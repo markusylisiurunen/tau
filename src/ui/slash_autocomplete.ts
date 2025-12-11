@@ -6,17 +6,26 @@ export interface PersonaSuggestion {
   label?: string;
 }
 
+export interface PromptSuggestion {
+  id: string;
+  label?: string;
+}
+
 /**
  * Autocomplete provider for slash commands only.
  * Supports:
  *   /help
  *   /copy
  *   /persona:<id>
+ *   /prompt:<id>
  *
  * No file/path completion.
  */
 export class SlashAutocompleteProvider implements AutocompleteProvider {
-  constructor(private personas: () => PersonaSuggestion[]) {}
+  constructor(
+    private personas: () => PersonaSuggestion[],
+    private prompts: () => PromptSuggestion[] = () => [],
+  ) {}
 
   getSuggestions(
     lines: string[],
@@ -35,6 +44,21 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
     if (personaMatch) {
       const argPrefix = personaMatch[1] ?? "";
       const all = this.personas();
+      const filtered = fuzzyFilter(all, argPrefix, (p) => `${p.id} ${p.label ?? ""}`);
+      const items = filtered.map((p) => ({
+        value: p.id,
+        label: p.id,
+        description: p.label,
+      }));
+      if (items.length === 0) return null;
+      return { items, prefix: argPrefix };
+    }
+
+    // Argument completion for /prompt:<prefix>
+    const promptMatch = afterSlash.match(/^prompt:(.*)$/i);
+    if (promptMatch) {
+      const argPrefix = promptMatch[1] ?? "";
+      const all = this.prompts();
       const filtered = fuzzyFilter(all, argPrefix, (p) => `${p.id} ${p.label ?? ""}`);
       const items = filtered.map((p) => ({
         value: p.id,
@@ -79,6 +103,19 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
       });
     }
 
+    for (const t of this.prompts()) {
+      const full = `prompt:${t.id}`;
+      const searchText = `${t.id} ${t.label ?? ""} ${full}`;
+      candidates.push({
+        item: {
+          value: full,
+          label: full,
+          description: t.label ? `Insert ${t.label}` : "Insert prompt template",
+        },
+        searchText,
+      });
+    }
+
     const filteredCandidates = fuzzyFilter(candidates, afterSlash, (c) => c.searchText);
     const items = filteredCandidates.map((c) => c.item);
 
@@ -97,11 +134,13 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
     const beforePrefix = line.slice(0, cursorCol - prefix.length);
     const afterCursor = line.slice(cursorCol);
 
-    // If we're completing a persona argument, prefix does not include "persona:"
-    const isPersonaArg = beforePrefix.toLowerCase().endsWith("/persona:");
+    // If we're completing an argument (/persona: or /prompt:), prefix does not include the command.
+    const lowerBeforePrefix = beforePrefix.toLowerCase();
+    const isArgCompletion =
+      lowerBeforePrefix.endsWith("/persona:") || lowerBeforePrefix.endsWith("/prompt:");
 
     let insert: string;
-    if (isPersonaArg) {
+    if (isArgCompletion) {
       insert = item.value;
     } else if (beforePrefix.endsWith("/")) {
       insert = item.value;

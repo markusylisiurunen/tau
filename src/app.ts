@@ -11,6 +11,7 @@ import {
 import { Container, Loader, ProcessTerminal, Spacer, Text, TUI } from "@mariozechner/pi-tui";
 import { copyTextToClipboard } from "./clipboard.js";
 import { getPersonaById } from "./personas.js";
+import type { PromptTemplate } from "./prompts.js";
 import type { Persona } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
 import { BashExecutionComponent } from "./ui/bash_execution.js";
@@ -33,7 +34,9 @@ const { palette } = theme;
 
 export interface ChatAppOptions {
   personas: Persona[];
+  prompts?: PromptTemplate[];
   initialPersonaId?: string;
+  initialUserMessage?: string;
 }
 
 export class ChatApp {
@@ -44,6 +47,8 @@ export class ChatApp {
 
   private personas: Persona[];
   private currentPersona: Persona;
+  private prompts: PromptTemplate[];
+  private initialUserMessage?: string;
 
   private messages: Message[] = [];
   private isFirstMessage = true;
@@ -61,6 +66,8 @@ export class ChatApp {
 
   constructor(options: ChatAppOptions) {
     this.personas = options.personas;
+    this.prompts = options.prompts ?? [];
+    this.initialUserMessage = options.initialUserMessage;
     this.currentPersona =
       (options.initialPersonaId && getPersonaById(options.initialPersonaId)) || this.personas[0]!;
 
@@ -91,7 +98,10 @@ export class ChatApp {
     };
 
     this.editor.setAutocompleteProvider(
-      new SlashAutocompleteProvider(() => this.personas.map((p) => ({ id: p.id, label: p.label }))),
+      new SlashAutocompleteProvider(
+        () => this.personas.map((p) => ({ id: p.id, label: p.label })),
+        () => this.prompts.map((t) => ({ id: t.id, label: t.label })),
+      ),
     );
 
     this.editor.onSubmit = (text) => this.handleSubmit(text);
@@ -111,6 +121,10 @@ export class ChatApp {
     this.addSystemMessage(
       `Persona: ${theme.formatPersonaLabel(this.currentPersona.label, this.currentPersona.model.id)}`,
     );
+
+    if (this.initialUserMessage) {
+      await this.sendInitialUserMessage(this.initialUserMessage);
+    }
   }
 
   stop(): void {
@@ -178,17 +192,36 @@ export class ChatApp {
     await this.runAssistantTurn();
   }
 
+  private async sendInitialUserMessage(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed || this.isStreaming) return;
+
+    this.addUserMessage(trimmed);
+
+    const userMessage: UserMessage = {
+      role: "user",
+      content: [{ type: "text", text: trimmed }],
+      timestamp: Date.now(),
+    };
+    this.messages.push(userMessage);
+
+    await this.runAssistantTurn();
+  }
+
   private async handleCommand(raw: string) {
     const trimmed = raw.trim();
 
     if (trimmed === "/help") {
+      const promptIds = this.prompts.map((p) => p.id).join(", ");
       this.addSystemMessage(
         [
           "Commands:",
           "/help           Show this help",
           "/copy           Copy last assistant message",
           "/persona:<id>   Switch persona",
+          "/prompt:<id>    Insert a prompt template",
           "/new            Clear session",
+          ...(promptIds ? ["", `Available prompts: ${promptIds}`] : []),
         ].join("\n"),
       );
       return;
@@ -245,6 +278,24 @@ export class ChatApp {
       this.addSystemMessage(
         `Switched to ${theme.formatPersonaLabel(persona.label, persona.model.id)}`,
       );
+      return;
+    }
+
+    const promptMatch = trimmed.match(/^\/prompt:(.+)$/i);
+    if (promptMatch) {
+      const idRaw = promptMatch[1]?.trim() ?? "";
+      if (!idRaw) {
+        this.addSystemMessage("Usage: /prompt:<id>");
+        return;
+      }
+      const lower = idRaw.toLowerCase();
+      const prompt = this.prompts.find((p) => p.id.toLowerCase() === lower);
+      if (!prompt) {
+        this.addSystemMessage(`Unknown prompt '${idRaw}'.`);
+        return;
+      }
+      this.editor.setText(prompt.template);
+      this.ui.requestRender();
       return;
     }
 

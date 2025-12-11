@@ -123,6 +123,8 @@ export function printHelp(personas: Persona[]): void {
       "",
       "Notes:",
       "  You can switch persona during a session with /persona:<id>.",
+      "  Insert predefined prompt templates with /prompt:<id>.",
+      "  If stdin is piped, its contents are sent as the first message automatically.",
       "  Reasoning only affects providers that support it.",
     ].join("\n"),
   );

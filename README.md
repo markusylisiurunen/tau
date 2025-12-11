@@ -24,6 +24,7 @@ export ANTHROPIC_API_KEY=...
 - `/help`
 - `/copy`
 - `/persona:<id>`
+- `/prompt:<id>` (insert a prompt template into the editor)
 - `/new`
 - `!<bash>` (run a shell command)
 
@@ -43,3 +44,10 @@ Available flags:
 - `--help` – show usage and exit.
 - `--persona <id>` – start with a specific persona. See `tau --help` for the current list.
 - `--reasoning <level>` – set reasoning effort for the initial persona. Levels: `minimal`, `low`, `medium`, `high`, `xhigh`, or `default`.
+
+If you pipe text into `tau`, it will be used as the first user message and sent to the model immediately:
+
+```sh
+cat somefile.txt | tau
+echo "summarize this:" | tau --persona opus
+```

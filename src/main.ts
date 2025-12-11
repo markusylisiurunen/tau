@@ -3,6 +3,18 @@ import { ChatApp } from "./app.js";
 import type { CliOptions } from "./cli.js";
 import { CliError, parseCliArgs, printHelp } from "./cli.js";
 import { personas } from "./personas.js";
+import { prompts } from "./prompts.js";
+
+async function readPipedStdin(): Promise<string | undefined> {
+  if (process.stdin.isTTY) return undefined;
+
+  process.stdin.setEncoding("utf8");
+  let data = "";
+  for await (const chunk of process.stdin) {
+    data += chunk;
+  }
+  return data;
+}
 
 let cli: CliOptions;
 try {
@@ -36,7 +48,14 @@ if (cli.reasoningSpecified) {
   }
 }
 
-const app = new ChatApp({ personas, initialPersonaId: cli.personaId });
+const initialUserMessage = await readPipedStdin();
+
+const app = new ChatApp({
+  personas,
+  prompts,
+  initialPersonaId: cli.personaId,
+  initialUserMessage,
+});
 
 try {
   await app.start();

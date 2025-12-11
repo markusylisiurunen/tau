@@ -126,7 +126,7 @@ export class ChatApp {
     const cwd = formatCwd(process.cwd());
     const left = `${cwd} · ${contextUsage} · ${sessionCost}`;
     const personaName = this.currentPersona.label || this.currentPersona.id;
-    const right = `${this.currentPersona.model.id} · ${reasoningLabel} · ${personaName}`;
+    const right = `${personaName} · ${this.currentPersona.model.id} (${reasoningLabel})`;
 
     this.footer.setLeftRight(left, right);
     this.ui.requestRender();

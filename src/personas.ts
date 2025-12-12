@@ -35,6 +35,16 @@ export const personas: Persona[] = [
       reasoning: "medium",
     },
   },
+  {
+    id: "gemini-3-pro",
+    label: "Default",
+    description: "Gemini 3 Pro with general purpose config",
+    model: getModel("openrouter", "google/gemini-3-pro-preview"),
+    systemPrompt: [BLOCK_OUTPUT_STYLE_GUIDELINES].join("\n\n"),
+    settings: {
+      reasoning: "low",
+    },
+  },
 ];
 
 export function getPersonaById(id: string): Persona | undefined {

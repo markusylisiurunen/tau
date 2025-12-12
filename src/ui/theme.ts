@@ -88,5 +88,24 @@ export const theme: Theme = {
     `${palette.accent(label)} ${palette.muted(`(${modelId})`)}`,
 };
 
+export function editorBorderForReasoning(reasoning?: string): (text: string) => string {
+  // Make this clearly noticeable. We ramp both lightness and saturation with effort,
+  // ending near the heading accent color (#d4a06a) at xhigh.
+  switch (reasoning) {
+    case "minimal":
+      return chalk.hex("#6f6259");
+    case "low":
+      return chalk.hex("#8a7260");
+    case "medium":
+      return chalk.hex("#a98064");
+    case "high":
+      return chalk.hex("#c19268");
+    case "xhigh":
+      return chalk.hex("#d0a06a");
+    default:
+      return palette.border;
+  }
+}
+
 // Backwards-compatible named exports (avoid churn in future refactors).
 export { palette, markdownTheme, editorTheme };

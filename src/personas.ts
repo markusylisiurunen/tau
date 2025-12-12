@@ -37,6 +37,15 @@ export const personas: Persona[] = [
     settings: { reasoning: "medium" },
   },
   {
+    id: "haiku",
+    label: "Default",
+    description: "Claude Haiku 4.5 with general purpose config",
+    model: getModel("anthropic", "claude-haiku-4-5"),
+    systemPrompt: [BLOCK_OUTPUT_STYLE_GUIDELINES, BLOCK_TOOL_USE_GUIDELINES].join("\n\n"),
+    allowedReasoningLevels: ["low", "medium", "high"],
+    settings: { reasoning: "low" },
+  },
+  {
     id: "gpt-5.2",
     label: "Default",
     description: "GPT-5.2 with general purpose config",

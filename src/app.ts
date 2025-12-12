@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
 import {
   type AssistantMessage,
   type Context,
@@ -24,8 +26,9 @@ import { CustomEditor } from "./ui/custom_editor.js";
 import { FooterComponent } from "./ui/footer.js";
 import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
 import { SystemMessageComponent } from "./ui/system_message.js";
-import { theme } from "./ui/theme.js";
+import { editorBorderForReasoning, theme } from "./ui/theme.js";
 import { UserMessageComponent } from "./ui/user_message.js";
+import { listProjectFiles } from "./utils/project_files.js";
 import {
   BASH_MAX_CAPTURE_BYTES,
   BASH_MAX_CONTEXT_BYTES_EFFECTIVE,
@@ -78,12 +81,17 @@ export class ChatApp {
   private initialUserMessage?: string;
 
   private messages: Message[] = [];
+  private assistantComponents: AssistantMessageComponent[] = [];
   private isFirstMessage = true;
   private isStreaming = false;
   private isBashMode = false;
+  private showThinking = false;
+  private currentTurnAbort?: AbortController;
   private toolAccessLevel: ToolAccessLevel = "read";
   private readonly initialToolAccessLevel: ToolAccessLevel;
   private readonly environmentTag: string;
+  private readonly projectContextBlock?: string;
+  private readonly projectFiles: string[];
   private baseSystemPrompt: string;
   private pendingToolAccessChange?:
     | {
@@ -114,10 +122,19 @@ export class ChatApp {
       cwd: process.cwd(),
       datetime: new Date().toISOString(),
     });
+    this.projectContextBlock = buildProjectContextBlock({
+      cwd: process.cwd(),
+      home: homedir(),
+    });
+    this.projectFiles = listProjectFiles(process.cwd());
     this.currentPersona =
       (options.initialPersonaId && getPersonaById(options.initialPersonaId)) || this.personas[0]!;
     this.clampPersonaReasoning(this.currentPersona);
-    this.baseSystemPrompt = `${this.currentPersona.systemPrompt}\n\n${this.environmentTag}`;
+    this.baseSystemPrompt = buildBaseSystemPrompt({
+      personaSystemPrompt: this.currentPersona.systemPrompt,
+      projectContextBlock: this.projectContextBlock,
+      environmentTag: this.environmentTag,
+    });
 
     this.ui = new TUI(createAppTerminal(Boolean(this.initialUserMessage)));
     this.chatContainer = new Container();
@@ -135,7 +152,9 @@ export class ChatApp {
       this.stop();
       process.exit(0);
     };
+    this.editor.onCtrlT = () => this.toggleThinkingVisibility();
     this.editor.onShiftTab = () => this.cycleReasoningLevel();
+    this.editor.onEscape = () => this.interruptAssistantTurn();
 
     this.editor.onChange = (text: string) => {
       const wasBash = this.isBashMode;
@@ -149,6 +168,7 @@ export class ChatApp {
       new SlashAutocompleteProvider(
         () => this.personas.map((p) => ({ id: p.id, label: p.label })),
         () => this.prompts.map((t) => ({ id: t.id, label: t.label })),
+        () => this.projectFiles,
       ),
     );
 
@@ -215,7 +235,31 @@ export class ChatApp {
 
   private addAssistantComponent(component: AssistantMessageComponent) {
     this.chatContainer.addChild(component);
+    this.assistantComponents.push(component);
     this.isFirstMessage = false;
+    this.ui.requestRender();
+  }
+
+  private toggleThinkingVisibility(): void {
+    this.showThinking = !this.showThinking;
+    for (const c of this.assistantComponents) {
+      c.setHideThinking(!this.showThinking);
+    }
+    this.addSystemMessage(
+      this.showThinking
+        ? "Thoughts visible (Ctrl+T to hide)."
+        : "Thoughts hidden (Ctrl+T to show).",
+      palette.muted,
+    );
+    this.ui.requestRender();
+  }
+
+  private interruptAssistantTurn(): void {
+    if (!this.isStreaming) return;
+    if (this.currentTurnAbort?.signal.aborted) return;
+
+    this.currentTurnAbort?.abort();
+    this.addSystemMessage("Interrupted.", palette.muted);
     this.ui.requestRender();
   }
 
@@ -285,6 +329,11 @@ export class ChatApp {
           "/tool:read      Allow read-only model bash tool",
           "/tool:all       Allow all model bash tool",
           "/new            Clear session",
+          "",
+          "Keys:",
+          "Shift+Tab       Cycle reasoning effort",
+          "Ctrl+T          Toggle thoughts visibility",
+          "Esc             Interrupt assistant",
           ...(promptIds ? ["", `Available prompts: ${promptIds}`] : []),
         ].join("\n"),
       );
@@ -315,6 +364,7 @@ export class ChatApp {
 
     if (trimmed === "/new") {
       this.messages = [];
+      this.assistantComponents = [];
       this.chatContainer.clear();
       this.isFirstMessage = true;
       this.isBashMode = false;
@@ -358,8 +408,13 @@ export class ChatApp {
       }
       this.currentPersona = persona;
       this.clampPersonaReasoning(this.currentPersona);
-      this.baseSystemPrompt = `${this.currentPersona.systemPrompt}\n\n${this.environmentTag}`;
+      this.baseSystemPrompt = buildBaseSystemPrompt({
+        personaSystemPrompt: this.currentPersona.systemPrompt,
+        projectContextBlock: this.projectContextBlock,
+        environmentTag: this.environmentTag,
+      });
       this.updateFooter();
+      this.updateEditorBorderColor();
       this.addSystemMessage(
         `Switched to ${theme.formatPersonaLabel(persona.label, persona.model.id)}`,
       );
@@ -390,26 +445,35 @@ export class ChatApp {
   private async runAssistantTurn() {
     this.isStreaming = true;
     this.editor.disableSubmit = true;
+    this.currentTurnAbort = new AbortController();
 
     try {
       let subturns = 0;
       while (subturns < MAX_ASSISTANT_SUBTURNS) {
+        if (this.currentTurnAbort.signal.aborted) break;
         subturns += 1;
 
         const assistantComponent = new AssistantMessageComponent();
-        assistantComponent.setHideThinking(true);
+        assistantComponent.setHideThinking(!this.showThinking);
         assistantComponent.setLeadingSpacer(false);
-        const loader = new Loader(this.ui, palette.accent, palette.muted, "Thinking...");
-        let loaderActive = true;
+        const showThinking = this.showThinking;
+        const loader = showThinking
+          ? undefined
+          : new Loader(this.ui, palette.accent, palette.muted, "Thinking...");
+        let loaderActive = !showThinking;
         const stopLoader = () => {
           if (!loaderActive) return;
           loaderActive = false;
-          this.chatContainer.removeChild(loader);
-          loader.stop();
+          if (loader) {
+            this.chatContainer.removeChild(loader);
+            loader.stop();
+          }
         };
 
-        this.chatContainer.addChild(loader);
-        this.ui.requestRender();
+        if (loader) {
+          this.chatContainer.addChild(loader);
+          this.ui.requestRender();
+        }
 
         try {
           const personaTools = this.currentPersona.tools ?? [];
@@ -421,19 +485,22 @@ export class ChatApp {
             tools,
           };
 
-          const stream = streamSimple(
-            this.currentPersona.model,
-            context,
-            this.getStreamingSettings(this.currentPersona),
-          );
+          const stream = streamSimple(this.currentPersona.model, context, {
+            ...this.getStreamingSettings(this.currentPersona),
+            signal: this.currentTurnAbort.signal,
+          });
 
           let text = "";
+          const thinkingBlocks: string[] = [];
+          let thinkingCurrent = "";
           let hasTextStarted = false;
           let thinkingDoneInserted = false;
+          let assistantInserted = false;
 
           const insertThinkingDone = () => {
             if (thinkingDoneInserted) return;
             thinkingDoneInserted = true;
+            if (showThinking) return;
             this.addSystemMessage("Thinking done.", palette.muted);
             // Always leave exactly one blank line after "Thinking done."
             this.chatContainer.addChild(new Spacer(1));
@@ -441,32 +508,74 @@ export class ChatApp {
             this.ui.requestRender();
           };
 
-          for await (const event of stream) {
-            if (event.type === "text_delta") {
-              text += event.delta;
+          const ensureAssistantInserted = () => {
+            if (assistantInserted) return;
+            assistantInserted = true;
+            stopLoader();
+            this.addAssistantComponent(assistantComponent);
+          };
+
+          let finalMessage: AssistantMessage | undefined;
+          try {
+            for await (const event of stream) {
+              if (event.type === "text_delta") {
+                text += event.delta;
+              }
+
+              if (event.type === "thinking_start") {
+                thinkingCurrent = "";
+              }
+              if (event.type === "thinking_delta") {
+                thinkingCurrent += event.delta;
+                if (showThinking && thinkingCurrent.trim() && !assistantInserted) {
+                  ensureAssistantInserted();
+                }
+              }
+              if (event.type === "thinking_end") {
+                const full = event.content?.trim() ? event.content : thinkingCurrent;
+                if (full.trim()) thinkingBlocks.push(full);
+                thinkingCurrent = "";
+                if (showThinking && thinkingBlocks.length > 0 && !assistantInserted) {
+                  ensureAssistantInserted();
+                }
+              }
+
+              if (!hasTextStarted && text.trim()) {
+                hasTextStarted = true;
+                insertThinkingDone();
+                ensureAssistantInserted();
+              }
+
+              if (assistantInserted) {
+                const thinking = [...thinkingBlocks, thinkingCurrent]
+                  .filter((s) => s.trim())
+                  .join("\n\n");
+                assistantComponent.updatePartial(hasTextStarted ? text : "", thinking);
+                this.ui.requestRender();
+              }
             }
 
-            if (!hasTextStarted && text.trim()) {
-              hasTextStarted = true;
-              stopLoader();
-              insertThinkingDone();
-              this.addAssistantComponent(assistantComponent);
+            finalMessage = await stream.result();
+          } catch (err) {
+            if (this.currentTurnAbort.signal.aborted) {
+              if (assistantInserted) {
+                const thinking = [...thinkingBlocks, thinkingCurrent]
+                  .filter((s) => s.trim())
+                  .join("\n\n");
+                assistantComponent.updatePartial(hasTextStarted ? text : "", thinking);
+                this.ui.requestRender();
+              }
+              break;
             }
-
-            if (hasTextStarted) {
-              assistantComponent.updatePartial(text);
-              this.ui.requestRender();
-            }
+            throw err;
           }
 
-          const finalMessage = await stream.result();
           this.messages.push(finalMessage);
           this.updateFooter();
 
-          if (!hasTextStarted) {
-            stopLoader();
-            insertThinkingDone();
-            this.addAssistantComponent(assistantComponent);
+          if (!assistantInserted) {
+            if (!showThinking) insertThinkingDone();
+            ensureAssistantInserted();
           }
 
           assistantComponent.updateFromMessage(finalMessage);
@@ -479,6 +588,7 @@ export class ChatApp {
           );
           if (!toolCalls.length) break;
 
+          if (this.currentTurnAbort.signal.aborted) break;
           await this.executeToolCalls(toolCalls);
         } finally {
           stopLoader();
@@ -496,12 +606,16 @@ export class ChatApp {
     } finally {
       this.isStreaming = false;
       this.editor.disableSubmit = false;
+      this.currentTurnAbort = undefined;
       this.ui.requestRender();
     }
   }
 
   private async executeToolCalls(toolCalls: ToolCall[]): Promise<void> {
     for (const [index, toolCall] of toolCalls.entries()) {
+      if (this.currentTurnAbort?.signal.aborted) {
+        return;
+      }
       if (toolCall.name !== BASH_TOOL.name) {
         const msg = `Tool '${toolCall.name}' is not supported by tau.`;
         const toolResult: ToolResultMessage = {
@@ -659,6 +773,7 @@ export class ChatApp {
     const next = allowed[(index + 1) % allowed.length];
     this.currentPersona.settings.reasoning = next;
     this.updateFooter();
+    this.updateEditorBorderColor();
   }
 
   private getAllowedReasoningLevelsForPersona(
@@ -772,7 +887,7 @@ export class ChatApp {
     if (this.isBashMode) {
       this.editor.borderColor = (s: string) => palette.bash(s);
     } else {
-      this.editor.borderColor = (s: string) => palette.border(s);
+      this.editor.borderColor = editorBorderForReasoning(this.currentPersona.settings.reasoning);
     }
     this.ui.requestRender();
   }
@@ -834,6 +949,74 @@ export class ChatApp {
       this.ui.requestRender();
     }
   }
+}
+
+function buildBaseSystemPrompt(args: {
+  personaSystemPrompt: string;
+  projectContextBlock?: string;
+  environmentTag: string;
+}): string {
+  const parts: string[] = [args.personaSystemPrompt.trim()];
+  if (args.projectContextBlock?.trim()) {
+    parts.push(args.projectContextBlock.trim());
+  }
+  parts.push(args.environmentTag.trim());
+  return parts.join("\n\n");
+}
+
+function buildProjectContextBlock(args: { cwd: string; home: string }): string | undefined {
+  const agentsFiles = findAgentsFilesFromCwdToHome(args.cwd, args.home);
+  if (agentsFiles.length === 0) return undefined;
+
+  const lines: string[] = ["### Project context", ""];
+
+  for (const filePath of agentsFiles) {
+    let content = "";
+    try {
+      content = readFileSync(filePath, "utf-8");
+    } catch {
+      continue;
+    }
+    lines.push(`<file path="${filePath}">`);
+    lines.push(content.trimEnd());
+    lines.push("</file>");
+    lines.push("");
+  }
+
+  const out = lines.join("\n").trimEnd();
+  return out.trim() ? out : undefined;
+}
+
+function findAgentsFilesFromCwdToHome(cwd: string, home: string): string[] {
+  const cwdAbs = resolve(cwd);
+  const homeAbs = resolve(home);
+
+  // If we're not inside the user's home directory, don't walk beyond it.
+  if (cwdAbs !== homeAbs && !cwdAbs.startsWith(homeAbs + sep)) {
+    return [];
+  }
+
+  const found: string[] = [];
+
+  let dir = cwdAbs;
+  // Closest-first order: cwd, parent, ..., home.
+  while (true) {
+    const candidate = join(dir, "AGENTS.md");
+    if (existsSync(candidate)) {
+      found.push(candidate);
+    }
+
+    if (dir === homeAbs) break;
+
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    // Stay within home.
+    if (parent !== homeAbs && !parent.startsWith(homeAbs + sep)) break;
+
+    dir = parent;
+  }
+
+  return found;
 }
 
 function describeToolAccessLevel(level: ToolAccessLevel): string {

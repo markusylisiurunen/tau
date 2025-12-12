@@ -6,6 +6,7 @@ export class AssistantMessageComponent extends Container {
   private contentContainer: Container;
   private hideThinking = false;
   private leadingSpacer = true;
+  private lastMessage?: AssistantMessage;
 
   constructor(message?: AssistantMessage) {
     super();
@@ -19,6 +20,9 @@ export class AssistantMessageComponent extends Container {
 
   setHideThinking(hide: boolean) {
     this.hideThinking = hide;
+    if (this.lastMessage) {
+      this.updateFromMessage(this.lastMessage);
+    }
   }
 
   setLeadingSpacer(enabled: boolean) {
@@ -50,6 +54,7 @@ export class AssistantMessageComponent extends Container {
   }
 
   updateFromMessage(message: AssistantMessage): void {
+    this.lastMessage = message;
     this.contentContainer.clear();
 
     if (
@@ -73,7 +78,7 @@ export class AssistantMessageComponent extends Container {
 
       if (content.type === "thinking" && content.thinking.trim()) {
         if (this.hideThinking) {
-          // Thinking is never shown in this app.
+          // Thinking is hidden unless toggled on.
           continue;
         }
 

@@ -1,15 +1,17 @@
 // Truncation utilities for bash output.
 // Supports head- and tail-truncation by max lines and max bytes (whichever hits first).
 
-export const BASH_MAX_CAPTURE_BYTES = 512 * 1024; // 512KB accepted from process output
+export const BASH_MAX_CAPTURE_BYTES = 1024 * 1024; // 1MB accepted from process output
 export const BASH_MAX_DISPLAY_LINES = 32; // UI only
 export const BASH_MAX_DISPLAY_BYTES = 50 * 1024; // UI only
 
 // Model/context limits.
-export const BASH_MAX_CONTEXT_BYTES = 512 * 1024; // hard byte cap for model context
-export const BASH_MAX_CONTEXT_LINES = 2000; // safety line cap for model context
-export const BASH_MAX_CONTEXT_TOKENS_APPROX = 32768;
 export const BASH_BYTES_PER_TOKEN_APPROX = 4;
+export const BASH_MAX_CONTEXT_BYTES = 1024 * 1024; // hard byte cap for model context
+export const BASH_MAX_CONTEXT_LINES = 10_000; // safety line cap for model context
+export const BASH_MAX_CONTEXT_TOKENS_APPROX = Math.floor(
+  BASH_MAX_CONTEXT_BYTES / BASH_BYTES_PER_TOKEN_APPROX,
+);
 export const BASH_MAX_CONTEXT_BYTES_EFFECTIVE = Math.min(
   BASH_MAX_CONTEXT_BYTES,
   BASH_MAX_CONTEXT_TOKENS_APPROX * BASH_BYTES_PER_TOKEN_APPROX,

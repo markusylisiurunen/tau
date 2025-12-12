@@ -21,13 +21,15 @@ export interface PromptSuggestion {
  *   /tool:none
  *   /tool:read
  *   /tool:all
+ *   @<file> (fuzzy file path completion)
  *
- * No file/path completion.
+ * File completion inserts the selected path after "@".
  */
 export class SlashAutocompleteProvider implements AutocompleteProvider {
   constructor(
     private personas: () => PersonaSuggestion[],
     private prompts: () => PromptSuggestion[] = () => [],
+    private files: () => string[] = () => [],
   ) {}
 
   getSuggestions(
@@ -37,6 +39,22 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
   ): { items: AutocompleteItem[]; prefix: string } | null {
     const line = lines[cursorLine] ?? "";
     const beforeCursor = line.slice(0, cursorCol);
+
+    // File reference completion: "@foo" (after whitespace or at start of line).
+    // Insert as "@path/to/file".
+    const fileMatch = beforeCursor.match(/(?:^|[\t ])(@[^\t ]*)$/);
+    if (fileMatch) {
+      const token = fileMatch[1] ?? "@";
+      const query = token.slice(1);
+      const all = this.files();
+      const filtered = fuzzyFilter(all, query, (p) => p);
+      const items = filtered.slice(0, 25).map((p) => ({
+        value: p,
+        label: p,
+      }));
+      if (items.length === 0) return null;
+      return { items, prefix: token };
+    }
 
     if (!beforeCursor.startsWith("/")) return null;
 
@@ -159,6 +177,19 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
     const line = lines[cursorLine] ?? "";
     const beforePrefix = line.slice(0, cursorCol - prefix.length);
     const afterCursor = line.slice(cursorCol);
+
+    if (prefix.startsWith("@")) {
+      const insert = `@${item.value}`;
+      const newLine = beforePrefix + insert + afterCursor;
+      const newLines = [...lines];
+      newLines[cursorLine] = newLine;
+
+      return {
+        lines: newLines,
+        cursorLine,
+        cursorCol: beforePrefix.length + insert.length,
+      };
+    }
 
     // If we're completing an argument (/persona: or /prompt:), prefix does not include the command.
     const lowerBeforePrefix = beforePrefix.toLowerCase();

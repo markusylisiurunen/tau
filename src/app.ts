@@ -8,10 +8,11 @@ import {
   streamSimple,
   type UserMessage,
 } from "@mariozechner/pi-ai";
-import { Container, Loader, ProcessTerminal, Spacer, Text, TUI } from "@mariozechner/pi-tui";
+import { Container, Loader, Spacer, Text, TUI } from "@mariozechner/pi-tui";
 import { copyTextToClipboard } from "./clipboard.js";
 import { getPersonaById } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
+import { createAppTerminal } from "./terminal.js";
 import type { Persona } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
 import { BashExecutionComponent } from "./ui/bash_execution.js";
@@ -71,7 +72,7 @@ export class ChatApp {
     this.currentPersona =
       (options.initialPersonaId && getPersonaById(options.initialPersonaId)) || this.personas[0]!;
 
-    this.ui = new TUI(new ProcessTerminal());
+    this.ui = new TUI(createAppTerminal(Boolean(this.initialUserMessage)));
     this.chatContainer = new Container();
 
     const headerText =

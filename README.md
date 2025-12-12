@@ -51,3 +51,5 @@ If you pipe text into `tau`, it will be used as the first user message and sent 
 cat somefile.txt | tau
 echo "summarize this:" | tau --persona opus
 ```
+
+When running in a terminal, Tau will still stay interactive after consuming stdin.

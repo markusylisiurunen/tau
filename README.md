@@ -50,6 +50,7 @@ Available flags:
 - `--persona <id>` – start with a specific persona. See `tau --help` for the current list.
 - `--reasoning <level>` – set reasoning effort for the initial persona. Levels: `minimal`, `low`, `medium`, `high`, `xhigh`, or `default`.
 - `--tool <level>` – set initial model bash tool access. Levels: `none`, `read`, or `all`. Default: `read`.
+- `--no-context` – do not inject any `AGENTS.md` project context into the system prompt.
 
 If you pipe text into `tau`, it will be used as the first user message and sent to the model immediately:
 

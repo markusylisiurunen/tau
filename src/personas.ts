@@ -58,7 +58,7 @@ export const personas: Persona[] = [
     id: "gemini-3-pro",
     label: "Default",
     description: "Gemini 3 Pro with general purpose config",
-    model: getModel("openrouter", "google/gemini-3-pro-preview"),
+    model: getModel("google", "gemini-3-pro-preview"),
     systemPrompt: [BLOCK_OUTPUT_STYLE_GUIDELINES, BLOCK_TOOL_USE_GUIDELINES].join("\n\n"),
     allowedReasoningLevels: ["low", "high"],
     settings: { reasoning: "low" },

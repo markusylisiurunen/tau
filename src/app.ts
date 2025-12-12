@@ -50,11 +50,13 @@ const BASH_TOOL: Tool = {
   parameters: Type.Object(
     {
       command: Type.String({
-        description: "The shell command to execute.",
+        description: ["The shell command to execute."].join(" "),
       }),
-      risk: Type.Union([Type.Literal("read"), Type.Literal("write")], {
-        description:
-          "Risk level of the command. Use 'read' only for non-mutating commands; otherwise use 'write'.",
+      risk: Type.String({
+        description: [
+          "Risk level of the command; MUST be either 'read' or 'write'.",
+          "Use 'read' only for non-mutating commands; otherwise use 'write'.",
+        ].join(" "),
       }),
     },
     { additionalProperties: false },
@@ -67,6 +69,7 @@ export interface ChatAppOptions {
   initialPersonaId?: string;
   initialUserMessage?: string;
   initialToolAccessLevel?: ToolAccessLevel;
+  noContext?: boolean;
 }
 
 export class ChatApp {
@@ -122,10 +125,12 @@ export class ChatApp {
       cwd: process.cwd(),
       datetime: new Date().toISOString(),
     });
-    this.projectContextBlock = buildProjectContextBlock({
-      cwd: process.cwd(),
-      home: homedir(),
-    });
+    this.projectContextBlock = options.noContext
+      ? undefined
+      : buildProjectContextBlock({
+          cwd: process.cwd(),
+          home: homedir(),
+        });
     this.projectFiles = listProjectFiles(process.cwd());
     this.currentPersona =
       (options.initialPersonaId && getPersonaById(options.initialPersonaId)) || this.personas[0]!;
@@ -454,9 +459,9 @@ export class ChatApp {
         subturns += 1;
 
         const assistantComponent = new AssistantMessageComponent();
-        assistantComponent.setHideThinking(!this.showThinking);
-        assistantComponent.setLeadingSpacer(false);
         const showThinking = this.showThinking;
+        assistantComponent.setHideThinking(!showThinking);
+        assistantComponent.setLeadingSpacer(showThinking);
         const loader = showThinking
           ? undefined
           : new Loader(this.ui, palette.accent, palette.muted, "Thinking...");

@@ -86,8 +86,10 @@ export class AssistantMessageComponent extends Container {
           .slice(i + 1)
           .some((c) => c.type === "text" && c.text.trim());
 
+        const thinkingText = normalizeEscapedNewlines(content.thinking).trim();
+
         this.contentContainer.addChild(
-          new Markdown(content.thinking.trim(), 1, 0, theme.markdownTheme, {
+          new Markdown(thinkingText, 1, 0, theme.markdownTheme, {
             color: (t: string) => theme.palette.muted(t),
             italic: true,
           }),
@@ -104,4 +106,15 @@ export class AssistantMessageComponent extends Container {
       this.contentContainer.addChild(new Text(theme.palette.error(`Error: ${errorMsg}`), 1, 0));
     }
   }
+}
+
+function normalizeEscapedNewlines(text: string): string {
+  // Some providers/models occasionally emit "\n" sequences literally instead of actual newlines.
+  // Only unescape when there are no real newlines present to avoid breaking legitimate backslashes.
+  const hasRealNewlines = text.includes("\n");
+  const hasEscapedNewlines = text.includes("\\n");
+  if (hasEscapedNewlines && !hasRealNewlines) {
+    return text.replaceAll("\\n", "\n");
+  }
+  return text;
 }

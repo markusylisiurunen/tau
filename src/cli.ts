@@ -7,6 +7,7 @@ export interface CliOptions {
   reasoningEffort: ReasoningEffort | undefined;
   reasoningSpecified: boolean;
   toolAccessLevel?: ToolAccessLevel;
+  noContext: boolean;
 }
 
 export class CliError extends Error {
@@ -82,12 +83,18 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let reasoningSpecified = false;
   let reasoningEffort: ReasoningEffort | undefined;
   let toolAccessLevel: ToolAccessLevel | undefined;
+  let noContext = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
 
     if (arg === "--help" || arg === "-h") {
       help = true;
+      continue;
+    }
+
+    if (arg === "--no-context") {
+      noContext = true;
       continue;
     }
 
@@ -124,7 +131,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     throw new CliError(`Unexpected argument: ${arg}`);
   }
 
-  return { help, personaId, reasoningEffort, reasoningSpecified, toolAccessLevel };
+  return { help, personaId, reasoningEffort, reasoningSpecified, toolAccessLevel, noContext };
 }
 
 export function printHelp(personas: Persona[]): void {
@@ -144,6 +151,7 @@ export function printHelp(personas: Persona[]): void {
       `  --persona <id>         Start with a persona. Available: ${personaList}`,
       `  --reasoning <level>    Set reasoning effort for initial persona. Levels: ${reasoningList}`,
       `  --tool <level>         Set initial model tool access level. Levels: ${toolList}. Default: read.`,
+      "  --no-context           Do not inject AGENTS.md into the system prompt.",
       "",
       "Notes:",
       "  You can switch persona during a session with /persona:<id>.",

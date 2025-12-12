@@ -25,12 +25,15 @@ export class BashExecutionComponent extends Container {
     captureTruncated = false,
     modelTruncation?: TruncationResult,
     modelCaptureTruncated = false,
+    includeTopSpacer = true,
   ) {
     super();
     const { palette } = theme;
     const bashColor = (s: string) => palette.bash(s);
 
-    this.addChild(new Spacer(1));
+    if (includeTopSpacer) {
+      this.addChild(new Spacer(1));
+    }
     this.addChild(new DynamicBorder(bashColor));
 
     const content = new Container();
@@ -83,5 +86,35 @@ export class BashExecutionComponent extends Container {
     }
 
     this.addChild(new DynamicBorder(bashColor));
+  }
+}
+
+/**
+ * Bash tool block shown when a model tool call is blocked.
+ * Uses error colors and includes the command and reason.
+ */
+export class BashBlockedComponent extends Container {
+  constructor(command: string, reason: string, includeTopSpacer = true) {
+    super();
+    const { palette } = theme;
+    const errorColor = (s: string) => palette.error(s);
+
+    if (includeTopSpacer) {
+      this.addChild(new Spacer(1));
+    }
+    this.addChild(new DynamicBorder(errorColor));
+
+    const content = new Container();
+    this.addChild(content);
+
+    const header = `\u001b[1m$ ${command}\u001b[22m`;
+    content.addChild(new Text(errorColor(header), 1, 0));
+
+    const msg = reason.trim();
+    if (msg) {
+      content.addChild(new Text(`\n${errorColor(msg)}`, 1, 0));
+    }
+
+    this.addChild(new DynamicBorder(errorColor));
   }
 }

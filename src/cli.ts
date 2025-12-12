@@ -1,11 +1,12 @@
 import type { ReasoningEffort } from "@mariozechner/pi-ai";
-import type { Persona } from "./types.js";
+import type { Persona, ToolAccessLevel } from "./types.js";
 
 export interface CliOptions {
   help: boolean;
   personaId?: string;
   reasoningEffort: ReasoningEffort | undefined;
   reasoningSpecified: boolean;
+  toolAccessLevel?: ToolAccessLevel;
 }
 
 export class CliError extends Error {
@@ -16,6 +17,7 @@ export class CliError extends Error {
 }
 
 const REASONING_LEVELS: ReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh"];
+const TOOL_LEVELS: ToolAccessLevel[] = ["none", "read", "all"];
 
 function resolvePersonaId(raw: string, personas: Persona[]): string | undefined {
   const trimmed = raw.trim();
@@ -39,6 +41,18 @@ function parseReasoning(raw: string): ReasoningEffort | undefined {
   }
   const allowed = [...REASONING_LEVELS, "default"].join(", ");
   throw new CliError(`Invalid reasoning level '${raw}'. Allowed levels: ${allowed}`);
+}
+
+function parseToolAccessLevel(raw: string): ToolAccessLevel {
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) {
+    throw new CliError("Missing value for --tool");
+  }
+  if ((TOOL_LEVELS as string[]).includes(normalized)) {
+    return normalized as ToolAccessLevel;
+  }
+  const allowed = TOOL_LEVELS.join(", ");
+  throw new CliError(`Invalid tool level '${raw}'. Allowed levels: ${allowed}`);
 }
 
 function parseValue(
@@ -67,6 +81,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let personaId: string | undefined;
   let reasoningSpecified = false;
   let reasoningEffort: ReasoningEffort | undefined;
+  let toolAccessLevel: ToolAccessLevel | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -96,18 +111,26 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       continue;
     }
 
+    if (arg === "--tool" || arg.startsWith("--tool=")) {
+      const { value, nextIndex } = parseValue(arg, argv, i);
+      i = nextIndex;
+      toolAccessLevel = parseToolAccessLevel(value);
+      continue;
+    }
+
     if (arg.startsWith("-")) {
       throw new CliError(`Unknown option: ${arg}`);
     }
     throw new CliError(`Unexpected argument: ${arg}`);
   }
 
-  return { help, personaId, reasoningEffort, reasoningSpecified };
+  return { help, personaId, reasoningEffort, reasoningSpecified, toolAccessLevel };
 }
 
 export function printHelp(personas: Persona[]): void {
   const personaList = personas.map((p) => p.id).join(", ");
   const reasoningList = [...REASONING_LEVELS, "default"].join(", ");
+  const toolList = TOOL_LEVELS.join(", ");
 
   console.log(
     [
@@ -120,10 +143,12 @@ export function printHelp(personas: Persona[]): void {
       "  --help                 Show this help and exit.",
       `  --persona <id>         Start with a persona. Available: ${personaList}`,
       `  --reasoning <level>    Set reasoning effort for initial persona. Levels: ${reasoningList}`,
+      `  --tool <level>         Set initial model tool access level. Levels: ${toolList}. Default: read.`,
       "",
       "Notes:",
       "  You can switch persona during a session with /persona:<id>.",
       "  Insert predefined prompt templates with /prompt:<id>.",
+      "  You can change model tool access during a session with /tool:none|read|all.",
       "  If stdin is piped, its contents are sent as the first message automatically.",
       "  Reasoning only affects providers that support it.",
     ].join("\n"),

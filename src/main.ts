@@ -55,6 +55,7 @@ const app = new ChatApp({
   prompts,
   initialPersonaId: cli.personaId,
   initialUserMessage,
+  initialToolAccessLevel: cli.toolAccessLevel,
 });
 
 try {

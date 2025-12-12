@@ -18,6 +18,9 @@ export interface PromptSuggestion {
  *   /copy
  *   /persona:<id>
  *   /prompt:<id>
+ *   /tool:none
+ *   /tool:read
+ *   /tool:all
  *
  * No file/path completion.
  */
@@ -69,11 +72,33 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
       return { items, prefix: argPrefix };
     }
 
+    // Argument completion for /tool:<prefix>
+    const toolMatch = afterSlash.match(/^tool:(.*)$/i);
+    if (toolMatch) {
+      const argPrefix = toolMatch[1] ?? "";
+      const toolOptions = [
+        { id: "none", description: "Block model bash tool calls" },
+        { id: "read", description: "Allow read-only model bash tool" },
+        { id: "all", description: "Allow all model bash tool" },
+      ];
+      const filtered = fuzzyFilter(toolOptions, argPrefix, (o) => `${o.id} ${o.description}`);
+      const items = filtered.map((o) => ({
+        value: o.id,
+        label: o.id,
+        description: o.description,
+      }));
+      if (items.length === 0) return null;
+      return { items, prefix: argPrefix };
+    }
+
     // Command name completion (no persona argument context).
     // Auto-generate /persona:<id> entries for convenience.
     const staticCommands: Array<{ value: string; label: string; description: string }> = [
       { value: "help", label: "help", description: "Show help" },
       { value: "copy", label: "copy", description: "Copy last assistant message" },
+      { value: "tool:none", label: "tool:none", description: "Disable model bash tool" },
+      { value: "tool:read", label: "tool:read", description: "Allow read-only model bash tool" },
+      { value: "tool:all", label: "tool:all", description: "Allow all model bash tool" },
       { value: "new", label: "new", description: "Clear session" },
     ];
 
@@ -120,7 +145,8 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
     const items = filteredCandidates.map((c) => c.item);
 
     if (items.length === 0) return null;
-    return { items, prefix: afterSlash };
+    // Prefix includes the leading "/" so pi-tui treats Enter as slash-submit.
+    return { items, prefix: `/${afterSlash}` };
   }
 
   applyCompletion(
@@ -137,11 +163,16 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
     // If we're completing an argument (/persona: or /prompt:), prefix does not include the command.
     const lowerBeforePrefix = beforePrefix.toLowerCase();
     const isArgCompletion =
-      lowerBeforePrefix.endsWith("/persona:") || lowerBeforePrefix.endsWith("/prompt:");
+      lowerBeforePrefix.endsWith("/persona:") ||
+      lowerBeforePrefix.endsWith("/prompt:") ||
+      lowerBeforePrefix.endsWith("/tool:");
 
     let insert: string;
     if (isArgCompletion) {
       insert = item.value;
+    } else if (prefix.startsWith("/")) {
+      // Command completion prefix already included a leading "/".
+      insert = `/${item.value}`;
     } else if (beforePrefix.endsWith("/")) {
       insert = item.value;
     } else {

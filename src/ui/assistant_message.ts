@@ -5,6 +5,7 @@ import { theme } from "./theme.js";
 export class AssistantMessageComponent extends Container {
   private contentContainer: Container;
   private hideThinking = false;
+  private leadingSpacer = true;
 
   constructor(message?: AssistantMessage) {
     super();
@@ -18,6 +19,10 @@ export class AssistantMessageComponent extends Container {
 
   setHideThinking(hide: boolean) {
     this.hideThinking = hide;
+  }
+
+  setLeadingSpacer(enabled: boolean) {
+    this.leadingSpacer = enabled;
   }
 
   updatePartial(text: string, thinking?: string) {
@@ -48,6 +53,7 @@ export class AssistantMessageComponent extends Container {
     this.contentContainer.clear();
 
     if (
+      this.leadingSpacer &&
       message.content.length > 0 &&
       message.content.some(
         (c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),

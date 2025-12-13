@@ -110,7 +110,7 @@ export class SessionEngine {
   private getStreamingSettings(persona: Persona) {
     const settings = { ...persona.settings };
     // ChatApp already clamps persona.reasoning to allowed values; keep engine minimal.
-    if (!settings.reasoning) {
+    if (settings.reasoning === undefined) {
       delete (settings as Record<string, unknown>).reasoning;
     }
     return settings;

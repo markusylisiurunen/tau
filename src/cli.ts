@@ -4,8 +4,7 @@ import { type Persona, REASONING_LEVELS, type ToolAccessLevel } from "./types.js
 export interface CliOptions {
   help: boolean;
   personaId?: string;
-  reasoningEffort: ReasoningEffort | undefined;
-  reasoningSpecified: boolean;
+  reasoningOverride?: ReasoningEffort;
   toolAccessLevel?: ToolAccessLevel;
   withContext: boolean;
 }
@@ -33,7 +32,7 @@ function parseReasoning(raw: string): ReasoningEffort | undefined {
   if (!normalized) {
     throw new CliError("missing value for --reasoning");
   }
-  if (normalized === "default" || normalized === "auto" || normalized === "none") {
+  if (normalized === "default" || normalized === "auto") {
     return undefined;
   }
   if ((REASONING_LEVELS as string[]).includes(normalized)) {
@@ -79,8 +78,7 @@ function parseValue(
 export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let help = false;
   let personaId: string | undefined;
-  let reasoningSpecified = false;
-  let reasoningEffort: ReasoningEffort | undefined;
+  let reasoningOverride: ReasoningEffort | undefined;
   let toolAccessLevel: ToolAccessLevel | undefined;
   let withContext = false;
 
@@ -97,23 +95,38 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       continue;
     }
 
-    if (arg === "--persona" || arg.startsWith("--persona=")) {
+    if (
+      arg === "--persona" ||
+      arg === "-p" ||
+      arg.startsWith("--persona=") ||
+      arg.startsWith("-p=")
+    ) {
       const { value, nextIndex } = parseValue(arg, argv, i);
       i = nextIndex;
-      const resolved = resolvePersonaId(value, personas);
+
+      // Split by first colon to separate persona ID and optional reasoning level
+      const colonIndex = value.indexOf(":");
+      let personaValue: string;
+      let reasoningValue: string | undefined;
+
+      if (colonIndex !== -1) {
+        personaValue = value.slice(0, colonIndex);
+        reasoningValue = value.slice(colonIndex + 1);
+      } else {
+        personaValue = value;
+      }
+
+      const resolved = resolvePersonaId(personaValue, personas);
       if (!resolved) {
         const available = personas.map((p) => p.id).join(", ");
-        throw new CliError(`unknown persona '${value}'. available personas: ${available}`);
+        throw new CliError(`unknown persona '${personaValue}'. available personas: ${available}`);
       }
       personaId = resolved;
-      continue;
-    }
 
-    if (arg === "--reasoning" || arg.startsWith("--reasoning=")) {
-      const { value, nextIndex } = parseValue(arg, argv, i);
-      i = nextIndex;
-      reasoningSpecified = true;
-      reasoningEffort = parseReasoning(value);
+      if (reasoningValue !== undefined) {
+        reasoningOverride = parseReasoning(reasoningValue);
+      }
+
       continue;
     }
 
@@ -130,7 +143,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     throw new CliError(`unexpected argument: ${arg}`);
   }
 
-  return { help, personaId, reasoningEffort, reasoningSpecified, toolAccessLevel, withContext };
+  return { help, personaId, reasoningOverride, toolAccessLevel, withContext };
 }
 
 export function printHelp(personas: Persona[]): void {
@@ -146,11 +159,16 @@ export function printHelp(personas: Persona[]): void {
       "  tau [options]",
       "",
       "options:",
-      "  --help                 show this help and exit.",
-      `  --persona <id>         start with a persona. available: ${personaList}.`,
-      `  --reasoning <level>    set reasoning effort for initial persona. levels: ${reasoningList}.`,
-      `  --tool <level>         set initial model tool access level. levels: ${toolList}. default: read.`,
-      "  --with-context         inject AGENTS.md into the system prompt.",
+      "  --help                        show this help and exit.",
+      `  --persona, -p <id>[:<level>]  start with a persona. available: ${personaList}.`,
+      `                                optionally specify reasoning level. levels: ${reasoningList}.`,
+      `  --tool <level>                set initial model tool access level. levels: ${toolList}. default: read.`,
+      "  --with-context                inject AGENTS.md into the system prompt.",
+      "",
+      "examples:",
+      "  tau --persona gpt-5.2:high",
+      "  tau -p opus-4.5",
+      "  tau --persona gpt-5.2:medium --tool all",
       "",
       "notes:",
       "  you can switch persona during a session with /persona:<id>.",

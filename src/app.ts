@@ -325,7 +325,7 @@ export class ChatApp {
 
   private cycleReasoningLevel(): void {
     const allowed = this.getAllowedReasoningLevels(this.currentPersona);
-    const current = this.currentPersona.settings.reasoning;
+    const current = (this.currentPersona.settings.reasoning ?? allowed[0]!) as ReasoningEffort;
     const index = allowed.indexOf(current);
     const next = allowed[(index + 1) % allowed.length];
     this.currentPersona.settings.reasoning = next;
@@ -333,9 +333,9 @@ export class ChatApp {
     this.updateEditorBorderColor();
   }
 
-  private getAllowedReasoningLevels(persona: Persona): Array<ReasoningEffort | undefined> {
+  private getAllowedReasoningLevels(persona: Persona): ReasoningEffort[] {
     if (!persona.model.reasoning) {
-      return [undefined];
+      return ["none"] as ReasoningEffort[];
     }
 
     const raw = persona.allowedReasoningLevels;
@@ -343,11 +343,9 @@ export class ChatApp {
       return REASONING_LEVELS_WITH_NONE;
     }
 
-    const normalized: Array<ReasoningEffort | undefined> = [];
+    const normalized: ReasoningEffort[] = [];
     for (const level of raw) {
-      if (level === "none") {
-        normalized.push(undefined);
-      } else if (REASONING_LEVELS_WITH_NONE.includes(level as ReasoningEffort)) {
+      if (REASONING_LEVELS_WITH_NONE.includes(level as ReasoningEffort)) {
         normalized.push(level as ReasoningEffort);
       }
     }
@@ -358,7 +356,7 @@ export class ChatApp {
 
   private clampPersonaReasoning(persona: Persona): void {
     const allowed = this.getAllowedReasoningLevels(persona);
-    if (!allowed.includes(persona.settings.reasoning)) {
+    if (!allowed.includes(persona.settings.reasoning as ReasoningEffort)) {
       persona.settings.reasoning = allowed[0];
     }
   }

@@ -3,11 +3,8 @@ import type { Api, Model, ReasoningEffort, SimpleStreamOptions, Tool } from "@ma
 export type ToolAccessLevel = "none" | "read" | "all";
 export type AllowedReasoningLevel = ReasoningEffort | "none";
 
-export const REASONING_LEVELS: ReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh"];
-export const REASONING_LEVELS_WITH_NONE: (ReasoningEffort | undefined)[] = [
-  undefined,
-  ...REASONING_LEVELS,
-];
+export const REASONING_LEVELS: ReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh"];
+export const REASONING_LEVELS_WITH_NONE: ReasoningEffort[] = REASONING_LEVELS;
 
 export interface Persona {
   id: string;

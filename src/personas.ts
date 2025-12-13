@@ -47,9 +47,9 @@ Before editing, confirm you have current content for the target section (e.g., \
 
 export const personas: Persona[] = [
   {
-    id: "opus",
-    label: "default",
-    description: "Claude Opus 4.5 with general purpose config",
+    id: "opus-4.5",
+    label: "basic",
+    description: "Claude Opus 4.5",
     model: getModel("anthropic", "claude-opus-4-5"),
     systemPrompt: [
       BLOCK_GENERAL_PURPOSE_PREAMBLE,
@@ -61,9 +61,9 @@ export const personas: Persona[] = [
     settings: { reasoning: "medium" },
   },
   {
-    id: "haiku",
-    label: "default",
-    description: "Claude Haiku 4.5 with general purpose config",
+    id: "haiku-4.5",
+    label: "basic",
+    description: "Claude Haiku 4.5",
     model: getModel("anthropic", "claude-haiku-4-5"),
     systemPrompt: [
       BLOCK_GENERAL_PURPOSE_PREAMBLE,
@@ -72,12 +72,12 @@ export const personas: Persona[] = [
       BLOCK_FILE_EDIT_GUIDELINES,
     ].join("\n\n"),
     allowedReasoningLevels: ["low", "medium", "high"],
-    settings: { reasoning: "low" },
+    settings: { reasoning: "medium" },
   },
   {
     id: "gpt-5.2",
-    label: "default",
-    description: "GPT-5.2 with general purpose config",
+    label: "basic",
+    description: "GPT-5.2",
     model: getModel("openai", "gpt-5.2"),
     systemPrompt: [
       BLOCK_GENERAL_PURPOSE_PREAMBLE,
@@ -85,13 +85,13 @@ export const personas: Persona[] = [
       BLOCK_TOOL_USE_GUIDELINES,
       BLOCK_FILE_EDIT_GUIDELINES,
     ].join("\n\n"),
-    allowedReasoningLevels: ["minimal", "low", "medium", "high"],
+    allowedReasoningLevels: ["none", "low", "medium", "high", "xhigh"],
     settings: { reasoning: "low" },
   },
   {
     id: "gemini-3-pro",
-    label: "default",
-    description: "Gemini 3 Pro with general purpose config",
+    label: "basic",
+    description: "Gemini 3 Pro",
     model: getModel("google", "gemini-3-pro-preview"),
     systemPrompt: [
       BLOCK_GENERAL_PURPOSE_PREAMBLE,

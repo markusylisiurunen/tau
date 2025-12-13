@@ -44,12 +44,8 @@ const initialPersona = cli.personaId
   ? (personas.find((p) => p.id === cli.personaId) ?? personas[0]!)
   : personas[0]!;
 
-if (cli.reasoningSpecified) {
-  if (cli.reasoningEffort) {
-    initialPersona.settings.reasoning = cli.reasoningEffort;
-  } else {
-    delete (initialPersona.settings as { reasoning?: unknown }).reasoning;
-  }
+if (cli.reasoningOverride !== undefined) {
+  initialPersona.settings.reasoning = cli.reasoningOverride;
 }
 
 const initialUserMessage = await readPipedStdin();

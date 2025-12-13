@@ -6,6 +6,8 @@ import type {
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
+import type { Config } from "../config.js";
+import { getApiKeyForProvider } from "../config.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Persona, ToolAccessLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
@@ -56,6 +58,7 @@ export type SessionEngineOptions = {
   baseSystemPrompt: string;
   toolAccessLevel: ToolAccessLevel;
   toolRegistry: ToolRegistry;
+  config?: Config;
 };
 
 export class SessionEngine {
@@ -63,6 +66,7 @@ export class SessionEngine {
   private baseSystemPrompt: string;
   private toolAccessLevel: ToolAccessLevel;
   private readonly toolRegistry: ToolRegistry;
+  private config: Config;
   private messages: Message[] = [];
 
   constructor(options: SessionEngineOptions) {
@@ -70,6 +74,7 @@ export class SessionEngine {
     this.baseSystemPrompt = options.baseSystemPrompt;
     this.toolAccessLevel = options.toolAccessLevel;
     this.toolRegistry = options.toolRegistry;
+    this.config = options.config ?? {};
   }
 
   reset(): void {
@@ -172,9 +177,11 @@ export class SessionEngine {
       tools,
     };
 
+    const apiKey = getApiKeyForProvider(this.config, this.persona.model.provider);
     const stream = streamSimple(this.persona.model, context, {
       ...this.getStreamingSettings(this.persona),
       signal,
+      ...(apiKey && { apiKey }),
     });
 
     const accumulator = new MessageAccumulator();

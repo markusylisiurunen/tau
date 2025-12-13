@@ -1,8 +1,11 @@
 import { homedir } from "node:os";
 import type { AssistantMessage, ReasoningEffort } from "@mariozechner/pi-ai";
+import { streamSimple } from "@mariozechner/pi-ai";
 import { Spacer, Text, TUI } from "@mariozechner/pi-tui";
 import { copyTextToClipboard } from "./clipboard.js";
 import { buildHelpText, getToolLevelDescription, parseCommand } from "./commands.js";
+import type { Config } from "./config.js";
+import { getApiKeyForProvider } from "./config.js";
 import { getPersonaById } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
 import { SessionEngine } from "./session/session_engine.js";
@@ -28,6 +31,8 @@ import {
   WriteSuccessComponent,
 } from "./ui/file_execution.js";
 import { FooterComponent } from "./ui/footer.js";
+import { SessionDividerComponent } from "./ui/session_divider.js";
+import { SessionSummaryComponent } from "./ui/session_summary.js";
 import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
 import { SystemMessageComponent } from "./ui/system_message.js";
 import { editorBorderForReasoning, theme } from "./ui/theme.js";
@@ -39,6 +44,7 @@ import {
   findAgentsFilesFromCwdToHome,
   formatToolAccessChangeNotice,
 } from "./utils/context.js";
+import { formatHistoryForCompression } from "./utils/fork.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "./utils/format.js";
 import { extractAssistantText } from "./utils/messages.js";
 import { listProjectFiles } from "./utils/project_files.js";
@@ -52,6 +58,7 @@ export interface ChatAppOptions {
   initialUserMessage?: string;
   initialToolAccessLevel?: ToolAccessLevel;
   noContext?: boolean;
+  config?: Config;
 }
 
 export class ChatApp {
@@ -64,6 +71,7 @@ export class ChatApp {
   private currentPersona: Persona;
   private prompts: PromptTemplate[];
   private initialUserMessage?: string;
+  private config: Config;
 
   private assistantComponents: AssistantMessageComponent[] = [];
   private readonly engine: SessionEngine;
@@ -80,11 +88,13 @@ export class ChatApp {
   private readonly agentsFiles: string[];
   private baseSystemPrompt: string;
   private pendingToolAccessChange?: { from: ToolAccessLevel; to: ToolAccessLevel };
+  private previousSessionSummary?: string;
 
   constructor(options: ChatAppOptions) {
     this.personas = options.personas;
     this.prompts = options.prompts ?? [];
     this.initialUserMessage = options.initialUserMessage;
+    this.config = options.config ?? {};
 
     if (options.initialToolAccessLevel) {
       this.toolAccessLevel = options.initialToolAccessLevel;
@@ -127,6 +137,7 @@ export class ChatApp {
       baseSystemPrompt: this.baseSystemPrompt,
       toolAccessLevel: this.toolAccessLevel,
       toolRegistry,
+      config: this.config,
     });
 
     this.ui = new TUI(createAppTerminal(Boolean(this.initialUserMessage)));
@@ -436,6 +447,10 @@ export class ChatApp {
         this.clearSession();
         break;
 
+      case "fork":
+        await this.forkSession();
+        break;
+
       case "tool":
         this.setToolAccessLevel(cmd.level);
         break;
@@ -482,11 +497,109 @@ export class ChatApp {
   private clearSession(): void {
     this.engine.reset();
     this.assistantComponents = [];
-    this.chatContainer.clear();
+    this.chatContainer.addMessage(new SessionDividerComponent("new session"));
     this.isBashMode = false;
+    this.previousSessionSummary = undefined;
     this.updateEditorBorderColor();
     this.updateFooter();
     this.ui.requestRender();
+  }
+
+  private async forkSession(): Promise<void> {
+    const history = this.engine.history;
+    if (history.length === 0) {
+      this.addSystemMessage("no conversation to fork.");
+      return;
+    }
+
+    this.addSystemMessage("summarizing session...", palette.muted);
+    this.isStreaming = true;
+    this.editor.disableSubmit = true;
+    this.footer.startWorkingIcon();
+
+    try {
+      const formattedHistory = formatHistoryForCompression(history);
+      const summaryPrompt = `
+Summarize this conversation so another assistant can continue without losing context. Be specific and factual.
+
+<conversation>
+${formattedHistory.trim()}
+</conversation>
+
+The conversation format uses \`--- USER ---\` and \`--- ASSISTANT ---\` markers. Tool calls appear as \`[Tool call: name(arguments)]\` and outputs as \`[Tool output: name (truncated)]\`. Outputs are truncated, so when tools were used, describe what was attempted rather than assuming outcomes.
+
+Capture what matters for continuity:
+
+- The goal or topic. What did the user want to accomplish or discuss? Note how this evolved if it changed during the conversation.
+- Key substance. For discussions: important facts, explanations, or ideas that were shared. For coding tasks: files created or modified, commands run, with concrete paths and names. Distinguish between "attempted" and "confirmed working" when tools were involved.
+- Decisions and preferences. Conclusions reached, options chosen, or constraints the user specified. These should carry forward.
+- Open threads. What's unresolved? For discussions: unanswered questions, topics to revisit. For tasks: what's incomplete, broken, or in progress when the conversation ended.
+- Skip the back-and-forth. Collapse tangents and false starts into what ultimately mattered. The reader has no context beyond what you provide, so name things concretely and include enough detail to resume without guessing.
+
+Write plain prose, no formatting. Be thorough enough that the reader can resume without guessing, but don't narrate every exchange. When relevant, name things concretely: file paths, function names, error messages. The reader has no context beyond what you provide.
+      `.trim();
+
+      const apiKey = getApiKeyForProvider(this.config, this.currentPersona.model.provider);
+      const stream = streamSimple(
+        this.currentPersona.model,
+        {
+          systemPrompt: [
+            "You are a precise and thorough conversation summarizer.",
+            "Your task is to distill conversations into clear, actionable summaries that preserve all context needed for seamless continuation.",
+            "Focus on facts, decisions, and concrete details rather than narrative flow.",
+            "Be specific about file paths, function names, and technical details when present.",
+            "Distinguish between what was attempted versus what was confirmed to work.",
+          ].join(" "),
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: summaryPrompt }],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        { reasoning: "medium", ...(apiKey && { apiKey }) },
+      );
+
+      let summary = "";
+      for await (const event of stream) {
+        if (event.type === "text_delta") {
+          summary += event.delta;
+        }
+      }
+
+      this.previousSessionSummary = summary.trim();
+
+      // Reset the session state but preserve history with divider and summary
+      this.engine.reset();
+      this.assistantComponents = [];
+      this.chatContainer.addMessage(new SessionDividerComponent("new session"));
+      this.chatContainer.addMessage(new SessionSummaryComponent(this.previousSessionSummary));
+      this.isBashMode = false;
+
+      // Rebuild system prompt with the new summary
+      this.baseSystemPrompt = buildBaseSystemPrompt({
+        personaSystemPrompt: this.currentPersona.systemPrompt,
+        projectContextBlock: this.projectContextBlock,
+        environmentTag: this.environmentTag,
+        previousSessionSummary: this.previousSessionSummary,
+      });
+      this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
+
+      this.updateEditorBorderColor();
+      this.updateFooter();
+      this.addSystemMessage(
+        "session forked. previous context has been summarized.",
+        palette.success,
+      );
+    } catch (err) {
+      this.addSystemMessage(`fork failed: ${(err as Error).message}`, palette.error);
+    } finally {
+      this.footer.stop();
+      this.isStreaming = false;
+      this.editor.disableSubmit = false;
+      this.ui.requestRender();
+    }
   }
 
   private setToolAccessLevel(level: ToolAccessLevel): void {

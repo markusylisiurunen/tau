@@ -43,3 +43,35 @@ There is no dedicated test runner in this repo currently. Validate changes by:
 
 - Never commit secrets. Use env vars like `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for local runs.
 - Treat any changes to shell/tool execution paths as security-sensitive: document defaults and failure modes in the PR description.
+
+## Adding a New Slash Command
+
+To add a new slash command (e.g., `/example`), update the following files:
+
+1. **`src/commands.ts`**:
+   - Add the command to the `Command` type union (e.g., `| { type: "example" }`)
+   - Add parsing logic in `parseCommand()` (e.g., `if (trimmed === "/example") return { type: "example" };`)
+   - Add the command to `buildHelpText()` so it appears in `/help` output
+
+2. **`src/ui/slash_autocomplete.ts`**:
+   - Add an entry to `STATIC_COMMANDS` array with `value`, `label`, and `description`
+
+3. **`src/app.ts`**:
+   - Add a `case "example":` in the `handleCommand()` switch statement
+   - Implement the handler method (e.g., `private exampleCommand(): void { ... }`)
+
+## Configuration
+
+The app loads configuration from `~/.config/tau/config.json`. This file is optional and can store API keys as an alternative to environment variables:
+
+```json
+{
+  "apiKeys": {
+    "anthropic": "sk-ant-...",
+    "openai": "sk-...",
+    "google": "..."
+  }
+}
+```
+
+The `loadConfig()` function in `src/config.ts` reads this file. Environment variables take precedence if both are set.

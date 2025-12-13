@@ -11,13 +11,29 @@ npm run dev
 
 Requires Node 20+. macOS only (clipboard uses `pbcopy`).
 
-Set an API key:
+Set an API key via environment variable:
 
 ```sh
+export ANTHROPIC_API_KEY=...
+# or
 export OPENAI_API_KEY=...
 # or
-export ANTHROPIC_API_KEY=...
+export GOOGLE_API_KEY=...
 ```
+
+Or store it in a config file at `~/.config/tau/config.json`:
+
+```json
+{
+  "apiKeys": {
+    "anthropic": "sk-ant-...",
+    "openai": "sk-...",
+    "google": "..."
+  }
+}
+```
+
+Environment variables take precedence over the config file.
 
 ## Commands
 

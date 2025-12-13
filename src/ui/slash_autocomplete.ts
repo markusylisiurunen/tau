@@ -14,6 +14,7 @@ export interface PromptSuggestion {
 const STATIC_COMMANDS = [
   { value: "help", label: "help", description: "show help" },
   { value: "new", label: "new", description: "new session" },
+  { value: "fork", label: "fork", description: "summarize and start new session" },
   { value: "copy", label: "copy", description: "copy last assistant message" },
   { value: "tool:none", label: "tool:none", description: "disable all tools" },
   { value: "tool:read", label: "tool:read", description: "allow read-only tools" },

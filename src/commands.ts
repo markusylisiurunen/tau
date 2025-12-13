@@ -4,6 +4,7 @@ export type Command =
   | { type: "help" }
   | { type: "copy" }
   | { type: "new" }
+  | { type: "fork" }
   | { type: "tool"; level: ToolAccessLevel }
   | { type: "persona"; id: string }
   | { type: "prompt"; id: string }
@@ -22,6 +23,10 @@ export function parseCommand(raw: string): Command {
 
   if (trimmed === "/new") {
     return { type: "new" };
+  }
+
+  if (trimmed === "/fork") {
+    return { type: "fork" };
   }
 
   const toolMatch = trimmed.match(/^\/tool:(none|read|all)$/i);
@@ -64,6 +69,7 @@ export function buildHelpText(agentsFiles?: string[]): string {
     "commands:",
     "  /help           show this help",
     "  /new            new session",
+    "  /fork           summarize and start new session",
     "  /copy           copy last assistant message",
     "  /tool:none      disable all tools",
     "  /tool:read      allow read-only tools",

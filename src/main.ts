@@ -2,8 +2,12 @@
 import { ChatApp } from "./app.js";
 import type { CliOptions } from "./cli.js";
 import { CliError, parseCliArgs, printHelp } from "./cli.js";
+import { loadConfig } from "./config.js";
 import { personas } from "./personas.js";
 import { prompts } from "./prompts.js";
+
+// Load configuration from file
+const config = loadConfig();
 
 async function readPipedStdin(): Promise<string | undefined> {
   if (process.stdin.isTTY) return undefined;
@@ -57,6 +61,7 @@ const app = new ChatApp({
   initialUserMessage,
   initialToolAccessLevel: cli.toolAccessLevel,
   noContext: cli.noContext,
+  config,
 });
 
 try {

@@ -551,7 +551,7 @@ export class ChatApp {
     this.ui.requestRender();
   }
 
-  private rebuildSystemPrompt(): void {
+  private rebuildSystemPrompt(previousSessionSummary?: string): void {
     this.environmentTag = buildEnvironmentTag({
       riskLevel: this.riskLevel,
       cwd: process.cwd(),
@@ -561,6 +561,7 @@ export class ChatApp {
       personaSystemPrompt: this.currentPersona.systemPrompt,
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
+      previousSessionSummary,
       userPreferences: this.config.userPreferences,
     });
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
@@ -645,19 +646,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.isBashMode = false;
 
       // Rebuild environment tag and system prompt with the new summary and current risk level
-      this.environmentTag = buildEnvironmentTag({
-        riskLevel: this.riskLevel,
-        cwd: process.cwd(),
-        datetime: new Date().toISOString(),
-      });
-      this.baseSystemPrompt = buildBaseSystemPrompt({
-        personaSystemPrompt: this.currentPersona.systemPrompt,
-        projectContextBlock: this.projectContextBlock,
-        environmentTag: this.environmentTag,
-        previousSessionSummary: this.previousSessionSummary,
-        userPreferences: this.config.userPreferences,
-      });
-      this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
+      this.rebuildSystemPrompt(this.previousSessionSummary);
 
       this.updateEditorBorderColor();
       this.updateFooter();

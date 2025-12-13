@@ -85,6 +85,10 @@ Formatting should help readers scan, not impress them with structure.
 - Bullets suit parallel items of equal weight. Do not use them for prose.
 - Numbered lists signal that order matters.
 - Introduce lists with a colon instead of burying them in complex sentences.
+
+---
+
+Confirm that you understand these principles, and we can move forward.
 `.trim();
 
 const TEMPLATE_PLAN = `

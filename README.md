@@ -57,14 +57,14 @@ Environment variables take precedence over the config file.
 ```sh
 tau --help
 tau --persona opus --reasoning high
-tau --tool all --no-context
+tau --tool all --with-context
 ```
 
 - `--help`
 - `--persona <id>`: see `tau --help` for available personas.
 - `--reasoning <level>`: `minimal`, `low`, `medium`, `high`, `xhigh`.
 - `--tool <level>`: `none`, `read`, `all` (default: `read`).
-- `--no-context`: skip injecting `AGENTS.md` context.
+- `--with-context`: inject `AGENTS.md` context into the system prompt.
 
 Piping input works as expected:
 

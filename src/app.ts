@@ -57,7 +57,7 @@ export interface ChatAppOptions {
   initialPersonaId?: string;
   initialUserMessage?: string;
   initialToolAccessLevel?: ToolAccessLevel;
-  noContext?: boolean;
+  withContext?: boolean;
   config?: Config;
 }
 
@@ -107,13 +107,13 @@ export class ChatApp {
       datetime: new Date().toISOString(),
     });
 
-    this.agentsFiles = options.noContext
-      ? []
-      : findAgentsFilesFromCwdToHome(process.cwd(), homedir());
+    this.agentsFiles = options.withContext
+      ? findAgentsFilesFromCwdToHome(process.cwd(), homedir())
+      : [];
 
-    this.projectContextBlock = options.noContext
-      ? undefined
-      : buildProjectContextBlock({ cwd: process.cwd(), home: homedir() });
+    this.projectContextBlock = options.withContext
+      ? buildProjectContextBlock({ cwd: process.cwd(), home: homedir() })
+      : undefined;
 
     this.projectFiles = listProjectFiles(process.cwd());
 

@@ -7,7 +7,7 @@ export interface CliOptions {
   reasoningEffort: ReasoningEffort | undefined;
   reasoningSpecified: boolean;
   toolAccessLevel?: ToolAccessLevel;
-  noContext: boolean;
+  withContext: boolean;
 }
 
 export class CliError extends Error {
@@ -82,7 +82,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let reasoningSpecified = false;
   let reasoningEffort: ReasoningEffort | undefined;
   let toolAccessLevel: ToolAccessLevel | undefined;
-  let noContext = false;
+  let withContext = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -92,8 +92,8 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       continue;
     }
 
-    if (arg === "--no-context") {
-      noContext = true;
+    if (arg === "--with-context") {
+      withContext = true;
       continue;
     }
 
@@ -130,7 +130,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     throw new CliError(`unexpected argument: ${arg}`);
   }
 
-  return { help, personaId, reasoningEffort, reasoningSpecified, toolAccessLevel, noContext };
+  return { help, personaId, reasoningEffort, reasoningSpecified, toolAccessLevel, withContext };
 }
 
 export function printHelp(personas: Persona[]): void {
@@ -150,7 +150,7 @@ export function printHelp(personas: Persona[]): void {
       `  --persona <id>         start with a persona. available: ${personaList}.`,
       `  --reasoning <level>    set reasoning effort for initial persona. levels: ${reasoningList}.`,
       `  --tool <level>         set initial model tool access level. levels: ${toolList}. default: read.`,
-      "  --no-context           do not inject AGENTS.md into the system prompt.",
+      "  --with-context         inject AGENTS.md into the system prompt.",
       "",
       "notes:",
       "  you can switch persona during a session with /persona:<id>.",

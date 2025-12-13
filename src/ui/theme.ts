@@ -64,8 +64,8 @@ const palette: Palette = {
   dim: chalk.hex(hslToHex(TEXT_HUE, 6, 42)),
   link: chalk.hex(hslToHex(LINK_HUE, 84, 72)),
   thinking: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
-  codeInline: chalk.hex(hslToHex(CODE_HUE, 62, 76)),
-  codeBlock: chalk.hex(hslToHex(CODE_HUE, 62, 76)),
+  codeInline: chalk.hex(hslToHex(CODE_HUE, 64, 74)),
+  codeBlock: chalk.hex(hslToHex(CODE_HUE, 64, 74)),
 
   // Semantic colors
   warn: chalk.hex(hslToHex(WARN_HUE, 76, 68)),
@@ -77,11 +77,11 @@ const palette: Palette = {
   filePreview: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
 
   // Diff colors
-  diffAdded: chalk.hex(hslToHex(92, 44, 56)),
-  diffRemoved: chalk.hex(hslToHex(0, 44, 56)),
+  diffAdded: chalk.hex(hslToHex(72, 40, 46)),
+  diffRemoved: chalk.hex(hslToHex(6, 44, 52)),
 
   // Notices
-  noticeSuccess: chalk.hex(hslToHex(CODE_HUE, 62, 76)),
+  noticeSuccess: chalk.hex(hslToHex(CODE_HUE, 64, 74)),
   noticeWarn: chalk.hex(hslToHex(WARN_HUE, 76, 68)),
   noticeError: chalk.hex(hslToHex(ERROR_HUE, 76, 68)),
 
@@ -91,7 +91,7 @@ const palette: Palette = {
 
   // Risk level indicators
   riskNone: chalk.hex(hslToHex(TEXT_HUE, 6, 42)),
-  riskReadOnly: chalk.hex(hslToHex(74, 42, 48)),
+  riskReadOnly: chalk.hex(hslToHex(72, 40, 46)),
   riskReadWrite: chalk.hex(hslToHex(8, 52, 56)),
 };
 

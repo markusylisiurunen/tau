@@ -94,6 +94,7 @@ export class ChatApp {
   private baseSystemPrompt: string;
   private pendingRiskLevelChange?: { from: RiskLevel; to: RiskLevel };
   private previousSessionSummary?: string;
+  private expandedFilesInCurrentPrompt: Set<string> = new Set();
 
   constructor(options: ChatAppOptions) {
     this.personas = options.personas;
@@ -418,6 +419,7 @@ export class ChatApp {
 
   private async sendUserMessage(text: string): Promise<void> {
     this.addUserMessage(text);
+    this.expandedFilesInCurrentPrompt.clear();
 
     const systemNotice = this.pendingRiskLevelChange
       ? formatRiskLevelChangeNotice(this.pendingRiskLevelChange)
@@ -539,6 +541,7 @@ export class ChatApp {
     this.engine.reset();
     this.assistantComponents = [];
     this.runningBashComponents.clear();
+    this.expandedFilesInCurrentPrompt.clear();
     this.chatContainer.addMessage(new SessionDividerComponent("new session"));
     this.isBashMode = false;
     this.previousSessionSummary = undefined;
@@ -620,6 +623,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       // Reset the session state but preserve history with divider and summary
       this.engine.reset();
       this.assistantComponents = [];
+      this.expandedFilesInCurrentPrompt.clear();
       this.chatContainer.addMessage(new SessionDividerComponent("new session"));
       this.chatContainer.addMessage(new SessionSummaryComponent(this.previousSessionSummary));
       this.isBashMode = false;
@@ -1022,14 +1026,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     // Filter to only valid project files and de-duplicate
     const projectFilesSet = new Set(this.projectFiles);
-    const seen = new Set<string>();
     const filesToExpand: string[] = [];
 
     for (const token of tokens) {
       // Strip trailing punctuation to handle cases like "@src/app.ts," or "(see @README.md)"
       const cleanToken = token.replace(/[.,;:)}\]]+$/, "");
-      if (projectFilesSet.has(cleanToken) && !seen.has(cleanToken)) {
-        seen.add(cleanToken);
+      if (projectFilesSet.has(cleanToken) && !this.expandedFilesInCurrentPrompt.has(cleanToken)) {
         filesToExpand.push(cleanToken);
       }
     }
@@ -1046,6 +1048,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       // Use -- to prevent cat from interpreting filenames starting with - as options
       const command = `printf '\\n===== %s =====\\n' ${quotedPath}; cat -- ${quotedPath}; printf '\\n'`;
       await this.runBashCommand(command);
+      // Track this file as expanded in the current prompt
+      this.expandedFilesInCurrentPrompt.add(filePath);
     }
   }
 }

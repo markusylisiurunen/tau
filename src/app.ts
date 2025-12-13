@@ -520,7 +520,7 @@ export class ChatApp {
     try {
       const formattedHistory = formatHistoryForCompression(history);
       const summaryPrompt = `
-Summarize this conversation so another assistant can continue without losing context. Be specific and factual.
+Summarize this conversation so another assistant can continue without losing context. Be specific and factual. Aim for extreme compression; at least 90% reduction from the original conversation length, preferably more. Every word should earn its place.
 
 <conversation>
 ${formattedHistory.trim()}
@@ -528,7 +528,7 @@ ${formattedHistory.trim()}
 
 The conversation format uses \`--- USER ---\` and \`--- ASSISTANT ---\` markers. Tool calls appear as \`[Tool call: name(arguments)]\` and outputs as \`[Tool output: name (truncated)]\`. Outputs are truncated, so when tools were used, describe what was attempted rather than assuming outcomes.
 
-Capture what matters for continuity:
+Capture only what matters for continuity:
 
 - The goal or topic. What did the user want to accomplish or discuss? Note how this evolved if it changed during the conversation.
 - Key substance. For discussions: important facts, explanations, or ideas that were shared. For coding tasks: files created or modified, commands run, with concrete paths and names. Distinguish between "attempted" and "confirmed working" when tools were involved.
@@ -536,7 +536,9 @@ Capture what matters for continuity:
 - Open threads. What's unresolved? For discussions: unanswered questions, topics to revisit. For tasks: what's incomplete, broken, or in progress when the conversation ended.
 - Skip the back-and-forth. Collapse tangents and false starts into what ultimately mattered. The reader has no context beyond what you provide, so name things concretely and include enough detail to resume without guessing.
 
-Write plain prose, no formatting. Be thorough enough that the reader can resume without guessing, but don't narrate every exchange. When relevant, name things concretely: file paths, function names, error messages. The reader has no context beyond what you provide.
+Ruthlessly compress: collapse tangents, skip back-and-forth, omit pleasantries. Name things concretely (paths, functions, errors) but use minimal words.
+
+Write plain prose, no formatting. Be thorough enough that the reader can resume without guessing, but don't narrate every exchange. When relevant, name things concretely: file paths, function names, error messages. The reader has no context beyond what you provide as the summary.
       `.trim();
 
       const apiKey = getApiKeyForProvider(

@@ -27,8 +27,8 @@ Or store it in a config file at `~/.config/tau/config.json`:
 {
   "apiKeys": {
     "anthropic": "sk-ant-...",
-    "openai": "sk-...",
-    "google": "..."
+    "google": "...",
+    "openai": "sk-..."
   },
   "userPreferences": "Prefer concise responses. Use TypeScript for code examples. Always explain trade-offs."
 }
@@ -80,6 +80,7 @@ description: Structured approach for my project
 ---
 
 Follow these steps for my project:
+
 1. Understand the requirements
 2. Plan the implementation
 3. Execute and test
@@ -103,7 +104,7 @@ Use `/reload` to refresh personas and prompts from disk without restarting. Usef
 - `/fork` (summarize session and start new)
 - `/reload` (reload personas and prompts from disk)
 - `/copy` (copy last assistant message)
-- `/copy:code` (copy code block from last assistant message)
+- `/copy:code` (copy code blocks from last assistant message)
 - `/persona:<id>` (switch persona)
 - `/prompt:<id>` (insert prompt template)
 - `/risk:none|read-only|read-write` (configure model risk level; default: `read-only`)

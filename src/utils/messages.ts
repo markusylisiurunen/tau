@@ -31,24 +31,24 @@ export function createToolSuccess(toolCall: ToolCall, text: string): ToolResultM
   return createToolResult(toolCall, text, false);
 }
 
-export function extractLastFencedCodeBlock(text: string): string | null {
+export function extractAllFencedCodeBlocks(text: string): string | null {
   // Match all triple-backtick fenced code blocks with optional language specifier
   // Allows optional spaces after opening fence, any language/info string, optional trailing spaces
   // on closing fence, and both LF and CRLF line endings
   const codeBlockRegex = /^```[ \t]*[^\r\n]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gm;
 
-  let lastMatch: RegExpExecArray | null = null;
+  const codeBlocks: string[] = [];
   let match = codeBlockRegex.exec(text);
 
   while (match !== null) {
-    lastMatch = match;
+    codeBlocks.push(match[1] ?? "");
     match = codeBlockRegex.exec(text);
   }
 
-  if (!lastMatch) {
+  if (codeBlocks.length === 0) {
     return null;
   }
 
-  // Return the captured group (inner code content)
-  return lastMatch[1] ?? null;
+  // Join all code blocks with newlines
+  return codeBlocks.join("\n");
 }

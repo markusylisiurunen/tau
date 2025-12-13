@@ -74,8 +74,8 @@ The app loads configuration from `~/.config/tau/config.json`. This file is optio
 {
   "apiKeys": {
     "anthropic": "sk-ant-...",
-    "openai": "sk-...",
-    "google": "..."
+    "google": "...",
+    "openai": "sk-..."
   }
 }
 ```

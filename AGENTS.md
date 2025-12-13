@@ -74,8 +74,8 @@ The app loads configuration from `~/.config/tau/config.json`. This file is optio
 {
   "apiKeys": {
     "anthropic": "sk-ant-...",
-    "openai": "sk-...",
-    "google": "..."
+    "google": "...",
+    "openai": "sk-..."
   }
 }
 ```
@@ -102,6 +102,7 @@ Users can extend tau with custom personas and prompt templates without modifying
 ### File Format
 
 **Persona markdown** (`~/.config/tau/personas/example.md`):
+
 ```markdown
 ---
 id: my-id
@@ -122,6 +123,7 @@ System prompt body goes here.
 Required: `id`, `provider`, `model`. Optional: all others.
 
 **Prompt markdown** (`~/.config/tau/prompts/example.md`):
+
 ```markdown
 ---
 id: my-template

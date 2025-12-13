@@ -50,7 +50,7 @@ import {
 } from "./utils/context.js";
 import { formatHistoryForCompression } from "./utils/fork.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "./utils/format.js";
-import { extractAssistantText, extractLastFencedCodeBlock } from "./utils/messages.js";
+import { extractAllFencedCodeBlocks, extractAssistantText } from "./utils/messages.js";
 import { listProjectFiles } from "./utils/project_files.js";
 
 const { palette } = theme;
@@ -523,7 +523,7 @@ export class ChatApp {
     }
 
     const text = extractAssistantText(lastAssistant);
-    const code = extractLastFencedCodeBlock(text);
+    const code = extractAllFencedCodeBlocks(text);
     if (!code) {
       this.addSystemMessage("no code block to copy yet.");
       return;
@@ -531,7 +531,7 @@ export class ChatApp {
 
     try {
       await copyTextToClipboard(code);
-      this.addSystemMessage("copied last code block to clipboard.", palette.noticeSuccess);
+      this.addSystemMessage("copied all code blocks to clipboard.", palette.noticeSuccess);
     } catch (err) {
       this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, palette.error);
     }

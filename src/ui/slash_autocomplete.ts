@@ -18,7 +18,7 @@ const STATIC_COMMANDS = [
   { value: "fork", label: "fork", description: "summarize and start new session" },
   { value: "reload", label: "reload", description: "reload personas and prompts from disk" },
   { value: "copy", label: "copy", description: "copy last assistant message" },
-  { value: "copy:code", label: "copy:code", description: "copy code block from last assistant message" },
+  { value: "copy:code", label: "copy:code", description: "copy code blocks from last assistant message" },
   { value: "risk:none", label: "risk:none", description: "disable all tools" },
   { value: "risk:read-only", label: "risk:read-only", description: "allow read-only tools" },
   { value: "risk:read-write", label: "risk:read-write", description: "allow all tools" },

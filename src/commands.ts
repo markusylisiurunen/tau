@@ -82,7 +82,7 @@ export function buildHelpText(agentsFiles?: string[]): string {
     "  /fork             summarize and start new session",
     "  /reload           reload personas and prompts from disk",
     "  /copy             copy last assistant message",
-    "  /copy:code        copy code block from last assistant message",
+    "  /copy:code        copy code blocks from last assistant message",
     "  /risk:none        disable all tools",
     "  /risk:read-only   allow read-only tools",
     "  /risk:read-write  allow all tools",

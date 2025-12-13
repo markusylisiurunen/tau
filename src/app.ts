@@ -3,7 +3,7 @@ import type { AssistantMessage, KnownProvider, ReasoningEffort } from "@mariozec
 import { streamSimple } from "@mariozechner/pi-ai";
 import { Spacer, Text, TUI } from "@mariozechner/pi-tui";
 import { copyTextToClipboard } from "./clipboard.js";
-import { buildHelpText, getToolLevelDescription, parseCommand } from "./commands.js";
+import { buildHelpText, getRiskLevelDescription, parseCommand } from "./commands.js";
 import type { Config } from "./config.js";
 import { getApiKeyForProvider } from "./config.js";
 import { getPersonaById } from "./personas.js";
@@ -19,7 +19,7 @@ import {
 import { createEditToolDefinition } from "./tools/edit.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { createWriteToolDefinition } from "./tools/write.js";
-import { type Persona, REASONING_LEVELS_WITH_NONE, type ToolAccessLevel } from "./types.js";
+import { type Persona, REASONING_LEVELS_WITH_NONE, type RiskLevel } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
 import { BashBlockedComponent, BashExecutionComponent } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
@@ -42,7 +42,7 @@ import {
   buildEnvironmentTag,
   buildProjectContextBlock,
   findAgentsFilesFromCwdToHome,
-  formatToolAccessChangeNotice,
+  formatRiskLevelChangeNotice,
 } from "./utils/context.js";
 import { formatHistoryForCompression } from "./utils/fork.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "./utils/format.js";
@@ -56,7 +56,7 @@ export interface ChatAppOptions {
   prompts?: PromptTemplate[];
   initialPersonaId?: string;
   initialUserMessage?: string;
-  initialToolAccessLevel?: ToolAccessLevel;
+  initialRiskLevel?: RiskLevel;
   withContext?: boolean;
   config?: Config;
 }
@@ -80,14 +80,14 @@ export class ChatApp {
   private isBashMode = false;
   private showThinking = false;
   private currentTurnAbort?: AbortController;
-  private toolAccessLevel: ToolAccessLevel = "read";
-  private readonly initialToolAccessLevel: ToolAccessLevel;
+  private riskLevel: RiskLevel = "read-only";
+  private readonly initialRiskLevel: RiskLevel;
   private readonly environmentTag: string;
   private readonly projectContextBlock?: string;
   private readonly projectFiles: string[];
   private readonly agentsFiles: string[];
   private baseSystemPrompt: string;
-  private pendingToolAccessChange?: { from: ToolAccessLevel; to: ToolAccessLevel };
+  private pendingRiskLevelChange?: { from: RiskLevel; to: RiskLevel };
   private previousSessionSummary?: string;
 
   constructor(options: ChatAppOptions) {
@@ -96,13 +96,13 @@ export class ChatApp {
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
 
-    if (options.initialToolAccessLevel) {
-      this.toolAccessLevel = options.initialToolAccessLevel;
+    if (options.initialRiskLevel) {
+      this.riskLevel = options.initialRiskLevel;
     }
-    this.initialToolAccessLevel = this.toolAccessLevel;
+    this.initialRiskLevel = this.riskLevel;
 
     this.environmentTag = buildEnvironmentTag({
-      toolAccessLevel: this.initialToolAccessLevel,
+      riskLevel: this.initialRiskLevel,
       cwd: process.cwd(),
       datetime: new Date().toISOString(),
     });
@@ -136,7 +136,7 @@ export class ChatApp {
     this.engine = new SessionEngine({
       persona: this.currentPersona,
       baseSystemPrompt: this.baseSystemPrompt,
-      toolAccessLevel: this.toolAccessLevel,
+      riskLevel: this.riskLevel,
       toolRegistry,
       config: this.config,
     });
@@ -211,7 +211,7 @@ export class ChatApp {
 
   private updateFooter(): void {
     const reasoningLabel = this.currentPersona.settings.reasoning || "default";
-    const toolLabel = this.formatToolAccessLabel();
+    const toolLabel = this.formatRiskLevelLabel();
     const contextUsage = this.getContextUsageString();
     const sessionCost = this.getSessionCostString();
     const cwd = formatCwd(process.cwd());
@@ -224,14 +224,14 @@ export class ChatApp {
     this.ui.requestRender();
   }
 
-  private formatToolAccessLabel(): string {
-    switch (this.toolAccessLevel) {
+  private formatRiskLevelLabel(): string {
+    switch (this.riskLevel) {
       case "none":
         return "none";
-      case "read":
-        return palette.accessRead("read");
-      case "all":
-        return palette.accessAll("all");
+      case "read-only":
+        return palette.accessRead("read-only");
+      case "read-write":
+        return palette.accessAll("read-write");
     }
   }
 
@@ -407,10 +407,10 @@ export class ChatApp {
   private async sendUserMessage(text: string): Promise<void> {
     this.addUserMessage(text);
 
-    const systemNotice = this.pendingToolAccessChange
-      ? formatToolAccessChangeNotice(this.pendingToolAccessChange)
+    const systemNotice = this.pendingRiskLevelChange
+      ? formatRiskLevelChangeNotice(this.pendingRiskLevelChange)
       : undefined;
-    this.pendingToolAccessChange = undefined;
+    this.pendingRiskLevelChange = undefined;
 
     const textForModel = systemNotice ? `${systemNotice}\n\n${text}` : text;
     this.engine.addUserText(textForModel);
@@ -450,8 +450,8 @@ export class ChatApp {
         await this.forkSession();
         break;
 
-      case "tool":
-        this.setToolAccessLevel(cmd.level);
+      case "risk":
+        this.setRiskLevel(cmd.level);
         break;
 
       case "persona":
@@ -607,18 +607,18 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
   }
 
-  private setToolAccessLevel(level: ToolAccessLevel): void {
-    const previous = this.toolAccessLevel;
-    this.toolAccessLevel = level;
-    this.engine.setToolAccessLevel(level);
+  private setRiskLevel(level: RiskLevel): void {
+    const previous = this.riskLevel;
+    this.riskLevel = level;
+    this.engine.setRiskLevel(level);
     this.updateFooter();
 
     if (previous !== level) {
-      this.pendingToolAccessChange = { from: previous, to: level };
+      this.pendingRiskLevelChange = { from: previous, to: level };
     }
 
-    const details = getToolLevelDescription(level);
-    this.addSystemMessage(`tool access set to '${level}': ${details}`, palette.systemLabel);
+    const details = getRiskLevelDescription(level);
+    this.addSystemMessage(`risk level set to '${level}': ${details}`, palette.systemLabel);
   }
 
   private switchPersona(id: string): void {

@@ -55,7 +55,7 @@ const app = new ChatApp({
   prompts,
   initialPersonaId: cli.personaId,
   initialUserMessage,
-  initialToolAccessLevel: cli.toolAccessLevel,
+  initialRiskLevel: cli.riskLevel,
   withContext: cli.withContext,
   config,
 });

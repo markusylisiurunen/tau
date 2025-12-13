@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Tool, ToolCall } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
-import type { ToolAccessLevel } from "../types.js";
+import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
 
@@ -64,7 +64,7 @@ function buildPreview(content: string): PreviewResult {
 export function createWriteToolDefinition(): ToolDefinition {
   return {
     schema: WRITE_TOOL,
-    async dispatch(toolCall: ToolCall, accessLevel: ToolAccessLevel): Promise<ToolDispatchResult> {
+    async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
       const { path, content } = parseWriteArgs(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
@@ -77,9 +77,9 @@ export function createWriteToolDefinition(): ToolDefinition {
         return { toolResult, uiEvent };
       };
 
-      if (accessLevel !== "all") {
+      if (riskLevel !== "read-write") {
         return blocked(
-          `Write tool blocked: requires tool access 'all', but current access is '${accessLevel}'. Ask the user to run /tool:all.`,
+          `Write tool blocked: requires risk level 'read-write', but current level is '${riskLevel}'. Ask the user to run /risk:read-write.`,
         );
       }
 

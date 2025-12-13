@@ -1,6 +1,6 @@
 import type { Api, Model, ReasoningEffort, SimpleStreamOptions, Tool } from "@mariozechner/pi-ai";
 
-export type ToolAccessLevel = "none" | "read" | "all";
+export type RiskLevel = "none" | "read-only" | "read-write";
 export type AllowedReasoningLevel = ReasoningEffort | "none";
 
 export const REASONING_LEVELS: ReasoningEffort[] = [

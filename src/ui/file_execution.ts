@@ -48,7 +48,9 @@ export class WriteSuccessComponent extends Container {
     // Show truncation notice if needed
     if (previewTruncation.truncated) {
       const icon = palette.warn("◆");
-      const msg = palette.dim(`preview: ${previewTruncation.outputLines} of ${previewTruncation.totalLines} lines`);
+      const msg = palette.dim(
+        `preview: ${previewTruncation.outputLines} of ${previewTruncation.totalLines} lines`,
+      );
       content.addChild(new Text(`\n${icon} ${msg}`, 1, 0));
     }
 
@@ -106,7 +108,8 @@ export class EditSuccessComponent extends Container {
     content.addChild(new Text(editColor(header), 1, 0));
 
     const sizeDiff = newLength - oldLength;
-    const diffStr = sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
+    const diffStr =
+      sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
     const msg = `replaced ${oldLength} → ${newLength} chars (${diffStr})`;
     content.addChild(new Text(`\n${palette.muted(msg)}`, 1, 0));
 
@@ -126,7 +129,9 @@ export class EditSuccessComponent extends Container {
     // Show truncation notice if needed
     if (diffTruncation.truncated) {
       const icon = palette.warn("◆");
-      const msg = palette.dim(`truncated: ${diffTruncation.outputLines} of ${diffTruncation.totalLines} lines`);
+      const msg = palette.dim(
+        `truncated: ${diffTruncation.outputLines} of ${diffTruncation.totalLines} lines`,
+      );
       content.addChild(new Text(`\n${icon} ${msg}`, 1, 0));
     }
 

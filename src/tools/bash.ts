@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
-import type { ToolAccessLevel } from "../types.js";
+import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import {
   type TruncationResult,
@@ -64,14 +64,17 @@ function sanitizeEnvironment(): NodeJS.ProcessEnv {
 
 const BASH_DESCRIPTION = [
   "Execute a shell command in the current working directory and return stdout/stderr.",
-  "Always provide a risk assessment: 'read' for commands without side effects, 'write' for commands that may modify state (filesystem, processes, network, etc).",
+  "CRITICAL: Always evaluate and provide an accurate safetyLevel assessment.",
 ].join(" ");
 
 const BASH_COMMAND_DESCRIPTION = "The shell command to execute.";
 
-const BASH_RISK_DESCRIPTION = [
-  "Risk level of the command: 'read' or 'write'.",
-  "Use 'read' for non-mutating commands; use 'write' for anything that may change state.",
+const BASH_SAFETY_LEVEL_DESCRIPTION = [
+  "Safety classification: 'read' (query-only, no side effects) or 'write' (modifies or has the potential to modify system state).",
+  "Use 'read' for: queries (ls, rg, cat, fd, find, ps, df, etc), information gathering (curl for APIs, git log, etc), analysis (wc, sort, sha256sum, etc).",
+  "Use 'write' for: filesystem changes (cp, mv, rm, mkdir, touch, echo >, etc), file modifications (sed -i, tee, chmod, chown, etc), process management (kill, pkill, etc), package management (apt, npm, etc), network changes (firewall, DNS, interfaces, etc), or any command that creates/deletes/modifies resources.",
+  "When in doubt, default to 'write' to be conservative. The system will enforce appropriate access controls based on your declared safetyLevel.",
+  "Always respect and strictly adhere to user-defined risk tolerance levels; never exceed the configured risk level under any circumstances.",
 ].join(" ");
 
 export const BASH_TOOL: Tool = {
@@ -80,7 +83,7 @@ export const BASH_TOOL: Tool = {
   parameters: Type.Object(
     {
       command: Type.String({ description: BASH_COMMAND_DESCRIPTION }),
-      risk: Type.String({ description: BASH_RISK_DESCRIPTION }),
+      safetyLevel: Type.String({ description: BASH_SAFETY_LEVEL_DESCRIPTION }),
     },
     { additionalProperties: false },
   ),
@@ -93,7 +96,7 @@ export type BashToolResult = {
   truncated: boolean;
 };
 
-export type BashRisk = "read" | "write";
+export type BashSafetyLevel = "read" | "write";
 
 export interface BashTruncationInfo {
   display: TruncationResult;
@@ -220,34 +223,36 @@ export function executeBashTool(command: string): Promise<BashToolResult> {
   });
 }
 
-function getMissingArgsMessage(command: string, risk: BashRisk | undefined): string {
-  if (!command && !risk) {
-    return "bash tool call missing valid 'command' and 'risk' fields.";
+function getMissingArgsMessage(command: string, safetyLevel: BashSafetyLevel | undefined): string {
+  if (!command && !safetyLevel) {
+    return "bash tool call missing valid 'command' and 'safetyLevel' fields.";
   }
   if (!command) {
     return "bash tool call missing a valid 'command' string.";
   }
-  return "bash tool call missing a valid 'risk' value ('read' or 'write').";
+  return "bash tool call missing a valid 'safetyLevel' value ('read' or 'write').";
 }
 
 function parseBashArgs(raw: unknown): {
   command: string;
-  risk: BashRisk | undefined;
+  safetyLevel: BashSafetyLevel | undefined;
   commandForDisplay: string;
 } {
-  const args = raw as { command?: unknown; risk?: unknown } | undefined;
+  const args = raw as { command?: unknown; safetyLevel?: unknown } | undefined;
   const command = typeof args?.command === "string" ? args.command.trim() : "";
-  const risk: BashRisk | undefined =
-    args?.risk === "read" || args?.risk === "write" ? (args.risk as BashRisk) : undefined;
+  const safetyLevel: BashSafetyLevel | undefined =
+    args?.safetyLevel === "read" || args?.safetyLevel === "write"
+      ? (args.safetyLevel as BashSafetyLevel)
+      : undefined;
   const commandForDisplay = command || "(missing command)";
-  return { command, risk, commandForDisplay };
+  return { command, safetyLevel, commandForDisplay };
 }
 
 export function createBashToolDefinition(): ToolDefinition {
   return {
     schema: BASH_TOOL,
-    async dispatch(toolCall: ToolCall, accessLevel: ToolAccessLevel): Promise<ToolDispatchResult> {
-      const { command, risk, commandForDisplay } = parseBashArgs(toolCall.arguments);
+    async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+      const { command, safetyLevel, commandForDisplay } = parseBashArgs(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -255,14 +260,14 @@ export function createBashToolDefinition(): ToolDefinition {
         return { toolResult, uiEvent };
       };
 
-      if (accessLevel === "none") {
+      if (riskLevel === "none") {
         return blocked(
-          "Bash tool call blocked: tool access is set to 'none'. Ask the user to enable it with /tool:read or /tool:all.",
+          "Bash tool call blocked: risk level is set to 'none'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
         );
       }
 
-      if (!command || !risk) {
-        const msg = getMissingArgsMessage(command, risk);
+      if (!command || !safetyLevel) {
+        const msg = getMissingArgsMessage(command, safetyLevel);
         const toolResult = createToolError(toolCall, msg);
         const uiEvent: ToolUiEvent = {
           type: "bash_blocked",
@@ -272,9 +277,9 @@ export function createBashToolDefinition(): ToolDefinition {
         return { toolResult, uiEvent };
       }
 
-      if (accessLevel === "read" && risk === "write") {
+      if (riskLevel === "read-only" && safetyLevel === "write") {
         return blocked(
-          "Bash tool call blocked: declared risk 'write' exceeds current tool access 'read'. Ask the user to run /tool:all or revise to a read-only command.",
+          "Bash tool call blocked: declared safetyLevel 'write' exceeds current risk level 'read-only'. Ask the user to run /risk:read-write or revise to a read-only command.",
         );
       }
 

@@ -43,7 +43,7 @@ Environment variables take precedence over the config file. The `userPreferences
 - `/copy` (copy last assistant message)
 - `/persona:<id>` (switch persona)
 - `/prompt:<id>` (insert prompt template)
-- `/tool:none|read|all` (configure model tool access; default: `read`)
+- `/risk:none|read-only|read-write` (configure model risk level; default: `read-only`)
 - `!<cmd>` (run immediate shell command)
 
 ## Keys
@@ -58,13 +58,13 @@ Environment variables take precedence over the config file. The `userPreferences
 ```sh
 tau --help
 tau --persona opus --reasoning high
-tau --tool all --with-context
+tau --risk read-write --with-context
 ```
 
 - `--help`
 - `--persona <id>`: see `tau --help` for available personas.
 - `--reasoning <level>`: `minimal`, `low`, `medium`, `high`, `xhigh`.
-- `--tool <level>`: `none`, `read`, `all` (default: `read`).
+- `--risk <level>`: `none`, `read-only`, `read-write` (default: `read-only`).
 - `--with-context`: inject `AGENTS.md` context into the system prompt.
 
 Piping input works as expected:

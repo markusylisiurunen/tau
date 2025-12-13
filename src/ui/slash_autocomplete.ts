@@ -16,15 +16,15 @@ const STATIC_COMMANDS = [
   { value: "new", label: "new", description: "new session" },
   { value: "fork", label: "fork", description: "summarize and start new session" },
   { value: "copy", label: "copy", description: "copy last assistant message" },
-  { value: "tool:none", label: "tool:none", description: "disable all tools" },
-  { value: "tool:read", label: "tool:read", description: "allow read-only tools" },
-  { value: "tool:all", label: "tool:all", description: "allow all tools" },
+  { value: "risk:none", label: "risk:none", description: "disable all tools" },
+  { value: "risk:read-only", label: "risk:read-only", description: "allow read-only tools" },
+  { value: "risk:read-write", label: "risk:read-write", description: "allow all tools" },
 ];
 
-const TOOL_OPTIONS = [
+const RISK_OPTIONS = [
   { id: "none", description: "disable all tools" },
-  { id: "read", description: "allow read-only tools" },
-  { id: "all", description: "allow all tools" },
+  { id: "read-only", description: "allow read-only tools" },
+  { id: "read-write", description: "allow all tools" },
 ];
 
 export class SlashAutocompleteProvider implements AutocompleteProvider {
@@ -114,9 +114,9 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
       return this.buildArgSuggestions(promptMatch[1] ?? "", this.getPrompts());
     }
 
-    const toolMatch = afterSlash.match(/^tool:(.*)$/i);
-    if (toolMatch) {
-      return this.buildToolSuggestions(toolMatch[1] ?? "");
+    const riskMatch = afterSlash.match(/^risk:(.*)$/i);
+    if (riskMatch) {
+      return this.buildRiskSuggestions(riskMatch[1] ?? "");
     }
 
     return null;
@@ -137,10 +137,10 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
     return { items, prefix: argPrefix };
   }
 
-  private buildToolSuggestions(
+  private buildRiskSuggestions(
     argPrefix: string,
   ): { items: AutocompleteItem[]; prefix: string } | null {
-    const filtered = fuzzyFilter(TOOL_OPTIONS, argPrefix, (o) => `${o.id} ${o.description}`);
+    const filtered = fuzzyFilter(RISK_OPTIONS, argPrefix, (o) => `${o.id} ${o.description}`);
     const items = filtered.map((o) => ({
       value: o.id,
       label: o.id,
@@ -203,7 +203,7 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
     const isArgCompletion =
       lowerBeforePrefix.endsWith("/persona:") ||
       lowerBeforePrefix.endsWith("/prompt:") ||
-      lowerBeforePrefix.endsWith("/tool:");
+      lowerBeforePrefix.endsWith("/risk:");
 
     if (isArgCompletion) {
       return item.value;

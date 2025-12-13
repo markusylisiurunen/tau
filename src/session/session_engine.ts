@@ -10,7 +10,7 @@ import { streamSimple } from "@mariozechner/pi-ai";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import type { Persona, ToolAccessLevel } from "../types.js";
+import type { Persona, RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
 import { type AssistantPartialSnapshot, MessageAccumulator } from "./message_accumulator.js";
 
@@ -57,7 +57,7 @@ export type EngineEvent =
 export type SessionEngineOptions = {
   persona: Persona;
   baseSystemPrompt: string;
-  toolAccessLevel: ToolAccessLevel;
+  riskLevel: RiskLevel;
   toolRegistry: ToolRegistry;
   config?: Config;
 };
@@ -65,7 +65,7 @@ export type SessionEngineOptions = {
 export class SessionEngine {
   private persona: Persona;
   private baseSystemPrompt: string;
-  private toolAccessLevel: ToolAccessLevel;
+  private riskLevel: RiskLevel;
   private readonly toolRegistry: ToolRegistry;
   private config: Config;
   private messages: Message[] = [];
@@ -73,7 +73,7 @@ export class SessionEngine {
   constructor(options: SessionEngineOptions) {
     this.persona = options.persona;
     this.baseSystemPrompt = options.baseSystemPrompt;
-    this.toolAccessLevel = options.toolAccessLevel;
+    this.riskLevel = options.riskLevel;
     this.toolRegistry = options.toolRegistry;
     this.config = options.config ?? {};
   }
@@ -87,8 +87,8 @@ export class SessionEngine {
     this.baseSystemPrompt = baseSystemPrompt;
   }
 
-  setToolAccessLevel(level: ToolAccessLevel): void {
-    this.toolAccessLevel = level;
+  setRiskLevel(level: RiskLevel): void {
+    this.riskLevel = level;
   }
 
   addUserText(textForModel: string): void {
@@ -148,7 +148,7 @@ export class SessionEngine {
           continue;
         }
 
-        const { toolResult, uiEvent } = await def.dispatch(toolCall, this.toolAccessLevel);
+        const { toolResult, uiEvent } = await def.dispatch(toolCall, this.riskLevel);
         this.messages.push(toolResult);
         yield { type: "tool_result", message: toolResult };
         if (uiEvent) {

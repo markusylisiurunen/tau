@@ -1,5 +1,5 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import type { ToolAccessLevel } from "../types.js";
+import type { RiskLevel } from "../types.js";
 
 export type ToolUiEvent =
   | {
@@ -43,7 +43,7 @@ export type ToolDispatchResult = {
 
 export interface ToolDefinition {
   readonly schema: Tool;
-  dispatch(toolCall: ToolCall, accessLevel: ToolAccessLevel): Promise<ToolDispatchResult>;
+  dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult>;
 }
 
 export class ToolRegistry {

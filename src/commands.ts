@@ -1,11 +1,11 @@
-import type { ToolAccessLevel } from "./types.js";
+import type { RiskLevel } from "./types.js";
 
 export type Command =
   | { type: "help" }
   | { type: "copy" }
   | { type: "new" }
   | { type: "fork" }
-  | { type: "tool"; level: ToolAccessLevel }
+  | { type: "risk"; level: RiskLevel }
   | { type: "persona"; id: string }
   | { type: "prompt"; id: string }
   | { type: "unknown"; raw: string };
@@ -29,10 +29,10 @@ export function parseCommand(raw: string): Command {
     return { type: "fork" };
   }
 
-  const toolMatch = trimmed.match(/^\/tool:(none|read|all)$/i);
-  if (toolMatch) {
-    const level = toolMatch[1]!.toLowerCase() as ToolAccessLevel;
-    return { type: "tool", level };
+  const riskMatch = trimmed.match(/^\/risk:(none|read-only|read-write)$/i);
+  if (riskMatch) {
+    const level = riskMatch[1]!.toLowerCase() as RiskLevel;
+    return { type: "risk", level };
   }
 
   const personaMatch = trimmed.match(/^\/persona:(.+)$/i);
@@ -67,31 +67,31 @@ export function buildHelpText(agentsFiles?: string[]): string {
   }
   lines.push(
     "commands:",
-    "  /help           show this help",
-    "  /new            new session",
-    "  /fork           summarize and start new session",
-    "  /copy           copy last assistant message",
-    "  /tool:none      disable all tools",
-    "  /tool:read      allow read-only tools",
-    "  /tool:all       allow all tools",
-    "  /persona:<id>   switch persona",
-    "  /prompt:<id>    insert prompt template",
+    "  /help             show this help",
+    "  /new              new session",
+    "  /fork             summarize and start new session",
+    "  /copy             copy last assistant message",
+    "  /risk:none        disable all tools",
+    "  /risk:read-only   allow read-only tools",
+    "  /risk:read-write  allow all tools",
+    "  /persona:<id>     switch persona",
+    "  /prompt:<id>      insert prompt template",
     "",
     "keys:",
-    "  shift+tab       cycle reasoning effort",
-    "  ctrl+t          toggle thoughts visibility",
-    "  esc             interrupt assistant",
+    "  shift+tab         cycle reasoning effort",
+    "  ctrl+t            toggle thoughts visibility",
+    "  esc               interrupt assistant",
   );
   return lines.join("\n");
 }
 
-export function getToolLevelDescription(level: ToolAccessLevel): string {
+export function getRiskLevelDescription(level: RiskLevel): string {
   switch (level) {
     case "none":
       return "all tools disabled";
-    case "read":
+    case "read-only":
       return "read-only tools allowed";
-    case "all":
+    case "read-write":
       return "all tools allowed";
   }
 }

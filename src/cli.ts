@@ -1,11 +1,11 @@
 import type { ReasoningEffort } from "@mariozechner/pi-ai";
-import { type Persona, REASONING_LEVELS, type ToolAccessLevel } from "./types.js";
+import { type Persona, REASONING_LEVELS, type RiskLevel } from "./types.js";
 
 export interface CliOptions {
   help: boolean;
   personaId?: string;
   reasoningOverride?: ReasoningEffort;
-  toolAccessLevel?: ToolAccessLevel;
+  riskLevel?: RiskLevel;
   withContext: boolean;
 }
 
@@ -16,7 +16,7 @@ export class CliError extends Error {
   }
 }
 
-const TOOL_LEVELS: ToolAccessLevel[] = ["none", "read", "all"];
+const RISK_LEVELS: RiskLevel[] = ["none", "read-only", "read-write"];
 
 function resolvePersonaId(raw: string, personas: Persona[]): string | undefined {
   const trimmed = raw.trim();
@@ -42,16 +42,16 @@ function parseReasoning(raw: string): ReasoningEffort | undefined {
   throw new CliError(`invalid reasoning level '${raw}'. allowed levels: ${allowed}`);
 }
 
-function parseToolAccessLevel(raw: string): ToolAccessLevel {
+function parseRiskLevel(raw: string): RiskLevel {
   const normalized = raw.trim().toLowerCase();
   if (!normalized) {
-    throw new CliError("missing value for --tool");
+    throw new CliError("missing value for --risk");
   }
-  if ((TOOL_LEVELS as string[]).includes(normalized)) {
-    return normalized as ToolAccessLevel;
+  if ((RISK_LEVELS as string[]).includes(normalized)) {
+    return normalized as RiskLevel;
   }
-  const allowed = TOOL_LEVELS.join(", ");
-  throw new CliError(`invalid tool level '${raw}'. allowed levels: ${allowed}`);
+  const allowed = RISK_LEVELS.join(", ");
+  throw new CliError(`invalid risk level '${raw}'. allowed levels: ${allowed}`);
 }
 
 function parseValue(
@@ -79,7 +79,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let help = false;
   let personaId: string | undefined;
   let reasoningOverride: ReasoningEffort | undefined;
-  let toolAccessLevel: ToolAccessLevel | undefined;
+  let riskLevel: RiskLevel | undefined;
   let withContext = false;
 
   for (let i = 0; i < argv.length; i++) {
@@ -130,10 +130,10 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       continue;
     }
 
-    if (arg === "--tool" || arg.startsWith("--tool=")) {
+    if (arg === "--risk" || arg === "-r" || arg.startsWith("--risk=") || arg.startsWith("-r=")) {
       const { value, nextIndex } = parseValue(arg, argv, i);
       i = nextIndex;
-      toolAccessLevel = parseToolAccessLevel(value);
+      riskLevel = parseRiskLevel(value);
       continue;
     }
 
@@ -143,13 +143,13 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     throw new CliError(`unexpected argument: ${arg}`);
   }
 
-  return { help, personaId, reasoningOverride, toolAccessLevel, withContext };
+  return { help, personaId, reasoningOverride, riskLevel, withContext };
 }
 
 export function printHelp(personas: Persona[]): void {
   const personaList = personas.map((p) => p.id).join(", ");
   const reasoningList = [...REASONING_LEVELS, "default"].join(", ");
-  const toolList = TOOL_LEVELS.join(", ");
+  const riskList = RISK_LEVELS.join(", ");
 
   console.log(
     [
@@ -162,18 +162,19 @@ export function printHelp(personas: Persona[]): void {
       "  --help                        show this help and exit.",
       `  --persona, -p <id>[:<level>]  start with a persona. available: ${personaList}.`,
       `                                optionally specify reasoning level. levels: ${reasoningList}.`,
-      `  --tool <level>                set initial model tool access level. levels: ${toolList}. default: read.`,
+      `  --risk, -r <level>            set initial model risk level. levels: ${riskList}. default: read-only.`,
       "  --with-context                inject AGENTS.md into the system prompt.",
       "",
       "examples:",
       "  tau --persona gpt-5.2:high",
       "  tau -p opus-4.5",
-      "  tau --persona gpt-5.2:medium --tool all",
+      "  tau --persona gpt-5.2:medium --risk read-write",
+      "  tau -p gpt-5.2:high -r read-write",
       "",
       "notes:",
       "  you can switch persona during a session with /persona:<id>.",
       "  insert predefined prompt templates with /prompt:<id>.",
-      "  you can change model tool access during a session with /tool:none|read|all.",
+      "  you can change model risk level during a session with /risk:none|read-only|read-write.",
       "  if stdin is piped, its contents are sent as the first message automatically.",
       "  reasoning only affects providers that support it.",
     ].join("\n"),

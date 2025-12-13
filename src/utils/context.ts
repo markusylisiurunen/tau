@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
-import type { ToolAccessLevel } from "../types.js";
+import type { RiskLevel } from "../types.js";
 
 function buildUserPreferencesBlock(userPreferences?: string): string | undefined {
   if (typeof userPreferences === "string" && userPreferences.trim()) {
@@ -95,41 +95,38 @@ export function findAgentsFilesFromCwdToHome(cwd: string, home: string): string[
   return found;
 }
 
-export function describeToolAccessLevel(level: ToolAccessLevel): string {
+export function describeRiskLevel(level: RiskLevel): string {
   switch (level) {
     case "none":
       return "No bash tool access for the model.";
-    case "read":
-      return "Model may call bash only for read-only commands (risk='read').";
-    case "all":
-      return "Model may call bash for read or write commands (risk='read' or 'write').";
+    case "read-only":
+      return "Model may call bash only for read-only commands (safetyLevel='read').";
+    case "read-write":
+      return "Model may call bash for read or write commands (safetyLevel='read' or 'write').";
   }
 }
 
 export function buildEnvironmentTag(args: {
   datetime: string;
   cwd: string;
-  toolAccessLevel: ToolAccessLevel;
+  riskLevel: RiskLevel;
 }): string {
-  const toolDesc = describeToolAccessLevel(args.toolAccessLevel);
+  const riskDesc = describeRiskLevel(args.riskLevel);
   const nodeVersion = process.version;
   const platform = process.platform;
   return [
     "<environment>",
     `  <datetime>${args.datetime}</datetime>`,
     `  <cwd>${args.cwd}</cwd>`,
-    `  <tool_access level="${args.toolAccessLevel}">${toolDesc}</tool_access>`,
+    `  <risk_level level="${args.riskLevel}">${riskDesc}</risk_level>`,
     `  <node>${nodeVersion}</node>`,
     `  <platform>${platform}</platform>`,
-    "  <notes>This environment tag is static for the session and reflects the initial tool access level. If the user changes tool access, you will be informed in a <system> tag at the start of the next user message.</notes>",
+    "  <notes>This environment tag is static for the session and reflects the initial risk level. If the user changes risk level, you will be informed in a <system> tag at the start of the next user message.</notes>",
     "</environment>",
   ].join("\n");
 }
 
-export function formatToolAccessChangeNotice(change: {
-  from: ToolAccessLevel;
-  to: ToolAccessLevel;
-}): string {
-  const toDesc = describeToolAccessLevel(change.to);
-  return `<system>Tool access level changed by user from '${change.from}' to '${change.to}'. ${toDesc} This overrides the initial tool access described in the system prompt.</system>`;
+export function formatRiskLevelChangeNotice(change: { from: RiskLevel; to: RiskLevel }): string {
+  const toDesc = describeRiskLevel(change.to);
+  return `<system>Risk level changed by user from '${change.from}' to '${change.to}'. ${toDesc} This overrides the initial risk level described in the system prompt.</system>`;
 }

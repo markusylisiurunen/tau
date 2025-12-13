@@ -32,22 +32,22 @@ There is no dedicated test runner in this repo currently. Validate changes by:
 
 - `npm run check` (format + lint + typecheck)
 - manual smoke tests: `npm run dev` and a full build/run (`npm run build && npm start`)
-  - try slash commands: `/help`, `/new`, `/fork`, `/copy`, `/tool:none|read|all`, `/persona:<id>`, `/prompt:<id>`
+  - try slash commands: `/help`, `/new`, `/fork`, `/copy`, `/risk:none|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`
   - try direct bash mode: prefix input with `!` to run a shell command (separate from model tool calls)
   - try file-path autocomplete: type `@` then a path fragment to insert a project-relative file path
   - if relevant, verify piped stdin behavior (non-interactive first message) and `/dev/tty` fallback for interactive input
 
 ## Commit & Pull Request Guidelines
 
-- Commit messages follow a simple imperative style (examples from history: “add …”, “implement …”, “update …”).
+- Commit messages follow a simple imperative style (examples from history: "add …", "implement …", "update …").
 - Keep commits focused; avoid bundling formatting-only changes with behavior changes unless necessary.
-- PRs should include: what changed, how to reproduce/verify in the terminal, and any relevant notes about tool-access behavior (`/tool:none|read|all`) or API key usage.
+- PRs should include: what changed, how to reproduce/verify in the terminal, and any relevant notes about risk level behavior (`/risk:none|read-only|read-write`) or API key usage.
 
 ## Security & Configuration Tips
 
 - Never commit secrets. Use env vars like `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for local runs.
 - Treat any changes to shell/tool execution paths as security-sensitive: document defaults and failure modes in the PR description.
-- Tool access levels (`/tool:none|read|all`) gate *model* tool calls (bash/write/edit). User-initiated `!` commands run directly in the app, so keep that distinction clear when changing execution behavior.
+- Risk levels (`/risk:none|read-only|read-write`) gate *model* tool calls (bash/write/edit). User-initiated `!` commands run directly in the app, so keep that distinction clear when changing execution behavior.
 - Bash tool execution sanitizes environment variables (see `sanitizeEnvironment()` in `src/tools/bash.ts`); update allow/deny lists carefully.
 
 ## Adding a New Slash Command

@@ -20,6 +20,9 @@ export const BASH_MODEL_MAX_LINES = 10_000;
 export const BASH_MODEL_MAX_BYTES = 1024 * 1024; // 1MB
 export const BASH_MODEL_BYTES_PER_TOKEN = 4;
 
+export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
+export const BASH_KILL_GRACE_MS = 2_000;
+
 const SENSITIVE_ENV_PATTERNS = [/_KEY$/, /_SECRET$/, /_TOKEN$/, /_PASSWORD$/, /^API_KEY$/];
 const ALLOWED_ENV_VARS = new Set([
   "PATH",
@@ -174,50 +177,147 @@ export function formatBashUserMessageText(args: {
   return `Bash command output:\n${bashContextText}`;
 }
 
-export function executeBashTool(command: string): Promise<BashToolResult> {
+export function executeBashTool(
+  command: string,
+  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<BashToolResult> {
   return new Promise((resolve, reject) => {
+    const timeoutMs = options.timeoutMs;
+    const signal = options.signal;
+
     const child = spawn(command, {
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: sanitizeEnvironment(),
+      detached: true,
     });
 
     let stdout = "";
     let stderr = "";
     let truncated = false;
+    let terminationNote: string | undefined;
 
-    const appendStdout = (chunk: string) => {
-      if (truncated) return;
-      if (!chunk) return;
-      stdout += chunk;
+    const truncateIfNeeded = () => {
       const totalBytes = Buffer.byteLength(stdout, "utf-8") + Buffer.byteLength(stderr, "utf-8");
       if (totalBytes > BASH_MAX_CAPTURE_BYTES) {
         truncated = true;
         stdout = truncateToBytesFromStart(stdout, BASH_MAX_CAPTURE_BYTES / 2);
         stderr = truncateToBytesFromStart(stderr, BASH_MAX_CAPTURE_BYTES / 2);
       }
+    };
+
+    const appendStdout = (chunk: string) => {
+      if (truncated) return;
+      if (!chunk) return;
+      stdout += chunk;
+      truncateIfNeeded();
     };
 
     const appendStderr = (chunk: string) => {
       if (truncated) return;
       if (!chunk) return;
       stderr += chunk;
-      const totalBytes = Buffer.byteLength(stdout, "utf-8") + Buffer.byteLength(stderr, "utf-8");
-      if (totalBytes > BASH_MAX_CAPTURE_BYTES) {
+      truncateIfNeeded();
+    };
+
+    const ensureTerminationNote = () => {
+      const note = terminationNote?.trim();
+      if (!note) return;
+      if (stdout.includes(note) || stderr.includes(note)) return;
+
+      const noteText = `${stderr && !stderr.endsWith("\n") ? "\n" : ""}${note}\n`;
+      const noteBytes = Buffer.byteLength(noteText, "utf-8");
+
+      const currentBytes = Buffer.byteLength(stdout, "utf-8") + Buffer.byteLength(stderr, "utf-8");
+
+      if (currentBytes + noteBytes > BASH_MAX_CAPTURE_BYTES) {
         truncated = true;
-        stdout = truncateToBytesFromStart(stdout, BASH_MAX_CAPTURE_BYTES / 2);
-        stderr = truncateToBytesFromStart(stderr, BASH_MAX_CAPTURE_BYTES / 2);
+
+        const remaining = Math.max(0, BASH_MAX_CAPTURE_BYTES - noteBytes);
+        const stdoutBudget = Math.floor(remaining / 2);
+        const stderrBudget = remaining - stdoutBudget;
+
+        stdout = truncateToBytesFromStart(stdout, stdoutBudget);
+        stderr = truncateToBytesFromStart(stderr, stderrBudget);
+      }
+
+      stderr += noteText;
+    };
+
+    const killProcess = (sig: NodeJS.Signals) => {
+      if (child.killed) return;
+
+      if (child.pid) {
+        try {
+          // Kill the whole process group, not just the shell.
+          process.kill(-child.pid, sig);
+          return;
+        } catch {
+          // Fall back to killing only the child.
+        }
+      }
+
+      try {
+        child.kill(sig);
+      } catch {
+        // ignore
       }
     };
+
+    let terminationRequested = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const requestTermination = (note: string) => {
+      if (terminationRequested) return;
+      terminationRequested = true;
+      terminationNote = note;
+
+      killProcess("SIGTERM");
+      killTimer = setTimeout(() => killProcess("SIGKILL"), BASH_KILL_GRACE_MS);
+    };
+
+    const abortHandler = () => requestTermination("(tau) aborted");
+
+    const timeoutId =
+      typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? setTimeout(() => requestTermination(`(tau) timed out after ${timeoutMs}ms`), timeoutMs)
+        : undefined;
+
+    const cleanup = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
+      if (signal) {
+        signal.removeEventListener("abort", abortHandler);
+      }
+    };
+
+    if (signal) {
+      if (signal.aborted) {
+        abortHandler();
+      } else {
+        signal.addEventListener("abort", abortHandler, { once: true });
+      }
+    }
 
     child.stdout?.on("data", (d) => appendStdout(d.toString()));
     child.stderr?.on("data", (d) => appendStderr(d.toString()));
 
-    child.on("error", () => {
-      reject();
+    child.on("error", (err) => {
+      cleanup();
+      reject(err);
     });
 
-    child.on("close", (exitCode) => {
+    child.on("close", (exitCode, closeSignal) => {
+      if (!terminationNote && closeSignal) {
+        terminationNote = `(tau) terminated by signal ${closeSignal}`;
+      }
+
+      cleanup();
+      ensureTerminationNote();
       resolve({ stdout, stderr, exitCode, truncated });
     });
   });
@@ -251,7 +351,11 @@ function parseBashArgs(raw: unknown): {
 export function createBashToolDefinition(): ToolDefinition {
   return {
     schema: BASH_TOOL,
-    async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+    async dispatch(
+      toolCall: ToolCall,
+      riskLevel: RiskLevel,
+      signal?: AbortSignal,
+    ): Promise<ToolDispatchResult> {
       const { command, safetyLevel, commandForDisplay } = parseBashArgs(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
@@ -289,7 +393,7 @@ export function createBashToolDefinition(): ToolDefinition {
           stderr,
           exitCode,
           truncated: captureTruncated,
-        } = await executeBashTool(command);
+        } = await executeBashTool(command, { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS });
 
         const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated);
         const toolText = formatBashToolResultText({ truncationInfo, exitCode });

@@ -19,7 +19,7 @@ import {
 import { createEditToolDefinition } from "./tools/edit.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { createWriteToolDefinition } from "./tools/write.js";
-import { type Persona, REASONING_LEVELS_WITH_NONE, type RiskLevel } from "./types.js";
+import { type Persona, REASONING_LEVELS, type RiskLevel } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
 import { BashBlockedComponent, BashExecutionComponent } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
@@ -334,25 +334,23 @@ export class ChatApp {
     this.updateEditorBorderColor();
   }
 
+  private isReasoningEffort(value: unknown): value is ReasoningEffort {
+    return typeof value === "string" && REASONING_LEVELS.includes(value as ReasoningEffort);
+  }
+
   private getAllowedReasoningLevels(persona: Persona): ReasoningEffort[] {
     if (!persona.model.reasoning) {
-      return ["none"] as ReasoningEffort[];
+      return ["none"];
     }
 
     const raw = persona.allowedReasoningLevels;
     if (!raw || raw.length === 0) {
-      return REASONING_LEVELS_WITH_NONE;
+      return REASONING_LEVELS;
     }
 
-    const normalized: ReasoningEffort[] = [];
-    for (const level of raw) {
-      if (REASONING_LEVELS_WITH_NONE.includes(level as ReasoningEffort)) {
-        normalized.push(level as ReasoningEffort);
-      }
-    }
-
+    const normalized = raw.filter((level) => this.isReasoningEffort(level));
     const unique = [...new Set(normalized)];
-    return unique.length ? unique : REASONING_LEVELS_WITH_NONE;
+    return unique.length ? unique : REASONING_LEVELS;
   }
 
   private clampPersonaReasoning(persona: Persona): void {

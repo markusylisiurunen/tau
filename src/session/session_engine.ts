@@ -148,7 +148,7 @@ export class SessionEngine {
           continue;
         }
 
-        const { toolResult, uiEvent } = await def.dispatch(toolCall, this.riskLevel);
+        const { toolResult, uiEvent } = await def.dispatch(toolCall, this.riskLevel, signal);
         this.messages.push(toolResult);
         yield { type: "tool_result", message: toolResult };
         if (uiEvent) {

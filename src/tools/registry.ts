@@ -43,7 +43,11 @@ export type ToolDispatchResult = {
 
 export interface ToolDefinition {
   readonly schema: Tool;
-  dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult>;
+  dispatch(
+    toolCall: ToolCall,
+    riskLevel: RiskLevel,
+    signal?: AbortSignal,
+  ): Promise<ToolDispatchResult>;
 }
 
 export class ToolRegistry {

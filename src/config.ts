@@ -1,7 +1,7 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { KnownProvider } from "@mariozechner/pi-ai";
-import fs from "fs";
-import os from "os";
-import path from "path";
 
 export interface Config {
   apiKeys?: {
@@ -13,15 +13,15 @@ export interface Config {
 }
 
 export function loadConfig(): Config {
-  const configDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-  const configPath = path.join(configDir, "tau", "config.json");
+  const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const configPath = join(configDir, "tau", "config.json");
 
   try {
-    if (!fs.existsSync(configPath)) {
+    if (!existsSync(configPath)) {
       return {};
     }
 
-    const content = fs.readFileSync(configPath, "utf-8");
+    const content = readFileSync(configPath, "utf-8");
     const config = JSON.parse(content) as Config;
     return typeof config === "object" && config !== null ? config : {};
   } catch (err) {

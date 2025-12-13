@@ -82,3 +82,21 @@ export class BashBlockedComponent extends Container {
     this.addChild(new DynamicBorder(errorColor));
   }
 }
+
+export class BashRunningComponent extends Container {
+  constructor(command: string) {
+    super();
+    const { palette } = theme;
+    const runningColor = (s: string) => palette.bashRunning(s);
+
+    this.addChild(new DynamicBorder(runningColor));
+
+    const content = new Container();
+    this.addChild(content);
+
+    const header = `\u001b[1m$ ${command}\u001b[22m`;
+    content.addChild(new Text(runningColor(header), 1, 0));
+
+    this.addChild(new DynamicBorder(runningColor));
+  }
+}

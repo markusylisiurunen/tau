@@ -151,7 +151,7 @@ export function createEditToolDefinition(): ToolDefinition {
           path: path || "(missing path)",
           reason,
         };
-        return { toolResult, uiEvent };
+        return { kind: "single", toolResult, uiEvent };
       };
 
       if (riskLevel !== "read-write") {
@@ -243,7 +243,7 @@ export function createEditToolDefinition(): ToolDefinition {
           diff,
           diffTruncation,
         };
-        return { toolResult, uiEvent };
+        return { kind: "single", toolResult, uiEvent };
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
         return blocked(`Edit tool error: could not write file: ${errorMessage}`);

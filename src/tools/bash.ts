@@ -9,7 +9,7 @@ import {
   truncateMiddleForModel,
   truncateToBytesFromStart,
 } from "../utils/truncate.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
+import type { ToolDefinition, ToolDispatchResult, ToolDispatchResultWithPhases, ToolUiEvent } from "./registry.js";
 
 export const BASH_MAX_CAPTURE_BYTES = 2 * 1024 * 1024; // 2MB
 
@@ -355,13 +355,13 @@ export function createBashToolDefinition(): ToolDefinition {
       toolCall: ToolCall,
       riskLevel: RiskLevel,
       signal?: AbortSignal,
-    ): Promise<ToolDispatchResult> {
+    ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const { command, safetyLevel, commandForDisplay } = parseBashArgs(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = { type: "bash_blocked", command: commandForDisplay, reason };
-        return { toolResult, uiEvent };
+        return { kind: "single", toolResult, uiEvent };
       };
 
       if (riskLevel === "none") {
@@ -378,7 +378,7 @@ export function createBashToolDefinition(): ToolDefinition {
           command: commandForDisplay,
           reason: msg,
         };
-        return { toolResult, uiEvent };
+        return { kind: "single", toolResult, uiEvent };
       }
 
       if (riskLevel === "read-only" && safetyLevel === "write") {
@@ -387,31 +387,49 @@ export function createBashToolDefinition(): ToolDefinition {
         );
       }
 
-      try {
-        const {
-          stdout,
-          stderr,
-          exitCode,
-          truncated: captureTruncated,
-        } = await executeBashTool(command, { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS });
+      // All acceptance checks passed; return two-phase result
+      return {
+        kind: "phased",
+        startedUiEvent: {
+          type: "bash_started",
+          toolCallId: toolCall.id,
+          command,
+        },
+        run: (async () => {
+          try {
+            const {
+              stdout,
+              stderr,
+              exitCode,
+              truncated: captureTruncated,
+            } = await executeBashTool(command, { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS });
 
-        const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated);
-        const toolText = formatBashToolResultText({ truncationInfo, exitCode });
-        const isError = exitCode !== null && exitCode !== 0;
+            const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated);
+            const toolText = formatBashToolResultText({ truncationInfo, exitCode });
+            const isError = exitCode !== null && exitCode !== 0;
 
-        const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, isError);
-        const uiEvent: ToolUiEvent = { type: "bash_execution", command, exitCode, truncationInfo };
-        return { toolResult, uiEvent };
-      } catch (e) {
-        const msg = `bash tool execution failed: ${e instanceof Error ? e.message : String(e)}`;
-        const toolResult = createToolError(toolCall, msg);
-        const uiEvent: ToolUiEvent = {
-          type: "bash_blocked",
-          command: commandForDisplay,
-          reason: msg,
-        };
-        return { toolResult, uiEvent };
-      }
+            const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, isError);
+            const uiEvent: ToolUiEvent = {
+              type: "bash_execution",
+              toolCallId: toolCall.id,
+              command,
+              exitCode,
+              truncationInfo,
+            };
+            return { kind: "single", toolResult, uiEvent };
+          } catch (e) {
+            const msg = `bash tool execution failed: ${e instanceof Error ? e.message : String(e)}`;
+            const toolResult = createToolError(toolCall, msg);
+            const uiEvent: ToolUiEvent = {
+              type: "bash_blocked",
+              command: commandForDisplay,
+              reason: msg,
+              toolCallId: toolCall.id,
+            };
+            return { kind: "single", toolResult, uiEvent };
+          }
+        })(),
+      };
     },
   };
 }

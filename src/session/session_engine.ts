@@ -148,11 +148,30 @@ export class SessionEngine {
           continue;
         }
 
-        const { toolResult, uiEvent } = await def.dispatch(toolCall, this.riskLevel, signal);
-        this.messages.push(toolResult);
-        yield { type: "tool_result", message: toolResult };
-        if (uiEvent) {
-          yield { type: "tool_ui", uiEvent };
+        const result = await def.dispatch(toolCall, this.riskLevel, signal);
+
+        // Check if this is a two-phase result
+        if (result.kind === "phased") {
+          // Two-phase: emit started UI immediately if present
+          if (result.startedUiEvent) {
+            yield { type: "tool_ui", uiEvent: result.startedUiEvent };
+          }
+
+          // Wait for the actual execution to complete
+          const { toolResult, uiEvent } = await result.run;
+          this.messages.push(toolResult);
+          yield { type: "tool_result", message: toolResult };
+          if (uiEvent) {
+            yield { type: "tool_ui", uiEvent };
+          }
+        } else {
+          // Single-phase: behave as before
+          const { toolResult, uiEvent } = result;
+          this.messages.push(toolResult);
+          yield { type: "tool_result", message: toolResult };
+          if (uiEvent) {
+            yield { type: "tool_ui", uiEvent };
+          }
         }
       }
     }

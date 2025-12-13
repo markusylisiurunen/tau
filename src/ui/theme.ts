@@ -17,6 +17,7 @@ export interface Palette {
   warn: (text: string) => string;
   error: (text: string) => string;
   bash: (text: string) => string;
+  bashRunning: (text: string) => string;
 
   // Diff colors
   diffAdded: (text: string) => string;
@@ -55,6 +56,7 @@ const palette: Palette = {
   warn: chalk.hex("#dcb076"), // soft gold
   error: chalk.hex("#d08a7c"), // soft clay
   bash: chalk.hex("#86afa9"), // desaturated teal
+  bashRunning: chalk.hex("#5a9a7d"), // greenish (for running state)
 
   // Diff colors
   diffAdded: chalk.hex("#8fad83"), // desaturated green

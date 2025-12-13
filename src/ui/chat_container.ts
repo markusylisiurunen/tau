@@ -15,13 +15,28 @@ export class ChatContainerComponent extends Container {
     this.addChild(this.chatContainer);
   }
 
-  addMessage(message: Component) {
+  addMessage(message: Component): number {
     const isAssistant = message instanceof AssistantMessageComponent;
     this.allMessages.push({ component: message, isAssistant });
 
     // Always add immediately (rebuild() will filter later if needed)
     this.addSpacerIfNeeded();
     this.chatContainer.addChild(message);
+
+    // Return the index of the added message
+    return this.allMessages.length - 1;
+  }
+
+  replaceMessageAtIndex(index: number, newComponent: Component): void {
+    if (index < 0 || index >= this.allMessages.length) {
+      return;
+    }
+
+    const isAssistant = newComponent instanceof AssistantMessageComponent;
+    this.allMessages[index] = { component: newComponent, isAssistant };
+
+    // Rebuild to update the display
+    this.rebuild();
   }
 
   setThinkingVisibility(visible: boolean) {

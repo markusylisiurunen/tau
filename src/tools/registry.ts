@@ -3,12 +3,18 @@ import type { RiskLevel } from "../types.js";
 
 export type ToolUiEvent =
   | {
+      type: "bash_started";
+      toolCallId: string;
+      command: string;
+    }
+  | {
       type: "bash_execution";
+      toolCallId: string;
       command: string;
       exitCode: number | null;
       truncationInfo: import("./bash.js").BashTruncationInfo;
     }
-  | { type: "bash_blocked"; command: string; reason: string }
+  | { type: "bash_blocked"; command: string; reason: string; toolCallId?: string }
   | {
       type: "write_success";
       path: string;
@@ -37,8 +43,15 @@ export type ToolUiEvent =
   | { type: "edit_blocked"; path: string; reason: string };
 
 export type ToolDispatchResult = {
+  kind: "single";
   toolResult: ToolResultMessage;
   uiEvent?: ToolUiEvent;
+};
+
+export type ToolDispatchResultWithPhases = {
+  kind: "phased";
+  startedUiEvent?: ToolUiEvent;
+  run: Promise<ToolDispatchResult>;
 };
 
 export interface ToolDefinition {
@@ -47,7 +60,7 @@ export interface ToolDefinition {
     toolCall: ToolCall,
     riskLevel: RiskLevel,
     signal?: AbortSignal,
-  ): Promise<ToolDispatchResult>;
+  ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases>;
 }
 
 export class ToolRegistry {

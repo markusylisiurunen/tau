@@ -21,7 +21,7 @@ import { ToolRegistry } from "./tools/registry.js";
 import { createWriteToolDefinition } from "./tools/write.js";
 import { type Persona, REASONING_LEVELS, type RiskLevel } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
-import { BashBlockedComponent, BashExecutionComponent } from "./ui/bash_execution.js";
+import { BashBlockedComponent, BashExecutionComponent, BashRunningComponent } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import { CustomEditor } from "./ui/custom_editor.js";
 import {
@@ -75,6 +75,7 @@ export class ChatApp {
 
   private assistantComponents: AssistantMessageComponent[] = [];
   private readonly engine: SessionEngine;
+  private runningBashComponents: Map<string, number> = new Map(); // toolCallId -> component index
 
   private isStreaming = false;
   private isBashMode = false;
@@ -494,6 +495,7 @@ export class ChatApp {
   private clearSession(): void {
     this.engine.reset();
     this.assistantComponents = [];
+    this.runningBashComponents.clear();
     this.chatContainer.addMessage(new SessionDividerComponent("new session"));
     this.isBashMode = false;
     this.previousSessionSummary = undefined;
@@ -738,19 +740,56 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
           case "tool_ui": {
             const uiEvent = event.uiEvent;
-            if (uiEvent.type === "bash_execution") {
-              this.chatContainer.addMessage(
-                new BashExecutionComponent(
+            if (uiEvent.type === "bash_started") {
+              // Create and add the running component, storing its index
+              const runningComponent = new BashRunningComponent(uiEvent.command);
+              const index = this.chatContainer.addMessage(runningComponent);
+              this.runningBashComponents.set(uiEvent.toolCallId, index);
+              this.ui.requestRender();
+            } else if (uiEvent.type === "bash_execution") {
+              // Check if we have a running component for this toolCallId
+              const runningIndex = this.runningBashComponents.get(uiEvent.toolCallId);
+              if (runningIndex !== undefined) {
+                // Replace the running component with the finished execution component
+                const finishedComponent = new BashExecutionComponent(
                   uiEvent.command,
                   uiEvent.exitCode,
                   uiEvent.truncationInfo,
-                ),
-              );
+                );
+                this.chatContainer.replaceMessageAtIndex(runningIndex, finishedComponent);
+                this.runningBashComponents.delete(uiEvent.toolCallId);
+              } else {
+                // Fallback: add as new component if no running component found
+                this.chatContainer.addMessage(
+                  new BashExecutionComponent(
+                    uiEvent.command,
+                    uiEvent.exitCode,
+                    uiEvent.truncationInfo,
+                  ),
+                );
+              }
               this.ui.requestRender();
             } else if (uiEvent.type === "bash_blocked") {
-              this.chatContainer.addMessage(
-                new BashBlockedComponent(uiEvent.command, uiEvent.reason),
-              );
+              // Check if this is a post-acceptance failure that has a running card
+              if (uiEvent.toolCallId) {
+                const runningIndex = this.runningBashComponents.get(uiEvent.toolCallId);
+                if (runningIndex !== undefined) {
+                  // Replace the running component with the blocked component
+                  const blockedComponent = new BashBlockedComponent(uiEvent.command, uiEvent.reason);
+                  this.chatContainer.replaceMessageAtIndex(runningIndex, blockedComponent);
+                  this.runningBashComponents.delete(uiEvent.toolCallId);
+                } else {
+                  // Fallback: add as new component if no running component found
+                  this.chatContainer.addMessage(
+                    new BashBlockedComponent(uiEvent.command, uiEvent.reason),
+                  );
+                }
+              } else {
+                // Pre-acceptance blocked event; just append as before
+                this.chatContainer.addMessage(
+                  new BashBlockedComponent(uiEvent.command, uiEvent.reason),
+                );
+              }
               this.ui.requestRender();
             } else if (uiEvent.type === "write_success") {
               this.chatContainer.addMessage(
@@ -808,6 +847,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.isStreaming = false;
       this.editor.disableSubmit = false;
       this.currentTurnAbort = undefined;
+      this.runningBashComponents.clear();
       this.ui.requestRender();
     }
   }

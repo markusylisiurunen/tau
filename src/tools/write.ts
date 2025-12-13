@@ -74,7 +74,7 @@ export function createWriteToolDefinition(): ToolDefinition {
           path: path || "(missing path)",
           reason,
         };
-        return { toolResult, uiEvent };
+        return { kind: "single", toolResult, uiEvent };
       };
 
       if (riskLevel !== "read-write") {
@@ -112,7 +112,7 @@ export function createWriteToolDefinition(): ToolDefinition {
           preview,
           previewTruncation,
         };
-        return { toolResult, uiEvent };
+        return { kind: "single", toolResult, uiEvent };
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
         return blocked(`Write tool failed: ${errorMessage}`);

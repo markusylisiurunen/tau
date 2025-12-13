@@ -1,27 +1,22 @@
 import { homedir } from "node:os";
-import type {
-  AssistantMessage,
-  Context,
-  Message,
-  ReasoningEffort,
-  ToolCall,
-  UserMessage,
-} from "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai";
+import type { AssistantMessage, ReasoningEffort } from "@mariozechner/pi-ai";
 import { Spacer, Text, TUI } from "@mariozechner/pi-tui";
 import { copyTextToClipboard } from "./clipboard.js";
 import { buildHelpText, getToolLevelDescription, parseCommand } from "./commands.js";
 import { getPersonaById } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
+import { SessionEngine } from "./session/session_engine.js";
 import { createAppTerminal } from "./terminal.js";
-import { BASH_TOOL, executeBashTool } from "./tools/bash.js";
+import {
+  createBashToolDefinition,
+  executeBashTool,
+  formatBashUserMessageText,
+  prepareBashOutput,
+} from "./tools/bash.js";
+import { ToolRegistry } from "./tools/registry.js";
 import { type Persona, REASONING_LEVELS_WITH_NONE, type ToolAccessLevel } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
-import {
-  BashBlockedComponent,
-  BashExecutionComponent,
-  prepareBashOutput,
-} from "./ui/bash_execution.js";
+import { BashBlockedComponent, BashExecutionComponent } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import { CustomEditor } from "./ui/custom_editor.js";
 import { FooterComponent } from "./ui/footer.js";
@@ -37,14 +32,10 @@ import {
   formatToolAccessChangeNotice,
 } from "./utils/context.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "./utils/format.js";
-import { createToolError, createToolResult, extractAssistantText } from "./utils/messages.js";
+import { extractAssistantText } from "./utils/messages.js";
 import { listProjectFiles } from "./utils/project_files.js";
 
 const { palette } = theme;
-
-const MAX_ASSISTANT_SUBTURNS = 64;
-
-type BashRisk = "read" | "write";
 
 export interface ChatAppOptions {
   personas: Persona[];
@@ -66,8 +57,8 @@ export class ChatApp {
   private prompts: PromptTemplate[];
   private initialUserMessage?: string;
 
-  private messages: Message[] = [];
   private assistantComponents: AssistantMessageComponent[] = [];
+  private readonly engine: SessionEngine;
 
   private isStreaming = false;
   private isBashMode = false;
@@ -116,6 +107,14 @@ export class ChatApp {
       personaSystemPrompt: this.currentPersona.systemPrompt,
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
+    });
+
+    const toolRegistry = new ToolRegistry([createBashToolDefinition()]);
+    this.engine = new SessionEngine({
+      persona: this.currentPersona,
+      baseSystemPrompt: this.baseSystemPrompt,
+      toolAccessLevel: this.toolAccessLevel,
+      toolRegistry,
     });
 
     this.ui = new TUI(createAppTerminal(Boolean(this.initialUserMessage)));
@@ -262,7 +261,7 @@ export class ChatApp {
 
   private getSessionCostString(): string {
     let total = 0;
-    for (const m of this.messages) {
+    for (const m of this.engine.history) {
       if (m.role === "assistant") {
         total += (m as AssistantMessage).usage?.cost?.total ?? 0;
       }
@@ -273,7 +272,7 @@ export class ChatApp {
   private getCacheTotals(): { read: number; write: number } {
     let read = 0;
     let write = 0;
-    for (const m of this.messages) {
+    for (const m of this.engine.history) {
       if (m.role === "assistant") {
         const usage = (m as AssistantMessage).usage;
         read += usage?.cacheRead ?? 0;
@@ -284,8 +283,9 @@ export class ChatApp {
   }
 
   private getLastAssistantMessage(): AssistantMessage | undefined {
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-      const m = this.messages[i];
+    const history = this.engine.history;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const m = history[i];
       if (m?.role === "assistant") return m as AssistantMessage;
     }
     return undefined;
@@ -340,19 +340,6 @@ export class ChatApp {
     }
   }
 
-  private getStreamingSettings(persona: Persona) {
-    const allowed = this.getAllowedReasoningLevels(persona);
-    const current = persona.settings.reasoning;
-    const reasoning = allowed.includes(current) ? current : allowed[0];
-    const settings = { ...persona.settings };
-    if (reasoning) {
-      settings.reasoning = reasoning;
-    } else {
-      delete (settings as Record<string, unknown>).reasoning;
-    }
-    return settings;
-  }
-
   // User Actions ----------------------------------------------------------------------------------
 
   private toggleThinkingVisibility(): void {
@@ -403,12 +390,7 @@ export class ChatApp {
     this.pendingToolAccessChange = undefined;
 
     const textForModel = systemNotice ? `${systemNotice}\n\n${text}` : text;
-    const userMessage: UserMessage = {
-      role: "user",
-      content: [{ type: "text", text: textForModel }],
-      timestamp: Date.now(),
-    };
-    this.messages.push(userMessage);
+    this.engine.addUserText(textForModel);
 
     await this.runAssistantTurn();
   }
@@ -418,12 +400,7 @@ export class ChatApp {
     if (!trimmed || this.isStreaming) return;
 
     this.addUserMessage(trimmed);
-    const userMessage: UserMessage = {
-      role: "user",
-      content: [{ type: "text", text: trimmed }],
-      timestamp: Date.now(),
-    };
-    this.messages.push(userMessage);
+    this.engine.addUserText(trimmed);
 
     await this.runAssistantTurn();
   }
@@ -490,7 +467,7 @@ export class ChatApp {
   }
 
   private clearSession(): void {
-    this.messages = [];
+    this.engine.reset();
     this.assistantComponents = [];
     this.chatContainer.clear();
     this.isBashMode = false;
@@ -502,6 +479,7 @@ export class ChatApp {
   private setToolAccessLevel(level: ToolAccessLevel): void {
     const previous = this.toolAccessLevel;
     this.toolAccessLevel = level;
+    this.engine.setToolAccessLevel(level);
     this.updateFooter();
 
     if (previous !== level) {
@@ -528,6 +506,7 @@ export class ChatApp {
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
     });
+    this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
     this.updateFooter();
     this.updateEditorBorderColor();
     this.addSystemMessage(
@@ -554,25 +533,102 @@ export class ChatApp {
     this.footer.startWorkingIcon();
 
     try {
-      let subturns = 0;
-      while (subturns < MAX_ASSISTANT_SUBTURNS) {
+      let currentAssistant: { component: AssistantMessageComponent; inserted: boolean } | undefined;
+
+      const ensureCurrentAssistant = (): {
+        component: AssistantMessageComponent;
+        inserted: boolean;
+      } => {
+        if (currentAssistant) return currentAssistant;
+        currentAssistant = {
+          component: new AssistantMessageComponent(undefined, this.showThinking),
+          inserted: false,
+        };
+        return currentAssistant;
+      };
+
+      const ensureAssistantInserted = () => {
+        const state = ensureCurrentAssistant();
+        if (state.inserted) return;
+        state.inserted = true;
+        this.addAssistantComponent(state.component);
+        state.component.setThinkingVisibility(this.showThinking);
+      };
+
+      for await (const event of this.engine.processTurn(this.currentTurnAbort.signal)) {
         if (this.currentTurnAbort.signal.aborted) break;
-        subturns += 1;
 
-        const finalMessage = await this.runSingleSubturn();
-        if (!finalMessage || finalMessage.stopReason !== "toolUse") break;
+        switch (event.type) {
+          case "assistant_start":
+            currentAssistant = {
+              component: new AssistantMessageComponent(undefined, this.showThinking),
+              inserted: false,
+            };
+            break;
 
-        const toolCalls = finalMessage.content.filter((c): c is ToolCall => c.type === "toolCall");
-        if (!toolCalls.length || this.currentTurnAbort.signal.aborted) break;
+          case "assistant_partial": {
+            const state = ensureCurrentAssistant();
+            const { snapshot } = event;
 
-        await this.executeToolCalls(toolCalls);
-      }
+            const shouldInsert =
+              snapshot.hasTextStarted || (this.showThinking && snapshot.hasAnyThinking);
+            if (shouldInsert && !state.inserted) {
+              ensureAssistantInserted();
+            }
 
-      if (subturns >= MAX_ASSISTANT_SUBTURNS) {
-        this.addSystemMessage(
-          `stopped after ${MAX_ASSISTANT_SUBTURNS} tool subturns to avoid an infinite loop.`,
-          palette.warn,
-        );
+            if (state.inserted) {
+              state.component.updatePartial(
+                snapshot.hasTextStarted ? snapshot.text : "",
+                snapshot.thinking,
+              );
+              this.ui.requestRender();
+            }
+            break;
+          }
+
+          case "assistant_final": {
+            ensureAssistantInserted();
+            ensureCurrentAssistant().component.updateFromMessage(event.message);
+            this.updateFooter();
+            this.ui.requestRender();
+            currentAssistant = undefined;
+            break;
+          }
+
+          case "tool_ui": {
+            const uiEvent = event.uiEvent;
+            if (uiEvent.type === "bash_execution") {
+              this.chatContainer.addMessage(
+                new BashExecutionComponent(
+                  uiEvent.command,
+                  uiEvent.exitCode,
+                  uiEvent.truncationInfo,
+                ),
+              );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "bash_blocked") {
+              this.chatContainer.addMessage(
+                new BashBlockedComponent(uiEvent.command, uiEvent.reason),
+              );
+              this.ui.requestRender();
+            }
+            break;
+          }
+
+          case "notice": {
+            const style =
+              event.severity === "error"
+                ? palette.error
+                : event.severity === "warn"
+                  ? palette.warn
+                  : palette.muted;
+            this.addSystemMessage(event.text, style);
+            break;
+          }
+
+          case "tool_result":
+            break;
+        }
       }
     } catch (err) {
       this.addSystemMessage(`error: ${(err as Error).message}`, palette.error);
@@ -582,202 +638,6 @@ export class ChatApp {
       this.editor.disableSubmit = false;
       this.currentTurnAbort = undefined;
       this.ui.requestRender();
-    }
-  }
-
-  private async runSingleSubturn(): Promise<AssistantMessage | undefined> {
-    const assistantComponent = new AssistantMessageComponent();
-    const showThinking = this.showThinking;
-    let assistantInserted = false;
-
-    const ensureAssistantInserted = () => {
-      if (assistantInserted) return;
-      assistantInserted = true;
-      this.addAssistantComponent(assistantComponent);
-    };
-
-    const personaTools = this.currentPersona.tools ?? [];
-    const tools = [BASH_TOOL, ...personaTools.filter((t) => t.name !== BASH_TOOL.name)];
-
-    const context: Context = {
-      systemPrompt: this.baseSystemPrompt,
-      messages: this.messages,
-      tools,
-    };
-
-    const stream = streamSimple(this.currentPersona.model, context, {
-      ...this.getStreamingSettings(this.currentPersona),
-      signal: this.currentTurnAbort!.signal,
-    });
-
-    let text = "";
-    const thinkingBlocks: string[] = [];
-    let thinkingCurrent = "";
-    let hasTextStarted = false;
-
-    const updateDisplay = () => {
-      if (!assistantInserted) return;
-      const thinking = [...thinkingBlocks, thinkingCurrent].filter((s) => s.trim()).join("\n\n");
-      assistantComponent.updatePartial(hasTextStarted ? text : "", thinking);
-      this.ui.requestRender();
-    };
-
-    try {
-      for await (const event of stream) {
-        switch (event.type) {
-          case "text_delta":
-            text += event.delta;
-            if (!hasTextStarted && text.trim()) {
-              hasTextStarted = true;
-              ensureAssistantInserted();
-            }
-            break;
-
-          case "thinking_start":
-            thinkingCurrent = "";
-            break;
-
-          case "thinking_delta":
-            thinkingCurrent += event.delta;
-            if (showThinking && thinkingCurrent.trim() && !assistantInserted) {
-              ensureAssistantInserted();
-            }
-            break;
-
-          case "thinking_end": {
-            const full = event.content?.trim() ? event.content : thinkingCurrent;
-            if (full.trim()) thinkingBlocks.push(full);
-            thinkingCurrent = "";
-            if (showThinking && thinkingBlocks.length > 0 && !assistantInserted) {
-              ensureAssistantInserted();
-            }
-            break;
-          }
-        }
-
-        updateDisplay();
-      }
-
-      const finalMessage = await stream.result();
-      this.messages.push(finalMessage);
-      this.updateFooter();
-
-      if (!assistantInserted) {
-        ensureAssistantInserted();
-      }
-
-      assistantComponent.updateFromMessage(finalMessage);
-      this.ui.requestRender();
-
-      return finalMessage;
-    } catch (err) {
-      if (this.currentTurnAbort?.signal.aborted) {
-        updateDisplay();
-        return undefined;
-      }
-      throw err;
-    }
-  }
-
-  // Tool Execution --------------------------------------------------------------------------------
-
-  private async executeToolCalls(toolCalls: ToolCall[]): Promise<void> {
-    for (const toolCall of toolCalls) {
-      if (this.currentTurnAbort?.signal.aborted) return;
-      await this.executeSingleToolCall(toolCall);
-    }
-  }
-
-  private async executeSingleToolCall(toolCall: ToolCall): Promise<void> {
-    if (toolCall.name !== BASH_TOOL.name) {
-      const msg = `tool '${toolCall.name}' is not supported by tau.`;
-      this.messages.push(createToolError(toolCall, msg));
-      this.addSystemMessage(msg, palette.error);
-      return;
-    }
-
-    if (this.toolAccessLevel === "none") {
-      this.handleBlockedToolCall(
-        toolCall,
-        "Bash tool call blocked: tool access is set to 'none'. Ask the user to enable it with /tool:read or /tool:all.",
-      );
-      return;
-    }
-
-    const args = toolCall.arguments as { command?: unknown; risk?: unknown } | undefined;
-    const command = typeof args?.command === "string" ? args.command.trim() : "";
-    const risk: BashRisk | undefined =
-      args?.risk === "read" || args?.risk === "write" ? (args.risk as BashRisk) : undefined;
-
-    if (!command || !risk) {
-      const msg = this.getMissingArgsMessage(command, risk);
-      this.messages.push(createToolError(toolCall, msg));
-      this.chatContainer.addMessage(new BashBlockedComponent(command || "(missing command)", msg));
-      this.ui.requestRender();
-      return;
-    }
-
-    if (this.toolAccessLevel === "read" && risk === "write") {
-      this.handleBlockedToolCall(
-        toolCall,
-        "Bash tool call blocked: declared risk 'write' exceeds current tool access 'read'. Ask the user to run /tool:all or revise to a read-only command.",
-        command,
-      );
-      return;
-    }
-
-    await this.executeBashToolCall(toolCall, command);
-  }
-
-  private handleBlockedToolCall(toolCall: ToolCall, msg: string, command?: string): void {
-    const commandForDisplay =
-      command ??
-      (typeof (toolCall.arguments as { command?: unknown } | undefined)?.command === "string"
-        ? String((toolCall.arguments as { command?: unknown }).command).trim() || "(empty command)"
-        : "(missing command)");
-
-    this.chatContainer.addMessage(new BashBlockedComponent(commandForDisplay, msg));
-    this.ui.requestRender();
-    this.messages.push(createToolError(toolCall, msg));
-  }
-
-  private getMissingArgsMessage(command: string, risk: BashRisk | undefined): string {
-    if (!command && !risk) {
-      return "bash tool call missing valid 'command' and 'risk' fields.";
-    }
-    if (!command) {
-      return "bash tool call missing a valid 'command' string.";
-    }
-    return "bash tool call missing a valid 'risk' value ('read' or 'write').";
-  }
-
-  private async executeBashToolCall(toolCall: ToolCall, command: string): Promise<void> {
-    try {
-      const {
-        stdout,
-        stderr,
-        exitCode,
-        truncated: captureTruncated,
-      } = await executeBashTool(command);
-      const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated);
-
-      this.chatContainer.addMessage(new BashExecutionComponent(command, exitCode, truncationInfo));
-
-      const { model, captureTruncated: wasTruncated } = truncationInfo;
-      const outputForContext = model.content.trimEnd() || "(no output)";
-      const truncNote =
-        model.truncated || wasTruncated
-          ? `\n\n[output truncated for context: ${model.outputLines} lines / ${model.outputBytes} bytes shown of ${model.totalLines} lines / ${model.totalBytes} bytes]`
-          : "";
-      const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
-      const toolText = `${outputForContext}${truncNote}${exitNote}`;
-
-      this.messages.push(createToolResult(toolCall, toolText, exitCode !== null && exitCode !== 0));
-      this.ui.requestRender();
-    } catch (e) {
-      const msg = `bash tool execution failed: ${e instanceof Error ? e.message : String(e)}`;
-      this.messages.push(createToolError(toolCall, msg));
-      this.addSystemMessage(msg, palette.error);
     }
   }
 
@@ -798,19 +658,7 @@ export class ChatApp {
 
       this.chatContainer.addMessage(new BashExecutionComponent(command, exitCode, truncationInfo));
 
-      const { model, captureTruncated: wasTruncated } = truncationInfo;
-      const outputForContext = model.content.trimEnd() || "(no output)";
-      const truncNote =
-        model.truncated || wasTruncated
-          ? `\n\n[output truncated for context: ${model.outputLines} lines / ${model.outputBytes} bytes shown of ${model.totalLines} lines / ${model.totalBytes} bytes]`
-          : "";
-      const bashContextText = `$ ${command}\n${outputForContext}${truncNote}`;
-
-      this.messages.push({
-        role: "user",
-        content: [{ type: "text", text: `Bash command output:\n${bashContextText}` }],
-        timestamp: Date.now(),
-      });
+      this.engine.addUserText(formatBashUserMessageText({ command, truncationInfo }));
 
       this.ui.requestRender();
     } catch (err) {

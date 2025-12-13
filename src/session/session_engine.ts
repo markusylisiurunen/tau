@@ -1,0 +1,200 @@
+import type {
+  AssistantMessage,
+  Context,
+  Message,
+  ToolCall,
+  ToolResultMessage,
+} from "@mariozechner/pi-ai";
+import { streamSimple } from "@mariozechner/pi-ai";
+import type { ToolRegistry } from "../tools/registry.js";
+import type { Persona, ToolAccessLevel } from "../types.js";
+import { createToolError } from "../utils/messages.js";
+import { type AssistantPartialSnapshot, MessageAccumulator } from "./message_accumulator.js";
+
+const MAX_ASSISTANT_SUBTURNS = 64;
+
+export type EngineNoticeEvent = {
+  type: "notice";
+  severity: "info" | "warn" | "error";
+  text: string;
+};
+
+export type EngineAssistantPartialEvent = {
+  type: "assistant_partial";
+  snapshot: AssistantPartialSnapshot;
+};
+
+export type EngineAssistantStartEvent = {
+  type: "assistant_start";
+};
+
+export type EngineAssistantFinalEvent = {
+  type: "assistant_final";
+  message: AssistantMessage;
+};
+
+export type EngineToolUiEvent = {
+  type: "tool_ui";
+  uiEvent: import("../tools/registry.js").ToolUiEvent;
+};
+
+export type EngineToolResultEvent = {
+  type: "tool_result";
+  message: ToolResultMessage;
+};
+
+export type EngineEvent =
+  | EngineNoticeEvent
+  | EngineAssistantStartEvent
+  | EngineAssistantPartialEvent
+  | EngineAssistantFinalEvent
+  | EngineToolUiEvent
+  | EngineToolResultEvent;
+
+export type SessionEngineOptions = {
+  persona: Persona;
+  baseSystemPrompt: string;
+  toolAccessLevel: ToolAccessLevel;
+  toolRegistry: ToolRegistry;
+};
+
+export class SessionEngine {
+  private persona: Persona;
+  private baseSystemPrompt: string;
+  private toolAccessLevel: ToolAccessLevel;
+  private readonly toolRegistry: ToolRegistry;
+  private messages: Message[] = [];
+
+  constructor(options: SessionEngineOptions) {
+    this.persona = options.persona;
+    this.baseSystemPrompt = options.baseSystemPrompt;
+    this.toolAccessLevel = options.toolAccessLevel;
+    this.toolRegistry = options.toolRegistry;
+  }
+
+  reset(): void {
+    this.messages = [];
+  }
+
+  setPersona(persona: Persona, baseSystemPrompt: string): void {
+    this.persona = persona;
+    this.baseSystemPrompt = baseSystemPrompt;
+  }
+
+  setToolAccessLevel(level: ToolAccessLevel): void {
+    this.toolAccessLevel = level;
+  }
+
+  addUserText(textForModel: string): void {
+    this.messages.push({
+      role: "user",
+      content: [{ type: "text", text: textForModel }],
+      timestamp: Date.now(),
+    });
+  }
+
+  addUserMessage(message: Message): void {
+    this.messages.push(message);
+  }
+
+  get history(): readonly Message[] {
+    return this.messages;
+  }
+
+  private getStreamingSettings(persona: Persona) {
+    const settings = { ...persona.settings };
+    // ChatApp already clamps persona.reasoning to allowed values; keep engine minimal.
+    if (!settings.reasoning) {
+      delete (settings as Record<string, unknown>).reasoning;
+    }
+    return settings;
+  }
+
+  async *processTurn(signal: AbortSignal): AsyncGenerator<EngineEvent> {
+    let subturns = 0;
+
+    while (subturns < MAX_ASSISTANT_SUBTURNS && !signal.aborted) {
+      subturns += 1;
+      const { finalMessage } = yield* this.runSingleSubturn(signal);
+
+      if (signal.aborted) {
+        break;
+      }
+
+      if (!finalMessage || finalMessage.stopReason !== "toolUse") {
+        break;
+      }
+
+      const toolCalls = finalMessage.content.filter((c): c is ToolCall => c.type === "toolCall");
+      if (!toolCalls.length) {
+        break;
+      }
+
+      for (const toolCall of toolCalls) {
+        if (signal.aborted) break;
+
+        const def = this.toolRegistry.get(toolCall.name);
+        if (!def) {
+          const msg = `tool '${toolCall.name}' is not supported by tau.`;
+          const toolError = createToolError(toolCall, msg);
+          this.messages.push(toolError);
+          yield { type: "notice", severity: "error", text: msg };
+          continue;
+        }
+
+        const { toolResult, uiEvent } = await def.dispatch(toolCall, this.toolAccessLevel);
+        this.messages.push(toolResult);
+        yield { type: "tool_result", message: toolResult };
+        if (uiEvent) {
+          yield { type: "tool_ui", uiEvent };
+        }
+      }
+    }
+
+    if (subturns >= MAX_ASSISTANT_SUBTURNS) {
+      yield {
+        type: "notice",
+        severity: "warn",
+        text: `stopped after ${MAX_ASSISTANT_SUBTURNS} tool subturns to avoid an infinite loop.`,
+      };
+    }
+  }
+
+  private async *runSingleSubturn(
+    signal: AbortSignal,
+  ): AsyncGenerator<EngineEvent, { finalMessage?: AssistantMessage }, void> {
+    yield { type: "assistant_start" };
+    const tools = this.toolRegistry.schemas;
+
+    const context: Context = {
+      systemPrompt: this.baseSystemPrompt,
+      messages: this.messages,
+      tools,
+    };
+
+    const stream = streamSimple(this.persona.model, context, {
+      ...this.getStreamingSettings(this.persona),
+      signal,
+    });
+
+    const accumulator = new MessageAccumulator();
+    try {
+      for await (const event of stream) {
+        accumulator.processEvent(event);
+        if (event.type === "text_delta" || event.type.startsWith("thinking_")) {
+          yield { type: "assistant_partial", snapshot: accumulator.snapshot };
+        }
+      }
+
+      const finalMessage = await stream.result();
+      this.messages.push(finalMessage);
+      yield { type: "assistant_final", message: finalMessage };
+      return { finalMessage };
+    } catch (err) {
+      if (signal.aborted) {
+        return { finalMessage: undefined };
+      }
+      throw err;
+    }
+  }
+}

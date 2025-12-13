@@ -1,5 +1,5 @@
 import type { ReasoningEffort } from "@mariozechner/pi-ai";
-import { REASONING_LEVELS, type Persona, type ToolAccessLevel } from "./types.js";
+import { type Persona, REASONING_LEVELS, type ToolAccessLevel } from "./types.js";
 
 export interface CliOptions {
   help: boolean;

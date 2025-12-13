@@ -11,7 +11,7 @@ npm run dev
 
 Requires Node 20+. macOS only (clipboard uses `pbcopy`).
 
-Set an API key, e.g.:
+Set an API key:
 
 ```sh
 export OPENAI_API_KEY=...
@@ -22,41 +22,36 @@ export ANTHROPIC_API_KEY=...
 ## Commands
 
 - `/help`
-- `/copy`
-- `/persona:<id>`
-- `/prompt:<id>` (insert a prompt template into the editor)
-- `/tool:none` (block all model bash tool calls)
-- `/tool:read` (allow read-only model bash tool, default)
-- `/tool:all` (allow all model bash tool)
-- `/new`
-- `!<bash>` (run a shell command)
-- Models can also call the `bash` tool during a turn; the tool requires a `risk` argument ("read" or "write"). Tau executes allowed calls, shows output, sends a tool result back to the model, and continues the assistant turn (up to 128 tool subturns). If a call's risk exceeds the current `/tool:` level, it is blocked and the model is told why in the tool result.
-- Tau appends a static `<environment>` tag to the system prompt at session start (including the initial tool access level, current time, and cwd). Later `/tool:*` changes are conveyed via a `<system>` prefix on the next user message.
+- `/new` (clear session)
+- `/copy` (copy last assistant message)
+- `/persona:<id>` (switch persona)
+- `/prompt:<id>` (insert prompt template)
+- `/tool:none|read|all` (configure model tool access; default: `read`)
+- `!<cmd>` (run immediate shell command)
 
-## CLI options
+## Keys
 
-You can also set a few startup options via flags:
+- `shift+tab`: cycle reasoning effort (low/medium/high)
+- `ctrl+t`: toggle thought chain visibility
+- `esc`: interrupt generation
+- `ctrl+c`: exit
+
+## CLI Options
 
 ```sh
 tau --help
-tau --persona opus
-tau --reasoning high
-tau --persona gpt-5.2 --reasoning medium
+tau --persona opus --reasoning high
+tau --tool all --no-context
 ```
 
-Available flags:
+- `--help`
+- `--persona <id>`: see `tau --help` for available personas.
+- `--reasoning <level>`: `minimal`, `low`, `medium`, `high`, `xhigh`.
+- `--tool <level>`: `none`, `read`, `all` (default: `read`).
+- `--no-context`: skip injecting `AGENTS.md` context.
 
-- `--help` – show usage and exit.
-- `--persona <id>` – start with a specific persona. See `tau --help` for the current list.
-- `--reasoning <level>` – set reasoning effort for the initial persona. Levels: `minimal`, `low`, `medium`, `high`, `xhigh`, or `default`.
-- `--tool <level>` – set initial model bash tool access. Levels: `none`, `read`, or `all`. Default: `read`.
-- `--no-context` – do not inject any `AGENTS.md` project context into the system prompt.
-
-If you pipe text into `tau`, it will be used as the first user message and sent to the model immediately:
+Piping input works as expected:
 
 ```sh
-cat somefile.txt | tau
-echo "summarize this:" | tau --persona opus
+cat file.ts | tau --persona opus
 ```
-
-When running in a terminal, Tau will still stay interactive after consuming stdin.

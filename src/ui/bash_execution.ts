@@ -1,62 +1,7 @@
 import { type Component, Container, Text } from "@mariozechner/pi-tui";
-import {
-  formatBytes,
-  type TruncationResult,
-  truncateMiddle,
-  truncateMiddleForModel,
-} from "../utils/truncate.js";
+import type { BashTruncationInfo } from "../tools/bash.js";
+import { formatBytes } from "../utils/truncate.js";
 import { theme } from "./theme.js";
-
-export const BASH_DISPLAY_MAX_LINES = 32;
-export const BASH_DISPLAY_MAX_BYTES = 50 * 1024; // 50KB
-
-export const BASH_MODEL_MAX_LINES = 10_000;
-export const BASH_MODEL_MAX_BYTES = 1024 * 1024; // 1MB
-export const BASH_MODEL_BYTES_PER_TOKEN = 4;
-
-export interface BashTruncationInfo {
-  display: TruncationResult;
-  model: TruncationResult;
-  captureTruncated: boolean;
-  hasStderr: boolean;
-}
-
-function combineOutputForDisplay(stdout: string, stderr: string): string {
-  const parts: string[] = [];
-  if (stdout.trim()) {
-    parts.push(stdout);
-  }
-  if (stderr.trim()) {
-    parts.push(`[stderr]\n${stderr}`);
-  }
-  return parts.join("\n");
-}
-
-export function prepareBashOutput(
-  stdout: string,
-  stderr: string,
-  captureTruncated: boolean,
-): BashTruncationInfo {
-  const combined = combineOutputForDisplay(stdout, stderr);
-
-  const modelTruncation = truncateMiddleForModel(combined, {
-    maxLines: BASH_MODEL_MAX_LINES,
-    maxBytes: BASH_MODEL_MAX_BYTES,
-    bytesPerTokenApprox: BASH_MODEL_BYTES_PER_TOKEN,
-  });
-
-  const displayTruncation = truncateMiddle(modelTruncation.content, {
-    maxLines: BASH_DISPLAY_MAX_LINES,
-    maxBytes: BASH_DISPLAY_MAX_BYTES,
-  });
-
-  return {
-    display: displayTruncation,
-    model: modelTruncation,
-    captureTruncated,
-    hasStderr: stderr.trim().length > 0,
-  };
-}
 
 class DynamicBorder implements Component {
   constructor(private color: (s: string) => string) {}

@@ -3,6 +3,8 @@
 ## Project Structure & Module Organization
 
 - `src/`: TypeScript source (ESM). Entry point is `src/main.ts`.
+- `src/session/`: core session logic (message accumulation, turn processing).
+- `src/tools/`: tool definitions and registry (e.g., bash execution).
 - `src/ui/`: terminal UI components (rendering, themes, slash autocomplete, message views).
 - `src/utils/`: small shared helpers (e.g., fuzzy matching, truncation).
 - `dist/`: build output from TypeScript (`npm run build`). Do not edit by hand.

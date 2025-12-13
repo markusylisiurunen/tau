@@ -72,7 +72,7 @@ export function renderBashRunning(command: string, compact: boolean): ToolOutput
     { text: " ", style: (s) => s },
     { text: "○", style: runningColor },
     { text: " ", style: (s) => s },
-    { text: "Running", style: palette.muted },
+    { text: "running", style: palette.muted },
     { text: " ", style: (s) => s },
     { text: commandInline, style: palette.accent },
   ];
@@ -103,22 +103,23 @@ export function renderBashExecution(
   const outSummary = hasOutput ? `${outputLines} lines, ${formatBytes(outputBytes)}` : "no output";
   const outSummaryInline = inline(outSummary);
 
-  const exitSummary = exitCode === null ? "exit ?" : `exit ${exitCode}`;
-  const exitStyle = exitCode !== null && exitCode !== 0 ? palette.error : palette.muted;
-
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
     { text: "○", style: bashColor },
     { text: " ", style: (s) => s },
-    { text: "Ran", style: palette.muted },
+    { text: "ran", style: palette.muted },
     { text: " ", style: (s) => s },
     { text: commandInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: "(", style: palette.muted },
-    { text: exitSummary, style: exitStyle },
-    { text: `, ${outSummaryInline}`, style: palette.muted },
-    { text: ")", style: palette.muted },
   ];
+
+  const exitSummary = exitCode === null ? "exit ?" : `exit ${exitCode}`;
+  const exitStyle = exitCode !== null && exitCode !== 0 ? palette.error : palette.muted;
+
+  const details = [
+    palette.muted("("),
+    exitStyle(exitSummary),
+    palette.muted(`, ${outSummaryInline})`),
+  ].join("");
 
   return new ToolOutputComponent({
     compact,
@@ -126,7 +127,7 @@ export function renderBashExecution(
       borderColor: bashColor,
       text: buildBashExecutionExpandedText(command, exitCode, truncationInfo),
     },
-    compactView: { segments, flexIndices: [5, 9] },
+    compactView: { segments, flexIndices: [5], extraText: `    ${details}` },
   });
 }
 
@@ -152,18 +153,16 @@ export function renderBashBlocked(
     { text: " ", style: (s) => s },
     { text: "○", style: errorColor },
     { text: " ", style: (s) => s },
-    { text: "Blocked", style: palette.muted },
+    { text: "blocked", style: palette.muted },
     { text: " ", style: (s) => s },
     { text: commandInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: "(", style: palette.muted },
-    { text: why, style: palette.muted },
-    { text: ")", style: palette.muted },
   ];
+
+  const details = why ? palette.muted(`(${why})`) : undefined;
 
   return new ToolOutputComponent({
     compact,
     expanded: { borderColor: errorColor, text: parts.join("\n") },
-    compactView: { segments, flexIndices: [5, 8] },
+    compactView: { segments, flexIndices: [5], extraText: details ? `    ${details}` : undefined },
   });
 }

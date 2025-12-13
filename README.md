@@ -29,11 +29,12 @@ Or store it in a config file at `~/.config/tau/config.json`:
     "anthropic": "sk-ant-...",
     "openai": "sk-...",
     "google": "..."
-  }
+  },
+  "userPreferences": "Prefer concise responses. Use TypeScript for code examples. Always explain trade-offs."
 }
 ```
 
-Environment variables take precedence over the config file.
+Environment variables take precedence over the config file. The `userPreferences` field is optional; when provided as a non-empty string, it is automatically injected into the system prompt wrapped in `<user_preferences>` tags, allowing you to specify consistent guidance (style, constraints, defaults) without re-prompting each session.
 
 ## Commands
 

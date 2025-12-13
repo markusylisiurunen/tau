@@ -125,6 +125,7 @@ export class ChatApp {
       personaSystemPrompt: this.currentPersona.systemPrompt,
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
+      userPreferences: this.config.userPreferences,
     });
 
     const toolRegistry = new ToolRegistry([
@@ -586,6 +587,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         projectContextBlock: this.projectContextBlock,
         environmentTag: this.environmentTag,
         previousSessionSummary: this.previousSessionSummary,
+        userPreferences: this.config.userPreferences,
       });
       this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
 
@@ -634,6 +636,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       personaSystemPrompt: this.currentPersona.systemPrompt,
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
+      userPreferences: this.config.userPreferences,
     });
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
     this.updateFooter();

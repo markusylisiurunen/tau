@@ -9,6 +9,7 @@ export interface Config {
     google?: string;
     openai?: string;
   };
+  userPreferences?: string;
 }
 
 export function loadConfig(): Config {

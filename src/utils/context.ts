@@ -2,11 +2,19 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import type { ToolAccessLevel } from "../types.js";
 
+function buildUserPreferencesBlock(userPreferences?: string): string | undefined {
+  if (typeof userPreferences === "string" && userPreferences.trim()) {
+    return ["<user_preferences>", userPreferences, "</user_preferences>"].join("\n");
+  }
+  return undefined;
+}
+
 export function buildBaseSystemPrompt(args: {
   personaSystemPrompt: string;
   projectContextBlock?: string;
   environmentTag: string;
   previousSessionSummary?: string;
+  userPreferences?: string;
 }): string {
   const parts: string[] = [args.personaSystemPrompt.trim()];
   if (args.projectContextBlock?.trim()) {
@@ -25,6 +33,10 @@ export function buildBaseSystemPrompt(args: {
     );
   }
   parts.push(args.environmentTag.trim());
+  const userPrefsBlock = buildUserPreferencesBlock(args.userPreferences);
+  if (userPrefsBlock) {
+    parts.push(userPrefsBlock);
+  }
   return parts.join("\n\n");
 }
 

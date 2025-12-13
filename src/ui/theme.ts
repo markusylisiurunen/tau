@@ -53,7 +53,7 @@ const palette: Palette = {
   bash: chalk.hex("#86afa9"), // desaturated teal
 
   // Surfaces & chrome
-  userBg: chalk.bgHex("#201a18"), // deep warm charcoal
+  userBg: chalk.bgHex("#1a1615"), // deep warm charcoal
   userText: chalk.hex("#e8dfd4"), // warm parchment
   assistantLabel: chalk.hex("#9ab58d"), // same as success (assistant = good)
   systemLabel: chalk.hex("#c4b2a3"), // subtle warm beige

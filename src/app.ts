@@ -87,7 +87,7 @@ export class ChatApp {
   private currentTurnAbort?: AbortController;
   private riskLevel: RiskLevel = "read-only";
   private readonly initialRiskLevel: RiskLevel;
-  private readonly environmentTag: string;
+  private environmentTag: string;
   private readonly projectContextBlock?: string;
   private readonly projectFiles: string[];
   private readonly agentsFiles: string[];
@@ -545,9 +545,25 @@ export class ChatApp {
     this.chatContainer.addMessage(new SessionDividerComponent("new session"));
     this.isBashMode = false;
     this.previousSessionSummary = undefined;
+    this.rebuildSystemPrompt();
     this.updateEditorBorderColor();
     this.updateFooter();
     this.ui.requestRender();
+  }
+
+  private rebuildSystemPrompt(): void {
+    this.environmentTag = buildEnvironmentTag({
+      riskLevel: this.riskLevel,
+      cwd: process.cwd(),
+      datetime: new Date().toISOString(),
+    });
+    this.baseSystemPrompt = buildBaseSystemPrompt({
+      personaSystemPrompt: this.currentPersona.systemPrompt,
+      projectContextBlock: this.projectContextBlock,
+      environmentTag: this.environmentTag,
+      userPreferences: this.config.userPreferences,
+    });
+    this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
   }
 
   private async forkSession(): Promise<void> {
@@ -628,7 +644,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.chatContainer.addMessage(new SessionSummaryComponent(this.previousSessionSummary));
       this.isBashMode = false;
 
-      // Rebuild system prompt with the new summary
+      // Rebuild environment tag and system prompt with the new summary and current risk level
+      this.environmentTag = buildEnvironmentTag({
+        riskLevel: this.riskLevel,
+        cwd: process.cwd(),
+        datetime: new Date().toISOString(),
+      });
       this.baseSystemPrompt = buildBaseSystemPrompt({
         personaSystemPrompt: this.currentPersona.systemPrompt,
         projectContextBlock: this.projectContextBlock,

@@ -409,7 +409,7 @@ export class ChatApp {
   private interruptAssistantTurn(): void {
     if (!this.isStreaming || this.currentTurnAbort?.signal.aborted) return;
     this.currentTurnAbort?.abort();
-    this.addSystemMessage("interrupted.", palette.noticeSuccess);
+    this.addSystemMessage("interrupted.", palette.noticeError);
     this.ui.requestRender();
   }
 
@@ -507,7 +507,10 @@ export class ChatApp {
   }
 
   private showHelp(): void {
-    this.addSystemMessage(buildHelpText(this.agentsFiles), palette.noticeSuccess);
+    this.addSystemMessage(
+      buildHelpText(this.agentsFiles),
+      palette.muted, // Intentionally not a notice style
+    );
   }
 
   private async copyLastAssistantMessage(): Promise<void> {

@@ -70,7 +70,7 @@ export function renderBashRunning(command: string, compact: boolean): ToolOutput
   const commandInline = inline(command);
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
-    { text: "○", style: runningColor },
+    { text: "▪", style: runningColor },
     { text: " ", style: (s) => s },
     { text: "running", style: palette.muted },
     { text: " ", style: (s) => s },
@@ -105,7 +105,7 @@ export function renderBashExecution(
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
-    { text: "○", style: bashColor },
+    { text: "▪", style: bashColor },
     { text: " ", style: (s) => s },
     { text: "ran", style: palette.muted },
     { text: " ", style: (s) => s },
@@ -151,7 +151,7 @@ export function renderBashBlocked(
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
-    { text: "○", style: errorColor },
+    { text: "▪", style: errorColor },
     { text: " ", style: (s) => s },
     { text: "blocked", style: palette.muted },
     { text: " ", style: (s) => s },

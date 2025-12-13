@@ -55,7 +55,7 @@ export function renderWriteSuccess(
   const pathInline = inline(path);
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
-    { text: "○", style: writeColor },
+    { text: "▪", style: writeColor },
     { text: " ", style: (s) => s },
     { text: "wrote", style: palette.muted },
     { text: " ", style: (s) => s },
@@ -109,7 +109,7 @@ export function renderWriteBlocked(
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
-    { text: "○", style: errorColor },
+    { text: "▪", style: errorColor },
     { text: " ", style: (s) => s },
     { text: "write", style: palette.muted },
     { text: " ", style: (s) => s },
@@ -178,7 +178,7 @@ export function renderEditSuccess(
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
-    { text: "○", style: editColor },
+    { text: "▪", style: editColor },
     { text: " ", style: (s) => s },
     { text: "edited", style: palette.muted },
     { text: " ", style: (s) => s },
@@ -237,7 +237,7 @@ export function renderEditBlocked(
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
-    { text: "○", style: errorColor },
+    { text: "▪", style: errorColor },
     { text: " ", style: (s) => s },
     { text: "edit", style: palette.muted },
     { text: " ", style: (s) => s },

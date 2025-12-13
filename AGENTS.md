@@ -24,7 +24,7 @@
 
 - Formatting/linting: Biome (2-space indent, line width 100). Prefer `npm run check` before pushing.
 - TypeScript: keep types in `PascalCase`, values/functions in `camelCase`, and files `lowercase.ts` (as in `src/app.ts`).
-- Keep OS-specific behavior isolated (clipboard uses `pbcopy`, so macOS assumptions belong in `src/clipboard.ts`).
+- Keep OS-specific behavior isolated. Clipboard currently uses `pbcopy` (macOS-only) in `src/clipboard.ts` and has no cross-platform fallback yet.
 
 ## Testing Guidelines
 
@@ -32,6 +32,10 @@ There is no dedicated test runner in this repo currently. Validate changes by:
 
 - `npm run check` (format + lint + typecheck)
 - manual smoke tests: `npm run dev` and a full build/run (`npm run build && npm start`)
+  - try slash commands: `/help`, `/new`, `/fork`, `/copy`, `/tool:none|read|all`, `/persona:<id>`, `/prompt:<id>`
+  - try direct bash mode: prefix input with `!` to run a shell command (separate from model tool calls)
+  - try file-path autocomplete: type `@` then a path fragment to insert a project-relative file path
+  - if relevant, verify piped stdin behavior (non-interactive first message) and `/dev/tty` fallback for interactive input
 
 ## Commit & Pull Request Guidelines
 
@@ -43,6 +47,8 @@ There is no dedicated test runner in this repo currently. Validate changes by:
 
 - Never commit secrets. Use env vars like `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for local runs.
 - Treat any changes to shell/tool execution paths as security-sensitive: document defaults and failure modes in the PR description.
+- Tool access levels (`/tool:none|read|all`) gate *model* tool calls (bash/write/edit). User-initiated `!` commands run directly in the app, so keep that distinction clear when changing execution behavior.
+- Bash tool execution sanitizes environment variables (see `sanitizeEnvironment()` in `src/tools/bash.ts`); update allow/deny lists carefully.
 
 ## Adding a New Slash Command
 

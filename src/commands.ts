@@ -92,7 +92,8 @@ export function buildHelpText(agentsFiles?: string[]): string {
     "keys:",
     "  shift+tab         cycle reasoning effort",
     "  ctrl+t            toggle thoughts visibility",
-    "  ctrl+e            expand @file mentions",
+    "  ctrl+o            toggle compact tool UI",
+    "  ctrl+f            expand @file mentions",
     "  esc               interrupt assistant",
   );
   return lines.join("\n");

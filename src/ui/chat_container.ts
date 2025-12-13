@@ -1,10 +1,15 @@
 import { type Component, Container, Spacer } from "@mariozechner/pi-tui";
 import { AssistantMessageComponent } from "./assistant_message.js";
 
+type ChatMessageRecord =
+  | { type: "component"; component: Component; isAssistant: boolean }
+  | { type: "tool"; render: (compactToolUi: boolean) => Component; isAssistant: boolean };
+
 export class ChatContainerComponent extends Container {
   private chatContainer: Container;
   private thoughtsVisible: boolean = false;
-  private allMessages: { component: Component; isAssistant: boolean }[] = [];
+  private compactToolUi: boolean = false;
+  private allMessages: ChatMessageRecord[] = [];
 
   constructor(thoughtsVisible = false) {
     super();
@@ -17,7 +22,7 @@ export class ChatContainerComponent extends Container {
 
   addMessage(message: Component): number {
     const isAssistant = message instanceof AssistantMessageComponent;
-    this.allMessages.push({ component: message, isAssistant });
+    this.allMessages.push({ type: "component", component: message, isAssistant });
 
     // Always add immediately (rebuild() will filter later if needed)
     this.addSpacerIfNeeded();
@@ -33,15 +38,40 @@ export class ChatContainerComponent extends Container {
     }
 
     const isAssistant = newComponent instanceof AssistantMessageComponent;
-    this.allMessages[index] = { component: newComponent, isAssistant };
+    this.allMessages[index] = { type: "component", component: newComponent, isAssistant };
 
     // Rebuild to update the display
+    this.rebuild();
+  }
+
+  addToolMessage(render: (compactToolUi: boolean) => Component): number {
+    this.allMessages.push({ type: "tool", render, isAssistant: false });
+
+    const component = render(this.compactToolUi);
+    this.addSpacerIfNeeded();
+    this.chatContainer.addChild(component);
+
+    return this.allMessages.length - 1;
+  }
+
+  replaceToolMessageAtIndex(index: number, render: (compactToolUi: boolean) => Component): void {
+    if (index < 0 || index >= this.allMessages.length) {
+      return;
+    }
+
+    this.allMessages[index] = { type: "tool", render, isAssistant: false };
     this.rebuild();
   }
 
   setThinkingVisibility(visible: boolean) {
     if (this.thoughtsVisible === visible) return;
     this.thoughtsVisible = visible;
+    this.rebuild();
+  }
+
+  setCompactToolUi(compact: boolean): void {
+    if (this.compactToolUi === compact) return;
+    this.compactToolUi = compact;
     this.rebuild();
   }
 
@@ -53,7 +83,10 @@ export class ChatContainerComponent extends Container {
   rebuild() {
     this.chatContainer.clear();
 
-    for (const { component, isAssistant } of this.allMessages) {
+    for (const record of this.allMessages) {
+      const component =
+        record.type === "component" ? record.component : record.render(this.compactToolUi);
+      const isAssistant = record.isAssistant;
       if (this.shouldShowMessage(component, isAssistant)) {
         this.addSpacerIfNeeded();
         this.chatContainer.addChild(component);

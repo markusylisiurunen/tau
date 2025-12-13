@@ -71,7 +71,7 @@ export class AssistantMessageComponent extends Container {
       if (this.thoughtsVisible && content.type === "thinking" && content.thinking.trim()) {
         this.contentContainer.addChild(
           new Markdown(content.thinking.trim(), 1, 0, markdownTheme, {
-            color: (t: string) => palette.muted(t),
+            color: (t: string) => palette.thinking(t),
             italic: true,
           }),
         );

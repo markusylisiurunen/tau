@@ -76,7 +76,8 @@ The app loads configuration from `~/.config/tau/config.json`. This file is optio
     "anthropic": "sk-ant-...",
     "google": "...",
     "openai": "sk-..."
-  }
+  },
+  "toolDisplayMode": "compact"
 }
 ```
 
@@ -140,9 +141,9 @@ Required: `id`. Optional: `label`, `description`.
 
 User-defined personas/prompts with IDs that collide with built-ins are silently skipped (case-insensitive comparison). Errors are accumulated in the result and optionally shown to the user (e.g., via `/reload`).
 
-## File Expansion: ctrl+e Keybinding
+## File Expansion: ctrl+f Keybinding
 
-Users can press `ctrl+e` to expand `@file` mentions in the editor, materializing file contents into the conversation.
+Users can press `ctrl+f` to expand `@file` mentions in the editor, materializing file contents into the conversation.
 
 ### Behavior
 
@@ -165,5 +166,5 @@ Users can press `ctrl+e` to expand `@file` mentions in the editor, materializing
 
 ### Implementation
 
-- **`src/ui/custom_editor.ts`**: Added `onCtrlE` callback hook and intercepts `\x05` (ctrl+e) byte before default behavior
+- **`src/ui/custom_editor.ts`**: Added `onCtrlF` callback hook and intercepts `\x06` (ctrl+f) byte before default behavior
 - **`src/app.ts`**: Implements `expandFileMentions()` and `shellQuote()` helper for safe path escaping

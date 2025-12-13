@@ -2,14 +2,14 @@
 
 Minimal terminal chat app built on `@mariozechner/pi-ai` + `@mariozechner/pi-tui`.
 
-## Run
+## Running
 
 ```sh
 npm install
 npm run dev
 ```
 
-Requires Node 20+. macOS only (clipboard uses `pbcopy`).
+Requires Node 20+. macOS-only (clipboard uses `pbcopy`).
 
 Set an API key via environment variable:
 
@@ -30,11 +30,17 @@ Or store it in a config file at `~/.config/tau/config.json`:
     "google": "...",
     "openai": "sk-..."
   },
+  "toolDisplayMode": "compact",
   "userPreferences": "Prefer concise responses. Use TypeScript for code examples. Always explain trade-offs."
 }
 ```
 
 Environment variables take precedence over the config file. The `userPreferences` field is optional; when provided as a non-empty string, it is automatically injected into the system prompt wrapped in `<user_preferences>` tags, allowing you to specify consistent guidance (style, constraints, defaults) without re-prompting each session.
+
+`toolDisplayMode` controls how tool call UI cards are displayed:
+
+- `"compact"` (default): one-line summaries
+- `"full"`: bordered multi-line blocks
 
 ## User-Defined Personas and Prompts
 
@@ -114,7 +120,8 @@ Use `/reload` to refresh personas and prompts from disk without restarting. Usef
 
 - `shift+tab`: cycle reasoning effort (low/medium/high)
 - `ctrl+t`: toggle thought chain visibility
-- `ctrl+e`: expand @file mentions (materializes file contents via bash)
+- `ctrl+o`: toggle compact tool UI
+- `ctrl+f`: expand @file mentions (materializes file contents via bash)
 - `esc`: interrupt generation
 - `ctrl+c`: exit
 

@@ -364,3 +364,13 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
+
+export function truncateInline(text: string, maxChars: number): string {
+  const singleLine = text.replace(/\s+/g, " ").trim();
+  if (maxChars <= 0) return "";
+
+  const chars = Array.from(singleLine);
+  if (chars.length <= maxChars) return singleLine;
+  if (maxChars === 1) return "…";
+  return `${chars.slice(0, maxChars - 1).join("")}…`;
+}

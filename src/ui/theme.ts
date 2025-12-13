@@ -1,5 +1,8 @@
+import type { ReasoningEffort } from "@mariozechner/pi-ai";
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
 import { Chalk } from "chalk";
+import { hslToHex } from "../utils/color.js";
+import { assertNever } from "../utils/never.js";
 
 const chalk = new Chalk({ level: 3 });
 
@@ -9,133 +12,149 @@ export interface Palette {
   muted: (text: string) => string;
   dim: (text: string) => string;
   link: (text: string) => string;
+  thinking: (text: string) => string;
   codeInline: (text: string) => string;
   codeBlock: (text: string) => string;
 
   // Semantic colors
-  success: (text: string) => string;
   warn: (text: string) => string;
   error: (text: string) => string;
-  bash: (text: string) => string;
   bashRunning: (text: string) => string;
+  bashRan: (text: string) => string;
   bashOutput: (text: string) => string;
+  toolFileRan: (text: string) => string;
+  filePreview: (text: string) => string;
 
   // Diff colors
   diffAdded: (text: string) => string;
   diffRemoved: (text: string) => string;
 
-  // Notices (short system acknowledgements)
+  // Notices
   noticeSuccess: (text: string) => string;
+  noticeWarn: (text: string) => string;
+  noticeError: (text: string) => string;
 
-  // Surfaces & chrome
+  // User message
   userBg: (text: string) => string;
   userText: (text: string) => string;
-  assistantLabel: (text: string) => string;
-  systemLabel: (text: string) => string;
-  border: (text: string) => string;
 
-  // Tool access level indicators
-  accessRead: (text: string) => string;
-  accessAll: (text: string) => string;
+  // Risk level indicators
+  riskNone: (text: string) => string;
+  riskReadOnly: (text: string) => string;
+  riskReadWrite: (text: string) => string;
 }
 
 export interface Theme {
   palette: Palette;
   markdownTheme: MarkdownTheme;
   editorTheme: EditorTheme;
-  formatPersonaLabel(label: string, modelId: string): string;
 }
+
+const ACCENT_HUE = 28;
+const TEXT_HUE = 24;
+const LINK_HUE = 328;
+const CODE_HUE = 224;
+const WARN_HUE = 24;
+const ERROR_HUE = 0;
 
 const palette: Palette = {
   // Primary colors
-  accent: chalk.hex("#d4a06a"), // sand / amber
-  muted: chalk.hex("#a79f97"), // warm stone gray
-  dim: chalk.dim, // built-in dim
-  link: chalk.hex("#92a6b3"), // dusty slate-blue
-  codeInline: chalk.hex("#d8b27a"), // soft honey
-  codeBlock: chalk.hex("#9ab58d"), // muted sage (distinct from success semantics)
+  accent: chalk.hex(hslToHex(ACCENT_HUE, 92, 72)),
+  muted: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
+  dim: chalk.hex(hslToHex(TEXT_HUE, 6, 42)),
+  link: chalk.hex(hslToHex(LINK_HUE, 84, 72)),
+  thinking: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
+  codeInline: chalk.hex(hslToHex(CODE_HUE, 62, 76)),
+  codeBlock: chalk.hex(hslToHex(CODE_HUE, 62, 76)),
 
-  // Semantic colors (kept low-saturation / warm)
-  success: chalk.hex("#9ab58d"), // muted sage
-  warn: chalk.hex("#dcb076"), // soft gold
-  error: chalk.hex("#d08a7c"), // soft clay
-  bash: chalk.hex("#86afa9"), // desaturated teal
-  bashRunning: chalk.hex("#d4c87a"), // brighter yellow-gold (running state, distinct from success)
-  bashOutput: chalk.hex("#9a928a"), // warm gray for bash stdout/stderr (dim, but distinct from prose)
+  // Semantic colors
+  warn: chalk.hex(hslToHex(WARN_HUE, 76, 68)),
+  error: chalk.hex(hslToHex(ERROR_HUE, 76, 68)),
+  bashRunning: chalk.hex(hslToHex(168, 80, 72)),
+  bashRan: chalk.hex(hslToHex(192, 80, 72)),
+  bashOutput: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
+  toolFileRan: chalk.hex(hslToHex(192, 80, 72)),
+  filePreview: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
 
   // Diff colors
-  diffAdded: chalk.hex("#8fad83"), // desaturated green
-  diffRemoved: chalk.hex("#c08877"), // desaturated red
+  diffAdded: chalk.hex(hslToHex(92, 44, 56)),
+  diffRemoved: chalk.hex(hslToHex(0, 44, 56)),
 
-  // Notices (short system acknowledgements)
-  noticeSuccess: chalk.hex("#9ab58d"), // muted sage (positive acknowledgement, not diff semantics)
+  // Notices
+  noticeSuccess: chalk.hex(hslToHex(CODE_HUE, 62, 76)),
+  noticeWarn: chalk.hex(hslToHex(WARN_HUE, 76, 68)),
+  noticeError: chalk.hex(hslToHex(ERROR_HUE, 76, 68)),
 
-  // Surfaces & chrome
-  userBg: chalk.bgHex("#1a1615"), // deep warm charcoal
-  userText: chalk.hex("#e8dfd4"), // warm parchment
-  assistantLabel: chalk.hex("#9ab58d"), // same as success (assistant = good)
-  systemLabel: chalk.hex("#c4b2a3"), // subtle warm beige
-  border: chalk.hex("#3f3935"), // low-contrast warm border
+  // User message
+  userBg: chalk.bgHex(hslToHex(TEXT_HUE, 6, 12)),
+  userText: (text) => text,
 
-  // Tool access level indicators (distinct from success/warn/error semantics)
-  accessRead: chalk.hex("#8ad199"),
-  accessAll: chalk.hex("#ffc9b0"),
+  // Risk level indicators
+  riskNone: chalk.hex(hslToHex(TEXT_HUE, 6, 42)),
+  riskReadOnly: chalk.hex(hslToHex(74, 42, 48)),
+  riskReadWrite: chalk.hex(hslToHex(8, 52, 56)),
 };
 
 const markdownTheme: MarkdownTheme = {
-  heading: (text) => chalk.bold(palette.accent(text)),
-  link: (text) => palette.link(text),
-  linkUrl: (text) => palette.dim(text),
+  bold: (text) => chalk.bold(text),
   code: (text) => palette.codeInline(text),
   codeBlock: (text) => palette.codeBlock(text),
-  codeBlockBorder: (text) => palette.muted(text),
-  quote: (text) => chalk.italic(palette.muted(text)),
-  quoteBorder: (text) => palette.muted(text),
-  hr: (text) => palette.muted(text),
-  listBullet: (text) => palette.accent(text),
-  bold: (text) => chalk.bold(text),
+  codeBlockBorder: (text) => palette.dim(text),
+  heading: (text) => chalk.bold(palette.accent(text)),
+  hr: (text) => palette.dim(text),
   italic: (text) => chalk.italic(text),
+  link: (text) => palette.link(text),
+  linkUrl: (text) => palette.dim(text),
+  listBullet: (text) => palette.accent(text),
+  quote: (text) => chalk.italic(palette.muted(text)),
+  quoteBorder: (text) => palette.dim(text),
   strikethrough: (text) => chalk.strikethrough(text),
   underline: (text) => chalk.underline(text),
 };
 
 const selectListTheme: SelectListTheme = {
-  selectedPrefix: (text) => palette.accent(text),
+  selectedPrefix: (text) => chalk.bold(palette.accent(text)),
   selectedText: (text) => chalk.bold(palette.accent(text)),
   description: (text) => palette.muted(text),
-  scrollInfo: (text) => palette.muted(text),
+  scrollInfo: (text) => palette.dim(text),
   noMatch: (text) => palette.muted(text),
 };
 
 const editorTheme: EditorTheme = {
-  borderColor: (text) => palette.border(text),
+  borderColor: (text) => editorBorderForReasoning("none")(text),
   selectList: selectListTheme,
 };
 
 export const theme: Theme = {
-  palette,
-  markdownTheme,
-  editorTheme,
-  formatPersonaLabel: (label: string, modelId: string) =>
-    `${palette.accent(label)} ${palette.muted(`(${modelId})`)}`,
+  palette: palette,
+  markdownTheme: markdownTheme,
+  editorTheme: editorTheme,
 };
 
-export function editorBorderForReasoning(reasoning?: string): (text: string) => string {
-  // Ramps both lightness and saturation with effort, ending near the heading
-  // accent color (#d4a06a) at xhigh.
-  switch (reasoning) {
+export function editorBorderForReasoning(effort?: ReasoningEffort): (text: string) => string {
+  const [MIN_H, MAX_H] = [20, 28];
+  const [MIN_S, MAX_S] = [8, 76];
+  const [MIN_L, MAX_L] = [24, 52];
+  const [RANGE_H, RANGE_S, RANGE_L] = [MAX_H - MIN_H, MAX_S - MIN_S, MAX_L - MIN_L];
+  const h = (x: number) => MIN_H + RANGE_H * x;
+  const s = (x: number) => MIN_S + RANGE_S * x;
+  const l = (x: number) => MIN_L + RANGE_L * x;
+  switch (effort) {
+    case undefined:
+    case "none":
+      return chalk.hex(hslToHex(h(0), s(0), l(0)));
     case "minimal":
-      return chalk.hex("#6f6259");
+      return chalk.hex(hslToHex(h(0.2), s(0.2), l(0.2)));
     case "low":
-      return chalk.hex("#8a7260");
+      return chalk.hex(hslToHex(h(0.4), s(0.4), l(0.4)));
     case "medium":
-      return chalk.hex("#a98064");
+      return chalk.hex(hslToHex(h(0.6), s(0.6), l(0.6)));
     case "high":
-      return chalk.hex("#c19268");
+      return chalk.hex(hslToHex(h(0.8), s(0.8), l(0.8)));
     case "xhigh":
-      return chalk.hex("#d0a06a");
+      return chalk.hex(hslToHex(h(1), s(1), l(1)));
     default:
-      return palette.border;
+      assertNever(effort);
   }
 }
 

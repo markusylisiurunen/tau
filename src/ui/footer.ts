@@ -57,13 +57,11 @@ export class FooterComponent implements Component {
       const availableLeft = Math.max(0, width - 1 - iconWidth - 1 - rightWidth - 1);
       const truncatedLeft = truncateToWidth(this.left, availableLeft);
 
-      // Keep left dimmed, but preserve any semantic colors embedded in `right`.
-      line = ` ${icon} ${theme.palette.dim(truncatedLeft)} ${this.right}`;
+      line = ` ${icon} ${truncatedLeft} ${this.right}`;
     } else {
       const spaces = " ".repeat(Math.max(1, width - 1 - iconWidth - 1 - leftWidth - rightWidth));
 
-      // Keep left dimmed, but preserve any semantic colors embedded in `right`.
-      line = ` ${icon} ${theme.palette.dim(this.left + spaces)}${this.right}`;
+      line = ` ${icon} ${this.left + spaces}${this.right}`;
     }
 
     return [line];

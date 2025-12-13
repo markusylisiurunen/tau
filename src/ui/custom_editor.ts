@@ -3,9 +3,10 @@ import { Editor } from "@mariozechner/pi-tui";
 export class CustomEditor extends Editor {
   public onCtrlC?: () => void;
   public onCtrlT?: () => void;
+  public onCtrlO?: () => void;
   public onEscape?: () => void;
   public onShiftTab?: () => void;
-  public onCtrlE?: () => void;
+  public onCtrlF?: () => void;
 
   handleInput(data: string): void {
     if ((data === "\x1b[Z" || data === "\x1b[1;2Z") && this.onShiftTab) {
@@ -23,8 +24,13 @@ export class CustomEditor extends Editor {
       return;
     }
 
-    if (data === "\x05" && this.onCtrlE && !this.isShowingAutocomplete()) {
-      this.onCtrlE();
+    if (data === "\x0f" && this.onCtrlO && !this.isShowingAutocomplete()) {
+      this.onCtrlO();
+      return;
+    }
+
+    if (data === "\x06" && this.onCtrlF && !this.isShowingAutocomplete()) {
+      this.onCtrlF();
       return;
     }
 

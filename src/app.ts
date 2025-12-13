@@ -21,18 +21,14 @@ import { ToolRegistry } from "./tools/registry.js";
 import { createWriteToolDefinition } from "./tools/write.js";
 import { type Persona, REASONING_LEVELS, type RiskLevel } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
-import {
-  BashBlockedComponent,
-  BashExecutionComponent,
-  BashRunningComponent,
-} from "./ui/bash_execution.js";
+import { renderBashBlocked, renderBashExecution, renderBashRunning } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import { CustomEditor } from "./ui/custom_editor.js";
 import {
-  EditBlockedComponent,
-  EditSuccessComponent,
-  WriteBlockedComponent,
-  WriteSuccessComponent,
+  renderEditBlocked,
+  renderEditSuccess,
+  renderWriteBlocked,
+  renderWriteSuccess,
 } from "./ui/file_execution.js";
 import { FooterComponent } from "./ui/footer.js";
 import { SessionDividerComponent } from "./ui/session_divider.js";
@@ -84,6 +80,7 @@ export class ChatApp {
   private isStreaming = false;
   private isBashMode = false;
   private showThinking = false;
+  private compactToolUi = true;
   private currentTurnAbort?: AbortController;
   private riskLevel: RiskLevel = "read-only";
   private readonly initialRiskLevel: RiskLevel;
@@ -101,6 +98,7 @@ export class ChatApp {
     this.prompts = options.prompts ?? [];
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
+    this.compactToolUi = this.config.toolDisplayMode !== "full";
 
     if (options.initialRiskLevel) {
       this.riskLevel = options.initialRiskLevel;
@@ -153,6 +151,7 @@ export class ChatApp {
 
     this.ui = new TUI(createAppTerminal(Boolean(this.initialUserMessage)));
     this.chatContainer = new ChatContainerComponent();
+    this.chatContainer.setCompactToolUi(this.compactToolUi);
     this.footer = new FooterComponent(this.ui);
     this.editor = new CustomEditor(theme.editorTheme);
 
@@ -183,11 +182,15 @@ export class ChatApp {
       process.exit(0);
     };
     this.editor.onCtrlT = () => this.toggleThinkingVisibility();
+    this.editor.onCtrlO = () => this.toggleCompactToolUi();
     this.editor.onShiftTab = () => this.cycleReasoningLevel();
     this.editor.onEscape = () => this.interruptAssistantTurn();
-    this.editor.onCtrlE = () => {
+    this.editor.onCtrlF = () => {
       this.expandFileMentions().catch((err) => {
-        this.addSystemMessage(`file expansion failed: ${(err as Error).message}`, palette.error);
+        this.addSystemMessage(
+          `file expansion failed: ${(err as Error).message}`,
+          palette.noticeError,
+        );
       });
     };
 
@@ -231,9 +234,12 @@ export class ChatApp {
     const sessionCost = this.getSessionCostString();
     const cwd = formatCwd(process.cwd());
 
-    const left = `${cwd} · ${contextUsage} · ${sessionCost}`;
+    const left = palette.dim(`${cwd} · ${contextUsage} · ${sessionCost}`);
     const personaName = this.currentPersona.label || this.currentPersona.id;
-    const right = `${personaName} · ${this.currentPersona.model.id} (${reasoningLabel}) · ${toolLabel}`;
+    const statusPart = palette.dim(
+      `${personaName} · ${this.currentPersona.model.id} (${reasoningLabel}) · `,
+    );
+    const right = `${statusPart}${toolLabel}`;
 
     this.footer.setLeftRight(left, right);
     this.ui.requestRender();
@@ -242,24 +248,24 @@ export class ChatApp {
   private formatRiskLevelLabel(): string {
     switch (this.riskLevel) {
       case "none":
-        return "none";
+        return palette.riskNone("none");
       case "read-only":
-        return palette.accessRead("read-only");
+        return palette.riskReadOnly("read");
       case "read-write":
-        return palette.accessAll("read-write");
+        return palette.riskReadWrite("write");
     }
   }
 
   private updateEditorBorderColor(): void {
     if (this.isBashMode) {
-      this.editor.borderColor = (s: string) => palette.bash(s);
+      this.editor.borderColor = (s: string) => palette.bashRan(s);
     } else {
       this.editor.borderColor = editorBorderForReasoning(this.currentPersona.settings.reasoning);
     }
     this.ui.requestRender();
   }
 
-  private addSystemMessage(text: string, styleFn?: (t: string) => string): void {
+  private addSystemMessage(text: string, styleFn: (t: string) => string): void {
     this.chatContainer.addMessage(new SystemMessageComponent(text, styleFn));
     this.ui.requestRender();
   }
@@ -386,14 +392,24 @@ export class ChatApp {
     const message = this.showThinking
       ? "thoughts visible (ctrl+t to hide)"
       : "thoughts hidden (ctrl+t to show)";
-    this.addSystemMessage(message, palette.muted);
+    this.addSystemMessage(message, palette.noticeSuccess);
+    this.ui.requestRender();
+  }
+
+  private toggleCompactToolUi(): void {
+    this.compactToolUi = !this.compactToolUi;
+    this.chatContainer.setCompactToolUi(this.compactToolUi);
+    const message = this.compactToolUi
+      ? "compact tool UI enabled (ctrl+o to disable)"
+      : "compact tool UI disabled (ctrl+o to enable)";
+    this.addSystemMessage(message, palette.noticeSuccess);
     this.ui.requestRender();
   }
 
   private interruptAssistantTurn(): void {
     if (!this.isStreaming || this.currentTurnAbort?.signal.aborted) return;
     this.currentTurnAbort?.abort();
-    this.addSystemMessage("interrupted.", palette.muted);
+    this.addSystemMessage("interrupted.", palette.noticeSuccess);
     this.ui.requestRender();
   }
 
@@ -485,25 +501,25 @@ export class ChatApp {
         break;
 
       case "unknown":
-        this.addSystemMessage("unknown command. type /help.");
+        this.addSystemMessage("unknown command. type /help.", palette.noticeError);
         break;
     }
   }
 
   private showHelp(): void {
-    this.addSystemMessage(buildHelpText(this.agentsFiles));
+    this.addSystemMessage(buildHelpText(this.agentsFiles), palette.noticeSuccess);
   }
 
   private async copyLastAssistantMessage(): Promise<void> {
     const lastAssistant = this.getLastAssistantMessage();
     if (!lastAssistant) {
-      this.addSystemMessage("no assistant message to copy yet.");
+      this.addSystemMessage("no assistant message to copy yet.", palette.noticeWarn);
       return;
     }
 
     const text = extractAssistantText(lastAssistant);
     if (!text.trim()) {
-      this.addSystemMessage("last assistant message was empty.");
+      this.addSystemMessage("last assistant message was empty.", palette.noticeWarn);
       return;
     }
 
@@ -511,21 +527,24 @@ export class ChatApp {
       await copyTextToClipboard(text);
       this.addSystemMessage("copied last assistant message to clipboard.", palette.noticeSuccess);
     } catch (err) {
-      this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, palette.error);
+      this.addSystemMessage(
+        `clipboard copy failed: ${(err as Error).message}`,
+        palette.noticeError,
+      );
     }
   }
 
   private async copyLastAssistantCodeBlock(): Promise<void> {
     const lastAssistant = this.getLastAssistantMessage();
     if (!lastAssistant) {
-      this.addSystemMessage("no assistant message to copy yet.");
+      this.addSystemMessage("no assistant message to copy yet.", palette.noticeWarn);
       return;
     }
 
     const text = extractAssistantText(lastAssistant);
     const code = extractAllFencedCodeBlocks(text);
     if (!code) {
-      this.addSystemMessage("no code block to copy yet.");
+      this.addSystemMessage("no code block to copy yet.", palette.noticeWarn);
       return;
     }
 
@@ -533,7 +552,10 @@ export class ChatApp {
       await copyTextToClipboard(code);
       this.addSystemMessage("copied all code blocks to clipboard.", palette.noticeSuccess);
     } catch (err) {
-      this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, palette.error);
+      this.addSystemMessage(
+        `clipboard copy failed: ${(err as Error).message}`,
+        palette.noticeError,
+      );
     }
   }
 
@@ -570,11 +592,11 @@ export class ChatApp {
   private async forkSession(): Promise<void> {
     const history = this.engine.history;
     if (history.length === 0) {
-      this.addSystemMessage("no conversation to fork.");
+      this.addSystemMessage("no conversation to fork.", palette.noticeWarn);
       return;
     }
 
-    this.addSystemMessage("summarizing session...", palette.muted);
+    this.addSystemMessage("summarizing session...", palette.noticeSuccess);
     this.isStreaming = true;
     this.editor.disableSubmit = true;
     this.footer.startWorkingIcon();
@@ -655,7 +677,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         palette.noticeSuccess,
       );
     } catch (err) {
-      this.addSystemMessage(`fork failed: ${(err as Error).message}`, palette.error);
+      this.addSystemMessage(`fork failed: ${(err as Error).message}`, palette.noticeError);
     } finally {
       this.footer.stop();
       this.isStreaming = false;
@@ -675,14 +697,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
 
     const details = getRiskLevelDescription(level);
-    this.addSystemMessage(`risk level set to '${level}': ${details}`, palette.systemLabel);
+    this.addSystemMessage(`risk level set to '${level}': ${details}`, palette.noticeSuccess);
   }
 
   private switchPersona(id: string): void {
     const persona = this.personas.find((p) => p.id.toLowerCase() === id.toLowerCase());
 
     if (!persona) {
-      this.addSystemMessage(`unknown persona '${id}'.`);
+      this.addSystemMessage(`unknown persona '${id}'.`, palette.noticeError);
       return;
     }
 
@@ -698,14 +720,15 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.updateFooter();
     this.updateEditorBorderColor();
     this.addSystemMessage(
-      `switched to ${theme.formatPersonaLabel(persona.label, persona.model.id)}`,
+      `switched to ${persona.label} (${persona.model.id})`,
+      palette.noticeSuccess,
     );
   }
 
   private insertPrompt(id: string): void {
     const prompt = this.prompts.find((p) => p.id.toLowerCase() === id.toLowerCase());
     if (!prompt) {
-      this.addSystemMessage(`unknown prompt '${id}'.`);
+      this.addSystemMessage(`unknown prompt '${id}'.`, palette.noticeError);
       return;
     }
     this.editor.setText(prompt.template);
@@ -716,7 +739,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     if (this.isStreaming) {
       this.addSystemMessage(
         "cannot reload while streaming. try again after the response.",
-        palette.muted,
+        palette.noticeWarn,
       );
       return;
     }
@@ -742,7 +765,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         this.clampPersonaReasoning(this.currentPersona);
         this.addSystemMessage(
           `previous persona no longer available; switched to ${this.currentPersona.label || this.currentPersona.id}.`,
-          palette.warn,
+          palette.noticeWarn,
         );
       }
 
@@ -771,7 +794,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.addSystemMessage(summary, palette.noticeSuccess);
       this.ui.requestRender();
     } catch (err) {
-      this.addSystemMessage(`reload failed: ${(err as Error).message}`, palette.error);
+      this.addSystemMessage(`reload failed: ${(err as Error).message}`, palette.noticeError);
     }
   }
 
@@ -861,8 +884,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
             const uiEvent = event.uiEvent;
             if (uiEvent.type === "bash_started") {
               // Create and add the running component, storing its index
-              const runningComponent = new BashRunningComponent(uiEvent.command);
-              const index = this.chatContainer.addMessage(runningComponent);
+              const index = this.chatContainer.addToolMessage((compact) =>
+                renderBashRunning(uiEvent.command, compact),
+              );
               this.runningBashComponents.set(uiEvent.toolCallId, index);
               this.ui.requestRender();
             } else if (uiEvent.type === "bash_execution") {
@@ -870,20 +894,23 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const runningIndex = this.runningBashComponents.get(uiEvent.toolCallId);
               if (runningIndex !== undefined) {
                 // Replace the running component with the finished execution component
-                const finishedComponent = new BashExecutionComponent(
-                  uiEvent.command,
-                  uiEvent.exitCode,
-                  uiEvent.truncationInfo,
-                );
-                this.chatContainer.replaceMessageAtIndex(runningIndex, finishedComponent);
-                this.runningBashComponents.delete(uiEvent.toolCallId);
-              } else {
-                // Fallback: add as new component if no running component found
-                this.chatContainer.addMessage(
-                  new BashExecutionComponent(
+                this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
+                  renderBashExecution(
                     uiEvent.command,
                     uiEvent.exitCode,
                     uiEvent.truncationInfo,
+                    compact,
+                  ),
+                );
+                this.runningBashComponents.delete(uiEvent.toolCallId);
+              } else {
+                // Fallback: add as new component if no running component found
+                this.chatContainer.addToolMessage((compact) =>
+                  renderBashExecution(
+                    uiEvent.command,
+                    uiEvent.exitCode,
+                    uiEvent.truncationInfo,
+                    compact,
                   ),
                 );
               }
@@ -894,54 +921,56 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                 const runningIndex = this.runningBashComponents.get(uiEvent.toolCallId);
                 if (runningIndex !== undefined) {
                   // Replace the running component with the blocked component
-                  const blockedComponent = new BashBlockedComponent(
-                    uiEvent.command,
-                    uiEvent.reason,
+                  this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
+                    renderBashBlocked(uiEvent.command, uiEvent.reason, compact),
                   );
-                  this.chatContainer.replaceMessageAtIndex(runningIndex, blockedComponent);
                   this.runningBashComponents.delete(uiEvent.toolCallId);
                 } else {
                   // Fallback: add as new component if no running component found
-                  this.chatContainer.addMessage(
-                    new BashBlockedComponent(uiEvent.command, uiEvent.reason),
+                  this.chatContainer.addToolMessage((compact) =>
+                    renderBashBlocked(uiEvent.command, uiEvent.reason, compact),
                   );
                 }
               } else {
                 // Pre-acceptance blocked event; just append as before
-                this.chatContainer.addMessage(
-                  new BashBlockedComponent(uiEvent.command, uiEvent.reason),
+                this.chatContainer.addToolMessage((compact) =>
+                  renderBashBlocked(uiEvent.command, uiEvent.reason, compact),
                 );
               }
               this.ui.requestRender();
             } else if (uiEvent.type === "write_success") {
-              this.chatContainer.addMessage(
-                new WriteSuccessComponent(
+              this.chatContainer.addToolMessage((compact) =>
+                renderWriteSuccess(
                   uiEvent.path,
                   uiEvent.bytes,
                   uiEvent.lines,
                   uiEvent.preview,
                   uiEvent.previewTruncation,
+                  compact,
                 ),
               );
               this.ui.requestRender();
             } else if (uiEvent.type === "write_blocked") {
-              this.chatContainer.addMessage(
-                new WriteBlockedComponent(uiEvent.path, uiEvent.reason),
+              this.chatContainer.addToolMessage((compact) =>
+                renderWriteBlocked(uiEvent.path, uiEvent.reason, compact),
               );
               this.ui.requestRender();
             } else if (uiEvent.type === "edit_success") {
-              this.chatContainer.addMessage(
-                new EditSuccessComponent(
+              this.chatContainer.addToolMessage((compact) =>
+                renderEditSuccess(
                   uiEvent.path,
                   uiEvent.oldLength,
                   uiEvent.newLength,
                   uiEvent.diff,
                   uiEvent.diffTruncation,
+                  compact,
                 ),
               );
               this.ui.requestRender();
             } else if (uiEvent.type === "edit_blocked") {
-              this.chatContainer.addMessage(new EditBlockedComponent(uiEvent.path, uiEvent.reason));
+              this.chatContainer.addToolMessage((compact) =>
+                renderEditBlocked(uiEvent.path, uiEvent.reason, compact),
+              );
               this.ui.requestRender();
             }
             break;
@@ -950,10 +979,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
           case "notice": {
             const style =
               event.severity === "error"
-                ? palette.error
+                ? palette.noticeError
                 : event.severity === "warn"
-                  ? palette.warn
-                  : palette.muted;
+                  ? palette.noticeWarn
+                  : palette.noticeSuccess;
             this.addSystemMessage(event.text, style);
             break;
           }
@@ -963,7 +992,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         }
       }
     } catch (err) {
-      this.addSystemMessage(`error: ${(err as Error).message}`, palette.error);
+      this.addSystemMessage(`error: ${(err as Error).message}`, palette.noticeError);
     } finally {
       this.footer.stop();
       this.isStreaming = false;
@@ -989,13 +1018,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       } = await executeBashTool(command);
       const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated);
 
-      this.chatContainer.addMessage(new BashExecutionComponent(command, exitCode, truncationInfo));
+      this.chatContainer.addMessage(renderBashExecution(command, exitCode, truncationInfo, false));
 
       this.engine.addUserText(formatBashUserMessageText({ command, truncationInfo }));
 
       this.ui.requestRender();
     } catch (err) {
-      this.addSystemMessage(`bash error: ${(err as Error).message}`, palette.error);
+      this.addSystemMessage(`bash error: ${(err as Error).message}`, palette.noticeError);
     } finally {
       this.isStreaming = false;
       this.editor.disableSubmit = false;
@@ -1003,7 +1032,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
   }
 
-  // File Expansion (ctrl+e) -----------------------------------------------------------------------
+  // File Expansion (ctrl+f) -----------------------------------------------------------------------
 
   private shellQuote(path: string): string {
     // Wrap in single quotes and escape any single quotes within the path
@@ -1014,7 +1043,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     if (this.isStreaming) {
       this.addSystemMessage(
         "cannot expand files while streaming. try again after the response.",
-        palette.muted,
+        palette.noticeWarn,
       );
       return;
     }

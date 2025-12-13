@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { KnownProvider } from "@mariozechner/pi-ai";
 
+export type ToolDisplayMode = "compact" | "full";
+
 export interface Config {
   apiKeys?: {
     anthropic?: string;
@@ -10,6 +12,7 @@ export interface Config {
     openai?: string;
   };
   userPreferences?: string;
+  toolDisplayMode?: ToolDisplayMode;
 }
 
 export function loadConfig(): Config {
@@ -23,7 +26,14 @@ export function loadConfig(): Config {
 
     const content = readFileSync(configPath, "utf-8");
     const config = JSON.parse(content) as Config;
-    return typeof config === "object" && config !== null ? config : {};
+    if (typeof config !== "object" || config === null) return {};
+
+    const mode = config.toolDisplayMode;
+    if (mode !== undefined && mode !== "compact" && mode !== "full") {
+      delete config.toolDisplayMode;
+    }
+
+    return config;
   } catch (err) {
     // If there's an error reading or parsing, silently return empty config
     return {};

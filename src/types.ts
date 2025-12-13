@@ -10,11 +10,6 @@ export interface Persona {
   model: Model<Api>;
   systemPrompt: string;
   settings: SimpleStreamOptions;
-  /**
-   * Allowed reasoning (thinking) levels for this persona.
-   * Use "none" to represent no reasoning (omit provider reasoning options).
-   * If omitted, defaults to all supported levels for the model.
-   */
   allowedReasoningLevels?: AllowedReasoningLevel[];
   tools?: Tool[];
 }

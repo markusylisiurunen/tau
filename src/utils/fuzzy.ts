@@ -1,7 +1,3 @@
-// Lightweight fuzzy search.
-// Matches if all query characters appear in order (not necessarily consecutive).
-// Lower score = better match.
-
 export interface FuzzyMatch {
   matches: boolean;
   score: number;

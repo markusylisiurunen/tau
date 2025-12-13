@@ -1,39 +1,63 @@
-import { type Component, Container, Spacer, Text } from "@mariozechner/pi-tui";
-import { formatBytes, type TruncationResult } from "../utils/truncate.js";
+import { type Component, Container, Text } from "@mariozechner/pi-tui";
+import {
+  formatBytes,
+  type TruncationResult,
+  truncateMiddle,
+  truncateMiddleForModel,
+} from "../utils/truncate.js";
 import { theme } from "./theme.js";
+
+export const BASH_DISPLAY_MAX_LINES = 32;
+export const BASH_DISPLAY_MAX_BYTES = 50 * 1024; // 50KB
+
+export const BASH_MODEL_MAX_LINES = 10_000;
+export const BASH_MODEL_MAX_BYTES = 1024 * 1024; // 1MB
+export const BASH_MODEL_BYTES_PER_TOKEN = 4;
+
+export interface BashTruncationInfo {
+  display: TruncationResult;
+  model: TruncationResult;
+  captureTruncated: boolean;
+}
+
+export function prepareBashOutput(
+  rawOutput: string,
+  captureTruncated: boolean,
+): BashTruncationInfo {
+  const modelTruncation = truncateMiddleForModel(rawOutput, {
+    maxLines: BASH_MODEL_MAX_LINES,
+    maxBytes: BASH_MODEL_MAX_BYTES,
+    bytesPerTokenApprox: BASH_MODEL_BYTES_PER_TOKEN,
+  });
+
+  const displayTruncation = truncateMiddle(modelTruncation.content, {
+    maxLines: BASH_DISPLAY_MAX_LINES,
+    maxBytes: BASH_DISPLAY_MAX_BYTES,
+  });
+
+  return {
+    display: displayTruncation,
+    model: modelTruncation,
+    captureTruncated,
+  };
+}
 
 class DynamicBorder implements Component {
   constructor(private color: (s: string) => string) {}
 
-  invalidate(): void {}
+  invalidate() {}
 
-  render(width: number): string[] {
+  render(width: number) {
     return [this.color("─".repeat(Math.max(1, width)))];
   }
 }
 
-/**
- * Non-streaming bash execution block.
- * Shows a bash-colored border, the command, and captured output.
- */
 export class BashExecutionComponent extends Container {
-  constructor(
-    command: string,
-    output: string,
-    exitCode: number | null,
-    truncation: TruncationResult,
-    captureTruncated = false,
-    modelTruncation?: TruncationResult,
-    modelCaptureTruncated = false,
-    includeTopSpacer = true,
-  ) {
+  constructor(command: string, exitCode: number | null, truncationInfo: BashTruncationInfo) {
     super();
     const { palette } = theme;
     const bashColor = (s: string) => palette.bash(s);
 
-    if (includeTopSpacer) {
-      this.addChild(new Spacer(1));
-    }
     this.addChild(new DynamicBorder(bashColor));
 
     const content = new Container();
@@ -42,43 +66,29 @@ export class BashExecutionComponent extends Container {
     const header = `\u001b[1m$ ${command}\u001b[22m`;
     content.addChild(new Text(bashColor(header), 1, 0));
 
-    const out = output.trimEnd();
+    const out = truncationInfo.display.content.trimEnd();
     if (out) {
       content.addChild(new Text(`\n${palette.muted(out)}`, 1, 0));
     }
 
-    if (truncation.truncated || captureTruncated) {
-      const shown = `${truncation.outputLines} lines / ${formatBytes(truncation.outputBytes)}`;
-      const total = `${truncation.totalLines} lines / ${formatBytes(truncation.totalBytes)}`;
-      const reason = captureTruncated
-        ? "capture limit reached"
-        : `truncated by ${truncation.truncatedBy}`;
-      content.addChild(
-        new Text(
-          `\n${palette.dim(`… output truncated (${reason}; showing first ${shown} of ${total})`)}`,
-          1,
-          0,
-        ),
-      );
+    const { display, model, captureTruncated } = truncationInfo;
+
+    let truncatedNoticeAdded = false;
+    if (display.truncated || captureTruncated) {
+      truncatedNoticeAdded = true;
+      const shown = `${display.outputLines} lines (${formatBytes(display.outputBytes)})`;
+      const total = `${display.totalLines} lines (${formatBytes(display.totalBytes)})`;
+      const icon = palette.warn("◆");
+      const msg = palette.dim(`truncated: ${shown} of ${total}`);
+      content.addChild(new Text(`\n${icon} ${msg}`, 1, 0));
     }
 
-    if (modelTruncation && (modelTruncation.truncated || modelCaptureTruncated)) {
-      const shown = `${modelTruncation.outputLines} lines / ${formatBytes(
-        modelTruncation.outputBytes,
-      )}`;
-      const total = `${modelTruncation.totalLines} lines / ${formatBytes(modelTruncation.totalBytes)}`;
-      const reason = modelCaptureTruncated
-        ? "capture limit reached"
-        : `truncated by ${modelTruncation.truncatedBy}`;
-      content.addChild(
-        new Text(
-          `\n${palette.dim(
-            `… model context truncated (${reason}; first ${shown} sent of ${total})`,
-          )}`,
-          1,
-          0,
-        ),
-      );
+    if (model.truncated || captureTruncated) {
+      const shown = `${model.outputLines} lines (${formatBytes(model.outputBytes)})`;
+      const total = `${model.totalLines} lines (${formatBytes(model.totalBytes)})`;
+      const icon = palette.warn("◆");
+      const msg = palette.warn(`truncated for model: ${shown} of ${total}`);
+      content.addChild(new Text(`${!truncatedNoticeAdded ? "\n" : ""}${icon} ${msg}`, 1, 0));
     }
 
     if (exitCode !== null && exitCode !== 0) {
@@ -89,19 +99,12 @@ export class BashExecutionComponent extends Container {
   }
 }
 
-/**
- * Bash tool block shown when a model tool call is blocked.
- * Uses error colors and includes the command and reason.
- */
 export class BashBlockedComponent extends Container {
-  constructor(command: string, reason: string, includeTopSpacer = true) {
+  constructor(command: string, reason: string) {
     super();
     const { palette } = theme;
     const errorColor = (s: string) => palette.error(s);
 
-    if (includeTopSpacer) {
-      this.addChild(new Spacer(1));
-    }
     this.addChild(new DynamicBorder(errorColor));
 
     const content = new Container();

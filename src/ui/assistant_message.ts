@@ -4,13 +4,15 @@ import { theme } from "./theme.js";
 
 export class AssistantMessageComponent extends Container {
   private contentContainer: Container;
-  private hideThinking = false;
-  private leadingSpacer = true;
-  private lastMessage?: AssistantMessage;
+  private thoughtsVisible: boolean;
+  private currentMessage: AssistantMessage | null = null;
 
-  constructor(message?: AssistantMessage) {
+  constructor(message?: AssistantMessage, thoughtsVisible = false) {
     super();
+
     this.contentContainer = new Container();
+    this.thoughtsVisible = thoughtsVisible;
+
     this.addChild(this.contentContainer);
 
     if (message) {
@@ -18,18 +20,15 @@ export class AssistantMessageComponent extends Container {
     }
   }
 
-  setHideThinking(hide: boolean) {
-    this.hideThinking = hide;
-    if (this.lastMessage) {
-      this.updateFromMessage(this.lastMessage);
+  setThinkingVisibility(visible: boolean): void {
+    this.thoughtsVisible = visible;
+
+    if (this.currentMessage !== null) {
+      this.updateFromMessage(this.currentMessage);
     }
   }
 
-  setLeadingSpacer(enabled: boolean) {
-    this.leadingSpacer = enabled;
-  }
-
-  updatePartial(text: string, thinking?: string) {
+  updatePartial(text: string, thinking?: string): void {
     const partial: AssistantMessage = {
       role: "assistant",
       api: "openai-responses",
@@ -54,67 +53,42 @@ export class AssistantMessageComponent extends Container {
   }
 
   updateFromMessage(message: AssistantMessage): void {
-    this.lastMessage = message;
-    this.contentContainer.clear();
+    const { palette, markdownTheme } = theme;
 
-    if (
-      this.leadingSpacer &&
-      message.content.length > 0 &&
-      message.content.some(
-        (c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
-      )
-    ) {
-      this.contentContainer.addChild(new Spacer(1));
-    }
+    this.currentMessage = message;
+    this.contentContainer.clear();
 
     for (let i = 0; i < message.content.length; i++) {
       const content = message.content[i]!;
-      if (content.type === "text" && content.text.trim()) {
-        this.contentContainer.addChild(
-          new Markdown(content.text.trim(), 1, 0, theme.markdownTheme),
-        );
-        continue;
-      }
 
-      if (content.type === "thinking" && content.thinking.trim()) {
-        if (this.hideThinking) {
-          // Thinking is hidden unless toggled on.
-          continue;
-        }
+      if (this.thoughtsVisible && content.type === "thinking" && content.thinking.trim()) {
+        this.contentContainer.addChild(
+          new Markdown(content.thinking.trim(), 1, 0, markdownTheme, {
+            color: (t: string) => palette.muted(t),
+            italic: true,
+          }),
+        );
 
         const hasTextAfter = message.content
           .slice(i + 1)
           .some((c) => c.type === "text" && c.text.trim());
+        if (hasTextAfter) {
+          this.contentContainer.addChild(new Spacer(1));
+        }
+      }
 
-        const thinkingText = normalizeEscapedNewlines(content.thinking).trim();
-
-        this.contentContainer.addChild(
-          new Markdown(thinkingText, 1, 0, theme.markdownTheme, {
-            color: (t: string) => theme.palette.muted(t),
-            italic: true,
-          }),
-        );
-        if (hasTextAfter) this.contentContainer.addChild(new Spacer(1));
+      if (content.type === "text" && content.text.trim()) {
+        this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, markdownTheme));
       }
     }
 
     if (message.stopReason === "aborted") {
-      this.contentContainer.addChild(new Text(theme.palette.warn("\nAborted"), 1, 0));
-    } else if (message.stopReason === "error") {
-      const errorMsg = message.errorMessage || "Unknown error";
       this.contentContainer.addChild(new Spacer(1));
-      this.contentContainer.addChild(new Text(theme.palette.error(`Error: ${errorMsg}`), 1, 0));
+      this.contentContainer.addChild(new Text(palette.warn("aborted"), 1, 0));
+    } else if (message.stopReason === "error") {
+      const errorMsg = message.errorMessage || "unknown error";
+      this.contentContainer.addChild(new Spacer(1));
+      this.contentContainer.addChild(new Text(palette.error(`error: ${errorMsg}`), 1, 0));
     }
   }
-}
-
-function normalizeEscapedNewlines(text: string): string {
-  // Some providers/models occasionally emit "\n" sequences literally instead of actual newlines.
-  // Only unescape when there are no real newlines present to avoid breaking legitimate backslashes.
-  const hasRealNewlines = text.includes("\n");
-  const hasEscapedNewlines = text.includes("\\n");
-  if (hasEscapedNewlines && !hasRealNewlines) {
-    return text.replaceAll("\\n", "\n");
-  }
-  return text;
 }

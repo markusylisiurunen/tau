@@ -26,8 +26,8 @@ Questions:
 export const prompts: PromptTemplate[] = [
   {
     id: "review",
-    label: "Code review",
-    description: "Ask for a thorough code review",
+    label: "code review",
+    description: "ask for a thorough code review",
     template: TEMPLATE_CODE_REVIEW,
   },
 ];

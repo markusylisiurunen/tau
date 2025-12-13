@@ -32,7 +32,7 @@ function resolvePersonaId(raw: string, personas: Persona[]): string | undefined 
 function parseReasoning(raw: string): ReasoningEffort | undefined {
   const normalized = raw.trim().toLowerCase();
   if (!normalized) {
-    throw new CliError("Missing value for --reasoning");
+    throw new CliError("missing value for --reasoning");
   }
   if (normalized === "default" || normalized === "auto" || normalized === "none") {
     return undefined;
@@ -41,19 +41,19 @@ function parseReasoning(raw: string): ReasoningEffort | undefined {
     return normalized as ReasoningEffort;
   }
   const allowed = [...REASONING_LEVELS, "default"].join(", ");
-  throw new CliError(`Invalid reasoning level '${raw}'. Allowed levels: ${allowed}`);
+  throw new CliError(`invalid reasoning level '${raw}'. allowed levels: ${allowed}`);
 }
 
 function parseToolAccessLevel(raw: string): ToolAccessLevel {
   const normalized = raw.trim().toLowerCase();
   if (!normalized) {
-    throw new CliError("Missing value for --tool");
+    throw new CliError("missing value for --tool");
   }
   if ((TOOL_LEVELS as string[]).includes(normalized)) {
     return normalized as ToolAccessLevel;
   }
   const allowed = TOOL_LEVELS.join(", ");
-  throw new CliError(`Invalid tool level '${raw}'. Allowed levels: ${allowed}`);
+  throw new CliError(`invalid tool level '${raw}'. allowed levels: ${allowed}`);
 }
 
 function parseValue(
@@ -65,14 +65,14 @@ function parseValue(
   if (eqIndex !== -1) {
     const value = arg.slice(eqIndex + 1);
     if (!value) {
-      throw new CliError(`Missing value for ${arg.slice(0, eqIndex)}`);
+      throw new CliError(`missing value for ${arg.slice(0, eqIndex)}`);
     }
     return { value, nextIndex: index };
   }
 
   const next = argv[index + 1];
   if (!next || next.startsWith("-")) {
-    throw new CliError(`Missing value for ${arg}`);
+    throw new CliError(`missing value for ${arg}`);
   }
   return { value: next, nextIndex: index + 1 };
 }
@@ -104,7 +104,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       const resolved = resolvePersonaId(value, personas);
       if (!resolved) {
         const available = personas.map((p) => p.id).join(", ");
-        throw new CliError(`Unknown persona '${value}'. Available personas: ${available}`);
+        throw new CliError(`unknown persona '${value}'. available personas: ${available}`);
       }
       personaId = resolved;
       continue;
@@ -126,9 +126,9 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     }
 
     if (arg.startsWith("-")) {
-      throw new CliError(`Unknown option: ${arg}`);
+      throw new CliError(`unknown option: ${arg}`);
     }
-    throw new CliError(`Unexpected argument: ${arg}`);
+    throw new CliError(`unexpected argument: ${arg}`);
   }
 
   return { help, personaId, reasoningEffort, reasoningSpecified, toolAccessLevel, noContext };
@@ -143,22 +143,22 @@ export function printHelp(personas: Persona[]): void {
     [
       "tau - terminal chat",
       "",
-      "Usage:",
+      "usage:",
       "  tau [options]",
       "",
-      "Options:",
-      "  --help                 Show this help and exit.",
-      `  --persona <id>         Start with a persona. Available: ${personaList}`,
-      `  --reasoning <level>    Set reasoning effort for initial persona. Levels: ${reasoningList}`,
-      `  --tool <level>         Set initial model tool access level. Levels: ${toolList}. Default: read.`,
-      "  --no-context           Do not inject AGENTS.md into the system prompt.",
+      "options:",
+      "  --help                 show this help and exit.",
+      `  --persona <id>         start with a persona. available: ${personaList}.`,
+      `  --reasoning <level>    set reasoning effort for initial persona. levels: ${reasoningList}.`,
+      `  --tool <level>         set initial model tool access level. levels: ${toolList}. default: read.`,
+      "  --no-context           do not inject AGENTS.md into the system prompt.",
       "",
-      "Notes:",
-      "  You can switch persona during a session with /persona:<id>.",
-      "  Insert predefined prompt templates with /prompt:<id>.",
-      "  You can change model tool access during a session with /tool:none|read|all.",
-      "  If stdin is piped, its contents are sent as the first message automatically.",
-      "  Reasoning only affects providers that support it.",
+      "notes:",
+      "  you can switch persona during a session with /persona:<id>.",
+      "  insert predefined prompt templates with /prompt:<id>.",
+      "  you can change model tool access during a session with /tool:none|read|all.",
+      "  if stdin is piped, its contents are sent as the first message automatically.",
+      "  reasoning only affects providers that support it.",
     ].join("\n"),
   );
 }

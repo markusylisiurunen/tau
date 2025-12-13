@@ -29,7 +29,7 @@ const BLOCK_TOOL_USE_GUIDELINES = `
 export const personas: Persona[] = [
   {
     id: "opus",
-    label: "Default",
+    label: "default",
     description: "Claude Opus 4.5 with general purpose config",
     model: getModel("anthropic", "claude-opus-4-5"),
     systemPrompt: [BLOCK_OUTPUT_STYLE_GUIDELINES, BLOCK_TOOL_USE_GUIDELINES].join("\n\n"),
@@ -38,7 +38,7 @@ export const personas: Persona[] = [
   },
   {
     id: "haiku",
-    label: "Default",
+    label: "default",
     description: "Claude Haiku 4.5 with general purpose config",
     model: getModel("anthropic", "claude-haiku-4-5"),
     systemPrompt: [BLOCK_OUTPUT_STYLE_GUIDELINES, BLOCK_TOOL_USE_GUIDELINES].join("\n\n"),
@@ -47,7 +47,7 @@ export const personas: Persona[] = [
   },
   {
     id: "gpt-5.2",
-    label: "Default",
+    label: "default",
     description: "GPT-5.2 with general purpose config",
     model: getModel("openai", "gpt-5.2"),
     systemPrompt: [BLOCK_OUTPUT_STYLE_GUIDELINES, BLOCK_TOOL_USE_GUIDELINES].join("\n\n"),
@@ -56,7 +56,7 @@ export const personas: Persona[] = [
   },
   {
     id: "gemini-3-pro",
-    label: "Default",
+    label: "default",
     description: "Gemini 3 Pro with general purpose config",
     model: getModel("google", "gemini-3-pro-preview"),
     systemPrompt: [BLOCK_OUTPUT_STYLE_GUIDELINES, BLOCK_TOOL_USE_GUIDELINES].join("\n\n"),

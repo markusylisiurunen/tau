@@ -5,6 +5,7 @@ export class CustomEditor extends Editor {
   public onCtrlT?: () => void;
   public onEscape?: () => void;
   public onShiftTab?: () => void;
+  public onCtrlE?: () => void;
 
   handleInput(data: string): void {
     if ((data === "\x1b[Z" || data === "\x1b[1;2Z") && this.onShiftTab) {
@@ -19,6 +20,11 @@ export class CustomEditor extends Editor {
 
     if (data === "\x14" && this.onCtrlT) {
       this.onCtrlT();
+      return;
+    }
+
+    if (data === "\x05" && this.onCtrlE && !this.isShowingAutocomplete()) {
+      this.onCtrlE();
       return;
     }
 

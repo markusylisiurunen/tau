@@ -3,8 +3,9 @@ import { ChatApp } from "./app.js";
 import type { CliOptions } from "./cli.js";
 import { CliError, parseCliArgs, printHelp } from "./cli.js";
 import { loadConfig } from "./config.js";
-import { personas } from "./personas.js";
-import { prompts } from "./prompts.js";
+import { loadAllContent } from "./content_loader.js";
+import type { PromptTemplate } from "./prompts.js";
+import type { Persona } from "./types.js";
 
 // Load configuration from file
 const config = loadConfig();
@@ -18,6 +19,26 @@ async function readPipedStdin(): Promise<string | undefined> {
     data += chunk;
   }
   return data;
+}
+
+// Load built-in and user content
+let personas: Persona[];
+let prompts: PromptTemplate[];
+try {
+  const content = await loadAllContent();
+  personas = content.personas;
+  prompts = content.prompts;
+} catch (err) {
+  // Safeguard: loadAllContent should not throw, but wrap to ensure tau --help works
+  // eslint-disable-next-line no-console
+  console.error(`warning: failed to load user content: ${(err as Error).message}`);
+  // eslint-disable-next-line no-console
+  console.error("using built-in personas and prompts only.");
+  // Import fallback built-ins
+  const { personas: builtinPersonas } = await import("./personas.js");
+  const { prompts: builtinPrompts } = await import("./prompts.js");
+  personas = builtinPersonas;
+  prompts = builtinPrompts;
 }
 
 let cli: CliOptions;

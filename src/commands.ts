@@ -6,6 +6,7 @@ export type Command =
   | { type: "copyCode" }
   | { type: "new" }
   | { type: "fork" }
+  | { type: "reload" }
   | { type: "risk"; level: RiskLevel }
   | { type: "persona"; id: string }
   | { type: "prompt"; id: string }
@@ -32,6 +33,10 @@ export function parseCommand(raw: string): Command {
 
   if (trimmed === "/fork") {
     return { type: "fork" };
+  }
+
+  if (trimmed === "/reload") {
+    return { type: "reload" };
   }
 
   const riskMatch = trimmed.match(/^\/risk:(none|read-only|read-write)$/i);
@@ -75,6 +80,7 @@ export function buildHelpText(agentsFiles?: string[]): string {
     "  /help             show this help",
     "  /new              new session",
     "  /fork             summarize and start new session",
+    "  /reload           reload personas and prompts from disk",
     "  /copy             copy last assistant message",
     "  /copy:code        copy code block from last assistant message",
     "  /risk:none        disable all tools",
@@ -86,6 +92,7 @@ export function buildHelpText(agentsFiles?: string[]): string {
     "keys:",
     "  shift+tab         cycle reasoning effort",
     "  ctrl+t            toggle thoughts visibility",
+    "  ctrl+e            expand @file mentions",
     "  esc               interrupt assistant",
   );
   return lines.join("\n");

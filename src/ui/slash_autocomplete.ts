@@ -16,6 +16,7 @@ const STATIC_COMMANDS = [
   { value: "help", label: "help", description: "show help" },
   { value: "new", label: "new", description: "new session" },
   { value: "fork", label: "fork", description: "summarize and start new session" },
+  { value: "reload", label: "reload", description: "reload personas and prompts from disk" },
   { value: "copy", label: "copy", description: "copy last assistant message" },
   { value: "copy:code", label: "copy:code", description: "copy code block from last assistant message" },
   { value: "risk:none", label: "risk:none", description: "disable all tools" },

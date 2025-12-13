@@ -81,3 +81,87 @@ The app loads configuration from `~/.config/tau/config.json`. This file is optio
 ```
 
 The `loadConfig()` function in `src/config.ts` reads this file. Environment variables take precedence if both are set.
+
+## User-Extensibility: Custom Personas and Prompts
+
+Users can extend tau with custom personas and prompt templates without modifying the codebase.
+
+### Architecture
+
+- **Content Loader** (`src/content_loader.ts`): Scans `~/.config/tau/personas/*.md` and `~/.config/tau/prompts/*.md`, parses YAML front-matter + markdown body, and returns merged arrays with built-ins first (so built-ins win on collision).
+  - `loadUserPersonas()`: Returns `{ personas: Persona[]; errors: string[] }`
+  - `loadUserPrompts()`: Returns `{ prompts: PromptTemplate[]; errors: string[] }`
+  - `loadAllContent()`: Combines both, never throws (catches errors internally and at call sites)
+
+- **Startup Integration** (`src/main.ts`): Calls `loadAllContent()` before CLI parsing. If it throws (safeguard), falls back to built-ins and logs a warning. This ensures `tau --help` works even if user content fails.
+
+- **Persona Lookup** (`src/app.ts`): Now searches `this.personas` (the injected list) instead of a global function, so user personas work everywhere (`--persona`, `/persona:id`, initial persona selection).
+
+- **Reload Command** (`/reload`): Reloads personas and prompts from disk, preserves the current persona if still available (falls back to first), updates the engine, and shows a summary. Guards against re-entrancy (won't reload while streaming).
+
+### File Format
+
+**Persona markdown** (`~/.config/tau/personas/example.md`):
+```markdown
+---
+id: my-id
+label: My Persona
+provider: anthropic
+model: claude-opus-4-5
+description: Optional description
+reasoning: medium
+allowedReasoningLevels:
+  - low
+  - medium
+  - high
+---
+
+System prompt body goes here.
+```
+
+Required: `id`, `provider`, `model`. Optional: all others.
+
+**Prompt markdown** (`~/.config/tau/prompts/example.md`):
+```markdown
+---
+id: my-template
+label: My Template
+description: Optional description
+---
+
+Prompt template body goes here.
+```
+
+Required: `id`. Optional: `label`, `description`.
+
+### Collision Handling
+
+User-defined personas/prompts with IDs that collide with built-ins are silently skipped (case-insensitive comparison). Errors are accumulated in the result and optionally shown to the user (e.g., via `/reload`).
+
+## File Expansion: ctrl+e Keybinding
+
+Users can press `ctrl+e` to expand `@file` mentions in the editor, materializing file contents into the conversation.
+
+### Behavior
+
+- Extracts `@path` tokens from editor text via regex
+- Strips trailing punctuation (`.,:;)}\]`) to handle mentions like "@src/app.ts," or "(see @README.md)"
+- Filters to only valid project files (case-sensitive exact match against `projectFiles` list)
+- De-duplicates while preserving first-seen order
+- Runs sequential bash commands: `printf '\n===== <path> =====\n'; cat -- <path>; printf '\n'`
+  - `--` prevents `cat` from interpreting filenames starting with `-` as options
+  - Blank lines before/after separate multiple files visually
+  - Trailing newline ensures files don't run together
+- Each file expansion becomes a separate bash execution card + user message in history
+- Editor text left unchanged so user can ask follow-up question after expanding
+
+### Guards
+
+- Early return if `this.isStreaming` (prevents interleaving with assistant turn)
+- Silent return if no valid tokens are found (no message)
+- Skips unknown mentions without noise
+
+### Implementation
+
+- **`src/ui/custom_editor.ts`**: Added `onCtrlE` callback hook and intercepts `\x05` (ctrl+e) byte before default behavior
+- **`src/app.ts`**: Implements `expandFileMentions()` and `shellQuote()` helper for safe path escaping

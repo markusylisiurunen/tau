@@ -6,7 +6,7 @@ import { copyTextToClipboard } from "./clipboard.js";
 import { buildHelpText, getRiskLevelDescription, parseCommand } from "./commands.js";
 import type { Config } from "./config.js";
 import { getApiKeyForProvider } from "./config.js";
-import { getPersonaById } from "./personas.js";
+import { loadAllContent } from "./content_loader.js";
 import type { PromptTemplate } from "./prompts.js";
 import { SessionEngine } from "./session/session_engine.js";
 import { createAppTerminal } from "./terminal.js";
@@ -123,7 +123,11 @@ export class ChatApp {
     this.projectFiles = listProjectFiles(process.cwd());
 
     this.currentPersona =
-      (options.initialPersonaId && getPersonaById(options.initialPersonaId)) || this.personas[0]!;
+      (options.initialPersonaId &&
+        this.personas.find(
+          (p) => p.id.toLowerCase() === options.initialPersonaId!.toLowerCase(),
+        )) ||
+      this.personas[0]!;
     this.clampPersonaReasoning(this.currentPersona);
 
     this.baseSystemPrompt = buildBaseSystemPrompt({
@@ -180,6 +184,11 @@ export class ChatApp {
     this.editor.onCtrlT = () => this.toggleThinkingVisibility();
     this.editor.onShiftTab = () => this.cycleReasoningLevel();
     this.editor.onEscape = () => this.interruptAssistantTurn();
+    this.editor.onCtrlE = () => {
+      this.expandFileMentions().catch((err) => {
+        this.addSystemMessage(`file expansion failed: ${(err as Error).message}`, palette.error);
+      });
+    };
 
     this.editor.onChange = (text: string) => {
       const wasBash = this.isBashMode;
@@ -469,6 +478,10 @@ export class ChatApp {
         this.insertPrompt(cmd.id);
         break;
 
+      case "reload":
+        await this.reloadContent();
+        break;
+
       case "unknown":
         this.addSystemMessage("unknown command. type /help.");
         break;
@@ -652,8 +665,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
   }
 
   private switchPersona(id: string): void {
-    const persona =
-      getPersonaById(id) ?? this.personas.find((p) => p.id.toLowerCase() === id.toLowerCase());
+    const persona = this.personas.find((p) => p.id.toLowerCase() === id.toLowerCase());
 
     if (!persona) {
       this.addSystemMessage(`unknown persona '${id}'.`);
@@ -684,6 +696,69 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
     this.editor.setText(prompt.template);
     this.ui.requestRender();
+  }
+
+  private async reloadContent(): Promise<void> {
+    if (this.isStreaming) {
+      this.addSystemMessage(
+        "cannot reload while streaming. try again after the response.",
+        palette.muted,
+      );
+      return;
+    }
+
+    try {
+      const result = await loadAllContent();
+      const { personas, prompts, errors } = result;
+
+      // Update the personas and prompts lists
+      this.personas = personas;
+      this.prompts = prompts;
+
+      // Try to preserve the current persona; fall back to first if not found
+      const currentPersonaId = this.currentPersona.id.toLowerCase();
+      const updatedPersona = personas.find((p) => p.id.toLowerCase() === currentPersonaId);
+
+      if (updatedPersona) {
+        this.currentPersona = updatedPersona;
+        this.clampPersonaReasoning(this.currentPersona);
+      } else {
+        // Persona no longer exists; switch to the first one
+        this.currentPersona = personas[0]!;
+        this.clampPersonaReasoning(this.currentPersona);
+        this.addSystemMessage(
+          `previous persona no longer available; switched to ${this.currentPersona.label || this.currentPersona.id}.`,
+          palette.warn,
+        );
+      }
+
+      // Rebuild system prompt and update the engine
+      this.baseSystemPrompt = buildBaseSystemPrompt({
+        personaSystemPrompt: this.currentPersona.systemPrompt,
+        projectContextBlock: this.projectContextBlock,
+        environmentTag: this.environmentTag,
+        userPreferences: this.config.userPreferences,
+      });
+      this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
+
+      // Update UI
+      this.updateFooter();
+      this.updateEditorBorderColor();
+
+      // Display summary
+      const personaCount = personas.length;
+      const promptCount = prompts.length;
+      const errorCount = errors.length;
+      const summary =
+        errorCount > 0
+          ? `reloaded: ${personaCount} personas, ${promptCount} prompts (${errorCount} errors).`
+          : `reloaded: ${personaCount} personas, ${promptCount} prompts.`;
+
+      this.addSystemMessage(summary, palette.noticeSuccess);
+      this.ui.requestRender();
+    } catch (err) {
+      this.addSystemMessage(`reload failed: ${(err as Error).message}`, palette.error);
+    }
   }
 
   // Assistant Turn --------------------------------------------------------------------------------
@@ -911,6 +986,66 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.isStreaming = false;
       this.editor.disableSubmit = false;
       this.ui.requestRender();
+    }
+  }
+
+  // File Expansion (ctrl+e) -----------------------------------------------------------------------
+
+  private shellQuote(path: string): string {
+    // Wrap in single quotes and escape any single quotes within the path
+    return `'${path.replace(/'/g, "'\\''")}'`;
+  }
+
+  private async expandFileMentions(): Promise<void> {
+    if (this.isStreaming) {
+      this.addSystemMessage(
+        "cannot expand files while streaming. try again after the response.",
+        palette.muted,
+      );
+      return;
+    }
+
+    const editorText = this.editor.getText();
+
+    // Extract @path tokens
+    const tokenRegex = /@([^\s]+)/g;
+    const tokens: string[] = [];
+    let match: RegExpExecArray | null = null;
+    // biome-ignore lint/suspicious/noAssignInExpressions: regex iteration pattern
+    while ((match = tokenRegex.exec(editorText)) !== null) {
+      tokens.push(match[1]!);
+    }
+
+    if (tokens.length === 0) {
+      return;
+    }
+
+    // Filter to only valid project files and de-duplicate
+    const projectFilesSet = new Set(this.projectFiles);
+    const seen = new Set<string>();
+    const filesToExpand: string[] = [];
+
+    for (const token of tokens) {
+      // Strip trailing punctuation to handle cases like "@src/app.ts," or "(see @README.md)"
+      const cleanToken = token.replace(/[.,;:)}\]]+$/, "");
+      if (projectFilesSet.has(cleanToken) && !seen.has(cleanToken)) {
+        seen.add(cleanToken);
+        filesToExpand.push(cleanToken);
+      }
+    }
+
+    if (filesToExpand.length === 0) {
+      return;
+    }
+
+    // Run bash commands sequentially for each file
+    for (const filePath of filesToExpand) {
+      const quotedPath = this.shellQuote(filePath);
+      // Format: blank line before header, header, content, blank line after
+      // Ensure trailing newline so multiple files don't run together
+      // Use -- to prevent cat from interpreting filenames starting with - as options
+      const command = `printf '\\n===== %s =====\\n' ${quotedPath}; cat -- ${quotedPath}; printf '\\n'`;
+      await this.runBashCommand(command);
     }
   }
 }

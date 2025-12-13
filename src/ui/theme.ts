@@ -60,8 +60,8 @@ const palette: Palette = {
   border: chalk.hex("#3f3935"), // low-contrast warm border
 
   // Tool access level indicators (distinct from success/warn/error semantics)
-  accessRead: chalk.hex("#92a6b3"), // dusty slate-blue (calm, safe)
-  accessAll: chalk.hex("#dcb076"), // soft gold (elevated, caution)
+  accessRead: chalk.hex("#8ad199"),
+  accessAll: chalk.hex("#ffc9b0"),
 };
 
 const markdownTheme: MarkdownTheme = {

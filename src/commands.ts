@@ -52,7 +52,7 @@ export function parseCommand(raw: string): Command {
 export function buildHelpText(agentsFiles?: string[]): string {
   const lines: string[] = [];
   if (agentsFiles && agentsFiles.length > 0) {
-    lines.push("agents files:");
+    lines.push("context:");
     agentsFiles.forEach((agentsFile) => {
       lines.push(`  ${agentsFile}`);
     });

@@ -347,6 +347,7 @@ export class ChatApp {
     this.assistantComponents.forEach((c) => {
       c.setThinkingVisibility(this.showThinking);
     });
+    this.chatContainer.setThinkingVisibility(this.showThinking);
     const message = this.showThinking
       ? "thoughts visible (ctrl+t to hide)"
       : "thoughts hidden (ctrl+t to show)";
@@ -577,10 +578,20 @@ export class ChatApp {
             }
 
             if (state.inserted) {
+              // Capture visibility state before update
+              const wasVisible = state.component.hasVisibleText;
+
               state.component.updatePartial(
                 snapshot.hasTextStarted ? snapshot.text : "",
                 snapshot.thinking,
               );
+
+              // If component became visible (e.g. text started after thoughts were hidden),
+              // rebuild the container to show it
+              if (!wasVisible && state.component.hasVisibleText) {
+                this.chatContainer.rebuild();
+              }
+
               this.ui.requestRender();
             }
             break;
@@ -589,6 +600,7 @@ export class ChatApp {
           case "assistant_final": {
             ensureAssistantInserted();
             ensureCurrentAssistant().component.updateFromMessage(event.message);
+            this.chatContainer.rebuild();
             this.updateFooter();
             this.ui.requestRender();
             currentAssistant = undefined;

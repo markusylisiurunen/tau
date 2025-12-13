@@ -7,6 +7,12 @@ export class AssistantMessageComponent extends Container {
   private thoughtsVisible: boolean;
   private currentMessage: AssistantMessage | null = null;
 
+  private _hasVisibleText: boolean = false;
+
+  public get hasVisibleText(): boolean {
+    return this._hasVisibleText;
+  }
+
   constructor(message?: AssistantMessage, thoughtsVisible = false) {
     super();
 
@@ -57,6 +63,7 @@ export class AssistantMessageComponent extends Container {
 
     this.currentMessage = message;
     this.contentContainer.clear();
+    this._hasVisibleText = false;
 
     for (let i = 0; i < message.content.length; i++) {
       const content = message.content[i]!;
@@ -68,6 +75,7 @@ export class AssistantMessageComponent extends Container {
             italic: true,
           }),
         );
+        this._hasVisibleText = true;
 
         const hasTextAfter = message.content
           .slice(i + 1)
@@ -79,16 +87,19 @@ export class AssistantMessageComponent extends Container {
 
       if (content.type === "text" && content.text.trim()) {
         this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, markdownTheme));
+        this._hasVisibleText = true;
       }
     }
 
     if (message.stopReason === "aborted") {
       this.contentContainer.addChild(new Spacer(1));
       this.contentContainer.addChild(new Text(palette.warn("aborted"), 1, 0));
+      this._hasVisibleText = true;
     } else if (message.stopReason === "error") {
       const errorMsg = message.errorMessage || "unknown error";
       this.contentContainer.addChild(new Spacer(1));
       this.contentContainer.addChild(new Text(palette.error(`error: ${errorMsg}`), 1, 0));
+      this._hasVisibleText = true;
     }
   }
 }

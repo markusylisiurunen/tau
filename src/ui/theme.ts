@@ -18,10 +18,14 @@ export interface Palette {
   error: (text: string) => string;
   bash: (text: string) => string;
   bashRunning: (text: string) => string;
+  bashOutput: (text: string) => string;
 
   // Diff colors
   diffAdded: (text: string) => string;
   diffRemoved: (text: string) => string;
+
+  // Notices (short system acknowledgements)
+  noticeSuccess: (text: string) => string;
 
   // Surfaces & chrome
   userBg: (text: string) => string;
@@ -56,11 +60,15 @@ const palette: Palette = {
   warn: chalk.hex("#dcb076"), // soft gold
   error: chalk.hex("#d08a7c"), // soft clay
   bash: chalk.hex("#86afa9"), // desaturated teal
-  bashRunning: chalk.hex("#5a9a7d"), // greenish (for running state)
+  bashRunning: chalk.hex("#9ccac3"), // brighter teal (running state, distinct from success)
+  bashOutput: chalk.hex("#9a928a"), // warm gray for bash stdout/stderr (dim, but distinct from prose)
 
   // Diff colors
   diffAdded: chalk.hex("#8fad83"), // desaturated green
   diffRemoved: chalk.hex("#c08877"), // desaturated red
+
+  // Notices (short system acknowledgements)
+  noticeSuccess: chalk.hex("#9ab58d"), // muted sage (positive acknowledgement, not diff semantics)
 
   // Surfaces & chrome
   userBg: chalk.bgHex("#1a1615"), // deep warm charcoal

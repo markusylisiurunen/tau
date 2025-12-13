@@ -494,7 +494,7 @@ export class ChatApp {
 
     try {
       await copyTextToClipboard(text);
-      this.addSystemMessage("copied last assistant message to clipboard.", palette.success);
+      this.addSystemMessage("copied last assistant message to clipboard.", palette.noticeSuccess);
     } catch (err) {
       this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, palette.error);
     }
@@ -516,7 +516,7 @@ export class ChatApp {
 
     try {
       await copyTextToClipboard(code);
-      this.addSystemMessage("copied last code block to clipboard.", palette.success);
+      this.addSystemMessage("copied last code block to clipboard.", palette.noticeSuccess);
     } catch (err) {
       this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, palette.error);
     }
@@ -625,7 +625,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.updateFooter();
       this.addSystemMessage(
         "session forked. previous context has been summarized.",
-        palette.success,
+        palette.noticeSuccess,
       );
     } catch (err) {
       this.addSystemMessage(`fork failed: ${(err as Error).message}`, palette.error);

@@ -56,10 +56,14 @@ export class FooterComponent implements Component {
     if (totalContentWidth > width) {
       const availableLeft = Math.max(0, width - 1 - iconWidth - 1 - rightWidth - 1);
       const truncatedLeft = truncateToWidth(this.left, availableLeft);
-      line = ` ${icon} ${theme.palette.dim(`${truncatedLeft} ${this.right}`)}`;
+
+      // Keep left dimmed, but preserve any semantic colors embedded in `right`.
+      line = ` ${icon} ${theme.palette.dim(truncatedLeft)} ${this.right}`;
     } else {
       const spaces = " ".repeat(Math.max(1, width - 1 - iconWidth - 1 - leftWidth - rightWidth));
-      line = ` ${icon} ${theme.palette.dim(`${this.left}${spaces}${this.right}`)}`;
+
+      // Keep left dimmed, but preserve any semantic colors embedded in `right`.
+      line = ` ${icon} ${theme.palette.dim(this.left + spaces)}${this.right}`;
     }
 
     return [line];

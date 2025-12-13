@@ -29,7 +29,8 @@ export class BashExecutionComponent extends Container {
 
     const out = truncationInfo.display.content.trimEnd();
     if (out) {
-      content.addChild(new Text(`\n${palette.muted(out)}`, 1, 0));
+      // Keep bash output readable but subdued (distinct from prose, not as bright as code blocks).
+      content.addChild(new Text(`\n${palette.bashOutput(out)}`, 1, 0));
     }
 
     const { display, model, captureTruncated } = truncationInfo;

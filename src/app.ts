@@ -13,12 +13,20 @@ import {
   formatBashUserMessageText,
   prepareBashOutput,
 } from "./tools/bash.js";
+import { createEditToolDefinition } from "./tools/edit.js";
 import { ToolRegistry } from "./tools/registry.js";
+import { createWriteToolDefinition } from "./tools/write.js";
 import { type Persona, REASONING_LEVELS_WITH_NONE, type ToolAccessLevel } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
 import { BashBlockedComponent, BashExecutionComponent } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import { CustomEditor } from "./ui/custom_editor.js";
+import {
+  EditBlockedComponent,
+  EditSuccessComponent,
+  WriteBlockedComponent,
+  WriteSuccessComponent,
+} from "./ui/file_execution.js";
 import { FooterComponent } from "./ui/footer.js";
 import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
 import { SystemMessageComponent } from "./ui/system_message.js";
@@ -109,7 +117,11 @@ export class ChatApp {
       environmentTag: this.environmentTag,
     });
 
-    const toolRegistry = new ToolRegistry([createBashToolDefinition()]);
+    const toolRegistry = new ToolRegistry([
+      createBashToolDefinition(),
+      createWriteToolDefinition(),
+      createEditToolDefinition(),
+    ]);
     this.engine = new SessionEngine({
       persona: this.currentPersona,
       baseSystemPrompt: this.baseSystemPrompt,
@@ -622,6 +634,24 @@ export class ChatApp {
               this.chatContainer.addMessage(
                 new BashBlockedComponent(uiEvent.command, uiEvent.reason),
               );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "write_success") {
+              this.chatContainer.addMessage(
+                new WriteSuccessComponent(uiEvent.path, uiEvent.bytes, uiEvent.lines),
+              );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "write_blocked") {
+              this.chatContainer.addMessage(
+                new WriteBlockedComponent(uiEvent.path, uiEvent.reason),
+              );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "edit_success") {
+              this.chatContainer.addMessage(
+                new EditSuccessComponent(uiEvent.path, uiEvent.oldLength, uiEvent.newLength),
+              );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "edit_blocked") {
+              this.chatContainer.addMessage(new EditBlockedComponent(uiEvent.path, uiEvent.reason));
               this.ui.requestRender();
             }
             break;

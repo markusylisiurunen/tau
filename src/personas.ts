@@ -21,6 +21,7 @@ const BLOCK_TOOL_USE_GUIDELINES = `
 - Always try to be efficient in your tool use; prefer parallel calls when possible to reduce latency.
 - Prefer modern tools like rg (ripgrep) and fd over traditional alternatives.
 - Avoid being too proactive with bash commands unless the user clearly indicates they want them executed; if bash would help complete a task or complete it better, ask the user first.
+- Write/edit tools are only allowed when the risk level is set appropriately; do not attempt file modifications if the current risk level doesn't permit them.
 - Never use bash to output text to the user; it's much better to respond directly with the information.
 - If you encounter a risk level mismatch, immediately notify the user and ask for confirmation before proceeding.
 - If the user's request is ambiguous, ask clarifying questions before using any mutating commands.

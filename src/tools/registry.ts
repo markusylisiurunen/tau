@@ -8,7 +8,11 @@ export type ToolUiEvent =
       exitCode: number | null;
       truncationInfo: import("./bash.js").BashTruncationInfo;
     }
-  | { type: "bash_blocked"; command: string; reason: string };
+  | { type: "bash_blocked"; command: string; reason: string }
+  | { type: "write_success"; path: string; bytes: number; lines: number }
+  | { type: "write_blocked"; path: string; reason: string }
+  | { type: "edit_success"; path: string; oldLength: number; newLength: number }
+  | { type: "edit_blocked"; path: string; reason: string };
 
 export type ToolDispatchResult = {
   toolResult: ToolResultMessage;

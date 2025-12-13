@@ -9,7 +9,18 @@ export type ToolUiEvent =
       truncationInfo: import("./bash.js").BashTruncationInfo;
     }
   | { type: "bash_blocked"; command: string; reason: string }
-  | { type: "write_success"; path: string; bytes: number; lines: number }
+  | {
+      type: "write_success";
+      path: string;
+      bytes: number;
+      lines: number;
+      preview: string;
+      previewTruncation: {
+        truncated: boolean;
+        totalLines: number;
+        outputLines: number;
+      };
+    }
   | { type: "write_blocked"; path: string; reason: string }
   | {
       type: "edit_success";

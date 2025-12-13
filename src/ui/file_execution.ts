@@ -11,8 +11,20 @@ class DynamicBorder implements Component {
   }
 }
 
+interface PreviewTruncation {
+  truncated: boolean;
+  totalLines: number;
+  outputLines: number;
+}
+
 export class WriteSuccessComponent extends Container {
-  constructor(path: string, bytes: number, lines: number) {
+  constructor(
+    path: string,
+    bytes: number,
+    lines: number,
+    preview: string,
+    previewTruncation: PreviewTruncation,
+  ) {
     super();
     const { palette } = theme;
     const writeColor = (s: string) => palette.accessAll(s);
@@ -27,6 +39,18 @@ export class WriteSuccessComponent extends Container {
 
     const msg = `${bytes} bytes (${lines} lines)`;
     content.addChild(new Text(`\n${palette.muted(msg)}`, 1, 0));
+
+    // Render the preview
+    if (preview) {
+      content.addChild(new Text(`\n${palette.muted(preview)}`, 1, 0));
+    }
+
+    // Show truncation notice if needed
+    if (previewTruncation.truncated) {
+      const icon = palette.warn("◆");
+      const msg = palette.dim(`preview: ${previewTruncation.outputLines} of ${previewTruncation.totalLines} lines`);
+      content.addChild(new Text(`\n${icon} ${msg}`, 1, 0));
+    }
 
     this.addChild(new DynamicBorder(writeColor));
   }
@@ -101,8 +125,9 @@ export class EditSuccessComponent extends Container {
 
     // Show truncation notice if needed
     if (diffTruncation.truncated) {
-      const notice = `◆ truncated: ${diffTruncation.outputLines} of ${diffTruncation.totalLines} lines`;
-      content.addChild(new Text(`\n${palette.muted(notice)}`, 1, 0));
+      const icon = palette.warn("◆");
+      const msg = palette.dim(`truncated: ${diffTruncation.outputLines} of ${diffTruncation.totalLines} lines`);
+      content.addChild(new Text(`\n${icon} ${msg}`, 1, 0));
     }
 
     this.addChild(new DynamicBorder(editColor));

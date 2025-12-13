@@ -756,7 +756,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "write_success") {
               this.chatContainer.addMessage(
-                new WriteSuccessComponent(uiEvent.path, uiEvent.bytes, uiEvent.lines),
+                new WriteSuccessComponent(
+                  uiEvent.path,
+                  uiEvent.bytes,
+                  uiEvent.lines,
+                  uiEvent.preview,
+                  uiEvent.previewTruncation,
+                ),
               );
               this.ui.requestRender();
             } else if (uiEvent.type === "write_blocked") {

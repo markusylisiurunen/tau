@@ -5,6 +5,48 @@ import { truncateToBytesFromStart } from "../utils/truncate.js";
 
 export const BASH_MAX_CAPTURE_BYTES = 2 * 1024 * 1024; // 2MB
 
+const SENSITIVE_ENV_PATTERNS = [/_KEY$/, /_SECRET$/, /_TOKEN$/, /_PASSWORD$/, /^API_KEY$/];
+const ALLOWED_ENV_VARS = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "SHELL",
+  "TERM",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "PWD",
+  "OLDPWD",
+  "EDITOR",
+  "VISUAL",
+  "PAGER",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+]);
+
+function sanitizeEnvironment(): NodeJS.ProcessEnv {
+  const sanitized: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    // Always include explicitly allowed vars
+    if (ALLOWED_ENV_VARS.has(key)) {
+      sanitized[key] = value;
+      continue;
+    }
+    // Exclude vars matching sensitive patterns
+    if (SENSITIVE_ENV_PATTERNS.some((pattern) => pattern.test(key))) {
+      continue;
+    }
+    // Include other vars (e.g., npm config, go paths, etc.)
+    sanitized[key] = value;
+  }
+  return sanitized;
+}
+
 const BASH_DESCRIPTION = [
   "Execute a shell command in the current working directory and return stdout/stderr.",
   "Always provide a risk assessment: 'read' for commands without side effects, 'write' for commands that may modify state (filesystem, processes, network, etc).",
@@ -30,7 +72,8 @@ export const BASH_TOOL: Tool = {
 };
 
 export type BashToolResult = {
-  output: string;
+  stdout: string;
+  stderr: string;
   exitCode: number | null;
   truncated: boolean;
 };
@@ -40,30 +83,46 @@ export function executeBashTool(command: string): Promise<BashToolResult> {
     const child = spawn(command, {
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env, // FIXME: consider restricting env for security
+      env: sanitizeEnvironment(),
     });
 
-    let output = "";
+    let stdout = "";
+    let stderr = "";
     let truncated = false;
 
-    const append = (chunk: string) => {
+    const appendStdout = (chunk: string) => {
+      if (truncated) return;
       if (!chunk) return;
-      output += chunk;
-      if (Buffer.byteLength(output, "utf-8") > BASH_MAX_CAPTURE_BYTES) {
+      stdout += chunk;
+      const totalBytes = Buffer.byteLength(stdout, "utf-8") + Buffer.byteLength(stderr, "utf-8");
+      if (totalBytes > BASH_MAX_CAPTURE_BYTES) {
         truncated = true;
-        output = truncateToBytesFromStart(output, BASH_MAX_CAPTURE_BYTES);
+        stdout = truncateToBytesFromStart(stdout, BASH_MAX_CAPTURE_BYTES / 2);
+        stderr = truncateToBytesFromStart(stderr, BASH_MAX_CAPTURE_BYTES / 2);
       }
     };
 
-    child.stdout?.on("data", (d) => append(d.toString()));
-    child.stderr?.on("data", (d) => append(d.toString()));
+    const appendStderr = (chunk: string) => {
+      if (truncated) return;
+      if (!chunk) return;
+      stderr += chunk;
+      const totalBytes = Buffer.byteLength(stdout, "utf-8") + Buffer.byteLength(stderr, "utf-8");
+      if (totalBytes > BASH_MAX_CAPTURE_BYTES) {
+        truncated = true;
+        stdout = truncateToBytesFromStart(stdout, BASH_MAX_CAPTURE_BYTES / 2);
+        stderr = truncateToBytesFromStart(stderr, BASH_MAX_CAPTURE_BYTES / 2);
+      }
+    };
+
+    child.stdout?.on("data", (d) => appendStdout(d.toString()));
+    child.stderr?.on("data", (d) => appendStderr(d.toString()));
 
     child.on("error", () => {
       reject();
     });
 
     child.on("close", (exitCode) => {
-      resolve({ output, exitCode, truncated });
+      resolve({ stdout, stderr, exitCode, truncated });
     });
   });
 }

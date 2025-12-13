@@ -15,7 +15,7 @@ import { getPersonaById } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
 import { createAppTerminal } from "./terminal.js";
 import { BASH_TOOL, executeBashTool } from "./tools/bash.js";
-import type { Persona, ToolAccessLevel } from "./types.js";
+import { type Persona, REASONING_LEVELS_WITH_NONE, type ToolAccessLevel } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
 import {
   BashBlockedComponent,
@@ -42,16 +42,7 @@ import { listProjectFiles } from "./utils/project_files.js";
 
 const { palette } = theme;
 
-const MAX_ASSISTANT_SUBTURNS = 128;
-
-const REASONING_LEVELS: Array<ReasoningEffort | undefined> = [
-  undefined,
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-];
+const MAX_ASSISTANT_SUBTURNS = 64;
 
 type BashRisk = "read" | "write";
 
@@ -326,20 +317,20 @@ export class ChatApp {
 
     const raw = persona.allowedReasoningLevels;
     if (!raw || raw.length === 0) {
-      return REASONING_LEVELS;
+      return REASONING_LEVELS_WITH_NONE;
     }
 
     const normalized: Array<ReasoningEffort | undefined> = [];
     for (const level of raw) {
       if (level === "none") {
         normalized.push(undefined);
-      } else if (REASONING_LEVELS.includes(level as ReasoningEffort)) {
+      } else if (REASONING_LEVELS_WITH_NONE.includes(level as ReasoningEffort)) {
         normalized.push(level as ReasoningEffort);
       }
     }
 
     const unique = [...new Set(normalized)];
-    return unique.length ? unique : REASONING_LEVELS;
+    return unique.length ? unique : REASONING_LEVELS_WITH_NONE;
   }
 
   private clampPersonaReasoning(persona: Persona): void {
@@ -762,8 +753,13 @@ export class ChatApp {
 
   private async executeBashToolCall(toolCall: ToolCall, command: string): Promise<void> {
     try {
-      const { output, exitCode, truncated: captureTruncated } = await executeBashTool(command);
-      const truncationInfo = prepareBashOutput(output, captureTruncated);
+      const {
+        stdout,
+        stderr,
+        exitCode,
+        truncated: captureTruncated,
+      } = await executeBashTool(command);
+      const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated);
 
       this.chatContainer.addMessage(new BashExecutionComponent(command, exitCode, truncationInfo));
 
@@ -792,8 +788,13 @@ export class ChatApp {
     this.editor.disableSubmit = true;
 
     try {
-      const { output, exitCode, truncated: captureTruncated } = await executeBashTool(command);
-      const truncationInfo = prepareBashOutput(output, captureTruncated);
+      const {
+        stdout,
+        stderr,
+        exitCode,
+        truncated: captureTruncated,
+      } = await executeBashTool(command);
+      const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated);
 
       this.chatContainer.addMessage(new BashExecutionComponent(command, exitCode, truncationInfo));
 

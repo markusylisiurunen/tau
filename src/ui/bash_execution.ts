@@ -18,13 +18,28 @@ export interface BashTruncationInfo {
   display: TruncationResult;
   model: TruncationResult;
   captureTruncated: boolean;
+  hasStderr: boolean;
+}
+
+function combineOutputForDisplay(stdout: string, stderr: string): string {
+  const parts: string[] = [];
+  if (stdout.trim()) {
+    parts.push(stdout);
+  }
+  if (stderr.trim()) {
+    parts.push(`[stderr]\n${stderr}`);
+  }
+  return parts.join("\n");
 }
 
 export function prepareBashOutput(
-  rawOutput: string,
+  stdout: string,
+  stderr: string,
   captureTruncated: boolean,
 ): BashTruncationInfo {
-  const modelTruncation = truncateMiddleForModel(rawOutput, {
+  const combined = combineOutputForDisplay(stdout, stderr);
+
+  const modelTruncation = truncateMiddleForModel(combined, {
     maxLines: BASH_MODEL_MAX_LINES,
     maxBytes: BASH_MODEL_MAX_BYTES,
     bytesPerTokenApprox: BASH_MODEL_BYTES_PER_TOKEN,
@@ -39,6 +54,7 @@ export function prepareBashOutput(
     display: displayTruncation,
     model: modelTruncation,
     captureTruncated,
+    hasStderr: stderr.trim().length > 0,
   };
 }
 

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const DEFAULT_IGNORED_DIRS = new Set([".git", "node_modules"]);
@@ -60,6 +60,25 @@ function listProjectFilesByWalking(cwd: string): string[] {
           const nextAbs = join(dirAbs, entry.name);
           const nextRel = dirRel ? join(dirRel, entry.name) : entry.name;
           walk(nextAbs, nextRel);
+          continue;
+        }
+
+        // Handle symlinks that point to directories
+        if (entry.isSymbolicLink()) {
+          try {
+            const targetPath = join(dirAbs, entry.name);
+            const stat = statSync(targetPath);
+            if (stat.isDirectory()) {
+              if (DEFAULT_IGNORED_DIRS.has(entry.name)) continue;
+              const nextRel = dirRel ? join(dirRel, entry.name) : entry.name;
+              walk(targetPath, nextRel);
+            } else if (stat.isFile()) {
+              const rel = dirRel ? join(dirRel, entry.name) : entry.name;
+              out.push(rel);
+            }
+          } catch {
+            // Broken symlink or permission error, skip
+          }
           continue;
         }
 

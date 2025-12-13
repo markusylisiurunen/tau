@@ -1,5 +1,5 @@
 import type { ReasoningEffort } from "@mariozechner/pi-ai";
-import type { Persona, ToolAccessLevel } from "./types.js";
+import { REASONING_LEVELS, type Persona, type ToolAccessLevel } from "./types.js";
 
 export interface CliOptions {
   help: boolean;
@@ -17,7 +17,6 @@ export class CliError extends Error {
   }
 }
 
-const REASONING_LEVELS: ReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh"];
 const TOOL_LEVELS: ToolAccessLevel[] = ["none", "read", "all"];
 
 function resolvePersonaId(raw: string, personas: Persona[]): string | undefined {

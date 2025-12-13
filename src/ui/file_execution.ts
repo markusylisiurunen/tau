@@ -55,8 +55,20 @@ export class WriteBlockedComponent extends Container {
   }
 }
 
+interface DiffTruncation {
+  truncated: boolean;
+  totalLines: number;
+  outputLines: number;
+}
+
 export class EditSuccessComponent extends Container {
-  constructor(path: string, oldLength: number, newLength: number) {
+  constructor(
+    path: string,
+    oldLength: number,
+    newLength: number,
+    diff: string,
+    diffTruncation: DiffTruncation,
+  ) {
     super();
     const { palette } = theme;
     const editColor = (s: string) => palette.accessAll(s);
@@ -69,10 +81,29 @@ export class EditSuccessComponent extends Container {
     const header = `\u001b[1medit ${path}\u001b[22m`;
     content.addChild(new Text(editColor(header), 1, 0));
 
-    const diff = newLength - oldLength;
-    const diffStr = diff === 0 ? "same size" : diff > 0 ? `+${diff} chars` : `${diff} chars`;
+    const sizeDiff = newLength - oldLength;
+    const diffStr = sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
     const msg = `replaced ${oldLength} → ${newLength} chars (${diffStr})`;
     content.addChild(new Text(`\n${palette.muted(msg)}`, 1, 0));
+
+    // Render the diff with semantic colors
+    const diffLines = diff.split("\n");
+    const coloredLines = diffLines.map((line) => {
+      if (line.startsWith("- ")) {
+        return palette.diffRemoved(line);
+      } else if (line.startsWith("+ ")) {
+        return palette.diffAdded(line);
+      } else {
+        return palette.muted(line);
+      }
+    });
+    content.addChild(new Text(`\n${coloredLines.join("\n")}`, 1, 0));
+
+    // Show truncation notice if needed
+    if (diffTruncation.truncated) {
+      const notice = `◆ truncated: ${diffTruncation.outputLines} of ${diffTruncation.totalLines} lines`;
+      content.addChild(new Text(`\n${palette.muted(notice)}`, 1, 0));
+    }
 
     this.addChild(new DynamicBorder(editColor));
   }

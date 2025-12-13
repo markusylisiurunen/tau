@@ -18,6 +18,10 @@ export interface Palette {
   error: (text: string) => string;
   bash: (text: string) => string;
 
+  // Diff colors
+  diffAdded: (text: string) => string;
+  diffRemoved: (text: string) => string;
+
   // Surfaces & chrome
   userBg: (text: string) => string;
   userText: (text: string) => string;
@@ -51,6 +55,10 @@ const palette: Palette = {
   warn: chalk.hex("#dcb076"), // soft gold
   error: chalk.hex("#d08a7c"), // soft clay
   bash: chalk.hex("#86afa9"), // desaturated teal
+
+  // Diff colors
+  diffAdded: chalk.hex("#8fad83"), // desaturated green
+  diffRemoved: chalk.hex("#c08877"), // desaturated red
 
   // Surfaces & chrome
   userBg: chalk.bgHex("#1a1615"), // deep warm charcoal

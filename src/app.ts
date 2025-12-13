@@ -766,7 +766,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "edit_success") {
               this.chatContainer.addMessage(
-                new EditSuccessComponent(uiEvent.path, uiEvent.oldLength, uiEvent.newLength),
+                new EditSuccessComponent(
+                  uiEvent.path,
+                  uiEvent.oldLength,
+                  uiEvent.newLength,
+                  uiEvent.diff,
+                  uiEvent.diffTruncation,
+                ),
               );
               this.ui.requestRender();
             } else if (uiEvent.type === "edit_blocked") {

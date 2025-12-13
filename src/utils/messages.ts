@@ -30,3 +30,25 @@ export function createToolError(toolCall: ToolCall, errorMessage: string): ToolR
 export function createToolSuccess(toolCall: ToolCall, text: string): ToolResultMessage {
   return createToolResult(toolCall, text, false);
 }
+
+export function extractLastFencedCodeBlock(text: string): string | null {
+  // Match all triple-backtick fenced code blocks with optional language specifier
+  // Allows optional spaces after opening fence, any language/info string, optional trailing spaces
+  // on closing fence, and both LF and CRLF line endings
+  const codeBlockRegex = /^```[ \t]*[^\r\n]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gm;
+
+  let lastMatch: RegExpExecArray | null = null;
+  let match = codeBlockRegex.exec(text);
+
+  while (match !== null) {
+    lastMatch = match;
+    match = codeBlockRegex.exec(text);
+  }
+
+  if (!lastMatch) {
+    return null;
+  }
+
+  // Return the captured group (inner code content)
+  return lastMatch[1] ?? null;
+}

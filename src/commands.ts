@@ -3,6 +3,7 @@ import type { RiskLevel } from "./types.js";
 export type Command =
   | { type: "help" }
   | { type: "copy" }
+  | { type: "copyCode" }
   | { type: "new" }
   | { type: "fork" }
   | { type: "risk"; level: RiskLevel }
@@ -19,6 +20,10 @@ export function parseCommand(raw: string): Command {
 
   if (trimmed === "/copy") {
     return { type: "copy" };
+  }
+
+  if (trimmed === "/copy:code") {
+    return { type: "copyCode" };
   }
 
   if (trimmed === "/new") {
@@ -71,6 +76,7 @@ export function buildHelpText(agentsFiles?: string[]): string {
     "  /new              new session",
     "  /fork             summarize and start new session",
     "  /copy             copy last assistant message",
+    "  /copy:code        copy code block from last assistant message",
     "  /risk:none        disable all tools",
     "  /risk:read-only   allow read-only tools",
     "  /risk:read-write  allow all tools",

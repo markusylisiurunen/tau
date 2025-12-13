@@ -41,6 +41,7 @@ Environment variables take precedence over the config file. The `userPreferences
 - `/help`
 - `/new` (clear session)
 - `/copy` (copy last assistant message)
+- `/copy:code` (copy code block from last assistant message)
 - `/persona:<id>` (switch persona)
 - `/prompt:<id>` (insert prompt template)
 - `/risk:none|read-only|read-write` (configure model risk level; default: `read-only`)

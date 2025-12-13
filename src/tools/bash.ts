@@ -9,7 +9,12 @@ import {
   truncateMiddleForModel,
   truncateToBytesFromStart,
 } from "../utils/truncate.js";
-import type { ToolDefinition, ToolDispatchResult, ToolDispatchResultWithPhases, ToolUiEvent } from "./registry.js";
+import type {
+  ToolDefinition,
+  ToolDispatchResult,
+  ToolDispatchResultWithPhases,
+  ToolUiEvent,
+} from "./registry.js";
 
 export const BASH_MAX_CAPTURE_BYTES = 2 * 1024 * 1024; // 2MB
 

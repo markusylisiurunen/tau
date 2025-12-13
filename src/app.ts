@@ -21,7 +21,11 @@ import { ToolRegistry } from "./tools/registry.js";
 import { createWriteToolDefinition } from "./tools/write.js";
 import { type Persona, REASONING_LEVELS, type RiskLevel } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
-import { BashBlockedComponent, BashExecutionComponent, BashRunningComponent } from "./ui/bash_execution.js";
+import {
+  BashBlockedComponent,
+  BashExecutionComponent,
+  BashRunningComponent,
+} from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import { CustomEditor } from "./ui/custom_editor.js";
 import {
@@ -46,7 +50,7 @@ import {
 } from "./utils/context.js";
 import { formatHistoryForCompression } from "./utils/fork.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "./utils/format.js";
-import { extractAssistantText } from "./utils/messages.js";
+import { extractAssistantText, extractLastFencedCodeBlock } from "./utils/messages.js";
 import { listProjectFiles } from "./utils/project_files.js";
 
 const { palette } = theme;
@@ -441,6 +445,10 @@ export class ChatApp {
         await this.copyLastAssistantMessage();
         break;
 
+      case "copyCode":
+        await this.copyLastAssistantCodeBlock();
+        break;
+
       case "new":
         this.clearSession();
         break;
@@ -487,6 +495,28 @@ export class ChatApp {
     try {
       await copyTextToClipboard(text);
       this.addSystemMessage("copied last assistant message to clipboard.", palette.success);
+    } catch (err) {
+      this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, palette.error);
+    }
+  }
+
+  private async copyLastAssistantCodeBlock(): Promise<void> {
+    const lastAssistant = this.getLastAssistantMessage();
+    if (!lastAssistant) {
+      this.addSystemMessage("no assistant message to copy yet.");
+      return;
+    }
+
+    const text = extractAssistantText(lastAssistant);
+    const code = extractLastFencedCodeBlock(text);
+    if (!code) {
+      this.addSystemMessage("no code block to copy yet.");
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(code);
+      this.addSystemMessage("copied last code block to clipboard.", palette.success);
     } catch (err) {
       this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, palette.error);
     }
@@ -775,7 +805,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                 const runningIndex = this.runningBashComponents.get(uiEvent.toolCallId);
                 if (runningIndex !== undefined) {
                   // Replace the running component with the blocked component
-                  const blockedComponent = new BashBlockedComponent(uiEvent.command, uiEvent.reason);
+                  const blockedComponent = new BashBlockedComponent(
+                    uiEvent.command,
+                    uiEvent.reason,
+                  );
                   this.chatContainer.replaceMessageAtIndex(runningIndex, blockedComponent);
                   this.runningBashComponents.delete(uiEvent.toolCallId);
                 } else {

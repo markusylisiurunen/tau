@@ -250,9 +250,9 @@ export class ChatApp {
       case "none":
         return palette.riskNone("none");
       case "read-only":
-        return palette.riskReadOnly("read");
+        return palette.riskReadOnly("read-only");
       case "read-write":
-        return palette.riskReadWrite("write");
+        return palette.riskReadWrite("read-write");
     }
   }
 

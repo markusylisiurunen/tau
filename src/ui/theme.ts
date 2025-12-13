@@ -91,8 +91,8 @@ const palette: Palette = {
 
   // Risk level indicators
   riskNone: chalk.hex(hslToHex(TEXT_HUE, 6, 42)),
-  riskReadOnly: chalk.hex(hslToHex(72, 40, 46)),
-  riskReadWrite: chalk.hex(hslToHex(8, 52, 56)),
+  riskReadOnly: chalk.hex(hslToHex(72, 16, 44)),
+  riskReadWrite: chalk.hex(hslToHex(8, 20, 56)),
 };
 
 const markdownTheme: MarkdownTheme = {

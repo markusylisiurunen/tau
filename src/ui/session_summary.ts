@@ -22,7 +22,7 @@ export class SessionSummaryComponent extends Container {
     const content = new Container();
     this.addChild(content);
 
-    const headerText = `\u001b[1m◆ Context from previous session\u001b[22m`;
+    const headerText = `\u001b[1m◆ context from previous session\u001b[22m`;
     content.addChild(new Text(accentColor(headerText), 1, 0));
 
     content.addChild(

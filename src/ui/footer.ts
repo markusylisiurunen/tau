@@ -1,5 +1,5 @@
 import { type Component, type TUI, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { theme } from "./theme.js";
+import { palette, theme } from "./theme.js";
 
 export class FooterComponent implements Component {
   private ui: TUI;
@@ -51,17 +51,19 @@ export class FooterComponent implements Component {
 
     let line: string;
 
-    const totalContentWidth = 1 + iconWidth + 1 + leftWidth + rightWidth + 1;
+    const totalContentWidth = 1 + iconWidth + 1 + leftWidth + rightWidth + 1 + 1;
 
     if (totalContentWidth > width) {
-      const availableLeft = Math.max(0, width - 1 - iconWidth - 1 - rightWidth - 1);
-      const truncatedLeft = truncateToWidth(this.left, availableLeft);
+      const availableLeft = Math.max(0, width - 1 - iconWidth - 1 - rightWidth - 1 - 1);
+      const truncatedLeft = truncateToWidth(this.left, availableLeft, palette.dim("…"));
 
-      line = ` ${icon} ${truncatedLeft} ${this.right}`;
+      line = ` ${icon} ${truncatedLeft} ${this.right} `;
     } else {
-      const spaces = " ".repeat(Math.max(1, width - 1 - iconWidth - 1 - leftWidth - rightWidth));
+      const spaces = " ".repeat(
+        Math.max(1, width - 1 - iconWidth - 1 - leftWidth - rightWidth - 1),
+      );
 
-      line = ` ${icon} ${this.left + spaces}${this.right}`;
+      line = ` ${icon} ${this.left + spaces}${this.right} `;
     }
 
     return [line];

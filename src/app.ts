@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import type { AssistantMessage, ReasoningEffort } from "@mariozechner/pi-ai";
+import type { AssistantMessage, KnownProvider, ReasoningEffort } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import { Spacer, Text, TUI } from "@mariozechner/pi-tui";
 import { copyTextToClipboard } from "./clipboard.js";
@@ -539,7 +539,10 @@ Capture what matters for continuity:
 Write plain prose, no formatting. Be thorough enough that the reader can resume without guessing, but don't narrate every exchange. When relevant, name things concretely: file paths, function names, error messages. The reader has no context beyond what you provide.
       `.trim();
 
-      const apiKey = getApiKeyForProvider(this.config, this.currentPersona.model.provider);
+      const apiKey = getApiKeyForProvider(
+        this.config,
+        this.currentPersona.model.provider as KnownProvider,
+      );
       const stream = streamSimple(
         this.currentPersona.model,
         {

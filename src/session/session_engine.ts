@@ -1,6 +1,7 @@
 import type {
   AssistantMessage,
   Context,
+  KnownProvider,
   Message,
   ToolCall,
   ToolResultMessage,
@@ -177,7 +178,7 @@ export class SessionEngine {
       tools,
     };
 
-    const apiKey = getApiKeyForProvider(this.config, this.persona.model.provider);
+    const apiKey = getApiKeyForProvider(this.config, this.persona.model.provider as KnownProvider);
     const stream = streamSimple(this.persona.model, context, {
       ...this.getStreamingSettings(this.persona),
       signal,

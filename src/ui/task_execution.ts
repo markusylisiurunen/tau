@@ -13,6 +13,25 @@ function formatCost(costTotal: number): string {
   return `$${formatAdaptiveNumber(costTotal, 2, 5)}`;
 }
 
+function filterAndFormatEvents(lastEvents: string[]): string {
+  const filtered: string[] = [];
+  for (const event of lastEvents) {
+    const trimmed = event.trim();
+    // Show bash running: events as "$ command"
+    if (trimmed.startsWith("bash running:")) {
+      const cmd = trimmed.replace(/^bash running:\s*/, "");
+      filtered.push(`$ ${cmd}`);
+    }
+    // Show agent text output as "> first line only"
+    else if (trimmed.startsWith("agent:")) {
+      const text = trimmed.replace(/^agent:\s*/, "");
+      const firstLine = text.split("\n")[0];
+      if (firstLine) filtered.push(`> ${firstLine}`);
+    }
+  }
+  return filtered.join("\n");
+}
+
 export function renderTaskRunning(
   title: string,
   lastEvents: string[],
@@ -37,7 +56,7 @@ export function renderTaskRunning(
   ];
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
-  const eventsText = lastEvents.map((e) => e.trim()).join("\n");
+  const eventsText = filterAndFormatEvents(lastEvents);
   const costPart = `cost: ${formatCost(costTotal)}`;
   const costLine = subagentName
     ? palette.dim(`${subagentName} · ${costPart} (${stats})`)
@@ -112,7 +131,8 @@ export function renderTaskFinished(
   ];
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
-  const outputPreview = finalOutput.trim().split("\n").slice(0, 8).join("\n").trim();
+  const outputTrimmed = finalOutput.trim();
+  const outputPreview = outputTrimmed.split("\n").slice(0, 8).join("\n").trim();
   const costLine = subagentName
     ? palette.dim(`${subagentName} · cost: ${formatCost(costTotal)} (`) +
       statusLabel +
@@ -130,9 +150,9 @@ export function renderTaskFinished(
     expandedParts.push(palette.dim(`subagent: ${subagentName}`));
   }
   expandedParts.push(palette.dim(`status: `) + statusLabel);
-  if (outputPreview) {
+  if (outputTrimmed) {
     expandedParts.push("");
-    expandedParts.push(outputPreview);
+    expandedParts.push(outputTrimmed);
   }
   expandedParts.push("");
   const expandedCostLine = subagentName

@@ -62,16 +62,16 @@ function buildToolRegistryForAllowedTools(allowedTools: AllowedSubagentToolName[
 function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | undefined {
   switch (uiEvent.type) {
     case "bash_started":
-      return `bash running: ${uiEvent.command}`;
-    case "bash_execution": {
-      const exit = uiEvent.exitCode === null ? "?" : String(uiEvent.exitCode);
-      return `bash finished: ${uiEvent.command} (exit ${exit})`;
-    }
-    case "bash_blocked":
-      return `bash blocked: ${uiEvent.command} (${uiEvent.reason})`;
+      return `bash running: ${uiEvent.command.replace(/\n/g, " ")}`;
     default:
       return undefined;
   }
+}
+
+function extractAssistantTextForProgress(message: AssistantMessage): string | undefined {
+  const text = extractAssistantText(message).trim();
+  const firstLine = text.split("\n")[0];
+  return firstLine ? `agent: ${firstLine}` : undefined;
 }
 
 function isToolCall(block: AssistantMessage["content"][number]): block is ToolCall {
@@ -148,12 +148,16 @@ export async function runSubagentToCompletion(options: {
     const messageToolCalls = finalMessage.content.filter(isToolCall);
     toolCalls += messageToolCalls.length;
 
+    // Emit any assistant text output
+    const agentText = extractAssistantTextForProgress(finalMessage);
+    if (agentText) {
+      emit(agentText);
+    }
+
     if (finalMessage.stopReason !== "toolUse") {
       emit("done");
       return { finalText: extractAssistantText(finalMessage).trim(), costTotal };
     }
-
-    emit("assistant: tool use");
 
     if (messageToolCalls.length === 0) {
       emit("done");

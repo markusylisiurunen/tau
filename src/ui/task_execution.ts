@@ -106,7 +106,7 @@ export function renderTaskFinished(
   ];
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
-  const outputPreview = lastLines(finalOutput, 8);
+  const outputPreview = finalOutput.trim().split("\n").slice(0, 8).join("\n").trim();
   const costLine =
     palette.dim(`cost: ${formatCost(costTotal)} (`) + statusLabel + palette.dim(`, ${stats})`);
 
@@ -120,7 +120,7 @@ export function renderTaskFinished(
   expandedParts.push(palette.dim(`status: `) + statusLabel);
   if (outputPreview) {
     expandedParts.push("");
-    expandedParts.push(palette.taskPreview(outputPreview));
+    expandedParts.push(outputPreview);
   }
   expandedParts.push("");
   expandedParts.push(palette.dim(`cost: ${formatCost(costTotal)}, ${stats}`));

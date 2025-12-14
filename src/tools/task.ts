@@ -152,9 +152,18 @@ export function createTaskToolDefinition(): ToolDefinition {
       const uiQueue = new AsyncUiEventQueue();
       const lastEvents: string[] = [];
       let costTotal = 0;
+      let turns = 0;
+      let toolCalls = 0;
 
-      const pushProgress = (eventText: string, nextCostTotal: number) => {
+      const pushProgress = (
+        eventText: string,
+        nextCostTotal: number,
+        nextTurns: number,
+        nextToolCalls: number,
+      ) => {
         costTotal = nextCostTotal;
+        turns = nextTurns;
+        toolCalls = nextToolCalls;
         lastEvents.push(eventText);
         while (lastEvents.length > 8) lastEvents.shift();
         uiQueue.push({
@@ -164,6 +173,8 @@ export function createTaskToolDefinition(): ToolDefinition {
           title,
           lastEvents: [...lastEvents],
           costTotal,
+          turns,
+          toolCalls,
         });
       };
 
@@ -178,7 +189,7 @@ export function createTaskToolDefinition(): ToolDefinition {
             prompt,
             config: context.config,
             signal: signal ?? new AbortController().signal,
-            onProgress: (e) => pushProgress(e.text, e.costTotal),
+            onProgress: (e) => pushProgress(e.text, e.costTotal, e.turns, e.toolCalls),
           });
           finalText = result.finalText;
           costTotal = result.costTotal;
@@ -206,6 +217,8 @@ export function createTaskToolDefinition(): ToolDefinition {
           title,
           lastEvents: [...lastEvents],
           costTotal,
+          turns,
+          toolCalls,
           status,
           finalOutput: finalText,
         };

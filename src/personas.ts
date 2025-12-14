@@ -102,6 +102,20 @@ export const personas: Persona[] = [
     allowedReasoningLevels: ["low", "high"],
     settings: { reasoning: "low" },
   },
+  {
+    id: "gemini-2.5-flash",
+    label: "basic",
+    description: "Gemini 2.5 Flash",
+    model: getModel("google", "gemini-2.5-flash-preview-09-2025"),
+    systemPrompt: [
+      BLOCK_GENERAL_PURPOSE_PREAMBLE,
+      BLOCK_OUTPUT_STYLE_GUIDELINES,
+      BLOCK_TOOL_USE_GUIDELINES,
+      BLOCK_FILE_EDIT_GUIDELINES,
+    ].join("\n\n"),
+    allowedReasoningLevels: ["none", "low", "high"],
+    settings: { reasoning: "high" },
+  },
 ];
 
 export function getPersonaById(id: string): Persona | undefined {

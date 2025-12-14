@@ -13,11 +13,6 @@ function formatCost(costTotal: number): string {
   return `$${formatAdaptiveNumber(costTotal, 2, 5)}`;
 }
 
-function lastLines(text: string, maxLines: number): string {
-  const lines = text.trim().split("\n");
-  return lines.slice(-maxLines).join("\n").trim();
-}
-
 export function renderTaskRunning(
   title: string,
   lastEvents: string[],

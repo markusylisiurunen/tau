@@ -215,7 +215,6 @@ export function createTaskToolDefinition(): ToolDefinition {
           toolCallId: toolCall.id,
           name: definition.name,
           title,
-          lastEvents: [...lastEvents],
           costTotal,
           turns,
           toolCalls,

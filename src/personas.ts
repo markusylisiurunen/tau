@@ -57,7 +57,7 @@ export const personas: Persona[] = [
       BLOCK_TOOL_USE_GUIDELINES,
       BLOCK_FILE_EDIT_GUIDELINES,
     ].join("\n\n"),
-    allowedReasoningLevels: ["low", "medium", "high"],
+    allowedReasoningLevels: ["minimal", "medium", "high"],
     settings: { reasoning: "medium" },
   },
   {
@@ -71,8 +71,8 @@ export const personas: Persona[] = [
       BLOCK_TOOL_USE_GUIDELINES,
       BLOCK_FILE_EDIT_GUIDELINES,
     ].join("\n\n"),
-    allowedReasoningLevels: ["low", "medium", "high"],
-    settings: { reasoning: "medium" },
+    allowedReasoningLevels: ["low", "high"],
+    settings: { reasoning: "high" },
   },
   {
     id: "gpt-5.2",
@@ -86,7 +86,7 @@ export const personas: Persona[] = [
       BLOCK_FILE_EDIT_GUIDELINES,
     ].join("\n\n"),
     allowedReasoningLevels: ["none", "low", "medium", "high", "xhigh"],
-    settings: { reasoning: "low" },
+    settings: { reasoning: "medium" },
   },
   {
     id: "gemini-3-pro",

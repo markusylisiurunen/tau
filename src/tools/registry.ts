@@ -38,6 +38,7 @@ export type ToolUiEvent =
       lastEvents: string[];
       costTotal: number;
       status: "success" | "error" | "aborted";
+      finalOutput: string;
     }
   | {
       type: "task_blocked";

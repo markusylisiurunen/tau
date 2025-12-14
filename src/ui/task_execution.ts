@@ -19,6 +19,11 @@ function buildEventsLines(lastEvents: string[], prefix: string): string[] {
   return lastEvents.map((e) => `${prefix}${e}`);
 }
 
+function buildOutputLines(output: string, maxLines: number, prefix: string): string[] {
+  const lines = output.split("\n");
+  return lines.slice(0, maxLines).map((l) => `${prefix}${l}`);
+}
+
 export function renderTaskRunning(
   title: string,
   lastEvents: string[],
@@ -41,14 +46,14 @@ export function renderTaskRunning(
   ];
 
   const extraLines = [
-    ...buildEventsLines(lastEvents, "    "),
+    ...buildEventsLines(lastEvents, palette.taskPreview("    ")),
     `    ${palette.dim("cost:")} ${palette.dim(formatCost(costTotal))}`,
   ].filter((l) => l.trim() !== "");
 
   const expandedParts: string[] = [runningColor(bold(`task: ${title}`))];
   if (lastEvents.length > 0) {
     expandedParts.push("");
-    expandedParts.push(...buildEventsLines(lastEvents, palette.muted("• ")));
+    expandedParts.push(...buildEventsLines(lastEvents, palette.taskPreview("• ")));
   }
   expandedParts.push("");
   expandedParts.push(palette.dim(`cost: ${formatCost(costTotal)}`));
@@ -66,9 +71,9 @@ export function renderTaskRunning(
 
 export function renderTaskFinished(
   title: string,
-  lastEvents: string[],
   costTotal: number,
   status: "success" | "error" | "aborted",
+  finalOutput: string,
   compact: boolean,
 ): ToolOutputComponent {
   const { palette } = theme;
@@ -98,16 +103,17 @@ export function renderTaskFinished(
     { text: titleInline, style: palette.accent },
   ];
 
+  const outputLines = buildOutputLines(finalOutput, 16, palette.taskPreview("    "));
   const extraLines = [
-    ...buildEventsLines(lastEvents, "    "),
+    ...outputLines,
     `    ${palette.dim("cost:")} ${palette.dim(formatCost(costTotal))} ${palette.dim("(")}${statusLabel}${palette.dim(")")}`,
   ].filter((l) => l.trim() !== "");
 
   const expandedParts: string[] = [borderColor(bold(`task: ${title}`))];
   expandedParts.push(palette.dim(`status: `) + statusLabel);
-  if (lastEvents.length > 0) {
+  if (finalOutput) {
     expandedParts.push("");
-    expandedParts.push(...buildEventsLines(lastEvents, palette.muted("• ")));
+    expandedParts.push(...buildOutputLines(finalOutput, 16, palette.taskPreview("• ")));
   }
   expandedParts.push("");
   expandedParts.push(palette.dim(`cost: ${formatCost(costTotal)}`));

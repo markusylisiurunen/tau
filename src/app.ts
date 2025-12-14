@@ -4,6 +4,7 @@ import type {
   KnownProvider,
   Message,
   ReasoningEffort,
+  ToolCall,
 } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import { Spacer, Text, TUI } from "@mariozechner/pi-tui";
@@ -237,14 +238,21 @@ export class ChatApp {
 
   // UI Updates ------------------------------------------------------------------------------------
 
+  private getSessionStatsString(): string {
+    const costStr = this.getSessionCostString();
+    const turns = this.getTurnCount();
+    const toolCalls = this.getToolCallCount();
+    return `cost: ${costStr}, turns: ${turns}, tool calls: ${toolCalls}`;
+  }
+
   private updateFooter(): void {
     const reasoningLabel = this.currentPersona.settings.reasoning || "default";
     const toolLabel = this.formatRiskLevelLabel();
     const contextUsage = this.getContextUsageString();
-    const sessionCost = this.getSessionCostString();
+    const sessionStats = this.getSessionStatsString();
     const cwd = formatCwd(process.cwd());
 
-    const left = palette.dim(`${cwd} · ${contextUsage} · ${sessionCost}`);
+    const left = palette.dim(`${cwd} · ${contextUsage} · ${sessionStats}`);
     const personaName = this.currentPersona.label || this.currentPersona.id;
     const statusPart = palette.dim(`${personaName} · ${reasoningLabel} · `);
     const right = `${statusPart}${toolLabel}`;
@@ -346,6 +354,25 @@ export class ChatApp {
       }
     }
     return { read, write };
+  }
+
+  private getTurnCount(): number {
+    let count = 0;
+    for (const m of this.engine.history) {
+      if (m.role === "assistant") count++;
+    }
+    return count;
+  }
+
+  private getToolCallCount(): number {
+    let count = 0;
+    for (const m of this.engine.history) {
+      if (m.role === "assistant") {
+        const msg = m as AssistantMessage;
+        count += msg.content.filter((c): c is ToolCall => c.type === "toolCall").length;
+      }
+    }
+    return count;
   }
 
   private getLastAssistantMessage(): AssistantMessage | undefined {
@@ -1102,7 +1129,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.runningTaskComponents.set(uiEvent.toolCallId, index);
               this.ui.requestRender();
             } else if (uiEvent.type === "task_progress") {
-              const lastEvents = uiEvent.lastEvents.slice(-4);
+              const lastEvents = uiEvent.lastEvents.slice(-8);
               const runningIndex = this.runningTaskComponents.get(uiEvent.toolCallId);
               if (runningIndex !== undefined) {
                 this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
@@ -1116,15 +1143,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               }
               this.ui.requestRender();
             } else if (uiEvent.type === "task_finished") {
-              const lastEvents = uiEvent.lastEvents.slice(-4);
               const runningIndex = this.runningTaskComponents.get(uiEvent.toolCallId);
               if (runningIndex !== undefined) {
                 this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
                   renderTaskFinished(
                     uiEvent.title,
-                    lastEvents,
                     uiEvent.costTotal,
                     uiEvent.status,
+                    uiEvent.finalOutput,
                     compact,
                   ),
                 );
@@ -1133,9 +1159,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                 this.chatContainer.addToolMessage((compact) =>
                   renderTaskFinished(
                     uiEvent.title,
-                    lastEvents,
                     uiEvent.costTotal,
                     uiEvent.status,
+                    uiEvent.finalOutput,
                     compact,
                   ),
                 );

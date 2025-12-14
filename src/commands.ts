@@ -5,7 +5,8 @@ export type Command =
   | { type: "copy" }
   | { type: "copyCode" }
   | { type: "new" }
-  | { type: "fork" }
+  | { type: "forkOnlySummary" }
+  | { type: "forkSummaryAndLastTurn" }
   | { type: "reload" }
   | { type: "risk"; level: RiskLevel }
   | { type: "persona"; id: string }
@@ -31,8 +32,12 @@ export function parseCommand(raw: string): Command {
     return { type: "new" };
   }
 
-  if (trimmed === "/fork") {
-    return { type: "fork" };
+  if (trimmed === "/fork:only-summary") {
+    return { type: "forkOnlySummary" };
+  }
+
+  if (trimmed === "/fork:with-last-turn") {
+    return { type: "forkSummaryAndLastTurn" };
   }
 
   if (trimmed === "/reload") {
@@ -77,24 +82,25 @@ export function buildHelpText(agentsFiles?: string[]): string {
   }
   lines.push(
     "commands:",
-    "  /help             show this help",
-    "  /new              new session",
-    "  /fork             summarize and start new session",
-    "  /reload           reload personas and prompts from disk",
-    "  /copy             copy last assistant message",
-    "  /copy:code        copy code blocks from last assistant message",
-    "  /risk:none        disable all tools",
-    "  /risk:read-only   allow read-only tools",
-    "  /risk:read-write  allow all tools",
-    "  /persona:<id>     switch persona",
-    "  /prompt:<id>      insert prompt template",
+    "  /help                 show this help",
+    "  /new                  new session",
+    "  /fork:only-summary    summarize and start new session",
+    "  /fork:with-last-turn  summarize and include previous last turn",
+    "  /reload               reload personas and prompts from disk",
+    "  /copy                 copy last assistant message",
+    "  /copy:code            copy code blocks from last assistant message",
+    "  /risk:none            disable all tools",
+    "  /risk:read-only       allow read-only tools",
+    "  /risk:read-write      allow all tools",
+    "  /persona:<id>         switch persona",
+    "  /prompt:<id>          insert prompt template",
     "",
     "keys:",
-    "  shift+tab         cycle reasoning effort",
-    "  ctrl+t            toggle thoughts visibility",
-    "  ctrl+o            toggle compact tool UI",
-    "  ctrl+f            expand @file mentions",
-    "  esc               interrupt assistant",
+    "  shift+tab             cycle reasoning effort",
+    "  ctrl+t                toggle thoughts visibility",
+    "  ctrl+o                toggle compact tool UI",
+    "  ctrl+f                expand @file mentions",
+    "  esc                   interrupt assistant",
   );
   return lines.join("\n");
 }

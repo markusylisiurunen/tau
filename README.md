@@ -107,7 +107,8 @@ Use `/reload` to refresh personas and prompts from disk without restarting. Usef
 
 - `/help`
 - `/new` (clear session)
-- `/fork` (summarize session and start new)
+- `/fork:only-summary` (summarize session and start new)
+- `/fork:with-last-turn` (summarize session and include previous last turn)
 - `/reload` (reload personas and prompts from disk)
 - `/copy` (copy last assistant message)
 - `/copy:code` (copy code blocks from last assistant message)

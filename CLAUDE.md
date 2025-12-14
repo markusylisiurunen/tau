@@ -32,7 +32,7 @@ There is no dedicated test runner in this repo currently. Validate changes by:
 
 - `npm run check` (format + lint + typecheck)
 - manual smoke tests: `npm run dev` and a full build/run (`npm run build && npm start`)
-  - try slash commands: `/help`, `/new`, `/fork`, `/copy`, `/copy:code`, `/risk:none|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`
+  - try slash commands: `/help`, `/new`, `/fork:only-summary`, `/fork:with-last-turn`, `/copy`, `/copy:code`, `/risk:none|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`
   - try direct bash mode: prefix input with `!` to run a shell command (separate from model tool calls)
   - try file-path autocomplete: type `@` then a path fragment to insert a project-relative file path
   - if relevant, verify piped stdin behavior (non-interactive first message) and `/dev/tty` fallback for interactive input

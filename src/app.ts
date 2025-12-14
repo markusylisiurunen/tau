@@ -1,5 +1,10 @@
 import { homedir } from "node:os";
-import type { AssistantMessage, KnownProvider, ReasoningEffort } from "@mariozechner/pi-ai";
+import type {
+  AssistantMessage,
+  KnownProvider,
+  Message,
+  ReasoningEffort,
+} from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import { Spacer, Text, TUI } from "@mariozechner/pi-tui";
 import { copyTextToClipboard } from "./clipboard.js";
@@ -493,8 +498,12 @@ export class ChatApp {
         this.clearSession();
         break;
 
-      case "fork":
-        await this.forkSession();
+      case "forkOnlySummary":
+        await this.forkSessionOnlySummary();
+        break;
+
+      case "forkSummaryAndLastTurn":
+        await this.forkSessionSummaryAndLastTurn();
         break;
 
       case "risk":
@@ -589,6 +598,71 @@ export class ChatApp {
     this.ui.requestRender();
   }
 
+  private escapeXml(text: string): string {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  private extractLastTurn(history: readonly Message[]): {
+    lastUserText?: string;
+    lastAssistantText?: string;
+  } {
+    if (history.length === 0) {
+      return {};
+    }
+
+    let lastUserIndex = -1;
+    let lastUserText: string | undefined;
+
+    // Find the last user message and extract its text
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i]!.role === "user") {
+        lastUserIndex = i;
+        const userMessage = history[i]!;
+        const textParts: string[] = [];
+        for (const block of userMessage.content) {
+          if (typeof block === "string") {
+            textParts.push(block);
+          } else if (block.type === "text") {
+            textParts.push(block.text);
+          }
+        }
+        const combined = textParts.join("\n").trim();
+        if (combined) {
+          lastUserText = combined;
+        }
+        break;
+      }
+    }
+
+    let lastAssistantText: string | undefined;
+
+    if (lastUserIndex >= 0) {
+      // Find the last assistant message after the last user message
+      for (let i = history.length - 1; i > lastUserIndex; i--) {
+        if (history[i]!.role === "assistant") {
+          const text = extractAssistantText(history[i]! as AssistantMessage).trim();
+          if (text) {
+            lastAssistantText = text;
+          }
+          break;
+        }
+      }
+    } else {
+      // No user message found; look for the last assistant message overall
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i]!.role === "assistant") {
+          const text = extractAssistantText(history[i]! as AssistantMessage).trim();
+          if (text) {
+            lastAssistantText = text;
+          }
+          break;
+        }
+      }
+    }
+
+    return { lastUserText, lastAssistantText };
+  }
+
   private rebuildSystemPrompt(previousSessionSummary?: string): void {
     this.environmentTag = buildEnvironmentTag({
       riskLevel: this.riskLevel,
@@ -605,21 +679,9 @@ export class ChatApp {
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
   }
 
-  private async forkSession(): Promise<void> {
-    const history = this.engine.history;
-    if (history.length === 0) {
-      this.addSystemMessage("no conversation to fork.", palette.noticeWarn);
-      return;
-    }
-
-    this.addSystemMessage("summarizing session...", palette.noticeSuccess);
-    this.isStreaming = true;
-    this.editor.disableSubmit = true;
-    this.footer.startWorkingIcon();
-
-    try {
-      const formattedHistory = formatHistoryForCompression(history);
-      const summaryPrompt = `
+  private async generateSummary(history: readonly Message[]): Promise<string> {
+    const formattedHistory = formatHistoryForCompression(history);
+    const summaryPrompt = `
 Summarize this conversation so another assistant can continue without losing context. Be specific and factual. Aim for extreme compression; at least 90% reduction from the original conversation length, preferably more. Every word should earn its place.
 
 <conversation>
@@ -639,57 +701,128 @@ Capture only what matters for continuity:
 Ruthlessly compress: collapse tangents, skip back-and-forth, omit pleasantries. Name things concretely (paths, functions, errors) but use minimal words.
 
 Write plain prose, no formatting. Be thorough enough that the reader can resume without guessing, but don't narrate every exchange. When relevant, name things concretely: file paths, function names, error messages. The reader has no context beyond what you provide as the summary.
-      `.trim();
+    `.trim();
 
-      const apiKey = getApiKeyForProvider(
-        this.config,
-        this.currentPersona.model.provider as KnownProvider,
-      );
-      const stream = streamSimple(
-        this.currentPersona.model,
-        {
-          systemPrompt: [
-            "You are a precise and thorough conversation summarizer.",
-            "Your task is to distill conversations into clear, actionable summaries that preserve all context needed for seamless continuation.",
-            "Focus on facts, decisions, and concrete details rather than narrative flow.",
-            "Be specific about file paths, function names, and technical details when present.",
-            "Distinguish between what was attempted versus what was confirmed to work.",
-          ].join(" "),
-          messages: [
-            {
-              role: "user",
-              content: [{ type: "text", text: summaryPrompt }],
-              timestamp: Date.now(),
-            },
-          ],
-        },
-        { reasoning: "medium", ...(apiKey && { apiKey }) },
-      );
+    const apiKey = getApiKeyForProvider(
+      this.config,
+      this.currentPersona.model.provider as KnownProvider,
+    );
+    const stream = streamSimple(
+      this.currentPersona.model,
+      {
+        systemPrompt: [
+          "You are a precise and thorough conversation summarizer.",
+          "Your task is to distill conversations into clear, actionable summaries that preserve all context needed for seamless continuation.",
+          "Focus on facts, decisions, and concrete details rather than narrative flow.",
+          "Be specific about file paths, function names, and technical details when present.",
+          "Distinguish between what was attempted versus what was confirmed to work.",
+        ].join(" "),
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: summaryPrompt }],
+            timestamp: Date.now(),
+          },
+        ],
+      },
+      { reasoning: "medium", ...(apiKey && { apiKey }) },
+    );
 
-      let summary = "";
-      for await (const event of stream) {
-        if (event.type === "text_delta") {
-          summary += event.delta;
-        }
+    let summary = "";
+    for await (const event of stream) {
+      if (event.type === "text_delta") {
+        summary += event.delta;
       }
+    }
 
-      this.previousSessionSummary = summary.trim();
+    return summary.trim();
+  }
 
-      // Reset the session state but preserve history with divider and summary
-      this.engine.reset();
-      this.assistantComponents = [];
-      this.expandedFilesInCurrentPrompt.clear();
-      this.chatContainer.addMessage(new SessionDividerComponent("new session"));
-      this.chatContainer.addMessage(new SessionSummaryComponent(this.previousSessionSummary));
-      this.isBashMode = false;
+  private applySessionContext(previousSessionContext: string): void {
+    this.previousSessionSummary = previousSessionContext;
 
-      // Rebuild environment tag and system prompt with the new summary and current risk level
-      this.rebuildSystemPrompt(this.previousSessionSummary);
+    // Reset the session state but preserve history with divider and summary
+    this.engine.reset();
+    this.assistantComponents = [];
+    this.expandedFilesInCurrentPrompt.clear();
+    this.chatContainer.addMessage(new SessionDividerComponent("new session"));
+    this.chatContainer.addMessage(new SessionSummaryComponent(this.previousSessionSummary));
+    this.isBashMode = false;
 
-      this.updateEditorBorderColor();
-      this.updateFooter();
+    // Rebuild environment tag and system prompt with the new summary and current risk level
+    this.rebuildSystemPrompt(this.previousSessionSummary);
+
+    this.updateEditorBorderColor();
+    this.updateFooter();
+  }
+
+  private async forkSessionOnlySummary(): Promise<void> {
+    const history = this.engine.history;
+    if (history.length === 0) {
+      this.addSystemMessage("no conversation to fork.", palette.noticeWarn);
+      return;
+    }
+
+    this.addSystemMessage("summarizing session...", palette.noticeSuccess);
+    this.isStreaming = true;
+    this.editor.disableSubmit = true;
+    this.footer.startWorkingIcon();
+
+    try {
+      const summary = await this.generateSummary(history);
+      this.applySessionContext(summary);
+
       this.addSystemMessage(
         "session forked. previous context has been summarized.",
+        palette.noticeSuccess,
+      );
+    } catch (err) {
+      this.addSystemMessage(`fork failed: ${(err as Error).message}`, palette.noticeError);
+    } finally {
+      this.footer.stop();
+      this.isStreaming = false;
+      this.editor.disableSubmit = false;
+      this.ui.requestRender();
+    }
+  }
+
+  private async forkSessionSummaryAndLastTurn(): Promise<void> {
+    const history = this.engine.history;
+    if (history.length === 0) {
+      this.addSystemMessage("no conversation to fork.", palette.noticeWarn);
+      return;
+    }
+
+    this.addSystemMessage("summarizing session...", palette.noticeSuccess);
+    this.isStreaming = true;
+    this.editor.disableSubmit = true;
+    this.footer.startWorkingIcon();
+
+    try {
+      const summary = await this.generateSummary(history);
+
+      // Extract the last turn from history
+      const lastTurn = this.extractLastTurn(history);
+
+      // Build the combined context with summary and last turn
+      let sessionContext = summary;
+
+      if (lastTurn.lastUserText || lastTurn.lastAssistantText) {
+        sessionContext += "\n\nLast turn from previous session (verbatim):\n";
+        sessionContext += "<last_turn>";
+        if (lastTurn.lastUserText) {
+          sessionContext += `\n<last_user_message>${this.escapeXml(lastTurn.lastUserText)}</last_user_message>`;
+        }
+        if (lastTurn.lastAssistantText) {
+          sessionContext += `\n<last_assistant_message>${this.escapeXml(lastTurn.lastAssistantText)}</last_assistant_message>`;
+        }
+        sessionContext += "\n</last_turn>";
+      }
+
+      this.applySessionContext(sessionContext);
+
+      this.addSystemMessage(
+        "session forked. previous context and last turn have been included.",
         palette.noticeSuccess,
       );
     } catch (err) {

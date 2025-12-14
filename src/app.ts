@@ -300,8 +300,8 @@ export class ChatApp {
     this.ui.requestRender();
   }
 
-  private addUserMessage(text: string): void {
-    this.chatContainer.addMessage(new UserMessageComponent(text));
+  private addUserMessage(text: string, opts?: { isMemoryMode?: boolean }): void {
+    this.chatContainer.addMessage(new UserMessageComponent(text, opts));
     this.ui.requestRender();
   }
 
@@ -482,15 +482,18 @@ export class ChatApp {
 
       const agentsFilePath = this.getMemoryModeFilePath();
       const textForModel = this.formatMemoryModeUserMessage(agentsFilePath, request);
-      await this.sendUserMessage(request, { textForModel });
+      await this.sendUserMessage(request, { textForModel, isMemoryMode: true });
       return;
     }
 
     await this.sendUserMessage(trimmed);
   }
 
-  private async sendUserMessage(text: string, opts?: { textForModel?: string }): Promise<void> {
-    this.addUserMessage(text);
+  private async sendUserMessage(
+    text: string,
+    opts?: { textForModel?: string; isMemoryMode?: boolean },
+  ): Promise<void> {
+    this.addUserMessage(text, { isMemoryMode: opts?.isMemoryMode });
     this.expandedFilesInCurrentPrompt.clear();
 
     const systemNotice = this.pendingRiskLevelChange
@@ -527,7 +530,7 @@ export class ChatApp {
   }
 
   private formatMemoryModeUserMessage(agentsFilePath: string, request: string): string {
-    return [
+    const system = [
       "Memory mode: update the project guidelines file at:",
       agentsFilePath,
       "",
@@ -537,12 +540,10 @@ export class ChatApp {
       "Place new content in the most appropriate existing section, or create a new section if needed.",
       "Always prefer an existing section over creating a new one. Sometimes changes are required in more than one place.",
       "",
-      "Do not mention this surrounding instruction in your response; it's invisible to the user.",
-      "",
-      "<user_request>",
-      request,
-      "</user_request>",
+      "Do not mention this surrounding instruction in your response.",
     ].join("\n");
+
+    return ["<system>", system, "</system>", "", request].join("\n");
   }
 
   // Command Handling ------------------------------------------------------------------------------

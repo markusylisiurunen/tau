@@ -41,6 +41,8 @@ export interface Palette {
   // User message
   userBg: (text: string) => string;
   userText: (text: string) => string;
+  userMemoryBg: (text: string) => string;
+  userMemoryText: (text: string) => string;
 
   // Risk level indicators
   riskNone: (text: string) => string;
@@ -96,6 +98,8 @@ const palette: Palette = {
   // User message
   userBg: chalk.bgHex(hslToHex(TEXT_HUE, 6, 12)),
   userText: (text) => text,
+  userMemoryBg: chalk.bgHex(hslToHex(280, 18, 18)),
+  userMemoryText: chalk.hex(hslToHex(280, 42, 82)),
 
   // Risk level indicators
   riskNone: chalk.hex(hslToHex(TEXT_HUE, 6, 42)),

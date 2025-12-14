@@ -355,10 +355,7 @@ export class SessionEngine {
     const makeUiNext = (iterator: ToolUiIterator, taskExec: TaskExec): Promise<PendingRace> =>
       iterator
         .next()
-        .then(
-          (result) =>
-            ({ kind: "ui", iterator, taskExec, result }) satisfies PendingRace,
-        )
+        .then((result) => ({ kind: "ui", iterator, taskExec, result }) satisfies PendingRace)
         .catch(
           () =>
             ({

@@ -1,6 +1,6 @@
-import type { ReasoningEffort } from "../types.js";
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
 import { Chalk } from "chalk";
+import type { ReasoningEffort } from "../types.js";
 import { hslToHex } from "../utils/color.js";
 import { assertNever } from "../utils/never.js";
 

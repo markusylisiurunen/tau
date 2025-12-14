@@ -27,7 +27,7 @@ export type ToolUiEvent =
       toolCallId: string;
       name: string;
       title: string;
-      lastEvents: string[];
+      event: string;
       costTotal: number;
       turns: number;
       toolCalls: number;

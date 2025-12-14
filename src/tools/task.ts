@@ -156,7 +156,7 @@ export function createTaskToolDefinition(): ToolDefinition {
       const pushProgress = (eventText: string, nextCostTotal: number) => {
         costTotal = nextCostTotal;
         lastEvents.push(eventText);
-        while (lastEvents.length > 4) lastEvents.shift();
+        while (lastEvents.length > 8) lastEvents.shift();
         uiQueue.push({
           type: "task_progress",
           toolCallId: toolCall.id,
@@ -207,6 +207,7 @@ export function createTaskToolDefinition(): ToolDefinition {
           lastEvents: [...lastEvents],
           costTotal,
           status,
+          finalOutput: finalText,
         };
 
         return { kind: "single", toolResult, uiEvent };

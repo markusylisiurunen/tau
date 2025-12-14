@@ -24,6 +24,7 @@ export interface Palette {
   bashOutput: (text: string) => string;
   toolFileRan: (text: string) => string;
   filePreview: (text: string) => string;
+  taskPreview: (text: string) => string;
 
   // Diff colors
   diffAdded: (text: string) => string;
@@ -75,6 +76,7 @@ const palette: Palette = {
   bashOutput: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
   toolFileRan: chalk.hex(hslToHex(192, 80, 72)),
   filePreview: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
+  taskPreview: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
 
   // Diff colors
   diffAdded: chalk.hex(hslToHex(72, 40, 46)),

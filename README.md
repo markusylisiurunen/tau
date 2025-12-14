@@ -215,3 +215,14 @@ tau connects your terminal to large language models, giving them tools to intera
 the model sees your messages, any file contents you've shared, and the results of tool calls. it doesn't have ambient access to your filesystem; it only sees what you show it or what it explicitly requests through tools.
 
 tool calls are displayed in the UI so you can see exactly what the model is doing. use `Ctrl+O` to toggle between compact and detailed views.
+
+## creating a release
+
+releases are published to npm automatically when a github release is published.
+
+- make sure `package.json` has the correct version (e.g. `0.2.0`).
+- run `npm run check` and `npm run build`.
+- commit and push the version bump.
+- create a github release with a tag matching the version (e.g. `v0.2.0`).
+
+the workflow expects an npm token in `NPM_TOKEN` (repo settings → secrets and variables → actions).

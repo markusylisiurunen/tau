@@ -85,3 +85,12 @@ User personas: `~/.config/tau/personas/*.md` with YAML frontmatter (`id`, `provi
 ## Maintaining this file
 
 Keep AGENTS.md in sync with the codebase. When making changes that affect architecture, commands, configuration, or other documented behavior, update the relevant sections here.
+
+## Releasing
+
+Tau is published to npm automatically when a GitHub Release is published.
+
+1. Bump `package.json` version and push the commit.
+2. Create a GitHub Release with a tag matching the version (e.g. `v0.2.0`).
+
+CI requires an npm token stored as the `NPM_TOKEN` GitHub Actions secret.

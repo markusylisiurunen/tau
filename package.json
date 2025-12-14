@@ -1,11 +1,14 @@
 {
   "name": "tau",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "bin": {
     "tau": "./dist/main.js"
   },
+  "files": [
+    "dist/",
+    "bin/"
+  ],
   "scripts": {
     "dev": "tsx src/main.ts",
     "build": "tsc -p tsconfig.json",
@@ -13,6 +16,9 @@
     "check": "biome check --write . && tsc -p tsconfig.json --noEmit",
     "fmt": "biome format --write .",
     "lint": "biome lint ."
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@mariozechner/pi-ai": "^0.21.0",

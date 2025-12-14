@@ -1,5 +1,7 @@
+import { Text } from "@mariozechner/pi-tui";
 import { formatAdaptiveNumber } from "../utils/format.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";
+import { PaddedContainer } from "./components/padded_container.js";
 import { theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
 
@@ -7,33 +9,26 @@ function bold(text: string): string {
   return `\u001b[1m${text}\u001b[22m`;
 }
 
-function inline(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
 function formatCost(costTotal: number): string {
   return `$${formatAdaptiveNumber(costTotal, 2, 5)}`;
 }
 
-function buildEventsLines(lastEvents: string[], prefix: string): string[] {
-  return lastEvents.map((e) => `${prefix}${e}`);
-}
-
-function buildOutputLines(output: string, maxLines: number, prefix: string): string[] {
-  const lines = output.split("\n");
-  return lines.slice(0, maxLines).map((l) => `${prefix}${l}`);
+function lastLines(text: string, maxLines: number): string {
+  const lines = text.trim().split("\n");
+  return lines.slice(-maxLines).join("\n").trim();
 }
 
 export function renderTaskRunning(
   title: string,
   lastEvents: string[],
   costTotal: number,
+  turns: number,
+  toolCalls: number,
   compact: boolean,
 ): ToolOutputComponent {
   const { palette } = theme;
-  const runningColor = (s: string) => palette.noticeSuccess(s);
+  const runningColor = (s: string) => palette.taskRunning(s);
 
-  const titleInline = inline(title);
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
     { text: "▪", style: runningColor },
@@ -42,21 +37,26 @@ export function renderTaskRunning(
     { text: " ", style: (s) => s },
     { text: "running", style: palette.muted },
     { text: " ", style: (s) => s },
-    { text: titleInline, style: palette.accent },
+    { text: title.trim(), style: palette.accent },
   ];
 
-  const extraLines = [
-    ...buildEventsLines(lastEvents, palette.taskPreview("    ")),
-    `    ${palette.dim("cost:")} ${palette.dim(formatCost(costTotal))}`,
-  ].filter((l) => l.trim() !== "");
+  const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
+  const eventsText = lastEvents.map((e) => e.trim()).join("\n");
+  const costLine = palette.dim(`cost: ${formatCost(costTotal)} (${stats})`);
+
+  const extraParts: string[] = [];
+  if (eventsText) {
+    extraParts.push(palette.taskPreview(eventsText));
+  }
+  extraParts.push(costLine);
 
   const expandedParts: string[] = [runningColor(bold(`task: ${title}`))];
-  if (lastEvents.length > 0) {
+  if (eventsText) {
     expandedParts.push("");
-    expandedParts.push(...buildEventsLines(lastEvents, palette.taskPreview("• ")));
+    expandedParts.push(palette.taskPreview(eventsText));
   }
   expandedParts.push("");
-  expandedParts.push(palette.dim(`cost: ${formatCost(costTotal)}`));
+  expandedParts.push(palette.dim(`cost: ${formatCost(costTotal)} (${stats})`));
 
   return new ToolOutputComponent({
     compact,
@@ -64,7 +64,7 @@ export function renderTaskRunning(
     compactView: {
       segments,
       flexIndices: [7],
-      extraText: extraLines.length > 0 ? extraLines.join("\n") : undefined,
+      extraComponent: new PaddedContainer(new Text(extraParts.join("\n"), 0, 0), 4),
     },
   });
 }
@@ -72,17 +72,20 @@ export function renderTaskRunning(
 export function renderTaskFinished(
   title: string,
   costTotal: number,
+  turns: number,
+  toolCalls: number,
   status: "success" | "error" | "aborted",
   finalOutput: string,
   compact: boolean,
 ): ToolOutputComponent {
   const { palette } = theme;
-  const okColor = (s: string) => palette.toolFileRan(s);
-  const warnColor = (s: string) => palette.warn(s);
-  const errorColor = (s: string) => palette.error(s);
 
   const borderColor =
-    status === "success" ? okColor : status === "aborted" ? warnColor : errorColor;
+    status === "success"
+      ? (s: string) => palette.taskRan(s)
+      : status === "aborted"
+        ? (s: string) => palette.warn(s)
+        : (s: string) => palette.error(s);
 
   const statusLabel =
     status === "success"
@@ -91,7 +94,6 @@ export function renderTaskFinished(
         ? palette.warn("aborted")
         : palette.error("error");
 
-  const titleInline = inline(title);
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
     { text: "▪", style: borderColor },
@@ -100,23 +102,28 @@ export function renderTaskFinished(
     { text: " ", style: (s) => s },
     { text: "finished", style: palette.muted },
     { text: " ", style: (s) => s },
-    { text: titleInline, style: palette.accent },
+    { text: title.trim(), style: palette.accent },
   ];
 
-  const outputLines = buildOutputLines(finalOutput, 16, palette.taskPreview("    "));
-  const extraLines = [
-    ...outputLines,
-    `    ${palette.dim("cost:")} ${palette.dim(formatCost(costTotal))} ${palette.dim("(")}${statusLabel}${palette.dim(")")}`,
-  ].filter((l) => l.trim() !== "");
+  const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
+  const outputPreview = lastLines(finalOutput, 8);
+  const costLine =
+    palette.dim(`cost: ${formatCost(costTotal)} (`) + statusLabel + palette.dim(`, ${stats})`);
+
+  const extraParts: string[] = [];
+  if (outputPreview) {
+    extraParts.push(palette.taskPreview(outputPreview));
+  }
+  extraParts.push(costLine);
 
   const expandedParts: string[] = [borderColor(bold(`task: ${title}`))];
   expandedParts.push(palette.dim(`status: `) + statusLabel);
-  if (finalOutput) {
+  if (outputPreview) {
     expandedParts.push("");
-    expandedParts.push(...buildOutputLines(finalOutput, 16, palette.taskPreview("• ")));
+    expandedParts.push(palette.taskPreview(outputPreview));
   }
   expandedParts.push("");
-  expandedParts.push(palette.dim(`cost: ${formatCost(costTotal)}`));
+  expandedParts.push(palette.dim(`cost: ${formatCost(costTotal)}, ${stats}`));
 
   return new ToolOutputComponent({
     compact,
@@ -124,7 +131,7 @@ export function renderTaskFinished(
     compactView: {
       segments,
       flexIndices: [7],
-      extraText: extraLines.length > 0 ? extraLines.join("\n") : undefined,
+      extraComponent: new PaddedContainer(new Text(extraParts.join("\n"), 0, 0), 4),
     },
   });
 }
@@ -137,8 +144,7 @@ export function renderTaskBlocked(
   const { palette } = theme;
   const errorColor = (s: string) => palette.error(s);
 
-  const titleInline = inline(title);
-  const why = inline(reason);
+  const why = reason.trim();
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
@@ -148,7 +154,7 @@ export function renderTaskBlocked(
     { text: " ", style: (s) => s },
     { text: "blocked", style: palette.muted },
     { text: " ", style: (s) => s },
-    { text: titleInline, style: palette.accent },
+    { text: title.trim(), style: palette.accent },
   ];
 
   const expandedParts: string[] = [errorColor(bold(`task: ${title}`))];
@@ -157,13 +163,19 @@ export function renderTaskBlocked(
     expandedParts.push(errorColor(why));
   }
 
-  const extraText = why
-    ? `    ${palette.muted("(")}${palette.error(why)}${palette.muted(")")}`
+  const extraContent = why
+    ? `${palette.muted("(")}${palette.error(why)}${palette.muted(")")}`
     : undefined;
 
   return new ToolOutputComponent({
     compact,
     expanded: { borderColor: errorColor, text: expandedParts.join("\n") },
-    compactView: { segments, flexIndices: [7], extraText },
+    compactView: {
+      segments,
+      flexIndices: [7],
+      extraComponent: extraContent
+        ? new PaddedContainer(new Text(extraContent, 0, 0), 4)
+        : undefined,
+    },
   });
 }

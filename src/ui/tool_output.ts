@@ -1,4 +1,4 @@
-import { Container, Text } from "@mariozechner/pi-tui";
+import { type Component, Container, Text } from "@mariozechner/pi-tui";
 import { DynamicBorder } from "./components/dynamic_border.js";
 import { type OneLineSegment, OneLineSegmentsComponent } from "./components/one_line_segments.js";
 
@@ -13,6 +13,7 @@ export interface ToolOutputCompactView {
   segments: OneLineSegment[];
   flexIndices?: number[];
   extraText?: string;
+  extraComponent?: Component;
   paddingX?: number;
   paddingY?: number;
 }
@@ -28,10 +29,13 @@ export class ToolOutputComponent extends Container {
     super();
 
     if (props.compact) {
-      const { segments, flexIndices, extraText, paddingX, paddingY } = props.compactView;
+      const { segments, flexIndices, extraText, extraComponent, paddingX, paddingY } =
+        props.compactView;
       this.addChild(new OneLineSegmentsComponent(segments, flexIndices ?? []));
 
-      if (extraText && extraText.trim() !== "") {
+      if (extraComponent) {
+        this.addChild(extraComponent);
+      } else if (extraText && extraText.trim() !== "") {
         this.addChild(new Text(extraText, paddingX ?? 0, paddingY ?? 0));
       }
 

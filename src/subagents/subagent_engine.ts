@@ -27,6 +27,8 @@ import type {
 export type SubagentProgressEvent = {
   text: string;
   costTotal: number;
+  turns: number;
+  toolCalls: number;
 };
 
 export type SubagentRunResult = {
@@ -102,10 +104,12 @@ export async function runSubagentToCompletion(options: {
   ];
 
   let costTotal = 0;
+  let turns = 0;
+  let toolCalls = 0;
   const maxSubturns = definition.maxSubturns ?? 64;
 
   const emit = (text: string) => {
-    onProgress?.({ text, costTotal });
+    onProgress?.({ text, costTotal, turns, toolCalls });
   };
 
   for (let subturn = 1; subturn <= maxSubturns && !signal.aborted; subturn++) {
@@ -138,7 +142,11 @@ export async function runSubagentToCompletion(options: {
     }
 
     messages.push(finalMessage);
+    turns++;
     costTotal += finalMessage.usage?.cost?.total ?? 0;
+
+    const messageToolCalls = finalMessage.content.filter(isToolCall);
+    toolCalls += messageToolCalls.length;
 
     if (finalMessage.stopReason !== "toolUse") {
       emit("done");
@@ -147,26 +155,25 @@ export async function runSubagentToCompletion(options: {
 
     emit("assistant: tool use");
 
-    const toolCalls = finalMessage.content.filter(isToolCall);
-    if (toolCalls.length === 0) {
+    if (messageToolCalls.length === 0) {
       emit("done");
       return { finalText: extractAssistantText(finalMessage).trim(), costTotal };
     }
 
     const riskLevel = definition.riskLevel as RiskLevel;
 
-    for (const toolCall of toolCalls) {
+    for (const call of messageToolCalls) {
       if (signal.aborted) break;
 
-      const toolDef = toolRegistry.get(toolCall.name);
+      const toolDef = toolRegistry.get(call.name);
       if (!toolDef) {
-        const msg = `tool '${toolCall.name}' is not available to this sub-agent.`;
-        messages.push(createToolError(toolCall, msg));
+        const msg = `tool '${call.name}' is not available to this sub-agent.`;
+        messages.push(createToolError(call, msg));
         emit(`tool blocked: ${msg}`);
         continue;
       }
 
-      const dispatchResult = await toolDef.dispatch(toolCall, riskLevel, signal);
+      const dispatchResult = await toolDef.dispatch(call, riskLevel, signal);
 
       const handleUi = (uiEvent: ToolUiEvent | undefined) => {
         if (!uiEvent) return;

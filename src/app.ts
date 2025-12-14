@@ -4,7 +4,6 @@ import type {
   KnownProvider,
   Message,
   ReasoningEffort,
-  ToolCall,
 } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import { Spacer, Text, TUI } from "@mariozechner/pi-tui";
@@ -238,21 +237,14 @@ export class ChatApp {
 
   // UI Updates ------------------------------------------------------------------------------------
 
-  private getSessionStatsString(): string {
-    const costStr = this.getSessionCostString();
-    const turns = this.getTurnCount();
-    const toolCalls = this.getToolCallCount();
-    return `cost: ${costStr}, turns: ${turns}, tool calls: ${toolCalls}`;
-  }
-
   private updateFooter(): void {
     const reasoningLabel = this.currentPersona.settings.reasoning || "default";
     const toolLabel = this.formatRiskLevelLabel();
     const contextUsage = this.getContextUsageString();
-    const sessionStats = this.getSessionStatsString();
+    const sessionCost = this.getSessionCostString();
     const cwd = formatCwd(process.cwd());
 
-    const left = palette.dim(`${cwd} · ${contextUsage} · ${sessionStats}`);
+    const left = palette.dim(`${cwd} · ${contextUsage} · ${sessionCost}`);
     const personaName = this.currentPersona.label || this.currentPersona.id;
     const statusPart = palette.dim(`${personaName} · ${reasoningLabel} · `);
     const right = `${statusPart}${toolLabel}`;
@@ -354,25 +346,6 @@ export class ChatApp {
       }
     }
     return { read, write };
-  }
-
-  private getTurnCount(): number {
-    let count = 0;
-    for (const m of this.engine.history) {
-      if (m.role === "assistant") count++;
-    }
-    return count;
-  }
-
-  private getToolCallCount(): number {
-    let count = 0;
-    for (const m of this.engine.history) {
-      if (m.role === "assistant") {
-        const msg = m as AssistantMessage;
-        count += msg.content.filter((c): c is ToolCall => c.type === "toolCall").length;
-      }
-    }
-    return count;
   }
 
   private getLastAssistantMessage(): AssistantMessage | undefined {
@@ -1124,7 +1097,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "task_started") {
               const index = this.chatContainer.addToolMessage((compact) =>
-                renderTaskRunning(uiEvent.title, [], 0, compact),
+                renderTaskRunning(uiEvent.title, [], 0, 0, 0, compact),
               );
               this.runningTaskComponents.set(uiEvent.toolCallId, index);
               this.ui.requestRender();
@@ -1133,11 +1106,25 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const runningIndex = this.runningTaskComponents.get(uiEvent.toolCallId);
               if (runningIndex !== undefined) {
                 this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
-                  renderTaskRunning(uiEvent.title, lastEvents, uiEvent.costTotal, compact),
+                  renderTaskRunning(
+                    uiEvent.title,
+                    lastEvents,
+                    uiEvent.costTotal,
+                    uiEvent.turns,
+                    uiEvent.toolCalls,
+                    compact,
+                  ),
                 );
               } else {
                 const index = this.chatContainer.addToolMessage((compact) =>
-                  renderTaskRunning(uiEvent.title, lastEvents, uiEvent.costTotal, compact),
+                  renderTaskRunning(
+                    uiEvent.title,
+                    lastEvents,
+                    uiEvent.costTotal,
+                    uiEvent.turns,
+                    uiEvent.toolCalls,
+                    compact,
+                  ),
                 );
                 this.runningTaskComponents.set(uiEvent.toolCallId, index);
               }
@@ -1149,6 +1136,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                   renderTaskFinished(
                     uiEvent.title,
                     uiEvent.costTotal,
+                    uiEvent.turns,
+                    uiEvent.toolCalls,
                     uiEvent.status,
                     uiEvent.finalOutput,
                     compact,
@@ -1160,6 +1149,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                   renderTaskFinished(
                     uiEvent.title,
                     uiEvent.costTotal,
+                    uiEvent.turns,
+                    uiEvent.toolCalls,
                     uiEvent.status,
                     uiEvent.finalOutput,
                     compact,

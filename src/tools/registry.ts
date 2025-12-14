@@ -29,6 +29,8 @@ export type ToolUiEvent =
       title: string;
       lastEvents: string[];
       costTotal: number;
+      turns: number;
+      toolCalls: number;
     }
   | {
       type: "task_finished";
@@ -37,6 +39,8 @@ export type ToolUiEvent =
       title: string;
       lastEvents: string[];
       costTotal: number;
+      turns: number;
+      toolCalls: number;
       status: "success" | "error" | "aborted";
       finalOutput: string;
     }

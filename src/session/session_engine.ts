@@ -278,45 +278,12 @@ export class SessionEngine {
       }
     }
 
-    // Step 4: Multiplex task UI events in parallel
+    // Step 4: Stream task UI events in parallel and finalize each task as it completes.
     if (taskExecutions.length > 0 && !signal.aborted) {
-      yield* this.multiplexTaskUiEvents(taskExecutions, signal);
+      yield* this.streamAndFinalizeTaskCalls(taskExecutions, resultsByIndex, signal);
     }
 
-    // Step 5: Wait for all task runs to settle before starting non-task tools
-    if (taskExecutions.length > 0 && !signal.aborted) {
-      const runPromises = taskExecutions.map((te) => te.runPromise);
-      const results = await Promise.allSettled(runPromises);
-
-      for (let i = 0; i < results.length; i++) {
-        const result = results[i]!;
-        const taskExec = taskExecutions[i]!;
-
-        if (result.status === "fulfilled") {
-          const { toolResult, uiEvent } = result.value;
-          resultsByIndex.set(taskExec.index, toolResult);
-          if (uiEvent) {
-            yield { type: "tool_ui", uiEvent };
-          }
-        } else {
-          // Task promise rejected; create error result
-          const errorMsg =
-            result.reason instanceof Error ? result.reason.message : String(result.reason);
-          const toolError = createToolError(
-            taskExec.toolCall,
-            `Task execution failed: ${errorMsg}`,
-          );
-          resultsByIndex.set(taskExec.index, toolError);
-          yield {
-            type: "notice",
-            severity: "error",
-            text: `Task '${taskExec.toolCall.id}' execution failed: ${errorMsg}`,
-          };
-        }
-      }
-    }
-
-    // Step 6: Execute non-task tools sequentially
+    // Step 5: Execute non-task tools sequentially
     for (const { index, toolCall, def } of nonTaskCalls) {
       if (signal.aborted) break;
 
@@ -348,7 +315,7 @@ export class SessionEngine {
       }
     }
 
-    // Step 7: Append all results to conversation history in original order
+    // Step 6: Append all results to conversation history in original order
     for (let i = 0; i < toolCalls.length; i++) {
       const toolResult = resultsByIndex.get(i);
       if (toolResult) {
@@ -358,51 +325,131 @@ export class SessionEngine {
     }
   }
 
-  private async *multiplexTaskUiEvents(
+  private async *streamAndFinalizeTaskCalls(
     taskExecutions: Array<{
+      index: number;
+      toolCall: ToolCall;
       uiEventsIterable?: AsyncIterable<ToolUiEvent>;
+      runPromise: Promise<ToolDispatchResult>;
     }>,
+    resultsByIndex: Map<number, ToolResultMessage>,
     signal: AbortSignal,
   ): AsyncGenerator<EngineEvent> {
-    const iterables = taskExecutions
-      .filter((te) => te.uiEventsIterable)
-      .map((te) => te.uiEventsIterable!);
-
-    if (iterables.length === 0) {
-      return;
-    }
-
     type ToolUiIterator = AsyncIterator<ToolUiEvent>;
 
-    const makeNext = (iterator: ToolUiIterator) =>
+    type TaskExec = (typeof taskExecutions)[number];
+
+    type PendingRace =
+      | {
+          kind: "ui";
+          iterator: ToolUiIterator;
+          taskExec: TaskExec;
+          result: IteratorResult<ToolUiEvent>;
+        }
+      | {
+          kind: "completion";
+          taskExec: TaskExec;
+          settled: PromiseSettledResult<ToolDispatchResult>;
+        };
+
+    const makeUiNext = (iterator: ToolUiIterator, taskExec: TaskExec): Promise<PendingRace> =>
       iterator
         .next()
-        .then((result) => ({ iterator, result }))
-        .catch(() => ({
-          iterator,
-          result: { done: true, value: undefined } as IteratorResult<ToolUiEvent>,
-        }));
+        .then(
+          (result) =>
+            ({ kind: "ui", iterator, taskExec, result }) satisfies PendingRace,
+        )
+        .catch(
+          () =>
+            ({
+              kind: "ui",
+              iterator,
+              taskExec,
+              result: { done: true, value: undefined } as IteratorResult<ToolUiEvent>,
+            }) satisfies PendingRace,
+        );
 
-    const pending = new Map<ToolUiIterator, ReturnType<typeof makeNext>>();
+    const makeCompletion = (taskExec: TaskExec): Promise<PendingRace> =>
+      taskExec.runPromise
+        .then(
+          (value) =>
+            ({
+              kind: "completion",
+              taskExec,
+              settled: { status: "fulfilled", value },
+            }) satisfies PendingRace,
+        )
+        .catch(
+          (reason) =>
+            ({
+              kind: "completion",
+              taskExec,
+              settled: { status: "rejected", reason },
+            }) satisfies PendingRace,
+        );
 
-    for (const iterable of iterables) {
-      const iterator = iterable[Symbol.asyncIterator]();
-      pending.set(iterator, makeNext(iterator));
-    }
+    const uiPending = new Map<ToolUiIterator, Promise<PendingRace>>();
+    const completionPending = new Map<TaskExec, Promise<PendingRace>>();
 
-    while (pending.size > 0 && !signal.aborted) {
-      const { iterator, result } = await Promise.race([...pending.values()]);
-      pending.delete(iterator);
-
-      if (result.done) {
+    for (const taskExec of taskExecutions) {
+      if (!taskExec.uiEventsIterable) {
+        completionPending.set(taskExec, makeCompletion(taskExec));
         continue;
       }
 
-      yield { type: "tool_ui", uiEvent: result.value };
+      const iterator = taskExec.uiEventsIterable[Symbol.asyncIterator]();
+      uiPending.set(iterator, makeUiNext(iterator, taskExec));
+    }
 
-      if (!signal.aborted) {
-        pending.set(iterator, makeNext(iterator));
+    while ((uiPending.size > 0 || completionPending.size > 0) && !signal.aborted) {
+      const next = await Promise.race<PendingRace>([
+        ...uiPending.values(),
+        ...completionPending.values(),
+      ]);
+
+      if (next.kind === "ui") {
+        uiPending.delete(next.iterator);
+
+        if (next.result.done) {
+          if (!completionPending.has(next.taskExec)) {
+            completionPending.set(next.taskExec, makeCompletion(next.taskExec));
+          }
+          continue;
+        }
+
+        yield { type: "tool_ui", uiEvent: next.result.value };
+
+        if (!signal.aborted) {
+          uiPending.set(next.iterator, makeUiNext(next.iterator, next.taskExec));
+        }
+        continue;
       }
+
+      completionPending.delete(next.taskExec);
+
+      if (next.settled.status === "fulfilled") {
+        const { toolResult, uiEvent } = next.settled.value;
+        resultsByIndex.set(next.taskExec.index, toolResult);
+        if (uiEvent) {
+          yield { type: "tool_ui", uiEvent };
+        }
+        continue;
+      }
+
+      const errorMsg =
+        next.settled.reason instanceof Error
+          ? next.settled.reason.message
+          : String(next.settled.reason);
+      const toolError = createToolError(
+        next.taskExec.toolCall,
+        `Task execution failed: ${errorMsg}`,
+      );
+      resultsByIndex.set(next.taskExec.index, toolError);
+      yield {
+        type: "notice",
+        severity: "error",
+        text: `Task '${next.taskExec.toolCall.id}' execution failed: ${errorMsg}`,
+      };
     }
   }
 }

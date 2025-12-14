@@ -218,11 +218,36 @@ tool calls are displayed in the UI so you can see exactly what the model is doin
 
 ## creating a release
 
-releases are published to npm automatically when a github release is published.
+releases are published to npm locally (no CI publish workflow).
 
-- make sure `package.json` has the correct version (e.g. `0.2.0`).
-- run `npm run check` and `npm run build`.
-- commit and push the version bump.
-- create a github release with a tag matching the version (e.g. `v0.2.0`).
+- bump the version (creates a git tag):
 
-the workflow expects an npm token in `NPM_TOKEN` (repo settings → secrets and variables → actions).
+```sh
+npm version patch
+```
+
+- run checks and build:
+
+```sh
+npm run check
+npm run build
+```
+
+- push the commit and tag:
+
+```sh
+git push --follow-tags
+```
+
+- create a github release (optional, for release notes):
+
+```sh
+gh release create v$(node -p "require('./package.json').version") --generate-notes
+```
+
+- publish to npm:
+
+```sh
+npm login
+npm publish --access public
+```

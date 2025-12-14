@@ -84,12 +84,20 @@ User personas: `~/.config/tau/personas/*.md` with YAML frontmatter (`id`, `provi
 
 ## Releasing
 
-Tau is published to npm automatically when a GitHub Release is published.
+Releases are published to npm locally (no CI publish workflow).
 
-1. Bump `package.json` version and push the commit.
-2. Create a GitHub Release with a tag matching the version (e.g. `v0.2.0`).
-
-CI requires an npm token stored as the `NPM_TOKEN` GitHub Actions secret.
+1. Ensure you are on `main` with a clean working tree.
+2. Bump the version and create a tag:
+   - `npm version patch|minor|major` (creates a `vX.Y.Z` tag)
+3. Run verification and build:
+   - `npm run check`
+   - `npm run build`
+4. Push the commit and tag:
+   - `git push --follow-tags`
+5. Create a GitHub Release:
+   - `gh release create v$(node -p "require('./package.json').version") --generate-notes`
+6. Publish to npm:
+   - `npm publish --access public`
 
 ## Maintaining this file
 

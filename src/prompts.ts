@@ -222,31 +222,31 @@ function getCodeReviewTemplateWithScope(scope: string): string {
 export const prompts: PromptTemplate[] = [
   {
     id: "rewrite-prompt",
-    label: "rewrite prompt",
+    label: "help with (re)writing a prompt",
     description: "help improve a given prompt",
     template: TEMPLATE_REWRITE_PROMPT,
   },
   {
     id: "plan",
-    label: "plan",
-    description: "create a step-by-step plan",
+    label: "plan a feature or change",
+    description: "create a step-by-step plan for implementing a feature or change",
     template: TEMPLATE_PLAN,
   },
   {
+    id: "review-current-changes",
+    label: "code review of current changes",
+    description: "ask for a thorough code review for the current changes",
+    template: getCodeReviewTemplateWithScope("the current changes"),
+  },
+  {
     id: "review-branch",
-    label: "code review (branch)",
-    description: "ask for a thorough code review for current branch",
+    label: "code review of current branch",
+    description: "ask for a thorough code review for the current branch",
     template: getCodeReviewTemplateWithScope("the current branch"),
   },
   {
-    id: "review-diff",
-    label: "code review (diff)",
-    description: "ask for a thorough code review for the current diff",
-    template: getCodeReviewTemplateWithScope("the current diff"),
-  },
-  {
     id: "review-last-commit",
-    label: "code review (commit)",
+    label: "code review of most recent commit",
     description: "ask for a thorough code review for the most recent commit",
     template: getCodeReviewTemplateWithScope("the most recent commit"),
   },

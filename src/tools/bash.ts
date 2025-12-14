@@ -371,7 +371,7 @@ export function createBashToolDefinition(): ToolDefinition {
 
       if (riskLevel === "none") {
         return blocked(
-          "Bash tool call blocked: risk level is set to 'none'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
+          "Blocked due to risk level being set to 'none'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
         );
       }
 
@@ -388,7 +388,7 @@ export function createBashToolDefinition(): ToolDefinition {
 
       if (riskLevel === "read-only" && safetyLevel === "write") {
         return blocked(
-          "Bash tool call blocked: declared safetyLevel 'write' exceeds current risk level 'read-only'. Ask the user to run /risk:read-write or revise to a read-only command.",
+          "Blocked due to risk level being set to 'read-only'. The declared safetyLevel 'write' exceeds the current risk level. Ask the user to enable it with /risk:read-write or revise to a read-only command.",
         );
       }
 

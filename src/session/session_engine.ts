@@ -9,7 +9,7 @@ import type {
 import { streamSimple } from "@mariozechner/pi-ai";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
-import type { ToolRegistry } from "../tools/registry.js";
+import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
 import { type AssistantPartialSnapshot, MessageAccumulator } from "./message_accumulator.js";
@@ -136,8 +136,20 @@ export class SessionEngine {
         break;
       }
 
+      const enabledTools = this.persona.tools ?? this.toolRegistry.schemas;
+      const enabledToolNames = new Set(enabledTools.map((t) => t.name));
+      const dispatchContext: ToolDispatchContext = { persona: this.persona, config: this.config };
+
       for (const toolCall of toolCalls) {
         if (signal.aborted) break;
+
+        if (!enabledToolNames.has(toolCall.name)) {
+          const msg = `tool '${toolCall.name}' is not enabled for the current persona.`;
+          const toolError = createToolError(toolCall, msg);
+          this.messages.push(toolError);
+          yield { type: "notice", severity: "error", text: msg };
+          continue;
+        }
 
         const def = this.toolRegistry.get(toolCall.name);
         if (!def) {
@@ -148,7 +160,7 @@ export class SessionEngine {
           continue;
         }
 
-        const result = await def.dispatch(toolCall, this.riskLevel, signal);
+        const result = await def.dispatch(toolCall, this.riskLevel, signal, dispatchContext);
 
         // Check if this is a two-phase result
         if (result.kind === "phased") {
@@ -157,8 +169,17 @@ export class SessionEngine {
             yield { type: "tool_ui", uiEvent: result.startedUiEvent };
           }
 
+          // If the tool provides streaming UI updates, emit them while it runs.
+          const runPromise = result.run;
+          if (result.uiEvents) {
+            for await (const uiEvent of result.uiEvents) {
+              if (signal.aborted) break;
+              yield { type: "tool_ui", uiEvent };
+            }
+          }
+
           // Wait for the actual execution to complete
-          const { toolResult, uiEvent } = await result.run;
+          const { toolResult, uiEvent } = await runPromise;
           this.messages.push(toolResult);
           yield { type: "tool_result", message: toolResult };
           if (uiEvent) {
@@ -189,7 +210,7 @@ export class SessionEngine {
     signal: AbortSignal,
   ): AsyncGenerator<EngineEvent, { finalMessage?: AssistantMessage }, void> {
     yield { type: "assistant_start" };
-    const tools = this.toolRegistry.schemas;
+    const tools = this.persona.tools ?? this.toolRegistry.schemas;
 
     const context: Context = {
       systemPrompt: this.baseSystemPrompt,

@@ -1,5 +1,6 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import type { RiskLevel } from "../types.js";
+import type { Config } from "../config.js";
+import type { Persona, RiskLevel } from "../types.js";
 
 export type ToolUiEvent =
   | {
@@ -15,6 +16,36 @@ export type ToolUiEvent =
       truncationInfo: import("./bash.js").BashTruncationInfo;
     }
   | { type: "bash_blocked"; command: string; reason: string; toolCallId?: string }
+  | {
+      type: "task_started";
+      toolCallId: string;
+      name: string;
+      title: string;
+    }
+  | {
+      type: "task_progress";
+      toolCallId: string;
+      name: string;
+      title: string;
+      lastEvents: string[];
+      costTotal: number;
+    }
+  | {
+      type: "task_finished";
+      toolCallId: string;
+      name: string;
+      title: string;
+      lastEvents: string[];
+      costTotal: number;
+      status: "success" | "error" | "aborted";
+    }
+  | {
+      type: "task_blocked";
+      toolCallId: string;
+      name?: string;
+      title: string;
+      reason: string;
+    }
   | {
       type: "write_success";
       path: string;
@@ -51,7 +82,13 @@ export type ToolDispatchResult = {
 export type ToolDispatchResultWithPhases = {
   kind: "phased";
   startedUiEvent?: ToolUiEvent;
+  uiEvents?: AsyncIterable<ToolUiEvent>;
   run: Promise<ToolDispatchResult>;
+};
+
+export type ToolDispatchContext = {
+  persona: Persona;
+  config: Config;
 };
 
 export interface ToolDefinition {
@@ -60,6 +97,7 @@ export interface ToolDefinition {
     toolCall: ToolCall,
     riskLevel: RiskLevel,
     signal?: AbortSignal,
+    context?: ToolDispatchContext,
   ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases>;
 }
 

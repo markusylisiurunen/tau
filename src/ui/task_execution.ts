@@ -1,8 +1,9 @@
-import { Text } from "@mariozechner/pi-tui";
+import type { Component } from "@mariozechner/pi-tui";
+import { Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { formatAdaptiveNumber } from "../utils/format.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";
 import { PaddedContainer } from "./components/padded_container.js";
-import { theme } from "./theme.js";
+import { palette, theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
 
 function bold(text: string): string {
@@ -13,7 +14,7 @@ function formatCost(costTotal: number): string {
   return `$${formatAdaptiveNumber(costTotal, 2, 5)}`;
 }
 
-function filterAndFormatEvents(lastEvents: string[]): string {
+function formatEventsForDisplay(lastEvents: string[]): string[] {
   const filtered: string[] = [];
   for (const event of lastEvents) {
     const trimmed = event.trim();
@@ -29,7 +30,23 @@ function filterAndFormatEvents(lastEvents: string[]): string {
       if (firstLine) filtered.push(`> ${firstLine}`);
     }
   }
-  return filtered.join("\n");
+  return filtered;
+}
+
+class TruncatedText implements Component {
+  constructor(private text: string) {}
+
+  invalidate() {}
+
+  render(width: number): string[] {
+    const lines = this.text.split("\n");
+    return lines.map((line) => {
+      if (visibleWidth(line) > width) {
+        return truncateToWidth(line, Math.max(1, width - 1), palette.taskPreview("…"));
+      }
+      return line;
+    });
+  }
 }
 
 export function renderTaskRunning(
@@ -56,15 +73,15 @@ export function renderTaskRunning(
   ];
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
-  const eventsText = filterAndFormatEvents(lastEvents);
+  const eventLines = formatEventsForDisplay(lastEvents);
   const costPart = `cost: ${formatCost(costTotal)}`;
   const costLine = subagentName
     ? palette.dim(`${subagentName} · ${costPart} (${stats})`)
     : palette.dim(`${costPart} (${stats})`);
 
   const extraParts: string[] = [];
-  if (eventsText) {
-    extraParts.push(palette.taskPreview(eventsText));
+  if (eventLines.length > 0) {
+    extraParts.push(palette.taskPreview(eventLines.join("\n")));
   }
   extraParts.push(costLine);
 
@@ -72,9 +89,9 @@ export function renderTaskRunning(
   if (subagentName) {
     expandedParts.push(palette.dim(`subagent: ${subagentName}`));
   }
-  if (eventsText) {
+  if (eventLines.length > 0) {
     expandedParts.push("");
-    expandedParts.push(palette.taskPreview(eventsText));
+    expandedParts.push(palette.taskPreview(eventLines.join("\n")));
   }
   expandedParts.push("");
   const expandedCostLine = subagentName
@@ -88,7 +105,7 @@ export function renderTaskRunning(
     compactView: {
       segments,
       flexIndices: [7],
-      extraComponent: new PaddedContainer(new Text(extraParts.join("\n"), 0, 0), 4),
+      extraComponent: new PaddedContainer(new TruncatedText(extraParts.join("\n")), 4),
     },
   });
 }

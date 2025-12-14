@@ -194,6 +194,9 @@ export function createTaskToolDefinition(): ToolDefinition {
         let finalText = "";
 
         try {
+          // Emit task started event
+          pushProgress("task started", 0, 0, 0);
+
           const result = await runSubagentToCompletion({
             definition,
             personaConfig,

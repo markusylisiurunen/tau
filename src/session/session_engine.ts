@@ -9,6 +9,7 @@ import type {
 import { streamSimple } from "@mariozechner/pi-ai";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
+import { formatSubagentsForPrompt } from "../subagents/registry.js";
 import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
@@ -212,8 +213,14 @@ export class SessionEngine {
     yield { type: "assistant_start" };
     const tools = this.persona.tools ?? this.toolRegistry.schemas;
 
+    let systemPrompt = this.baseSystemPrompt;
+    const subagentInfo = formatSubagentsForPrompt(this.persona);
+    if (subagentInfo) {
+      systemPrompt += subagentInfo;
+    }
+
     const context: Context = {
-      systemPrompt: this.baseSystemPrompt,
+      systemPrompt,
       messages: this.messages,
       tools,
     };

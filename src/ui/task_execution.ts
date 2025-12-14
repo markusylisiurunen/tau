@@ -20,6 +20,7 @@ export function renderTaskRunning(
   turns: number,
   toolCalls: number,
   compact: boolean,
+  subagentName?: string,
 ): ToolOutputComponent {
   const { palette } = theme;
   const runningColor = (s: string) => palette.taskRunning(s);
@@ -37,7 +38,10 @@ export function renderTaskRunning(
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
   const eventsText = lastEvents.map((e) => e.trim()).join("\n");
-  const costLine = palette.dim(`cost: ${formatCost(costTotal)} (${stats})`);
+  const costPart = `cost: ${formatCost(costTotal)}`;
+  const costLine = subagentName
+    ? palette.dim(`${subagentName} · ${costPart} (${stats})`)
+    : palette.dim(`${costPart} (${stats})`);
 
   const extraParts: string[] = [];
   if (eventsText) {
@@ -46,12 +50,18 @@ export function renderTaskRunning(
   extraParts.push(costLine);
 
   const expandedParts: string[] = [runningColor(bold(`task: ${title}`))];
+  if (subagentName) {
+    expandedParts.push(palette.dim(`subagent: ${subagentName}`));
+  }
   if (eventsText) {
     expandedParts.push("");
     expandedParts.push(palette.taskPreview(eventsText));
   }
   expandedParts.push("");
-  expandedParts.push(palette.dim(`cost: ${formatCost(costTotal)} (${stats})`));
+  const expandedCostLine = subagentName
+    ? palette.dim(`${subagentName} · cost: ${formatCost(costTotal)}, ${stats}`)
+    : palette.dim(`cost: ${formatCost(costTotal)}, ${stats}`);
+  expandedParts.push(expandedCostLine);
 
   return new ToolOutputComponent({
     compact,
@@ -72,6 +82,7 @@ export function renderTaskFinished(
   status: "success" | "error" | "aborted",
   finalOutput: string,
   compact: boolean,
+  subagentName?: string,
 ): ToolOutputComponent {
   const { palette } = theme;
 
@@ -102,8 +113,11 @@ export function renderTaskFinished(
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
   const outputPreview = finalOutput.trim().split("\n").slice(0, 8).join("\n").trim();
-  const costLine =
-    palette.dim(`cost: ${formatCost(costTotal)} (`) + statusLabel + palette.dim(`, ${stats})`);
+  const costLine = subagentName
+    ? palette.dim(`${subagentName} · cost: ${formatCost(costTotal)} (`) +
+      statusLabel +
+      palette.dim(`, ${stats})`)
+    : palette.dim(`cost: ${formatCost(costTotal)} (`) + statusLabel + palette.dim(`, ${stats})`);
 
   const extraParts: string[] = [];
   if (outputPreview) {
@@ -112,13 +126,19 @@ export function renderTaskFinished(
   extraParts.push(costLine);
 
   const expandedParts: string[] = [borderColor(bold(`task: ${title}`))];
+  if (subagentName) {
+    expandedParts.push(palette.dim(`subagent: ${subagentName}`));
+  }
   expandedParts.push(palette.dim(`status: `) + statusLabel);
   if (outputPreview) {
     expandedParts.push("");
     expandedParts.push(outputPreview);
   }
   expandedParts.push("");
-  expandedParts.push(palette.dim(`cost: ${formatCost(costTotal)}, ${stats}`));
+  const expandedCostLine = subagentName
+    ? palette.dim(`${subagentName} · cost: ${formatCost(costTotal)}, ${stats}`)
+    : palette.dim(`cost: ${formatCost(costTotal)}, ${stats}`);
+  expandedParts.push(expandedCostLine);
 
   return new ToolOutputComponent({
     compact,
@@ -135,6 +155,7 @@ export function renderTaskBlocked(
   title: string,
   reason: string,
   compact: boolean,
+  subagentName?: string,
 ): ToolOutputComponent {
   const { palette } = theme;
   const errorColor = (s: string) => palette.error(s);
@@ -153,6 +174,9 @@ export function renderTaskBlocked(
   ];
 
   const expandedParts: string[] = [errorColor(bold(`task: ${title}`))];
+  if (subagentName) {
+    expandedParts.push(palette.dim(`subagent: ${subagentName}`));
+  }
   if (why) {
     expandedParts.push("");
     expandedParts.push(errorColor(why));

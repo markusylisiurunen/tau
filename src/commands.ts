@@ -9,6 +9,7 @@ export type Command =
   | { type: "forkSummaryAndLastTurn" }
   | { type: "reload" }
   | { type: "risk"; level: RiskLevel }
+  | { type: "bash"; id: string }
   | { type: "persona"; id: string }
   | { type: "prompt"; id: string }
   | { type: "unknown"; raw: string };
@@ -66,6 +67,14 @@ export function parseCommand(raw: string): Command {
     }
   }
 
+  const bashMatch = trimmed.match(/^\/bash:(.+)$/i);
+  if (bashMatch) {
+    const id = bashMatch[1]?.trim() ?? "";
+    if (id) {
+      return { type: "bash", id };
+    }
+  }
+
   return { type: "unknown", raw: trimmed };
 }
 
@@ -92,6 +101,7 @@ export function buildHelpText(agentsFiles?: string[]): string {
     "  /risk:none            disable all tools",
     "  /risk:read-only       allow read-only tools",
     "  /risk:read-write      allow all tools",
+    "  /bash:<id>            run saved bash command",
     "  /persona:<id>         switch persona",
     "  /prompt:<id>          insert prompt template",
     "",

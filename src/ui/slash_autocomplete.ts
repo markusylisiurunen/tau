@@ -11,6 +11,11 @@ export interface PromptSuggestion {
   label?: string;
 }
 
+export interface BashSuggestion {
+  id: string;
+  description?: string;
+}
+
 // biome-ignore format: keep array items on single lines for readability
 const STATIC_COMMANDS = [
   { value: "help", label: "help", description: "show help" },
@@ -34,15 +39,18 @@ const RISK_OPTIONS = [
 export class SlashAutocompleteProvider implements AutocompleteProvider {
   private getPersonas: () => PersonaSuggestion[];
   private getPrompts: () => PromptSuggestion[];
+  private getBashCommands: () => BashSuggestion[];
   private getFiles: () => string[];
 
   constructor(
     personas: () => PersonaSuggestion[],
     prompts: () => PromptSuggestion[] = () => [],
+    bashCommands: () => BashSuggestion[] = () => [],
     files: () => string[] = () => [],
   ) {
     this.getPersonas = personas;
     this.getPrompts = prompts;
+    this.getBashCommands = bashCommands;
     this.getFiles = files;
   }
 
@@ -188,6 +196,18 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
           description: t.label ? `insert ${t.label}` : "insert prompt template",
         },
         searchText: `${t.id} ${t.label ?? ""} ${full}`,
+      });
+    }
+
+    for (const b of this.getBashCommands()) {
+      const full = `bash:${b.id}`;
+      candidates.push({
+        item: {
+          value: full,
+          label: full,
+          description: b.description ? b.description : "run saved bash command",
+        },
+        searchText: `${b.id} ${b.description ?? ""} ${full}`,
       });
     }
 

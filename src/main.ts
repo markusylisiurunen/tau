@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { ChatApp } from "./app.js";
+import { loadBashCommands } from "./bash_commands.js";
 import type { CliOptions } from "./cli.js";
 import { CliError, parseCliArgs, printHelp } from "./cli.js";
 import { loadConfig } from "./config.js";
@@ -9,6 +10,8 @@ import type { Persona } from "./types.js";
 
 // Load configuration from file
 const config = loadConfig();
+
+const bashCommands = loadBashCommands(process.cwd()).commands;
 
 async function readPipedStdin(): Promise<string | undefined> {
   if (process.stdin.isTTY) return undefined;
@@ -74,6 +77,7 @@ const initialUserMessage = await readPipedStdin();
 const app = new ChatApp({
   personas,
   prompts,
+  bashCommands,
   initialPersonaId: cli.personaId,
   initialUserMessage,
   initialRiskLevel: cli.riskLevel,

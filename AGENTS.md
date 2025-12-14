@@ -13,9 +13,9 @@
 ## Build, Test, and Development Commands
 
 - `npm install`: install dependencies (requires Node `>=20`).
-- `npm run dev`: run from source via `tsx` (fast iteration).
+- `npm run dev`: run from source via `tsx` (fast iteration). Avoid running this in automated/non-interactive environments since it launches the interactive terminal UI.
 - `npm run build`: compile TypeScript to `dist/` using `tsc`.
-- `npm start`: run the compiled CLI from `dist/`.
+- `npm start`: run the compiled CLI from `dist/`. Avoid running this in automated/non-interactive environments since it launches the interactive terminal UI.
 - `npm run check`: auto-format/lint with Biome + typecheck (`tsc --noEmit`).
 - `npm run fmt`: format the repo with Biome.
 - `npm run lint`: lint with Biome (no writes).
@@ -31,8 +31,8 @@
 There is no dedicated test runner in this repo currently. Validate changes by:
 
 - `npm run check` (format + lint + typecheck)
-- manual smoke tests: `npm run dev` and a full build/run (`npm run build && npm start`)
-  - try slash commands: `/help`, `/new`, `/fork:only-summary`, `/fork:with-last-turn`, `/copy`, `/copy:code` `/risk:none|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`
+- manual smoke tests: run locally in a real terminal UI (do not run `npm run dev`, `npm start`, or `node dist/main.js` in automated/non-interactive environments)
+  - try slash commands: `/help`, `/new`, `/fork:only-summary`, `/fork:with-last-turn`, `/copy`, `/copy:code`, `/bash:<id>`, `/risk:none|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`
   - try direct bash mode: prefix input with `!` to run a shell command (separate from model tool calls)
   - try file-path autocomplete: type `@` then a path fragment to insert a project-relative file path
   - if relevant, verify piped stdin behavior (non-interactive first message) and `/dev/tty` fallback for interactive input
@@ -82,6 +82,27 @@ The app loads configuration from `~/.config/tau/config.json`. This file is optio
 ```
 
 The `loadConfig()` function in `src/config.ts` reads this file. Environment variables take precedence if both are set.
+
+### Saved bash commands
+
+Tau can load reusable shell command definitions from JSON files and expose them via the `/bash:<id>` slash command (with autocomplete).
+
+Files (in order):
+
+- repo-local `.tau/config.json` (preferred for project workflows, and gitignored by default)
+- global `~/.tau/config.json`
+
+Format:
+
+```json
+{
+  "bash": [
+    { "id": "check", "description": "lint + typecheck", "cmd": "npm run check" }
+  ]
+}
+```
+
+On ID collision, the repo-local command wins.
 
 ## User-Extensibility: Custom Personas and Prompts
 

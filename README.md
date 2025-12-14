@@ -42,6 +42,28 @@ Environment variables take precedence over the config file. The `userPreferences
 - `"compact"` (default): one-line summaries
 - `"full"`: bordered multi-line blocks
 
+## Saved bash commands
+
+You can define reusable shell commands and run them from inside tau via `/bash:<id>`.
+
+Commands are loaded from (in order):
+
+- repo-local `.tau/config.json` (recommended for project workflows, and gitignored by default)
+- global `~/.tau/config.json`
+
+Example `.tau/config.json`:
+
+```json
+{
+  "bash": [
+    { "id": "check", "description": "lint + typecheck", "cmd": "npm run check" },
+    { "id": "build", "cmd": "npm run build" }
+  ]
+}
+```
+
+If the same `id` exists in both places, the repo-local version wins.
+
 ## User-Defined Personas and Prompts
 
 Add custom personas and prompt templates by creating markdown files in `~/.config/tau/personas/` and `~/.config/tau/prompts/`, respectively.
@@ -103,7 +125,7 @@ Built-in prompt templates include: `rewrite-prompt`, `plan`, `review-current-cha
 
 ### Reloading
 
-Use `/reload` to refresh personas and prompts from disk without restarting. Useful when adding or modifying custom files during a session.
+Use `/reload` to refresh personas, prompts, and saved bash commands from disk without restarting. Useful when adding or modifying custom files during a session.
 
 ## Commands
 
@@ -116,6 +138,7 @@ Use `/reload` to refresh personas and prompts from disk without restarting. Usef
 - `/copy:code` (copy code blocks from last assistant message)
 - `/persona:<id>` (switch persona)
 - `/prompt:<id>` (insert prompt template)
+- `/bash:<id>` (run saved bash command)
 - `/risk:none|read-only|read-write` (configure model risk level; default: `read-only`)
 - `!<cmd>` (run immediate shell command)
 

@@ -184,17 +184,19 @@ export function formatBashUserMessageText(args: {
 
 export function executeBashTool(
   command: string,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: { timeoutMs?: number; signal?: AbortSignal; cwd?: string } = {},
 ): Promise<BashToolResult> {
   return new Promise((resolve, reject) => {
     const timeoutMs = options.timeoutMs;
     const signal = options.signal;
+    const cwd = options.cwd;
 
     const child = spawn(command, {
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: sanitizeEnvironment(),
       detached: true,
+      cwd,
     });
 
     let stdout = "";

@@ -8,6 +8,7 @@ import type {
 } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import { Spacer, Text, TUI } from "@mariozechner/pi-tui";
+import { type BashCommand, loadBashCommands } from "./bash_commands.js";
 import { copyTextToClipboard } from "./clipboard.js";
 import { buildHelpText, getRiskLevelDescription, parseCommand } from "./commands.js";
 import type { Config } from "./config.js";
@@ -63,6 +64,7 @@ const { palette } = theme;
 export interface ChatAppOptions {
   personas: Persona[];
   prompts?: PromptTemplate[];
+  bashCommands?: BashCommand[];
   initialPersonaId?: string;
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
@@ -79,6 +81,8 @@ export class ChatApp {
   private personas: Persona[];
   private currentPersona: Persona;
   private prompts: PromptTemplate[];
+  private bashCommands: BashCommand[];
+  private readonly repoRoot: string;
   private initialUserMessage?: string;
   private config: Config;
 
@@ -109,6 +113,8 @@ export class ChatApp {
   constructor(options: ChatAppOptions) {
     this.personas = options.personas;
     this.prompts = options.prompts ?? [];
+    this.bashCommands = options.bashCommands ?? [];
+    this.repoRoot = getGitRoot(process.cwd()) ?? process.cwd();
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
     this.compactToolUi = this.config.toolDisplayMode !== "full";
@@ -225,6 +231,11 @@ export class ChatApp {
       new SlashAutocompleteProvider(
         () => this.personas.map((p) => ({ id: p.id, label: p.label })),
         () => this.prompts.map((t) => ({ id: t.id, label: t.label })),
+        () =>
+          this.bashCommands.map((b) => ({
+            id: b.id,
+            description: b.description,
+          })),
         () => this.projectFiles,
       ),
     );
@@ -574,6 +585,10 @@ export class ChatApp {
 
       case "prompt":
         this.insertPrompt(cmd.id);
+        break;
+
+      case "bash":
+        await this.runSavedBashCommand(cmd.id);
         break;
 
       case "reload":
@@ -951,6 +966,16 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.ui.requestRender();
   }
 
+  private async runSavedBashCommand(id: string): Promise<void> {
+    const saved = this.bashCommands.find((b) => b.id.toLowerCase() === id.toLowerCase());
+    if (!saved) {
+      this.addSystemMessage(`unknown bash command '${id}'.`, palette.noticeError);
+      return;
+    }
+
+    await this.runBashCommand(saved.cmd, { cwd: this.repoRoot });
+  }
+
   private async reloadContent(): Promise<void> {
     if (this.isStreaming) {
       this.addSystemMessage(
@@ -963,6 +988,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     try {
       const result = await loadAllContent();
       const { personas, prompts, errors } = result;
+
+      const bashResult = loadBashCommands(process.cwd());
+      this.bashCommands = bashResult.commands;
 
       // Update the personas and prompts lists
       this.personas = personas;
@@ -1001,11 +1029,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       // Display summary
       const personaCount = personas.length;
       const promptCount = prompts.length;
-      const errorCount = errors.length;
+      const bashCount = bashResult.commands.length;
+      const errorCount = errors.length + bashResult.errors.length;
       const summary =
         errorCount > 0
-          ? `reloaded: ${personaCount} personas, ${promptCount} prompts (${errorCount} errors).`
-          : `reloaded: ${personaCount} personas, ${promptCount} prompts.`;
+          ? `reloaded: ${personaCount} personas, ${promptCount} prompts, ${bashCount} bash commands (${errorCount} errors).`
+          : `reloaded: ${personaCount} personas, ${promptCount} prompts, ${bashCount} bash commands.`;
 
       this.addSystemMessage(summary, palette.noticeSuccess);
       this.ui.requestRender();
@@ -1318,7 +1347,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
   // Direct Bash Execution (user ! commands) -------------------------------------------------------
 
-  private async runBashCommand(command: string): Promise<void> {
+  private async runBashCommand(command: string, opts?: { cwd?: string }): Promise<void> {
     this.isStreaming = true;
     this.editor.disableSubmit = true;
 
@@ -1328,7 +1357,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         stderr,
         exitCode,
         truncated: captureTruncated,
-      } = await executeBashTool(command);
+      } = await executeBashTool(command, { cwd: opts?.cwd });
       const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated);
 
       this.chatContainer.addMessage(renderBashExecution(command, exitCode, truncationInfo, false));

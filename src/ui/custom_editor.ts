@@ -7,6 +7,8 @@ export class CustomEditor extends Editor {
   public onEscape?: () => void;
   public onShiftTab?: () => void;
   public onCtrlF?: () => void;
+  public onAltUp?: () => void;
+  public beforeSubmit?: (text: string) => boolean;
 
   handleInput(data: string): void {
     if ((data === "\x1b[Z" || data === "\x1b[1;2Z") && this.onShiftTab) {
@@ -32,6 +34,26 @@ export class CustomEditor extends Editor {
     if (data === "\x06" && this.onCtrlF && !this.isShowingAutocomplete()) {
       this.onCtrlF();
       return;
+    }
+
+    if (
+      (data === "\x1b[1;3A" || data === "\x1b[1;9A") &&
+      this.onAltUp &&
+      !this.isShowingAutocomplete()
+    ) {
+      this.onAltUp();
+      return;
+    }
+
+    if (
+      data.charCodeAt(0) === 13 &&
+      data.length === 1 &&
+      this.beforeSubmit &&
+      !this.isShowingAutocomplete()
+    ) {
+      if (!this.beforeSubmit(this.getText())) {
+        return;
+      }
     }
 
     if (data === "\x1b" && this.onEscape && !this.isShowingAutocomplete()) {

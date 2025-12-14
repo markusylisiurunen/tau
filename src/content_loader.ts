@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Api, KnownProvider, Model, ReasoningEffort } from "@mariozechner/pi-ai";
+import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { personas as builtinPersonas } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
@@ -9,7 +9,7 @@ import { prompts as builtinPrompts } from "./prompts.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
 import { WRITE_TOOL } from "./tools/write.js";
-import type { Persona } from "./types.js";
+import type { Persona, ReasoningEffort } from "./types.js";
 import { REASONING_LEVELS } from "./types.js";
 
 interface FrontMatter {

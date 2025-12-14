@@ -3,6 +3,7 @@ import type {
   Context,
   KnownProvider,
   Message,
+  SimpleStreamOptions,
   ToolCall,
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
@@ -114,13 +115,18 @@ export class SessionEngine {
     return this.messages;
   }
 
-  private getStreamingSettings(persona: Persona) {
-    const settings = { ...persona.settings };
-    // ChatApp already clamps persona.reasoning to allowed values; keep engine minimal.
-    if (settings.reasoning === undefined) {
-      delete (settings as Record<string, unknown>).reasoning;
+  private getStreamingSettings(persona: Persona): SimpleStreamOptions {
+    const merged = { ...persona.settings } as Record<string, unknown>;
+    const reasoning = persona.settings.reasoning;
+
+    // pi-ai uses undefined for "no reasoning".
+    if (reasoning === undefined || reasoning === "none") {
+      delete merged.reasoning;
+    } else {
+      merged.reasoning = reasoning;
     }
-    return settings;
+
+    return merged as unknown as SimpleStreamOptions;
   }
 
   async *processTurn(signal: AbortSignal): AsyncGenerator<EngineEvent> {

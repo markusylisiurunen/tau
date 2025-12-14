@@ -1,11 +1,6 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type {
-  AssistantMessage,
-  KnownProvider,
-  Message,
-  ReasoningEffort,
-} from "@mariozechner/pi-ai";
+import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import { Spacer, Text, TUI } from "@mariozechner/pi-tui";
 import { type BashCommand, loadBashCommands } from "./bash_commands.js";
@@ -27,7 +22,7 @@ import { createEditToolDefinition } from "./tools/edit.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { createTaskToolDefinition } from "./tools/task.js";
 import { createWriteToolDefinition } from "./tools/write.js";
-import { type Persona, REASONING_LEVELS, type RiskLevel } from "./types.js";
+import { type Persona, REASONING_LEVELS, type ReasoningEffort, type RiskLevel } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
 import { renderBashBlocked, renderBashExecution, renderBashRunning } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
@@ -39,6 +34,7 @@ import {
   renderWriteSuccess,
 } from "./ui/file_execution.js";
 import { FooterComponent } from "./ui/footer.js";
+import { QueuedMessagesComponent } from "./ui/queued_messages.js";
 import { SessionDividerComponent } from "./ui/session_divider.js";
 import { SessionSummaryComponent } from "./ui/session_summary.js";
 import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
@@ -76,6 +72,7 @@ export class ChatApp {
   private ui: TUI;
   private chatContainer: ChatContainerComponent;
   private footer: FooterComponent;
+  private queuedMessages: QueuedMessagesComponent;
   private editor: CustomEditor;
 
   private personas: Persona[];
@@ -94,6 +91,8 @@ export class ChatApp {
   private subagentCostTotal = 0;
 
   private isStreaming = false;
+  private queuedUserMessages: string[] = [];
+  private isDrainingQueuedUserMessages = false;
   private isBashMode = false;
   private isMemoryMode = false;
   private showThinking = false;
@@ -173,6 +172,7 @@ export class ChatApp {
     this.chatContainer = new ChatContainerComponent();
     this.chatContainer.setCompactToolUi(this.compactToolUi);
     this.footer = new FooterComponent(this.ui);
+    this.queuedMessages = new QueuedMessagesComponent(() => this.queuedUserMessages);
     this.editor = new CustomEditor(theme.editorTheme);
 
     this.setupUI();
@@ -182,6 +182,7 @@ export class ChatApp {
   private setupUI(): void {
     this.ui.addChild(this.chatContainer);
     this.ui.addChild(new Spacer(1));
+    this.ui.addChild(this.queuedMessages);
     this.ui.addChild(this.editor);
     this.ui.addChild(this.footer);
 
@@ -212,6 +213,13 @@ export class ChatApp {
           palette.noticeError,
         );
       });
+    };
+
+    this.editor.onAltUp = () => this.popQueuedUserMessageIntoEditor();
+    this.editor.beforeSubmit = (text: string) => {
+      if (!this.isStreaming) return true;
+      const trimmed = text.trimStart();
+      return !trimmed.startsWith("/") && !trimmed.startsWith("!");
     };
 
     this.editor.onChange = (text: string) => {
@@ -458,9 +466,49 @@ export class ChatApp {
 
   // Input Handling --------------------------------------------------------------------------------
 
+  private queueUserMessage(text: string): void {
+    this.queuedUserMessages.push(text);
+    this.ui.requestRender();
+  }
+
+  private popQueuedUserMessageIntoEditor(): void {
+    if (this.editor.getText() !== "") return;
+
+    const last = this.queuedUserMessages.pop();
+    if (!last) return;
+
+    this.editor.setText(last);
+    this.ui.requestRender();
+  }
+
+  private async drainQueuedUserMessages(): Promise<void> {
+    if (this.isDrainingQueuedUserMessages) return;
+    this.isDrainingQueuedUserMessages = true;
+
+    try {
+      while (!this.isStreaming && this.queuedUserMessages.length > 0) {
+        const next = this.queuedUserMessages.shift();
+        if (!next) return;
+
+        this.ui.requestRender();
+        await this.handleSubmit(next);
+      }
+    } finally {
+      this.isDrainingQueuedUserMessages = false;
+    }
+  }
+
   private async handleSubmit(text: string): Promise<void> {
     const trimmed = text.trim();
-    if (!trimmed || this.isStreaming) return;
+    if (!trimmed) return;
+
+    if (this.isStreaming) {
+      if (trimmed.startsWith("/") || trimmed.startsWith("!")) {
+        return;
+      }
+      this.queueUserMessage(trimmed);
+      return;
+    }
 
     if (trimmed.startsWith("/")) {
       await this.handleCommand(trimmed);
@@ -842,7 +890,6 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     this.addSystemMessage("summarizing session...", palette.noticeSuccess);
     this.isStreaming = true;
-    this.editor.disableSubmit = true;
     this.footer.startWorkingIcon();
 
     try {
@@ -858,8 +905,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     } finally {
       this.footer.stop();
       this.isStreaming = false;
-      this.editor.disableSubmit = false;
       this.ui.requestRender();
+      void this.drainQueuedUserMessages();
     }
   }
 
@@ -872,7 +919,6 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     this.addSystemMessage("summarizing session...", palette.noticeSuccess);
     this.isStreaming = true;
-    this.editor.disableSubmit = true;
     this.footer.startWorkingIcon();
 
     try {
@@ -907,8 +953,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     } finally {
       this.footer.stop();
       this.isStreaming = false;
-      this.editor.disableSubmit = false;
       this.ui.requestRender();
+      void this.drainQueuedUserMessages();
     }
   }
 
@@ -1044,7 +1090,6 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
   private async runAssistantTurn(): Promise<void> {
     this.isStreaming = true;
-    this.editor.disableSubmit = true;
     this.currentTurnAbort = new AbortController();
     this.footer.startWorkingIcon();
 
@@ -1333,12 +1378,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     } finally {
       this.footer.stop();
       this.isStreaming = false;
-      this.editor.disableSubmit = false;
       this.currentTurnAbort = undefined;
       this.runningBashComponents.clear();
       this.runningTaskComponents.clear();
       this.taskEvents.clear();
       this.ui.requestRender();
+      void this.drainQueuedUserMessages();
     }
   }
 
@@ -1346,7 +1391,6 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
   private async runBashCommand(command: string, opts?: { cwd?: string }): Promise<void> {
     this.isStreaming = true;
-    this.editor.disableSubmit = true;
 
     try {
       const {
@@ -1366,8 +1410,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.addSystemMessage(`bash error: ${(err as Error).message}`, palette.noticeError);
     } finally {
       this.isStreaming = false;
-      this.editor.disableSubmit = false;
       this.ui.requestRender();
+      void this.drainQueuedUserMessages();
     }
   }
 

@@ -1,11 +1,10 @@
-import type { ReasoningEffort } from "@mariozechner/pi-ai";
 import { getModel } from "@mariozechner/pi-ai";
 import type { SubagentConfigMap } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
 import { TASK_TOOL } from "./tools/task.js";
 import { WRITE_TOOL } from "./tools/write.js";
-import type { Persona } from "./types.js";
+import type { Persona, ReasoningEffort } from "./types.js";
 
 const BLOCK_GENERAL_PURPOSE_PREAMBLE = `
 You are a helpful assistant. Your primary mode is conversation: answer questions, explain concepts, talk through problems, or help with any topic the user brings up. You have access to tools for working with code and files, but reach for them only when they genuinely help.
@@ -234,7 +233,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
       ? {
           explore: {
             model: explorerModel,
-            settings: { reasoning: explorerEffort },
+            settings: explorerEffort === "none" ? {} : { reasoning: explorerEffort },
           },
         }
       : undefined;

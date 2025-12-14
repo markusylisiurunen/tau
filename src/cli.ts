@@ -1,5 +1,4 @@
-import type { ReasoningEffort } from "@mariozechner/pi-ai";
-import { type Persona, REASONING_LEVELS, type RiskLevel } from "./types.js";
+import { type Persona, REASONING_LEVELS, type ReasoningEffort, type RiskLevel } from "./types.js";
 
 export interface CliOptions {
   help: boolean;

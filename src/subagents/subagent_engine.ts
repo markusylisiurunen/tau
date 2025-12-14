@@ -3,6 +3,7 @@ import type {
   Context,
   KnownProvider,
   Message,
+  SimpleStreamOptions,
   ToolCall,
 } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
@@ -36,13 +37,15 @@ export type SubagentRunResult = {
   costTotal: number;
 };
 
-function getStreamingSettings(settings: SubagentPersonaConfig["settings"]) {
-  const merged = { ...(settings ?? {}) };
-  // Keep parity with SessionEngine: don't send reasoning: undefined.
-  if (merged.reasoning === undefined) {
-    delete (merged as Record<string, unknown>).reasoning;
+function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): SimpleStreamOptions {
+  const merged = { ...(settings ?? {}) } as Record<string, unknown>;
+  const reasoning = merged.reasoning;
+
+  if (reasoning === undefined || reasoning === "none") {
+    delete merged.reasoning;
   }
-  return merged;
+
+  return merged as unknown as SimpleStreamOptions;
 }
 
 function buildToolRegistryForAllowedTools(allowedTools: AllowedSubagentToolName[]): ToolRegistry {

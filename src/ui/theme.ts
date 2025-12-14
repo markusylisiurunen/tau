@@ -1,4 +1,4 @@
-import type { ReasoningEffort } from "@mariozechner/pi-ai";
+import type { ReasoningEffort } from "../types.js";
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
 import { Chalk } from "chalk";
 import { hslToHex } from "../utils/color.js";

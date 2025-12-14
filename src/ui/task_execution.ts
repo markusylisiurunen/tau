@@ -73,7 +73,7 @@ export function renderTaskRunning(
   ];
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
-  const eventLines = formatEventsForDisplay(lastEvents);
+  const eventLines = formatEventsForDisplay(lastEvents).slice(-4);
   const costPart = `cost: ${formatCost(costTotal)}`;
   const costLine = subagentName
     ? palette.dim(`${subagentName} · ${costPart} (${stats})`)

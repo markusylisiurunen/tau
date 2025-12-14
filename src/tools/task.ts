@@ -161,7 +161,6 @@ export function createTaskToolDefinition(): ToolDefinition {
       }
 
       const uiQueue = new AsyncUiEventQueue();
-      const lastEvents: string[] = [];
       let costTotal = 0;
       let turns = 0;
       let toolCalls = 0;
@@ -175,14 +174,12 @@ export function createTaskToolDefinition(): ToolDefinition {
         costTotal = nextCostTotal;
         turns = nextTurns;
         toolCalls = nextToolCalls;
-        lastEvents.push(eventText);
-        while (lastEvents.length > 8) lastEvents.shift();
         uiQueue.push({
           type: "task_progress",
           toolCallId: toolCall.id,
           name: definition.name,
           title,
-          lastEvents: [...lastEvents],
+          event: eventText,
           costTotal,
           turns,
           toolCalls,

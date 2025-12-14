@@ -84,6 +84,7 @@ export class ChatApp {
   private readonly engine: SessionEngine;
   private runningBashComponents: Map<string, number> = new Map(); // toolCallId -> component index
   private runningTaskComponents: Map<string, number> = new Map(); // toolCallId -> component index
+  private taskEvents: Map<string, string[]> = new Map(); // toolCallId -> accumulated events
   private subagentCostTotal = 0;
 
   private isStreaming = false;
@@ -592,6 +593,7 @@ export class ChatApp {
     this.assistantComponents = [];
     this.runningBashComponents.clear();
     this.runningTaskComponents.clear();
+    this.taskEvents.clear();
     this.subagentCostTotal = 0;
     this.expandedFilesInCurrentPrompt.clear();
     this.chatContainer.addMessage(new SessionDividerComponent("new session"));
@@ -751,6 +753,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.assistantComponents = [];
     this.runningBashComponents.clear();
     this.runningTaskComponents.clear();
+    this.taskEvents.clear();
     this.subagentCostTotal = 0;
     this.expandedFilesInCurrentPrompt.clear();
     this.chatContainer.addMessage(new SessionDividerComponent("new session"));
@@ -1096,19 +1099,27 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               }
               this.ui.requestRender();
             } else if (uiEvent.type === "task_started") {
+              this.taskEvents.set(uiEvent.toolCallId, []);
               const index = this.chatContainer.addToolMessage((compact) =>
                 renderTaskRunning(uiEvent.title, [], 0, 0, 0, compact, uiEvent.name),
               );
               this.runningTaskComponents.set(uiEvent.toolCallId, index);
               this.ui.requestRender();
             } else if (uiEvent.type === "task_progress") {
-              const lastEvents = uiEvent.lastEvents.slice(-8);
+              // Accumulate events for this task
+              let events = this.taskEvents.get(uiEvent.toolCallId);
+              if (!events) {
+                events = [];
+                this.taskEvents.set(uiEvent.toolCallId, events);
+              }
+              events.push(uiEvent.event);
+
               const runningIndex = this.runningTaskComponents.get(uiEvent.toolCallId);
               if (runningIndex !== undefined) {
                 this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
                   renderTaskRunning(
                     uiEvent.title,
-                    lastEvents,
+                    events,
                     uiEvent.costTotal,
                     uiEvent.turns,
                     uiEvent.toolCalls,
@@ -1120,7 +1131,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                 const index = this.chatContainer.addToolMessage((compact) =>
                   renderTaskRunning(
                     uiEvent.title,
-                    lastEvents,
+                    events,
                     uiEvent.costTotal,
                     uiEvent.turns,
                     uiEvent.toolCalls,
@@ -1162,6 +1173,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                 );
               }
 
+              this.taskEvents.delete(uiEvent.toolCallId);
               this.subagentCostTotal += uiEvent.costTotal;
               this.updateFooter();
               this.ui.requestRender();
@@ -1177,6 +1189,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                   renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, uiEvent.name),
                 );
               }
+              this.taskEvents.delete(uiEvent.toolCallId);
               this.ui.requestRender();
             } else if (uiEvent.type === "write_success") {
               this.chatContainer.addToolMessage((compact) =>
@@ -1240,6 +1253,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.currentTurnAbort = undefined;
       this.runningBashComponents.clear();
       this.runningTaskComponents.clear();
+      this.taskEvents.clear();
       this.ui.requestRender();
     }
   }

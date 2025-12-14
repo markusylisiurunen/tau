@@ -1,191 +1,87 @@
-# Repository Guidelines
+# Tau
 
-## Project Structure & Module Organization
+Terminal-based AI chat client with tool execution, streaming responses, and risk-level controls. Supports Anthropic, OpenAI, and Google models.
 
-- `src/`: TypeScript source (ESM). Entry point is `src/main.ts`.
-- `src/session/`: core session logic (message accumulation, turn processing).
-- `src/tools/`: tool definitions and registry (e.g., bash execution or editing files)
-- `src/ui/`: terminal UI components (rendering, themes, slash autocomplete, message views).
-- `src/utils/`: small shared helpers (e.g., fuzzy matching, truncation).
-- `dist/`: build output from TypeScript (`npm run build`). Do not edit by hand.
-- `bin/`: local helper binaries (ignored by git).
+## Architecture
 
-## Build, Test, and Development Commands
+- **ChatApp** (`src/app.ts`): Main orchestrator handling UI, commands, and state
+- **SessionEngine** (`src/session/session_engine.ts`): Manages LLM streaming and tool dispatch via async generator events
+- **ToolRegistry** (`src/tools/registry.ts`): Registers bash, write, edit, and task tools
+- **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/ui/`
 
-- `npm install`: install dependencies (requires Node `>=20`).
-- `npm run dev`: run from source via `tsx` (fast iteration). Avoid running this in automated/non-interactive environments since it launches the interactive terminal UI.
-- `npm run build`: compile TypeScript to `dist/` using `tsc`.
-- `npm start`: run the compiled CLI from `dist/`. Avoid running this in automated/non-interactive environments since it launches the interactive terminal UI.
-- `npm run check`: auto-format/lint with Biome + typecheck (`tsc --noEmit`).
-- `npm run fmt`: format the repo with Biome.
-- `npm run lint`: lint with Biome (no writes).
+**Data flow**: User input → `ChatApp.handleSubmit()` → `SessionEngine.processTurn()` (yields events) → tool dispatch → UI rendering.
 
-## Coding Style & Naming Conventions
+**Engine events**: `processTurn()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
 
-- Formatting/linting: Biome (2-space indent, line width 100). Prefer `npm run check` before pushing.
-- TypeScript: keep types in `PascalCase`, values/functions in `camelCase`, and files `lowercase.ts` (as in `src/app.ts`).
-- Keep OS-specific behavior isolated. Clipboard currently uses `pbcopy` (macOS-only) in `src/clipboard.ts` and has no cross-platform fallback yet.
+## Key modules
 
-## Testing Guidelines
+- `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
+- `src/personas.ts` - Persona definitions and system prompt blocks
+- `src/content_loader.ts` - User persona/prompt loading from `~/.config/tau/`
+- `src/commands.ts` - Slash command parsing
+- `src/session/` - Turn processing and message accumulation
+- `src/tools/` - Tool implementations (bash, write, edit, task)
+- `src/subagents/` - Isolated agent execution (explore subagent)
+- `src/ui/` - Terminal components, themes, autocomplete
+- `src/utils/` - Helpers for truncation, fuzzy matching, context building
 
-There is no dedicated test runner in this repo currently. Validate changes by:
+## Tool system
 
-- `npm run check` (format + lint + typecheck)
-- manual smoke tests: run locally in a real terminal UI (do not run `npm run dev`, `npm start`, or `node dist/main.js` in automated/non-interactive environments)
-  - try slash commands: `/help`, `/new`, `/fork:only-summary`, `/fork:with-last-turn`, `/copy`, `/copy:code`, `/bash:<id>`, `/risk:none|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`
-  - try direct bash mode: prefix input with `!` to run a shell command (separate from model tool calls)
-  - try file-path autocomplete: type `@` then a path fragment to insert a project-relative file path
-  - if relevant, verify piped stdin behavior (non-interactive first message) and `/dev/tty` fallback for interactive input
+| Tool    | Purpose                     | Risk requirement                               |
+| ------- | --------------------------- | ---------------------------------------------- |
+| `bash`  | Shell execution             | `read-only` for reads, `read-write` for writes |
+| `write` | Create/overwrite files      | `read-write`                                   |
+| `edit`  | Replace exact text in files | `read-write`                                   |
+| `task`  | Run isolated subagent       | `read-only` or higher                          |
 
-## Commit & Pull Request Guidelines
+Risk levels (`none`, `read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
 
-- Commit messages follow a simple imperative style (examples from history: "add …", "implement …", "update …").
-- Keep commits focused; avoid bundling formatting-only changes with behavior changes unless necessary.
-- PRs should include: what changed, how to reproduce/verify in the terminal, and any relevant notes about risk level behavior (`/risk:none|read-only|read-write`) or API key usage.
+**Bash limits**: 2MB capture, 1MB to model context, 50KB to display, 60s timeout. Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/tools/bash.ts`).
 
-## Security & Configuration Tips
+## Personas and subagents
 
-- Never commit secrets. Use env vars like `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for local runs.
-- Treat any changes to shell/tool execution paths as security-sensitive: document defaults and failure modes in the PR description.
-- Risk levels (`/risk:none|read-only|read-write`) gate _model_ tool calls (bash/write/edit). User-initiated `!` commands run directly in the app, so keep that distinction clear when changing execution behavior.
-- Bash tool execution sanitizes environment variables (see `sanitizeEnvironment()` in `src/tools/bash.ts`); update allow/deny lists carefully.
+**Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/2.5 Flash) × 3 variants (basic, coder, raw) = 15 personas. Coder variants include the **explore** subagent for multi-turn read-only codebase investigation.
 
-## Adding a New Slash Command
-
-To add a new slash command (e.g., `/example`), update the following files:
-
-1. **`src/commands.ts`**:
-   - Add the command to the `Command` type union (e.g., `| { type: "example" }`)
-   - Add parsing logic in `parseCommand()` (e.g., `if (trimmed === "/example") return { type: "example" };`)
-   - Add the command to `buildHelpText()` so it appears in `/help` output
-
-2. **`src/ui/slash_autocomplete.ts`**:
-   - Add an entry to `STATIC_COMMANDS` array with `value`, `label`, and `description`
-
-3. **`src/app.ts`**:
-   - Add a `case "example":` in the `handleCommand()` switch statement
-   - Implement the handler method (e.g., `private exampleCommand(): void { ... }`)
+User personas: `~/.config/tau/personas/*.md` with YAML frontmatter (`id`, `provider`, `model` required).
 
 ## Configuration
 
-The app loads configuration from `~/.config/tau/config.json`. This file is optional and can store API keys as an alternative to environment variables:
+- **Global**: `~/.config/tau/config.json` (API keys, `toolDisplayMode`)
+- **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
+- **User prompts**: `~/.config/tau/prompts/*.md` (YAML frontmatter with `id`)
 
-```json
-{
-  "apiKeys": {
-    "anthropic": "sk-ant-...",
-    "google": "...",
-    "openai": "sk-..."
-  },
-  "toolDisplayMode": "compact"
-}
-```
+## Commands
 
-The `loadConfig()` function in `src/config.ts` reads this file. Environment variables take precedence if both are set.
+- `/help`, `/new`, `/copy`, `/copy:code`, `/reload`
+- `/fork:only-summary`, `/fork:with-last-turn` - Fork with compressed history
+- `/risk:none|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/bash:<id>`
+- `!<cmd>` - Direct bash execution (bypasses model)
+- `#<request>` - Memory mode for updating AGENTS.md
 
-### Saved bash commands
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @files), `Escape` (interrupt)
 
-Tau can load reusable shell command definitions from JSON files and expose them via the `/bash:<id>` slash command (with autocomplete).
+## Development
 
-Files (in order):
+- `npm run check` - Format (Biome) + typecheck
+- `npm run dev` - Run from source via tsx
+- `npm run build` - Compile to dist/
 
-- repo-local `.tau/config.json` (preferred for project workflows, and gitignored by default)
-- global `~/.tau/config.json`
+**Do not run the app** (`npm run dev`, `npm start`, `node dist/main.js`) in automated or non-interactive environments. It launches an interactive TUI that requires a real terminal.
 
-Format:
+**Style**: Biome (2-space indent, 100 line width). Types `PascalCase`, values/functions `camelCase`, files `lowercase.ts`.
 
-```json
-{
-  "bash": [
-    { "id": "check", "description": "lint + typecheck", "cmd": "npm run check" }
-  ]
-}
-```
+## Adding a slash command
 
-On ID collision, the repo-local command wins.
+1. `src/commands.ts`: Add to `Command` type, `parseCommand()`, `buildHelpText()`
+2. `src/ui/slash_autocomplete.ts`: Add to `STATIC_COMMANDS`
+3. `src/app.ts`: Add case in `handleCommand()`, implement handler
 
-## User-Extensibility: Custom Personas and Prompts
+## Security
 
-Users can extend tau with custom personas and prompt templates without modifying the codebase.
+- Risk levels gate model tools only; `!` commands bypass checks
+- Bash sanitizes environment, blocks `*_KEY`, `*_SECRET`, `*_TOKEN`, `*_PASSWORD` patterns
+- Process groups terminated on abort to prevent orphaned processes
 
-### Architecture
+## Maintaining this file
 
-- **Content Loader** (`src/content_loader.ts`): Scans `~/.config/tau/personas/*.md` and `~/.config/tau/prompts/*.md`, parses YAML front-matter + markdown body, and returns merged arrays with built-ins first (so built-ins win on collision).
-  - `loadUserPersonas()`: Returns `{ personas: Persona[]; errors: string[] }`
-  - `loadUserPrompts()`: Returns `{ prompts: PromptTemplate[]; errors: string[] }`
-  - `loadAllContent()`: Combines both, never throws (catches errors internally and at call sites)
-
-- **Startup Integration** (`src/main.ts`): Calls `loadAllContent()` before CLI parsing. If it throws (safeguard), falls back to built-ins and logs a warning. This ensures `tau --help` works even if user content fails.
-
-- **Persona Lookup** (`src/app.ts`): Now searches `this.personas` (the injected list) instead of a global function, so user personas work everywhere (`--persona`, `/persona:id`, initial persona selection).
-
-- **Reload Command** (`/reload`): Reloads personas and prompts from disk, preserves the current persona if still available (falls back to first), updates the engine, and shows a summary. Guards against re-entrancy (won't reload while streaming).
-
-### File Format
-
-**Persona markdown** (`~/.config/tau/personas/example.md`):
-
-```markdown
----
-id: my-id
-label: My Persona
-provider: anthropic
-model: claude-opus-4-5
-description: Optional description
-reasoning: medium
-allowedReasoningLevels:
-  - low
-  - medium
-  - high
----
-
-System prompt body goes here.
-```
-
-Required: `id`, `provider`, `model`. Optional: all others.
-
-**Prompt markdown** (`~/.config/tau/prompts/example.md`):
-
-```markdown
----
-id: my-template
-label: My Template
-description: Optional description
----
-
-Prompt template body goes here.
-```
-
-Required: `id`. Optional: `label`, `description`.
-
-### Collision Handling
-
-User-defined personas/prompts with IDs that collide with built-ins are silently skipped (case-insensitive comparison). Errors are accumulated in the result and optionally shown to the user (e.g., via `/reload`).
-
-## File Expansion: ctrl+f Keybinding
-
-Users can press `ctrl+f` to expand `@file` mentions in the editor, materializing file contents into the conversation.
-
-### Behavior
-
-- Extracts `@path` tokens from editor text via regex
-- Strips trailing punctuation (`.,:;)}\]`) to handle mentions like "@src/app.ts," or "(see @README.md)"
-- Filters to only valid project files (case-sensitive exact match against `projectFiles` list)
-- De-duplicates while preserving first-seen order
-- Runs sequential bash commands: `printf '\n===== <path> =====\n'; cat -- <path>; printf '\n'`
-  - `--` prevents `cat` from interpreting filenames starting with `-` as options
-  - Blank lines before/after separate multiple files visually
-  - Trailing newline ensures files don't run together
-- Each file expansion becomes a separate bash execution card + user message in history
-- Editor text left unchanged so user can ask follow-up question after expanding
-
-### Guards
-
-- Early return if `this.isStreaming` (prevents interleaving with assistant turn)
-- Silent return if no valid tokens are found (no message)
-- Skips unknown mentions without noise
-
-### Implementation
-
-- **`src/ui/custom_editor.ts`**: Added `onCtrlF` callback hook and intercepts `\x06` (ctrl+f) byte before default behavior
-- **`src/app.ts`**: Implements `expandFileMentions()` and `shellQuote()` helper for safe path escaping
+Keep AGENTS.md in sync with the codebase. When making changes that affect architecture, commands, configuration, or other documented behavior, update the relevant sections here.

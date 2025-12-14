@@ -1099,7 +1099,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               }
               this.ui.requestRender();
             } else if (uiEvent.type === "task_started") {
-              this.taskEvents.set(uiEvent.toolCallId, []);
+              if (!this.taskEvents.has(uiEvent.toolCallId)) {
+                this.taskEvents.set(uiEvent.toolCallId, []);
+              }
               const index = this.chatContainer.addToolMessage((compact) =>
                 renderTaskRunning(uiEvent.title, [], 0, 0, 0, compact, uiEvent.name),
               );

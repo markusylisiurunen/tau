@@ -23,7 +23,8 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
   if (!persona.subagents || Object.keys(persona.subagents).length === 0) {
     return undefined;
   }
-  const entries = Object.entries(persona.subagents);
+  const entries = Object.entries(persona.subagents).filter(([, cfg]) => cfg);
+  if (entries.length === 0) return undefined;
   const subagentLines = entries
     .map(([name]) => {
       const def = getSubagentDefinitionFromString(name);

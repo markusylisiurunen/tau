@@ -805,14 +805,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       { reasoning: "medium", ...(apiKey && { apiKey }) },
     );
 
-    let summary = "";
-    for await (const event of stream) {
-      if (event.type === "text_delta") {
-        summary += event.delta;
-      }
-    }
-
-    return summary.trim();
+    const final = await stream.result();
+    return extractAssistantText(final).trim();
   }
 
   private applySessionContext(previousSessionContext: string): void {
@@ -945,6 +939,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       personaSystemPrompt: this.currentPersona.systemPrompt,
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
+      previousSessionSummary: this.previousSessionSummary,
       userPreferences: this.config.userPreferences,
     });
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
@@ -1018,6 +1013,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         personaSystemPrompt: this.currentPersona.systemPrompt,
         projectContextBlock: this.projectContextBlock,
         environmentTag: this.environmentTag,
+        previousSessionSummary: this.previousSessionSummary,
         userPreferences: this.config.userPreferences,
       });
       this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);

@@ -131,6 +131,14 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
       return this.buildRiskSuggestions(riskMatch[1] ?? "");
     }
 
+    const bashMatch = afterSlash.match(/^bash:(.*)$/i);
+    if (bashMatch) {
+      return this.buildArgSuggestions(
+        bashMatch[1] ?? "",
+        this.getBashCommands().map((b) => ({ id: b.id, label: b.description })),
+      );
+    }
+
     return null;
   }
 
@@ -227,7 +235,8 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
     const isArgCompletion =
       lowerBeforePrefix.endsWith("/persona:") ||
       lowerBeforePrefix.endsWith("/prompt:") ||
-      lowerBeforePrefix.endsWith("/risk:");
+      lowerBeforePrefix.endsWith("/risk:") ||
+      lowerBeforePrefix.endsWith("/bash:");
 
     if (isArgCompletion) {
       return item.value;

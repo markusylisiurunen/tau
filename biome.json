@@ -2,7 +2,8 @@
   "$schema": "https://biomejs.dev/schemas/2.3.8/schema.json",
   "files": {
     "includes": [
-      ".zed/settings.json",
+      ".tau/*.json",
+      ".zed/*.json",
       "src/**/*.ts",
       "src/**/*.js",
       "*.json",

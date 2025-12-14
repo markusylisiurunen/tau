@@ -19,6 +19,7 @@ export interface Palette {
   // Semantic colors
   warn: (text: string) => string;
   error: (text: string) => string;
+  memoryMode: (text: string) => string;
   bashRunning: (text: string) => string;
   bashRan: (text: string) => string;
   bashOutput: (text: string) => string;
@@ -73,6 +74,7 @@ const palette: Palette = {
   // Semantic colors
   warn: chalk.hex(hslToHex(WARN_HUE, 76, 68)),
   error: chalk.hex(hslToHex(ERROR_HUE, 76, 68)),
+  memoryMode: chalk.hex(hslToHex(280, 80, 72)),
   bashRunning: chalk.hex(hslToHex(168, 80, 72)),
   bashRan: chalk.hex(hslToHex(192, 80, 72)),
   bashOutput: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),

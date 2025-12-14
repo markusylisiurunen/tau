@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type {
   AssistantMessage,
   KnownProvider,
@@ -53,6 +54,7 @@ import {
 } from "./utils/context.js";
 import { formatHistoryForCompression } from "./utils/fork.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "./utils/format.js";
+import { getGitRoot } from "./utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "./utils/messages.js";
 import { listProjectFiles } from "./utils/project_files.js";
 
@@ -89,6 +91,7 @@ export class ChatApp {
 
   private isStreaming = false;
   private isBashMode = false;
+  private isMemoryMode = false;
   private showThinking = false;
   private compactToolUi = true;
   private currentTurnAbort?: AbortController;
@@ -207,8 +210,13 @@ export class ChatApp {
 
     this.editor.onChange = (text: string) => {
       const wasBash = this.isBashMode;
-      this.isBashMode = text.trimStart().startsWith("!");
-      if (wasBash !== this.isBashMode) {
+      const wasMemory = this.isMemoryMode;
+
+      const trimmed = text.trimStart();
+      this.isBashMode = trimmed.startsWith("!");
+      this.isMemoryMode = trimmed.startsWith("#");
+
+      if (wasBash !== this.isBashMode || wasMemory !== this.isMemoryMode) {
         this.updateEditorBorderColor();
       }
     };
@@ -268,6 +276,8 @@ export class ChatApp {
   private updateEditorBorderColor(): void {
     if (this.isBashMode) {
       this.editor.borderColor = (s: string) => palette.bashRan(s);
+    } else if (this.isMemoryMode) {
+      this.editor.borderColor = (s: string) => palette.memoryMode(s);
     } else {
       this.editor.borderColor = editorBorderForReasoning(this.currentPersona.settings.reasoning);
     }
@@ -452,10 +462,23 @@ export class ChatApp {
       return;
     }
 
+    if (trimmed.startsWith("#")) {
+      const request = trimmed.slice(1).trim();
+      if (!request) {
+        this.addSystemMessage("memory mode request was empty.", palette.noticeWarn);
+        return;
+      }
+
+      const agentsFilePath = this.getMemoryModeFilePath();
+      const textForModel = this.formatMemoryModeUserMessage(agentsFilePath, request);
+      await this.sendUserMessage(request, { textForModel });
+      return;
+    }
+
     await this.sendUserMessage(trimmed);
   }
 
-  private async sendUserMessage(text: string): Promise<void> {
+  private async sendUserMessage(text: string, opts?: { textForModel?: string }): Promise<void> {
     this.addUserMessage(text);
     this.expandedFilesInCurrentPrompt.clear();
 
@@ -464,7 +487,8 @@ export class ChatApp {
       : undefined;
     this.pendingRiskLevelChange = undefined;
 
-    const textForModel = systemNotice ? `${systemNotice}\n\n${text}` : text;
+    const baseTextForModel = opts?.textForModel ?? text;
+    const textForModel = systemNotice ? `${systemNotice}\n\n${baseTextForModel}` : baseTextForModel;
     this.engine.addUserText(textForModel);
 
     await this.runAssistantTurn();
@@ -478,6 +502,36 @@ export class ChatApp {
     this.engine.addUserText(trimmed);
 
     await this.runAssistantTurn();
+  }
+
+  private getMemoryModeFilePath(): string {
+    const cwd = process.cwd();
+    const gitRoot = getGitRoot(cwd);
+
+    if (gitRoot) {
+      return resolve(join(gitRoot, "AGENTS.md"));
+    }
+
+    return resolve(join(cwd, "AGENTS.md"));
+  }
+
+  private formatMemoryModeUserMessage(agentsFilePath: string, request: string): string {
+    return [
+      "Memory mode: update the project guidelines file at:",
+      agentsFilePath,
+      "",
+      "If the file exists, use the edit tool to update it. If it does not exist, use the write tool to create it.",
+      "Preserve all unrelated content and match the existing formatting style.",
+      "Integrate the user's request thoughtfully. Don't just append it verbatim.",
+      "Place new content in the most appropriate existing section, or create a new section if needed.",
+      "Always prefer an existing section over creating a new one. Sometimes changes are required in more than one place.",
+      "",
+      "Do not mention this surrounding instruction in your response; it's invisible to the user.",
+      "",
+      "<user_request>",
+      request,
+      "</user_request>",
+    ].join("\n");
   }
 
   // Command Handling ------------------------------------------------------------------------------
@@ -598,6 +652,7 @@ export class ChatApp {
     this.expandedFilesInCurrentPrompt.clear();
     this.chatContainer.addMessage(new SessionDividerComponent("new session"));
     this.isBashMode = false;
+    this.isMemoryMode = false;
     this.previousSessionSummary = undefined;
     this.rebuildSystemPrompt();
     this.updateEditorBorderColor();
@@ -759,6 +814,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.chatContainer.addMessage(new SessionDividerComponent("new session"));
     this.chatContainer.addMessage(new SessionSummaryComponent(this.previousSessionSummary));
     this.isBashMode = false;
+    this.isMemoryMode = false;
 
     // Rebuild environment tag and system prompt with the new summary and current risk level
     this.rebuildSystemPrompt(this.previousSessionSummary);

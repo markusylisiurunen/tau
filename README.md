@@ -99,6 +99,8 @@ The markdown body becomes the prompt template.
 
 Use `/prompt:my-workflow` to insert the template into the editor.
 
+Built-in prompt templates include: `rewrite-prompt`, `plan`, `review-current-changes`, `review-branch`, `review-last-commit`, `commit`.
+
 ### Reloading
 
 Use `/reload` to refresh personas and prompts from disk without restarting. Useful when adding or modifying custom files during a session.

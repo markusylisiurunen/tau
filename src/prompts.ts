@@ -219,7 +219,23 @@ function getCodeReviewTemplateWithScope(scope: string): string {
   return TEMPLATE_CODE_REVIEW.replaceAll("{{review_scope}}", scope);
 }
 
+const TEMPLATE_COMMIT = [
+  "Please commit my staged changes.",
+  "Run `git diff --staged` to see what's there, and if nothing is staged, just tell me and stop.",
+  "Write a commit message that uses imperative mood, stays lowercase except for proper nouns, skips trailing punctuation, and omits conventional prefixes like `feat:` or `fix:`.",
+  "Keep it to a single line under 90 characters that summarizes everything staged.",
+  'Run `git commit -m "<message>"` immediately after.',
+  "Don't do any extra exploration: no other git commands, no reading files.",
+  "Let me know the message you chose afterwards.",
+].join(" ");
+
 export const prompts: PromptTemplate[] = [
+  {
+    id: "commit",
+    label: "commit staged changes",
+    description: "commit the current staged changes with a concise, well-formed message",
+    template: TEMPLATE_COMMIT,
+  },
   {
     id: "rewrite-prompt",
     label: "help with (re)writing a prompt",

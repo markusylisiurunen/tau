@@ -290,18 +290,31 @@ export class ChatApp {
       : this.currentPersona.model.contextWindow;
 
     const { read, write } = this.getCacheTotals();
-    const cacheStats = `R${formatTokenWindow(read)} W${formatTokenWindow(write)}`;
+    let stats = `R${formatTokenWindow(read)} W${formatTokenWindow(write)}`;
 
     if (!last) {
-      return `${cacheStats} 0%/${formatTokenWindow(windowTokens)}`;
+      return `${stats} 0%/${formatTokenWindow(windowTokens)}`;
     }
+
+    // Sum output tokens from assistant messages in the current turn (after last user message)
+    let totalOutputTokens = 0;
+    for (let i = this.engine.history.length - 1; i >= 0; i--) {
+      const m = this.engine.history[i]!;
+      if (m.role === "user") {
+        break;
+      }
+      if (m.role === "assistant") {
+        totalOutputTokens += (m as AssistantMessage).usage?.output ?? 0;
+      }
+    }
+    stats += ` O${formatTokenWindow(totalOutputTokens)}`;
 
     const promptTokensSent =
       (last.usage?.input ?? 0) + (last.usage?.cacheRead ?? 0) + (last.usage?.cacheWrite ?? 0);
     const percent = windowTokens > 0 ? (promptTokensSent / windowTokens) * 100 : 0;
     const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;
 
-    return `${cacheStats} ${percentStr}/${formatTokenWindow(windowTokens)}`;
+    return `${stats} ${percentStr}/${formatTokenWindow(windowTokens)}`;
   }
 
   private getSessionCostString(): string {

@@ -23,6 +23,7 @@ import {
 } from "./tools/bash.js";
 import { createEditToolDefinition } from "./tools/edit.js";
 import { ToolRegistry } from "./tools/registry.js";
+import { createTaskToolDefinition } from "./tools/task.js";
 import { createWriteToolDefinition } from "./tools/write.js";
 import { type Persona, REASONING_LEVELS, type RiskLevel } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
@@ -40,6 +41,7 @@ import { SessionDividerComponent } from "./ui/session_divider.js";
 import { SessionSummaryComponent } from "./ui/session_summary.js";
 import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
 import { SystemMessageComponent } from "./ui/system_message.js";
+import { renderTaskBlocked, renderTaskFinished, renderTaskRunning } from "./ui/task_execution.js";
 import { editorBorderForReasoning, theme } from "./ui/theme.js";
 import { UserMessageComponent } from "./ui/user_message.js";
 import {
@@ -81,6 +83,8 @@ export class ChatApp {
   private assistantComponents: AssistantMessageComponent[] = [];
   private readonly engine: SessionEngine;
   private runningBashComponents: Map<string, number> = new Map(); // toolCallId -> component index
+  private runningTaskComponents: Map<string, number> = new Map(); // toolCallId -> component index
+  private subagentCostTotal = 0;
 
   private isStreaming = false;
   private isBashMode = false;
@@ -145,6 +149,7 @@ export class ChatApp {
       createBashToolDefinition(),
       createWriteToolDefinition(),
       createEditToolDefinition(),
+      createTaskToolDefinition(),
     ]);
     this.engine = new SessionEngine({
       persona: this.currentPersona,
@@ -327,7 +332,7 @@ export class ChatApp {
         total += (m as AssistantMessage).usage?.cost?.total ?? 0;
       }
     }
-    return `$${formatAdaptiveNumber(total, 2, 5)}`;
+    return `$${formatAdaptiveNumber(total + this.subagentCostTotal, 2, 5)}`;
   }
 
   private getCacheTotals(): { read: number; write: number } {
@@ -586,6 +591,8 @@ export class ChatApp {
     this.engine.reset();
     this.assistantComponents = [];
     this.runningBashComponents.clear();
+    this.runningTaskComponents.clear();
+    this.subagentCostTotal = 0;
     this.expandedFilesInCurrentPrompt.clear();
     this.chatContainer.addMessage(new SessionDividerComponent("new session"));
     this.isBashMode = false;
@@ -742,6 +749,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     // Reset the session state but preserve history with divider and summary
     this.engine.reset();
     this.assistantComponents = [];
+    this.runningBashComponents.clear();
+    this.runningTaskComponents.clear();
+    this.subagentCostTotal = 0;
     this.expandedFilesInCurrentPrompt.clear();
     this.chatContainer.addMessage(new SessionDividerComponent("new session"));
     this.chatContainer.addMessage(new SessionSummaryComponent(this.previousSessionSummary));
@@ -1085,6 +1095,68 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                 );
               }
               this.ui.requestRender();
+            } else if (uiEvent.type === "task_started") {
+              const index = this.chatContainer.addToolMessage((compact) =>
+                renderTaskRunning(uiEvent.title, [], 0, compact),
+              );
+              this.runningTaskComponents.set(uiEvent.toolCallId, index);
+              this.ui.requestRender();
+            } else if (uiEvent.type === "task_progress") {
+              const lastEvents = uiEvent.lastEvents.slice(-4);
+              const runningIndex = this.runningTaskComponents.get(uiEvent.toolCallId);
+              if (runningIndex !== undefined) {
+                this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
+                  renderTaskRunning(uiEvent.title, lastEvents, uiEvent.costTotal, compact),
+                );
+              } else {
+                const index = this.chatContainer.addToolMessage((compact) =>
+                  renderTaskRunning(uiEvent.title, lastEvents, uiEvent.costTotal, compact),
+                );
+                this.runningTaskComponents.set(uiEvent.toolCallId, index);
+              }
+              this.ui.requestRender();
+            } else if (uiEvent.type === "task_finished") {
+              const lastEvents = uiEvent.lastEvents.slice(-4);
+              const runningIndex = this.runningTaskComponents.get(uiEvent.toolCallId);
+              if (runningIndex !== undefined) {
+                this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
+                  renderTaskFinished(
+                    uiEvent.title,
+                    lastEvents,
+                    uiEvent.costTotal,
+                    uiEvent.status,
+                    compact,
+                  ),
+                );
+                this.runningTaskComponents.delete(uiEvent.toolCallId);
+              } else {
+                this.chatContainer.addToolMessage((compact) =>
+                  renderTaskFinished(
+                    uiEvent.title,
+                    lastEvents,
+                    uiEvent.costTotal,
+                    uiEvent.status,
+                    compact,
+                  ),
+                );
+              }
+
+              this.subagentCostTotal += uiEvent.costTotal;
+              this.updateFooter();
+              this.ui.requestRender();
+            } else if (uiEvent.type === "task_blocked") {
+              const runningIndex = this.runningTaskComponents.get(uiEvent.toolCallId);
+              if (runningIndex !== undefined) {
+                this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
+                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact),
+                );
+                this.runningTaskComponents.delete(uiEvent.toolCallId);
+              } else {
+                this.chatContainer.addToolMessage((compact) =>
+                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact),
+                );
+              }
+              this.ui.requestRender();
             } else if (uiEvent.type === "write_success") {
               this.chatContainer.addToolMessage((compact) =>
                 renderWriteSuccess(
@@ -1146,6 +1218,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.editor.disableSubmit = false;
       this.currentTurnAbort = undefined;
       this.runningBashComponents.clear();
+      this.runningTaskComponents.clear();
       this.ui.requestRender();
     }
   }

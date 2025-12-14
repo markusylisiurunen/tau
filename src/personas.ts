@@ -1,4 +1,10 @@
+import type { ReasoningEffort } from "@mariozechner/pi-ai";
 import { getModel } from "@mariozechner/pi-ai";
+import type { SubagentConfigMap } from "./subagents/types.js";
+import { BASH_TOOL } from "./tools/bash.js";
+import { EDIT_TOOL } from "./tools/edit.js";
+import { TASK_TOOL } from "./tools/task.js";
+import { WRITE_TOOL } from "./tools/write.js";
 import type { Persona } from "./types.js";
 
 const BLOCK_GENERAL_PURPOSE_PREAMBLE = `
@@ -182,9 +188,32 @@ const VARIANT_CONFIG: Record<Variant, { suffix: string; systemPrompt: string }> 
   raw: { suffix: "-raw", systemPrompt: RAW_SYSTEM_PROMPT },
 };
 
+const BASE_TOOLS: NonNullable<Persona["tools"]> = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
+
+function pickExploreReasoning(allowed: ReasoningEffort[]): ReasoningEffort {
+  const preferred: ReasoningEffort[] = ["minimal", "low", "none", "medium", "high", "xhigh"];
+  for (const level of preferred) {
+    if (allowed.includes(level)) return level;
+  }
+  return allowed[0] ?? "none";
+}
+
 function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   const config = VARIANT_CONFIG[variant];
   const displaySuffix = config.suffix ? `-${variant}` : "";
+
+  const subagents: SubagentConfigMap | undefined =
+    variant === "coder"
+      ? {
+          explore: {
+            model: spec.model,
+            settings: { reasoning: pickExploreReasoning(spec.allowedReasoningLevels) },
+          },
+        }
+      : undefined;
+
+  const tools = subagents ? [...BASE_TOOLS, TASK_TOOL] : BASE_TOOLS;
+
   return {
     id: `${spec.id}${config.suffix}`,
     label: `${spec.id}${displaySuffix}`,
@@ -193,6 +222,8 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
     systemPrompt: config.systemPrompt,
     allowedReasoningLevels: spec.allowedReasoningLevels,
     settings: spec.settings,
+    ...(subagents && { subagents }),
+    tools,
   };
 }
 

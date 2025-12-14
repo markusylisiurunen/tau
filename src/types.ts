@@ -1,4 +1,5 @@
 import type { Api, Model, ReasoningEffort, SimpleStreamOptions, Tool } from "@mariozechner/pi-ai";
+import type { SubagentConfigMap } from "./subagents/types.js";
 
 export type RiskLevel = "none" | "read-only" | "read-write";
 
@@ -19,5 +20,6 @@ export interface Persona {
   systemPrompt: string;
   settings: SimpleStreamOptions;
   allowedReasoningLevels?: ReasoningEffort[];
+  subagents?: SubagentConfigMap;
   tools?: Tool[];
 }

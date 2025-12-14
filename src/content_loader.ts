@@ -6,6 +6,9 @@ import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { personas as builtinPersonas } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
 import { prompts as builtinPrompts } from "./prompts.js";
+import { BASH_TOOL } from "./tools/bash.js";
+import { EDIT_TOOL } from "./tools/edit.js";
+import { WRITE_TOOL } from "./tools/write.js";
 import type { Persona } from "./types.js";
 import { REASONING_LEVELS } from "./types.js";
 
@@ -183,6 +186,7 @@ export async function loadUserPersonas(): Promise<{
           model: modelObj,
           systemPrompt: body,
           settings,
+          tools: [BASH_TOOL, WRITE_TOOL, EDIT_TOOL],
           ...(description && { description }),
           ...(filteredReasoningLevels && filteredReasoningLevels.length > 0
             ? { allowedReasoningLevels: filteredReasoningLevels }

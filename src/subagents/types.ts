@@ -15,6 +15,7 @@ export type SubagentRiskLevel = "none" | "read-only" | "read-write";
 
 export type SubagentRuntimeDefinition = {
   name: SubagentName;
+  description?: string;
   systemPrompt: string;
   allowedTools: AllowedSubagentToolName[];
   riskLevel: SubagentRiskLevel;

@@ -1097,7 +1097,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "task_started") {
               const index = this.chatContainer.addToolMessage((compact) =>
-                renderTaskRunning(uiEvent.title, [], 0, 0, 0, compact),
+                renderTaskRunning(uiEvent.title, [], 0, 0, 0, compact, uiEvent.name),
               );
               this.runningTaskComponents.set(uiEvent.toolCallId, index);
               this.ui.requestRender();
@@ -1113,6 +1113,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                     uiEvent.turns,
                     uiEvent.toolCalls,
                     compact,
+                    uiEvent.name,
                   ),
                 );
               } else {
@@ -1124,6 +1125,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                     uiEvent.turns,
                     uiEvent.toolCalls,
                     compact,
+                    uiEvent.name,
                   ),
                 );
                 this.runningTaskComponents.set(uiEvent.toolCallId, index);
@@ -1141,6 +1143,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                     uiEvent.status,
                     uiEvent.finalOutput,
                     compact,
+                    uiEvent.name,
                   ),
                 );
                 this.runningTaskComponents.delete(uiEvent.toolCallId);
@@ -1154,6 +1157,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                     uiEvent.status,
                     uiEvent.finalOutput,
                     compact,
+                    uiEvent.name,
                   ),
                 );
               }
@@ -1165,12 +1169,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const runningIndex = this.runningTaskComponents.get(uiEvent.toolCallId);
               if (runningIndex !== undefined) {
                 this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
-                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact),
+                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, uiEvent.name),
                 );
                 this.runningTaskComponents.delete(uiEvent.toolCallId);
               } else {
                 this.chatContainer.addToolMessage((compact) =>
-                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact),
+                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, uiEvent.name),
                 );
               }
               this.ui.requestRender();

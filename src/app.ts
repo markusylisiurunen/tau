@@ -241,9 +241,7 @@ export class ChatApp {
 
     const left = palette.dim(`${cwd} · ${contextUsage} · ${sessionCost}`);
     const personaName = this.currentPersona.label || this.currentPersona.id;
-    const statusPart = palette.dim(
-      `${personaName} · ${this.currentPersona.model.id} (${reasoningLabel}) · `,
-    );
+    const statusPart = palette.dim(`${personaName} · ${reasoningLabel} · `);
     const right = `${statusPart}${toolLabel}`;
 
     this.footer.setLeftRight(left, right);

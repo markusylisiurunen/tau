@@ -184,7 +184,7 @@ const VARIANT_CONFIG: Record<Variant, { suffix: string; systemPrompt: string }> 
 
 function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   const config = VARIANT_CONFIG[variant];
-  const displaySuffix = config.suffix ? ` (${variant})` : "";
+  const displaySuffix = config.suffix ? `-${variant}` : "";
   return {
     id: `${spec.id}${config.suffix}`,
     label: `${spec.id}${displaySuffix}`,

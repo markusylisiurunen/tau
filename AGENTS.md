@@ -42,7 +42,7 @@ Risk levels (`none`, `read-only`, `read-write`) gate model tool calls. The model
 
 **Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/2.5 Flash) × 3 variants (basic, coder, raw) = 15 personas. Coder variants include the **explore** subagent for multi-turn read-only codebase investigation.
 
-User personas: `~/.config/tau/personas/*.md` with YAML frontmatter (`id`, `provider`, `model` required).
+Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter (`id`, `provider`, `model` required, plus optional `label`, `description`, `reasoning`, `allowedReasoningLevels`). On conflicts, project personas override user and built-in personas.
 
 ## Configuration
 
@@ -50,7 +50,7 @@ User personas: `~/.config/tau/personas/*.md` with YAML frontmatter (`id`, `provi
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`none`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
 - **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
-- **User prompts**: `~/.config/tau/prompts/*.md` (YAML frontmatter with `id`)
+- **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (YAML frontmatter with `id`, project overrides on conflicts)
 
 ## Commands
 
@@ -100,6 +100,7 @@ Publishing to npm happens automatically via GitHub Actions when a GitHub Release
    - `gh release create v$(node -p "require('./package.json').version") --generate-notes`
 
 Notes:
+
 - The workflow uses the `NPM_TOKEN` GitHub secret to authenticate with npm.
 
 ## Maintaining this file

@@ -203,7 +203,7 @@ run them with `/bash:check` or `/bash:test`.
 
 ### custom personas
 
-create your own personas by adding markdown files to `~/.config/tau/personas/`:
+create your own personas by adding markdown files to `~/.config/tau/personas/` (user-level) or `.tau/personas/` (project-level):
 
 ```markdown
 ---
@@ -216,11 +216,18 @@ you are a helpful assistant specialized in my workflow.
 focus on clarity and efficiency.
 ```
 
-the frontmatter defines the persona's id, provider, and model. the markdown body becomes the system prompt. use it with `--persona my-assistant` or `/persona:my-assistant`.
+the frontmatter defines the persona's id, provider, and model. the markdown body becomes the system prompt.
+
+you can also set model parameters via optional frontmatter fields:
+
+- `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
+- `allowedReasoningLevels`: list of reasoning levels shown in the ui
+
+use it with `--persona my-assistant` or `/persona:my-assistant`. if a project persona id conflicts with a user or built-in persona, the project persona wins.
 
 ### custom prompts
 
-save reusable prompt templates in `~/.config/tau/prompts/`:
+save reusable prompt templates in `~/.config/tau/prompts/` (user-level) or `.tau/prompts/` (project-level):
 
 ```markdown
 ---
@@ -231,7 +238,7 @@ review this code for bugs, edge cases, and style issues.
 suggest specific improvements with code examples.
 ```
 
-insert them with `/prompt:review`.
+insert them with `/prompt:review`. if a project prompt id conflicts with a user or built-in prompt, the project prompt wins.
 
 use `/reload` to pick up changes to personas and prompts without restarting.
 

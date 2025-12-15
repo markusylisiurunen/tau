@@ -16,15 +16,18 @@ interface FrontMatter {
   [key: string]: unknown;
 }
 
+interface MarkdownFile {
+  name: string;
+  content: string;
+}
+
 function parseMarkdownWithFrontMatter(content: string): { frontMatter: FrontMatter; body: string } {
   const lines = content.split("\n");
 
-  // Check for opening delimiter
   if (lines[0]?.trim() !== "---") {
     return { frontMatter: {}, body: content };
   }
 
-  // Find closing delimiter
   let endIndex = -1;
   for (let i = 1; i < lines.length; i++) {
     if (lines[i]?.trim() === "---") {
@@ -40,7 +43,6 @@ function parseMarkdownWithFrontMatter(content: string): { frontMatter: FrontMatt
   const frontMatterLines = lines.slice(1, endIndex);
   const bodyLines = lines.slice(endIndex + 1);
 
-  // Parse simple YAML
   const frontMatter = parseSimpleYaml(frontMatterLines.join("\n"));
   const body = bodyLines.join("\n").trim();
 
@@ -58,28 +60,23 @@ function parseSimpleYaml(yamlText: string): FrontMatter {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    // List item
     if (trimmed.startsWith("- ")) {
       const item = trimmed.slice(2).trim();
       currentList.push(item);
       continue;
     }
 
-    // Finalize any pending list
     if (currentKey && currentList.length > 0) {
       result[currentKey] = currentList;
       currentList = [];
     }
 
-    // Scalar key: value
     const colonIndex = line.indexOf(":");
     if (colonIndex > 0) {
       currentKey = line.substring(0, colonIndex).trim();
       const valueStr = line.substring(colonIndex + 1).trim();
 
       if (valueStr) {
-        // Parse value: treat as string by default
-        // Simple heuristic: "true"/"false" -> boolean, numbers -> number
         if (valueStr.toLowerCase() === "true") {
           result[currentKey] = true;
         } else if (valueStr.toLowerCase() === "false") {
@@ -93,7 +90,6 @@ function parseSimpleYaml(yamlText: string): FrontMatter {
     }
   }
 
-  // Finalize pending list
   if (currentKey && currentList.length > 0) {
     result[currentKey] = currentList;
   }
@@ -114,91 +110,175 @@ function resolveModel(provider: string, modelId: string): Model<Api> | undefined
   return getModels(provider).find((m) => m.id === modelId) as Model<Api> | undefined;
 }
 
+function mergeById<T extends { id: string }>(base: T[], overlay: T[], overlay2?: T[]): T[] {
+  const map = new Map<string, T>();
+
+  for (const item of base) {
+    map.set(item.id.toLowerCase(), item);
+  }
+
+  for (const item of overlay) {
+    map.set(item.id.toLowerCase(), item);
+  }
+
+  if (overlay2) {
+    for (const item of overlay2) {
+      map.set(item.id.toLowerCase(), item);
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function loadMarkdownFiles(dir: string): { files: MarkdownFile[]; error?: string } {
+  if (!existsSync(dir)) {
+    return { files: [] };
+  }
+
+  try {
+    const names = readdirSync(dir).filter((f) => f.endsWith(".md"));
+    return {
+      files: names.map((name) => ({
+        name,
+        content: readFileSync(join(dir, name), "utf-8"),
+      })),
+    };
+  } catch {
+    return { files: [], error: `failed to read directory: ${dir}` };
+  }
+}
+
+function parsePersona(
+  file: string,
+  content: string,
+  forbiddenIds?: Set<string>,
+): { persona?: Persona; error?: string } {
+  const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
+
+  const id = frontMatter.id as string | undefined;
+  const label = frontMatter.label as string | undefined;
+  const provider = frontMatter.provider as string | undefined;
+  const model = frontMatter.model as string | undefined;
+
+  if (!id || !provider || !model) {
+    return { error: `${file}: missing required fields (id, provider, model). skipped.` };
+  }
+
+  if (forbiddenIds?.has(id.toLowerCase())) {
+    return { error: `${file}: persona id "${id}" conflicts with built-in. skipped.` };
+  }
+
+  const modelObj = resolveModel(provider, model);
+  if (!modelObj) {
+    return { error: `${file}: failed to load model "${provider}:${model}". skipped.` };
+  }
+
+  const description = frontMatter.description as string | undefined;
+  const reasoningRaw = frontMatter.reasoning;
+  const allowedReasoningLevelsRaw = frontMatter.allowedReasoningLevels;
+
+  const settings: Persona["settings"] = {};
+  if (isReasoningEffort(reasoningRaw)) {
+    settings.reasoning = reasoningRaw;
+  }
+
+  const filteredReasoningLevels = Array.isArray(allowedReasoningLevelsRaw)
+    ? allowedReasoningLevelsRaw.filter(isReasoningEffort)
+    : undefined;
+
+  const persona: Persona = {
+    id,
+    label: label || "custom",
+    model: modelObj,
+    systemPrompt: body,
+    settings,
+    tools: [BASH_TOOL, WRITE_TOOL, EDIT_TOOL],
+    ...(description && { description }),
+    ...(filteredReasoningLevels && filteredReasoningLevels.length > 0
+      ? { allowedReasoningLevels: filteredReasoningLevels }
+      : {}),
+  };
+
+  return { persona };
+}
+
+function parsePrompt(
+  file: string,
+  content: string,
+  forbiddenIds?: Set<string>,
+): { prompt?: PromptTemplate; error?: string } {
+  const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
+
+  const id = frontMatter.id as string | undefined;
+  if (!id) {
+    return { error: `${file}: missing required field 'id'. skipped.` };
+  }
+
+  if (forbiddenIds?.has(id.toLowerCase())) {
+    return { error: `${file}: prompt id "${id}" conflicts with built-in. skipped.` };
+  }
+
+  const label = frontMatter.label as string | undefined;
+  const description = frontMatter.description as string | undefined;
+
+  const prompt: PromptTemplate = {
+    id,
+    template: body,
+    ...(label && { label }),
+    ...(description && { description }),
+  };
+
+  return { prompt };
+}
+
 export async function loadUserPersonas(): Promise<{
   personas: Persona[];
   errors: string[];
 }> {
   const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
   const personasDir = join(configDir, "tau", "personas");
-  const personas: Persona[] = [];
-  const errors: string[] = [];
+  const { files, error } = loadMarkdownFiles(personasDir);
 
-  if (!existsSync(personasDir)) {
-    return { personas, errors };
-  }
-
-  let files: string[] = [];
-  try {
-    files = readdirSync(personasDir).filter((f) => f.endsWith(".md"));
-  } catch {
-    errors.push(`failed to read personas directory: ${personasDir}`);
-    return { personas, errors };
+  if (error) {
+    return { personas: [], errors: [error] };
   }
 
   const builtinIds = new Set(builtinPersonas.map((p) => p.id.toLowerCase()));
+  const personas: Persona[] = [];
+  const errors: string[] = [];
 
   for (const file of files) {
-    const filePath = join(personasDir, file);
-    try {
-      const content = readFileSync(filePath, "utf-8");
-      const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
+    const result = parsePersona(file.name, file.content, builtinIds);
+    if (result.persona) {
+      personas.push(result.persona);
+    } else if (result.error) {
+      errors.push(result.error);
+    }
+  }
 
-      // Validate required fields
-      const id = frontMatter.id as string | undefined;
-      const label = frontMatter.label as string | undefined;
-      const provider = frontMatter.provider as string | undefined;
-      const model = frontMatter.model as string | undefined;
+  return { personas, errors };
+}
 
-      if (!id || !provider || !model) {
-        errors.push(`${file}: missing required fields (id, provider, model). skipped.`);
-        continue;
-      }
+export async function loadProjectPersonas(): Promise<{
+  personas: Persona[];
+  errors: string[];
+}> {
+  const personasDir = join(process.cwd(), ".tau", "personas");
+  const { files, error } = loadMarkdownFiles(personasDir);
 
-      // Check for collision with built-ins
-      if (builtinIds.has(id.toLowerCase())) {
-        errors.push(`${file}: persona id "${id}" conflicts with built-in. skipped.`);
-        continue;
-      }
+  if (error) {
+    return { personas: [], errors: [error] };
+  }
 
-      try {
-        const modelObj = resolveModel(provider, model);
-        if (!modelObj) {
-          errors.push(`${file}: failed to load model "${provider}:${model}". skipped.`);
-          continue;
-        }
+  const personas: Persona[] = [];
+  const errors: string[] = [];
 
-        const description = frontMatter.description as string | undefined;
-        const reasoningRaw = frontMatter.reasoning;
-        const allowedReasoningLevelsRaw = frontMatter.allowedReasoningLevels;
-
-        const settings: Persona["settings"] = {};
-        if (isReasoningEffort(reasoningRaw)) {
-          settings.reasoning = reasoningRaw;
-        }
-
-        const filteredReasoningLevels = Array.isArray(allowedReasoningLevelsRaw)
-          ? allowedReasoningLevelsRaw.filter(isReasoningEffort)
-          : undefined;
-
-        const persona: Persona = {
-          id,
-          label: label || "custom",
-          model: modelObj,
-          systemPrompt: body,
-          settings,
-          tools: [BASH_TOOL, WRITE_TOOL, EDIT_TOOL],
-          ...(description && { description }),
-          ...(filteredReasoningLevels && filteredReasoningLevels.length > 0
-            ? { allowedReasoningLevels: filteredReasoningLevels }
-            : {}),
-        };
-
-        personas.push(persona);
-      } catch (err) {
-        errors.push(`${file}: failed to load persona. skipped.`);
-      }
-    } catch (err) {
-      errors.push(`${file}: ${(err as Error).message}`);
+  for (const file of files) {
+    const result = parsePersona(file.name, file.content);
+    if (result.persona) {
+      personas.push(result.persona);
+    } else if (result.error) {
+      errors.push(result.error);
     }
   }
 
@@ -211,55 +291,48 @@ export async function loadUserPrompts(): Promise<{
 }> {
   const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
   const promptsDir = join(configDir, "tau", "prompts");
-  const prompts: PromptTemplate[] = [];
-  const errors: string[] = [];
+  const { files, error } = loadMarkdownFiles(promptsDir);
 
-  if (!existsSync(promptsDir)) {
-    return { prompts, errors };
-  }
-
-  let files: string[] = [];
-  try {
-    files = readdirSync(promptsDir).filter((f) => f.endsWith(".md"));
-  } catch {
-    errors.push(`failed to read prompts directory: ${promptsDir}`);
-    return { prompts, errors };
+  if (error) {
+    return { prompts: [], errors: [error] };
   }
 
   const builtinIds = new Set(builtinPrompts.map((p) => p.id.toLowerCase()));
+  const prompts: PromptTemplate[] = [];
+  const errors: string[] = [];
 
   for (const file of files) {
-    const filePath = join(promptsDir, file);
-    try {
-      const content = readFileSync(filePath, "utf-8");
-      const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
+    const result = parsePrompt(file.name, file.content, builtinIds);
+    if (result.prompt) {
+      prompts.push(result.prompt);
+    } else if (result.error) {
+      errors.push(result.error);
+    }
+  }
 
-      // Validate required fields
-      const id = frontMatter.id as string | undefined;
-      if (!id) {
-        errors.push(`${file}: missing required field 'id'. skipped.`);
-        continue;
-      }
+  return { prompts, errors };
+}
 
-      // Check for collision with built-ins
-      if (builtinIds.has(id.toLowerCase())) {
-        errors.push(`${file}: prompt id "${id}" conflicts with built-in. skipped.`);
-        continue;
-      }
+export async function loadProjectPrompts(): Promise<{
+  prompts: PromptTemplate[];
+  errors: string[];
+}> {
+  const promptsDir = join(process.cwd(), ".tau", "prompts");
+  const { files, error } = loadMarkdownFiles(promptsDir);
 
-      const label = frontMatter.label as string | undefined;
-      const description = frontMatter.description as string | undefined;
+  if (error) {
+    return { prompts: [], errors: [error] };
+  }
 
-      const prompt: PromptTemplate = {
-        id,
-        template: body,
-        ...(label && { label }),
-        ...(description && { description }),
-      };
+  const prompts: PromptTemplate[] = [];
+  const errors: string[] = [];
 
-      prompts.push(prompt);
-    } catch (err) {
-      errors.push(`${file}: ${(err as Error).message}`);
+  for (const file of files) {
+    const result = parsePrompt(file.name, file.content);
+    if (result.prompt) {
+      prompts.push(result.prompt);
+    } else if (result.error) {
+      errors.push(result.error);
     }
   }
 
@@ -273,18 +346,27 @@ export async function loadAllContent(): Promise<{
 }> {
   try {
     const userPersonasResult = await loadUserPersonas();
+    const projectPersonasResult = await loadProjectPersonas();
     const userPromptsResult = await loadUserPrompts();
+    const projectPromptsResult = await loadProjectPrompts();
 
-    const allErrors = [...userPersonasResult.errors, ...userPromptsResult.errors];
+    const allErrors = [
+      ...userPersonasResult.errors,
+      ...projectPersonasResult.errors,
+      ...userPromptsResult.errors,
+      ...projectPromptsResult.errors,
+    ];
 
     return {
-      personas: [...builtinPersonas, ...userPersonasResult.personas],
-      prompts: [...builtinPrompts, ...userPromptsResult.prompts],
+      personas: mergeById(
+        builtinPersonas,
+        userPersonasResult.personas,
+        projectPersonasResult.personas,
+      ),
+      prompts: mergeById(builtinPrompts, userPromptsResult.prompts, projectPromptsResult.prompts),
       errors: allErrors,
     };
   } catch (err) {
-    // Safeguard: should not happen if loadUserPersonas/loadUserPrompts are robust,
-    // but wrap to ensure we never throw during startup
     return {
       personas: builtinPersonas,
       prompts: builtinPrompts,

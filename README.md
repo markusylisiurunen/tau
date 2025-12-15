@@ -172,12 +172,15 @@ store settings in `~/.config/tau/config.json`:
     "google": "..."
   },
   "defaultPersona": "gpt-5.2",
+  "defaultRisk": "read-write",
   "toolDisplayMode": "compact",
   "userPreferences": "prefer concise responses. use TypeScript for examples."
 }
 ```
 
 the `defaultPersona` field specifies which persona to use when starting the app. the `--persona` flag overrides this setting.
+
+the `defaultRisk` field sets the initial risk level (`none`, `read-only`, or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 
 the `userPreferences` field lets you set guidance that applies to every conversation: preferred languages, response style, or domain context.
 

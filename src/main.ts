@@ -79,6 +79,8 @@ if (cli.reasoningOverride !== undefined) {
   initialPersona.settings.reasoning = cli.reasoningOverride;
 }
 
+const initialRiskLevel = cli.riskLevel || config.defaultRisk;
+
 const initialUserMessage = await readPipedStdin();
 
 const app = new ChatApp({
@@ -87,7 +89,7 @@ const app = new ChatApp({
   bashCommands,
   initialPersonaId,
   initialUserMessage,
-  initialRiskLevel: cli.riskLevel,
+  initialRiskLevel,
   withContext: cli.withContext,
   config,
 });

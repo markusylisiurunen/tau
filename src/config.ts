@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { KnownProvider } from "@mariozechner/pi-ai";
+import type { RiskLevel } from "./types.js";
 
 export type ToolDisplayMode = "compact" | "full";
 
@@ -14,6 +15,7 @@ export interface Config {
   userPreferences?: string;
   toolDisplayMode?: ToolDisplayMode;
   defaultPersona?: string;
+  defaultRisk?: RiskLevel;
 }
 
 export function loadConfig(): Config {
@@ -37,6 +39,11 @@ export function loadConfig(): Config {
     const defaultPersona = config.defaultPersona;
     if (defaultPersona !== undefined && typeof defaultPersona !== "string") {
       delete config.defaultPersona;
+    }
+
+    const defaultRisk = config.defaultRisk;
+    if (defaultRisk !== undefined && !["none", "read-only", "read-write"].includes(defaultRisk)) {
+      delete config.defaultRisk;
     }
 
     return config;

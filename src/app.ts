@@ -487,6 +487,34 @@ export class ChatApp {
     this.ui.terminal.write(`\x1b]9;${title}\x1b\\`);
   }
 
+  private buildIdleNotificationTitle(): string {
+    const baseTitle = "tau is waiting for your input";
+
+    const lastAssistant = this.getLastAssistantMessage();
+    if (!lastAssistant) return baseTitle;
+
+    const rawText = extractAssistantText(lastAssistant).trimStart();
+    if (!rawText) return baseTitle;
+
+    const firstLine = rawText.split(/\r?\n/, 1)[0]?.trimEnd() ?? "";
+    const headingMatch = firstLine.match(/^#{1,6}\s+(.+)$/);
+    if (headingMatch) {
+      const heading = headingMatch[1]!.trim();
+      if (!heading) return baseTitle;
+      const summary = heading.length > 60 ? `${heading.slice(0, 57)}...` : heading;
+      return summary;
+    }
+
+    if (/^[A-Za-z0-9]/.test(rawText)) {
+      const plainText = rawText.replace(/\s+/g, " ").trim();
+      if (!plainText) return baseTitle;
+      const summary = plainText.length > 60 ? `${plainText.slice(0, 57)}...` : plainText;
+      return summary;
+    }
+
+    return baseTitle;
+  }
+
   private async drainQueuedUserMessages(): Promise<void> {
     if (this.isDrainingQueuedUserMessages) return;
     this.isDrainingQueuedUserMessages = true;
@@ -508,7 +536,7 @@ export class ChatApp {
         this.queuedUserMessages.length === 0
       ) {
         this.pendingIdleNotification = false;
-        this.sendTerminalNotification("tau is waiting for your input");
+        this.sendTerminalNotification(this.buildIdleNotificationTitle());
       }
     }
   }

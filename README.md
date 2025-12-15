@@ -245,7 +245,9 @@ tool calls are displayed in the UI so you can see exactly what the model is doin
 
 ## creating a release
 
-releases are published to npm locally (no CI publish workflow).
+publishing to npm happens automatically via github actions when a github release is published.
+
+release steps:
 
 - run checks and build:
 
@@ -266,15 +268,8 @@ npm version patch
 git push --follow-tags
 ```
 
-- create a github release:
+- create a github release (this triggers the publish workflow):
 
 ```sh
 gh release create v$(node -p "require('./package.json').version") --generate-notes
-```
-
-- publish to npm:
-
-```sh
-npm login
-npm publish --access public
 ```

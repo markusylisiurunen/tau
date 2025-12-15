@@ -86,7 +86,7 @@ User personas: `~/.config/tau/personas/*.md` with YAML frontmatter (`id`, `provi
 
 ## Releasing
 
-Releases are published to npm locally (no CI publish workflow).
+Publishing to npm happens automatically via GitHub Actions when a GitHub Release is published.
 
 1. Ensure you are on `main` with a clean working tree.
 2. Run verification and build:
@@ -96,11 +96,11 @@ Releases are published to npm locally (no CI publish workflow).
    - `npm version patch|minor|major` (creates a `vX.Y.Z` tag)
 4. Push the commit and tag:
    - `git push --follow-tags`
-5. Create a GitHub Release:
+5. Create a GitHub Release (this triggers the publish workflow):
    - `gh release create v$(node -p "require('./package.json').version") --generate-notes`
-6. Publish to npm:
-   - Run `npm publish --access public`
-   - Important: This step must be run manually by the user; **DO NOT** run it automatically.
+
+Notes:
+- The workflow uses the `NPM_TOKEN` GitHub secret to authenticate with npm.
 
 ## Maintaining this file
 

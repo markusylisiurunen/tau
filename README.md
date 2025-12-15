@@ -2,6 +2,8 @@
 
 a terminal-based AI chat client for working with code. tau gives you access to Claude, GPT, and Gemini models, each equipped with tools to explore, write, and edit files in your project.
 
+![tau](./assets/tau.png)
+
 ## installation
 
 ```sh

@@ -93,6 +93,7 @@ export class ChatApp {
   private isStreaming = false;
   private queuedUserMessages: string[] = [];
   private isDrainingQueuedUserMessages = false;
+  private pendingIdleNotification = false;
   private isBashMode = false;
   private isMemoryMode = false;
   private showThinking = false;
@@ -481,6 +482,11 @@ export class ChatApp {
     this.ui.requestRender();
   }
 
+  private sendTerminalNotification(title: string): void {
+    if (!process.stdout.isTTY) return;
+    this.ui.terminal.write(`\x1b]9;${title}\x1b\\`);
+  }
+
   private async drainQueuedUserMessages(): Promise<void> {
     if (this.isDrainingQueuedUserMessages) return;
     this.isDrainingQueuedUserMessages = true;
@@ -495,6 +501,15 @@ export class ChatApp {
       }
     } finally {
       this.isDrainingQueuedUserMessages = false;
+
+      if (
+        this.pendingIdleNotification &&
+        !this.isStreaming &&
+        this.queuedUserMessages.length === 0
+      ) {
+        this.pendingIdleNotification = false;
+        this.sendTerminalNotification("tau is waiting for your input");
+      }
     }
   }
 
@@ -1382,6 +1397,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.runningBashComponents.clear();
       this.runningTaskComponents.clear();
       this.taskEvents.clear();
+      this.pendingIdleNotification = true;
       this.ui.requestRender();
       void this.drainQueuedUserMessages();
     }

@@ -454,5 +454,35 @@ export class SessionEngine {
         text: `Task '${next.taskExec.toolCall.id}' execution failed: ${errorMsg}`,
       };
     }
+
+    // Drain any remaining pending completions if signal was aborted
+    for (const [taskExec, promise] of completionPending.entries()) {
+      const next = await promise;
+
+      if (next.kind !== "completion") continue;
+
+      if (next.settled.status === "fulfilled") {
+        const { toolResult, uiEvent } = next.settled.value;
+        resultsByIndex.set(next.taskExec.index, toolResult);
+        if (uiEvent) {
+          yield { type: "tool_ui", uiEvent };
+        }
+      } else {
+        const errorMsg =
+          next.settled.reason instanceof Error
+            ? next.settled.reason.message
+            : String(next.settled.reason);
+        const toolError = createToolError(
+          next.taskExec.toolCall,
+          `Task execution failed: ${errorMsg}`,
+        );
+        resultsByIndex.set(next.taskExec.index, toolError);
+        yield {
+          type: "notice",
+          severity: "error",
+          text: `Task '${next.taskExec.toolCall.id}' execution failed: ${errorMsg}`,
+        };
+      }
+    }
   }
 }

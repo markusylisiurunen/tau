@@ -2,11 +2,11 @@
 import { ChatApp } from "./app.js";
 import { loadBashCommands } from "./bash_commands.js";
 import type { CliOptions } from "./cli.js";
-import { CliError, parseCliArgs, printHelp, resolvePersonaId } from "./cli.js";
+import { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
 import { loadConfig } from "./config.js";
 import { loadAllContent } from "./content_loader.js";
 import type { PromptTemplate } from "./prompts.js";
-import type { Persona } from "./types.js";
+import type { Persona, ReasoningEffort } from "./types.js";
 
 // Load configuration from file
 const config = loadConfig();
@@ -65,18 +65,24 @@ if (cli.help) {
 }
 
 let initialPersonaId: string | undefined;
+let reasoningOverride: ReasoningEffort | undefined = cli.reasoningOverride;
+
 if (cli.personaId) {
   initialPersonaId = cli.personaId;
 } else if (config.defaultPersona) {
-  initialPersonaId = resolvePersonaId(config.defaultPersona, personas);
+  const parsed = parsePersonaString(config.defaultPersona, personas);
+  initialPersonaId = parsed.personaId;
+  if (reasoningOverride === undefined) {
+    reasoningOverride = parsed.reasoning;
+  }
 }
 
 const initialPersona = initialPersonaId
   ? (personas.find((p) => p.id === initialPersonaId) ?? personas[0]!)
   : personas[0]!;
 
-if (cli.reasoningOverride !== undefined) {
-  initialPersona.settings.reasoning = cli.reasoningOverride;
+if (reasoningOverride !== undefined) {
+  initialPersona.settings.reasoning = reasoningOverride;
 }
 
 const initialRiskLevel = cli.riskLevel || config.defaultRisk;

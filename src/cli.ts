@@ -26,19 +26,26 @@ export function resolvePersonaId(raw: string, personas: Persona[]): string | und
   return personas.find((p) => p.id.toLowerCase() === lower)?.id;
 }
 
-function parseReasoning(raw: string): ReasoningEffort | undefined {
-  const normalized = raw.trim().toLowerCase();
-  if (!normalized) {
-    throw new CliError("missing value for --reasoning");
+export function parsePersonaString(
+  raw: string,
+  personas: Persona[],
+): { personaId: string | undefined; reasoning: ReasoningEffort | undefined } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { personaId: undefined, reasoning: undefined };
+
+  const colonIndex = trimmed.indexOf(":");
+  if (colonIndex === -1) {
+    return { personaId: resolvePersonaId(trimmed, personas), reasoning: undefined };
   }
-  if (normalized === "default" || normalized === "auto") {
-    return undefined;
-  }
-  if ((REASONING_LEVELS as string[]).includes(normalized)) {
-    return normalized as ReasoningEffort;
-  }
-  const allowed = [...REASONING_LEVELS, "default"].join(", ");
-  throw new CliError(`invalid reasoning level '${raw}'. allowed levels: ${allowed}`);
+
+  const personaValue = trimmed.slice(0, colonIndex);
+  const reasoningValue = trimmed.slice(colonIndex + 1).toLowerCase();
+  const personaId = resolvePersonaId(personaValue, personas);
+  const reasoning = (REASONING_LEVELS as string[]).includes(reasoningValue)
+    ? (reasoningValue as ReasoningEffort)
+    : undefined;
+
+  return { personaId, reasoning };
 }
 
 function parseRiskLevel(raw: string): RiskLevel {
@@ -103,27 +110,16 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       const { value, nextIndex } = parseValue(arg, argv, i);
       i = nextIndex;
 
-      // Split by first colon to separate persona ID and optional reasoning level
-      const colonIndex = value.indexOf(":");
-      let personaValue: string;
-      let reasoningValue: string | undefined;
-
-      if (colonIndex !== -1) {
-        personaValue = value.slice(0, colonIndex);
-        reasoningValue = value.slice(colonIndex + 1);
-      } else {
-        personaValue = value;
-      }
-
-      const resolved = resolvePersonaId(personaValue, personas);
-      if (!resolved) {
+      const parsed = parsePersonaString(value, personas);
+      if (!parsed.personaId) {
+        const colonIndex = value.indexOf(":");
+        const personaValue = colonIndex !== -1 ? value.slice(0, colonIndex) : value;
         const available = personas.map((p) => p.id).join(", ");
         throw new CliError(`unknown persona '${personaValue}'. available personas: ${available}`);
       }
-      personaId = resolved;
-
-      if (reasoningValue !== undefined) {
-        reasoningOverride = parseReasoning(reasoningValue);
+      personaId = parsed.personaId;
+      if (parsed.reasoning !== undefined) {
+        reasoningOverride = parsed.reasoning;
       }
 
       continue;

@@ -46,7 +46,8 @@ User personas: `~/.config/tau/personas/*.md` with YAML frontmatter (`id`, `provi
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `toolDisplayMode`)
+- **Global**: `~/.config/tau/config.json` (API keys, `toolDisplayMode`, `defaultPersona`)
+  - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
 - **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
 - **User prompts**: `~/.config/tau/prompts/*.md` (YAML frontmatter with `id`)
 

@@ -13,6 +13,7 @@ export interface Config {
   };
   userPreferences?: string;
   toolDisplayMode?: ToolDisplayMode;
+  defaultPersona?: string;
 }
 
 export function loadConfig(): Config {
@@ -31,6 +32,11 @@ export function loadConfig(): Config {
     const mode = config.toolDisplayMode;
     if (mode !== undefined && mode !== "compact" && mode !== "full") {
       delete config.toolDisplayMode;
+    }
+
+    const defaultPersona = config.defaultPersona;
+    if (defaultPersona !== undefined && typeof defaultPersona !== "string") {
+      delete config.defaultPersona;
     }
 
     return config;

@@ -171,10 +171,13 @@ store settings in `~/.config/tau/config.json`:
     "openai": "sk-...",
     "google": "..."
   },
+  "defaultPersona": "gpt-5.2",
   "toolDisplayMode": "compact",
   "userPreferences": "prefer concise responses. use TypeScript for examples."
 }
 ```
+
+the `defaultPersona` field specifies which persona to use when starting the app. the `--persona` flag overrides this setting.
 
 the `userPreferences` field lets you set guidance that applies to every conversation: preferred languages, response style, or domain context.
 

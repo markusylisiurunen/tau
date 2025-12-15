@@ -17,7 +17,7 @@ export class CliError extends Error {
 
 const RISK_LEVELS: RiskLevel[] = ["none", "read-only", "read-write"];
 
-function resolvePersonaId(raw: string, personas: Persona[]): string | undefined {
+export function resolvePersonaId(raw: string, personas: Persona[]): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
   const exact = personas.find((p) => p.id === trimmed);
@@ -161,6 +161,7 @@ export function printHelp(personas: Persona[]): void {
       "  --help                        show this help and exit.",
       `  --persona, -p <id>[:<level>]  start with a persona. available: ${personaList}.`,
       `                                optionally specify reasoning level. levels: ${reasoningList}.`,
+      `                                if not specified, uses defaultPersona from ~/.config/tau/config.json.`,
       `  --risk, -r <level>            set initial model risk level. levels: ${riskList}. default: read-only.`,
       "  --with-context                inject AGENTS.md into the system prompt.",
       "",

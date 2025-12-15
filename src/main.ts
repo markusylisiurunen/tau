@@ -2,7 +2,7 @@
 import { ChatApp } from "./app.js";
 import { loadBashCommands } from "./bash_commands.js";
 import type { CliOptions } from "./cli.js";
-import { CliError, parseCliArgs, printHelp } from "./cli.js";
+import { CliError, parseCliArgs, printHelp, resolvePersonaId } from "./cli.js";
 import { loadConfig } from "./config.js";
 import { loadAllContent } from "./content_loader.js";
 import type { PromptTemplate } from "./prompts.js";
@@ -64,8 +64,15 @@ if (cli.help) {
   process.exit(0);
 }
 
-const initialPersona = cli.personaId
-  ? (personas.find((p) => p.id === cli.personaId) ?? personas[0]!)
+let initialPersonaId: string | undefined;
+if (cli.personaId) {
+  initialPersonaId = cli.personaId;
+} else if (config.defaultPersona) {
+  initialPersonaId = resolvePersonaId(config.defaultPersona, personas);
+}
+
+const initialPersona = initialPersonaId
+  ? (personas.find((p) => p.id === initialPersonaId) ?? personas[0]!)
   : personas[0]!;
 
 if (cli.reasoningOverride !== undefined) {
@@ -78,7 +85,7 @@ const app = new ChatApp({
   personas,
   prompts,
   bashCommands,
-  initialPersonaId: cli.personaId,
+  initialPersonaId,
   initialUserMessage,
   initialRiskLevel: cli.riskLevel,
   withContext: cli.withContext,

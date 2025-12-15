@@ -46,7 +46,9 @@ User personas: `~/.config/tau/personas/*.md` with YAML frontmatter (`id`, `provi
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `toolDisplayMode`)
+- **Global**: `~/.config/tau/config.json` (API keys, `toolDisplayMode`, `defaultPersona`, `defaultRisk`)
+  - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
+  - `defaultRisk` (optional): Default risk level (`none`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
 - **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
 - **User prompts**: `~/.config/tau/prompts/*.md` (YAML frontmatter with `id`)
 
@@ -87,17 +89,18 @@ User personas: `~/.config/tau/personas/*.md` with YAML frontmatter (`id`, `provi
 Releases are published to npm locally (no CI publish workflow).
 
 1. Ensure you are on `main` with a clean working tree.
-2. Bump the version and create a tag:
-   - `npm version patch|minor|major` (creates a `vX.Y.Z` tag)
-3. Run verification and build:
+2. Run verification and build:
    - `npm run check`
    - `npm run build`
+3. Bump the version and create a tag:
+   - `npm version patch|minor|major` (creates a `vX.Y.Z` tag)
 4. Push the commit and tag:
    - `git push --follow-tags`
 5. Create a GitHub Release:
    - `gh release create v$(node -p "require('./package.json').version") --generate-notes`
 6. Publish to npm:
-   - `npm publish --access public`
+   - Run `npm publish --access public`
+   - Important: This step must be run manually by the user; **DO NOT** run it automatically.
 
 ## Maintaining this file
 

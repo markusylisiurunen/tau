@@ -329,7 +329,7 @@ export class ChatApp {
       : this.currentPersona.model.contextWindow;
 
     const { read, write } = this.getCacheTotals();
-    let stats = `R${formatTokenWindow(read)} W${formatTokenWindow(write)}`;
+    let stats = `r${formatTokenWindow(read)} w${formatTokenWindow(write)}`;
 
     if (!last) {
       return `${stats} 0%/${formatTokenWindow(windowTokens)}`;
@@ -346,7 +346,7 @@ export class ChatApp {
         totalOutputTokens += (m as AssistantMessage).usage?.output ?? 0;
       }
     }
-    stats += ` O${formatTokenWindow(totalOutputTokens)}`;
+    stats += ` o${formatTokenWindow(totalOutputTokens)}`;
 
     const promptTokensSent =
       (last.usage?.input ?? 0) + (last.usage?.cacheRead ?? 0) + (last.usage?.cacheWrite ?? 0);

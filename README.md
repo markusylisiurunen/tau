@@ -96,17 +96,17 @@ tau --persona opus-4.5-coder
 
 ## reasoning
 
-some models support extended thinking, where they reason through problems before responding. cycle through reasoning levels with `Shift+Tab`, or set one at startup:
+some models support extended thinking, where they reason through problems before responding. cycle through reasoning levels with `shift+tab`, or set one at startup:
 
 ```sh
 tau --persona opus-4.5:high
 ```
 
-toggle visibility of the model's thinking with `Ctrl+T`.
+toggle visibility of the model's thinking with `ctrl+t`.
 
 ## working with files
 
-reference files in your message by typing `@` followed by the filename. autocomplete helps you find the right path. press `Ctrl+F` to expand file contents into the conversation, letting the model see the actual code.
+reference files in your message by typing `@` followed by the filename. autocomplete helps you find the right path. press `ctrl+f` to expand file contents into the conversation, letting the model see the actual code.
 
 you can also pipe content directly:
 
@@ -151,12 +151,12 @@ the fork commands are useful when conversations get long. they compress everythi
 
 | key         | action                      |
 | ----------- | --------------------------- |
-| `Shift+Tab` | cycle reasoning effort      |
-| `Ctrl+T`    | toggle thinking visibility  |
-| `Ctrl+O`    | toggle compact tool display |
-| `Ctrl+F`    | expand @file mentions       |
-| `Escape`    | interrupt generation        |
-| `Ctrl+C`    | exit                        |
+| `shift+tab` | cycle reasoning effort      |
+| `ctrl+t`    | toggle thinking visibility  |
+| `ctrl+o`    | toggle compact tool display |
+| `ctrl+f`    | expand @file mentions       |
+| `esc`       | interrupt generation        |
+| `ctrl+c`    | exit                        |
 
 ## configuration
 
@@ -241,17 +241,11 @@ tau connects your terminal to large language models, giving them tools to intera
 
 the model sees your messages, any file contents you've shared, and the results of tool calls. it doesn't have ambient access to your filesystem; it only sees what you show it or what it explicitly requests through tools.
 
-tool calls are displayed in the UI so you can see exactly what the model is doing. use `Ctrl+O` to toggle between compact and detailed views.
+tool calls are displayed in the UI so you can see exactly what the model is doing. use `ctrl+o` to toggle between compact and detailed views.
 
 ## creating a release
 
 releases are published to npm locally (no CI publish workflow).
-
-- bump the version (creates a git tag):
-
-```sh
-npm version patch
-```
 
 - run checks and build:
 
@@ -260,13 +254,19 @@ npm run check
 npm run build
 ```
 
+- bump the version (creates a git tag):
+
+```sh
+npm version patch
+```
+
 - push the commit and tag:
 
 ```sh
 git push --follow-tags
 ```
 
-- create a github release (optional, for release notes):
+- create a github release:
 
 ```sh
 gh release create v$(node -p "require('./package.json').version") --generate-notes

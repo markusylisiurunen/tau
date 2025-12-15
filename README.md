@@ -222,6 +222,14 @@ you can also set model parameters via optional frontmatter fields:
 
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
+- `subagents`: enable sub-agents (currently only `explore` is supported) for multi-turn codebase investigation. you can specify as a list (`subagents: [explore]`) to use the main persona's model, or as an object to customize each sub-agent's model and reasoning. example:
+  ```yaml
+  subagents:
+    explore:
+      provider: anthropic
+      model: claude-haiku-4-5
+      reasoning: medium
+  ```
 
 use it with `--persona my-assistant` or `/persona:my-assistant`. if a project persona id conflicts with a user or built-in persona, the project persona wins.
 

@@ -139,10 +139,15 @@ type PersonaSpec = {
   model: Persona["model"];
   allowedReasoningLevels: NonNullable<Persona["allowedReasoningLevels"]>;
   settings: Persona["settings"];
-  explorer?: {
-    model?: Persona["model"];
-    reasoning?: ReasoningEffort;
-  };
+  subagents?: Partial<
+    Record<
+      "explore",
+      {
+        model?: Persona["model"];
+        reasoning?: ReasoningEffort;
+      }
+    >
+  >;
 };
 
 const PERSONA_SPECS: PersonaSpec[] = [
@@ -152,9 +157,11 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("anthropic", "claude-opus-4-5"),
     allowedReasoningLevels: ["minimal", "medium", "high"],
     settings: { reasoning: "medium" },
-    explorer: {
-      model: getModel("anthropic", "claude-haiku-4-5"),
-      reasoning: "medium",
+    subagents: {
+      explore: {
+        model: getModel("anthropic", "claude-haiku-4-5"),
+        reasoning: "medium",
+      },
     },
   },
   {
@@ -163,9 +170,11 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("anthropic", "claude-haiku-4-5"),
     allowedReasoningLevels: ["low", "high"],
     settings: { reasoning: "high" },
-    explorer: {
-      model: getModel("anthropic", "claude-haiku-4-5"),
-      reasoning: "medium",
+    subagents: {
+      explore: {
+        model: getModel("anthropic", "claude-haiku-4-5"),
+        reasoning: "medium",
+      },
     },
   },
   {
@@ -174,9 +183,11 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("openai", "gpt-5.2"),
     allowedReasoningLevels: ["none", "low", "medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
-    explorer: {
-      model: getModel("openai", "gpt-5.2"),
-      reasoning: "none",
+    subagents: {
+      explore: {
+        model: getModel("openai", "gpt-5.2"),
+        reasoning: "none",
+      },
     },
   },
   {
@@ -185,9 +196,11 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("google", "gemini-3-pro-preview"),
     allowedReasoningLevels: ["low", "high"],
     settings: { reasoning: "low" },
-    explorer: {
-      model: getModel("google", "gemini-2.5-flash-preview-09-2025"),
-      reasoning: "low",
+    subagents: {
+      explore: {
+        model: getModel("google", "gemini-2.5-flash-preview-09-2025"),
+        reasoning: "low",
+      },
     },
   },
   {
@@ -196,9 +209,11 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("google", "gemini-2.5-flash-preview-09-2025"),
     allowedReasoningLevels: ["none", "low", "high"],
     settings: { reasoning: "high" },
-    explorer: {
-      model: getModel("google", "gemini-2.5-flash-preview-09-2025"),
-      reasoning: "low",
+    subagents: {
+      explore: {
+        model: getModel("google", "gemini-2.5-flash-preview-09-2025"),
+        reasoning: "low",
+      },
     },
   },
 ];
@@ -225,18 +240,19 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   const config = VARIANT_CONFIG[variant];
   const displaySuffix = config.suffix ? `-${variant}` : "";
 
-  const explorer = spec.explorer;
-  const explorerModel = explorer?.model ?? spec.model;
-  const explorerEffort = explorer?.reasoning ?? pickExploreReasoning(spec.allowedReasoningLevels);
-  const subagents: SubagentConfigMap | undefined =
-    variant === "coder"
-      ? {
-          explore: {
-            model: explorerModel,
-            settings: explorerEffort === "none" ? {} : { reasoning: explorerEffort },
-          },
-        }
-      : undefined;
+  let subagents: SubagentConfigMap | undefined;
+  if (variant === "coder" && spec.subagents?.explore) {
+    const exploreSpec = spec.subagents.explore;
+    const exploreModel = exploreSpec.model ?? spec.model;
+    const exploreEffort =
+      exploreSpec.reasoning ?? pickExploreReasoning(spec.allowedReasoningLevels);
+    subagents = {
+      explore: {
+        model: exploreModel,
+        settings: exploreEffort === "none" ? {} : { reasoning: exploreEffort },
+      },
+    };
+  }
 
   const tools = subagents ? [...BASE_TOOLS, TASK_TOOL] : BASE_TOOLS;
 

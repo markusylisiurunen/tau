@@ -6,6 +6,7 @@ import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { personas as builtinPersonas } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
 import { prompts as builtinPrompts } from "./prompts.js";
+import type { SubagentConfigMap, SubagentPersonaConfig } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
 import { WRITE_TOOL } from "./tools/write.js";
@@ -105,6 +106,90 @@ function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return typeof value === "string" && REASONING_LEVELS.includes(value as ReasoningEffort);
 }
 
+function isSubagentName(value: unknown): value is "explore" {
+  return value === "explore";
+}
+
+interface PartialSubagentConfig {
+  [name: string]: {
+    model?: Model<Api>;
+    reasoning?: ReasoningEffort;
+  };
+}
+
+function parseSubagentConfig(subagentsRaw: unknown): {
+  config?: PartialSubagentConfig;
+  error?: string;
+} {
+  if (!subagentsRaw) {
+    return {};
+  }
+
+  const config: PartialSubagentConfig = {};
+
+  // Handle list of subagent names
+  if (Array.isArray(subagentsRaw)) {
+    for (const name of subagentsRaw) {
+      if (typeof name !== "string") {
+        return { error: "subagents list must contain only strings" };
+      }
+      if (!isSubagentName(name)) {
+        return { error: `unknown subagent: ${name}` };
+      }
+      // Enable with default settings (use main persona's model)
+      config[name] = {};
+    }
+    return { config };
+  }
+
+  // Handle object with per-subagent config
+  if (typeof subagentsRaw === "object" && subagentsRaw !== null) {
+    for (const [name, spec] of Object.entries(subagentsRaw)) {
+      if (!isSubagentName(name)) {
+        return { error: `unknown subagent: ${name}` };
+      }
+
+      if (!spec || typeof spec !== "object") {
+        // Empty config, will use defaults
+        config[name] = {};
+        continue;
+      }
+
+      const specObj = spec as Record<string, unknown>;
+      const provider = specObj.provider as string | undefined;
+      const model = specObj.model as string | undefined;
+      const reasoning = specObj.reasoning;
+
+      // Resolve model if provided
+      if (provider || model) {
+        if (!provider || !model) {
+          return {
+            error: `subagent ${name}: both provider and model are required if specified`,
+          };
+        }
+
+        const modelObj = resolveModel(provider, model);
+        if (!modelObj) {
+          return {
+            error: `subagent ${name}: failed to resolve model "${provider}:${model}"`,
+          };
+        }
+
+        config[name] = {
+          model: modelObj,
+          ...(isReasoningEffort(reasoning) && reasoning !== "none" && { reasoning }),
+        };
+      } else {
+        // No model specified, will use main persona's model
+        config[name] = {};
+      }
+    }
+    return { config };
+  }
+
+  return { error: "subagents must be a list or object" };
+}
+
 function resolveModel(provider: string, modelId: string): Model<Api> | undefined {
   if (!isKnownProvider(provider)) return undefined;
   return getModels(provider).find((m) => m.id === modelId) as Model<Api> | undefined;
@@ -186,6 +271,30 @@ function parsePersona(
     ? allowedReasoningLevelsRaw.filter(isReasoningEffort)
     : undefined;
 
+  // Parse subagents
+  const subagentsResult = parseSubagentConfig(frontMatter.subagents);
+  if (subagentsResult.error) {
+    return { error: `${file}: ${subagentsResult.error}. skipped.` };
+  }
+
+  // Fill in main persona's model for subagents that don't specify one
+  let finalSubagents: SubagentConfigMap | undefined;
+  if (subagentsResult.config && Object.keys(subagentsResult.config).length > 0) {
+    finalSubagents = {};
+    for (const [name, cfg] of Object.entries(subagentsResult.config)) {
+      if (!isSubagentName(name)) continue; // Validate name is a known subagent
+      const subagentModel = cfg.model ?? modelObj;
+      const settings: SubagentPersonaConfig["settings"] = {};
+      if (cfg.reasoning !== undefined && cfg.reasoning !== "none") {
+        settings.reasoning = cfg.reasoning;
+      }
+      finalSubagents[name] = {
+        model: subagentModel,
+        ...(Object.keys(settings).length > 0 && { settings }),
+      };
+    }
+  }
+
   const persona: Persona = {
     id,
     label: label || "custom",
@@ -197,6 +306,7 @@ function parsePersona(
     ...(filteredReasoningLevels && filteredReasoningLevels.length > 0
       ? { allowedReasoningLevels: filteredReasoningLevels }
       : {}),
+    ...(finalSubagents && { subagents: finalSubagents }),
   };
 
   return { persona };

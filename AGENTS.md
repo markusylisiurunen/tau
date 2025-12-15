@@ -42,7 +42,14 @@ Risk levels (`none`, `read-only`, `read-write`) gate model tool calls. The model
 
 **Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/2.5 Flash) × 3 variants (basic, coder, raw) = 15 personas. Coder variants include the **explore** subagent for multi-turn read-only codebase investigation.
 
-Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter (`id`, `provider`, `model` required, plus optional `label`, `description`, `reasoning`, `allowedReasoningLevels`). On conflicts, project personas override user and built-in personas.
+Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields:
+
+- `label`, `description`: metadata
+- `reasoning`: default reasoning effort level
+- `allowedReasoningLevels`: list of reasoning levels shown in the UI
+- `subagents`: enable sub-agents (currently `explore` for codebase investigation). specify as a list `[explore]` to use the main persona's model, or as an object with custom model/reasoning per sub-agent.
+
+On conflicts, project personas override user and built-in personas.
 
 ## Configuration
 

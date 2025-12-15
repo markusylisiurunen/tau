@@ -2,20 +2,10 @@
 
 a terminal-based AI chat client for working with code. tau gives you access to Claude, GPT, and Gemini models, each equipped with tools to explore, write, and edit files in your project.
 
-## getting started
-
-tau requires Node.js 20+ and runs on macOS.
+## installation
 
 ```sh
-npm install
-npm run build
-npm start
-```
-
-or run directly from source during development:
-
-```sh
-npm run dev
+npm install -g @markusylisiurunen/tau@latest
 ```
 
 you'll need an API key from at least one provider. set it via environment variable:
@@ -38,6 +28,35 @@ or store keys in `~/.config/tau/config.json`:
 ```
 
 environment variables take precedence over the config file.
+
+## security notice
+
+**the risk level system is a UX guardrail, not a hard security boundary.** it helps prevent accidental writes and guides model behavior, but it has significant limitations:
+
+- **model trust**: the bash tool relies on the model honestly declaring whether a command is a read or write. there's no runtime validation that the command actually matches the declared intent. a model could declare `safetyLevel="read"` while running `rm -rf /`.
+- **no command analysis**: the system doesn't inspect command content. it trusts the declared safety level without verifying what the command actually does.
+- **full system access**: there is no sandboxing or directory restriction. the model can access any file on your system that your user account can read or write, not just the current working directory.
+- **user bypasses**: the `!` prefix executes shell commands directly, completely bypassing risk level checks. this is intentional for interactive use, but means risk levels only constrain the model, not the user.
+
+note that there is no confirmation step before tool execution. the model runs commands immediately, and you can only observe the results after the fact.
+
+## getting started
+
+tau requires Node.js 20+ and runs on macOS.
+
+for development from source:
+
+```sh
+npm install
+npm run build
+npm start
+```
+
+or run directly via tsx:
+
+```sh
+npm run dev
+```
 
 ## risk levels
 

@@ -49,6 +49,9 @@ export function extractAllFencedCodeBlocks(text: string): string | null {
     return null;
   }
 
-  // Join all code blocks with newlines
-  return codeBlocks.join("\n");
+  const normalizedBlocks = codeBlocks.map((block) =>
+    block.replace(/^\r?\n+/, "").replace(/\r?\n+$/, ""),
+  );
+
+  return normalizedBlocks.join("\n\n");
 }

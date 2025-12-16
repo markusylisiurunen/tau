@@ -10,18 +10,38 @@ function buildUserPreferencesBlock(userPreferences?: string): string | undefined
 }
 
 export function buildSkillsIndexBlock(skills: Skill[]): string | undefined {
-  if (skills.length === 0) return undefined;
+  if (skills.length === 0) {
+    return undefined;
+  }
 
-  const lines: string[] = ["### Skills", ""];
+  const intro = [
+    "Skills are packages of domain expertise stored as directories.",
+    "Each contains a SKILL.md file with instructions, and may include additional resources: documentation, scripts, templates.",
+  ].join(" ");
 
+  const disclosure = [
+    "Skills load in layers to conserve context:",
+    "1. **Metadata** (always loaded): The name and description below indicate what each skill covers and when to use it.",
+    "2. **Instructions** (on trigger): When a request matches a skill's description, read SKILL.md with bash (e.g., `cat <path>`).",
+    "3. **Resources** (as needed): SKILL.md may reference additional files; load them when the instructions call for it.",
+  ].join("\n");
+
+  const usage = [
+    "Trigger a skill when the request clearly falls within its stated scope, or when the user explicitly asks.",
+    "Don't load skills speculatively.",
+    "Scripts can be executed directly without reading their code into context.",
+    "Paths in SKILL.md are relative to the skill directory.",
+  ].join(" ");
+
+  const lines: string[] = ["### Skills", "", intro, "", disclosure, "", usage, ""];
+
+  lines.push("Available skills:");
   for (const skill of skills) {
-    lines.push(`- name: ${skill.name}`);
-    lines.push(`  description: ${skill.description}`);
+    lines.push(`- **${skill.name}**: ${skill.description}`);
     lines.push(`  path: ${skill.path}`);
   }
 
-  const out = lines.join("\n").trim();
-  return out ? out : undefined;
+  return lines.join("\n").trim();
 }
 
 export function buildBaseSystemPrompt(args: {

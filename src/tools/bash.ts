@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
+import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import {
@@ -340,17 +341,21 @@ function getMissingArgsMessage(command: string, safetyLevel: BashSafetyLevel | u
   return "bash tool call missing a valid 'safetyLevel' value ('read' or 'write').";
 }
 
+const bashArgsSchema = z.object({
+  command: z.string().trim().catch(""),
+  safetyLevel: z.enum(["read", "write"]).optional().catch(undefined),
+});
+
 function parseBashArgs(raw: unknown): {
   command: string;
   safetyLevel: BashSafetyLevel | undefined;
   commandForDisplay: string;
 } {
-  const args = raw as { command?: unknown; safetyLevel?: unknown } | undefined;
-  const command = typeof args?.command === "string" ? args.command.trim() : "";
-  const safetyLevel: BashSafetyLevel | undefined =
-    args?.safetyLevel === "read" || args?.safetyLevel === "write"
-      ? (args.safetyLevel as BashSafetyLevel)
-      : undefined;
+  const parsed = bashArgsSchema.safeParse(raw);
+  const command = parsed.success ? parsed.data.command : "";
+  const safetyLevel = parsed.success
+    ? (parsed.data.safetyLevel as BashSafetyLevel | undefined)
+    : undefined;
   const commandForDisplay = command || "(missing command)";
   return { command, safetyLevel, commandForDisplay };
 }

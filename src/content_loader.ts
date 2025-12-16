@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
+import { z } from "zod";
 import { personas as builtinPersonas } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
 import { prompts as builtinPrompts } from "./prompts.js";
@@ -12,7 +13,8 @@ import { EDIT_TOOL } from "./tools/edit.js";
 import { TASK_TOOL } from "./tools/task.js";
 import { WRITE_TOOL } from "./tools/write.js";
 import type { Persona, ReasoningEffort, Skill } from "./types.js";
-import { REASONING_LEVELS } from "./types.js";
+import { ReasoningEffortSchema } from "./types.js";
+import { formatZodError } from "./utils/zod.js";
 
 interface FrontMatter {
   [key: string]: unknown;
@@ -103,10 +105,6 @@ function isKnownProvider(value: string): value is KnownProvider {
   return getProviders().includes(value as KnownProvider);
 }
 
-function isReasoningEffort(value: unknown): value is ReasoningEffort {
-  return typeof value === "string" && REASONING_LEVELS.includes(value as ReasoningEffort);
-}
-
 function isSubagentName(value: unknown): value is "explore" | "web" {
   return value === "explore" || value === "web";
 }
@@ -117,6 +115,24 @@ interface PartialSubagentConfig {
     reasoning?: ReasoningEffort;
   };
 }
+
+const subagentSpecSchema = z
+  .object({
+    provider: z.string().trim().min(1).optional(),
+    model: z.string().trim().min(1).optional(),
+    reasoning: ReasoningEffortSchema.optional(),
+  })
+  .passthrough()
+  .superRefine((spec, ctx) => {
+    const hasProvider = spec.provider !== undefined;
+    const hasModel = spec.model !== undefined;
+    if (hasProvider !== hasModel) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "both provider and model are required if specified",
+      });
+    }
+  });
 
 function parseSubagentConfig(subagentsRaw: unknown): {
   config?: PartialSubagentConfig;
@@ -130,13 +146,17 @@ function parseSubagentConfig(subagentsRaw: unknown): {
 
   // Handle list of subagent names
   if (Array.isArray(subagentsRaw)) {
-    for (const name of subagentsRaw) {
-      if (typeof name !== "string") {
+    for (const nameRaw of subagentsRaw) {
+      const nameParsed = z.string().safeParse(nameRaw);
+      if (!nameParsed.success) {
         return { error: "subagents list must contain only strings" };
       }
+
+      const name = nameParsed.data;
       if (!isSubagentName(name)) {
         return { error: `unknown subagent: ${name}` };
       }
+
       // Enable with default settings (use main persona's model)
       config[name] = {};
     }
@@ -144,31 +164,29 @@ function parseSubagentConfig(subagentsRaw: unknown): {
   }
 
   // Handle object with per-subagent config
-  if (typeof subagentsRaw === "object" && subagentsRaw !== null) {
-    for (const [name, spec] of Object.entries(subagentsRaw)) {
+  const configParsed = z.record(z.string(), z.unknown()).safeParse(subagentsRaw);
+  if (configParsed.success) {
+    for (const [name, specRaw] of Object.entries(configParsed.data)) {
       if (!isSubagentName(name)) {
         return { error: `unknown subagent: ${name}` };
       }
 
-      if (!spec || typeof spec !== "object") {
+      if (!specRaw || typeof specRaw !== "object") {
         // Empty config, will use defaults
         config[name] = {};
         continue;
       }
 
-      const specObj = spec as Record<string, unknown>;
-      const provider = specObj.provider as string | undefined;
-      const model = specObj.model as string | undefined;
-      const reasoning = specObj.reasoning;
+      const spec = subagentSpecSchema.safeParse(specRaw);
+      if (!spec.success) {
+        return { error: `subagent ${name}: ${formatZodError(spec.error)}` };
+      }
+
+      const provider = spec.data.provider;
+      const model = spec.data.model;
 
       // Resolve model if provided
-      if (provider || model) {
-        if (!provider || !model) {
-          return {
-            error: `subagent ${name}: both provider and model are required if specified`,
-          };
-        }
-
+      if (provider && model) {
         const modelObj = resolveModel(provider, model);
         if (!modelObj) {
           return {
@@ -178,13 +196,20 @@ function parseSubagentConfig(subagentsRaw: unknown): {
 
         config[name] = {
           model: modelObj,
-          ...(isReasoningEffort(reasoning) && reasoning !== "none" && { reasoning }),
+          ...(spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
+            ? { reasoning: spec.data.reasoning }
+            : {}),
         };
       } else {
         // No model specified, will use main persona's model
-        config[name] = {};
+        config[name] = {
+          ...(spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
+            ? { reasoning: spec.data.reasoning }
+            : {}),
+        };
       }
     }
+
     return { config };
   }
 
@@ -234,6 +259,37 @@ function loadMarkdownFiles(dir: string): { files: MarkdownFile[]; error?: string
   }
 }
 
+const personaFrontMatterSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    label: z.string().trim().optional(),
+    provider: z.string().trim().min(1),
+    model: z.string().trim().min(1),
+    description: z.string().trim().optional(),
+    reasoning: ReasoningEffortSchema.optional(),
+    allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
+    skills: z.unknown().optional(),
+    subagents: z.unknown().optional(),
+  })
+  .passthrough();
+
+const skillsSchema = z.union([z.literal("*"), z.string(), z.array(z.string())]).optional();
+
+const promptFrontMatterSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    label: z.string().trim().optional(),
+    description: z.string().trim().optional(),
+  })
+  .passthrough();
+
+const skillFrontMatterSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    description: z.string().trim().min(1),
+  })
+  .passthrough();
+
 function parsePersona(
   file: string,
   content: string,
@@ -241,14 +297,16 @@ function parsePersona(
 ): { persona?: Persona; error?: string } {
   const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
 
-  const id = frontMatter.id as string | undefined;
-  const label = frontMatter.label as string | undefined;
-  const provider = frontMatter.provider as string | undefined;
-  const model = frontMatter.model as string | undefined;
-
-  if (!id || !provider || !model) {
+  const parsedFrontMatter = personaFrontMatterSchema.safeParse(frontMatter);
+  if (!parsedFrontMatter.success) {
     return { error: `${file}: missing required fields (id, provider, model). skipped.` };
   }
+
+  const { id, label, provider, model, description } = parsedFrontMatter.data;
+  const reasoning = parsedFrontMatter.data.reasoning;
+  const allowedReasoningLevels = parsedFrontMatter.data.allowedReasoningLevels;
+  const skillsRaw = parsedFrontMatter.data.skills;
+  const subagentsRaw = parsedFrontMatter.data.subagents;
 
   if (forbiddenIds?.has(id.toLowerCase())) {
     return { error: `${file}: persona id "${id}" conflicts with built-in. skipped.` };
@@ -259,42 +317,35 @@ function parsePersona(
     return { error: `${file}: failed to load model "${provider}:${model}". skipped.` };
   }
 
-  const description = frontMatter.description as string | undefined;
-  const reasoningRaw = frontMatter.reasoning;
-  const allowedReasoningLevelsRaw = frontMatter.allowedReasoningLevels;
-
   const settings: Persona["settings"] = {};
-  if (isReasoningEffort(reasoningRaw)) {
-    settings.reasoning = reasoningRaw;
+  if (reasoning) {
+    settings.reasoning = reasoning;
   }
 
-  const filteredReasoningLevels = Array.isArray(allowedReasoningLevelsRaw)
-    ? allowedReasoningLevelsRaw.filter(isReasoningEffort)
-    : undefined;
+  const skillsParsed = skillsSchema.safeParse(skillsRaw);
 
-  const skillsRaw = frontMatter.skills;
   let skills: string[] | "*" | undefined;
-  if (typeof skillsRaw === "string") {
-    const trimmed = skillsRaw.trim();
-    if (trimmed === "*") {
+  if (skillsParsed.success) {
+    const val = skillsParsed.data;
+
+    if (val === "*") {
       skills = "*";
-    } else {
+    } else if (typeof val === "string") {
+      const trimmed = val.trim();
       skills = trimmed ? [trimmed] : undefined;
+    } else if (Array.isArray(val)) {
+      const trimmed = val.map((s) => s.trim()).filter(Boolean);
+      skills = trimmed.length > 0 ? trimmed : undefined;
     }
-  } else if (Array.isArray(skillsRaw)) {
-    for (const skill of skillsRaw) {
-      if (typeof skill !== "string") {
-        return { error: `${file}: skills must contain only strings. skipped.` };
-      }
-    }
-    const trimmed = skillsRaw.map((s) => s.trim()).filter(Boolean);
-    skills = trimmed.length > 0 ? trimmed : undefined;
   } else if (skillsRaw !== undefined) {
+    if (Array.isArray(skillsRaw)) {
+      return { error: `${file}: skills must contain only strings. skipped.` };
+    }
     return { error: `${file}: skills must be a string, "*", or list of strings. skipped.` };
   }
 
   // Parse subagents
-  const subagentsResult = parseSubagentConfig(frontMatter.subagents);
+  const subagentsResult = parseSubagentConfig(subagentsRaw);
   if (subagentsResult.error) {
     return { error: `${file}: ${subagentsResult.error}. skipped.` };
   }
@@ -341,8 +392,8 @@ function parsePersona(
     settings,
     tools,
     ...(description && { description }),
-    ...(filteredReasoningLevels && filteredReasoningLevels.length > 0
-      ? { allowedReasoningLevels: filteredReasoningLevels }
+    ...(allowedReasoningLevels && allowedReasoningLevels.length > 0
+      ? { allowedReasoningLevels: allowedReasoningLevels }
       : {}),
     ...(finalSubagents && { subagents: finalSubagents }),
     ...(skills && { skills }),
@@ -358,17 +409,16 @@ function parsePrompt(
 ): { prompt?: PromptTemplate; error?: string } {
   const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
 
-  const id = frontMatter.id as string | undefined;
-  if (!id) {
+  const parsedFrontMatter = promptFrontMatterSchema.safeParse(frontMatter);
+  if (!parsedFrontMatter.success) {
     return { error: `${file}: missing required field 'id'. skipped.` };
   }
+
+  const { id, label, description } = parsedFrontMatter.data;
 
   if (forbiddenIds?.has(id.toLowerCase())) {
     return { error: `${file}: prompt id "${id}" conflicts with built-in. skipped.` };
   }
-
-  const label = frontMatter.label as string | undefined;
-  const description = frontMatter.description as string | undefined;
 
   const prompt: PromptTemplate = {
     id,
@@ -491,18 +541,15 @@ export async function loadProjectPrompts(): Promise<{
 function parseSkill(filePath: string, content: string): { skill?: Skill; error?: string } {
   const { frontMatter } = parseMarkdownWithFrontMatter(content);
 
-  const name = typeof frontMatter.name === "string" ? frontMatter.name.trim() : "";
-  const description =
-    typeof frontMatter.description === "string" ? frontMatter.description.trim() : "";
-
-  if (!name || !description) {
+  const parsedFrontMatter = skillFrontMatterSchema.safeParse(frontMatter);
+  if (!parsedFrontMatter.success) {
     return { error: `${filePath}: missing required fields (name, description). skipped.` };
   }
 
   return {
     skill: {
-      name,
-      description,
+      name: parsedFrontMatter.data.name,
+      description: parsedFrontMatter.data.description,
       path: resolve(filePath),
     },
   };

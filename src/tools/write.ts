@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Tool, ToolCall } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
+import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
@@ -26,11 +27,14 @@ export const WRITE_TOOL: Tool = {
   ),
 };
 
+const writeArgsSchema = z.object({
+  path: z.string().trim().catch(""),
+  content: z.string().catch(""),
+});
+
 function parseWriteArgs(raw: unknown): { path: string; content: string } {
-  const args = raw as { path?: unknown; content?: unknown } | undefined;
-  const path = typeof args?.path === "string" ? args.path.trim() : "";
-  const content = typeof args?.content === "string" ? args.content : "";
-  return { path, content };
+  const parsed = writeArgsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : { path: "", content: "" };
 }
 
 const PREVIEW_LINES = 16;

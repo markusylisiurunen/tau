@@ -1,10 +1,12 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
+import { z } from "zod";
 import type { Config } from "../config.js";
 import { getParallelApiKey } from "../config.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { truncateMiddleForModel } from "../utils/truncate.js";
+import { formatZodError } from "../utils/zod.js";
 import type {
   ToolDefinition,
   ToolDispatchResult,
@@ -56,87 +58,101 @@ export const WEB_SEARCH_TOOL: Tool = {
   ),
 };
 
-type WebSearchArgs = {
-  objective: string;
-  searchQueries?: string[];
-  maxResults?: number;
-  maxCharsPerResult?: number;
-  includeDomains?: string[];
-  excludeDomains?: string[];
-};
+const webSearchArgsSchema = z.object({
+  objective: z.string().trim().catch(""),
+  searchQueries: z
+    .array(z.string().trim())
+    .transform((queries) => queries.filter(Boolean))
+    .optional()
+    .catch(undefined),
+  maxResults: z.number().int().min(1).max(50).optional().catch(undefined),
+  maxCharsPerResult: z.number().int().min(200).max(50_000).optional().catch(undefined),
+  includeDomains: z
+    .array(z.string().trim())
+    .transform((domains) => domains.filter(Boolean))
+    .optional()
+    .catch(undefined),
+  excludeDomains: z
+    .array(z.string().trim())
+    .transform((domains) => domains.filter(Boolean))
+    .optional()
+    .catch(undefined),
+});
 
-type ParallelSearchResponse = {
-  results?: Array<{
-    url: string;
-    title?: string | null;
-    publish_date?: string | null;
-    excerpts?: string[] | null;
-  }>;
-  warnings?: unknown;
-  usage?: unknown;
-};
+type WebSearchArgs = z.infer<typeof webSearchArgsSchema>;
+
+const parallelApiErrorSchema = z.union([
+  z.object({
+    type: z.literal("error"),
+    error: z.object({
+      message: z.string(),
+    }),
+  }),
+  z.object({
+    message: z.string(),
+  }),
+]);
+
+type ParallelApiError = z.infer<typeof parallelApiErrorSchema>;
+
+const searchResultSchema = z
+  .object({
+    url: z.string().catch(""),
+    title: z.string().nullable().optional().catch(undefined),
+    publish_date: z.string().nullable().optional().catch(undefined),
+    excerpts: z.array(z.string()).nullable().optional().catch(undefined),
+  })
+  .passthrough();
+
+const parallelSearchResponseSchema = z
+  .object({
+    results: z.array(searchResultSchema).catch([]),
+    warnings: z.unknown().optional(),
+    usage: z.unknown().optional(),
+  })
+  .passthrough();
+
+type ParallelSearchResponse = z.infer<typeof parallelSearchResponseSchema>;
+
+type SearchResult = ParallelSearchResponse["results"][number];
 
 function parseArgs(raw: unknown): WebSearchArgs {
-  const args = raw as Partial<WebSearchArgs> | undefined;
-  const objective = typeof args?.objective === "string" ? args.objective.trim() : "";
+  const parsed = webSearchArgsSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { objective: "" };
+  }
 
-  const searchQueries =
-    Array.isArray(args?.searchQueries) && args.searchQueries.every((q) => typeof q === "string")
-      ? args.searchQueries.map((q) => q.trim()).filter(Boolean)
-      : undefined;
-
-  const maxResultsRaw = args?.maxResults;
-  const maxResults =
-    typeof maxResultsRaw === "number" &&
-    Number.isFinite(maxResultsRaw) &&
-    Number.isInteger(maxResultsRaw) &&
-    maxResultsRaw >= 1 &&
-    maxResultsRaw <= 50
-      ? maxResultsRaw
-      : undefined;
-
-  const maxCharsPerResultRaw = args?.maxCharsPerResult;
-  const maxCharsPerResult =
-    typeof maxCharsPerResultRaw === "number" &&
-    Number.isFinite(maxCharsPerResultRaw) &&
-    Number.isInteger(maxCharsPerResultRaw) &&
-    maxCharsPerResultRaw >= 200 &&
-    maxCharsPerResultRaw <= 50_000
-      ? maxCharsPerResultRaw
-      : undefined;
-
-  const includeDomains =
-    Array.isArray(args?.includeDomains) && args.includeDomains.every((d) => typeof d === "string")
-      ? args.includeDomains.map((d) => d.trim()).filter(Boolean)
-      : undefined;
-
-  const excludeDomains =
-    Array.isArray(args?.excludeDomains) && args.excludeDomains.every((d) => typeof d === "string")
-      ? args.excludeDomains.map((d) => d.trim()).filter(Boolean)
-      : undefined;
+  const args = parsed.data;
+  const objective = args.objective.trim();
+  const searchQueries = args.searchQueries?.map((q) => q.trim()).filter(Boolean);
+  const includeDomains = args.includeDomains?.map((d) => d.trim()).filter(Boolean);
+  const excludeDomains = args.excludeDomains?.map((d) => d.trim()).filter(Boolean);
 
   return {
     objective,
     ...(searchQueries && searchQueries.length > 0 && { searchQueries }),
-    ...(maxResults !== undefined && { maxResults }),
-    ...(maxCharsPerResult !== undefined && { maxCharsPerResult }),
+    ...(args.maxResults !== undefined && { maxResults: args.maxResults }),
+    ...(args.maxCharsPerResult !== undefined && { maxCharsPerResult: args.maxCharsPerResult }),
     ...(includeDomains && includeDomains.length > 0 && { includeDomains }),
     ...(excludeDomains && excludeDomains.length > 0 && { excludeDomains }),
   };
 }
 
 function extractParallelErrorMessage(raw: unknown): string | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
+  const parsed = parallelApiErrorSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
 
-  const obj = raw as Record<string, unknown>;
-  if (obj.type === "error") {
-    const error = obj.error as Record<string, unknown> | undefined;
-    const msg = error?.message;
-    if (typeof msg === "string" && msg.trim()) return msg.trim();
+  const obj: ParallelApiError = parsed.data;
+
+  if ("type" in obj && obj.type === "error") {
+    const msg = obj.error.message.trim();
+    return msg ? msg : undefined;
   }
 
-  const msg = obj.message;
-  if (typeof msg === "string" && msg.trim()) return msg.trim();
+  if ("message" in obj) {
+    const msg = obj.message.trim();
+    return msg ? msg : undefined;
+  }
 
   return undefined;
 }
@@ -157,7 +173,7 @@ function estimateParallelSearchCostUsd(
 }
 
 function formatSearchResults(response: ParallelSearchResponse): string {
-  const results = response.results ?? [];
+  const results = response.results;
   if (results.length === 0) {
     return "No results.";
   }
@@ -271,7 +287,14 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
               throw new Error(`Parallel API error (${res.status}): ${details}`);
             }
 
-            const response = parsed as ParallelSearchResponse;
+            const responseParsed = parallelSearchResponseSchema.safeParse(parsed);
+            if (!responseParsed.success) {
+              throw new Error(
+                `Parallel API response parse error: ${formatZodError(responseParsed.error)}`,
+              );
+            }
+
+            const response = responseParsed.data;
 
             const text = formatSearchResults(response);
             const toolResult: ToolResultMessage = createToolResult(toolCall, text, false);
@@ -280,7 +303,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
               toolCallId: toolCall.id,
               objective: args.objective,
               status: "success",
-              costUsd: estimateParallelSearchCostUsd(args.maxResults, response.results?.length),
+              costUsd: estimateParallelSearchCostUsd(args.maxResults, response.results.length),
             };
             return { kind: "single", toolResult, uiEvent };
           } catch (e) {

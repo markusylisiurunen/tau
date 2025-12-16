@@ -5,9 +5,11 @@ import type {
   SimpleStreamOptions,
   Tool,
 } from "@mariozechner/pi-ai";
+import { z } from "zod";
 import type { SubagentConfigMap } from "./subagents/types.js";
 
-export type RiskLevel = "none" | "read-only" | "read-write";
+export const RiskLevelSchema = z.enum(["none", "read-only", "read-write"]);
+export type RiskLevel = z.infer<typeof RiskLevelSchema>;
 
 export type ReasoningEffort = PiReasoningEffort | "none";
 
@@ -15,14 +17,18 @@ export type PersonaSettings = Omit<SimpleStreamOptions, "reasoning"> & {
   reasoning?: ReasoningEffort;
 };
 
-export const REASONING_LEVELS: ReasoningEffort[] = [
+export const REASONING_LEVELS_TUPLE = [
   "none",
   "minimal",
   "low",
   "medium",
   "high",
   "xhigh",
-];
+] as const;
+
+export const ReasoningEffortSchema = z.enum(REASONING_LEVELS_TUPLE);
+
+export const REASONING_LEVELS: ReasoningEffort[] = [...REASONING_LEVELS_TUPLE];
 
 export interface Skill {
   name: string;

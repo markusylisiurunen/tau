@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { z } from "zod";
 import { getGitRoot } from "./utils/git.js";
 
 export interface BashCommand {
@@ -8,6 +9,20 @@ export interface BashCommand {
   description?: string;
   cmd: string;
 }
+
+const bashCommandsFileSchema = z
+  .object({
+    bash: z.array(z.unknown()).optional(),
+  })
+  .passthrough();
+
+const bashCommandSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    description: z.string().trim().optional(),
+    cmd: z.string().trim().min(1),
+  })
+  .passthrough();
 
 function parseBashCommandsFromJson(
   raw: unknown,
@@ -22,10 +37,17 @@ function parseBashCommandsFromJson(
     return { commands: [], errors };
   }
 
-  const bash = (raw as { bash?: unknown }).bash;
-  if (bash === undefined) {
+  const root = bashCommandsFileSchema.safeParse(raw);
+  if (!root.success) {
+    errors.push(`${sourceLabel}: 'bash' must be an array.`);
     return { commands: [], errors };
   }
+
+  if (root.data.bash === undefined) {
+    return { commands: [], errors };
+  }
+
+  const bash = root.data.bash;
 
   if (!Array.isArray(bash)) {
     errors.push(`${sourceLabel}: 'bash' must be an array.`);
@@ -34,34 +56,33 @@ function parseBashCommandsFromJson(
 
   const commands: BashCommand[] = [];
 
-  for (const entry of bash) {
-    if (typeof entry !== "object" || entry === null) {
+  for (const entryRaw of bash) {
+    if (typeof entryRaw !== "object" || entryRaw === null) {
       errors.push(`${sourceLabel}: bash entries must be objects.`);
       continue;
     }
 
-    const { id, description, cmd } = entry as {
-      id?: unknown;
-      description?: unknown;
-      cmd?: unknown;
-    };
+    const idRaw = (entryRaw as { id?: unknown }).id;
+    const idForMessage = typeof idRaw === "string" ? idRaw.trim() : "";
 
-    if (typeof id !== "string" || !id.trim()) {
-      errors.push(`${sourceLabel}: bash entry missing valid 'id'.`);
+    const entry = bashCommandSchema.safeParse(entryRaw);
+    if (!entry.success) {
+      if (!idForMessage) {
+        errors.push(`${sourceLabel}: bash entry missing valid 'id'.`);
+        continue;
+      }
+
+      const hasCmdIssue = entry.error.issues.some((issue) => issue.path[0] === "cmd");
+      if (hasCmdIssue) {
+        errors.push(`${sourceLabel}: bash entry '${idForMessage}' missing valid 'cmd'.`);
+        continue;
+      }
+
+      errors.push(`${sourceLabel}: bash entry '${idForMessage}' is invalid.`);
       continue;
     }
 
-    if (typeof cmd !== "string" || !cmd.trim()) {
-      errors.push(`${sourceLabel}: bash entry '${id}' missing valid 'cmd'.`);
-      continue;
-    }
-
-    commands.push({
-      id: id.trim(),
-      description:
-        typeof description === "string" && description.trim() ? description.trim() : undefined,
-      cmd: cmd.trim(),
-    });
+    commands.push(entry.data);
   }
 
   return { commands, errors };

@@ -1,4 +1,10 @@
-import { type Persona, REASONING_LEVELS, type ReasoningEffort, type RiskLevel } from "./types.js";
+import {
+  type Persona,
+  REASONING_LEVELS,
+  type ReasoningEffort,
+  type RiskLevel,
+  RiskLevelSchema,
+} from "./types.js";
 
 export interface CliOptions {
   help: boolean;
@@ -14,8 +20,6 @@ export class CliError extends Error {
     this.name = "CliError";
   }
 }
-
-const RISK_LEVELS: RiskLevel[] = ["none", "read-only", "read-write"];
 
 export function resolvePersonaId(raw: string, personas: Persona[]): string | undefined {
   const trimmed = raw.trim();
@@ -53,10 +57,13 @@ function parseRiskLevel(raw: string): RiskLevel {
   if (!normalized) {
     throw new CliError("missing value for --risk");
   }
-  if ((RISK_LEVELS as string[]).includes(normalized)) {
-    return normalized as RiskLevel;
+
+  const parsed = RiskLevelSchema.safeParse(normalized);
+  if (parsed.success) {
+    return parsed.data;
   }
-  const allowed = RISK_LEVELS.join(", ");
+
+  const allowed = RiskLevelSchema.options.join(", ");
   throw new CliError(`invalid risk level '${raw}'. allowed levels: ${allowed}`);
 }
 
@@ -144,7 +151,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
 export function printHelp(personas: Persona[]): void {
   const personaList = personas.map((p) => p.id).join(", ");
   const reasoningList = [...REASONING_LEVELS, "default"].join(", ");
-  const riskList = RISK_LEVELS.join(", ");
+  const riskList = RiskLevelSchema.options.join(", ");
 
   console.log(
     [

@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Tool, ToolCall } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
+import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
@@ -32,12 +33,15 @@ export const EDIT_TOOL: Tool = {
   ),
 };
 
+const editArgsSchema = z.object({
+  path: z.string().trim().catch(""),
+  oldText: z.string().catch(""),
+  newText: z.string().catch(""),
+});
+
 function parseEditArgs(raw: unknown): { path: string; oldText: string; newText: string } {
-  const args = raw as { path?: unknown; oldText?: unknown; newText?: unknown } | undefined;
-  const path = typeof args?.path === "string" ? args.path.trim() : "";
-  const oldText = typeof args?.oldText === "string" ? args.oldText : "";
-  const newText = typeof args?.newText === "string" ? args.newText : "";
-  return { path, oldText, newText };
+  const parsed = editArgsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : { path: "", oldText: "", newText: "" };
 }
 
 function countOccurrences(content: string, search: string): number {

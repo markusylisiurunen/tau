@@ -1,10 +1,12 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
+import { z } from "zod";
 import type { Config } from "../config.js";
 import { getParallelApiKey } from "../config.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { truncateMiddleForModel } from "../utils/truncate.js";
+import { formatZodError } from "../utils/zod.js";
 import type {
   ToolDefinition,
   ToolDispatchResult,
@@ -64,83 +66,105 @@ export const WEB_FETCH_TOOL: Tool = {
   ),
 };
 
-type WebFetchArgs = {
-  url: string;
-  objective?: string;
-  searchQueries?: string[];
-  excerpts?: boolean;
-  fullContent?: boolean;
-  maxCharsPerResult?: number;
-};
+const webFetchArgsSchema = z.object({
+  url: z.string().trim().catch(""),
+  objective: z.string().trim().optional().catch(undefined),
+  searchQueries: z
+    .array(z.string().trim())
+    .transform((queries) => queries.filter(Boolean))
+    .optional()
+    .catch(undefined),
+  excerpts: z.boolean().optional().catch(undefined),
+  fullContent: z.boolean().optional().catch(undefined),
+  maxCharsPerResult: z.number().int().min(200).max(100_000).optional().catch(undefined),
+});
 
-type ExtractResult = {
-  url: string;
-  title?: string | null;
-  publish_date?: string | null;
-  excerpts?: string[] | null;
-  full_content?: string | null;
-};
+type WebFetchArgs = z.infer<typeof webFetchArgsSchema>;
 
-type ExtractError = {
-  url: string;
-  error_type: string;
-  http_status_code: number | null;
-  content: string | null;
-};
+const parallelApiErrorSchema = z.union([
+  z.object({
+    type: z.literal("error"),
+    error: z.object({
+      message: z.string(),
+    }),
+  }),
+  z.object({
+    message: z.string(),
+  }),
+]);
 
-type ExtractResponse = {
-  extract_id: string;
-  results: ExtractResult[];
-  errors: ExtractError[];
-  warnings?: unknown;
-  usage?: unknown;
-};
+type ParallelApiError = z.infer<typeof parallelApiErrorSchema>;
+
+const extractResultSchema = z
+  .object({
+    url: z.string().catch(""),
+    title: z.string().nullable().optional().catch(undefined),
+    publish_date: z.string().nullable().optional().catch(undefined),
+    excerpts: z.array(z.string()).nullable().optional().catch(undefined),
+    full_content: z.string().nullable().optional().catch(undefined),
+  })
+  .passthrough();
+
+const extractErrorSchema = z
+  .object({
+    url: z.string().catch(""),
+    error_type: z.string().catch("unknown error"),
+    http_status_code: z.number().int().nullable().catch(null),
+    content: z.string().nullable().catch(null),
+  })
+  .passthrough();
+
+const extractResponseSchema = z
+  .object({
+    extract_id: z.string().catch(""),
+    results: z.array(extractResultSchema).catch([]),
+    errors: z.array(extractErrorSchema).catch([]),
+    warnings: z.unknown().optional(),
+    usage: z.unknown().optional(),
+  })
+  .passthrough();
+
+type ExtractResponse = z.infer<typeof extractResponseSchema>;
+
+type ExtractResult = ExtractResponse["results"][number];
+
+type ExtractError = ExtractResponse["errors"][number];
 
 function parseArgs(raw: unknown): WebFetchArgs {
-  const args = raw as Partial<WebFetchArgs> | undefined;
-  const url = typeof args?.url === "string" ? args.url.trim() : "";
-  const objective = typeof args?.objective === "string" ? args.objective.trim() : undefined;
+  const parsed = webFetchArgsSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { url: "" };
+  }
 
-  const searchQueries =
-    Array.isArray(args?.searchQueries) && args.searchQueries.every((q) => typeof q === "string")
-      ? args.searchQueries.map((q) => q.trim()).filter(Boolean)
-      : undefined;
-
-  const excerpts = typeof args?.excerpts === "boolean" ? args.excerpts : undefined;
-  const fullContent = typeof args?.fullContent === "boolean" ? args.fullContent : undefined;
-
-  const maxCharsPerResultRaw = args?.maxCharsPerResult;
-  const maxCharsPerResult =
-    typeof maxCharsPerResultRaw === "number" &&
-    Number.isFinite(maxCharsPerResultRaw) &&
-    Number.isInteger(maxCharsPerResultRaw) &&
-    maxCharsPerResultRaw >= 200 &&
-    maxCharsPerResultRaw <= 100_000
-      ? maxCharsPerResultRaw
-      : undefined;
+  const args = parsed.data;
+  const objective = args.objective?.trim() || undefined;
+  const searchQueries = args.searchQueries?.map((q) => q.trim()).filter(Boolean);
 
   return {
-    url,
+    url: args.url,
     ...(objective && { objective }),
     ...(searchQueries && searchQueries.length > 0 && { searchQueries }),
-    ...(excerpts !== undefined && { excerpts }),
-    ...(fullContent !== undefined && { fullContent }),
-    ...(maxCharsPerResult !== undefined && { maxCharsPerResult }),
+    ...(args.excerpts !== undefined && { excerpts: args.excerpts }),
+    ...(args.fullContent !== undefined && { fullContent: args.fullContent }),
+    ...(args.maxCharsPerResult !== undefined && { maxCharsPerResult: args.maxCharsPerResult }),
   };
 }
 
 function extractParallelErrorMessage(raw: unknown): string | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
+  const parsed = parallelApiErrorSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
 
-  const obj = raw as Record<string, unknown>;
-  if (obj.type === "error") {
-    const error = obj.error as Record<string, unknown> | undefined;
-    const msg = error?.message;
-    if (typeof msg === "string" && msg.trim()) return msg.trim();
+  const obj: ParallelApiError = parsed.data;
+
+  if ("type" in obj && obj.type === "error") {
+    const msg = obj.error.message.trim();
+    return msg ? msg : undefined;
   }
 
-  const msg = obj.message;
-  if (typeof msg === "string" && msg.trim()) return msg.trim();
+  if ("message" in obj) {
+    const msg = obj.message.trim();
+    return msg ? msg : undefined;
+  }
 
   return undefined;
 }
@@ -150,8 +174,8 @@ function estimateParallelExtractCostUsd(urlCount: number): number {
 }
 
 function formatExtractResults(response: ExtractResponse): string {
-  const results = Array.isArray(response.results) ? response.results : [];
-  const errors = Array.isArray(response.errors) ? response.errors : [];
+  const results = response.results;
+  const errors = response.errors;
 
   if (results.length === 0 && errors.length === 0) {
     return "No extract results.";
@@ -283,7 +307,14 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
               throw new Error(`Parallel API error (${res.status}): ${details}`);
             }
 
-            const response = parsed as ExtractResponse;
+            const responseParsed = extractResponseSchema.safeParse(parsed);
+            if (!responseParsed.success) {
+              throw new Error(
+                `Parallel API response parse error: ${formatZodError(responseParsed.error)}`,
+              );
+            }
+
+            const response = responseParsed.data;
             const text = formatExtractResults(response);
             const toolResult: ToolResultMessage = createToolResult(toolCall, text, false);
             const uiEvent: ToolUiEvent = {

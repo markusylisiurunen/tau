@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { KnownProvider } from "@mariozechner/pi-ai";
-import type { RiskLevel } from "./types.js";
+import { z } from "zod";
+import { type RiskLevel, RiskLevelSchema } from "./types.js";
 
 export type ToolDisplayMode = "compact" | "full";
 
@@ -19,6 +20,25 @@ export interface Config {
   defaultRisk?: RiskLevel;
 }
 
+const configSchema = z
+  .object({
+    apiKeys: z
+      .object({
+        anthropic: z.string().optional().catch(undefined),
+        google: z.string().optional().catch(undefined),
+        openai: z.string().optional().catch(undefined),
+        parallel: z.string().optional().catch(undefined),
+      })
+      .passthrough()
+      .optional()
+      .catch(undefined),
+    userPreferences: z.string().optional().catch(undefined),
+    toolDisplayMode: z.enum(["compact", "full"]).optional().catch(undefined),
+    defaultPersona: z.string().optional().catch(undefined),
+    defaultRisk: RiskLevelSchema.optional().catch(undefined),
+  })
+  .passthrough();
+
 export function loadConfig(): Config {
   const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
   const configPath = join(configDir, "tau", "config.json");
@@ -29,39 +49,11 @@ export function loadConfig(): Config {
     }
 
     const content = readFileSync(configPath, "utf-8");
-    const config = JSON.parse(content) as Config;
-    if (typeof config !== "object" || config === null) return {};
+    const json = JSON.parse(content) as unknown;
+    if (typeof json !== "object" || json === null) return {};
 
-    const mode = config.toolDisplayMode;
-    if (mode !== undefined && mode !== "compact" && mode !== "full") {
-      delete config.toolDisplayMode;
-    }
-
-    const defaultPersona = config.defaultPersona;
-    if (defaultPersona !== undefined && typeof defaultPersona !== "string") {
-      delete config.defaultPersona;
-    }
-
-    const defaultRisk = config.defaultRisk;
-    if (defaultRisk !== undefined && !["none", "read-only", "read-write"].includes(defaultRisk)) {
-      delete config.defaultRisk;
-    }
-
-    const apiKeys = config.apiKeys as Record<string, unknown> | undefined;
-    if (apiKeys !== undefined) {
-      if (typeof apiKeys !== "object" || apiKeys === null) {
-        delete config.apiKeys;
-      } else {
-        for (const key of ["anthropic", "google", "openai", "parallel"] as const) {
-          const value = apiKeys[key];
-          if (value !== undefined && typeof value !== "string") {
-            delete apiKeys[key];
-          }
-        }
-      }
-    }
-
-    return config;
+    const parsed = configSchema.safeParse(json);
+    return parsed.success ? (parsed.data as Config) : {};
   } catch (err) {
     // If there's an error reading or parsing, silently return empty config
     return {};

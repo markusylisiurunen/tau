@@ -1,5 +1,6 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
+import { z } from "zod";
 import { getSubagentDefinitionFromString } from "../subagents/registry.js";
 import { runSubagentToCompletion } from "../subagents/subagent_engine.js";
 import type { SubagentPersonaConfig, SubagentRuntimeDefinition } from "../subagents/types.js";
@@ -46,12 +47,15 @@ export const TASK_TOOL: Tool = {
   ),
 };
 
+const taskArgsSchema = z.object({
+  name: z.string().trim().catch(""),
+  title: z.string().trim().catch(""),
+  prompt: z.string().trim().catch(""),
+});
+
 function parseTaskArgs(raw: unknown): { name: string; title: string; prompt: string } {
-  const args = raw as { name?: unknown; title?: unknown; prompt?: unknown } | undefined;
-  const name = typeof args?.name === "string" ? args.name.trim() : "";
-  const title = typeof args?.title === "string" ? args.title.trim() : "";
-  const prompt = typeof args?.prompt === "string" ? args.prompt.trim() : "";
-  return { name, title, prompt };
+  const parsed = taskArgsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : { name: "", title: "", prompt: "" };
 }
 
 type TaskStatus = "success" | "error" | "aborted";

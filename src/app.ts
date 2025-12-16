@@ -202,7 +202,7 @@ export class ChatApp {
 
     const headerText =
       `\n${palette.accent("tau")} ${palette.muted("– terminal chat")}\n\n` +
-      palette.muted(buildHelpText(this.agentsFiles));
+      palette.muted(buildHelpText(this.agentsFiles, this.skills));
     this.chatContainer.addMessage(new Text(headerText, 1, 0));
 
     this.ui.setFocus(this.editor);
@@ -776,7 +776,7 @@ export class ChatApp {
 
   private showHelp(): void {
     this.addSystemMessage(
-      buildHelpText(this.agentsFiles),
+      buildHelpText(this.agentsFiles, this.skills),
       palette.muted, // Intentionally not a notice style
     );
   }

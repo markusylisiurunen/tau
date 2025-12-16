@@ -1,4 +1,6 @@
-import type { RiskLevel } from "./types.js";
+import { homedir } from "node:os";
+import { join, relative } from "node:path";
+import type { RiskLevel, Skill } from "./types.js";
 
 export type Command =
   | { type: "help" }
@@ -78,12 +80,42 @@ export function parseCommand(raw: string): Command {
   return { type: "unknown", raw: trimmed };
 }
 
-export function buildHelpText(agentsFiles?: string[]): string {
+function formatSkillPath(fullPath: string): string {
+  const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const globalSkillsDir = join(configHome, "tau", "skills");
+  const projectSkillsDir = join(process.cwd(), ".tau", "skills");
+
+  // Check if path is in project skills directory
+  if (fullPath.startsWith(projectSkillsDir)) {
+    const relPath = relative(process.cwd(), fullPath);
+    return relPath;
+  }
+
+  // Check if path is in global skills directory
+  if (fullPath.startsWith(globalSkillsDir)) {
+    const relPath = relative(configHome, fullPath);
+    return `~/.config/${relPath}`;
+  }
+
+  // Fallback to full path
+  return fullPath;
+}
+
+export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string {
   const lines: string[] = [];
   if (agentsFiles && agentsFiles.length > 0) {
     lines.push("context:");
     agentsFiles.forEach((agentsFile) => {
       lines.push(`  ${agentsFile}`);
+    });
+  }
+  if (skills && skills.length > 0) {
+    if (lines.length > 0) {
+      lines.push("");
+    }
+    lines.push("skills:");
+    skills.forEach((skill) => {
+      lines.push(`  ${skill.name} (${formatSkillPath(skill.path)})`);
     });
   }
   if (lines.length > 0) {

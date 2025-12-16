@@ -1,63 +1,97 @@
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
-import type { RiskLevel, Skill } from "./types.js";
+import { z } from "zod";
+import { type RiskLevel, RiskLevelSchema, type Skill } from "./types.js";
 
-export type Command =
-  | { type: "help" }
-  | { type: "copy" }
-  | { type: "copyCode" }
-  | { type: "new" }
-  | { type: "forkOnlySummary" }
-  | { type: "forkSummaryAndLastTurn" }
-  | { type: "reload" }
-  | { type: "risk"; level: RiskLevel }
-  | { type: "bash"; id: string }
-  | { type: "persona"; id: string }
-  | { type: "prompt"; id: string }
-  | { type: "unknown"; raw: string };
+const HelpCommandSchema = z.object({ type: z.literal("help") });
+const CopyCommandSchema = z.object({ type: z.literal("copy") });
+const CopyCodeCommandSchema = z.object({ type: z.literal("copyCode") });
+const NewCommandSchema = z.object({ type: z.literal("new") });
+const ForkOnlySummaryCommandSchema = z.object({ type: z.literal("forkOnlySummary") });
+const ForkSummaryAndLastTurnCommandSchema = z.object({
+  type: z.literal("forkSummaryAndLastTurn"),
+});
+const ReloadCommandSchema = z.object({ type: z.literal("reload") });
+const RiskCommandSchema = z.object({
+  type: z.literal("risk"),
+  level: RiskLevelSchema,
+});
+const BashCommandSchema = z.object({
+  type: z.literal("bash"),
+  id: z.string().min(1),
+});
+const PersonaCommandSchema = z.object({
+  type: z.literal("persona"),
+  id: z.string().min(1),
+});
+const PromptCommandSchema = z.object({
+  type: z.literal("prompt"),
+  id: z.string().min(1),
+});
+const UnknownCommandSchema = z.object({
+  type: z.literal("unknown"),
+  raw: z.string(),
+});
+
+export const CommandSchema = z.discriminatedUnion("type", [
+  HelpCommandSchema,
+  CopyCommandSchema,
+  CopyCodeCommandSchema,
+  NewCommandSchema,
+  ForkOnlySummaryCommandSchema,
+  ForkSummaryAndLastTurnCommandSchema,
+  ReloadCommandSchema,
+  RiskCommandSchema,
+  BashCommandSchema,
+  PersonaCommandSchema,
+  PromptCommandSchema,
+  UnknownCommandSchema,
+]);
+
+export type Command = z.infer<typeof CommandSchema>;
 
 export function parseCommand(raw: string): Command {
   const trimmed = raw.trim();
 
   if (trimmed === "/help") {
-    return { type: "help" };
+    return CommandSchema.parse({ type: "help" });
   }
 
   if (trimmed === "/copy") {
-    return { type: "copy" };
+    return CommandSchema.parse({ type: "copy" });
   }
 
   if (trimmed === "/copy:code") {
-    return { type: "copyCode" };
+    return CommandSchema.parse({ type: "copyCode" });
   }
 
   if (trimmed === "/new") {
-    return { type: "new" };
+    return CommandSchema.parse({ type: "new" });
   }
 
   if (trimmed === "/fork:only-summary") {
-    return { type: "forkOnlySummary" };
+    return CommandSchema.parse({ type: "forkOnlySummary" });
   }
 
   if (trimmed === "/fork:with-last-turn") {
-    return { type: "forkSummaryAndLastTurn" };
+    return CommandSchema.parse({ type: "forkSummaryAndLastTurn" });
   }
 
   if (trimmed === "/reload") {
-    return { type: "reload" };
+    return CommandSchema.parse({ type: "reload" });
   }
 
   const riskMatch = trimmed.match(/^\/risk:(none|read-only|read-write)$/i);
   if (riskMatch) {
     const level = riskMatch[1]!.toLowerCase() as RiskLevel;
-    return { type: "risk", level };
+    return CommandSchema.parse({ type: "risk", level });
   }
 
   const personaMatch = trimmed.match(/^\/persona:(.+)$/i);
   if (personaMatch) {
     const id = personaMatch[1]?.trim() ?? "";
     if (id) {
-      return { type: "persona", id };
+      return CommandSchema.parse({ type: "persona", id });
     }
   }
 
@@ -65,7 +99,7 @@ export function parseCommand(raw: string): Command {
   if (promptMatch) {
     const id = promptMatch[1]?.trim() ?? "";
     if (id) {
-      return { type: "prompt", id };
+      return CommandSchema.parse({ type: "prompt", id });
     }
   }
 
@@ -73,11 +107,11 @@ export function parseCommand(raw: string): Command {
   if (bashMatch) {
     const id = bashMatch[1]?.trim() ?? "";
     if (id) {
-      return { type: "bash", id };
+      return CommandSchema.parse({ type: "bash", id });
     }
   }
 
-  return { type: "unknown", raw: trimmed };
+  return CommandSchema.parse({ type: "unknown", raw: trimmed });
 }
 
 function formatSkillPath(fullPath: string): string {

@@ -116,7 +116,9 @@ interface PartialSubagentConfig {
   };
 }
 
-const subagentSpecSchema = z
+const SubagentNameSchema = z.enum(["explore", "web"]);
+
+const SubagentSpecSchema = z
   .object({
     provider: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),
@@ -134,6 +136,12 @@ const subagentSpecSchema = z
     }
   });
 
+// Union schema: either a list of subagent names or an object mapping names to specs
+const SubagentConfigRawSchema = z.union([
+  z.array(z.string()),
+  z.record(SubagentNameSchema, z.union([z.undefined(), z.object({}).passthrough()])),
+]);
+
 function parseSubagentConfig(subagentsRaw: unknown): {
   config?: PartialSubagentConfig;
   error?: string;
@@ -147,16 +155,12 @@ function parseSubagentConfig(subagentsRaw: unknown): {
   // Handle list of subagent names
   if (Array.isArray(subagentsRaw)) {
     for (const nameRaw of subagentsRaw) {
-      const nameParsed = z.string().safeParse(nameRaw);
+      const nameParsed = SubagentNameSchema.safeParse(nameRaw);
       if (!nameParsed.success) {
-        return { error: "subagents list must contain only strings" };
+        return { error: `invalid subagent: ${formatZodError(nameParsed.error)}` };
       }
 
       const name = nameParsed.data;
-      if (!isSubagentName(name)) {
-        return { error: `unknown subagent: ${name}` };
-      }
-
       // Enable with default settings (use main persona's model)
       config[name] = {};
     }
@@ -167,19 +171,22 @@ function parseSubagentConfig(subagentsRaw: unknown): {
   const configParsed = z.record(z.string(), z.unknown()).safeParse(subagentsRaw);
   if (configParsed.success) {
     for (const [name, specRaw] of Object.entries(configParsed.data)) {
-      if (!isSubagentName(name)) {
-        return { error: `unknown subagent: ${name}` };
+      const nameParsed = SubagentNameSchema.safeParse(name);
+      if (!nameParsed.success) {
+        return { error: `invalid subagent: ${formatZodError(nameParsed.error)}` };
       }
+
+      const validatedName = nameParsed.data;
 
       if (!specRaw || typeof specRaw !== "object") {
         // Empty config, will use defaults
-        config[name] = {};
+        config[validatedName] = {};
         continue;
       }
 
-      const spec = subagentSpecSchema.safeParse(specRaw);
+      const spec = SubagentSpecSchema.safeParse(specRaw);
       if (!spec.success) {
-        return { error: `subagent ${name}: ${formatZodError(spec.error)}` };
+        return { error: `subagent ${validatedName}: ${formatZodError(spec.error)}` };
       }
 
       const provider = spec.data.provider;
@@ -190,11 +197,11 @@ function parseSubagentConfig(subagentsRaw: unknown): {
         const modelObj = resolveModel(provider, model);
         if (!modelObj) {
           return {
-            error: `subagent ${name}: failed to resolve model "${provider}:${model}"`,
+            error: `subagent ${validatedName}: failed to resolve model "${provider}:${model}"`,
           };
         }
 
-        config[name] = {
+        config[validatedName] = {
           model: modelObj,
           ...(spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
             ? { reasoning: spec.data.reasoning }
@@ -202,7 +209,7 @@ function parseSubagentConfig(subagentsRaw: unknown): {
         };
       } else {
         // No model specified, will use main persona's model
-        config[name] = {
+        config[validatedName] = {
           ...(spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
             ? { reasoning: spec.data.reasoning }
             : {}),

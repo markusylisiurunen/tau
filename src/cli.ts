@@ -1,18 +1,22 @@
+import { z } from "zod";
 import {
   type Persona,
   REASONING_LEVELS,
   type ReasoningEffort,
+  ReasoningEffortSchema,
   type RiskLevel,
   RiskLevelSchema,
 } from "./types.js";
 
-export interface CliOptions {
-  help: boolean;
-  personaId?: string;
-  reasoningOverride?: ReasoningEffort;
-  riskLevel?: RiskLevel;
-  withContext: boolean;
-}
+export const CliOptionsSchema = z.object({
+  help: z.boolean(),
+  personaId: z.string().optional(),
+  reasoningOverride: ReasoningEffortSchema.optional(),
+  riskLevel: RiskLevelSchema.optional(),
+  withContext: z.boolean(),
+});
+
+export type CliOptions = z.infer<typeof CliOptionsSchema>;
 
 export class CliError extends Error {
   constructor(message: string) {
@@ -145,7 +149,8 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     throw new CliError(`unexpected argument: ${arg}`);
   }
 
-  return { help, personaId, reasoningOverride, riskLevel, withContext };
+  const options = { help, personaId, reasoningOverride, riskLevel, withContext };
+  return CliOptionsSchema.parse(options);
 }
 
 export function printHelp(personas: Persona[]): void {

@@ -149,15 +149,14 @@ export function printDebugInfo(args: {
     datetime: new Date().toISOString(),
   });
 
-  const baseSystemPrompt = buildBaseSystemPrompt({
+  const subagentsBlock = formatSubagentsForPrompt(selectedPersona);
+  const fullSystemPrompt = buildBaseSystemPrompt({
     personaSystemPrompt: selectedPersona.systemPrompt,
     skillsBlock,
     projectContextBlock,
     environmentTag,
+    subagentsBlock,
   });
-
-  const subagentsBlock = formatSubagentsForPrompt(selectedPersona);
-  const fullSystemPrompt = subagentsBlock ? baseSystemPrompt + subagentsBlock : baseSystemPrompt;
 
   console.log(`\n${fullSystemPrompt}`);
 

@@ -11,6 +11,7 @@ import { getApiKeyForProvider } from "./config.js";
 import { loadAllContent } from "./content_loader.js";
 import type { PromptTemplate } from "./prompts.js";
 import { SessionEngine } from "./session/session_engine.js";
+import { formatSubagentsForPrompt } from "./subagents/registry.js";
 import { createAppTerminal } from "./terminal.js";
 import {
   createBashToolDefinition,
@@ -185,6 +186,7 @@ export class ChatApp {
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
       userPreferences: this.config.userPreferences,
+      subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });
 
     const toolRegistry = new ToolRegistry([
@@ -195,7 +197,7 @@ export class ChatApp {
     ]);
     this.engine = new SessionEngine({
       persona: this.currentPersona,
-      baseSystemPrompt: this.baseSystemPrompt,
+      systemPrompt: this.baseSystemPrompt,
       riskLevel: this.riskLevel,
       toolRegistry,
       config: this.config,
@@ -945,6 +947,7 @@ export class ChatApp {
       environmentTag: this.environmentTag,
       previousSessionSummary,
       userPreferences: this.config.userPreferences,
+      subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
   }
@@ -1134,6 +1137,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       environmentTag: this.environmentTag,
       previousSessionSummary: this.previousSessionSummary,
       userPreferences: this.config.userPreferences,
+      subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
     this.updateFooter();
@@ -1219,6 +1223,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         environmentTag: this.environmentTag,
         previousSessionSummary: this.previousSessionSummary,
         userPreferences: this.config.userPreferences,
+        subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
       });
       this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
 

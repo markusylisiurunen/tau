@@ -10,7 +10,6 @@ import type {
 import { streamSimple } from "@mariozechner/pi-ai";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
-import { formatSubagentsForPrompt } from "../subagents/registry.js";
 import type {
   ToolDefinition,
   ToolDispatchContext,
@@ -65,7 +64,7 @@ export type EngineEvent =
 
 export type SessionEngineOptions = {
   persona: Persona;
-  baseSystemPrompt: string;
+  systemPrompt: string;
   riskLevel: RiskLevel;
   toolRegistry: ToolRegistry;
   config?: Config;
@@ -73,7 +72,7 @@ export type SessionEngineOptions = {
 
 export class SessionEngine {
   private persona: Persona;
-  private baseSystemPrompt: string;
+  private systemPrompt: string;
   private riskLevel: RiskLevel;
   private readonly toolRegistry: ToolRegistry;
   private config: Config;
@@ -81,7 +80,7 @@ export class SessionEngine {
 
   constructor(options: SessionEngineOptions) {
     this.persona = options.persona;
-    this.baseSystemPrompt = options.baseSystemPrompt;
+    this.systemPrompt = options.systemPrompt;
     this.riskLevel = options.riskLevel;
     this.toolRegistry = options.toolRegistry;
     this.config = options.config ?? {};
@@ -91,9 +90,9 @@ export class SessionEngine {
     this.messages = [];
   }
 
-  setPersona(persona: Persona, baseSystemPrompt: string): void {
+  setPersona(persona: Persona, systemPrompt: string): void {
     this.persona = persona;
-    this.baseSystemPrompt = baseSystemPrompt;
+    this.systemPrompt = systemPrompt;
   }
 
   setRiskLevel(level: RiskLevel): void {
@@ -159,14 +158,8 @@ export class SessionEngine {
     yield { type: "assistant_start" };
     const tools = this.persona.tools ?? this.toolRegistry.schemas;
 
-    let systemPrompt = this.baseSystemPrompt;
-    const subagentInfo = formatSubagentsForPrompt(this.persona);
-    if (subagentInfo) {
-      systemPrompt += subagentInfo;
-    }
-
     const context: Context = {
-      systemPrompt,
+      systemPrompt: this.systemPrompt,
       messages: this.messages,
       tools,
     };

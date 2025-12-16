@@ -51,6 +51,7 @@ export function buildBaseSystemPrompt(args: {
   environmentTag: string;
   previousSessionSummary?: string;
   userPreferences?: string;
+  subagentsBlock?: string;
 }): string {
   const parts: string[] = [args.personaSystemPrompt.trim()];
   if (args.skillsBlock?.trim()) {
@@ -71,11 +72,14 @@ export function buildBaseSystemPrompt(args: {
       ].join("\n"),
     );
   }
-  parts.push(args.environmentTag.trim());
+  if (args.subagentsBlock?.trim()) {
+    parts.push(args.subagentsBlock.trim());
+  }
   const userPrefsBlock = buildUserPreferencesBlock(args.userPreferences);
   if (userPrefsBlock) {
     parts.push(userPrefsBlock);
   }
+  parts.push(args.environmentTag.trim());
   return parts.join("\n\n");
 }
 

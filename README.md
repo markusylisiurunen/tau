@@ -235,7 +235,7 @@ you can also set model parameters via optional frontmatter fields:
 
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
-- `skills`: list of enabled skill names (matched by `name` in skill frontmatter)
+- `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
 - `subagents`: enable sub-agents (`explore` for multi-turn codebase investigation, `web` for web research). you can specify as a list (`subagents: [explore]`, `subagents: [web]`, or `subagents: [explore, web]`) to use the main persona's model, or as an object to customize each sub-agent's model and reasoning. example:
   ```yaml
   subagents:
@@ -266,7 +266,7 @@ insert them with `/prompt:review`. if a project prompt id conflicts with a user 
 
 skills are optional markdown files discovered at `~/.config/tau/skills/<dir>/SKILL.md` (user-level) and `.tau/skills/<dir>/SKILL.md` (project-level). each `SKILL.md` must contain yaml frontmatter with `name` and `description`.
 
-enable skills per persona with the `skills` frontmatter field (a list of skill names). tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
+enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), or use `"*"` to enable all discovered skills. all non-raw built-in personas (basic and coder variants) have `skills: "*"` by default. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
 
 use `/reload` to pick up changes to personas, prompts, and skills without restarting.
 

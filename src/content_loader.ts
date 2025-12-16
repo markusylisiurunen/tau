@@ -273,10 +273,14 @@ function parsePersona(
     : undefined;
 
   const skillsRaw = frontMatter.skills;
-  let skills: string[] | undefined;
+  let skills: string[] | "*" | undefined;
   if (typeof skillsRaw === "string") {
     const trimmed = skillsRaw.trim();
-    skills = trimmed ? [trimmed] : undefined;
+    if (trimmed === "*") {
+      skills = "*";
+    } else {
+      skills = trimmed ? [trimmed] : undefined;
+    }
   } else if (Array.isArray(skillsRaw)) {
     for (const skill of skillsRaw) {
       if (typeof skill !== "string") {
@@ -286,7 +290,7 @@ function parsePersona(
     const trimmed = skillsRaw.map((s) => s.trim()).filter(Boolean);
     skills = trimmed.length > 0 ? trimmed : undefined;
   } else if (skillsRaw !== undefined) {
-    return { error: `${file}: skills must be a string or list of strings. skipped.` };
+    return { error: `${file}: skills must be a string, "*", or list of strings. skipped.` };
   }
 
   // Parse subagents

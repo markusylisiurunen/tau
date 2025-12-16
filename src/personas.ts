@@ -240,6 +240,7 @@ function pickExploreReasoning(allowed: ReasoningEffort[]): ReasoningEffort {
 function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   const config = VARIANT_CONFIG[variant];
   const displaySuffix = config.suffix ? `-${variant}` : "";
+  const skills = variant === "raw" ? spec.skills : "*";
 
   let subagents: SubagentConfigMap | undefined;
   if (variant !== "raw") {
@@ -290,7 +291,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
     systemPrompt: config.systemPrompt,
     allowedReasoningLevels: spec.allowedReasoningLevels,
     settings: spec.settings,
-    ...(spec.skills && { skills: spec.skills }),
+    ...(skills && { skills }),
     ...(subagents && { subagents }),
     tools,
   };

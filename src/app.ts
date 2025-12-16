@@ -482,8 +482,8 @@ export class ChatApp {
     skillsBlock?: string;
     unknown: string[];
   } {
-    const enabled = persona.skills ?? [];
-    if (enabled.length === 0) {
+    const enabled = persona.skills;
+    if (!enabled) {
       return { unknown: [] };
     }
 
@@ -496,7 +496,9 @@ export class ChatApp {
     const unknown: string[] = [];
     const seen = new Set<string>();
 
-    for (const name of enabled) {
+    const enabledArray = enabled === "*" ? Array.from(skillsByName.keys()) : enabled;
+
+    for (const name of enabledArray) {
       const key = name.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -504,7 +506,7 @@ export class ChatApp {
       const skill = skillsByName.get(key);
       if (skill) {
         selected.push(skill);
-      } else {
+      } else if (enabled !== "*") {
         unknown.push(name);
       }
     }

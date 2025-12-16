@@ -22,7 +22,7 @@ import type { Persona, RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
 import { type AssistantPartialSnapshot, MessageAccumulator } from "./message_accumulator.js";
 
-const MAX_ASSISTANT_SUBTURNS = 64;
+const MAX_ASSISTANT_SUBTURNS = 128;
 
 export type EngineNoticeEvent = {
   type: "notice";

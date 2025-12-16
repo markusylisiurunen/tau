@@ -17,6 +17,8 @@ import type {
   ToolUiEvent,
 } from "../tools/registry.js";
 import { ToolRegistry } from "../tools/registry.js";
+import { createWebFetchToolDefinition } from "../tools/web_fetch.js";
+import { createWebSearchToolDefinition } from "../tools/web_search.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, extractAssistantText } from "../utils/messages.js";
 import type {
@@ -48,13 +50,22 @@ function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): Simp
   return merged as unknown as SimpleStreamOptions;
 }
 
-function buildToolRegistryForAllowedTools(allowedTools: AllowedSubagentToolName[]): ToolRegistry {
+function buildToolRegistryForAllowedTools(
+  allowedTools: AllowedSubagentToolName[],
+  config: Config,
+): ToolRegistry {
   const definitions: ToolDefinition[] = [];
 
   for (const tool of allowedTools) {
     switch (tool) {
       case "bash":
         definitions.push(createBashToolDefinition());
+        break;
+      case "web_search":
+        definitions.push(createWebSearchToolDefinition(config));
+        break;
+      case "web_fetch":
+        definitions.push(createWebFetchToolDefinition(config));
         break;
     }
   }
@@ -66,6 +77,10 @@ function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | undefined 
   switch (uiEvent.type) {
     case "bash_started":
       return `bash running: ${uiEvent.command.replace(/\n/g, " ")}`;
+    case "web_search_started":
+      return `web search: ${uiEvent.objective}`;
+    case "web_fetch_started":
+      return `web fetch: ${uiEvent.url}`;
     default:
       return undefined;
   }
@@ -97,7 +112,7 @@ export async function runSubagentToCompletion(options: {
 }): Promise<SubagentRunResult> {
   const { definition, personaConfig, prompt, config, signal, onProgress } = options;
 
-  const toolRegistry = buildToolRegistryForAllowedTools(definition.allowedTools);
+  const toolRegistry = buildToolRegistryForAllowedTools(definition.allowedTools, config);
   const messages: Message[] = [
     {
       role: "user",
@@ -184,6 +199,16 @@ export async function runSubagentToCompletion(options: {
 
       const handleUi = (uiEvent: ToolUiEvent | undefined) => {
         if (!uiEvent) return;
+
+        if (
+          (uiEvent.type === "web_search_finished" || uiEvent.type === "web_fetch_finished") &&
+          typeof uiEvent.costUsd === "number" &&
+          Number.isFinite(uiEvent.costUsd) &&
+          uiEvent.costUsd > 0
+        ) {
+          costTotal += uiEvent.costUsd;
+        }
+
         const text = formatToolUiEventForProgress(uiEvent);
         if (text) emit(text);
       };

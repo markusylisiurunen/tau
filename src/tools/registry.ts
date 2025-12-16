@@ -51,6 +51,30 @@ export type ToolUiEvent =
       reason: string;
     }
   | {
+      type: "web_search_started";
+      toolCallId: string;
+      objective: string;
+    }
+  | {
+      type: "web_search_finished";
+      toolCallId: string;
+      objective: string;
+      status: "success" | "error";
+      costUsd?: number;
+    }
+  | {
+      type: "web_fetch_started";
+      toolCallId: string;
+      url: string;
+    }
+  | {
+      type: "web_fetch_finished";
+      toolCallId: string;
+      url: string;
+      status: "success" | "error";
+      costUsd?: number;
+    }
+  | {
       type: "write_success";
       path: string;
       bytes: number;

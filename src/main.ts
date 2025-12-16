@@ -6,7 +6,7 @@ import { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js"
 import { loadConfig } from "./config.js";
 import { loadAllContent } from "./content_loader.js";
 import type { PromptTemplate } from "./prompts.js";
-import type { Persona, ReasoningEffort } from "./types.js";
+import type { Persona, ReasoningEffort, Skill } from "./types.js";
 
 // Load configuration from file
 const config = loadConfig();
@@ -27,10 +27,12 @@ async function readPipedStdin(): Promise<string | undefined> {
 // Load built-in and user content
 let personas: Persona[];
 let prompts: PromptTemplate[];
+let skills: Skill[];
 try {
   const content = await loadAllContent();
   personas = content.personas;
   prompts = content.prompts;
+  skills = content.skills;
 } catch (err) {
   // Safeguard: loadAllContent should not throw, but wrap to ensure tau --help works
   // eslint-disable-next-line no-console
@@ -42,6 +44,7 @@ try {
   const { prompts: builtinPrompts } = await import("./prompts.js");
   personas = builtinPersonas;
   prompts = builtinPrompts;
+  skills = [];
 }
 
 let cli: CliOptions;
@@ -92,6 +95,7 @@ const initialUserMessage = await readPipedStdin();
 const app = new ChatApp({
   personas,
   prompts,
+  skills,
   bashCommands,
   initialPersonaId,
   initialUserMessage,

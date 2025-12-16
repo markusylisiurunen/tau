@@ -16,13 +16,14 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 ## Key modules
 
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
-- `src/personas.ts` - Persona definitions and system prompt blocks
-- `src/content_loader.ts` - User persona/prompt loading from `~/.config/tau/`
+- `src/personas.ts` - Built-in persona definitions and system prompt blocks
+- `src/content_loader.ts` - User/project content loading (personas, prompts, skills)
 - `src/commands.ts` - Slash command parsing
 - `src/session/` - Turn processing and message accumulation
-- `src/tools/` - Tool implementations (bash, write, edit, task)
-- `src/subagents/` - Isolated agent execution (explore subagent)
+- `src/tools/` - Tool implementations (bash, write, edit, task, web_search, web_fetch)
+- `src/subagents/` - Isolated agent execution (`explore`, `web`) and runtime (`src/subagents/subagent_engine.ts`)
 - `src/ui/` - Terminal components, themes, autocomplete
+- `src/utils/project_files.ts` - Project file discovery for `@file` autocomplete
 - `src/utils/` - Helpers for truncation, fuzzy matching, context building
 
 ## Tool system
@@ -38,26 +39,31 @@ Risk levels (`none`, `read-only`, `read-write`) gate model tool calls. The model
 
 **Bash limits**: 2MB capture, 1MB to model context, 50KB to display, 60s timeout. Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/tools/bash.ts`).
 
+**Subagent-only tools**: the `web` subagent uses `web_search` and `web_fetch` (see `src/tools/web_search.ts`, `src/tools/web_fetch.ts`) via the subagent tool registry in `src/subagents/subagent_engine.ts`.
+
 ## Personas and subagents
 
-**Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/2.5 Flash) × 3 variants (basic, coder, raw) = 15 personas. Coder variants include the **explore** subagent for multi-turn read-only codebase investigation.
+**Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/2.5 Flash) × 3 variants (basic, coder, raw) = 15 personas. Basic and coder variants include the **web** subagent for agentic web research, and coder variants also include the **explore** subagent for multi-turn read-only codebase investigation.
 
 Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields:
 
 - `label`, `description`: metadata
 - `reasoning`: default reasoning effort level
 - `allowedReasoningLevels`: list of reasoning levels shown in the UI
-- `subagents`: enable sub-agents (currently `explore` for codebase investigation). specify as a list `[explore]` to use the main persona's model, or as an object with custom model/reasoning per sub-agent.
+- `skills`: list of enabled skill names (matched by `name` in skill frontmatter)
+- `subagents`: enable sub-agents (`explore` for codebase investigation, `web` for web research). specify as a list `[explore]`, `[web]`, or `[explore, web]` to use the main persona's model, or as an object with custom model/reasoning per sub-agent.
 
 On conflicts, project personas override user and built-in personas.
 
 ## Configuration
 
 - **Global**: `~/.config/tau/config.json` (API keys, `toolDisplayMode`, `defaultPersona`, `defaultRisk`)
+  - `apiKeys.parallel` (optional): Parallel API key for the `web` subagent.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`none`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
 - **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
 - **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (YAML frontmatter with `id`, project overrides on conflicts)
+- **Skills**: user-level `~/.config/tau/skills/<dir>/SKILL.md` and project-level `.tau/skills/<dir>/SKILL.md` (YAML frontmatter with `name`, `description`, project overrides on conflicts by `name`)
 
 ## Commands
 

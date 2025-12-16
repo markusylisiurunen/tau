@@ -1,6 +1,6 @@
 # tau
 
-a terminal-based AI chat client for working with code. tau gives you access to Claude, GPT, and Gemini models, each equipped with tools to explore, write, and edit files in your project.
+a terminal-based AI chat client for working with code. tau gives you access to Claude, GPT, and Gemini models, each equipped with tools to explore, write, and edit files in your project, plus optional sub-agents for deeper codebase investigation and web research.
 
 ![tau](./assets/tau.png)
 
@@ -24,12 +24,15 @@ or store keys in `~/.config/tau/config.json`:
   "apiKeys": {
     "anthropic": "sk-ant-...",
     "openai": "sk-...",
-    "google": "..."
+    "google": "...",
+    "parallel": "..."
   }
 }
 ```
 
 environment variables take precedence over the config file.
+
+`parallel` is only needed for the web sub-agent tools (`web_search`/`web_fetch`).
 
 ## security notice
 
@@ -86,13 +89,22 @@ tau comes with several built-in personas across different models:
 - **GPT-5.2** (OpenAI)
 - **Gemini 3 Pro** and **Gemini 2.5 Flash** (Google)
 
-each model has three variants: a general-purpose assistant, a coder variant optimized for software engineering, and a raw variant with minimal prompting.
+each model has three variants: a general-purpose assistant, a coder variant optimized for software engineering, and a raw variant with minimal prompting. basic and coder variants include the `web` sub-agent for web research, and coder variants also include the `explore` sub-agent for multi-turn codebase investigation.
 
 switch personas at startup with `--persona` or mid-session with `/persona:<id>`:
 
 ```sh
 tau --persona opus-4.5-coder
 ```
+
+## sub-agents
+
+some personas can run isolated sub-agents via the internal `task` tool:
+
+- `explore`: read-only, multi-turn codebase investigation
+- `web`: high-threshold web research using Parallel Search/Extract (`web_search`/`web_fetch`)
+
+to use the web sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when needed or when you explicitly ask for web research.
 
 ## reasoning
 
@@ -130,20 +142,20 @@ tau will create or update AGENTS.md at your project root, integrating the new in
 
 tau supports slash commands for common actions:
 
-| command                | description                                  |
-| ---------------------- | -------------------------------------------- |
-| `/help`                | show available commands                      |
-| `/new`                 | clear the session and start fresh            |
-| `/copy`                | copy the last assistant message              |
-| `/copy:code`           | copy just the code blocks                    |
-| `/reload`              | reload personas and prompts from disk        |
-| `/fork:only-summary`   | compress history and continue with a summary |
-| `/fork:with-last-turn` | compress history but keep the last exchange  |
-| `/persona:<id>`        | switch to a different persona                |
-| `/prompt:<id>`         | insert a saved prompt template               |
-| `/bash:<id>`           | run a saved shell command                    |
-| `/risk:<level>`        | change the risk level                        |
-| `!<cmd>`               | run a shell command directly                 |
+| command                | description                                    |
+| ---------------------- | ---------------------------------------------- |
+| `/help`                | show available commands                        |
+| `/new`                 | clear the session and start fresh              |
+| `/copy`                | copy the last assistant message                |
+| `/copy:code`           | copy just the code blocks                      |
+| `/reload`              | reload personas, prompts, and skills from disk |
+| `/fork:only-summary`   | compress history and continue with a summary   |
+| `/fork:with-last-turn` | compress history but keep the last exchange    |
+| `/persona:<id>`        | switch to a different persona                  |
+| `/prompt:<id>`         | insert a saved prompt template                 |
+| `/bash:<id>`           | run a saved shell command                      |
+| `/risk:<level>`        | change the risk level                          |
+| `!<cmd>`               | run a shell command directly                   |
 
 the fork commands are useful when conversations get long. they compress everything into a summary so the model retains context without the overhead of a full history.
 
@@ -169,7 +181,8 @@ store settings in `~/.config/tau/config.json`:
   "apiKeys": {
     "anthropic": "sk-ant-...",
     "openai": "sk-...",
-    "google": "..."
+    "google": "...",
+    "parallel": "..."
   },
   "defaultPersona": "gpt-5.2",
   "defaultRisk": "read-write",
@@ -222,7 +235,8 @@ you can also set model parameters via optional frontmatter fields:
 
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
-- `subagents`: enable sub-agents (currently only `explore` is supported) for multi-turn codebase investigation. you can specify as a list (`subagents: [explore]`) to use the main persona's model, or as an object to customize each sub-agent's model and reasoning. example:
+- `skills`: list of enabled skill names (matched by `name` in skill frontmatter)
+- `subagents`: enable sub-agents (`explore` for multi-turn codebase investigation, `web` for web research). you can specify as a list (`subagents: [explore]`, `subagents: [web]`, or `subagents: [explore, web]`) to use the main persona's model, or as an object to customize each sub-agent's model and reasoning. example:
   ```yaml
   subagents:
     explore:
@@ -248,7 +262,13 @@ suggest specific improvements with code examples.
 
 insert them with `/prompt:review`. if a project prompt id conflicts with a user or built-in prompt, the project prompt wins.
 
-use `/reload` to pick up changes to personas and prompts without restarting.
+### skills
+
+skills are optional markdown files discovered at `~/.config/tau/skills/<dir>/SKILL.md` (user-level) and `.tau/skills/<dir>/SKILL.md` (project-level). each `SKILL.md` must contain yaml frontmatter with `name` and `description`.
+
+enable skills per persona with the `skills` frontmatter field (a list of skill names). tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
+
+use `/reload` to pick up changes to personas, prompts, and skills without restarting.
 
 ## how it works
 

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
-import type { RiskLevel } from "../types.js";
+import type { RiskLevel, Skill } from "../types.js";
 
 function buildUserPreferencesBlock(userPreferences?: string): string | undefined {
   if (typeof userPreferences === "string" && userPreferences.trim()) {
@@ -9,14 +9,33 @@ function buildUserPreferencesBlock(userPreferences?: string): string | undefined
   return undefined;
 }
 
+export function buildSkillsIndexBlock(skills: Skill[]): string | undefined {
+  if (skills.length === 0) return undefined;
+
+  const lines: string[] = ["### Skills", ""];
+
+  for (const skill of skills) {
+    lines.push(`- name: ${skill.name}`);
+    lines.push(`  description: ${skill.description}`);
+    lines.push(`  path: ${skill.path}`);
+  }
+
+  const out = lines.join("\n").trim();
+  return out ? out : undefined;
+}
+
 export function buildBaseSystemPrompt(args: {
   personaSystemPrompt: string;
+  skillsBlock?: string;
   projectContextBlock?: string;
   environmentTag: string;
   previousSessionSummary?: string;
   userPreferences?: string;
 }): string {
   const parts: string[] = [args.personaSystemPrompt.trim()];
+  if (args.skillsBlock?.trim()) {
+    parts.push(args.skillsBlock.trim());
+  }
   if (args.projectContextBlock?.trim()) {
     parts.push(args.projectContextBlock.trim());
   }

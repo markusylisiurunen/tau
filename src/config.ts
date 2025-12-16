@@ -11,6 +11,7 @@ export interface Config {
     anthropic?: string;
     google?: string;
     openai?: string;
+    parallel?: string;
   };
   userPreferences?: string;
   toolDisplayMode?: ToolDisplayMode;
@@ -46,6 +47,20 @@ export function loadConfig(): Config {
       delete config.defaultRisk;
     }
 
+    const apiKeys = config.apiKeys as Record<string, unknown> | undefined;
+    if (apiKeys !== undefined) {
+      if (typeof apiKeys !== "object" || apiKeys === null) {
+        delete config.apiKeys;
+      } else {
+        for (const key of ["anthropic", "google", "openai", "parallel"] as const) {
+          const value = apiKeys[key];
+          if (value !== undefined && typeof value !== "string") {
+            delete apiKeys[key];
+          }
+        }
+      }
+    }
+
     return config;
   } catch (err) {
     // If there's an error reading or parsing, silently return empty config
@@ -65,4 +80,8 @@ export function getApiKeyForProvider(config: Config, provider: KnownProvider): s
     default:
       return undefined;
   }
+}
+
+export function getParallelApiKey(config: Config): string | undefined {
+  return config.apiKeys?.parallel;
 }

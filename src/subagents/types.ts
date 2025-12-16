@@ -1,6 +1,6 @@
 import type { Api, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 
-export type SubagentName = "explore";
+export type SubagentName = "explore" | "web";
 
 export type SubagentPersonaConfig = {
   model: Model<Api>;
@@ -9,7 +9,7 @@ export type SubagentPersonaConfig = {
 
 export type SubagentConfigMap = Partial<Record<SubagentName, SubagentPersonaConfig>>;
 
-export type AllowedSubagentToolName = "bash";
+export type AllowedSubagentToolName = "bash" | "web_search" | "web_fetch";
 
 export type SubagentRiskLevel = "none" | "read-only" | "read-write";
 

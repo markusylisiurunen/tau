@@ -1,15 +1,18 @@
 import type { Persona } from "../types.js";
 import { EXPLORE_DEFINITION } from "./explore.js";
 import type { SubagentName, SubagentRuntimeDefinition } from "./types.js";
+import { WEB_DEFINITION } from "./web.js";
 
 export function isSubagentName(value: string): value is SubagentName {
-  return value === "explore";
+  return value === "explore" || value === "web";
 }
 
 export function getSubagentDefinition(name: SubagentName): SubagentRuntimeDefinition {
   switch (name) {
     case "explore":
       return EXPLORE_DEFINITION;
+    case "web":
+      return WEB_DEFINITION;
   }
 }
 

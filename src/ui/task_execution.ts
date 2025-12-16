@@ -23,6 +23,20 @@ function formatEventsForDisplay(lastEvents: string[]): string[] {
       const cmd = trimmed.replace(/^bash running:\s*/, "");
       filtered.push(`$ ${cmd}`);
     }
+    // Show web tool calls like shell commands
+    else if (trimmed.startsWith("web search:")) {
+      const objective = trimmed
+        .replace(/^web search:\s*/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      filtered.push(`? ${objective}`);
+    } else if (trimmed.startsWith("web fetch:")) {
+      const url = trimmed
+        .replace(/^web fetch:\s*/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      filtered.push(`? ${url}`);
+    }
     // Show agent text output as "> first line only"
     else if (trimmed.startsWith("agent:")) {
       const text = trimmed.replace(/^agent:\s*/, "");

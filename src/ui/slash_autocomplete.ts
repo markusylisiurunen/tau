@@ -1,6 +1,11 @@
 import type { AutocompleteItem, AutocompleteProvider } from "@mariozechner/pi-tui";
 import { fuzzyFilter } from "../utils/fuzzy.js";
 
+export function getFileAutocompleteToken(beforeCursor: string): string | null {
+  const fileMatch = beforeCursor.match(/(?:^|[\t ])(@[^\t ]*)$/);
+  return fileMatch?.[1] ?? null;
+}
+
 export interface PersonaSuggestion {
   id: string;
   label?: string;
@@ -101,10 +106,9 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
   private getFileSuggestions(
     beforeCursor: string,
   ): { items: AutocompleteItem[]; prefix: string } | null {
-    const fileMatch = beforeCursor.match(/(?:^|[\t ])(@[^\t ]*)$/);
-    if (!fileMatch) return null;
+    const token = getFileAutocompleteToken(beforeCursor);
+    if (!token) return null;
 
-    const token = fileMatch[1] ?? "@";
     const query = token.slice(1);
     const filtered = fuzzyFilter(this.getFiles(), query, (p) => p);
     const items = filtered.slice(0, 25).map((p) => ({ value: p, label: p }));

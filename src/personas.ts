@@ -139,9 +139,10 @@ type PersonaSpec = {
   model: Persona["model"];
   allowedReasoningLevels: NonNullable<Persona["allowedReasoningLevels"]>;
   settings: Persona["settings"];
+  skills?: string[];
   subagents?: Partial<
     Record<
-      "explore",
+      "explore" | "web",
       {
         model?: Persona["model"];
         reasoning?: ReasoningEffort;
@@ -241,17 +242,42 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   const displaySuffix = config.suffix ? `-${variant}` : "";
 
   let subagents: SubagentConfigMap | undefined;
-  if (variant === "coder" && spec.subagents?.explore) {
-    const exploreSpec = spec.subagents.explore;
-    const exploreModel = exploreSpec.model ?? spec.model;
-    const exploreEffort =
-      exploreSpec.reasoning ?? pickExploreReasoning(spec.allowedReasoningLevels);
-    subagents = {
-      explore: {
+  if (variant !== "raw") {
+    const next: SubagentConfigMap = {};
+
+    if (variant === "coder" && spec.subagents?.explore) {
+      const exploreSpec = spec.subagents.explore;
+      const exploreModel = exploreSpec.model ?? spec.model;
+      const exploreEffort =
+        exploreSpec.reasoning ?? pickExploreReasoning(spec.allowedReasoningLevels);
+      next.explore = {
         model: exploreModel,
         settings: exploreEffort === "none" ? {} : { reasoning: exploreEffort },
-      },
+      };
+    }
+
+    const webSpec = spec.subagents?.web ?? {};
+    const webModel = webSpec.model ?? spec.model;
+
+    const { reasoning, ...rest } = spec.settings;
+    const inheritedSettings = {
+      ...rest,
+      ...(reasoning && reasoning !== "none" ? { reasoning } : {}),
     };
+
+    const webSettings =
+      webSpec.reasoning !== undefined
+        ? webSpec.reasoning === "none"
+          ? {}
+          : { reasoning: webSpec.reasoning }
+        : inheritedSettings;
+
+    next.web = {
+      model: webModel,
+      settings: webSettings,
+    };
+
+    subagents = next;
   }
 
   const tools = subagents ? [...BASE_TOOLS, TASK_TOOL] : BASE_TOOLS;
@@ -264,6 +290,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
     systemPrompt: config.systemPrompt,
     allowedReasoningLevels: spec.allowedReasoningLevels,
     settings: spec.settings,
+    ...(spec.skills && { skills: spec.skills }),
     ...(subagents && { subagents }),
     tools,
   };

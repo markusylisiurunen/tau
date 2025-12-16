@@ -24,6 +24,12 @@ export const REASONING_LEVELS: ReasoningEffort[] = [
   "xhigh",
 ];
 
+export interface Skill {
+  name: string;
+  description: string;
+  path: string;
+}
+
 export interface Persona {
   id: string;
   label: string;
@@ -34,4 +40,5 @@ export interface Persona {
   allowedReasoningLevels?: ReasoningEffort[];
   subagents?: SubagentConfigMap;
   tools?: Tool[];
+  skills?: string[];
 }

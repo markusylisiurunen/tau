@@ -22,7 +22,13 @@ import { createEditToolDefinition } from "./tools/edit.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { createTaskToolDefinition } from "./tools/task.js";
 import { createWriteToolDefinition } from "./tools/write.js";
-import { type Persona, REASONING_LEVELS, type ReasoningEffort, type RiskLevel } from "./types.js";
+import {
+  type Persona,
+  REASONING_LEVELS,
+  type ReasoningEffort,
+  type RiskLevel,
+  type Skill,
+} from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
 import { renderBashBlocked, renderBashExecution, renderBashRunning } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
@@ -37,7 +43,7 @@ import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
 import { SessionDividerComponent } from "./ui/session_divider.js";
 import { SessionSummaryComponent } from "./ui/session_summary.js";
-import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
+import { getFileAutocompleteToken, SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
 import { SystemMessageComponent } from "./ui/system_message.js";
 import { renderTaskBlocked, renderTaskFinished, renderTaskRunning } from "./ui/task_execution.js";
 import { editorBorderForReasoning, theme } from "./ui/theme.js";
@@ -46,6 +52,7 @@ import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
   buildProjectContextBlock,
+  buildSkillsIndexBlock,
   findAgentsFilesFromCwdToHome,
   formatRiskLevelChangeNotice,
 } from "./utils/context.js";
@@ -53,13 +60,14 @@ import { formatHistoryForCompression } from "./utils/fork.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "./utils/format.js";
 import { getGitRoot } from "./utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "./utils/messages.js";
-import { listProjectFiles } from "./utils/project_files.js";
+import { listProjectFiles, listProjectFilesAsync } from "./utils/project_files.js";
 
 const { palette } = theme;
 
 export interface ChatAppOptions {
   personas: Persona[];
   prompts?: PromptTemplate[];
+  skills?: Skill[];
   bashCommands?: BashCommand[];
   initialPersonaId?: string;
   initialUserMessage?: string;
@@ -78,6 +86,7 @@ export class ChatApp {
   private personas: Persona[];
   private currentPersona: Persona;
   private prompts: PromptTemplate[];
+  private skills: Skill[];
   private bashCommands: BashCommand[];
   private readonly repoRoot: string;
   private initialUserMessage?: string;
@@ -103,7 +112,9 @@ export class ChatApp {
   private readonly initialRiskLevel: RiskLevel;
   private environmentTag: string;
   private readonly projectContextBlock?: string;
-  private readonly projectFiles: string[];
+  private projectFiles: string[] = [];
+  private isRefreshingProjectFiles = false;
+  private isInFileAutocomplete = false;
   private readonly agentsFiles: string[];
   private baseSystemPrompt: string;
   private pendingRiskLevelChange?: { from: RiskLevel; to: RiskLevel };
@@ -113,6 +124,7 @@ export class ChatApp {
   constructor(options: ChatAppOptions) {
     this.personas = options.personas;
     this.prompts = options.prompts ?? [];
+    this.skills = options.skills ?? [];
     this.bashCommands = options.bashCommands ?? [];
     this.repoRoot = getGitRoot(process.cwd()) ?? process.cwd();
     this.initialUserMessage = options.initialUserMessage;
@@ -150,6 +162,7 @@ export class ChatApp {
 
     this.baseSystemPrompt = buildBaseSystemPrompt({
       personaSystemPrompt: this.currentPersona.systemPrompt,
+      skillsBlock: this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock,
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
       userPreferences: this.config.userPreferences,
@@ -226,10 +239,18 @@ export class ChatApp {
     this.editor.onChange = (text: string) => {
       const wasBash = this.isBashMode;
       const wasMemory = this.isMemoryMode;
+      const wasInFileAutocomplete = this.isInFileAutocomplete;
 
       const trimmed = text.trimStart();
       this.isBashMode = trimmed.startsWith("!");
       this.isMemoryMode = trimmed.startsWith("#");
+
+      const beforeCursor = this.getEditorTextBeforeCursor();
+      this.isInFileAutocomplete = Boolean(getFileAutocompleteToken(beforeCursor));
+
+      if (!wasInFileAutocomplete && this.isInFileAutocomplete) {
+        this.refreshProjectFilesInBackground();
+      }
 
       if (wasBash !== this.isBashMode || wasMemory !== this.isMemoryMode) {
         this.updateEditorBorderColor();
@@ -250,6 +271,30 @@ export class ChatApp {
     );
 
     this.editor.onSubmit = (text) => this.handleSubmit(text);
+  }
+
+  private getEditorTextBeforeCursor(): string {
+    const { line, col } = this.editor.getCursor();
+    const lines = this.editor.getLines();
+    const current = lines[line] ?? "";
+    return current.slice(0, col);
+  }
+
+  private refreshProjectFilesInBackground(): void {
+    if (this.isRefreshingProjectFiles) return;
+
+    this.isRefreshingProjectFiles = true;
+
+    void listProjectFilesAsync(process.cwd())
+      .then((files) => {
+        this.projectFiles = files;
+      })
+      .catch(() => {
+        // Ignore refresh errors; autocomplete will keep using the existing cache.
+      })
+      .finally(() => {
+        this.isRefreshingProjectFiles = false;
+      });
   }
 
   async start(): Promise<void> {
@@ -431,6 +476,40 @@ export class ChatApp {
     if (!allowed.includes(persona.settings.reasoning as ReasoningEffort)) {
       persona.settings.reasoning = allowed[0];
     }
+  }
+
+  private getSkillsIndexBlockForPersona(persona: Persona): {
+    skillsBlock?: string;
+    unknown: string[];
+  } {
+    const enabled = persona.skills ?? [];
+    if (enabled.length === 0) {
+      return { unknown: [] };
+    }
+
+    const skillsByName = new Map<string, Skill>();
+    for (const skill of this.skills) {
+      skillsByName.set(skill.name.toLowerCase(), skill);
+    }
+
+    const selected: Skill[] = [];
+    const unknown: string[] = [];
+    const seen = new Set<string>();
+
+    for (const name of enabled) {
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const skill = skillsByName.get(key);
+      if (skill) {
+        selected.push(skill);
+      } else {
+        unknown.push(name);
+      }
+    }
+
+    return { skillsBlock: buildSkillsIndexBlock(selected), unknown };
   }
 
   // User Actions ----------------------------------------------------------------------------------
@@ -840,6 +919,7 @@ export class ChatApp {
     });
     this.baseSystemPrompt = buildBaseSystemPrompt({
       personaSystemPrompt: this.currentPersona.systemPrompt,
+      skillsBlock: this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock,
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
       previousSessionSummary,
@@ -1025,8 +1105,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     this.currentPersona = persona;
     this.clampPersonaReasoning(this.currentPersona);
+    const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
     this.baseSystemPrompt = buildBaseSystemPrompt({
       personaSystemPrompt: this.currentPersona.systemPrompt,
+      skillsBlock: skillsContext.skillsBlock,
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
       previousSessionSummary: this.previousSessionSummary,
@@ -1035,6 +1117,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
     this.updateFooter();
     this.updateEditorBorderColor();
+
+    if (skillsContext.unknown.length > 0) {
+      this.addSystemMessage(
+        `warning: unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
+        palette.noticeWarn,
+      );
+    }
+
     this.addSystemMessage(
       `switched to ${persona.label} (${persona.model.id})`,
       palette.noticeSuccess,
@@ -1072,7 +1162,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     try {
       const result = await loadAllContent();
-      const { personas, prompts, errors } = result;
+      const { personas, prompts, skills, errors } = result;
 
       const bashResult = loadBashCommands(process.cwd());
       this.bashCommands = bashResult.commands;
@@ -1080,6 +1170,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       // Update the personas and prompts lists
       this.personas = personas;
       this.prompts = prompts;
+      this.skills = skills;
 
       // Try to preserve the current persona; fall back to first if not found
       const currentPersonaId = this.currentPersona.id.toLowerCase();
@@ -1099,14 +1190,23 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       }
 
       // Rebuild system prompt and update the engine
+      const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
       this.baseSystemPrompt = buildBaseSystemPrompt({
         personaSystemPrompt: this.currentPersona.systemPrompt,
+        skillsBlock: skillsContext.skillsBlock,
         projectContextBlock: this.projectContextBlock,
         environmentTag: this.environmentTag,
         previousSessionSummary: this.previousSessionSummary,
         userPreferences: this.config.userPreferences,
       });
       this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
+
+      if (skillsContext.unknown.length > 0) {
+        this.addSystemMessage(
+          `warning: unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
+          palette.noticeWarn,
+        );
+      }
 
       // Update UI
       this.updateFooter();
@@ -1115,12 +1215,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       // Display summary
       const personaCount = personas.length;
       const promptCount = prompts.length;
+      const skillCount = skills.length;
       const bashCount = bashResult.commands.length;
       const errorCount = errors.length + bashResult.errors.length;
       const summary =
         errorCount > 0
-          ? `reloaded: ${personaCount} personas, ${promptCount} prompts, ${bashCount} bash commands (${errorCount} errors).`
-          : `reloaded: ${personaCount} personas, ${promptCount} prompts, ${bashCount} bash commands.`;
+          ? `reloaded: ${personaCount} personas, ${promptCount} prompts, ${skillCount} skills, ${bashCount} bash commands (${errorCount} errors).`
+          : `reloaded: ${personaCount} personas, ${promptCount} prompts, ${skillCount} skills, ${bashCount} bash commands.`;
 
       this.addSystemMessage(summary, palette.noticeSuccess);
       this.ui.requestRender();

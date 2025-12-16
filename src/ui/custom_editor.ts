@@ -10,6 +10,21 @@ export class CustomEditor extends Editor {
   public onAltUp?: () => void;
   public beforeSubmit?: (text: string) => boolean;
 
+  getCursor(): { line: number; col: number } {
+    // FIXME: should use the `pi-tui` methods once they become available
+    const state = (this as unknown as { state?: { cursorLine: number; cursorCol: number } }).state;
+    return {
+      line: state?.cursorLine ?? 0,
+      col: state?.cursorCol ?? 0,
+    };
+  }
+
+  getLines(): string[] {
+    // FIXME: should use the `pi-tui` methods once they become available
+    const state = (this as unknown as { state?: { lines: string[] } }).state;
+    return state?.lines ? [...state.lines] : this.getText().split("\n");
+  }
+
   handleInput(data: string): void {
     if ((data === "\x1b[Z" || data === "\x1b[1;2Z") && this.onShiftTab) {
       this.onShiftTab();

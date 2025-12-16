@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { personas as builtinPersonas } from "./personas.js";
@@ -9,8 +9,9 @@ import { prompts as builtinPrompts } from "./prompts.js";
 import type { SubagentConfigMap, SubagentPersonaConfig } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
+import { TASK_TOOL } from "./tools/task.js";
 import { WRITE_TOOL } from "./tools/write.js";
-import type { Persona, ReasoningEffort } from "./types.js";
+import type { Persona, ReasoningEffort, Skill } from "./types.js";
 import { REASONING_LEVELS } from "./types.js";
 
 interface FrontMatter {
@@ -106,8 +107,8 @@ function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return typeof value === "string" && REASONING_LEVELS.includes(value as ReasoningEffort);
 }
 
-function isSubagentName(value: unknown): value is "explore" {
-  return value === "explore";
+function isSubagentName(value: unknown): value is "explore" | "web" {
+  return value === "explore" || value === "web";
 }
 
 interface PartialSubagentConfig {
@@ -271,6 +272,23 @@ function parsePersona(
     ? allowedReasoningLevelsRaw.filter(isReasoningEffort)
     : undefined;
 
+  const skillsRaw = frontMatter.skills;
+  let skills: string[] | undefined;
+  if (typeof skillsRaw === "string") {
+    const trimmed = skillsRaw.trim();
+    skills = trimmed ? [trimmed] : undefined;
+  } else if (Array.isArray(skillsRaw)) {
+    for (const skill of skillsRaw) {
+      if (typeof skill !== "string") {
+        return { error: `${file}: skills must contain only strings. skipped.` };
+      }
+    }
+    const trimmed = skillsRaw.map((s) => s.trim()).filter(Boolean);
+    skills = trimmed.length > 0 ? trimmed : undefined;
+  } else if (skillsRaw !== undefined) {
+    return { error: `${file}: skills must be a string or list of strings. skipped.` };
+  }
+
   // Parse subagents
   const subagentsResult = parseSubagentConfig(frontMatter.subagents);
   if (subagentsResult.error) {
@@ -284,16 +302,32 @@ function parsePersona(
     for (const [name, cfg] of Object.entries(subagentsResult.config)) {
       if (!isSubagentName(name)) continue; // Validate name is a known subagent
       const subagentModel = cfg.model ?? modelObj;
-      const settings: SubagentPersonaConfig["settings"] = {};
-      if (cfg.reasoning !== undefined && cfg.reasoning !== "none") {
-        settings.reasoning = cfg.reasoning;
+
+      let subagentSettings: SubagentPersonaConfig["settings"] | undefined;
+      if (cfg.reasoning !== undefined) {
+        subagentSettings = cfg.reasoning === "none" ? {} : { reasoning: cfg.reasoning };
+      } else if (Object.keys(settings).length > 0) {
+        const { reasoning, ...rest } = settings;
+        subagentSettings = {
+          ...rest,
+          ...(reasoning && reasoning !== "none" ? { reasoning } : {}),
+        };
       }
+
       finalSubagents[name] = {
         model: subagentModel,
-        ...(Object.keys(settings).length > 0 && { settings }),
+        ...(subagentSettings && { settings: subagentSettings }),
       };
     }
+
+    if (Object.keys(finalSubagents).length === 0) {
+      finalSubagents = undefined;
+    }
   }
+
+  const tools = finalSubagents
+    ? [BASH_TOOL, WRITE_TOOL, EDIT_TOOL, TASK_TOOL]
+    : [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
 
   const persona: Persona = {
     id,
@@ -301,12 +335,13 @@ function parsePersona(
     model: modelObj,
     systemPrompt: body,
     settings,
-    tools: [BASH_TOOL, WRITE_TOOL, EDIT_TOOL],
+    tools,
     ...(description && { description }),
     ...(filteredReasoningLevels && filteredReasoningLevels.length > 0
       ? { allowedReasoningLevels: filteredReasoningLevels }
       : {}),
     ...(finalSubagents && { subagents: finalSubagents }),
+    ...(skills && { skills }),
   };
 
   return { persona };
@@ -449,9 +484,85 @@ export async function loadProjectPrompts(): Promise<{
   return { prompts, errors };
 }
 
+function parseSkill(filePath: string, content: string): { skill?: Skill; error?: string } {
+  const { frontMatter } = parseMarkdownWithFrontMatter(content);
+
+  const name = typeof frontMatter.name === "string" ? frontMatter.name.trim() : "";
+  const description =
+    typeof frontMatter.description === "string" ? frontMatter.description.trim() : "";
+
+  if (!name || !description) {
+    return { error: `${filePath}: missing required fields (name, description). skipped.` };
+  }
+
+  return {
+    skill: {
+      name,
+      description,
+      path: resolve(filePath),
+    },
+  };
+}
+
+function loadSkillsFromDir(skillsDir: string): { skills: Skill[]; errors: string[] } {
+  if (!existsSync(skillsDir)) {
+    return { skills: [], errors: [] };
+  }
+
+  let entries: string[];
+  try {
+    entries = readdirSync(skillsDir);
+  } catch {
+    return { skills: [], errors: [`failed to read directory: ${skillsDir}`] };
+  }
+
+  const skills: Skill[] = [];
+  const errors: string[] = [];
+
+  for (const entry of entries) {
+    const filePath = join(skillsDir, entry, "SKILL.md");
+    if (!existsSync(filePath)) continue;
+
+    let content = "";
+    try {
+      content = readFileSync(filePath, "utf-8");
+    } catch {
+      errors.push(`failed to read file: ${filePath}`);
+      continue;
+    }
+
+    const result = parseSkill(filePath, content);
+    if (result.skill) {
+      skills.push(result.skill);
+    } else if (result.error) {
+      errors.push(result.error);
+    }
+  }
+
+  return { skills, errors };
+}
+
+export async function loadUserSkills(): Promise<{
+  skills: Skill[];
+  errors: string[];
+}> {
+  const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const skillsDir = join(configDir, "tau", "skills");
+  return loadSkillsFromDir(skillsDir);
+}
+
+export async function loadProjectSkills(): Promise<{
+  skills: Skill[];
+  errors: string[];
+}> {
+  const skillsDir = join(process.cwd(), ".tau", "skills");
+  return loadSkillsFromDir(skillsDir);
+}
+
 export async function loadAllContent(): Promise<{
   personas: Persona[];
   prompts: PromptTemplate[];
+  skills: Skill[];
   errors: string[];
 }> {
   try {
@@ -459,13 +570,29 @@ export async function loadAllContent(): Promise<{
     const projectPersonasResult = await loadProjectPersonas();
     const userPromptsResult = await loadUserPrompts();
     const projectPromptsResult = await loadProjectPrompts();
+    const userSkillsResult = await loadUserSkills();
+    const projectSkillsResult = await loadProjectSkills();
 
     const allErrors = [
       ...userPersonasResult.errors,
       ...projectPersonasResult.errors,
       ...userPromptsResult.errors,
       ...projectPromptsResult.errors,
+      ...userSkillsResult.errors,
+      ...projectSkillsResult.errors,
     ];
+
+    const skillsByName = new Map<string, Skill>();
+    for (const skill of userSkillsResult.skills) {
+      skillsByName.set(skill.name.toLowerCase(), skill);
+    }
+    for (const skill of projectSkillsResult.skills) {
+      skillsByName.set(skill.name.toLowerCase(), skill);
+    }
+
+    const skills = Array.from(skillsByName.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+    );
 
     return {
       personas: mergeById(
@@ -474,12 +601,14 @@ export async function loadAllContent(): Promise<{
         projectPersonasResult.personas,
       ),
       prompts: mergeById(builtinPrompts, userPromptsResult.prompts, projectPromptsResult.prompts),
+      skills,
       errors: allErrors,
     };
   } catch (err) {
     return {
       personas: builtinPersonas,
       prompts: builtinPrompts,
+      skills: [],
       errors: [`unexpected error loading user content: ${(err as Error).message}`],
     };
   }

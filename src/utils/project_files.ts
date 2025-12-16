@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 const DEFAULT_IGNORED_DIRS = new Set([".git", "node_modules"]);
 
@@ -76,6 +76,16 @@ function listProjectFilesFromGit(cwd: string): string[] {
     if (inside.status !== 0) return [];
     if ((inside.stdout ?? "").trim() !== "true") return [];
 
+    const rootRes = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    if (rootRes.status !== 0) return [];
+
+    const repoRoot = (rootRes.stdout ?? "").trim();
+    if (!repoRoot) return [];
+
     const res = spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], {
       cwd,
       encoding: "utf-8",
@@ -87,7 +97,8 @@ function listProjectFilesFromGit(cwd: string): string[] {
     const files = (res.stdout ?? "")
       .split("\n")
       .map((l) => l.trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((file) => relative(cwd, join(repoRoot, file)));
 
     // Keep stable order and avoid duplicates.
     return [...new Set(files)].sort();
@@ -102,6 +113,12 @@ async function listProjectFilesFromGitAsync(cwd: string): Promise<string[]> {
     if (inside.status !== 0) return [];
     if ((inside.stdout ?? "").trim() !== "true") return [];
 
+    const rootRes = await runCommand(cwd, "git", ["rev-parse", "--show-toplevel"]);
+    if (rootRes.status !== 0) return [];
+
+    const repoRoot = (rootRes.stdout ?? "").trim();
+    if (!repoRoot) return [];
+
     const res = await runCommand(cwd, "git", [
       "ls-files",
       "--cached",
@@ -113,7 +130,8 @@ async function listProjectFilesFromGitAsync(cwd: string): Promise<string[]> {
     const files = (res.stdout ?? "")
       .split("\n")
       .map((l) => l.trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((file) => relative(cwd, join(repoRoot, file)));
 
     return [...new Set(files)].sort();
   } catch {

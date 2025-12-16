@@ -241,6 +241,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   const config = VARIANT_CONFIG[variant];
   const displaySuffix = config.suffix ? `-${variant}` : "";
   const skills = variant === "raw" ? spec.skills : "*";
+  const settings = structuredClone(spec.settings);
 
   let subagents: SubagentConfigMap | undefined;
   if (variant !== "raw") {
@@ -260,7 +261,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
     const webSpec = spec.subagents?.web ?? {};
     const webModel = webSpec.model ?? spec.model;
 
-    const { reasoning, ...rest } = spec.settings;
+    const { reasoning, ...rest } = settings;
     const inheritedSettings = {
       ...rest,
       ...(reasoning && reasoning !== "none" ? { reasoning } : {}),
@@ -290,7 +291,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
     model: spec.model,
     systemPrompt: config.systemPrompt,
     allowedReasoningLevels: spec.allowedReasoningLevels,
-    settings: spec.settings,
+    settings,
     ...(skills && { skills }),
     ...(subagents && { subagents }),
     tools,

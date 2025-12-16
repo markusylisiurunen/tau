@@ -166,3 +166,39 @@ export function renderBashBlocked(
     compactView: { segments, flexIndices: [5], extraText: details ? `    ${details}` : undefined },
   });
 }
+
+export function renderBashAborted(
+  command: string,
+  reason: string,
+  compact: boolean,
+): ToolOutputComponent {
+  const { palette } = theme;
+  const warnColor = (s: string) => palette.warn(s);
+
+  const parts: string[] = [warnColor(bold(`$ ${command}`))];
+  const msg = reason.trim();
+  if (msg) {
+    parts.push("");
+    parts.push(warnColor(msg));
+  }
+
+  const commandInline = inline(command);
+  const why = inline(reason);
+
+  const segments: OneLineSegment[] = [
+    { text: " ", style: (s) => s },
+    { text: "▪", style: warnColor },
+    { text: " ", style: (s) => s },
+    { text: inline(reason) || "aborted", style: palette.muted },
+    { text: " ", style: (s) => s },
+    { text: commandInline, style: palette.accent },
+  ];
+
+  const details = why ? palette.muted(`(${why})`) : undefined;
+
+  return new ToolOutputComponent({
+    compact,
+    expanded: { borderColor: warnColor, text: parts.join("\n") },
+    compactView: { segments, flexIndices: [5], extraText: details ? `    ${details}` : undefined },
+  });
+}

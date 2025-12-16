@@ -126,7 +126,7 @@ you can also pipe content directly:
 cat src/app.ts | tau --persona opus-4.5
 ```
 
-for project-aware sessions, use `--with-context` to inject your AGENTS.md (or similar project guidelines file) into the system prompt. run `tau --help` to see all available options.
+for project-aware sessions, use `--with-context` to inject your AGENTS.md into the system prompt. tau searches for this file in the current directory and parent directories up to your home folder. run `tau --help` to see all available options.
 
 ## memory mode
 
@@ -167,6 +167,7 @@ the fork commands are useful when conversations get long. they compress everythi
 | `ctrl+t`    | toggle thinking visibility  |
 | `ctrl+o`    | toggle compact tool display |
 | `ctrl+f`    | expand @file mentions       |
+| `alt+up`    | pop queued message          |
 | `esc`       | interrupt generation        |
 | `ctrl+c`    | exit                        |
 

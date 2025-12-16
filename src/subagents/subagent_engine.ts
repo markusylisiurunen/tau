@@ -7,7 +7,7 @@ import type {
   ToolCall,
 } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
-import { z } from "zod";
+import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
 import { createBashToolDefinition } from "../tools/bash.js";
@@ -28,18 +28,6 @@ import type {
   SubagentRuntimeDefinition,
 } from "./types.js";
 
-const StreamingSettingsSchema = z
-  .record(z.string(), z.unknown())
-  .transform((data): SimpleStreamOptions => {
-    const result = { ...data } as Record<string, unknown>;
-
-    // Handle reasoning field: convert "none" to undefined for pi-ai compatibility
-    if (result.reasoning === undefined || result.reasoning === "none") {
-      delete result.reasoning;
-    }
-
-    return result as unknown as SimpleStreamOptions;
-  });
 
 export type SubagentProgressEvent = {
   text: string;
@@ -55,7 +43,7 @@ export type SubagentRunResult = {
 
 function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): SimpleStreamOptions {
   const merged = { ...(settings ?? {}) } as Record<string, unknown>;
-  return StreamingSettingsSchema.parse(merged);
+  return parseStreamingSettings(merged);
 }
 
 function buildToolRegistryForAllowedTools(

@@ -30,7 +30,12 @@ import {
   type Skill,
 } from "./types.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
-import { renderBashBlocked, renderBashExecution, renderBashRunning } from "./ui/bash_execution.js";
+import {
+  renderBashAborted,
+  renderBashBlocked,
+  renderBashExecution,
+  renderBashRunning,
+} from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import { CustomEditor } from "./ui/custom_editor.js";
 import {
@@ -64,6 +69,20 @@ import { listProjectFiles, listProjectFilesAsync } from "./utils/project_files.j
 
 const { palette } = theme;
 
+type RunningBashComponent = {
+  index: number;
+  command: string;
+};
+
+type RunningTaskComponent = {
+  index: number;
+  name?: string;
+  title: string;
+  costTotal: number;
+  turns: number;
+  toolCalls: number;
+};
+
 export interface ChatAppOptions {
   personas: Persona[];
   prompts?: PromptTemplate[];
@@ -94,8 +113,8 @@ export class ChatApp {
 
   private assistantComponents: AssistantMessageComponent[] = [];
   private readonly engine: SessionEngine;
-  private runningBashComponents: Map<string, number> = new Map(); // toolCallId -> component index
-  private runningTaskComponents: Map<string, number> = new Map(); // toolCallId -> component index
+  private runningBashComponents: Map<string, RunningBashComponent> = new Map();
+  private runningTaskComponents: Map<string, RunningTaskComponent> = new Map();
   private taskEvents: Map<string, string[]> = new Map(); // toolCallId -> accumulated events
   private subagentCostTotal = 0;
 
@@ -1320,14 +1339,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const index = this.chatContainer.addToolMessage((compact) =>
                 renderBashRunning(uiEvent.command, compact),
               );
-              this.runningBashComponents.set(uiEvent.toolCallId, index);
+              this.runningBashComponents.set(uiEvent.toolCallId, { index, command: uiEvent.command });
               this.ui.requestRender();
             } else if (uiEvent.type === "bash_execution") {
               // Check if we have a running component for this toolCallId
-              const runningIndex = this.runningBashComponents.get(uiEvent.toolCallId);
-              if (runningIndex !== undefined) {
+              const running = this.runningBashComponents.get(uiEvent.toolCallId);
+              if (running) {
                 // Replace the running component with the finished execution component
-                this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
+                this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
                   renderBashExecution(
                     uiEvent.command,
                     uiEvent.exitCode,
@@ -1351,10 +1370,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
             } else if (uiEvent.type === "bash_blocked") {
               // Check if this is a post-acceptance failure that has a running card
               if (uiEvent.toolCallId) {
-                const runningIndex = this.runningBashComponents.get(uiEvent.toolCallId);
-                if (runningIndex !== undefined) {
+                const running = this.runningBashComponents.get(uiEvent.toolCallId);
+                if (running) {
                   // Replace the running component with the blocked component
-                  this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
+                  this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
                     renderBashBlocked(uiEvent.command, uiEvent.reason, compact),
                   );
                   this.runningBashComponents.delete(uiEvent.toolCallId);
@@ -1378,7 +1397,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const index = this.chatContainer.addToolMessage((compact) =>
                 renderTaskRunning(uiEvent.title, [], 0, 0, 0, compact, uiEvent.name),
               );
-              this.runningTaskComponents.set(uiEvent.toolCallId, index);
+              this.runningTaskComponents.set(uiEvent.toolCallId, {
+                index,
+                name: uiEvent.name,
+                title: uiEvent.title,
+                costTotal: 0,
+                turns: 0,
+                toolCalls: 0,
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "task_progress") {
               // Accumulate events for this task
@@ -1389,9 +1415,15 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               }
               events.push(uiEvent.event);
 
-              const runningIndex = this.runningTaskComponents.get(uiEvent.toolCallId);
-              if (runningIndex !== undefined) {
-                this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
+              const running = this.runningTaskComponents.get(uiEvent.toolCallId);
+              if (running) {
+                running.name = uiEvent.name;
+                running.title = uiEvent.title;
+                running.costTotal = uiEvent.costTotal;
+                running.turns = uiEvent.turns;
+                running.toolCalls = uiEvent.toolCalls;
+
+                this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
                   renderTaskRunning(
                     uiEvent.title,
                     events,
@@ -1414,13 +1446,20 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                     uiEvent.name,
                   ),
                 );
-                this.runningTaskComponents.set(uiEvent.toolCallId, index);
+                this.runningTaskComponents.set(uiEvent.toolCallId, {
+                  index,
+                  name: uiEvent.name,
+                  title: uiEvent.title,
+                  costTotal: uiEvent.costTotal,
+                  turns: uiEvent.turns,
+                  toolCalls: uiEvent.toolCalls,
+                });
               }
               this.ui.requestRender();
             } else if (uiEvent.type === "task_finished") {
-              const runningIndex = this.runningTaskComponents.get(uiEvent.toolCallId);
-              if (runningIndex !== undefined) {
-                this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
+              const running = this.runningTaskComponents.get(uiEvent.toolCallId);
+              if (running) {
+                this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
                   renderTaskFinished(
                     uiEvent.title,
                     uiEvent.costTotal,
@@ -1453,9 +1492,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.updateFooter();
               this.ui.requestRender();
             } else if (uiEvent.type === "task_blocked") {
-              const runningIndex = this.runningTaskComponents.get(uiEvent.toolCallId);
-              if (runningIndex !== undefined) {
-                this.chatContainer.replaceToolMessageAtIndex(runningIndex, (compact) =>
+              const running = this.runningTaskComponents.get(uiEvent.toolCallId);
+              if (running) {
+                this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
                   renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, uiEvent.name),
                 );
                 this.runningTaskComponents.delete(uiEvent.toolCallId);
@@ -1522,6 +1561,31 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     } catch (err) {
       this.addSystemMessage(`error: ${(err as Error).message}`, palette.noticeError);
     } finally {
+      const wasAborted = this.currentTurnAbort?.signal.aborted ?? false;
+      const reason = wasAborted ? "aborted" : "interrupted";
+
+      for (const running of this.runningBashComponents.values()) {
+        this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
+          renderBashAborted(running.command, reason, compact),
+        );
+      }
+
+      const taskStatus = wasAborted ? "aborted" : "error";
+      for (const running of this.runningTaskComponents.values()) {
+        this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
+          renderTaskFinished(
+            running.title,
+            running.costTotal,
+            running.turns,
+            running.toolCalls,
+            taskStatus,
+            reason,
+            compact,
+            running.name,
+          ),
+        );
+      }
+
       this.footer.stop();
       this.isStreaming = false;
       this.currentTurnAbort = undefined;

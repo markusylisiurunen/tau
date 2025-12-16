@@ -13,9 +13,11 @@ import type {
   ToolDispatchResultWithPhases,
   ToolUiEvent,
 } from "./registry.js";
-
-const PARALLEL_API_BASE_URL = "https://api.parallel.ai";
-const PARALLEL_BETA_HEADER = "search-extract-2025-10-10";
+import {
+  extractParallelErrorMessage,
+  PARALLEL_API_BASE_URL,
+  PARALLEL_BETA_HEADER,
+} from "./parallel_api.js";
 
 const WEB_SEARCH_DESCRIPTION = [
   "Search the web for relevant sources.",
@@ -81,19 +83,6 @@ const webSearchArgsSchema = z.object({
 
 type WebSearchArgs = z.infer<typeof webSearchArgsSchema>;
 
-const parallelApiErrorSchema = z.union([
-  z.object({
-    type: z.literal("error"),
-    error: z.object({
-      message: z.string(),
-    }),
-  }),
-  z.object({
-    message: z.string(),
-  }),
-]);
-
-type ParallelApiError = z.infer<typeof parallelApiErrorSchema>;
 
 const searchResultSchema = z
   .object({
@@ -138,24 +127,6 @@ function parseArgs(raw: unknown): WebSearchArgs {
   };
 }
 
-function extractParallelErrorMessage(raw: unknown): string | undefined {
-  const parsed = parallelApiErrorSchema.safeParse(raw);
-  if (!parsed.success) return undefined;
-
-  const obj: ParallelApiError = parsed.data;
-
-  if ("type" in obj && obj.type === "error") {
-    const msg = obj.error.message.trim();
-    return msg ? msg : undefined;
-  }
-
-  if ("message" in obj) {
-    const msg = obj.message.trim();
-    return msg ? msg : undefined;
-  }
-
-  return undefined;
-}
 
 function estimateParallelSearchCostUsd(
   maxResultsRequested: number | undefined,

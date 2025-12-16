@@ -43,7 +43,7 @@ Risk levels (`none`, `read-only`, `read-write`) gate model tool calls. The model
 
 ## Personas and subagents
 
-**Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/2.5 Flash) × 3 variants (basic, coder, raw) = 15 personas. Basic and coder variants include the **web** subagent for agentic web research, and coder variants also include the **explore** subagent for multi-turn read-only codebase investigation. Non-raw built-in personas have `skills: "*"` to enable all discovered skills by default.
+**Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/2.5 Flash) × 3 variants (basic, coder, raw) = 15 personas. Basic and coder variants include the **web** subagent (max 32 turns) for agentic web research, and coder variants also include the **explore** subagent (max 64 turns) for multi-turn read-only codebase investigation. Non-raw built-in personas have `skills: "*"` to enable all discovered skills by default.
 
 Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields:
 
@@ -61,6 +61,7 @@ On conflicts, project personas override user and built-in personas.
   - `apiKeys.parallel` (optional): Parallel API key for the `web` subagent.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`none`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
+- **Project Context**: `AGENTS.md` (searched from current directory up to home)
 - **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
 - **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (YAML frontmatter with `id`, project overrides on conflicts)
 - **Skills**: user-level `~/.config/tau/skills/<dir>/SKILL.md` and project-level `.tau/skills/<dir>/SKILL.md` (YAML frontmatter with `name`, `description`, project overrides on conflicts by `name`)
@@ -73,7 +74,7 @@ On conflicts, project personas override user and built-in personas.
 - `!<cmd>` - Direct bash execution (bypasses model)
 - `#<request>` - Memory mode for updating AGENTS.md
 
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @files), `Escape` (interrupt)
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @files), `Alt+Up` (pop queued message), `Escape` (interrupt), `Ctrl+C` (exit)
 
 ## Development
 

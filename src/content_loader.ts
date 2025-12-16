@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { z } from "zod";
+import { parse as parseYaml } from "yaml";
 import { personas as builtinPersonas } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
 import { prompts as builtinPrompts } from "./prompts.js";
@@ -47,58 +48,22 @@ function parseMarkdownWithFrontMatter(content: string): { frontMatter: FrontMatt
   const frontMatterLines = lines.slice(1, endIndex);
   const bodyLines = lines.slice(endIndex + 1);
 
-  const frontMatter = parseSimpleYaml(frontMatterLines.join("\n"));
+  const frontMatter = parseYamlFrontMatter(frontMatterLines.join("\n"));
   const body = bodyLines.join("\n").trim();
 
   return { frontMatter, body };
 }
 
-function parseSimpleYaml(yamlText: string): FrontMatter {
-  const result: FrontMatter = {};
-  const lines = yamlText.split("\n");
-
-  let currentKey: string | undefined;
-  let currentList: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    if (trimmed.startsWith("- ")) {
-      const item = trimmed.slice(2).trim();
-      currentList.push(item);
-      continue;
+function parseYamlFrontMatter(yamlText: string): FrontMatter {
+  try {
+    const parsed = parseYaml(yamlText) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
     }
-
-    if (currentKey && currentList.length > 0) {
-      result[currentKey] = currentList;
-      currentList = [];
-    }
-
-    const colonIndex = line.indexOf(":");
-    if (colonIndex > 0) {
-      currentKey = line.substring(0, colonIndex).trim();
-      const valueStr = line.substring(colonIndex + 1).trim();
-
-      if (valueStr) {
-        if (valueStr.toLowerCase() === "true") {
-          result[currentKey] = true;
-        } else if (valueStr.toLowerCase() === "false") {
-          result[currentKey] = false;
-        } else if (!Number.isNaN(Number(valueStr))) {
-          result[currentKey] = Number(valueStr);
-        } else {
-          result[currentKey] = valueStr;
-        }
-      }
-    }
+    return parsed as FrontMatter;
+  } catch {
+    return {};
   }
-
-  if (currentKey && currentList.length > 0) {
-    result[currentKey] = currentList;
-  }
-
-  return result;
 }
 
 function isKnownProvider(value: string): value is KnownProvider {

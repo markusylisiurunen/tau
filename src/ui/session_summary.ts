@@ -1,15 +1,6 @@
-import { type Component, Container, Markdown, Text } from "@mariozechner/pi-tui";
+import { Container, Markdown, Text } from "@mariozechner/pi-tui";
+import { DynamicBorder } from "./components/dynamic_border.js";
 import { theme } from "./theme.js";
-
-class DynamicBorder implements Component {
-  constructor(private color: (s: string) => string) {}
-
-  invalidate() {}
-
-  render(width: number) {
-    return [this.color("─".repeat(Math.max(1, width)))];
-  }
-}
 
 export class SessionSummaryComponent extends Container {
   constructor(summary: string) {

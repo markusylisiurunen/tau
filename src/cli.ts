@@ -10,6 +10,7 @@ import {
 
 export const CliOptionsSchema = z.object({
   help: z.boolean(),
+  debug: z.boolean(),
   personaId: z.string().optional(),
   reasoningOverride: ReasoningEffortSchema.optional(),
   riskLevel: RiskLevelSchema.optional(),
@@ -94,6 +95,7 @@ function parseValue(
 
 export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let help = false;
+  let debug = false;
   let personaId: string | undefined;
   let reasoningOverride: ReasoningEffort | undefined;
   let riskLevel: RiskLevel | undefined;
@@ -104,6 +106,11 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
 
     if (arg === "--help" || arg === "-h") {
       help = true;
+      continue;
+    }
+
+    if (arg === "--debug") {
+      debug = true;
       continue;
     }
 
@@ -149,7 +156,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     throw new CliError(`unexpected argument: ${arg}`);
   }
 
-  const options = { help, personaId, reasoningOverride, riskLevel, withContext };
+  const options = { help, debug, personaId, reasoningOverride, riskLevel, withContext };
   return CliOptionsSchema.parse(options);
 }
 
@@ -167,6 +174,7 @@ export function printHelp(personas: Persona[]): void {
       "",
       "options:",
       "  --help                        show this help and exit.",
+      "  --debug                       print debug info (personas, prompts, skills, system prompt) and exit.",
       `  --persona, -p <id>[:<level>]  start with a persona. available: ${personaList}.`,
       `                                optionally specify reasoning level. levels: ${reasoningList}.`,
       `                                if not specified, uses defaultPersona from ~/.config/tau/config.json.`,

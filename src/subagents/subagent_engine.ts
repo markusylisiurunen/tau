@@ -7,7 +7,6 @@ import type {
   ToolCall,
 } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
-import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
 import { createBashToolDefinition } from "../tools/bash.js";
@@ -22,12 +21,12 @@ import { createWebFetchToolDefinition } from "../tools/web_fetch.js";
 import { createWebSearchToolDefinition } from "../tools/web_search.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, extractAssistantText } from "../utils/messages.js";
+import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import type {
   AllowedSubagentToolName,
   SubagentPersonaConfig,
   SubagentRuntimeDefinition,
 } from "./types.js";
-
 
 export type SubagentProgressEvent = {
   text: string;

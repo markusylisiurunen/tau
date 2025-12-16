@@ -7,17 +7,17 @@ import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { truncateMiddleForModel } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
+import {
+  extractParallelErrorMessage,
+  PARALLEL_API_BASE_URL,
+  PARALLEL_BETA_HEADER,
+} from "./parallel_api.js";
 import type {
   ToolDefinition,
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
   ToolUiEvent,
 } from "./registry.js";
-import {
-  extractParallelErrorMessage,
-  PARALLEL_API_BASE_URL,
-  PARALLEL_BETA_HEADER,
-} from "./parallel_api.js";
 
 const WEB_FETCH_DESCRIPTION = [
   "Fetch and extract relevant content from a URL.",
@@ -83,7 +83,6 @@ const webFetchArgsSchema = z.object({
 
 type WebFetchArgs = z.infer<typeof webFetchArgsSchema>;
 
-
 const extractResultSchema = z
   .object({
     url: z.string().catch(""),
@@ -138,7 +137,6 @@ function parseArgs(raw: unknown): WebFetchArgs {
     ...(args.maxCharsPerResult !== undefined && { maxCharsPerResult: args.maxCharsPerResult }),
   };
 }
-
 
 function estimateParallelExtractCostUsd(urlCount: number): number {
   return 0.001 * urlCount;

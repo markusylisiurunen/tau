@@ -66,6 +66,16 @@ On conflicts, project personas override user and built-in personas.
 - **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (YAML frontmatter with `id`, project overrides on conflicts)
 - **Skills**: user-level `~/.config/tau/skills/<dir>/SKILL.md` and project-level `.tau/skills/<dir>/SKILL.md` (YAML frontmatter with `name`, `description`, project overrides on conflicts by `name`)
 
+## CLI flags
+
+- `--help`, `-h` - Show help and exit
+- `--debug` - Print debug info (loaded personas, prompts, bash commands, skills, full system prompt, tool schemas) and exit
+- `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
+- `--risk <level>`, `-r` - Set initial risk level (`none`, `read-only`, `read-write`)
+- `--with-context` - Inject AGENTS.md into the system prompt
+
+The `--debug` flag respects `--persona` and `--with-context`, so you can inspect exactly what system prompt a given configuration produces.
+
 ## Commands
 
 - `/help`, `/new`, `/copy`, `/copy:code`, `/reload`

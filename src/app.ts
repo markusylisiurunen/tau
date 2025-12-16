@@ -1339,7 +1339,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const index = this.chatContainer.addToolMessage((compact) =>
                 renderBashRunning(uiEvent.command, compact),
               );
-              this.runningBashComponents.set(uiEvent.toolCallId, { index, command: uiEvent.command });
+              this.runningBashComponents.set(uiEvent.toolCallId, {
+                index,
+                command: uiEvent.command,
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "bash_execution") {
               // Check if we have a running component for this toolCallId

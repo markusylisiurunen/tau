@@ -5,6 +5,7 @@ import type { CliOptions } from "./cli.js";
 import { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
 import { loadConfig } from "./config.js";
 import { loadAllContent } from "./content_loader.js";
+import { printDebugInfo } from "./debug.js";
 import type { PromptTemplate } from "./prompts.js";
 import type { Persona, ReasoningEffort, Skill } from "./types.js";
 
@@ -64,6 +65,41 @@ try {
 
 if (cli.help) {
   printHelp(personas);
+  process.exit(0);
+}
+
+if (cli.debug) {
+  let debugPersonaId: string | undefined;
+  let debugReasoningOverride: ReasoningEffort | undefined;
+
+  if (cli.personaId) {
+    debugPersonaId = cli.personaId;
+  } else if (config.defaultPersona) {
+    const parsed = parsePersonaString(config.defaultPersona, personas);
+    debugPersonaId = parsed.personaId;
+    debugReasoningOverride = parsed.reasoning;
+  }
+
+  if (cli.reasoningOverride !== undefined) {
+    debugReasoningOverride = cli.reasoningOverride;
+  }
+
+  const debugPersona = debugPersonaId
+    ? (personas.find((p) => p.id === debugPersonaId) ?? personas[0]!)
+    : personas[0]!;
+
+  if (debugReasoningOverride !== undefined) {
+    debugPersona.settings.reasoning = debugReasoningOverride;
+  }
+
+  printDebugInfo({
+    personas,
+    prompts,
+    bashCommands,
+    skills,
+    selectedPersona: debugPersona,
+    withContext: cli.withContext,
+  });
   process.exit(0);
 }
 

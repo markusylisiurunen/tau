@@ -8,7 +8,6 @@ import type {
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
-import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
 import { formatSubagentsForPrompt } from "../subagents/registry.js";
@@ -21,8 +20,8 @@ import type {
 } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
+import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import { type AssistantPartialSnapshot, MessageAccumulator } from "./message_accumulator.js";
-
 
 const MAX_ASSISTANT_SUBTURNS = 128;
 

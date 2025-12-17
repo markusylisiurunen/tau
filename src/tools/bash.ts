@@ -20,11 +20,17 @@ import type {
 export const BASH_MAX_CAPTURE_BYTES = 2 * 1024 * 1024; // 2MB
 
 export const BASH_DISPLAY_MAX_LINES = 32;
-export const BASH_DISPLAY_MAX_BYTES = 50 * 1024; // 50KB
+export const BASH_DISPLAY_MAX_TOKENS = 5000;
 
-export const BASH_MODEL_MAX_LINES = 10_000;
-export const BASH_MODEL_MAX_BYTES = 1024 * 1024; // 1MB
-export const BASH_MODEL_BYTES_PER_TOKEN = 4;
+export const BASH_TOOL_MAX_STDOUT_LINES = 4096;
+export const BASH_TOOL_MAX_STDOUT_TOKENS = 25000;
+export const BASH_TOOL_MAX_STDERR_LINES = 4096;
+export const BASH_TOOL_MAX_STDERR_TOKENS = 25000;
+
+export const BASH_USER_MAX_STDOUT_LINES = 16384;
+export const BASH_USER_MAX_STDOUT_TOKENS = 100000;
+export const BASH_USER_MAX_STDERR_LINES = 4096;
+export const BASH_USER_MAX_STDERR_TOKENS = 25000;
 
 export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 export const BASH_KILL_GRACE_MS = 2_000;
@@ -114,33 +120,63 @@ export interface BashTruncationInfo {
   hasStderr: boolean;
 }
 
-function combineOutputForDisplay(stdout: string, stderr: string): string {
-  const parts: string[] = [];
-  if (stdout.trim()) {
-    parts.push(stdout);
-  }
-  if (stderr.trim()) {
-    parts.push(`[stderr]\n${stderr}`);
-  }
-  return parts.join("\n");
-}
-
 export function prepareBashOutput(
   stdout: string,
   stderr: string,
   captureTruncated: boolean,
+  limits: {
+    stdout: { maxLines: number; maxTokens: number };
+    stderr: { maxLines: number; maxTokens: number };
+  },
 ): BashTruncationInfo {
-  const combined = combineOutputForDisplay(stdout, stderr);
-
-  const modelTruncation = truncateMiddleForModel(combined, {
-    maxLines: BASH_MODEL_MAX_LINES,
-    maxBytes: BASH_MODEL_MAX_BYTES,
-    bytesPerTokenApprox: BASH_MODEL_BYTES_PER_TOKEN,
+  const stdoutTrunc = truncateMiddleForModel(stdout, {
+    maxLines: limits.stdout.maxLines,
+    maxTokens: limits.stdout.maxTokens,
   });
+
+  const stderrTrunc = truncateMiddleForModel(stderr, {
+    maxLines: limits.stderr.maxLines,
+    maxTokens: limits.stderr.maxTokens,
+  });
+
+  const stdoutHasOutput = stdoutTrunc.content.trim().length > 0;
+  const stderrHasOutput = stderrTrunc.content.trim().length > 0;
+
+  const combinedParts: string[] = [];
+  if (stdoutHasOutput) {
+    combinedParts.push(stdoutTrunc.content);
+  }
+  if (stderrHasOutput) {
+    combinedParts.push(`[stderr]\n${stderrTrunc.content}`);
+  }
+  const combined = combinedParts.join("\n");
+
+  const combinedTotalParts: string[] = [];
+  const stdoutTotalHasOutput = stdout.trim().length > 0;
+  const stderrTotalHasOutput = stderr.trim().length > 0;
+  if (stdoutTotalHasOutput) {
+    combinedTotalParts.push(stdout);
+  }
+  if (stderrTotalHasOutput) {
+    combinedTotalParts.push(`[stderr]\n${stderr}`);
+  }
+  const combinedTotal = combinedTotalParts.join("\n");
+
+  const modelTruncation: TruncationResult = {
+    content: combined,
+    truncated: stdoutTrunc.truncated || stderrTrunc.truncated,
+    truncatedBy: (stdoutTrunc.truncatedBy || stderrTrunc.truncatedBy) as "lines" | "bytes" | null,
+    totalLines: combinedTotal === "" ? 0 : combinedTotal.split("\n").length,
+    totalBytes: Buffer.byteLength(combinedTotal, "utf-8"),
+    outputLines: combined === "" ? 0 : combined.split("\n").length,
+    outputBytes: Buffer.byteLength(combined, "utf-8"),
+    maxLines: limits.stdout.maxLines + limits.stderr.maxLines,
+    maxTokens: limits.stdout.maxTokens + limits.stderr.maxTokens,
+  };
 
   const displayTruncation = truncateMiddle(modelTruncation.content, {
     maxLines: BASH_DISPLAY_MAX_LINES,
-    maxBytes: BASH_DISPLAY_MAX_BYTES,
+    maxTokens: BASH_DISPLAY_MAX_TOKENS,
   });
 
   return {
@@ -416,7 +452,16 @@ export function createBashToolDefinition(): ToolDefinition {
               truncated: captureTruncated,
             } = await executeBashTool(command, { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS });
 
-            const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated);
+            const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {
+              stdout: {
+                maxLines: BASH_TOOL_MAX_STDOUT_LINES,
+                maxTokens: BASH_TOOL_MAX_STDOUT_TOKENS,
+              },
+              stderr: {
+                maxLines: BASH_TOOL_MAX_STDERR_LINES,
+                maxTokens: BASH_TOOL_MAX_STDERR_TOKENS,
+              },
+            });
             const toolText = formatBashToolResultText({ truncationInfo, exitCode });
             const isError = exitCode !== null && exitCode !== 0;
 

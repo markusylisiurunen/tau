@@ -14,6 +14,10 @@ import { SessionEngine } from "./session/session_engine.js";
 import { formatSubagentsForPrompt } from "./subagents/registry.js";
 import { createAppTerminal } from "./terminal.js";
 import {
+  BASH_USER_MAX_STDERR_LINES,
+  BASH_USER_MAX_STDERR_TOKENS,
+  BASH_USER_MAX_STDOUT_LINES,
+  BASH_USER_MAX_STDOUT_TOKENS,
   createBashToolDefinition,
   executeBashTool,
   formatBashUserMessageText,
@@ -1618,7 +1622,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         exitCode,
         truncated: captureTruncated,
       } = await executeBashTool(command, { cwd: opts?.cwd });
-      const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated);
+      const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {
+        stdout: { maxLines: BASH_USER_MAX_STDOUT_LINES, maxTokens: BASH_USER_MAX_STDOUT_TOKENS },
+        stderr: { maxLines: BASH_USER_MAX_STDERR_LINES, maxTokens: BASH_USER_MAX_STDERR_TOKENS },
+      });
 
       this.chatContainer.addMessage(renderBashExecution(command, exitCode, truncationInfo, false));
 

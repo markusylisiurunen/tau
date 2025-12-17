@@ -37,13 +37,26 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 Risk levels (`none`, `read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
 
-**Bash limits**: 2MB capture, 1MB to model context, 50KB to display, 60s timeout. Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/tools/bash.ts`).
+**Bash limits**: 2MB raw capture, 60s timeout. Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/tools/bash.ts`).
+
+**Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
+
+- **Bash (assistant)**: 4,096 lines / 25,000 tokens for stdout and stderr separately.
+- **Bash (user/!/@)**: 16,384 lines / 100,000 tokens for stdout; 4,096 lines / 25,000 tokens for stderr.
+- **web_fetch**: 8,192 lines / 50,000 tokens.
+- **web_search**: 4,096 lines / 25,000 tokens.
+
+**UI truncation**:
+
+- **Bash**: 32 lines / 5,000 tokens from the middle.
+- **write**: 16 lines preview from the start.
+- **edit**: 200 lines / 5,000 tokens from the middle.
 
 **Subagent-only tools**: the `web` subagent uses `web_search` and `web_fetch` (see `src/tools/web_search.ts`, `src/tools/web_fetch.ts`) via the subagent tool registry in `src/subagents/subagent_engine.ts`.
 
 ## Personas and subagents
 
-**Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/2.5 Flash) × 3 variants (basic, coder, raw) = 15 personas. Basic and coder variants include the **web** subagent (max 32 turns) for agentic web research, and coder variants also include the **explore** subagent (max 64 turns) for multi-turn read-only codebase investigation. Non-raw built-in personas have `skills: "*"` to enable all discovered skills by default.
+**Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/2.5 Flash) × 3 variants (basic, coder, raw) = 15 personas. Basic and coder variants include the **web** subagent (max 64 turns) for agentic web research, and coder variants also include the **explore** subagent (max 64 turns) for multi-turn read-only codebase investigation. Non-raw built-in personas have `skills: "*"` to enable all discovered skills by default.
 
 Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields:
 

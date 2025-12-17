@@ -188,9 +188,8 @@ function formatExtractResults(response: ExtractResponse): string {
 
   const formatted = lines.join("\n");
   return truncateMiddleForModel(formatted, {
-    maxLines: 4000,
-    maxBytes: 250_000,
-    bytesPerTokenApprox: 4,
+    maxLines: 8192,
+    maxTokens: 50000,
   }).content;
 }
 

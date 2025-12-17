@@ -164,9 +164,8 @@ function formatSearchResults(response: ParallelSearchResponse): string {
 
   const formatted = lines.join("\n");
   return truncateMiddleForModel(formatted, {
-    maxLines: 4000,
-    maxBytes: 200_000,
-    bytesPerTokenApprox: 4,
+    maxLines: 4096,
+    maxTokens: 25000,
   }).content;
 }
 

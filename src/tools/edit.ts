@@ -4,6 +4,7 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
+import { bytesToTokens } from "../utils/token.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
 
 const EDIT_DESCRIPTION = [
@@ -58,7 +59,7 @@ function countOccurrences(content: string, search: string): number {
 }
 
 const DIFF_MAX_LINES = 200;
-const DIFF_MAX_BYTES = 40_000;
+const DIFF_MAX_TOKENS = 5000;
 
 interface DiffResult {
   diff: string;
@@ -95,12 +96,13 @@ function buildSimpleDiff(oldText: string, newText: string): DiffResult {
 
   let diff = outputLines.join("\n");
 
-  // Truncate by bytes if needed
-  const byteLength = Buffer.byteLength(diff, "utf-8");
-  if (byteLength > DIFF_MAX_BYTES) {
-    // Simple byte truncation from middle
+  // Truncate by tokens if needed
+  if (bytesToTokens(Buffer.byteLength(diff, "utf-8")) > DIFF_MAX_TOKENS) {
     const lines = diff.split("\n");
-    while (Buffer.byteLength(lines.join("\n"), "utf-8") > DIFF_MAX_BYTES && lines.length > 2) {
+    while (
+      bytesToTokens(Buffer.byteLength(lines.join("\n"), "utf-8")) > DIFF_MAX_TOKENS &&
+      lines.length > 2
+    ) {
       const mid = Math.floor(lines.length / 2);
       lines.splice(mid, 1);
     }

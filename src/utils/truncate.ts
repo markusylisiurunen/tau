@@ -1,3 +1,5 @@
+import { BYTES_PER_TOKEN } from "./token.js";
+
 export interface TruncationResult {
   content: string;
   truncated: boolean;
@@ -7,23 +9,30 @@ export interface TruncationResult {
   outputLines: number;
   outputBytes: number;
   maxLines: number;
-  maxBytes: number;
+  maxTokens: number;
 }
 
 export interface TruncateMiddleOptions {
   maxLines: number;
-  maxBytes: number;
+  maxBytes?: number;
+  maxTokens?: number;
   marker?: string;
 }
 
 export interface TruncateMiddleForModelOptions {
   maxLines: number;
-  maxBytes: number;
-  bytesPerTokenApprox?: number;
+  maxBytes?: number;
+  maxTokens?: number;
 }
 
 const DEFAULT_MIDDLE_MARKER = "… (truncated) …";
-const DEFAULT_BYTES_PER_TOKEN = 4;
+
+function getEffectiveMaxBytes(options: { maxBytes?: number; maxTokens?: number }): number {
+  if (options.maxTokens !== undefined) {
+    return options.maxTokens * BYTES_PER_TOKEN;
+  }
+  return options.maxBytes ?? Number.POSITIVE_INFINITY;
+}
 
 function truncateStringToBytesFromMiddle(str: string, maxBytes: number, marker: string): string {
   const markerBytes = Buffer.byteLength(marker, "utf-8");
@@ -44,8 +53,9 @@ export function truncateMiddleForModel(
   content: string,
   options: TruncateMiddleForModelOptions,
 ): TruncationResult {
-  const { maxLines, maxBytes } = options;
-  const bytesPerTokenApprox = options.bytesPerTokenApprox ?? DEFAULT_BYTES_PER_TOKEN;
+  const { maxLines } = options;
+  const maxBytes = getEffectiveMaxBytes(options);
+  const maxTokens = options.maxTokens ?? Math.floor(maxBytes / BYTES_PER_TOKEN);
 
   const totalBytes = Buffer.byteLength(content, "utf-8");
   const lines = content.split("\n");
@@ -61,13 +71,13 @@ export function truncateMiddleForModel(
       outputLines: totalLines,
       outputBytes: totalBytes,
       maxLines,
-      maxBytes,
+      maxTokens,
     };
   }
 
   const tokenCountFromBytes = (bytesTruncated: number): number => {
     if (bytesTruncated <= 0) return 0;
-    const approx = Math.floor(bytesTruncated / bytesPerTokenApprox);
+    const approx = Math.floor(bytesTruncated / BYTES_PER_TOKEN);
     return Math.max(1, approx);
   };
 
@@ -114,7 +124,7 @@ export function truncateMiddleForModel(
       outputLines: built.out.split("\n").length,
       outputBytes: built.outBytes,
       maxLines,
-      maxBytes,
+      maxTokens,
     };
   }
 
@@ -142,12 +152,14 @@ export function truncateMiddleForModel(
     outputLines: out.split("\n").length,
     outputBytes: finalBytes,
     maxLines,
-    maxBytes,
+    maxTokens,
   };
 }
 
 export function truncateMiddle(content: string, options: TruncateMiddleOptions): TruncationResult {
-  const { maxLines, maxBytes } = options;
+  const { maxLines } = options;
+  const maxBytes = getEffectiveMaxBytes(options);
+  const maxTokens = options.maxTokens ?? Math.floor(maxBytes / BYTES_PER_TOKEN);
   const marker = options.marker ?? DEFAULT_MIDDLE_MARKER;
 
   const totalBytes = Buffer.byteLength(content, "utf-8");
@@ -164,7 +176,7 @@ export function truncateMiddle(content: string, options: TruncateMiddleOptions):
       outputLines: totalLines,
       outputBytes: totalBytes,
       maxLines,
-      maxBytes,
+      maxTokens,
     };
   }
 
@@ -201,15 +213,17 @@ export function truncateMiddle(content: string, options: TruncateMiddleOptions):
     outputLines,
     outputBytes,
     maxLines,
-    maxBytes,
+    maxTokens,
   };
 }
 
 export function truncateTail(
   content: string,
-  options: { maxLines: number; maxBytes: number },
+  options: { maxLines: number; maxBytes?: number; maxTokens?: number },
 ): TruncationResult {
-  const { maxLines, maxBytes } = options;
+  const { maxLines } = options;
+  const maxBytes = getEffectiveMaxBytes(options);
+  const maxTokens = options.maxTokens ?? Math.floor(maxBytes / BYTES_PER_TOKEN);
 
   const totalBytes = Buffer.byteLength(content, "utf-8");
   const lines = content.split("\n");
@@ -225,7 +239,7 @@ export function truncateTail(
       outputLines: totalLines,
       outputBytes: totalBytes,
       maxLines,
-      maxBytes,
+      maxTokens,
     };
   }
 
@@ -267,7 +281,7 @@ export function truncateTail(
     outputLines: outputLinesArr.length,
     outputBytes: finalOutputBytes,
     maxLines,
-    maxBytes,
+    maxTokens,
   };
 }
 
@@ -284,9 +298,11 @@ function truncateStringToBytesFromEnd(str: string, maxBytes: number): string {
 
 export function truncateHead(
   content: string,
-  options: { maxLines: number; maxBytes: number },
+  options: { maxLines: number; maxBytes?: number; maxTokens?: number },
 ): TruncationResult {
-  const { maxLines, maxBytes } = options;
+  const { maxLines } = options;
+  const maxBytes = getEffectiveMaxBytes(options);
+  const maxTokens = options.maxTokens ?? Math.floor(maxBytes / BYTES_PER_TOKEN);
 
   const totalBytes = Buffer.byteLength(content, "utf-8");
   const lines = content.split("\n");
@@ -302,7 +318,7 @@ export function truncateHead(
       outputLines: totalLines,
       outputBytes: totalBytes,
       maxLines,
-      maxBytes,
+      maxTokens,
     };
   }
 
@@ -344,7 +360,7 @@ export function truncateHead(
     outputLines: outputLinesArr.length,
     outputBytes: finalOutputBytes,
     maxLines,
-    maxBytes,
+    maxTokens,
   };
 }
 

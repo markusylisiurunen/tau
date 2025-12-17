@@ -56,5 +56,5 @@ export const WEB_DEFINITION: SubagentRuntimeDefinition = {
   systemPrompt: WEB_SYSTEM_PROMPT,
   allowedTools: ["web_search", "web_fetch", "bash"],
   riskLevel: "read-only",
-  maxSubturns: 32,
+  maxSubturns: 64,
 };

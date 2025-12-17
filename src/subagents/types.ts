@@ -1,10 +1,11 @@
-import type { Api, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
+import type { Api, Model } from "@mariozechner/pi-ai";
+import type { PersonaSettings } from "../types.js";
 
 export type SubagentName = "explore" | "web";
 
 export type SubagentPersonaConfig = {
   model: Model<Api>;
-  settings?: SimpleStreamOptions;
+  settings?: PersonaSettings;
 };
 
 export type SubagentConfigMap = Partial<Record<SubagentName, SubagentPersonaConfig>>;

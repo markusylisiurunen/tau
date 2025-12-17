@@ -334,13 +334,9 @@ function parsePersona(
 
       let subagentSettings: SubagentPersonaConfig["settings"] | undefined;
       if (cfg.reasoning !== undefined) {
-        subagentSettings = cfg.reasoning === "none" ? {} : { reasoning: cfg.reasoning };
-      } else if (Object.keys(settings).length > 0) {
-        const { reasoning, ...rest } = settings;
-        subagentSettings = {
-          ...rest,
-          ...(reasoning && reasoning !== "none" ? { reasoning } : {}),
-        };
+        subagentSettings = { reasoning: cfg.reasoning };
+      } else {
+        subagentSettings = settings;
       }
 
       finalSubagents[name] = {

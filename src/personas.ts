@@ -163,6 +163,10 @@ const PERSONA_SPECS: PersonaSpec[] = [
         model: getModel("anthropic", "claude-haiku-4-5"),
         reasoning: "medium",
       },
+      web: {
+        model: getModel("anthropic", "claude-haiku-4-5"),
+        reasoning: "medium",
+      },
     },
   },
   {
@@ -173,6 +177,10 @@ const PERSONA_SPECS: PersonaSpec[] = [
     settings: { reasoning: "high" },
     subagents: {
       explore: {
+        model: getModel("anthropic", "claude-haiku-4-5"),
+        reasoning: "medium",
+      },
+      web: {
         model: getModel("anthropic", "claude-haiku-4-5"),
         reasoning: "medium",
       },
@@ -189,6 +197,10 @@ const PERSONA_SPECS: PersonaSpec[] = [
         model: getModel("openai", "gpt-5.2"),
         reasoning: "none",
       },
+      web: {
+        model: getModel("openai", "gpt-5.2"),
+        reasoning: "none",
+      },
     },
   },
   {
@@ -202,6 +214,10 @@ const PERSONA_SPECS: PersonaSpec[] = [
         model: getModel("google", "gemini-3-flash-preview"),
         reasoning: "low",
       },
+      web: {
+        model: getModel("google", "gemini-3-flash-preview"),
+        reasoning: "low",
+      },
     },
   },
   {
@@ -212,6 +228,10 @@ const PERSONA_SPECS: PersonaSpec[] = [
     settings: { reasoning: "high" },
     subagents: {
       explore: {
+        model: getModel("google", "gemini-3-flash-preview"),
+        reasoning: "low",
+      },
+      web: {
         model: getModel("google", "gemini-3-flash-preview"),
         reasoning: "low",
       },
@@ -254,25 +274,15 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
         exploreSpec.reasoning ?? pickExploreReasoning(spec.allowedReasoningLevels);
       next.explore = {
         model: exploreModel,
-        settings: exploreEffort === "none" ? {} : { reasoning: exploreEffort },
+        settings: { reasoning: exploreEffort },
       };
     }
 
     const webSpec = spec.subagents?.web ?? {};
     const webModel = webSpec.model ?? spec.model;
 
-    const { reasoning, ...rest } = settings;
-    const inheritedSettings = {
-      ...rest,
-      ...(reasoning && reasoning !== "none" ? { reasoning } : {}),
-    };
-
     const webSettings =
-      webSpec.reasoning !== undefined
-        ? webSpec.reasoning === "none"
-          ? {}
-          : { reasoning: webSpec.reasoning }
-        : inheritedSettings;
+      webSpec.reasoning !== undefined ? { reasoning: webSpec.reasoning } : settings;
 
     next.web = {
       model: webModel,

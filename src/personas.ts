@@ -208,7 +208,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
     id: "gemini-3-flash",
     description: "Gemini 3 Flash",
     model: getModel("google", "gemini-3-flash-preview"),
-    allowedReasoningLevels: ["none", "low", "high"],
+    allowedReasoningLevels: ["minimal", "low", "medium", "high"],
     settings: { reasoning: "high" },
     subagents: {
       explore: {

@@ -37,6 +37,38 @@ function formatEventsForDisplay(lastEvents: string[]): string[] {
         .trim();
       filtered.push(`? ${url}`);
     }
+    // Surface failures and blocked tool calls
+    else if (trimmed.startsWith("bash blocked:")) {
+      const msg = trimmed.replace(/^bash blocked:\s*/, "").trim();
+      if (msg) filtered.push(`! ${msg}`);
+    } else if (trimmed.startsWith("bash failed:")) {
+      const msg = trimmed.replace(/^bash failed:\s*/, "").trim();
+      if (msg) filtered.push(`! ${msg}`);
+    } else if (trimmed.startsWith("web search failed:")) {
+      const msg = trimmed
+        .replace(/^web search failed:\s*/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (msg) filtered.push(`! ${msg}`);
+    } else if (trimmed.startsWith("web fetch failed:")) {
+      const msg = trimmed
+        .replace(/^web fetch failed:\s*/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (msg) filtered.push(`! ${msg}`);
+    } else if (trimmed.startsWith("tool blocked:")) {
+      const msg = trimmed
+        .replace(/^tool blocked:\s*/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (msg) filtered.push(`! ${msg}`);
+    } else if (trimmed.startsWith("tool error:")) {
+      const msg = trimmed
+        .replace(/^tool error:\s*/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (msg) filtered.push(`! ${msg}`);
+    }
     // Show agent text output as "> first line only"
     else if (trimmed.startsWith("agent:")) {
       const text = trimmed.replace(/^agent:\s*/, "");

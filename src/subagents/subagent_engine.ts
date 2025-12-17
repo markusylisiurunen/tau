@@ -5,6 +5,7 @@ import type {
   Message,
   SimpleStreamOptions,
   ToolCall,
+  ToolResultMessage,
 } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import type { Config } from "../config.js";
@@ -40,6 +41,19 @@ export type SubagentRunResult = {
   costTotal: number;
 };
 
+function normalizeOneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function getToolResultFirstLine(toolResult: ToolResultMessage): string {
+  const text = toolResult.content
+    .filter((c): c is { type: "text"; text: string } => c.type === "text")
+    .map((c) => c.text)
+    .join("\n")
+    .trim();
+  return normalizeOneLine(text.split("\n")[0] ?? "");
+}
+
 function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): SimpleStreamOptions {
   const merged = { ...(settings ?? {}) } as Record<string, unknown>;
   return parseStreamingSettings(merged);
@@ -72,10 +86,20 @@ function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | undefined 
   switch (uiEvent.type) {
     case "bash_started":
       return `bash running: ${uiEvent.command.replace(/\n/g, " ")}`;
+    case "bash_execution":
+      return uiEvent.exitCode !== null && uiEvent.exitCode !== 0
+        ? `bash failed: $ ${uiEvent.command.replace(/\n/g, " ")} (exit ${uiEvent.exitCode})`
+        : undefined;
+    case "bash_blocked":
+      return `bash blocked: $ ${uiEvent.command.replace(/\n/g, " ")} (${normalizeOneLine(uiEvent.reason)})`;
     case "web_search_started":
       return `web search: ${uiEvent.objective}`;
+    case "web_search_finished":
+      return uiEvent.status === "error" ? `web search failed: ? ${uiEvent.objective}` : undefined;
     case "web_fetch_started":
       return `web fetch: ${uiEvent.url}`;
+    case "web_fetch_finished":
+      return uiEvent.status === "error" ? `web fetch failed: ? ${uiEvent.url}` : undefined;
     default:
       return undefined;
   }
@@ -107,6 +131,10 @@ export async function runSubagentToCompletion(options: {
 }): Promise<SubagentRunResult> {
   const { definition, personaConfig, prompt, config, signal, onProgress } = options;
 
+  if (signal.aborted) {
+    throw new Error("sub-agent aborted");
+  }
+
   const toolRegistry = buildToolRegistryForAllowedTools(definition.allowedTools, config);
   const messages: Message[] = [
     {
@@ -124,6 +152,17 @@ export async function runSubagentToCompletion(options: {
   const emit = (text: string) => {
     onProgress?.({ text, costTotal, turns, toolCalls });
   };
+
+  const issues: string[] = [];
+
+  const recordIssue = (text: string) => {
+    const normalized = normalizeOneLine(text);
+    if (!normalized) return;
+    issues.push(normalized);
+  };
+
+  const formatIssueSummary = (): string =>
+    issues.length > 0 ? ` (recent issues: ${issues.slice(-3).join("; ")})` : "";
 
   for (let subturn = 1; subturn <= maxSubturns && !signal.aborted; subturn++) {
     emit("assistant: thinking");
@@ -167,14 +206,23 @@ export async function runSubagentToCompletion(options: {
       emit(agentText);
     }
 
-    if (finalMessage.stopReason !== "toolUse") {
+    const finish = () => {
+      const finalText = extractAssistantText(finalMessage).trim();
+      if (!finalText) {
+        throw new Error(
+          `sub-agent produced an empty response (stopReason: ${finalMessage.stopReason ?? "unknown"})${formatIssueSummary()}`,
+        );
+      }
       emit("done");
-      return { finalText: extractAssistantText(finalMessage).trim(), costTotal };
+      return { finalText, costTotal };
+    };
+
+    if (finalMessage.stopReason !== "toolUse") {
+      return finish();
     }
 
     if (messageToolCalls.length === 0) {
-      emit("done");
-      return { finalText: extractAssistantText(finalMessage).trim(), costTotal };
+      return finish();
     }
 
     const riskLevel = definition.riskLevel as RiskLevel;
@@ -186,6 +234,7 @@ export async function runSubagentToCompletion(options: {
       if (!toolDef) {
         const msg = `tool '${call.name}' is not available to this sub-agent.`;
         messages.push(createToolError(call, msg));
+        recordIssue(msg);
         emit(`tool blocked: ${msg}`);
         continue;
       }
@@ -205,7 +254,12 @@ export async function runSubagentToCompletion(options: {
         }
 
         const text = formatToolUiEventForProgress(uiEvent);
-        if (text) emit(text);
+        if (text) {
+          if (/\b(blocked|failed):/.test(text)) {
+            recordIssue(text);
+          }
+          emit(text);
+        }
       };
 
       if (isPhased(dispatchResult)) {
@@ -220,13 +274,31 @@ export async function runSubagentToCompletion(options: {
 
         const { toolResult, uiEvent } = await dispatchResult.run;
         messages.push(toolResult);
+        if (toolResult.isError) {
+          const firstLine = getToolResultFirstLine(toolResult);
+          const issue = firstLine
+            ? `${call.name}: ${firstLine}`
+            : `${call.name}: tool returned an error`;
+          recordIssue(issue);
+        }
         handleUi(uiEvent);
         continue;
       }
 
       messages.push(dispatchResult.toolResult);
+      if (dispatchResult.toolResult.isError) {
+        const firstLine = getToolResultFirstLine(dispatchResult.toolResult);
+        const issue = firstLine
+          ? `${call.name}: ${firstLine}`
+          : `${call.name}: tool returned an error`;
+        recordIssue(issue);
+      }
       handleUi(dispatchResult.uiEvent);
     }
+  }
+
+  if (signal.aborted) {
+    throw new Error("sub-agent aborted");
   }
 
   emit(`done (stopped after ${maxSubturns} subturns)`);
@@ -234,5 +306,13 @@ export async function runSubagentToCompletion(options: {
     | AssistantMessage
     | undefined;
 
-  return { finalText: lastAssistant ? extractAssistantText(lastAssistant).trim() : "", costTotal };
+  const lastAssistantText = lastAssistant ? extractAssistantText(lastAssistant).trim() : "";
+  const lastAssistantLine = lastAssistantText
+    ? normalizeOneLine(lastAssistantText.split("\n")[0] ?? "")
+    : "";
+  const lastNote = lastAssistantLine ? ` Last output: "${lastAssistantLine}".` : "";
+
+  throw new Error(
+    `sub-agent stopped after ${maxSubturns} subturns without producing a final response.${lastNote}${formatIssueSummary()}`,
+  );
 }

@@ -206,7 +206,11 @@ export function createTaskToolDefinition(): ToolDefinition {
             signal: signal ?? new AbortController().signal,
             onProgress: (e) => pushProgress(e.text, e.costTotal, e.turns, e.toolCalls),
           });
-          finalText = result.finalText;
+          const text = result.finalText.trim();
+          if (!text) {
+            throw new Error("sub-agent returned an empty response");
+          }
+          finalText = text;
           costTotal = result.costTotal;
         } catch (err) {
           if (signal?.aborted) {

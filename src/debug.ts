@@ -160,6 +160,23 @@ export function printDebugInfo(args: {
 
   console.log(`\n${fullSystemPrompt}`);
 
+  // Sub-agents
+  const activeSubagents = selectedPersona.subagents
+    ? Object.entries(selectedPersona.subagents).filter(([, cfg]) => cfg)
+    : [];
+  section(`Active sub-agents (${activeSubagents.length})`);
+  if (activeSubagents.length === 0) {
+    console.log("\n  (none)");
+  } else {
+    for (const [name, cfg] of activeSubagents) {
+      console.log(`\n- ${name}`);
+      console.log(`  model: ${cfg.model.provider}:${cfg.model.id}`);
+      if (cfg.settings) {
+        console.log(`  settings: ${JSON.stringify(cfg.settings)}`);
+      }
+    }
+  }
+
   // Tools
   const tools = selectedPersona.tools ?? [];
   section(`Active tools (${tools.length})`);

@@ -307,3 +307,44 @@ export const personas: Persona[] = PERSONA_SPECS.flatMap((spec) => [
 export function getPersonaById(id: string): Persona | undefined {
   return personas.find((p) => p.id === id);
 }
+
+const GEMINI_SUBAGENT_TARGET_IDS = new Set([
+  "opus-4.5",
+  "opus-4.5-coder",
+  "haiku-4.5",
+  "haiku-4.5-coder",
+  "gpt-5.2",
+  "gpt-5.2-coder",
+]);
+
+export function applyGeminiSubagents(personas: Persona[]): Persona[] {
+  const geminiModel = getModel("google", "gemini-3-flash-preview");
+  const geminiSettings = { reasoning: "low" as const };
+
+  return personas.map((persona) => {
+    if (!GEMINI_SUBAGENT_TARGET_IDS.has(persona.id) || !persona.subagents) {
+      return persona;
+    }
+
+    const newSubagents: SubagentConfigMap = {};
+
+    if (persona.subagents.explore) {
+      newSubagents.explore = {
+        model: geminiModel,
+        settings: geminiSettings,
+      };
+    }
+
+    if (persona.subagents.web) {
+      newSubagents.web = {
+        model: geminiModel,
+        settings: geminiSettings,
+      };
+    }
+
+    return {
+      ...persona,
+      subagents: newSubagents,
+    };
+  });
+}

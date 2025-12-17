@@ -3,10 +3,12 @@ import { ChatApp } from "./app.js";
 import { loadBashCommands } from "./bash_commands.js";
 import type { CliOptions } from "./cli.js";
 import { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
-import { loadConfig } from "./config.js";
+import { isGoogleAuthAvailable, loadConfig } from "./config.js";
 import { loadAllContent } from "./content_loader.js";
 import { printDebugInfo } from "./debug.js";
+import { applyGeminiSubagents, personas as builtinPersonas } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
+import { prompts as builtinPrompts } from "./prompts.js";
 import type { Persona, ReasoningEffort, Skill } from "./types.js";
 
 // Load configuration from file
@@ -30,7 +32,7 @@ let personas: Persona[];
 let prompts: PromptTemplate[];
 let skills: Skill[];
 try {
-  const content = await loadAllContent();
+  const content = await loadAllContent(config);
   personas = content.personas;
   prompts = content.prompts;
   skills = content.skills;
@@ -40,10 +42,10 @@ try {
   console.error(`warning: failed to load user content: ${(err as Error).message}`);
   // eslint-disable-next-line no-console
   console.error("using built-in personas and prompts only.");
-  // Import fallback built-ins
-  const { personas: builtinPersonas } = await import("./personas.js");
-  const { prompts: builtinPrompts } = await import("./prompts.js");
-  personas = builtinPersonas;
+  const effectiveBuiltins = isGoogleAuthAvailable(config)
+    ? applyGeminiSubagents(builtinPersonas)
+    : builtinPersonas;
+  personas = effectiveBuiltins;
   prompts = builtinPrompts;
   skills = [];
 }

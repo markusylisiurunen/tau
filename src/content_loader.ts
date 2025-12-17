@@ -5,7 +5,9 @@ import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { personas as builtinPersonas } from "./personas.js";
+import type { Config } from "./config.js";
+import { isGoogleAuthAvailable } from "./config.js";
+import { applyGeminiSubagents, personas as builtinPersonas } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
 import { prompts as builtinPrompts } from "./prompts.js";
 import type { SubagentConfigMap, SubagentPersonaConfig } from "./subagents/types.js";
@@ -582,7 +584,7 @@ export async function loadProjectSkills(): Promise<{
   return loadSkillsFromDir(skillsDir);
 }
 
-export async function loadAllContent(): Promise<{
+export async function loadAllContent(config?: Config): Promise<{
   personas: Persona[];
   prompts: PromptTemplate[];
   skills: Skill[];
@@ -617,9 +619,14 @@ export async function loadAllContent(): Promise<{
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
     );
 
+    const effectiveBuiltins =
+      config && isGoogleAuthAvailable(config)
+        ? applyGeminiSubagents(builtinPersonas)
+        : builtinPersonas;
+
     return {
       personas: mergeById(
-        builtinPersonas,
+        effectiveBuiltins,
         userPersonasResult.personas,
         projectPersonasResult.personas,
       ),
@@ -628,8 +635,12 @@ export async function loadAllContent(): Promise<{
       errors: allErrors,
     };
   } catch (err) {
+    const effectiveBuiltins =
+      config && isGoogleAuthAvailable(config)
+        ? applyGeminiSubagents(builtinPersonas)
+        : builtinPersonas;
     return {
-      personas: builtinPersonas,
+      personas: effectiveBuiltins,
       prompts: builtinPrompts,
       skills: [],
       errors: [`unexpected error loading user content: ${(err as Error).message}`],

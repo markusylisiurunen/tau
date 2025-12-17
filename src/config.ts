@@ -77,3 +77,7 @@ export function getApiKeyForProvider(config: Config, provider: KnownProvider): s
 export function getParallelApiKey(config: Config): string | undefined {
   return config.apiKeys?.parallel;
 }
+
+export function isGoogleAuthAvailable(config: Config): boolean {
+  return !!(config.apiKeys?.google || process.env.GEMINI_API_KEY);
+}

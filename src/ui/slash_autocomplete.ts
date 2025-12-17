@@ -91,7 +91,14 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
     const beforePrefix = line.slice(0, cursorCol - prefix.length);
     const afterCursor = line.slice(cursorCol);
 
-    const insert = this.buildInsertText(item, prefix, beforePrefix);
+    let insert = this.buildInsertText(item, prefix, beforePrefix);
+
+    if (prefix.startsWith("@") && afterCursor.length > 0 && !/^\s/.test(afterCursor)) {
+      insert += " ";
+    } else if (prefix.startsWith("@") && afterCursor.length === 0) {
+      insert += " ";
+    }
+
     const newLine = beforePrefix + insert + afterCursor;
     const newLines = [...lines];
     newLines[cursorLine] = newLine;

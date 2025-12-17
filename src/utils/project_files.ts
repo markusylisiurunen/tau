@@ -86,12 +86,16 @@ function listProjectFilesFromGit(cwd: string): string[] {
     const repoRoot = (rootRes.stdout ?? "").trim();
     if (!repoRoot) return [];
 
-    const res = spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], {
-      cwd,
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-      maxBuffer: 10 * 1024 * 1024,
-    });
+    const res = spawnSync(
+      "git",
+      ["ls-files", "--full-name", "--cached", "--others", "--exclude-standard"],
+      {
+        cwd,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    );
     if (res.status !== 0) return [];
 
     const files = (res.stdout ?? "")
@@ -121,6 +125,7 @@ async function listProjectFilesFromGitAsync(cwd: string): Promise<string[]> {
 
     const res = await runCommand(cwd, "git", [
       "ls-files",
+      "--full-name",
       "--cached",
       "--others",
       "--exclude-standard",

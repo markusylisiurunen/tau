@@ -199,20 +199,20 @@ const PERSONA_SPECS: PersonaSpec[] = [
     settings: { reasoning: "low" },
     subagents: {
       explore: {
-        model: getModel("google", "gemini-2.5-flash-preview-09-2025"),
+        model: getModel("google", "gemini-3-flash-preview"),
         reasoning: "low",
       },
     },
   },
   {
-    id: "gemini-2.5-flash",
-    description: "Gemini 2.5 Flash",
-    model: getModel("google", "gemini-2.5-flash-preview-09-2025"),
+    id: "gemini-3-flash",
+    description: "Gemini 3 Flash",
+    model: getModel("google", "gemini-3-flash-preview"),
     allowedReasoningLevels: ["none", "low", "high"],
     settings: { reasoning: "high" },
     subagents: {
       explore: {
-        model: getModel("google", "gemini-2.5-flash-preview-09-2025"),
+        model: getModel("google", "gemini-3-flash-preview"),
         reasoning: "low",
       },
     },

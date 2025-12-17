@@ -57,12 +57,6 @@ npm run build
 npm start
 ```
 
-or run directly via tsx:
-
-```sh
-npm run dev
-```
-
 ## risk levels
 
 tau uses risk levels to control what the model can do. this lets you stay in control while working alongside AI.

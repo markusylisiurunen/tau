@@ -10,7 +10,7 @@
     "bin/"
   ],
   "scripts": {
-    "dev": "tsx src/main.ts",
+    "prebuild": "node scripts/generate-version.js",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "check": "biome check --write . && tsc -p tsconfig.json --noEmit",
@@ -31,7 +31,6 @@
   "devDependencies": {
     "@biomejs/biome": "2.3.10",
     "@types/node": "^24.10.4",
-    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "engines": {

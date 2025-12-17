@@ -71,6 +71,7 @@ import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "./utils/form
 import { getGitRoot } from "./utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "./utils/messages.js";
 import { listProjectFiles, listProjectFilesAsync } from "./utils/project_files.js";
+import { APP_VERSION } from "./version.js";
 
 const { palette } = theme;
 
@@ -226,7 +227,7 @@ export class ChatApp {
     this.ui.addChild(this.footer);
 
     const headerText =
-      `\n${palette.accent("tau")} ${palette.muted("– terminal chat")}\n\n` +
+      `\n${palette.accent("tau")} ${palette.muted(`– terminal chat (v${APP_VERSION})`)}\n\n` +
       palette.muted(buildHelpText(this.agentsFiles, this.skills));
     this.chatContainer.addMessage(new Text(headerText, 1, 0));
 

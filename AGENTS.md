@@ -102,10 +102,9 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 ## Development
 
 - `npm run check` - Format (Biome) + typecheck
-- `npm run dev` - Run from source via tsx
 - `npm run build` - Compile to dist/
 
-**Do not run the app** (`npm run dev`, `npm start`, `node dist/main.js`) in automated or non-interactive environments. It launches an interactive TUI that requires a real terminal.
+**Do not run the app** (`npm start`, `node dist/main.js`) ever. It launches an interactive TUI that requires a real terminal.
 
 **Style**: Biome (2-space indent, 100 line width). Types `PascalCase`, values/functions `camelCase`, files `lowercase.ts`.
 

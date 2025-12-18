@@ -21,8 +21,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.23.2",
-    "@mariozechner/pi-tui": "^0.23.2",
+    "@mariozechner/pi-ai": "^0.23.4",
+    "@mariozechner/pi-tui": "^0.23.4",
     "@sinclair/typebox": "^0.34.41",
     "chalk": "^5.6.2",
     "yaml": "^2.8.2",

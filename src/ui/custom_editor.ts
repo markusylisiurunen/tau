@@ -11,18 +11,11 @@ export class CustomEditor extends Editor {
   public beforeSubmit?: (text: string) => boolean;
 
   getCursor(): { line: number; col: number } {
-    // FIXME: should use the `pi-tui` methods once they become available
-    const state = (this as unknown as { state?: { cursorLine: number; cursorCol: number } }).state;
-    return {
-      line: state?.cursorLine ?? 0,
-      col: state?.cursorCol ?? 0,
-    };
+    return super.getCursor();
   }
 
   getLines(): string[] {
-    // FIXME: should use the `pi-tui` methods once they become available
-    const state = (this as unknown as { state?: { lines: string[] } }).state;
-    return state?.lines ? [...state.lines] : this.getText().split("\n");
+    return super.getLines();
   }
 
   handleInput(data: string): void {

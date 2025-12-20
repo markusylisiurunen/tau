@@ -77,12 +77,10 @@ import { APP_VERSION } from "./version.js";
 const { palette } = theme;
 
 type RunningBashComponent = {
-  index: number;
   command: string;
 };
 
 type RunningTaskComponent = {
-  index: number;
   kind: "task" | "fork";
   name?: string;
   title: string;
@@ -1348,59 +1346,38 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
           case "tool_ui": {
             const uiEvent = event.uiEvent;
             if (uiEvent.type === "bash_started") {
-              // Create and add the running component, storing its index
-              const index = this.chatContainer.addToolMessage((compact) =>
-                renderBashRunning(uiEvent.command, compact),
+              this.chatContainer.addToolMessage(
+                (compact) => renderBashRunning(uiEvent.command, compact),
+                uiEvent.toolCallId,
               );
               this.runningBashComponents.set(uiEvent.toolCallId, {
-                index,
                 command: uiEvent.command,
               });
               this.ui.requestRender();
             } else if (uiEvent.type === "bash_execution") {
-              // Check if we have a running component for this toolCallId
               const running = this.runningBashComponents.get(uiEvent.toolCallId);
+              this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
+                renderBashExecution(
+                  uiEvent.command,
+                  uiEvent.exitCode,
+                  uiEvent.truncationInfo,
+                  compact,
+                ),
+              );
               if (running) {
-                // Replace the running component with the finished execution component
-                this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
-                  renderBashExecution(
-                    uiEvent.command,
-                    uiEvent.exitCode,
-                    uiEvent.truncationInfo,
-                    compact,
-                  ),
-                );
                 this.runningBashComponents.delete(uiEvent.toolCallId);
-              } else {
-                // Fallback: add as new component if no running component found
-                this.chatContainer.addToolMessage((compact) =>
-                  renderBashExecution(
-                    uiEvent.command,
-                    uiEvent.exitCode,
-                    uiEvent.truncationInfo,
-                    compact,
-                  ),
-                );
               }
               this.ui.requestRender();
             } else if (uiEvent.type === "bash_blocked") {
-              // Check if this is a post-acceptance failure that has a running card
               if (uiEvent.toolCallId) {
                 const running = this.runningBashComponents.get(uiEvent.toolCallId);
+                this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
+                  renderBashBlocked(uiEvent.command, uiEvent.reason, compact),
+                );
                 if (running) {
-                  // Replace the running component with the blocked component
-                  this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
-                    renderBashBlocked(uiEvent.command, uiEvent.reason, compact),
-                  );
                   this.runningBashComponents.delete(uiEvent.toolCallId);
-                } else {
-                  // Fallback: add as new component if no running component found
-                  this.chatContainer.addToolMessage((compact) =>
-                    renderBashBlocked(uiEvent.command, uiEvent.reason, compact),
-                  );
                 }
               } else {
-                // Pre-acceptance blocked event; just append as before
                 this.chatContainer.addToolMessage((compact) =>
                   renderBashBlocked(uiEvent.command, uiEvent.reason, compact),
                 );
@@ -1413,11 +1390,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const kind = uiEvent.kind ?? "task";
               const subagentName = uiEvent.name.trim() || undefined;
 
-              const index = this.chatContainer.addToolMessage((compact) =>
-                renderTaskRunning(uiEvent.title, [], 0, 0, 0, compact, { kind, subagentName }),
+              this.chatContainer.addToolMessage(
+                (compact) =>
+                  renderTaskRunning(uiEvent.title, [], 0, 0, 0, compact, { kind, subagentName }),
+                uiEvent.toolCallId,
               );
               this.runningTaskComponents.set(uiEvent.toolCallId, {
-                index,
                 kind,
                 name: subagentName,
                 title: uiEvent.title,
@@ -1427,7 +1405,6 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               });
               this.ui.requestRender();
             } else if (uiEvent.type === "task_progress") {
-              // Accumulate events for this task
               let events = this.taskEvents.get(uiEvent.toolCallId);
               if (!events) {
                 events = [];
@@ -1440,83 +1417,45 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const subagentName = uiEvent.name.trim() || undefined;
 
               if (running) {
-                if (uiEvent.kind) {
-                  running.kind = uiEvent.kind;
-                }
+                running.kind = kind;
                 running.name = subagentName;
                 running.title = uiEvent.title;
                 running.costTotal = uiEvent.costTotal;
                 running.turns = uiEvent.turns;
                 running.toolCalls = uiEvent.toolCalls;
-
-                this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
-                  renderTaskRunning(
-                    uiEvent.title,
-                    events,
-                    uiEvent.costTotal,
-                    uiEvent.turns,
-                    uiEvent.toolCalls,
-                    compact,
-                    { kind, subagentName },
-                  ),
-                );
-              } else {
-                const index = this.chatContainer.addToolMessage((compact) =>
-                  renderTaskRunning(
-                    uiEvent.title,
-                    events,
-                    uiEvent.costTotal,
-                    uiEvent.turns,
-                    uiEvent.toolCalls,
-                    compact,
-                    { kind, subagentName },
-                  ),
-                );
-                this.runningTaskComponents.set(uiEvent.toolCallId, {
-                  index,
-                  kind,
-                  name: subagentName,
-                  title: uiEvent.title,
-                  costTotal: uiEvent.costTotal,
-                  turns: uiEvent.turns,
-                  toolCalls: uiEvent.toolCalls,
-                });
               }
+
+              this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
+                renderTaskRunning(
+                  uiEvent.title,
+                  events!,
+                  uiEvent.costTotal,
+                  uiEvent.turns,
+                  uiEvent.toolCalls,
+                  compact,
+                  { kind, subagentName },
+                ),
+              );
               this.ui.requestRender();
             } else if (uiEvent.type === "task_finished") {
               const running = this.runningTaskComponents.get(uiEvent.toolCallId);
               const kind = uiEvent.kind ?? running?.kind ?? "task";
               const subagentName = uiEvent.name.trim() || undefined;
 
-              if (running) {
-                this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
-                  renderTaskFinished(
-                    uiEvent.title,
-                    uiEvent.costTotal,
-                    uiEvent.turns,
-                    uiEvent.toolCalls,
-                    uiEvent.status,
-                    uiEvent.finalOutput,
-                    compact,
-                    { kind, subagentName },
-                  ),
-                );
-                this.runningTaskComponents.delete(uiEvent.toolCallId);
-              } else {
-                this.chatContainer.addToolMessage((compact) =>
-                  renderTaskFinished(
-                    uiEvent.title,
-                    uiEvent.costTotal,
-                    uiEvent.turns,
-                    uiEvent.toolCalls,
-                    uiEvent.status,
-                    uiEvent.finalOutput,
-                    compact,
-                    { kind, subagentName },
-                  ),
-                );
-              }
+              this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
+                renderTaskFinished(
+                  uiEvent.title,
+                  uiEvent.costTotal,
+                  uiEvent.turns,
+                  uiEvent.toolCalls,
+                  uiEvent.status,
+                  uiEvent.finalOutput,
+                  compact,
+                  { kind, subagentName },
+                ),
+              );
 
+              this.runningTaskComponents.delete(uiEvent.toolCallId);
               this.taskEvents.delete(uiEvent.toolCallId);
               this.subagentCostTotal += uiEvent.costTotal;
               this.updateFooter();
@@ -1527,15 +1466,21 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const subagentName = uiEvent.name?.trim() || undefined;
 
               if (running) {
-                this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
+                this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
                   renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, { kind, subagentName }),
                 );
-                this.runningTaskComponents.delete(uiEvent.toolCallId);
               } else {
-                this.chatContainer.addToolMessage((compact) =>
-                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, { kind, subagentName }),
+                this.chatContainer.addToolMessage(
+                  (compact) =>
+                    renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, {
+                      kind,
+                      subagentName,
+                    }),
+                  uiEvent.toolCallId,
                 );
               }
+
+              this.runningTaskComponents.delete(uiEvent.toolCallId);
               this.taskEvents.delete(uiEvent.toolCallId);
               this.ui.requestRender();
             } else if (uiEvent.type === "write_success") {
@@ -1597,15 +1542,15 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const wasAborted = this.currentTurnAbort?.signal.aborted ?? false;
       const reason = wasAborted ? "aborted" : "interrupted";
 
-      for (const running of this.runningBashComponents.values()) {
-        this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
+      for (const [id, running] of this.runningBashComponents.entries()) {
+        this.chatContainer.replaceToolMessage(id, (compact) =>
           renderBashAborted(running.command, reason, compact),
         );
       }
 
       const taskStatus = wasAborted ? "aborted" : "error";
-      for (const running of this.runningTaskComponents.values()) {
-        this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
+      for (const [id, running] of this.runningTaskComponents.entries()) {
+        this.chatContainer.replaceToolMessage(id, (compact) =>
           renderTaskFinished(
             running.title,
             running.costTotal,

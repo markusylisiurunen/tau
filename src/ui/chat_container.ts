@@ -2,14 +2,25 @@ import { type Component, Container, Spacer } from "@mariozechner/pi-tui";
 import { AssistantMessageComponent } from "./assistant_message.js";
 
 type ChatMessageRecord =
-  | { type: "component"; component: Component; isAssistant: boolean }
-  | { type: "tool"; render: (compactToolUi: boolean) => Component; isAssistant: boolean };
+  | {
+      id: string;
+      type: "component";
+      component: Component;
+      isAssistant: boolean;
+    }
+  | {
+      id: string;
+      type: "tool";
+      render: (compactToolUi: boolean) => Component;
+      isAssistant: boolean;
+    };
 
 export class ChatContainerComponent extends Container {
   private chatContainer: Container;
   private thoughtsVisible: boolean = false;
   private compactToolUi: boolean = false;
   private allMessages: ChatMessageRecord[] = [];
+  private idToIndex: Map<string, number> = new Map();
 
   constructor(thoughtsVisible = false) {
     super();
@@ -20,46 +31,52 @@ export class ChatContainerComponent extends Container {
     this.addChild(this.chatContainer);
   }
 
-  addMessage(message: Component): number {
+  addMessage(message: Component): string {
+    const id = this.generateId();
     const isAssistant = message instanceof AssistantMessageComponent;
-    this.allMessages.push({ type: "component", component: message, isAssistant });
+    this.allMessages.push({ id, type: "component", component: message, isAssistant });
+    this.idToIndex.set(id, this.allMessages.length - 1);
 
     // Always add immediately (rebuild() will filter later if needed)
     this.addSpacerIfNeeded();
     this.chatContainer.addChild(message);
 
-    // Return the index of the added message
-    return this.allMessages.length - 1;
+    return id;
   }
 
-  replaceMessageAtIndex(index: number, newComponent: Component): void {
-    if (index < 0 || index >= this.allMessages.length) {
-      return;
-    }
+  replaceMessage(id: string, newComponent: Component): void {
+    const index = this.idToIndex.get(id);
+    if (index === undefined) return;
 
     const isAssistant = newComponent instanceof AssistantMessageComponent;
-    this.allMessages[index] = { type: "component", component: newComponent, isAssistant };
+    this.allMessages[index] = { id, type: "component", component: newComponent, isAssistant };
 
     // Rebuild to update the display
     this.rebuild();
   }
 
-  addToolMessage(render: (compactToolUi: boolean) => Component): number {
-    this.allMessages.push({ type: "tool", render, isAssistant: false });
+  addToolMessage(render: (compactToolUi: boolean) => Component, id?: string): string {
+    const finalId = id ?? this.generateId();
+    this.allMessages.push({ id: finalId, type: "tool", render, isAssistant: false });
+    this.idToIndex.set(finalId, this.allMessages.length - 1);
 
     const component = render(this.compactToolUi);
     this.addSpacerIfNeeded();
     this.chatContainer.addChild(component);
 
-    return this.allMessages.length - 1;
+    return finalId;
   }
 
-  replaceToolMessageAtIndex(index: number, render: (compactToolUi: boolean) => Component): void {
-    if (index < 0 || index >= this.allMessages.length) {
-      return;
-    }
+  replaceToolMessage(id: string, render: (compactToolUi: boolean) => Component): void {
+    const index = this.idToIndex.get(id);
+    if (index === undefined) return;
 
-    this.allMessages[index] = { type: "tool", render, isAssistant: false };
+    this.allMessages[index] = {
+      id,
+      type: "tool",
+      render,
+      isAssistant: false,
+    };
     this.rebuild();
   }
 
@@ -77,6 +94,7 @@ export class ChatContainerComponent extends Container {
 
   clear() {
     this.allMessages = [];
+    this.idToIndex.clear();
     this.chatContainer.clear();
   }
 
@@ -108,5 +126,9 @@ export class ChatContainerComponent extends Container {
     const isFirst = this.chatContainer.children.length === 0;
     if (isFirst) return;
     this.chatContainer.addChild(new Spacer(1));
+  }
+
+  private generateId(): string {
+    return Math.random().toString(36).slice(2, 11);
   }
 }

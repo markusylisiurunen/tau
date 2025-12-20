@@ -107,15 +107,15 @@ export class TauTerminal implements Terminal {
  * Create a terminal for Tau. If stdin is piped and we're still running in a TTY,
  * we fall back to reading input from /dev/tty so the chat remains interactive.
  */
-export function createAppTerminal(preferTtyInput: boolean): Terminal {
+export function createAppTerminal(): Terminal {
   // Normal mode: stdin is a TTY, use upstream ProcessTerminal.
-  if (!preferTtyInput && process.stdin.isTTY) {
+  if (process.stdin.isTTY) {
     return new ProcessTerminal();
   }
 
   // If stdin is not a TTY but we're still in an interactive terminal,
   // try to read input from /dev/tty so the UI stays interactive.
-  if (!process.stdin.isTTY && process.stdout.isTTY) {
+  if (process.stdout.isTTY) {
     try {
       const fd = openSync("/dev/tty", "r");
       const input = new ReadStream(fd);
@@ -128,13 +128,9 @@ export function createAppTerminal(preferTtyInput: boolean): Terminal {
         }
       });
     } catch {
-      // Fall through to process.stdin.
+      // Fall through
     }
   }
 
-  // Fallback: use process streams directly.
-  // In piped mode without a controlling terminal, this will behave non-interactively.
-  return preferTtyInput
-    ? new TauTerminal(process.stdin as InputStream, process.stdout)
-    : new ProcessTerminal();
+  return new ProcessTerminal();
 }

@@ -24,6 +24,7 @@ import {
   prepareBashOutput,
 } from "./tools/bash.js";
 import { createEditToolDefinition } from "./tools/edit.js";
+import { createForkToolDefinition } from "./tools/fork.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { createTaskToolDefinition } from "./tools/task.js";
 import { createWriteToolDefinition } from "./tools/write.js";
@@ -82,6 +83,7 @@ type RunningBashComponent = {
 
 type RunningTaskComponent = {
   index: number;
+  kind: "task" | "fork";
   name?: string;
   title: string;
   costTotal: number;
@@ -199,6 +201,7 @@ export class ChatApp {
       createWriteToolDefinition(),
       createEditToolDefinition(),
       createTaskToolDefinition(),
+      createForkToolDefinition(),
     ]);
     this.engine = new SessionEngine({
       persona: this.currentPersona,
@@ -208,7 +211,7 @@ export class ChatApp {
       config: this.config,
     });
 
-    this.ui = new TUI(createAppTerminal(Boolean(this.initialUserMessage)));
+    this.ui = new TUI(createAppTerminal());
     this.chatContainer = new ChatContainerComponent();
     this.chatContainer.setCompactToolUi(this.compactToolUi);
     this.footer = new FooterComponent(this.ui);
@@ -1407,12 +1410,16 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               if (!this.taskEvents.has(uiEvent.toolCallId)) {
                 this.taskEvents.set(uiEvent.toolCallId, []);
               }
+              const kind = uiEvent.kind ?? "task";
+              const subagentName = uiEvent.name.trim() || undefined;
+
               const index = this.chatContainer.addToolMessage((compact) =>
-                renderTaskRunning(uiEvent.title, [], 0, 0, 0, compact, uiEvent.name),
+                renderTaskRunning(uiEvent.title, [], 0, 0, 0, compact, { kind, subagentName }),
               );
               this.runningTaskComponents.set(uiEvent.toolCallId, {
                 index,
-                name: uiEvent.name,
+                kind,
+                name: subagentName,
                 title: uiEvent.title,
                 costTotal: 0,
                 turns: 0,
@@ -1429,8 +1436,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               events.push(uiEvent.event);
 
               const running = this.runningTaskComponents.get(uiEvent.toolCallId);
+              const kind = uiEvent.kind ?? running?.kind ?? "task";
+              const subagentName = uiEvent.name.trim() || undefined;
+
               if (running) {
-                running.name = uiEvent.name;
+                if (uiEvent.kind) {
+                  running.kind = uiEvent.kind;
+                }
+                running.name = subagentName;
                 running.title = uiEvent.title;
                 running.costTotal = uiEvent.costTotal;
                 running.turns = uiEvent.turns;
@@ -1444,7 +1457,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                     uiEvent.turns,
                     uiEvent.toolCalls,
                     compact,
-                    uiEvent.name,
+                    { kind, subagentName },
                   ),
                 );
               } else {
@@ -1456,12 +1469,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                     uiEvent.turns,
                     uiEvent.toolCalls,
                     compact,
-                    uiEvent.name,
+                    { kind, subagentName },
                   ),
                 );
                 this.runningTaskComponents.set(uiEvent.toolCallId, {
                   index,
-                  name: uiEvent.name,
+                  kind,
+                  name: subagentName,
                   title: uiEvent.title,
                   costTotal: uiEvent.costTotal,
                   turns: uiEvent.turns,
@@ -1471,6 +1485,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "task_finished") {
               const running = this.runningTaskComponents.get(uiEvent.toolCallId);
+              const kind = uiEvent.kind ?? running?.kind ?? "task";
+              const subagentName = uiEvent.name.trim() || undefined;
+
               if (running) {
                 this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
                   renderTaskFinished(
@@ -1481,7 +1498,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                     uiEvent.status,
                     uiEvent.finalOutput,
                     compact,
-                    uiEvent.name,
+                    { kind, subagentName },
                   ),
                 );
                 this.runningTaskComponents.delete(uiEvent.toolCallId);
@@ -1495,7 +1512,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                     uiEvent.status,
                     uiEvent.finalOutput,
                     compact,
-                    uiEvent.name,
+                    { kind, subagentName },
                   ),
                 );
               }
@@ -1506,14 +1523,17 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "task_blocked") {
               const running = this.runningTaskComponents.get(uiEvent.toolCallId);
+              const kind = uiEvent.kind ?? running?.kind ?? "task";
+              const subagentName = uiEvent.name?.trim() || undefined;
+
               if (running) {
                 this.chatContainer.replaceToolMessageAtIndex(running.index, (compact) =>
-                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, uiEvent.name),
+                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, { kind, subagentName }),
                 );
                 this.runningTaskComponents.delete(uiEvent.toolCallId);
               } else {
                 this.chatContainer.addToolMessage((compact) =>
-                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, uiEvent.name),
+                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, { kind, subagentName }),
                 );
               }
               this.taskEvents.delete(uiEvent.toolCallId);
@@ -1594,7 +1614,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
             taskStatus,
             reason,
             compact,
-            running.name,
+            { kind: running.kind, subagentName: running.name },
           ),
         );
       }

@@ -93,7 +93,9 @@ tau --persona opus-4.5-coder
 
 ## sub-agents
 
-some personas can run isolated sub-agents via the internal `task` tool:
+some personas can run isolated sub-agents via the internal `task` tool.
+
+tau also supports an internal `fork` tool, which runs an autonomous fork of the current session using the full conversation history and returns the fork's final answer.
 
 - `explore`: read-only, multi-turn codebase investigation
 - `web`: high-threshold web research using Parallel Search/Extract (`web_search`/`web_fetch`)

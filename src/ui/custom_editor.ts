@@ -1,4 +1,13 @@
-import { Editor } from "@mariozechner/pi-tui";
+import {
+  Editor,
+  isCtrlC,
+  isCtrlO,
+  isCtrlT,
+  isEnter,
+  isEscape,
+  isShiftTab,
+} from "@mariozechner/pi-tui";
+import { isKittyCtrl } from "@mariozechner/pi-tui/dist/keys.js";
 
 export class CustomEditor extends Editor {
   public onCtrlC?: () => void;
@@ -19,27 +28,31 @@ export class CustomEditor extends Editor {
   }
 
   handleInput(data: string): void {
-    if ((data === "\x1b[Z" || data === "\x1b[1;2Z") && this.onShiftTab) {
+    if ((isShiftTab(data) || data === "\x1b[1;2Z") && this.onShiftTab) {
       this.onShiftTab();
       return;
     }
 
-    if (data === "\x03" && this.onCtrlC) {
+    if (isCtrlC(data) && this.onCtrlC) {
       this.onCtrlC();
       return;
     }
 
-    if (data === "\x14" && this.onCtrlT) {
+    if (isCtrlT(data) && this.onCtrlT) {
       this.onCtrlT();
       return;
     }
 
-    if (data === "\x0f" && this.onCtrlO && !this.isShowingAutocomplete()) {
+    if (isCtrlO(data) && this.onCtrlO && !this.isShowingAutocomplete()) {
       this.onCtrlO();
       return;
     }
 
-    if (data === "\x06" && this.onCtrlF && !this.isShowingAutocomplete()) {
+    if (
+      (data === "\x06" || isKittyCtrl(data, "f")) &&
+      this.onCtrlF &&
+      !this.isShowingAutocomplete()
+    ) {
       this.onCtrlF();
       return;
     }
@@ -53,18 +66,13 @@ export class CustomEditor extends Editor {
       return;
     }
 
-    if (
-      data.charCodeAt(0) === 13 &&
-      data.length === 1 &&
-      this.beforeSubmit &&
-      !this.isShowingAutocomplete()
-    ) {
+    if (isEnter(data) && this.beforeSubmit && !this.isShowingAutocomplete()) {
       if (!this.beforeSubmit(this.getText())) {
         return;
       }
     }
 
-    if (data === "\x1b" && this.onEscape && !this.isShowingAutocomplete()) {
+    if (isEscape(data) && this.onEscape && !this.isShowingAutocomplete()) {
       this.onEscape();
       return;
     }

@@ -6,6 +6,13 @@ import { PaddedContainer } from "./components/padded_container.js";
 import { palette, theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
 
+type TaskKind = "task" | "fork";
+
+type TaskRenderOptions = {
+  kind?: TaskKind;
+  subagentName?: string;
+};
+
 function bold(text: string): string {
   return `\u001b[1m${text}\u001b[22m`;
 }
@@ -102,16 +109,19 @@ export function renderTaskRunning(
   turns: number,
   toolCalls: number,
   compact: boolean,
-  subagentName?: string,
+  opts?: TaskRenderOptions,
 ): ToolOutputComponent {
   const { palette } = theme;
   const runningColor = (s: string) => palette.taskRunning(s);
+
+  const kind = opts?.kind ?? "task";
+  const subagentName = opts?.subagentName;
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
     { text: "▪", style: runningColor },
     { text: " ", style: (s) => s },
-    { text: "task", style: palette.muted },
+    { text: kind, style: palette.muted },
     { text: " ", style: (s) => s },
     { text: "running", style: palette.muted },
     { text: " ", style: (s) => s },
@@ -131,7 +141,7 @@ export function renderTaskRunning(
   }
   extraParts.push(costLine);
 
-  const expandedParts: string[] = [runningColor(bold(`task: ${title}`))];
+  const expandedParts: string[] = [runningColor(bold(`${kind}: ${title}`))];
   if (subagentName) {
     expandedParts.push(palette.dim(`subagent: ${subagentName}`));
   }
@@ -164,9 +174,12 @@ export function renderTaskFinished(
   status: "success" | "error" | "aborted",
   finalOutput: string,
   compact: boolean,
-  subagentName?: string,
+  opts?: TaskRenderOptions,
 ): ToolOutputComponent {
   const { palette } = theme;
+
+  const kind = opts?.kind ?? "task";
+  const subagentName = opts?.subagentName;
 
   const borderColor =
     status === "success"
@@ -186,7 +199,7 @@ export function renderTaskFinished(
     { text: " ", style: (s) => s },
     { text: "▪", style: borderColor },
     { text: " ", style: (s) => s },
-    { text: "task", style: palette.muted },
+    { text: kind, style: palette.muted },
     { text: " ", style: (s) => s },
     { text: "finished", style: palette.muted },
     { text: " ", style: (s) => s },
@@ -208,7 +221,7 @@ export function renderTaskFinished(
   }
   extraParts.push(costLine);
 
-  const expandedParts: string[] = [borderColor(bold(`task: ${title}`))];
+  const expandedParts: string[] = [borderColor(bold(`${kind}: ${title}`))];
   if (subagentName) {
     expandedParts.push(palette.dim(`subagent: ${subagentName}`));
   }
@@ -238,10 +251,13 @@ export function renderTaskBlocked(
   title: string,
   reason: string,
   compact: boolean,
-  subagentName?: string,
+  opts?: TaskRenderOptions,
 ): ToolOutputComponent {
   const { palette } = theme;
   const errorColor = (s: string) => palette.error(s);
+
+  const kind = opts?.kind ?? "task";
+  const subagentName = opts?.subagentName;
 
   const why = reason.trim();
 
@@ -249,14 +265,14 @@ export function renderTaskBlocked(
     { text: " ", style: (s) => s },
     { text: "▪", style: errorColor },
     { text: " ", style: (s) => s },
-    { text: "task", style: palette.muted },
+    { text: kind, style: palette.muted },
     { text: " ", style: (s) => s },
     { text: "blocked", style: palette.muted },
     { text: " ", style: (s) => s },
     { text: title.trim(), style: palette.accent },
   ];
 
-  const expandedParts: string[] = [errorColor(bold(`task: ${title}`))];
+  const expandedParts: string[] = [errorColor(bold(`${kind}: ${title}`))];
   if (subagentName) {
     expandedParts.push(palette.dim(`subagent: ${subagentName}`));
   }

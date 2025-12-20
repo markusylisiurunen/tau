@@ -6,7 +6,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 - **ChatApp** (`src/app.ts`): Main orchestrator handling UI, commands, and state
 - **SessionEngine** (`src/session/session_engine.ts`): Manages LLM streaming and tool dispatch via async generator events
-- **ToolRegistry** (`src/tools/registry.ts`): Registers bash, write, edit, and task tools
+- **ToolRegistry** (`src/tools/registry.ts`): Registers bash, write, edit, task, and fork tools
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/ui/`
 
 **Data flow**: User input → `ChatApp.handleSubmit()` → `SessionEngine.processTurn()` (yields events) → tool dispatch → UI rendering.
@@ -20,7 +20,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - `src/content_loader.ts` - User/project content loading (personas, prompts, skills)
 - `src/commands.ts` - Slash command parsing
 - `src/session/` - Turn processing and message accumulation
-- `src/tools/` - Tool implementations (bash, write, edit, task, web_search, web_fetch)
+- `src/tools/` - Tool implementations (bash, write, edit, task, fork, web_search, web_fetch)
 - `src/subagents/` - Isolated agent execution (`explore`, `web`) and runtime (`src/subagents/subagent_engine.ts`)
 - `src/ui/` - Terminal components, themes, autocomplete
 - `src/utils/project_files.ts` - Project file discovery for `@file` autocomplete
@@ -34,6 +34,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 | `write` | Create/overwrite files      | `read-write`                                   |
 | `edit`  | Replace exact text in files | `read-write`                                   |
 | `task`  | Run isolated subagent       | `read-only` or higher                          |
+| `fork`  | Fork session and run agent  | `read-only` or higher                          |
 
 Risk levels (`none`, `read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
 

@@ -107,7 +107,7 @@ export class SessionEngine {
     });
   }
 
-  addUserMessage(message: Message): void {
+  addMessage(message: Message): void {
     this.messages.push(message);
   }
 
@@ -198,7 +198,13 @@ export class SessionEngine {
   ): AsyncGenerator<EngineEvent> {
     const enabledTools = this.persona.tools ?? this.toolRegistry.schemas;
     const enabledToolNames = new Set(enabledTools.map((t) => t.name));
-    const dispatchContext: ToolDispatchContext = { persona: this.persona, config: this.config };
+    const dispatchContext: ToolDispatchContext = {
+      persona: this.persona,
+      config: this.config,
+      history: [...this.messages],
+      systemPrompt: this.systemPrompt,
+      toolRegistry: this.toolRegistry,
+    };
 
     // Step 1: Validate all tools and create result buffer
     const resultsByIndex = new Map<number, ToolResultMessage>();
@@ -229,9 +235,10 @@ export class SessionEngine {
       validToolCalls.push({ index: i, toolCall, def });
     }
 
-    // Step 2: Separate task and non-task tools
-    const taskCalls = validToolCalls.filter((v) => v.toolCall.name === "task");
-    const nonTaskCalls = validToolCalls.filter((v) => v.toolCall.name !== "task");
+    // Step 2: Separate task-like and non-task tools
+    const taskLikeToolNames = new Set(["task", "fork"]);
+    const taskCalls = validToolCalls.filter((v) => taskLikeToolNames.has(v.toolCall.name));
+    const nonTaskCalls = validToolCalls.filter((v) => !taskLikeToolNames.has(v.toolCall.name));
 
     // Step 3: Start all task calls and begin streaming their UI
     interface TaskExecution {
@@ -428,15 +435,16 @@ export class SessionEngine {
         next.settled.reason instanceof Error
           ? next.settled.reason.message
           : String(next.settled.reason);
+      const toolName = next.taskExec.toolCall.name;
       const toolError = createToolError(
         next.taskExec.toolCall,
-        `Task execution failed: ${errorMsg}`,
+        `${toolName} execution failed: ${errorMsg}`,
       );
       resultsByIndex.set(next.taskExec.index, toolError);
       yield {
         type: "notice",
         severity: "error",
-        text: `Task '${next.taskExec.toolCall.id}' execution failed: ${errorMsg}`,
+        text: `${toolName} '${next.taskExec.toolCall.id}' execution failed: ${errorMsg}`,
       };
     }
 
@@ -457,15 +465,16 @@ export class SessionEngine {
           next.settled.reason instanceof Error
             ? next.settled.reason.message
             : String(next.settled.reason);
+        const toolName = next.taskExec.toolCall.name;
         const toolError = createToolError(
           next.taskExec.toolCall,
-          `Task execution failed: ${errorMsg}`,
+          `${toolName} execution failed: ${errorMsg}`,
         );
         resultsByIndex.set(next.taskExec.index, toolError);
         yield {
           type: "notice",
           severity: "error",
-          text: `Task '${next.taskExec.toolCall.id}' execution failed: ${errorMsg}`,
+          text: `${toolName} '${next.taskExec.toolCall.id}' execution failed: ${errorMsg}`,
         };
       }
     }

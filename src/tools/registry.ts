@@ -1,4 +1,4 @@
-import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Message, Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import type { Config } from "../config.js";
 import type { Persona, RiskLevel } from "../types.js";
 
@@ -19,12 +19,14 @@ export type ToolUiEvent =
   | {
       type: "task_started";
       toolCallId: string;
+      kind?: "task" | "fork";
       name: string;
       title: string;
     }
   | {
       type: "task_progress";
       toolCallId: string;
+      kind?: "task" | "fork";
       name: string;
       title: string;
       event: string;
@@ -35,6 +37,7 @@ export type ToolUiEvent =
   | {
       type: "task_finished";
       toolCallId: string;
+      kind?: "task" | "fork";
       name: string;
       title: string;
       costTotal: number;
@@ -46,6 +49,7 @@ export type ToolUiEvent =
   | {
       type: "task_blocked";
       toolCallId: string;
+      kind?: "task" | "fork";
       name?: string;
       title: string;
       reason: string;
@@ -117,6 +121,9 @@ export type ToolDispatchResultWithPhases = {
 export type ToolDispatchContext = {
   persona: Persona;
   config: Config;
+  history: readonly Message[];
+  systemPrompt: string;
+  toolRegistry: ToolRegistry;
 };
 
 export interface ToolDefinition {

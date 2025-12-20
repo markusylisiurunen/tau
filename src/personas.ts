@@ -2,6 +2,7 @@ import { getModel } from "@mariozechner/pi-ai";
 import type { SubagentConfigMap } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
+import { FORK_TOOL } from "./tools/fork.js";
 import { TASK_TOOL } from "./tools/task.js";
 import { WRITE_TOOL } from "./tools/write.js";
 import type { Persona, ReasoningEffort } from "./types.js";
@@ -292,7 +293,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
     subagents = next;
   }
 
-  const tools = subagents ? [...BASE_TOOLS, TASK_TOOL] : BASE_TOOLS;
+  const tools = subagents ? [...BASE_TOOLS, TASK_TOOL, FORK_TOOL] : BASE_TOOLS;
 
   return {
     id: `${spec.id}${config.suffix}`,

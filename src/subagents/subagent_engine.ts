@@ -5,7 +5,6 @@ import type {
   Message,
   SimpleStreamOptions,
   ToolCall,
-  ToolResultMessage,
 } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import type { Config } from "../config.js";
@@ -23,6 +22,12 @@ import { createWebSearchToolDefinition } from "../tools/web_search.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, extractAssistantText } from "../utils/messages.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
+import {
+  extractAssistantTextForProgress,
+  formatToolUiEventForProgress,
+  getToolResultFirstLine,
+  normalizeOneLine,
+} from "../utils/subagent_utils.js";
 import type {
   AllowedSubagentToolName,
   SubagentPersonaConfig,
@@ -40,19 +45,6 @@ export type SubagentRunResult = {
   finalText: string;
   costTotal: number;
 };
-
-function normalizeOneLine(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function getToolResultFirstLine(toolResult: ToolResultMessage): string {
-  const text = toolResult.content
-    .filter((c): c is { type: "text"; text: string } => c.type === "text")
-    .map((c) => c.text)
-    .join("\n")
-    .trim();
-  return normalizeOneLine(text.split("\n")[0] ?? "");
-}
 
 function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): SimpleStreamOptions {
   const merged = { ...(settings ?? {}) } as Record<string, unknown>;
@@ -80,35 +72,6 @@ function buildToolRegistryForAllowedTools(
   }
 
   return new ToolRegistry(definitions);
-}
-
-function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | undefined {
-  switch (uiEvent.type) {
-    case "bash_started":
-      return `bash running: ${uiEvent.command.replace(/\n/g, " ")}`;
-    case "bash_execution":
-      return uiEvent.exitCode !== null && uiEvent.exitCode !== 0
-        ? `bash failed: $ ${uiEvent.command.replace(/\n/g, " ")} (exit ${uiEvent.exitCode})`
-        : undefined;
-    case "bash_blocked":
-      return `bash blocked: $ ${uiEvent.command.replace(/\n/g, " ")} (${normalizeOneLine(uiEvent.reason)})`;
-    case "web_search_started":
-      return `web search: ${uiEvent.objective}`;
-    case "web_search_finished":
-      return uiEvent.status === "error" ? `web search failed: ? ${uiEvent.objective}` : undefined;
-    case "web_fetch_started":
-      return `web fetch: ${uiEvent.url}`;
-    case "web_fetch_finished":
-      return uiEvent.status === "error" ? `web fetch failed: ? ${uiEvent.url}` : undefined;
-    default:
-      return undefined;
-  }
-}
-
-function extractAssistantTextForProgress(message: AssistantMessage): string | undefined {
-  const text = extractAssistantText(message).trim();
-  const firstLine = text.split("\n")[0];
-  return firstLine ? `agent: ${firstLine}` : undefined;
 }
 
 function isToolCall(block: AssistantMessage["content"][number]): block is ToolCall {

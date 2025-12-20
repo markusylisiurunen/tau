@@ -6,6 +6,7 @@ import { runSubagentToCompletion } from "../subagents/subagent_engine.js";
 import type { SubagentPersonaConfig, SubagentRuntimeDefinition } from "../subagents/types.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
+import { AsyncUiEventQueue } from "../utils/subagent_utils.js";
 import type {
   ToolDefinition,
   ToolDispatchContext,
@@ -60,44 +61,6 @@ function parseTaskArgs(raw: unknown): { name: string; title: string; prompt: str
 
 type TaskStatus = "success" | "error" | "aborted";
 
-class AsyncUiEventQueue implements AsyncIterable<ToolUiEvent> {
-  private readonly buffered: ToolUiEvent[] = [];
-  private readonly waiting: Array<(result: IteratorResult<ToolUiEvent>) => void> = [];
-  private closed = false;
-
-  push(event: ToolUiEvent): void {
-    if (this.closed) return;
-    const next = this.waiting.shift();
-    if (next) {
-      next({ value: event, done: false });
-      return;
-    }
-    this.buffered.push(event);
-  }
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    for (const resolve of this.waiting.splice(0)) {
-      resolve({ value: undefined, done: true });
-    }
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<ToolUiEvent> {
-    return {
-      next: () => {
-        if (this.buffered.length > 0) {
-          return Promise.resolve({ value: this.buffered.shift()!, done: false });
-        }
-        if (this.closed) {
-          return Promise.resolve({ value: undefined, done: true });
-        }
-        return new Promise<IteratorResult<ToolUiEvent>>((resolve) => this.waiting.push(resolve));
-      },
-    };
-  }
-}
-
 function getEnabledSubagentConfig(
   context: ToolDispatchContext | undefined,
   definition: SubagentRuntimeDefinition,
@@ -123,6 +86,7 @@ export function createTaskToolDefinition(): ToolDefinition {
         const uiEvent: ToolUiEvent = {
           type: "task_blocked",
           toolCallId: toolCall.id,
+          kind: "task",
           name: details?.name ?? (name || undefined),
           title: details?.title ?? (title || "(task)"),
           reason,
@@ -164,7 +128,7 @@ export function createTaskToolDefinition(): ToolDefinition {
         });
       }
 
-      const uiQueue = new AsyncUiEventQueue();
+      const uiQueue = new AsyncUiEventQueue<ToolUiEvent>();
       let costTotal = 0;
       let turns = 0;
       let toolCalls = 0;
@@ -181,6 +145,7 @@ export function createTaskToolDefinition(): ToolDefinition {
         uiQueue.push({
           type: "task_progress",
           toolCallId: toolCall.id,
+          kind: "task",
           name: definition.name,
           title,
           event: eventText,
@@ -232,6 +197,7 @@ export function createTaskToolDefinition(): ToolDefinition {
         const uiEvent: ToolUiEvent = {
           type: "task_finished",
           toolCallId: toolCall.id,
+          kind: "task",
           name: definition.name,
           title,
           costTotal,
@@ -249,6 +215,7 @@ export function createTaskToolDefinition(): ToolDefinition {
         startedUiEvent: {
           type: "task_started",
           toolCallId: toolCall.id,
+          kind: "task",
           name: definition.name,
           title,
         },

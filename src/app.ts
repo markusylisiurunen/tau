@@ -25,6 +25,9 @@ import {
 } from "./tools/bash.js";
 import { createEditToolDefinition } from "./tools/edit.js";
 import { createForkToolDefinition } from "./tools/fork.js";
+import { createGrepToolDefinition } from "./tools/grep.js";
+import { createListToolDefinition } from "./tools/list.js";
+import { createReadToolDefinition } from "./tools/read.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { createTaskToolDefinition } from "./tools/task.js";
 import { createWriteToolDefinition } from "./tools/write.js";
@@ -52,6 +55,15 @@ import {
 } from "./ui/file_execution.js";
 import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
+import {
+  renderGrepBlocked,
+  renderGrepFinished,
+  renderGrepRunning,
+  renderListBlocked,
+  renderListSuccess,
+  renderReadBlocked,
+  renderReadSuccess,
+} from "./ui/restricted_execution.js";
 import { SessionDividerComponent } from "./ui/session_divider.js";
 import { SessionSummaryComponent } from "./ui/session_summary.js";
 import { getFileAutocompleteToken, SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
@@ -200,6 +212,9 @@ export class ChatApp {
       createEditToolDefinition(),
       createTaskToolDefinition(),
       createForkToolDefinition(),
+      createReadToolDefinition(),
+      createGrepToolDefinition(),
+      createListToolDefinition(),
     ]);
     this.engine = new SessionEngine({
       persona: this.currentPersona,
@@ -356,8 +371,8 @@ export class ChatApp {
 
   private formatRiskLevelLabel(): string {
     switch (this.riskLevel) {
-      case "none":
-        return palette.riskNone("none");
+      case "restricted":
+        return palette.riskRestricted("restricted");
       case "read-only":
         return palette.riskReadOnly("read-only");
       case "read-write":
@@ -1515,6 +1530,69 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
             } else if (uiEvent.type === "edit_blocked") {
               this.chatContainer.addToolMessage((compact) =>
                 renderEditBlocked(uiEvent.path, uiEvent.reason, compact),
+              );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "read_success") {
+              this.chatContainer.addToolMessage((compact) =>
+                renderReadSuccess(
+                  uiEvent.path,
+                  uiEvent.startLine,
+                  uiEvent.endLine,
+                  uiEvent.preview,
+                  uiEvent.previewTruncation,
+                  uiEvent.modelTruncation,
+                  compact,
+                ),
+              );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "read_blocked") {
+              this.chatContainer.addToolMessage((compact) =>
+                renderReadBlocked(uiEvent.path, uiEvent.reason, compact),
+              );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "list_success") {
+              this.chatContainer.addToolMessage((compact) =>
+                renderListSuccess(
+                  uiEvent.path,
+                  uiEvent.offset,
+                  uiEvent.limit,
+                  uiEvent.total,
+                  uiEvent.returned,
+                  uiEvent.entries,
+                  compact,
+                ),
+              );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "list_blocked") {
+              this.chatContainer.addToolMessage((compact) =>
+                renderListBlocked(uiEvent.path, uiEvent.reason, compact),
+              );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "grep_started") {
+              this.chatContainer.addToolMessage(
+                (compact) => renderGrepRunning(uiEvent.pattern, compact),
+                uiEvent.toolCallId,
+              );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "grep_finished") {
+              this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
+                renderGrepFinished(
+                  uiEvent.pattern,
+                  uiEvent.status,
+                  uiEvent.exitCode,
+                  uiEvent.stdoutPreview,
+                  uiEvent.stdoutPreviewTruncation,
+                  uiEvent.stderrPreview,
+                  uiEvent.stderrPreviewTruncation,
+                  uiEvent.captureTruncated,
+                  compact,
+                ),
+              );
+              this.ui.requestRender();
+            } else if (uiEvent.type === "grep_blocked") {
+              this.chatContainer.addToolMessage(
+                (compact) => renderGrepBlocked(uiEvent.pattern, uiEvent.reason, compact),
+                uiEvent.toolCallId,
               );
               this.ui.requestRender();
             }

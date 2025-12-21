@@ -191,7 +191,7 @@ export function printHelp(personas: Persona[]): void {
       "notes:",
       "  you can switch persona during a session with /persona:<id>.",
       "  insert predefined prompt templates with /prompt:<id>.",
-      "  you can change model risk level during a session with /risk:none|read-only|read-write.",
+      "  you can change model risk level during a session with /risk:restricted|read-only|read-write.",
       "  if stdin is piped, its contents are sent as the first message automatically.",
       "  reasoning only affects providers that support it.",
     ].join("\n"),

@@ -79,6 +79,65 @@ export type ToolUiEvent =
       costUsd?: number;
     }
   | {
+      type: "read_success";
+      path: string;
+      startLine: number;
+      endLine?: number;
+      preview: string;
+      previewTruncation: {
+        truncated: boolean;
+        totalLines: number;
+        outputLines: number;
+      };
+      modelTruncation: {
+        truncated: boolean;
+        totalLines: number;
+        outputLines: number;
+      };
+    }
+  | { type: "read_blocked"; path: string; reason: string }
+  | {
+      type: "list_success";
+      path: string;
+      offset: number;
+      limit: number;
+      total: number;
+      returned: number;
+      entries: string[];
+    }
+  | { type: "list_blocked"; path: string; reason: string }
+  | {
+      type: "grep_started";
+      toolCallId: string;
+      pattern: string;
+    }
+  | {
+      type: "grep_finished";
+      toolCallId: string;
+      pattern: string;
+      status: "success" | "error";
+      exitCode: number | null;
+      stdoutPreview: string;
+      stdoutPreviewTruncation: {
+        truncated: boolean;
+        totalLines: number;
+        outputLines: number;
+      };
+      stderrPreview: string;
+      stderrPreviewTruncation: {
+        truncated: boolean;
+        totalLines: number;
+        outputLines: number;
+      };
+      captureTruncated: boolean;
+    }
+  | {
+      type: "grep_blocked";
+      toolCallId: string;
+      pattern: string;
+      reason: string;
+    }
+  | {
       type: "write_success";
       path: string;
       bytes: number;

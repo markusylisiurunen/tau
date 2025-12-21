@@ -94,9 +94,9 @@ export function createTaskToolDefinition(): ToolDefinition {
         return { kind: "single", toolResult, uiEvent } satisfies ToolDispatchResult;
       };
 
-      if (riskLevel === "none") {
+      if (riskLevel === "restricted") {
         return blocked(
-          "Task tool blocked due to risk level being set to 'none'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
+          "Task tool blocked due to risk level being set to 'restricted'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
         );
       }
 

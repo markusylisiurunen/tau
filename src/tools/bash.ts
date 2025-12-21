@@ -412,9 +412,9 @@ export function createBashToolDefinition(): ToolDefinition {
         return { kind: "single", toolResult, uiEvent };
       };
 
-      if (riskLevel === "none") {
+      if (riskLevel === "restricted") {
         return blocked(
-          "Blocked due to risk level being set to 'none'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
+          "Blocked due to risk level being set to 'restricted'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
         );
       }
 

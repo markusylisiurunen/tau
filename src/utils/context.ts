@@ -158,8 +158,8 @@ export function findAgentsFilesFromCwdToHome(cwd: string, home: string): string[
 
 export function describeRiskLevel(level: RiskLevel): string {
   switch (level) {
-    case "none":
-      return "No bash tool access for the model.";
+    case "restricted":
+      return "Model can only use restricted tools (read/grep/list) scoped to the repo root.";
     case "read-only":
       return "Model may call bash only for read-only commands (safetyLevel='read').";
     case "read-write":

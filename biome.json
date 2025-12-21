@@ -9,8 +9,7 @@
       "*.json",
       "*.md",
       "!**/node_modules/**/*",
-      "!dist/**/*",
-      "!bin/**/*"
+      "!dist/**/*"
     ]
   },
   "formatter": {

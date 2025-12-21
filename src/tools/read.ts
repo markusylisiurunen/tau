@@ -1,0 +1,179 @@
+import { readFileSync } from "node:fs";
+import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import { Type } from "@sinclair/typebox";
+import { z } from "zod";
+import type { RiskLevel } from "../types.js";
+import { createToolError, createToolResult } from "../utils/messages.js";
+import { resolveRestrictedFilePath } from "../utils/restricted_fs.js";
+import { truncateMiddle, truncateMiddleForModel } from "../utils/truncate.js";
+import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
+
+export const READ_DISPLAY_MAX_LINES = 32;
+export const READ_DISPLAY_MAX_TOKENS = 5000;
+
+export const READ_TOOL_MAX_LINES = 4096;
+export const READ_TOOL_MAX_TOKENS = 25000;
+
+const READ_DESCRIPTION = ["Read a file from the project safely."].join(" ");
+
+export const READ_TOOL: Tool = {
+  name: "read",
+  description: READ_DESCRIPTION,
+  parameters: Type.Object(
+    {
+      path: Type.String({ description: "File path to read (relative to the repo root)." }),
+      startLine: Type.Optional(
+        Type.Integer({ description: "1-based inclusive start line.", minimum: 1 }),
+      ),
+      endLine: Type.Optional(
+        Type.Integer({ description: "1-based inclusive end line.", minimum: 1 }),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+};
+
+const readArgsSchema = z.object({
+  path: z.string().trim().catch(""),
+  startLine: z.number().int().positive().optional(),
+  endLine: z.number().int().positive().optional(),
+});
+
+function parseReadArgs(raw: unknown): {
+  path: string;
+  startLine?: number;
+  endLine?: number;
+} {
+  const parsed = readArgsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : { path: "" };
+}
+
+function formatRange(startLine: number, endLine: number | undefined): string {
+  if (!endLine) {
+    return `${startLine}-EOF`;
+  }
+  return `${startLine}-${endLine}`;
+}
+
+function formatReadToolResultText(args: {
+  path: string;
+  startLine: number;
+  endLine?: number;
+  content: string;
+  truncation: ReturnType<typeof truncateMiddleForModel>;
+}): string {
+  const header = `read ${args.path} (${formatRange(args.startLine, args.endLine)})`;
+  const parts: string[] = [header];
+
+  const body = args.content.trimEnd();
+  if (body) {
+    parts.push("", body);
+  }
+
+  if (args.truncation.truncated) {
+    parts.push(
+      "",
+      `truncated for model: ${args.truncation.outputLines} of ${args.truncation.totalLines} lines`,
+    );
+  }
+
+  return parts.join("\n");
+}
+
+export function createReadToolDefinition(): ToolDefinition {
+  return {
+    schema: READ_TOOL,
+    async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+      const { path, startLine, endLine } = parseReadArgs(toolCall.arguments);
+
+      const blocked = (reason: string): ToolDispatchResult => {
+        const toolResult = createToolError(toolCall, reason);
+        const uiEvent: ToolUiEvent = {
+          type: "read_blocked",
+          path: path || "(missing path)",
+          reason,
+        };
+        return { kind: "single", toolResult, uiEvent };
+      };
+
+      if (riskLevel !== "restricted") {
+        return blocked(
+          `Read tool blocked: only available in restricted mode, but current level is '${riskLevel}'.`,
+        );
+      }
+
+      if (!path) {
+        return blocked("Read tool error: missing 'path' parameter.");
+      }
+
+      if (startLine !== undefined && startLine < 1) {
+        return blocked("Read tool error: startLine must be >= 1.");
+      }
+
+      if (endLine !== undefined && endLine < 1) {
+        return blocked("Read tool error: endLine must be >= 1.");
+      }
+
+      if (startLine !== undefined && endLine !== undefined && endLine < startLine) {
+        return blocked("Read tool error: endLine must be >= startLine.");
+      }
+
+      try {
+        const resolved = resolveRestrictedFilePath(path);
+        const rawContent = readFileSync(resolved.realPath, "utf-8");
+
+        const allLines = rawContent.split("\n");
+        const totalLines = allLines.length;
+        const start = startLine ?? 1;
+        const end = endLine ?? totalLines;
+
+        const startIndex = Math.max(0, start - 1);
+        const endIndex = Math.min(totalLines, Math.max(startIndex, end));
+
+        const selected = allLines.slice(startIndex, endIndex).join("\n");
+
+        const modelTruncation = truncateMiddleForModel(selected, {
+          maxLines: READ_TOOL_MAX_LINES,
+          maxTokens: READ_TOOL_MAX_TOKENS,
+        });
+
+        const displayTruncation = truncateMiddle(selected, {
+          maxLines: READ_DISPLAY_MAX_LINES,
+          maxTokens: READ_DISPLAY_MAX_TOKENS,
+        });
+
+        const toolText = formatReadToolResultText({
+          path: resolved.relPath,
+          startLine: start,
+          endLine: endLine,
+          content: modelTruncation.content,
+          truncation: modelTruncation,
+        });
+
+        const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
+        const uiEvent: ToolUiEvent = {
+          type: "read_success",
+          path: resolved.relPath,
+          startLine: start,
+          endLine: endLine,
+          preview: displayTruncation.content,
+          previewTruncation: {
+            truncated: displayTruncation.truncated,
+            totalLines: displayTruncation.totalLines,
+            outputLines: displayTruncation.outputLines,
+          },
+          modelTruncation: {
+            truncated: modelTruncation.truncated,
+            totalLines: modelTruncation.totalLines,
+            outputLines: modelTruncation.outputLines,
+          },
+        };
+
+        return { kind: "single", toolResult, uiEvent };
+      } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        return blocked(`Read tool failed: ${errorMessage}`);
+      }
+    },
+  };
+}

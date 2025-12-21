@@ -35,8 +35,11 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 | `edit`  | Replace exact text in files | `read-write`                                   |
 | `task`  | Run isolated subagent       | `read-only` or higher                          |
 | `fork`  | Fork session and run agent  | `read-only` or higher                          |
+| `read`  | Read file content safely    | `restricted`                                   |
+| `grep`  | Search the project safely   | `restricted`                                   |
+| `list`  | List directory contents     | `restricted`                                   |
 
-Risk levels (`none`, `read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
+Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
 
 **Bash limits**: 2MB raw capture, 60s timeout. Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/tools/bash.ts`).
 
@@ -74,7 +77,7 @@ On conflicts, project personas override user and built-in personas.
 - **Global**: `~/.config/tau/config.json` (API keys, `toolDisplayMode`, `defaultPersona`, `defaultRisk`)
   - `apiKeys.parallel` (optional): Parallel API key for the `web` subagent.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
-  - `defaultRisk` (optional): Default risk level (`none`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
+  - `defaultRisk` (optional): Default risk level (`restricted`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home)
 - **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
 - **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (YAML frontmatter with `id`, project overrides on conflicts)
@@ -85,7 +88,7 @@ On conflicts, project personas override user and built-in personas.
 - `--help`, `-h` - Show help and exit
 - `--debug` - Print debug info (loaded personas, prompts, bash commands, skills, full system prompt, tool schemas) and exit
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
-- `--risk <level>`, `-r` - Set initial risk level (`none`, `read-only`, `read-write`)
+- `--risk <level>`, `-r` - Set initial risk level (`restricted`, `read-only`, `read-write`)
 - `--with-context` - Inject AGENTS.md into the system prompt
 
 The `--debug` flag respects `--persona` and `--with-context`, so you can inspect exactly what system prompt a given configuration produces.
@@ -94,7 +97,7 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 
 - `/help`, `/new`, `/copy`, `/copy:code`, `/reload`
 - `/fork:only-summary`, `/fork:with-last-turn` - Fork with compressed history
-- `/risk:none|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/bash:<id>`
+- `/risk:restricted|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model)
 - `#<request>` - Memory mode for updating AGENTS.md
 

@@ -120,6 +120,17 @@ export class SessionEngine {
     return parseStreamingSettings(merged);
   }
 
+  private getEnabledToolSchemas() {
+    const restrictedToolNames = new Set(["read", "grep", "list"]);
+
+    if (this.riskLevel === "restricted") {
+      return this.toolRegistry.schemas.filter((tool) => restrictedToolNames.has(tool.name));
+    }
+
+    const baseTools = this.persona.tools ?? this.toolRegistry.schemas;
+    return baseTools.filter((tool) => !restrictedToolNames.has(tool.name));
+  }
+
   async *processTurn(signal: AbortSignal): AsyncGenerator<EngineEvent> {
     let subturns = 0;
 
@@ -156,7 +167,7 @@ export class SessionEngine {
     signal: AbortSignal,
   ): AsyncGenerator<EngineEvent, { finalMessage?: AssistantMessage }, void> {
     yield { type: "assistant_start" };
-    const tools = this.persona.tools ?? this.toolRegistry.schemas;
+    const tools = this.getEnabledToolSchemas();
 
     const context: Context = {
       systemPrompt: this.systemPrompt,
@@ -196,7 +207,7 @@ export class SessionEngine {
     toolCalls: ToolCall[],
     signal: AbortSignal,
   ): AsyncGenerator<EngineEvent> {
-    const enabledTools = this.persona.tools ?? this.toolRegistry.schemas;
+    const enabledTools = this.getEnabledToolSchemas();
     const enabledToolNames = new Set(enabledTools.map((t) => t.name));
     const dispatchContext: ToolDispatchContext = {
       persona: this.persona,
@@ -216,7 +227,7 @@ export class SessionEngine {
       const toolCall = toolCalls[i]!;
 
       if (!enabledToolNames.has(toolCall.name)) {
-        const msg = `tool '${toolCall.name}' is not enabled for the current persona.`;
+        const msg = `tool '${toolCall.name}' is not enabled for the current risk level.`;
         const toolError = createToolError(toolCall, msg);
         resultsByIndex.set(i, toolError);
         yield { type: "notice", severity: "error", text: msg };

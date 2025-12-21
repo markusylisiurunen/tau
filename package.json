@@ -6,23 +6,20 @@
     "tau": "./dist/main.js"
   },
   "files": [
-    "dist/",
-    "bin/"
+    "dist/"
   ],
   "scripts": {
     "prebuild": "node scripts/generate-version.js",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
-    "check": "biome check --write . && tsc -p tsconfig.json --noEmit",
-    "fmt": "biome format --write .",
-    "lint": "biome lint ."
+    "check": "biome check --write . && tsc -p tsconfig.json --noEmit"
   },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.25.0",
-    "@mariozechner/pi-tui": "^0.25.0",
+    "@mariozechner/pi-ai": "^0.25.2",
+    "@mariozechner/pi-tui": "^0.25.2",
     "@sinclair/typebox": "^0.34.41",
     "chalk": "^5.6.2",
     "yaml": "^2.8.2",

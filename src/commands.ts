@@ -81,7 +81,7 @@ export function parseCommand(raw: string): Command {
     return CommandSchema.parse({ type: "reload" });
   }
 
-  const riskMatch = trimmed.match(/^\/risk:(none|read-only|read-write)$/i);
+  const riskMatch = trimmed.match(/^\/risk:(restricted|read-only|read-write)$/i);
   if (riskMatch) {
     const level = riskMatch[1]!.toLowerCase() as RiskLevel;
     return CommandSchema.parse({ type: "risk", level });
@@ -167,7 +167,7 @@ export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string 
     "  /reload               reload personas, prompts, and skills from disk",
     "  /copy                 copy last assistant message",
     "  /copy:code            copy code blocks from last assistant message",
-    "  /risk:none            disable all tools",
+    "  /risk:restricted      restricted tools only (read/grep/list)",
     "  /risk:read-only       allow read-only tools",
     "  /risk:read-write      allow all tools",
     "  /bash:<id>            run saved bash command",
@@ -186,8 +186,8 @@ export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string 
 
 export function getRiskLevelDescription(level: RiskLevel): string {
   switch (level) {
-    case "none":
-      return "all tools disabled";
+    case "restricted":
+      return "restricted tools only (read/grep/list)";
     case "read-only":
       return "read-only tools allowed";
     case "read-write":

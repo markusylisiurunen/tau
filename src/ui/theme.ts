@@ -45,7 +45,7 @@ export interface Palette {
   userMemoryText: (text: string) => string;
 
   // Risk level indicators
-  riskNone: (text: string) => string;
+  riskRestricted: (text: string) => string;
   riskReadOnly: (text: string) => string;
   riskReadWrite: (text: string) => string;
 }
@@ -102,7 +102,7 @@ const palette: Palette = {
   userMemoryText: chalk.hex(hslToHex(280, 42, 82)),
 
   // Risk level indicators
-  riskNone: chalk.hex(hslToHex(TEXT_HUE, 6, 42)),
+  riskRestricted: chalk.hex(hslToHex(TEXT_HUE, 6, 42)),
   riskReadOnly: chalk.hex(hslToHex(72, 16, 44)),
   riskReadWrite: chalk.hex(hslToHex(8, 20, 56)),
 };

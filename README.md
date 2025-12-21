@@ -61,8 +61,8 @@ npm start
 
 tau uses risk levels to control what the model can do. this lets you stay in control while working alongside AI.
 
-- **none**: model can only chat, no tools available
-- **read-only** (default): model can explore your codebase but can't modify anything
+- **restricted**: model can only use safe inspection tools (`read`, `grep`, `list`)
+- **read-only** (default): model can run read-only tools (no file modifications)
 - **read-write**: model can create, edit, and delete files
 
 start with a specific risk level:
@@ -71,7 +71,7 @@ start with a specific risk level:
 tau --risk read-write
 ```
 
-or change it during a session with `/risk:read-only` or `/risk:read-write`.
+or change it during a session with `/risk:restricted`, `/risk:read-only`, or `/risk:read-write`.
 
 the default is read-only because it lets the model investigate your code and answer questions without risk of unintended changes. bump it to read-write when you're ready to let the model make edits.
 
@@ -192,7 +192,7 @@ store settings in `~/.config/tau/config.json`:
 
 the `defaultPersona` field specifies which persona to use when starting the app. the `--persona` flag overrides this setting.
 
-the `defaultRisk` field sets the initial risk level (`none`, `read-only`, or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
+the `defaultRisk` field sets the initial risk level (`restricted`, `read-only`, or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 
 the `userPreferences` field lets you set guidance that applies to every conversation: preferred languages, response style, or domain context.
 

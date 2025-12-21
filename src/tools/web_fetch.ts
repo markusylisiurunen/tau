@@ -214,9 +214,9 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
         return { kind: "single", toolResult, uiEvent };
       };
 
-      if (riskLevel === "none") {
+      if (riskLevel === "restricted") {
         return blocked(
-          "web_fetch blocked due to risk level being set to 'none'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
+          "web_fetch blocked due to risk level being set to 'restricted'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
         );
       }
 

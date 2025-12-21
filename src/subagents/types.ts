@@ -12,7 +12,7 @@ export type SubagentConfigMap = Partial<Record<SubagentName, SubagentPersonaConf
 
 export type AllowedSubagentToolName = "bash" | "web_search" | "web_fetch";
 
-export type SubagentRiskLevel = "none" | "read-only" | "read-write";
+export type SubagentRiskLevel = "restricted" | "read-only" | "read-write";
 
 export type SubagentRuntimeDefinition = {
   name: SubagentName;

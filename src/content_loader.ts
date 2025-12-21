@@ -1,6 +1,6 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { parse as parseYaml } from "yaml";
@@ -257,10 +257,23 @@ const promptFrontMatterSchema = z
   })
   .passthrough();
 
+const skillNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+
+const skillDescriptionSchema = z.string().trim().min(1).max(1024);
+
 const skillFrontMatterSchema = z
   .object({
-    name: z.string().trim().min(1),
-    description: z.string().trim().min(1),
+    name: skillNameSchema,
+    description: skillDescriptionSchema,
+    license: z.string().trim().min(1).optional(),
+    compatibility: z.string().trim().min(1).max(500).optional(),
+    metadata: z.record(z.string(), z.string()).optional(),
+    "allowed-tools": z.string().trim().min(1).optional(),
   })
   .passthrough();
 
@@ -513,7 +526,16 @@ function parseSkill(filePath: string, content: string): { skill?: Skill; error?:
 
   const parsedFrontMatter = skillFrontMatterSchema.safeParse(frontMatter);
   if (!parsedFrontMatter.success) {
-    return { error: `${filePath}: missing required fields (name, description). skipped.` };
+    return {
+      error: `${filePath}: invalid frontmatter (name/description required, and must follow the skills spec). skipped.`,
+    };
+  }
+
+  const dirName = dirname(filePath).split(sep).pop();
+  if (dirName && parsedFrontMatter.data.name !== dirName) {
+    return {
+      error: `${filePath}: frontmatter name "${parsedFrontMatter.data.name}" must match directory name "${dirName}". skipped.`,
+    };
   }
 
   return {
@@ -541,7 +563,18 @@ function loadSkillsFromDir(skillsDir: string): { skills: Skill[]; errors: string
   const errors: string[] = [];
 
   for (const entry of entries) {
-    const filePath = join(skillsDir, entry, "SKILL.md");
+    const skillDir = join(skillsDir, entry);
+
+    let isDir = false;
+    try {
+      isDir = statSync(skillDir).isDirectory();
+    } catch {
+      continue;
+    }
+
+    if (!isDir) continue;
+
+    const filePath = join(skillDir, "SKILL.md");
     if (!existsSync(filePath)) continue;
 
     let content = "";

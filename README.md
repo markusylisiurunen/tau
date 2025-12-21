@@ -263,9 +263,16 @@ insert them with `/prompt:review`. if a project prompt id conflicts with a user 
 
 ### skills
 
-skills are optional markdown files discovered at `~/.config/tau/skills/<dir>/SKILL.md` (user-level) and `.tau/skills/<dir>/SKILL.md` (project-level). each `SKILL.md` must contain yaml frontmatter with `name` and `description`.
+skills are optional directories discovered at `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and `.tau/skills/`. each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
 
-enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), or use `"*"` to enable all discovered skills. all non-raw built-in personas (basic and coder variants) have `skills: "*"` by default. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
+`SKILL.md` must start with yaml frontmatter:
+
+- `name`: 1-64 chars, `a-z0-9-`, must match the directory name
+- `description`: 1-1024 chars
+
+optional fields: `license`, `compatibility` (<=500 chars), `metadata` (string map), `allowed-tools` (validated, currently ignored by tau).
+
+enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), or use `"*"` to enable all discovered skills. all non-raw built-in personas (basic and coder variants) have `skills: "*"` by default. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
 
 use `/reload` to pick up changes to personas, prompts, and skills without restarting.
 

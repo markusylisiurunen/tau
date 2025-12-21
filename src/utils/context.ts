@@ -9,39 +9,57 @@ function buildUserPreferencesBlock(userPreferences?: string): string | undefined
   return undefined;
 }
 
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
 export function buildSkillsIndexBlock(skills: Skill[]): string | undefined {
   if (skills.length === 0) {
     return undefined;
   }
 
   const intro = [
-    "Skills are packages of domain expertise stored as directories.",
-    "Each contains a SKILL.md file with instructions, and may include additional resources: documentation, scripts, templates.",
+    "Skills are local, on-disk packages of domain expertise.",
+    "Each skill is a directory containing a `SKILL.md` (YAML frontmatter + instructions), and may include `references/`, `scripts/`, and `assets/`.",
   ].join(" ");
 
-  const disclosure = [
-    "Skills load in layers to conserve context:",
-    "1. **Metadata** (always loaded): The name and description below indicate what each skill covers and when to use it.",
-    "2. **Instructions** (on trigger): When a request matches a skill's description, read SKILL.md with bash (e.g., `cat <path>`).",
-    "3. **Resources** (as needed): SKILL.md may reference additional files; load them when the instructions call for it.",
-  ].join("\n");
+  const lines: string[] = [
+    "### Skills",
+    "",
+    intro,
+    "",
+    "Discovered skills:",
+    "",
+    "<available_skills>",
+  ];
 
-  const usage = [
-    "Trigger a skill when the request clearly falls within its stated scope, or when the user explicitly asks.",
-    "Don't load skills speculatively.",
-    "Scripts can be executed directly without reading their code into context.",
-    "Paths in SKILL.md are relative to the skill directory.",
-  ].join(" ");
-
-  const lines: string[] = ["### Skills", "", intro, "", disclosure, "", usage, ""];
-
-  lines.push("Available skills:");
   for (const skill of skills) {
-    lines.push(`- **${skill.name}**: ${skill.description}`);
-    lines.push(`  path: ${skill.path}`);
+    lines.push("  <skill>");
+    lines.push(`    <name>${escapeXml(skill.name)}</name>`);
+    lines.push(`    <description>${escapeXml(skill.description)}</description>`);
+    lines.push(`    <location>${escapeXml(skill.path)}</location>`);
+    lines.push("  </skill>");
   }
 
-  return lines.join("\n").trim();
+  lines.push("</available_skills>");
+
+  lines.push(
+    "",
+    "Guidelines:",
+    "- Trigger rules: Use a skill for the current turn if the user names it (e.g. `$skill-name`) or the request clearly matches its description. Use the minimal set of skills that covers the request.",
+    "- Activation (progressive disclosure): After deciding to use a skill, open its `SKILL.md` from the <location> above (e.g. `cat <path>`). Read only what's needed to follow the workflow.",
+    "- Resources: If `SKILL.md` references files in `references/` or `assets/`, load only the specific files you need. Don't bulk-load directories.",
+    "- Scripts: If `scripts/` exist, prefer running or patching them instead of retyping large code blocks.",
+    "- Paths: Paths mentioned inside `SKILL.md` are relative to the skill directory.",
+    "- Missing/blocked: If a named skill isn't listed or its `SKILL.md` can't be read, say so briefly and continue with the best fallback.",
+  );
+
+  return lines.join("\n").trimEnd();
 }
 
 export function buildBaseSystemPrompt(args: {

@@ -128,6 +128,9 @@ function formatSkillPath(fullPath: string): string {
   // Check if path is in global skills directory
   if (fullPath.startsWith(globalSkillsDir)) {
     const relPath = relative(configHome, fullPath);
+    if (process.env.XDG_CONFIG_HOME) {
+      return `$XDG_CONFIG_HOME/${relPath}`;
+    }
     return `~/.config/${relPath}`;
   }
 
@@ -161,7 +164,7 @@ export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string 
     "  /new                  new session",
     "  /fork:only-summary    summarize and start new session",
     "  /fork:with-last-turn  summarize and include previous last turn",
-    "  /reload               reload personas and prompts from disk",
+    "  /reload               reload personas, prompts, and skills from disk",
     "  /copy                 copy last assistant message",
     "  /copy:code            copy code blocks from last assistant message",
     "  /risk:none            disable all tools",

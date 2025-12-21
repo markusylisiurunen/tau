@@ -78,7 +78,7 @@ On conflicts, project personas override user and built-in personas.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home)
 - **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
 - **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (YAML frontmatter with `id`, project overrides on conflicts)
-- **Skills**: user-level `~/.config/tau/skills/<dir>/SKILL.md` and project-level `.tau/skills/<dir>/SKILL.md` (YAML frontmatter with `name`, `description`, project overrides on conflicts by `name`)
+- **Skills**: user `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and project `.tau/skills/`. Each skill is a directory containing `SKILL.md` with required YAML frontmatter `name` (1-64 chars, `a-z0-9-`, must match directory name) and `description` (1-1024 chars). Optional: `license`, `compatibility` (<=500 chars), `metadata` (string map), `allowed-tools` (validated, currently ignored). On conflicts, project overrides user by `name`.
 
 ## CLI flags
 

@@ -57,7 +57,7 @@ Risk levels (`none`, `read-only`, `read-write`) gate model tool calls. The model
 
 ## Personas and subagents
 
-**Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/2.5 Flash) × 3 variants (basic, coder, raw) = 15 personas. Basic and coder variants include the **web** subagent (max 64 turns) for agentic web research, and coder variants also include the **explore** subagent (max 64 turns) for multi-turn read-only codebase investigation. Non-raw built-in personas have `skills: "*"` to enable all discovered skills by default.
+**Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/Flash) × 2 variants (chat, coder) = 10 personas. Both variants include the **web** subagent (max 64 turns) for agentic web research, and coder variants also include the **explore** subagent (max 64 turns) for multi-turn read-only codebase investigation. Built-in personas have `skills: "*"` to enable all discovered skills by default.
 
 Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields:
 

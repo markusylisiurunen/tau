@@ -81,9 +81,9 @@ tau comes with several built-in personas across different models:
 
 - **Claude Opus 4.5** and **Haiku 4.5** (Anthropic)
 - **GPT-5.2** (OpenAI)
-- **Gemini 3 Pro** and **Gemini 2.5 Flash** (Google)
+- **Gemini 3 Pro** and **Gemini 3 Flash** (Google)
 
-each model has three variants: a general-purpose assistant, a coder variant optimized for software engineering, and a raw variant with minimal prompting. basic and coder variants include the `web` sub-agent for web research, and coder variants also include the `explore` sub-agent for multi-turn codebase investigation.
+each model has two variants: a chat variant for general-purpose assistance, and a coder variant optimized for software engineering. both variants include the `web` sub-agent for web research, and coder variants also include the `explore` sub-agent for multi-turn codebase investigation.
 
 switch personas at startup with `--persona` or mid-session with `/persona:<id>`:
 
@@ -107,7 +107,7 @@ to use the web sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` 
 some models support extended thinking, where they reason through problems before responding. cycle through reasoning levels with `shift+tab`, or set one at startup:
 
 ```sh
-tau --persona opus-4.5:high
+tau --persona opus-4.5-chat:high
 ```
 
 toggle visibility of the model's thinking with `ctrl+t`.
@@ -119,7 +119,7 @@ reference files in your message by typing `@` followed by the filename. autocomp
 you can also pipe content directly:
 
 ```sh
-cat src/app.ts | tau --persona opus-4.5
+cat src/app.ts | tau --persona opus-4.5-chat
 ```
 
 for project-aware sessions, use `--with-context` to inject your AGENTS.md into the system prompt. tau searches for this file in the current directory and parent directories up to your home folder.
@@ -183,7 +183,7 @@ store settings in `~/.config/tau/config.json`:
     "google": "...",
     "parallel": "..."
   },
-  "defaultPersona": "gpt-5.2",
+  "defaultPersona": "gpt-5.2-chat",
   "defaultRisk": "read-write",
   "toolDisplayMode": "compact",
   "userPreferences": "prefer concise responses. use TypeScript for examples."
@@ -272,7 +272,7 @@ skills are optional directories discovered at `$XDG_CONFIG_HOME/tau/skills/` (de
 
 optional fields: `license`, `compatibility` (<=500 chars), `metadata` (string map), `allowed-tools` (validated, currently ignored by tau).
 
-enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), or use `"*"` to enable all discovered skills. all non-raw built-in personas (basic and coder variants) have `skills: "*"` by default. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
+enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), or use `"*"` to enable all discovered skills. all built-in personas have `skills: "*"` by default. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
 
 use `/reload` to pick up changes to personas, prompts, and skills without restarting.
 

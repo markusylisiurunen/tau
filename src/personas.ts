@@ -120,8 +120,6 @@ const BLOCK_PROJECT_CONTEXT = `
 If an AGENTS.md file (or similar project guidelines file) is present, read it early. It contains project-specific conventions, build commands, and architecture notes that will help you work effectively.
 `.trim();
 
-const RAW_SYSTEM_PROMPT = "You are a helpful assistant.";
-
 const BASIC_SYSTEM_PROMPT = [
   BLOCK_GENERAL_PURPOSE_PREAMBLE,
   BLOCK_OUTPUT_STYLE_GUIDELINES,
@@ -246,12 +244,11 @@ const PERSONA_SPECS: PersonaSpec[] = [
   },
 ];
 
-type Variant = "raw" | "basic" | "coder";
+type Variant = "chat" | "coder";
 
 const VARIANT_CONFIG: Record<Variant, { suffix: string; systemPrompt: string }> = {
-  basic: { suffix: "", systemPrompt: BASIC_SYSTEM_PROMPT },
+  chat: { suffix: "-chat", systemPrompt: BASIC_SYSTEM_PROMPT },
   coder: { suffix: "-coder", systemPrompt: CODER_SYSTEM_PROMPT },
-  raw: { suffix: "-raw", systemPrompt: RAW_SYSTEM_PROMPT },
 };
 
 const BASE_TOOLS: NonNullable<Persona["tools"]> = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
@@ -266,59 +263,51 @@ function pickExploreReasoning(allowed: ReasoningEffort[]): ReasoningEffort {
 
 function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   const config = VARIANT_CONFIG[variant];
-  const displaySuffix = config.suffix ? `-${variant}` : "";
-  const skills = variant === "raw" ? spec.skills : "*";
+  const skills = "*";
   const settings = structuredClone(spec.settings);
 
-  let subagents: SubagentConfigMap | undefined;
-  if (variant !== "raw") {
-    const next: SubagentConfigMap = {};
+  const subagents: SubagentConfigMap = {};
 
-    if (variant === "coder" && spec.subagents?.explore) {
-      const exploreSpec = spec.subagents.explore;
-      const exploreModel = exploreSpec.model ?? spec.model;
-      const exploreEffort =
-        exploreSpec.reasoning ?? pickExploreReasoning(spec.allowedReasoningLevels);
-      next.explore = {
-        model: exploreModel,
-        settings: { reasoning: exploreEffort },
-      };
-    }
-
-    const webSpec = spec.subagents?.web ?? {};
-    const webModel = webSpec.model ?? spec.model;
-
-    const webSettings =
-      webSpec.reasoning !== undefined ? { reasoning: webSpec.reasoning } : settings;
-
-    next.web = {
-      model: webModel,
-      settings: webSettings,
+  if (variant === "coder" && spec.subagents?.explore) {
+    const exploreSpec = spec.subagents.explore;
+    const exploreModel = exploreSpec.model ?? spec.model;
+    const exploreEffort =
+      exploreSpec.reasoning ?? pickExploreReasoning(spec.allowedReasoningLevels);
+    subagents.explore = {
+      model: exploreModel,
+      settings: { reasoning: exploreEffort },
     };
-
-    subagents = next;
   }
 
-  const tools = subagents ? [...BASE_TOOLS, TASK_TOOL, FORK_TOOL] : BASE_TOOLS;
+  const webSpec = spec.subagents?.web ?? {};
+  const webModel = webSpec.model ?? spec.model;
+
+  const webSettings = webSpec.reasoning !== undefined ? { reasoning: webSpec.reasoning } : settings;
+
+  subagents.web = {
+    model: webModel,
+    settings: webSettings,
+  };
+
+  const tools = [...BASE_TOOLS, TASK_TOOL, FORK_TOOL];
 
   return {
     id: `${spec.id}${config.suffix}`,
-    label: `${spec.id}${displaySuffix}`,
-    description: `${spec.description}${displaySuffix}`,
+    label: `${spec.id}-${variant}`,
+    description: `${spec.description}-${variant}`,
     model: spec.model,
     systemPrompt: config.systemPrompt,
     allowedReasoningLevels: spec.allowedReasoningLevels,
     settings,
-    ...(skills && { skills }),
-    ...(subagents && { subagents }),
+    skills,
+    subagents,
     tools,
   };
 }
 
 export const personas: Persona[] = PERSONA_SPECS.flatMap((spec) => [
-  buildPersona(spec, "basic"),
+  buildPersona(spec, "chat"),
   buildPersona(spec, "coder"),
-  buildPersona(spec, "raw"),
 ]);
 
 export function getPersonaById(id: string): Persona | undefined {
@@ -326,11 +315,11 @@ export function getPersonaById(id: string): Persona | undefined {
 }
 
 const GEMINI_SUBAGENT_TARGET_IDS = new Set([
-  "opus-4.5",
+  "opus-4.5-chat",
   "opus-4.5-coder",
-  "haiku-4.5",
+  "haiku-4.5-chat",
   "haiku-4.5-coder",
-  "gpt-5.2",
+  "gpt-5.2-chat",
   "gpt-5.2-coder",
 ]);
 

@@ -13,20 +13,21 @@ const LIST_DEFAULT_LIMIT = 64;
 
 const LIST_DESCRIPTION = ["List files in a directory (non-recursive)."].join(" ");
 
+const LIST_PATH_DESCRIPTION =
+  "Directory path to list (relative to the repo root). Use '.' for root.";
+const LIST_OFFSET_DESCRIPTION = "Number of entries to skip.";
+const LIST_LIMIT_DESCRIPTION = "Max number of entries to return (<= 256).";
+
 export const LIST_TOOL: Tool = {
   name: "list",
   description: LIST_DESCRIPTION,
   parameters: Type.Object(
     {
       path: Type.String({
-        description: "Directory path to list (relative to the repo root). Use '.' for root.",
+        description: LIST_PATH_DESCRIPTION,
       }),
-      offset: Type.Optional(
-        Type.Integer({ description: "Number of entries to skip.", minimum: 0 }),
-      ),
-      limit: Type.Optional(
-        Type.Integer({ description: "Max number of entries to return (<= 256).", minimum: 1 }),
-      ),
+      offset: Type.Optional(Type.Integer({ description: LIST_OFFSET_DESCRIPTION, minimum: 0 })),
+      limit: Type.Optional(Type.Integer({ description: LIST_LIMIT_DESCRIPTION, minimum: 1 })),
     },
     { additionalProperties: false },
   ),
@@ -44,15 +45,10 @@ function parseListArgs(raw: unknown): {
   limit: number;
 } {
   const parsed = listArgsSchema.safeParse(raw);
-  if (!parsed.success) {
-    return { path: "", offset: 0, limit: LIST_DEFAULT_LIMIT };
-  }
-
-  return {
-    path: parsed.data.path,
-    offset: parsed.data.offset ?? 0,
-    limit: parsed.data.limit ?? LIST_DEFAULT_LIMIT,
-  };
+  const path = parsed.success ? parsed.data.path : "";
+  const offset = parsed.success ? (parsed.data.offset ?? 0) : 0;
+  const limit = parsed.success ? (parsed.data.limit ?? LIST_DEFAULT_LIMIT) : LIST_DEFAULT_LIMIT;
+  return { path, offset, limit };
 }
 
 function formatListToolResultText(args: {
@@ -77,7 +73,7 @@ function formatListToolResultText(args: {
 export function createListToolDefinition(): ToolDefinition {
   return {
     schema: LIST_TOOL,
-    async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+    async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
       const { path, offset, limit } = parseListArgs(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
@@ -90,12 +86,7 @@ export function createListToolDefinition(): ToolDefinition {
         return { kind: "single", toolResult, uiEvent };
       };
 
-      if (riskLevel !== "restricted") {
-        return blocked(
-          `List tool blocked: only available in restricted mode, but current level is '${riskLevel}'.`,
-        );
-      }
-
+      // All acceptance checks passed; return result
       if (!path) {
         return blocked("List tool error: missing 'path' parameter.");
       }

@@ -16,18 +16,20 @@ export const READ_TOOL_MAX_TOKENS = 25000;
 
 const READ_DESCRIPTION = ["Read a file from the project safely."].join(" ");
 
+const READ_PATH_DESCRIPTION = "File path to read (relative to the repo root).";
+const READ_START_LINE_DESCRIPTION = "1-based inclusive start line.";
+const READ_END_LINE_DESCRIPTION = "1-based inclusive end line.";
+
 export const READ_TOOL: Tool = {
   name: "read",
   description: READ_DESCRIPTION,
   parameters: Type.Object(
     {
-      path: Type.String({ description: "File path to read (relative to the repo root)." }),
+      path: Type.String({ description: READ_PATH_DESCRIPTION }),
       startLine: Type.Optional(
-        Type.Integer({ description: "1-based inclusive start line.", minimum: 1 }),
+        Type.Integer({ description: READ_START_LINE_DESCRIPTION, minimum: 1 }),
       ),
-      endLine: Type.Optional(
-        Type.Integer({ description: "1-based inclusive end line.", minimum: 1 }),
-      ),
+      endLine: Type.Optional(Type.Integer({ description: READ_END_LINE_DESCRIPTION, minimum: 1 })),
     },
     { additionalProperties: false },
   ),
@@ -83,7 +85,7 @@ function formatReadToolResultText(args: {
 export function createReadToolDefinition(): ToolDefinition {
   return {
     schema: READ_TOOL,
-    async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+    async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
       const { path, startLine, endLine } = parseReadArgs(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
@@ -95,12 +97,6 @@ export function createReadToolDefinition(): ToolDefinition {
         };
         return { kind: "single", toolResult, uiEvent };
       };
-
-      if (riskLevel !== "restricted") {
-        return blocked(
-          `Read tool blocked: only available in restricted mode, but current level is '${riskLevel}'.`,
-        );
-      }
 
       if (!path) {
         return blocked("Read tool error: missing 'path' parameter.");

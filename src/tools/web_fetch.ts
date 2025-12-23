@@ -28,37 +28,48 @@ const WEB_FETCH_DESCRIPTION = [
   "You may use maxCharsPerResult to limit the size of the extracted content if needed.",
 ].join(" ");
 
+const WEB_FETCH_URL_DESCRIPTION = "URL to fetch.";
+const WEB_FETCH_OBJECTIVE_DESCRIPTION =
+  "If provided, focuses extracted content on the specified search objective.";
+const WEB_FETCH_SEARCH_QUERIES_DESCRIPTION =
+  "If provided, focuses extracted content on the specified keyword search queries.";
+const WEB_FETCH_EXCERPTS_DESCRIPTION =
+  "Include excerpts from URL relevant to the search objective and queries.";
+const WEB_FETCH_FULL_CONTENT_DESCRIPTION = "Include full content from URL. Can be large.";
+const WEB_FETCH_MAX_CHARS_PER_RESULT_DESCRIPTION =
+  "Max number of characters per extracted excerpt.";
+
 export const WEB_FETCH_TOOL: Tool = {
   name: "web_fetch",
   description: WEB_FETCH_DESCRIPTION,
   parameters: Type.Object(
     {
       url: Type.String({
-        description: "URL to fetch.",
+        description: WEB_FETCH_URL_DESCRIPTION,
       }),
       objective: Type.Optional(
         Type.String({
-          description: "If provided, focuses extracted content on the specified search objective.",
+          description: WEB_FETCH_OBJECTIVE_DESCRIPTION,
         }),
       ),
       searchQueries: Type.Optional(
         Type.Array(Type.String(), {
-          description:
-            "If provided, focuses extracted content on the specified keyword search queries.",
+          description: WEB_FETCH_SEARCH_QUERIES_DESCRIPTION,
         }),
       ),
       excerpts: Type.Optional(
         Type.Boolean({
-          description: "Include excerpts from URL relevant to the search objective and queries.",
+          description: WEB_FETCH_EXCERPTS_DESCRIPTION,
         }),
       ),
       fullContent: Type.Optional(
         Type.Boolean({
-          description: "Include full content from URL. Can be large.",
+          description: WEB_FETCH_FULL_CONTENT_DESCRIPTION,
         }),
       ),
       maxCharsPerResult: Type.Optional(
         Type.Integer({
+          description: WEB_FETCH_MAX_CHARS_PER_RESULT_DESCRIPTION,
           minimum: 200,
           maximum: 100_000,
         }),

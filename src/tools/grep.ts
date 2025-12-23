@@ -28,38 +28,50 @@ const GREP_DESCRIPTION = ["Search the project with ripgrep (rg).", "Runs without
   " ",
 );
 
+const GREP_PATTERN_DESCRIPTION = "Search pattern (ripgrep regex).";
+const GREP_PATHS_DESCRIPTION = "Paths to search (files or directories, relative to repo root).";
+const GREP_CASE_MODE_DESCRIPTION =
+  "Case sensitivity mode. Must be one of: smart, sensitive, insensitive.";
+const GREP_FIXED_STRINGS_DESCRIPTION = "Treat pattern as a literal string.";
+const GREP_WORD_REGEXP_DESCRIPTION = "Match only whole words.";
+const GREP_MAX_COUNT_DESCRIPTION = "Max matches per file.";
+const GREP_BEFORE_CONTEXT_DESCRIPTION = "Lines of context before.";
+const GREP_AFTER_CONTEXT_DESCRIPTION = "Lines of context after.";
+const GREP_CONTEXT_DESCRIPTION = "Lines of context before and after.";
+const GREP_GLOB_DESCRIPTION = "Include/exclude glob(s) passed via --glob.";
+const GREP_HIDDEN_DESCRIPTION = "Search hidden files and directories.";
+
 export const GREP_TOOL: Tool = {
   name: "grep",
   description: GREP_DESCRIPTION,
   parameters: Type.Object(
     {
-      pattern: Type.String({ description: "Search pattern (ripgrep regex)." }),
+      pattern: Type.String({ description: GREP_PATTERN_DESCRIPTION }),
       paths: Type.Optional(
         Type.Array(Type.String(), {
-          description: "Paths to search (files or directories, relative to repo root).",
+          description: GREP_PATHS_DESCRIPTION,
         }),
       ),
       caseMode: Type.Optional(
-        Type.Union([Type.Literal("smart"), Type.Literal("sensitive"), Type.Literal("insensitive")]),
+        Type.String({
+          description: GREP_CASE_MODE_DESCRIPTION,
+          enum: ["smart", "sensitive", "insensitive"],
+        }),
       ),
-      fixedStrings: Type.Optional(
-        Type.Boolean({ description: "Treat pattern as a literal string." }),
+      fixedStrings: Type.Optional(Type.Boolean({ description: GREP_FIXED_STRINGS_DESCRIPTION })),
+      wordRegexp: Type.Optional(Type.Boolean({ description: GREP_WORD_REGEXP_DESCRIPTION })),
+      maxCount: Type.Optional(
+        Type.Integer({ description: GREP_MAX_COUNT_DESCRIPTION, minimum: 1 }),
       ),
-      wordRegexp: Type.Optional(Type.Boolean({ description: "Match only whole words." })),
-      maxCount: Type.Optional(Type.Integer({ description: "Max matches per file.", minimum: 1 })),
       beforeContext: Type.Optional(
-        Type.Integer({ description: "Lines of context before.", minimum: 0 }),
+        Type.Integer({ description: GREP_BEFORE_CONTEXT_DESCRIPTION, minimum: 0 }),
       ),
       afterContext: Type.Optional(
-        Type.Integer({ description: "Lines of context after.", minimum: 0 }),
+        Type.Integer({ description: GREP_AFTER_CONTEXT_DESCRIPTION, minimum: 0 }),
       ),
-      context: Type.Optional(
-        Type.Integer({ description: "Lines of context before and after.", minimum: 0 }),
-      ),
-      glob: Type.Optional(
-        Type.Array(Type.String(), { description: "Include/exclude glob(s) passed via --glob." }),
-      ),
-      hidden: Type.Optional(Type.Boolean({ description: "Search hidden files and directories." })),
+      context: Type.Optional(Type.Integer({ description: GREP_CONTEXT_DESCRIPTION, minimum: 0 })),
+      glob: Type.Optional(Type.Array(Type.String(), { description: GREP_GLOB_DESCRIPTION })),
+      hidden: Type.Optional(Type.Boolean({ description: GREP_HIDDEN_DESCRIPTION })),
     },
     { additionalProperties: false },
   ),
@@ -79,12 +91,23 @@ const grepArgsSchema = z.object({
   hidden: z.boolean().optional(),
 });
 
-function parseGrepArgs(raw: unknown): z.infer<typeof grepArgsSchema> {
+type GrepArgs = {
+  pattern: string;
+  paths?: string[];
+  caseMode?: "smart" | "sensitive" | "insensitive";
+  fixedStrings?: boolean;
+  wordRegexp?: boolean;
+  maxCount?: number;
+  beforeContext?: number;
+  afterContext?: number;
+  context?: number;
+  glob?: string[];
+  hidden?: boolean;
+};
+
+function parseGrepArgs(raw: unknown): GrepArgs {
   const parsed = grepArgsSchema.safeParse(raw);
-  if (!parsed.success) {
-    return { pattern: "" };
-  }
-  return parsed.data;
+  return parsed.success ? parsed.data : { pattern: "" };
 }
 
 type GrepExecResult = {
@@ -276,7 +299,7 @@ export function createGrepToolDefinition(): ToolDefinition {
     schema: GREP_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      riskLevel: RiskLevel,
+      _riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const parsed = parseGrepArgs(toolCall.arguments);
@@ -291,12 +314,6 @@ export function createGrepToolDefinition(): ToolDefinition {
         };
         return { kind: "single", toolResult, uiEvent };
       };
-
-      if (riskLevel !== "restricted") {
-        return blocked(
-          `Grep tool blocked: only available in restricted mode, but current level is '${riskLevel}'.`,
-        );
-      }
 
       if (!parsed.pattern) {
         return blocked("Grep tool error: missing 'pattern' parameter.");

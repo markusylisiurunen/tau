@@ -97,8 +97,13 @@ export const BASH_TOOL: Tool = {
   description: BASH_DESCRIPTION,
   parameters: Type.Object(
     {
-      command: Type.String({ description: BASH_COMMAND_DESCRIPTION }),
-      safetyLevel: Type.String({ description: BASH_SAFETY_LEVEL_DESCRIPTION }),
+      command: Type.String({
+        description: BASH_COMMAND_DESCRIPTION,
+      }),
+      safetyLevel: Type.String({
+        description: BASH_SAFETY_LEVEL_DESCRIPTION,
+        enum: ["read", "write"],
+      }),
     },
     { additionalProperties: false },
   ),

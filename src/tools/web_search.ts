@@ -28,33 +28,50 @@ const WEB_SEARCH_DESCRIPTION = [
   "You may adjust maxResults and maxCharsPerResult to balance coverage vs token usage.",
 ].join(" ");
 
+const WEB_SEARCH_OBJECTIVE_DESCRIPTION = "What you are trying to find out.";
+const WEB_SEARCH_SEARCH_QUERIES_DESCRIPTION = "Optional keyword-style queries to guide the search.";
+const WEB_SEARCH_MAX_RESULTS_DESCRIPTION = "Max number of results to return.";
+const WEB_SEARCH_MAX_CHARS_PER_RESULT_DESCRIPTION = "Max characters per result excerpt.";
+const WEB_SEARCH_INCLUDE_DOMAINS_DESCRIPTION = "List of domains to include in search.";
+const WEB_SEARCH_EXCLUDE_DOMAINS_DESCRIPTION = "List of domains to exclude from search.";
+
 export const WEB_SEARCH_TOOL: Tool = {
   name: "web_search",
   description: WEB_SEARCH_DESCRIPTION,
   parameters: Type.Object(
     {
       objective: Type.String({
-        description: "What you are trying to find out.",
+        description: WEB_SEARCH_OBJECTIVE_DESCRIPTION,
       }),
       searchQueries: Type.Optional(
         Type.Array(Type.String(), {
-          description: "Optional keyword-style queries to guide the search.",
+          description: WEB_SEARCH_SEARCH_QUERIES_DESCRIPTION,
         }),
       ),
       maxResults: Type.Optional(
         Type.Integer({
+          description: WEB_SEARCH_MAX_RESULTS_DESCRIPTION,
           minimum: 1,
           maximum: 50,
         }),
       ),
       maxCharsPerResult: Type.Optional(
         Type.Integer({
+          description: WEB_SEARCH_MAX_CHARS_PER_RESULT_DESCRIPTION,
           minimum: 200,
           maximum: 50_000,
         }),
       ),
-      includeDomains: Type.Optional(Type.Array(Type.String())),
-      excludeDomains: Type.Optional(Type.Array(Type.String())),
+      includeDomains: Type.Optional(
+        Type.Array(Type.String(), {
+          description: WEB_SEARCH_INCLUDE_DOMAINS_DESCRIPTION,
+        }),
+      ),
+      excludeDomains: Type.Optional(
+        Type.Array(Type.String(), {
+          description: WEB_SEARCH_EXCLUDE_DOMAINS_DESCRIPTION,
+        }),
+      ),
     },
     { additionalProperties: false },
   ),

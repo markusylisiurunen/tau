@@ -121,14 +121,7 @@ export class SessionEngine {
   }
 
   private getEnabledToolSchemas() {
-    const restrictedToolNames = new Set(["read", "grep", "list"]);
-
-    if (this.riskLevel === "restricted") {
-      return this.toolRegistry.schemas.filter((tool) => restrictedToolNames.has(tool.name));
-    }
-
-    const baseTools = this.persona.tools ?? this.toolRegistry.schemas;
-    return baseTools.filter((tool) => !restrictedToolNames.has(tool.name));
+    return this.toolRegistry.getEnabledToolSchemas(this.riskLevel, this.persona.tools);
   }
 
   async *processTurn(signal: AbortSignal): AsyncGenerator<EngineEvent> {

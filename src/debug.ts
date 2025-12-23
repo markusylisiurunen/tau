@@ -3,7 +3,8 @@ import type { Tool } from "@mariozechner/pi-ai";
 import type { BashCommand } from "./bash_commands.js";
 import type { PromptTemplate } from "./prompts.js";
 import { formatSubagentsForPrompt } from "./subagents/registry.js";
-import type { Persona, Skill } from "./types.js";
+import type { ToolRegistry } from "./tools/registry.js";
+import type { Persona, RiskLevel, Skill } from "./types.js";
 import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
@@ -82,8 +83,19 @@ export function printDebugInfo(args: {
   skills: Skill[];
   selectedPersona: Persona;
   withContext: boolean;
+  riskLevel?: RiskLevel;
+  toolRegistry: ToolRegistry;
 }): void {
-  const { personas, prompts, bashCommands, skills, selectedPersona, withContext } = args;
+  const {
+    personas,
+    prompts,
+    bashCommands,
+    skills,
+    selectedPersona,
+    withContext,
+    riskLevel,
+    toolRegistry,
+  } = args;
 
   console.log("tau debug info");
   console.log(`cwd: ${process.cwd()}`);
@@ -143,8 +155,9 @@ export function printDebugInfo(args: {
   const projectContextBlock = withContext
     ? buildProjectContextBlock({ cwd: process.cwd(), home: homedir() })
     : undefined;
+  const effectiveRiskLevel: RiskLevel = riskLevel ?? "read-only";
   const environmentTag = buildEnvironmentTag({
-    riskLevel: "read-only",
+    riskLevel: effectiveRiskLevel,
     cwd: process.cwd(),
     datetime: new Date().toISOString(),
   });
@@ -178,12 +191,16 @@ export function printDebugInfo(args: {
   }
 
   // Tools
-  const tools = selectedPersona.tools ?? [];
-  section(`Active tools (${tools.length})`);
-  if (tools.length === 0) {
+  const enabledTools = toolRegistry.getEnabledToolSchemas(
+    effectiveRiskLevel,
+    selectedPersona.tools,
+  );
+
+  section(`Active tools (${enabledTools.length})`);
+  if (enabledTools.length === 0) {
     console.log("\n  (none)");
   } else {
-    for (const tool of tools) {
+    for (const tool of enabledTools) {
       console.log(`\n- ${tool.name}`);
       console.log(formatToolSchema(tool));
     }

@@ -9,6 +9,15 @@ import { printDebugInfo } from "./debug.js";
 import { applyGeminiSubagents, personas as builtinPersonas } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
 import { prompts as builtinPrompts } from "./prompts.js";
+import { createBashToolDefinition } from "./tools/bash.js";
+import { createEditToolDefinition } from "./tools/edit.js";
+import { createForkToolDefinition } from "./tools/fork.js";
+import { createGrepToolDefinition } from "./tools/grep.js";
+import { createListToolDefinition } from "./tools/list.js";
+import { createReadToolDefinition } from "./tools/read.js";
+import { ToolRegistry } from "./tools/registry.js";
+import { createTaskToolDefinition } from "./tools/task.js";
+import { createWriteToolDefinition } from "./tools/write.js";
 import type { Persona, ReasoningEffort, Skill } from "./types.js";
 
 // Load configuration from file
@@ -94,6 +103,17 @@ if (cli.debug) {
     debugPersona.settings.reasoning = debugReasoningOverride;
   }
 
+  const debugRiskLevel = cli.riskLevel ?? config.defaultRisk ?? "read-only";
+  const debugToolRegistry = new ToolRegistry([
+    createBashToolDefinition(),
+    createWriteToolDefinition(),
+    createEditToolDefinition(),
+    createTaskToolDefinition(),
+    createForkToolDefinition(),
+    createReadToolDefinition(),
+    createGrepToolDefinition(),
+    createListToolDefinition(),
+  ]);
   printDebugInfo({
     personas,
     prompts,
@@ -101,6 +121,8 @@ if (cli.debug) {
     skills,
     selectedPersona: debugPersona,
     withContext: cli.withContext,
+    riskLevel: debugRiskLevel,
+    toolRegistry: debugToolRegistry,
   });
   process.exit(0);
 }

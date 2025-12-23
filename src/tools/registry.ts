@@ -2,6 +2,8 @@ import type { Message, Tool, ToolCall, ToolResultMessage } from "@mariozechner/p
 import type { Config } from "../config.js";
 import type { Persona, RiskLevel } from "../types.js";
 
+const restrictedToolNames = new Set(["read", "grep", "list"]);
+
 export type ToolUiEvent =
   | {
       type: "bash_started";
@@ -210,5 +212,14 @@ export class ToolRegistry {
 
   get(toolName: string): ToolDefinition | undefined {
     return this.byName.get(toolName);
+  }
+
+  getEnabledToolSchemas(riskLevel: RiskLevel, personaTools?: Tool[]): Tool[] {
+    if (riskLevel === "restricted") {
+      return this.schemas.filter((tool) => restrictedToolNames.has(tool.name));
+    }
+
+    const baseTools = personaTools ?? this.schemas;
+    return baseTools.filter((tool) => !restrictedToolNames.has(tool.name));
   }
 }

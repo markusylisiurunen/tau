@@ -417,28 +417,12 @@ export class ChatApp {
       ? this.getContextWindowForLastTurn(last)
       : this.currentPersona.model.contextWindow;
 
-    const { read, write } = this.getCacheTotals();
-    let stats = `r${formatTokenWindow(read)} w${formatTokenWindow(write)}`;
+    const { input, read, write, output } = this.getSessionTotals();
+    const stats = `i${formatTokenWindow(input)} r${formatTokenWindow(read)} w${formatTokenWindow(write)} o${formatTokenWindow(output)}`;
 
-    if (!last) {
-      return `${stats} 0%/${formatTokenWindow(windowTokens)}`;
-    }
-
-    // Sum output tokens from assistant messages in the current turn (after last user message)
-    let totalOutputTokens = 0;
-    for (let i = this.engine.history.length - 1; i >= 0; i--) {
-      const m = this.engine.history[i]!;
-      if (m.role === "user") {
-        break;
-      }
-      if (m.role === "assistant") {
-        totalOutputTokens += (m as AssistantMessage).usage?.output ?? 0;
-      }
-    }
-    stats += ` o${formatTokenWindow(totalOutputTokens)}`;
-
-    const promptTokensSent =
-      (last.usage?.input ?? 0) + (last.usage?.cacheRead ?? 0) + (last.usage?.cacheWrite ?? 0);
+    const promptTokensSent = last
+      ? (last.usage?.input ?? 0) + (last.usage?.cacheRead ?? 0) + (last.usage?.cacheWrite ?? 0)
+      : 0;
     const percent = windowTokens > 0 ? (promptTokensSent / windowTokens) * 100 : 0;
     const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;
 
@@ -455,17 +439,21 @@ export class ChatApp {
     return `$${formatAdaptiveNumber(total + this.subagentCostTotal, 2, 5)}`;
   }
 
-  private getCacheTotals(): { read: number; write: number } {
+  private getSessionTotals(): { input: number; read: number; write: number; output: number } {
+    let input = 0;
     let read = 0;
     let write = 0;
+    let output = 0;
     for (const m of this.engine.history) {
       if (m.role === "assistant") {
         const usage = (m as AssistantMessage).usage;
+        input += usage?.input ?? 0;
         read += usage?.cacheRead ?? 0;
         write += usage?.cacheWrite ?? 0;
+        output += usage?.output ?? 0;
       }
     }
-    return { read, write };
+    return { input, read, write, output };
   }
 
   private getLastAssistantMessage(): AssistantMessage | undefined {

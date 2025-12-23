@@ -102,6 +102,16 @@ tau also supports an internal `fork` tool, which runs an autonomous fork of the 
 
 to use the web sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when needed or when you explicitly ask for web research.
 
+## trigger sensitivity
+
+sub-agents and skills define when they should be activated via trigger sensitivity levels:
+
+- **eager**: use proactively whenever the capability would help, even if not explicitly requested. example: `explore` is eager because multi-step codebase investigation is often valuable.
+- **balanced**: use when the request clearly matches the capability. this is the default if not specified. good for skills that solve specific problems but shouldn't be assumed.
+- **explicit**: use only when the user specifically names or requests it. example: `web` is explicit because web research should happen only when the user asks for current information.
+
+when you write custom skills, you can specify trigger sensitivity in the skill description. if not specified, the default is balanced. the model respects these levels and won't trigger a skill or sub-agent inappropriately.
+
 ## reasoning
 
 some models support extended thinking, where they reason through problems before responding. cycle through reasoning levels with `shift+tab`, or set one at startup:

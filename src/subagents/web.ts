@@ -32,26 +32,21 @@ Fetch these via curl when you spot them. Keep in mind that some sites may requir
 
 - Start with web_search to find candidates. Scan snippets before fetching.
 - Fetch only the most promising URLs; don't retrieve speculatively.
-- Make parallel fetch calls when evaluating independent sources.
-- If a fetch fails or returns irrelevant content, move on.
+- Make parallel calls when evaluating independent sources.
+- If a fetch fails or returns noise, move on.
 - Stop once you have enough to answer confidently.
 
 ### Output
 
-Return only the answer to the user's prompt. Summarize rather than quote at length.
-Be direct and concise. No meta commentary about your exploration process or tool usage.
-Cite sources as URLs when you used them.
-If you encountered blockers, made assumptions, or found conflicting information, note them briefly at the end.
+Return only the answer to the request. Summarize rather than quote at length. Be direct and concise. No meta commentary about your exploration process. Cite sources as URLs. If you hit blockers, made assumptions, or found conflicts, note them briefly at the end.
 `.trim();
 
 export const WEB_DEFINITION: SubagentRuntimeDefinition = {
   name: "web",
   description: [
-    "Sub-agent for multi-step web research: technical docs, bug reports, changelogs, release notes.",
-    "Use when the question needs current information, authoritative sources, or context not available locally.",
-    "Examples: 'what's new in React 19', 'is this a known issue in package X',",
-    "'what do the docs say about Y', 'how do I configure Z in library W'.",
-    "Skip when general knowledge or local context suffices: concepts, well-established patterns, things you know confidently.",
+    "Web research for technical docs, bug reports, changelogs, release notes, and so on. Trigger: explicit.",
+    "Use only when the user mentions searching the web for current information not available locally.",
+    "Examples: 'search the web for X', 'using web, what's new in React 19?', 'is this a known issue in package Y according to GitHub issues?'.",
   ].join(" "),
   systemPrompt: WEB_SYSTEM_PROMPT,
   allowedTools: ["web_search", "web_fetch", "bash"],

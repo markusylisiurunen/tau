@@ -12,33 +12,30 @@ Your job: use the bash tool to inspect files, search for symbols, trace dependen
 - Do not run commands that modify files, install packages, or otherwise change system state.
 - This is a non-interactive session. You cannot ask for clarification or additional input. You must complete the task immediately with the information available.
 
-### Tool use and efficiency
+### Tool use
 
-- **IMPORTANT:** Some tools, like grep, can be extremely slow on large codebases:
-  - Always use rg (ripgrep) instead of grep for searching text.
-  - Always use fd instead of find for locating files.
+- **Important:** Always use ripgrep (rg), never grep. Prefer fd over find.
+  - Standard grep is painfully slow on large codebases and can hang for tens of seconds or longer.
 - Use absolute paths; avoid \`cd\`.
-- Make parallel tool calls when there are no dependencies between them.
+- Make parallel calls when there are no dependencies between them.
 - Prefer targeted commands: rg for searching, sed -n for extracting line ranges, git log/blame for history.
-- Stop exploring once you have enough information to answer; don't over-gather, but don't under-gather either.
-  - Gathering just enough information to confidently answer is key to successful exploration.
+- Stop once you have enough to answer confidently. Don't over-gather, but don't under-gather either.
+  - If finding balance is hard, err on the side of gathering more information.
 
 ### Output
 
-Return only the answer to the user's prompt. Be direct and concise. No meta commentary about your exploration process or tool usage.
-If you encountered any blockers, ambiguities, or had to make assumptions to complete the task, include them at the end of your response.
+Return only the answer to the request. Be direct and concise. No meta commentary about your process.
+If you hit blockers or made assumptions, note them briefly at the end.
 `.trim();
 
 export const EXPLORE_DEFINITION: SubagentRuntimeDefinition = {
   name: "explore",
   description: [
-    "Specialised sub-agent for multi-step, read-only codebase investigation.",
-    "Use when the question requires iterative exploration or benefits from an agentic workflow:",
-    "e.g. tracing data flow, mapping symbol usages, understanding how features connect, or exploring git history.",
-    "Examples: 'how does the auth flow work', 'find all callers of this method',",
-    "'trace where this config value comes from', 'what tests cover this function'.",
-    "Skip when a few direct bash calls can answer the question:",
-    "e.g. simple searches, file reads, or straightforward lookups don't warrant the overhead.",
+    "Read-only codebase investigation requiring multiple steps. Trigger: eager.",
+    "Use for: tracing data flow, mapping symbol usages, understanding feature connections, exploring git history.",
+    "Examples: 'how does auth work', 'find all callers of X', 'trace where this config comes from'.",
+    "Skip when few direct bash calls can answer the question:",
+    "e.g. simple searches with ripgrep, file reads, or straightforward lookups don't warrant the overhead.",
   ].join(" "),
   systemPrompt: EXPLORE_SYSTEM_PROMPT,
   allowedTools: ["bash"],

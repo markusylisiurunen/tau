@@ -60,7 +60,7 @@ Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The
 
 ## Personas and subagents
 
-**Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/Flash) × 2 variants (chat, coder) = 10 personas. Both variants include the **web** subagent (max 64 turns) for agentic web research, and coder variants also include the **explore** subagent (max 64 turns) for multi-turn read-only codebase investigation. Built-in personas have `skills: "*"` to enable all discovered skills by default.
+**Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/Flash) × 2 variants (chat, coder) = 10 personas. Both variants include the **web** subagent (max 64 turns, trigger: explicit) for agentic web research, and coder variants also include the **explore** subagent (max 64 turns, trigger: eager) for multi-turn read-only codebase investigation. Built-in personas have `skills: "*"` to enable all discovered skills by default. See trigger sensitivity below for how subagent and skill activation is controlled.
 
 Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields:
 
@@ -81,7 +81,37 @@ On conflicts, project personas override user and built-in personas.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home)
 - **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
 - **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (YAML frontmatter with `id`, project overrides on conflicts)
-- **Skills**: user `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and project `.tau/skills/`. Each skill is a directory containing `SKILL.md` with required YAML frontmatter `name` (1-64 chars, `a-z0-9-`, must match directory name) and `description` (1-1024 chars). Optional: `license`, `compatibility` (<=500 chars), `metadata` (string map), `allowed-tools` (validated, currently ignored). On conflicts, project overrides user by `name`.
+- **Skills**: user `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and project `.tau/skills/`. Each skill is a directory containing `SKILL.md` with required YAML frontmatter:
+  - `name` (1-64 chars, `a-z0-9-`, must match directory name)
+  - `description` (1-1024 chars)
+
+  Optional frontmatter: `license`, `compatibility` (<=500 chars), `metadata` (string map), `allowed-tools` (validated, currently ignored).
+
+  **Trigger sensitivity**: Skills can specify when they should be activated by including a trigger keyword in their description. If not specified, the default is **balanced**:
+  - Include "Trigger: eager" to use whenever the capability helps, even if not explicitly requested
+  - Include "Trigger: balanced" (or omit to use default) to use when the request clearly matches the skill's purpose
+  - Include "Trigger: explicit" to use only when the user specifically names or requests the skill
+
+  Example: "Git workflow helper. Trigger: eager." or "Database migrator. Trigger: explicit."
+
+  On conflicts, project overrides user by `name`.
+
+## Trigger sensitivity
+
+Trigger sensitivity is a concept that guides how proactively the model should activate skills and sub-agents. All three levels are defined in the system prompt, and the model respects them when deciding whether to use a capability.
+
+**Levels:**
+
+- **eager**: Use proactively whenever the capability would help, even if not explicitly requested. The model should consider using it for related problems.
+- **balanced**: Use when the request clearly matches the capability. This is the default if not specified. The model should activate it when appropriate, but not speculatively.
+- **explicit**: Use only when the user specifically names or requests it. The model should never use this capability unless explicitly mentioned.
+
+**Built-in subagents:**
+
+- `explore`: eager (multi-turn codebase investigation is often valuable for code understanding questions)
+- `web`: explicit (web research should only happen when explicitly requested, to avoid unnecessary external calls)
+
+**For custom skills:** Include "Trigger: eager", "Trigger: balanced", or "Trigger: explicit" in your skill's description. If omitted, balanced is the default. This ensures the model knows when to use your skill.
 
 ## CLI flags
 

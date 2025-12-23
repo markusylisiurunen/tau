@@ -261,6 +261,8 @@ export class ChatApp {
     this.editor.onCtrlT = () => this.toggleThinkingVisibility();
     this.editor.onCtrlO = () => this.toggleCompactToolUi();
     this.editor.onShiftTab = () => this.cycleReasoningLevel();
+    this.editor.onCtrlR = () => this.cycleRiskLevel();
+    this.editor.onCtrlP = () => this.cyclePersonality();
     this.editor.onEscape = () => this.interruptAssistantTurn();
     this.editor.onCtrlF = () => {
       this.expandFileMentions().catch((err) => {
@@ -518,6 +520,65 @@ export class ChatApp {
     if (!allowed.includes(persona.settings.reasoning as ReasoningEffort)) {
       persona.settings.reasoning = allowed[0];
     }
+  }
+
+  // Risk Level Management ---------------------------------------------------------------
+
+  private cycleRiskLevel(): void {
+    const levels: RiskLevel[] = ["restricted", "read-only", "read-write"];
+    const previous = this.riskLevel;
+    const index = levels.indexOf(this.riskLevel);
+    const next = levels[(index + 1) % levels.length]!;
+    this.riskLevel = next;
+    this.engine.setRiskLevel(next);
+    this.updateFooter();
+
+    if (previous !== next) {
+      const from = this.pendingRiskLevelChange?.from ?? previous;
+      if (from === next) {
+        this.pendingRiskLevelChange = undefined;
+      } else {
+        this.pendingRiskLevelChange = { from, to: next };
+      }
+    }
+
+    const description = getRiskLevelDescription(next);
+    this.addSystemMessage(`risk level: ${description} (ctrl+r to cycle)`, palette.noticeSuccess);
+    this.ui.requestRender();
+  }
+
+  // Personality Management ---------------------------------------------------------------
+
+  private cyclePersonality(): void {
+    const index = this.personas.findIndex((p) => p.id === this.currentPersona.id);
+    const next = this.personas[(index + 1) % this.personas.length]!;
+
+    this.currentPersona = next;
+    this.clampPersonaReasoning(this.currentPersona);
+    const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
+    this.baseSystemPrompt = buildBaseSystemPrompt({
+      personaSystemPrompt: this.currentPersona.systemPrompt,
+      skillsBlock: skillsContext.skillsBlock,
+      projectContextBlock: this.projectContextBlock,
+      environmentTag: this.environmentTag,
+      previousSessionSummary: this.previousSessionSummary,
+      userPreferences: this.config.userPreferences,
+      subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
+    });
+    this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
+    this.updateFooter();
+    this.updateEditorBorderColor();
+
+    if (skillsContext.unknown.length > 0) {
+      this.addSystemMessage(
+        `warning: unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
+        palette.noticeWarn,
+      );
+    }
+
+    const label = this.currentPersona.label || this.currentPersona.id;
+    this.addSystemMessage(`switched to ${label} (ctrl+p to cycle)`, palette.noticeSuccess);
+    this.ui.requestRender();
   }
 
   private getSkillsIndexBlockForPersona(persona: Persona): {
@@ -1133,7 +1194,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.updateFooter();
 
     if (previous !== level) {
-      this.pendingRiskLevelChange = { from: previous, to: level };
+      const from = this.pendingRiskLevelChange?.from ?? previous;
+      if (from === level) {
+        this.pendingRiskLevelChange = undefined;
+      } else {
+        this.pendingRiskLevelChange = { from, to: level };
+      }
     }
 
     const details = getRiskLevelDescription(level);

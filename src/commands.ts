@@ -176,6 +176,8 @@ export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string 
     "",
     "keys:",
     "  shift+tab             cycle reasoning effort",
+    "  ctrl+r                cycle risk level",
+    "  ctrl+p                cycle personality",
     "  ctrl+t                toggle thoughts visibility",
     "  ctrl+o                toggle compact tool UI",
     "  ctrl+f                expand @file mentions",

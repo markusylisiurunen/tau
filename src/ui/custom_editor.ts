@@ -2,6 +2,7 @@ import {
   Editor,
   isCtrlC,
   isCtrlO,
+  isCtrlP,
   isCtrlT,
   isEnter,
   isEscape,
@@ -16,6 +17,8 @@ export class CustomEditor extends Editor {
   public onEscape?: () => void;
   public onShiftTab?: () => void;
   public onCtrlF?: () => void;
+  public onCtrlR?: () => void;
+  public onCtrlP?: () => void;
   public onAltUp?: () => void;
   public beforeSubmit?: (text: string) => boolean;
 
@@ -54,6 +57,20 @@ export class CustomEditor extends Editor {
       !this.isShowingAutocomplete()
     ) {
       this.onCtrlF();
+      return;
+    }
+
+    if (
+      (data === "\x12" || isKittyCtrl(data, "r")) &&
+      this.onCtrlR &&
+      !this.isShowingAutocomplete()
+    ) {
+      this.onCtrlR();
+      return;
+    }
+
+    if (isCtrlP(data) && this.onCtrlP && !this.isShowingAutocomplete()) {
+      this.onCtrlP();
       return;
     }
 

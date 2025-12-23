@@ -63,6 +63,12 @@ const BLOCK_TOOL_USE_GUIDELINES_CODER = `
 **Safety**: Write and edit tools require the appropriate risk level. If permissions don't match, stop and tell the user. For destructive operations (deleting files, dropping data, force-pushing), confirm intent even if the user seems confident.
 `.trim();
 
+const BLOCK_FILE_MENTIONS = `
+### File mentions
+
+The user may refer to files by typing \`@\` followed by a path relative to the current working directory (e.g., \`@src/utils/helpers.ts\`). The \`@\` symbol indicates a file reference and is not part of the actual path. When you see this notation, treat it as a reference to that specific file. Use the path exactly as given; don't attempt to resolve it or search for similar files.
+`.trim();
+
 const BLOCK_FILE_EDIT_GUIDELINES = `
 ### File edit guidelines
 
@@ -124,6 +130,7 @@ const BASIC_SYSTEM_PROMPT = [
   BLOCK_GENERAL_PURPOSE_PREAMBLE,
   BLOCK_OUTPUT_STYLE_GUIDELINES,
   BLOCK_TOOL_USE_GUIDELINES,
+  BLOCK_FILE_MENTIONS,
   BLOCK_FILE_EDIT_GUIDELINES,
   BLOCK_PROJECT_CONTEXT,
 ].join("\n\n");
@@ -132,6 +139,7 @@ const CODER_SYSTEM_PROMPT = [
   BLOCK_CODER_PREAMBLE,
   BLOCK_OUTPUT_STYLE_GUIDELINES,
   BLOCK_TOOL_USE_GUIDELINES_CODER,
+  BLOCK_FILE_MENTIONS,
   BLOCK_FILE_EDIT_GUIDELINES,
   BLOCK_CODER_WORKFLOW,
   BLOCK_CODER_DISCIPLINE,

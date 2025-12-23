@@ -162,6 +162,8 @@ the fork commands are useful when conversations get long. they compress everythi
 | key         | action                      |
 | ----------- | --------------------------- |
 | `shift+tab` | cycle reasoning effort      |
+| `ctrl+r`    | cycle risk level            |
+| `ctrl+p`    | cycle personality           |
 | `ctrl+t`    | toggle thinking visibility  |
 | `ctrl+o`    | toggle compact tool display |
 | `ctrl+f`    | expand @file mentions       |

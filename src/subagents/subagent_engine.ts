@@ -1,12 +1,5 @@
-import type {
-  AssistantMessage,
-  Context,
-  KnownProvider,
-  Message,
-  SimpleStreamOptions,
-  ToolCall,
-} from "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Context, Message, StreamOptions } from "@markusylisiurunen/iota";
+import { stream } from "@markusylisiurunen/iota";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
 import { createBashToolDefinition } from "../tools/bash.js";
@@ -16,7 +9,7 @@ import type {
   ToolDispatchResultWithPhases,
   ToolUiEvent,
 } from "../tools/registry.js";
-import { ToolRegistry } from "../tools/registry.js";
+import { type ToolCallPart, ToolRegistry } from "../tools/registry.js";
 import { createWebFetchToolDefinition } from "../tools/web_fetch.js";
 import { createWebSearchToolDefinition } from "../tools/web_search.js";
 import type { RiskLevel } from "../types.js";
@@ -46,7 +39,7 @@ export type SubagentRunResult = {
   costTotal: number;
 };
 
-function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): SimpleStreamOptions {
+function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): StreamOptions {
   const merged = { ...(settings ?? {}) } as Record<string, unknown>;
   return parseStreamingSettings(merged);
 }
@@ -74,8 +67,8 @@ function buildToolRegistryForAllowedTools(
   return new ToolRegistry(definitions);
 }
 
-function isToolCall(block: AssistantMessage["content"][number]): block is ToolCall {
-  return block.type === "toolCall";
+function isToolCall(block: AssistantMessage["content"][number]): block is ToolCallPart {
+  return block.type === "tool_call";
 }
 
 function isPhased(
@@ -102,8 +95,7 @@ export async function runSubagentToCompletion(options: {
   const messages: Message[] = [
     {
       role: "user",
-      content: [{ type: "text", text: prompt }],
-      timestamp: Date.now(),
+      content: prompt,
     },
   ];
 
@@ -131,13 +123,13 @@ export async function runSubagentToCompletion(options: {
     emit("assistant: thinking");
 
     const context: Context = {
-      systemPrompt: definition.systemPrompt,
+      system: definition.systemPrompt,
       messages,
       tools: toolRegistry.schemas,
     };
 
-    const apiKey = getApiKeyForProvider(config, personaConfig.model.provider as KnownProvider);
-    const stream = streamSimple(personaConfig.model, context, {
+    const apiKey = getApiKeyForProvider(config, personaConfig.model.provider);
+    const assistantStream = stream(personaConfig.model, context, {
       ...getStreamingSettings(personaConfig.settings),
       signal,
       ...(apiKey && { apiKey }),
@@ -145,10 +137,13 @@ export async function runSubagentToCompletion(options: {
 
     let finalMessage: AssistantMessage;
     try {
-      for await (const _event of stream) {
+      for await (const _event of assistantStream) {
         if (signal.aborted) break;
       }
-      finalMessage = await stream.result();
+      finalMessage = await assistantStream.result();
+      if (finalMessage.stopReason === "aborted") {
+        throw new Error("sub-agent aborted");
+      }
     } catch (err) {
       if (signal.aborted) {
         throw new Error("sub-agent aborted");
@@ -158,7 +153,7 @@ export async function runSubagentToCompletion(options: {
 
     messages.push(finalMessage);
     turns++;
-    costTotal += finalMessage.usage?.cost?.total ?? 0;
+    costTotal += finalMessage.usage.cost.total;
 
     const messageToolCalls = finalMessage.content.filter(isToolCall);
     toolCalls += messageToolCalls.length;
@@ -180,7 +175,7 @@ export async function runSubagentToCompletion(options: {
       return { finalText, costTotal };
     };
 
-    if (finalMessage.stopReason !== "toolUse") {
+    if (finalMessage.stopReason !== "tool_use") {
       return finish();
     }
 

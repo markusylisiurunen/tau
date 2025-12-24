@@ -1,16 +1,15 @@
 import type {
   AssistantMessage,
   Context,
-  KnownProvider,
   Message,
-  SimpleStreamOptions,
-  ToolCall,
-  ToolResultMessage,
-} from "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai";
+  StreamOptions,
+  ToolMessage,
+} from "@markusylisiurunen/iota";
+import { stream } from "@markusylisiurunen/iota";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
 import type {
+  ToolCallPart,
   ToolDefinition,
   ToolDispatchContext,
   ToolDispatchResult,
@@ -51,7 +50,7 @@ export type EngineToolUiEvent = {
 
 export type EngineToolResultEvent = {
   type: "tool_result";
-  message: ToolResultMessage;
+  message: ToolMessage;
 };
 
 export type EngineEvent =
@@ -102,8 +101,7 @@ export class SessionEngine {
   addUserText(textForModel: string): void {
     this.messages.push({
       role: "user",
-      content: [{ type: "text", text: textForModel }],
-      timestamp: Date.now(),
+      content: textForModel,
     });
   }
 
@@ -115,7 +113,7 @@ export class SessionEngine {
     return this.messages;
   }
 
-  private getStreamingSettings(persona: Persona): SimpleStreamOptions {
+  private getStreamingSettings(persona: Persona): StreamOptions {
     const merged = { ...persona.settings } as Record<string, unknown>;
     return parseStreamingSettings(merged);
   }
@@ -135,11 +133,13 @@ export class SessionEngine {
         break;
       }
 
-      if (!finalMessage || finalMessage.stopReason !== "toolUse") {
+      if (!finalMessage || finalMessage.stopReason !== "tool_use") {
         break;
       }
 
-      const toolCalls = finalMessage.content.filter((c): c is ToolCall => c.type === "toolCall");
+      const toolCalls = finalMessage.content.filter(
+        (c): c is ToolCallPart => c.type === "tool_call",
+      );
       if (!toolCalls.length) {
         break;
       }
@@ -163,13 +163,13 @@ export class SessionEngine {
     const tools = this.getEnabledToolSchemas();
 
     const context: Context = {
-      systemPrompt: this.systemPrompt,
+      system: this.systemPrompt,
       messages: this.messages,
       tools,
     };
 
-    const apiKey = getApiKeyForProvider(this.config, this.persona.model.provider as KnownProvider);
-    const stream = streamSimple(this.persona.model, context, {
+    const apiKey = getApiKeyForProvider(this.config, this.persona.model.provider);
+    const assistantStream = stream(this.persona.model, context, {
       ...this.getStreamingSettings(this.persona),
       signal,
       ...(apiKey && { apiKey }),
@@ -177,14 +177,22 @@ export class SessionEngine {
 
     const accumulator = new MessageAccumulator();
     try {
-      for await (const event of stream) {
-        accumulator.processEvent(event);
-        if (event.type === "text_delta" || event.type.startsWith("thinking_")) {
+      for await (const event of assistantStream) {
+        if (signal.aborted) {
+          break;
+        }
+
+        const changed = accumulator.processEvent(event);
+        if (changed) {
           yield { type: "assistant_partial", snapshot: accumulator.snapshot };
         }
       }
 
-      const finalMessage = await stream.result();
+      const finalMessage = await assistantStream.result();
+      if (finalMessage.stopReason === "aborted") {
+        return { finalMessage: undefined };
+      }
+
       this.messages.push(finalMessage);
       yield { type: "assistant_final", message: finalMessage };
       return { finalMessage };
@@ -197,7 +205,7 @@ export class SessionEngine {
   }
 
   private async *executeToolCalls(
-    toolCalls: ToolCall[],
+    toolCalls: ToolCallPart[],
     signal: AbortSignal,
   ): AsyncGenerator<EngineEvent> {
     const enabledTools = this.getEnabledToolSchemas();
@@ -211,8 +219,9 @@ export class SessionEngine {
     };
 
     // Step 1: Validate all tools and create result buffer
-    const resultsByIndex = new Map<number, ToolResultMessage>();
-    const validToolCalls: Array<{ index: number; toolCall: ToolCall; def: ToolDefinition }> = [];
+    const resultsByIndex = new Map<number, ToolMessage>();
+    const validToolCalls: Array<{ index: number; toolCall: ToolCallPart; def: ToolDefinition }> =
+      [];
 
     for (let i = 0; i < toolCalls.length; i++) {
       if (signal.aborted) break;
@@ -247,7 +256,7 @@ export class SessionEngine {
     // Step 3: Start all task calls and begin streaming their UI
     interface TaskExecution {
       index: number;
-      toolCall: ToolCall;
+      toolCall: ToolCallPart;
       startedUiEvent?: ToolUiEvent;
       uiEventsIterable?: AsyncIterable<ToolUiEvent>;
       runPromise: Promise<ToolDispatchResult>;
@@ -330,11 +339,11 @@ export class SessionEngine {
   private async *streamAndFinalizeTaskCalls(
     taskExecutions: Array<{
       index: number;
-      toolCall: ToolCall;
+      toolCall: ToolCallPart;
       uiEventsIterable?: AsyncIterable<ToolUiEvent>;
       runPromise: Promise<ToolDispatchResult>;
     }>,
-    resultsByIndex: Map<number, ToolResultMessage>,
+    resultsByIndex: Map<number, ToolMessage>,
     signal: AbortSignal,
   ): AsyncGenerator<EngineEvent> {
     type ToolUiIterator = AsyncIterator<ToolUiEvent>;

@@ -1,8 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
-import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
-import { getModels, getProviders } from "@mariozechner/pi-ai";
+import { type AnyModel, getModel, type Provider } from "@markusylisiurunen/iota";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { Config } from "./config.js";
@@ -68,8 +67,15 @@ function parseYamlFrontMatter(yamlText: string): FrontMatter {
   }
 }
 
-function isKnownProvider(value: string): value is KnownProvider {
-  return getProviders().includes(value as KnownProvider);
+function normalizeProvider(value: string): Provider | undefined {
+  switch (value) {
+    case "openai":
+    case "anthropic":
+    case "google":
+      return value;
+    default:
+      return undefined;
+  }
 }
 
 function isSubagentName(value: unknown): value is "explore" | "web" {
@@ -78,7 +84,7 @@ function isSubagentName(value: unknown): value is "explore" | "web" {
 
 interface PartialSubagentConfig {
   [name: string]: {
-    model?: Model<Api>;
+    model?: AnyModel;
     reasoning?: ReasoningEffort;
   };
 }
@@ -190,9 +196,22 @@ function parseSubagentConfig(subagentsRaw: unknown): {
   return { error: "subagents must be a list or object" };
 }
 
-function resolveModel(provider: string, modelId: string): Model<Api> | undefined {
-  if (!isKnownProvider(provider)) return undefined;
-  return getModels(provider).find((m) => m.id === modelId) as Model<Api> | undefined;
+function resolveModel(providerRaw: string, modelId: string): AnyModel | undefined {
+  const provider = normalizeProvider(providerRaw);
+  if (!provider) return undefined;
+
+  try {
+    switch (provider) {
+      case "openai":
+        return getModel("openai", modelId as never);
+      case "anthropic":
+        return getModel("anthropic", modelId as never);
+      case "google":
+        return getModel("google", modelId as never);
+    }
+  } catch {
+    return undefined;
+  }
 }
 
 function mergeById<T extends { id: string }>(base: T[], overlay: T[], overlay2?: T[]): T[] {

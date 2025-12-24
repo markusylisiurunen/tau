@@ -1,11 +1,11 @@
 import { readdirSync } from "node:fs";
-import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Tool } from "@markusylisiurunen/iota";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { resolveRestrictedDirPath } from "../utils/restricted_fs.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
+import type { ToolCallPart, ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
 
 export const LIST_MAX_ENTRIES = 256;
 
@@ -27,7 +27,13 @@ export const LIST_TOOL: Tool = {
         description: LIST_PATH_DESCRIPTION,
       }),
       offset: Type.Optional(Type.Integer({ description: LIST_OFFSET_DESCRIPTION, minimum: 0 })),
-      limit: Type.Optional(Type.Integer({ description: LIST_LIMIT_DESCRIPTION, minimum: 1 })),
+      limit: Type.Optional(
+        Type.Integer({
+          description: LIST_LIMIT_DESCRIPTION,
+          minimum: 1,
+          maximum: LIST_MAX_ENTRIES,
+        }),
+      ),
     },
     { additionalProperties: false },
   ),
@@ -73,8 +79,8 @@ function formatListToolResultText(args: {
 export function createListToolDefinition(): ToolDefinition {
   return {
     schema: LIST_TOOL,
-    async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
-      const { path, offset, limit } = parseListArgs(toolCall.arguments);
+    async dispatch(toolCall: ToolCallPart, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+      const { path, offset, limit } = parseListArgs(toolCall.args);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -121,7 +127,7 @@ export function createListToolDefinition(): ToolDefinition {
           entries: windowed,
         });
 
-        const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
+        const toolResult = createToolResult(toolCall, toolText, false);
         const uiEvent: ToolUiEvent = {
           type: "list_success",
           path: resolved.relPath,

@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai";
 import { Spacer, Text, TUI } from "@mariozechner/pi-tui";
+import type { AssistantMessage, Message } from "@markusylisiurunen/iota";
+import { complete } from "@markusylisiurunen/iota";
 import { type BashCommand, loadBashCommands } from "./bash_commands.js";
 import { copyTextToClipboard } from "./clipboard.js";
 import { buildHelpText, getRiskLevelDescription, parseCommand } from "./commands.js";
@@ -421,7 +421,7 @@ export class ChatApp {
     const stats = `i${formatTokenWindow(input)} r${formatTokenWindow(read)} w${formatTokenWindow(write)} o${formatTokenWindow(output)}`;
 
     const promptTokensSent = last
-      ? (last.usage?.input ?? 0) + (last.usage?.cacheRead ?? 0) + (last.usage?.cacheWrite ?? 0)
+      ? last.usage.inputTokens + last.usage.cacheReadTokens + last.usage.cacheWriteTokens
       : 0;
     const percent = windowTokens > 0 ? (promptTokensSent / windowTokens) * 100 : 0;
     const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;
@@ -433,7 +433,7 @@ export class ChatApp {
     let total = 0;
     for (const m of this.engine.history) {
       if (m.role === "assistant") {
-        total += (m as AssistantMessage).usage?.cost?.total ?? 0;
+        total += (m as AssistantMessage).usage.cost.total;
       }
     }
     return `$${formatAdaptiveNumber(total + this.subagentCostTotal, 2, 5)}`;
@@ -447,10 +447,10 @@ export class ChatApp {
     for (const m of this.engine.history) {
       if (m.role === "assistant") {
         const usage = (m as AssistantMessage).usage;
-        input += usage?.input ?? 0;
-        read += usage?.cacheRead ?? 0;
-        write += usage?.cacheWrite ?? 0;
-        output += usage?.output ?? 0;
+        input += usage.inputTokens;
+        read += usage.cacheReadTokens;
+        write += usage.cacheWriteTokens;
+        output += usage.outputTokens;
       }
     }
     return { input, read, write, output };
@@ -489,7 +489,7 @@ export class ChatApp {
   }
 
   private getAllowedReasoningLevels(persona: Persona): ReasoningEffort[] {
-    if (!persona.model.reasoning) {
+    if (!persona.model.supports.reasoning) {
       return ["none"];
     }
 
@@ -958,16 +958,8 @@ export class ChatApp {
     for (let i = history.length - 1; i >= 0; i--) {
       if (history[i]!.role === "user") {
         lastUserIndex = i;
-        const userMessage = history[i]!;
-        const textParts: string[] = [];
-        for (const block of userMessage.content) {
-          if (typeof block === "string") {
-            textParts.push(block);
-          } else if (block.type === "text") {
-            textParts.push(block.text);
-          }
-        }
-        const combined = textParts.join("\n").trim();
+        const userMessage = history[i]! as Extract<Message, { role: "user" }>;
+        const combined = userMessage.content.trim();
         if (combined) {
           lastUserText = combined;
         }
@@ -1046,14 +1038,12 @@ Ruthlessly compress: collapse tangents, skip back-and-forth, omit pleasantries. 
 Write plain prose, no formatting. Be thorough enough that the reader can resume without guessing, but don't narrate every exchange. When relevant, name things concretely: file paths, function names, error messages. The reader has no context beyond what you provide as the summary.
     `.trim();
 
-    const apiKey = getApiKeyForProvider(
-      this.config,
-      this.currentPersona.model.provider as KnownProvider,
-    );
-    const stream = streamSimple(
+    const apiKey = getApiKeyForProvider(this.config, this.currentPersona.model.provider);
+
+    const final = await complete(
       this.currentPersona.model,
       {
-        systemPrompt: [
+        system: [
           "You are a precise and thorough conversation summarizer.",
           "Your task is to distill conversations into clear, actionable summaries that preserve all context needed for seamless continuation.",
           "Focus on facts, decisions, and concrete details rather than narrative flow.",
@@ -1063,15 +1053,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         messages: [
           {
             role: "user",
-            content: [{ type: "text", text: summaryPrompt }],
-            timestamp: Date.now(),
+            content: summaryPrompt,
           },
         ],
       },
       { reasoning: "medium", ...(apiKey && { apiKey }) },
     );
 
-    const final = await stream.result();
     return extractAssistantText(final).trim();
   }
 

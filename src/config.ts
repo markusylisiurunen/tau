@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { KnownProvider } from "@mariozechner/pi-ai";
+import type { Provider } from "@markusylisiurunen/iota";
 import { z } from "zod";
 import { type RiskLevel, RiskLevelSchema } from "./types.js";
 
@@ -54,13 +54,13 @@ export function loadConfig(): Config {
 
     const parsed = configSchema.safeParse(json);
     return parsed.success ? (parsed.data as Config) : {};
-  } catch (err) {
+  } catch {
     // If there's an error reading or parsing, silently return empty config
     return {};
   }
 }
 
-export function getApiKeyForProvider(config: Config, provider: KnownProvider): string | undefined {
+export function getApiKeyForProvider(config: Config, provider: Provider): string | undefined {
   const apiKeys = config.apiKeys || {};
   switch (provider) {
     case "anthropic":
@@ -79,5 +79,5 @@ export function getParallelApiKey(config: Config): string | undefined {
 }
 
 export function isGoogleAuthAvailable(config: Config): boolean {
-  return !!(config.apiKeys?.google || process.env.GEMINI_API_KEY);
+  return !!(config.apiKeys?.google || process.env.GOOGLE_API_KEY);
 }

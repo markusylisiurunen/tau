@@ -1,8 +1,10 @@
-import type { Message, Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantPart, Message, Tool, ToolMessage } from "@markusylisiurunen/iota";
 import type { Config } from "../config.js";
 import type { Persona, RiskLevel } from "../types.js";
 
 const restrictedToolNames = new Set(["read", "grep", "list"]);
+
+export type ToolCallPart = Extract<AssistantPart, { type: "tool_call" }>;
 
 export type ToolUiEvent =
   | {
@@ -168,7 +170,7 @@ export type ToolUiEvent =
 
 export type ToolDispatchResult = {
   kind: "single";
-  toolResult: ToolResultMessage;
+  toolResult: ToolMessage;
   uiEvent?: ToolUiEvent;
 };
 
@@ -190,7 +192,7 @@ export type ToolDispatchContext = {
 export interface ToolDefinition {
   readonly schema: Tool;
   dispatch(
-    toolCall: ToolCall,
+    toolCall: ToolCallPart,
     riskLevel: RiskLevel,
     signal?: AbortSignal,
     context?: ToolDispatchContext,

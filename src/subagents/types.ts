@@ -1,10 +1,10 @@
-import type { Api, Model } from "@mariozechner/pi-ai";
+import type { AnyModel } from "@markusylisiurunen/iota";
 import type { PersonaSettings } from "../types.js";
 
 export type SubagentName = "explore" | "web";
 
 export type SubagentPersonaConfig = {
-  model: Model<Api>;
+  model: AnyModel;
   settings?: PersonaSettings;
 };
 

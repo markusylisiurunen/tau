@@ -1,4 +1,5 @@
-import type { AssistantMessage, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, ToolMessage } from "@markusylisiurunen/iota";
+import type { ToolCallPart } from "../tools/registry.js";
 
 export function extractAssistantText(message: AssistantMessage): string {
   return message.content
@@ -9,25 +10,24 @@ export function extractAssistantText(message: AssistantMessage): string {
 }
 
 export function createToolResult(
-  toolCall: ToolCall,
+  toolCall: ToolCallPart,
   text: string,
   isError: boolean,
-): ToolResultMessage {
+): ToolMessage {
   return {
-    role: "toolResult",
+    role: "tool",
     toolCallId: toolCall.id,
     toolName: toolCall.name,
-    content: [{ type: "text", text }],
-    isError: isError,
-    timestamp: Date.now(),
+    content: text,
+    ...(isError ? { isError: true } : {}),
   };
 }
 
-export function createToolError(toolCall: ToolCall, errorMessage: string): ToolResultMessage {
+export function createToolError(toolCall: ToolCallPart, errorMessage: string): ToolMessage {
   return createToolResult(toolCall, errorMessage, true);
 }
 
-export function createToolSuccess(toolCall: ToolCall, text: string): ToolResultMessage {
+export function createToolSuccess(toolCall: ToolCallPart, text: string): ToolMessage {
   return createToolResult(toolCall, text, false);
 }
 

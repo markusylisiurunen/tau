@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Tool } from "@markusylisiurunen/iota";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
@@ -7,6 +7,7 @@ import { createToolError, createToolResult } from "../utils/messages.js";
 import { resolveRestrictedPath } from "../utils/restricted_fs.js";
 import { truncateMiddle, truncateMiddleForModel } from "../utils/truncate.js";
 import type {
+  ToolCallPart,
   ToolDefinition,
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
@@ -298,11 +299,11 @@ export function createGrepToolDefinition(): ToolDefinition {
   return {
     schema: GREP_TOOL,
     async dispatch(
-      toolCall: ToolCall,
+      toolCall: ToolCallPart,
       _riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const parsed = parseGrepArgs(toolCall.arguments);
+      const parsed = parseGrepArgs(toolCall.args);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -380,7 +381,7 @@ export function createGrepToolDefinition(): ToolDefinition {
           });
 
           const isError = exitCode !== null && exitCode !== 0 && exitCode !== 1;
-          const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, isError);
+          const toolResult = createToolResult(toolCall, toolText, isError);
 
           const uiEvent: ToolUiEvent = {
             type: "grep_finished",

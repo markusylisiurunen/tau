@@ -1,21 +1,18 @@
 import type {
-  Api,
-  Model,
-  ReasoningEffort as PiReasoningEffort,
-  SimpleStreamOptions,
+  AnyModel,
+  ReasoningEffort as IotaReasoningEffort,
+  StreamOptions,
   Tool,
-} from "@mariozechner/pi-ai";
+} from "@markusylisiurunen/iota";
 import { z } from "zod";
 import type { SubagentConfigMap } from "./subagents/types.js";
 
 export const RiskLevelSchema = z.enum(["restricted", "read-only", "read-write"]);
 export type RiskLevel = z.infer<typeof RiskLevelSchema>;
 
-export type ReasoningEffort = PiReasoningEffort | "none";
+export type ReasoningEffort = IotaReasoningEffort;
 
-export type PersonaSettings = Omit<SimpleStreamOptions, "reasoning"> & {
-  reasoning?: ReasoningEffort;
-};
+export type PersonaSettings = StreamOptions;
 
 export const REASONING_LEVELS_TUPLE = [
   "none",
@@ -40,7 +37,7 @@ export interface Persona {
   id: string;
   label: string;
   description?: string;
-  model: Model<Api>;
+  model: AnyModel;
   systemPrompt: string;
   settings: PersonaSettings;
   allowedReasoningLevels?: ReasoningEffort[];

@@ -1,5 +1,5 @@
-import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
+import type { AssistantMessage } from "@markusylisiurunen/iota";
 import { theme } from "./theme.js";
 
 export class AssistantMessageComponent extends Container {
@@ -37,21 +37,19 @@ export class AssistantMessageComponent extends Container {
   updatePartial(text: string, thinking?: string): void {
     const partial: AssistantMessage = {
       role: "assistant",
-      api: "openai-responses",
       provider: "openai",
       model: "",
-      timestamp: Date.now(),
       usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
         totalTokens: 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
       stopReason: "stop",
       content: [
-        ...(thinking?.trim() ? [{ type: "thinking" as const, thinking }] : []),
+        ...(thinking?.trim() ? [{ type: "thinking" as const, text: thinking }] : []),
         { type: "text" as const, text },
       ],
     };
@@ -68,9 +66,9 @@ export class AssistantMessageComponent extends Container {
     for (let i = 0; i < message.content.length; i++) {
       const content = message.content[i]!;
 
-      if (this.thoughtsVisible && content.type === "thinking" && content.thinking.trim()) {
+      if (this.thoughtsVisible && content.type === "thinking" && content.text.trim()) {
         this.contentContainer.addChild(
-          new Markdown(content.thinking.trim(), 1, 0, markdownTheme, {
+          new Markdown(content.text.trim(), 1, 0, markdownTheme, {
             color: (t: string) => palette.thinking(t),
             italic: true,
           }),

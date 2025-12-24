@@ -1,4 +1,4 @@
-import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Tool } from "@markusylisiurunen/iota";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import { getSubagentDefinitionFromString } from "../subagents/registry.js";
@@ -8,6 +8,7 @@ import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { AsyncUiEventQueue } from "../utils/subagent_utils.js";
 import type {
+  ToolCallPart,
   ToolDefinition,
   ToolDispatchContext,
   ToolDispatchResult,
@@ -74,12 +75,12 @@ export function createTaskToolDefinition(): ToolDefinition {
   return {
     schema: TASK_TOOL,
     async dispatch(
-      toolCall: ToolCall,
+      toolCall: ToolCallPart,
       riskLevel: RiskLevel,
       signal?: AbortSignal,
       context?: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { name, title, prompt } = parseTaskArgs(toolCall.arguments);
+      const { name, title, prompt } = parseTaskArgs(toolCall.args);
 
       const blocked = (reason: string, details?: { name?: string; title?: string }) => {
         const toolResult = createToolError(toolCall, reason);
@@ -189,7 +190,7 @@ export function createTaskToolDefinition(): ToolDefinition {
           uiQueue.close();
         }
 
-        const toolResult: ToolResultMessage =
+        const toolResult =
           status === "success"
             ? createToolResult(toolCall, finalText, false)
             : createToolResult(toolCall, finalText, true);

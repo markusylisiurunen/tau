@@ -1,11 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import type { Tool, ToolCall } from "@mariozechner/pi-ai";
+import type { Tool } from "@markusylisiurunen/iota";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import { bytesToTokens } from "../utils/token.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
+import type { ToolCallPart, ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
 
 const EDIT_DESCRIPTION = [
   "Edit a file by replacing exact text matches.",
@@ -147,8 +147,8 @@ function findMatchContext(content: string, search: string, contextLines: number 
 export function createEditToolDefinition(): ToolDefinition {
   return {
     schema: EDIT_TOOL,
-    async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
-      const { path, oldText, newText } = parseEditArgs(toolCall.arguments);
+    async dispatch(toolCall: ToolCallPart, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+      const { path, oldText, newText } = parseEditArgs(toolCall.args);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);

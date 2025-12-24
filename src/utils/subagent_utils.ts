@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, ToolMessage } from "@markusylisiurunen/iota";
 import type { ToolUiEvent } from "../tools/registry.js";
 import { extractAssistantText } from "./messages.js";
 
@@ -6,13 +6,8 @@ export function normalizeOneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-export function getToolResultFirstLine(toolResult: ToolResultMessage): string {
-  const text = toolResult.content
-    .filter((c): c is { type: "text"; text: string } => c.type === "text")
-    .map((c) => c.text)
-    .join("\n")
-    .trim();
-  return normalizeOneLine(text.split("\n")[0] ?? "");
+export function getToolResultFirstLine(toolResult: ToolMessage): string {
+  return normalizeOneLine(toolResult.content.split("\n")[0] ?? "");
 }
 
 export function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | undefined {

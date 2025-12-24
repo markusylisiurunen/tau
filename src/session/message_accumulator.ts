@@ -1,4 +1,4 @@
-import type { AssistantMessageEvent } from "@mariozechner/pi-ai";
+import type { AssistantStreamEvent } from "@markusylisiurunen/iota";
 
 export type AssistantPartialSnapshot = {
   text: string;
@@ -7,66 +7,53 @@ export type AssistantPartialSnapshot = {
   hasAnyThinking: boolean;
 };
 
+function hasPartial(
+  event: AssistantStreamEvent,
+): event is Extract<AssistantStreamEvent, { partial: unknown }> {
+  return "partial" in event;
+}
+
 export class MessageAccumulator {
   private text = "";
-  private thinkingBlocks: string[] = [];
-  private thinkingCurrent = "";
+  private thinking = "";
   private hasTextStarted = false;
 
-  processEvent(event: AssistantMessageEvent): void {
-    switch (event.type) {
-      case "text_delta": {
-        this.text += event.delta;
-        if (!this.hasTextStarted && this.text.trim()) {
-          this.hasTextStarted = true;
-        }
-        return;
-      }
-
-      case "text_end": {
-        if (!this.text && event.content) {
-          this.text = event.content;
-          if (!this.hasTextStarted && this.text.trim()) {
-            this.hasTextStarted = true;
-          }
-        }
-        return;
-      }
-
-      case "thinking_start": {
-        this.thinkingCurrent = "";
-        return;
-      }
-
-      case "thinking_delta": {
-        this.thinkingCurrent += event.delta;
-        return;
-      }
-
-      case "thinking_end": {
-        const full = event.content?.trim() ? event.content : this.thinkingCurrent;
-        if (full.trim()) {
-          this.thinkingBlocks.push(full);
-        }
-        this.thinkingCurrent = "";
-        return;
-      }
-
-      default:
-        return;
+  processEvent(event: AssistantStreamEvent): boolean {
+    if (!hasPartial(event)) {
+      return false;
     }
+
+    const partial = event.partial;
+
+    const nextText = partial.content
+      .filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("");
+
+    const nextThinking = partial.content
+      .filter((p) => p.type === "thinking")
+      .map((p) => p.text)
+      .join("\n\n");
+
+    const changed = nextText !== this.text || nextThinking !== this.thinking;
+
+    this.text = nextText;
+    this.thinking = nextThinking;
+
+    if (!this.hasTextStarted && this.text.trim()) {
+      this.hasTextStarted = true;
+    }
+
+    return changed;
   }
 
   get snapshot(): AssistantPartialSnapshot {
-    const thinking = [...this.thinkingBlocks, this.thinkingCurrent]
-      .filter((s) => s.trim())
-      .join("\n\n");
-
+    const thinking = this.thinking.trim();
     return {
       text: this.text,
       thinking,
       hasTextStarted: this.hasTextStarted,
-      hasAnyThinking: Boolean(thinking.trim()),
+      hasAnyThinking: Boolean(thinking),
     };
   }
 }

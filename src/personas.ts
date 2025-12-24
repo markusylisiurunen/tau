@@ -1,4 +1,4 @@
-import { getModel } from "@mariozechner/pi-ai";
+import { getModel } from "@markusylisiurunen/iota";
 import type { SubagentConfigMap } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
@@ -194,16 +194,16 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "opus-4.5",
     description: "Claude Opus 4.5",
-    model: getModel("anthropic", "claude-opus-4-5"),
+    model: getModel("anthropic", "opus-4.5"),
     allowedReasoningLevels: ["minimal", "medium", "high"],
     settings: { reasoning: "medium" },
     subagents: {
       explore: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
+        model: getModel("anthropic", "haiku-4.5"),
         reasoning: "medium",
       },
       web: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
+        model: getModel("anthropic", "haiku-4.5"),
         reasoning: "medium",
       },
     },
@@ -211,16 +211,16 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "haiku-4.5",
     description: "Claude Haiku 4.5",
-    model: getModel("anthropic", "claude-haiku-4-5"),
+    model: getModel("anthropic", "haiku-4.5"),
     allowedReasoningLevels: ["low", "high"],
     settings: { reasoning: "high" },
     subagents: {
       explore: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
+        model: getModel("anthropic", "haiku-4.5"),
         reasoning: "medium",
       },
       web: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
+        model: getModel("anthropic", "haiku-4.5"),
         reasoning: "medium",
       },
     },

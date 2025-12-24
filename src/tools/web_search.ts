@@ -1,4 +1,4 @@
-import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Tool } from "@markusylisiurunen/iota";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { Config } from "../config.js";
@@ -13,6 +13,7 @@ import {
 import { truncateMiddleForModel } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type {
+  ToolCallPart,
   ToolDefinition,
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
@@ -190,11 +191,11 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
   return {
     schema: WEB_SEARCH_TOOL,
     async dispatch(
-      toolCall: ToolCall,
+      toolCall: ToolCallPart,
       riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const args = parseArgs(toolCall.arguments);
+      const args = parseArgs(toolCall.args);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -282,7 +283,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
             const response = responseParsed.data;
 
             const text = formatSearchResults(response);
-            const toolResult: ToolResultMessage = createToolResult(toolCall, text, false);
+            const toolResult = createToolResult(toolCall, text, false);
             const uiEvent: ToolUiEvent = {
               type: "web_search_finished",
               toolCallId: toolCall.id,

@@ -1,4 +1,4 @@
-import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessageInput, Message, ToolMessage } from "@markusylisiurunen/iota";
 
 export function formatHistoryForCompression(history: readonly Message[]): string {
   const lines: string[] = [];
@@ -6,30 +6,35 @@ export function formatHistoryForCompression(history: readonly Message[]): string
   for (const message of history) {
     if (message.role === "user") {
       lines.push("--- USER ---");
-      for (const block of message.content) {
-        if (typeof block === "string") {
-          lines.push(block);
-        } else if (block.type === "text") {
-          lines.push(block.text);
-        }
-      }
+      lines.push(message.content);
       lines.push("");
-    } else if (message.role === "assistant") {
+      continue;
+    }
+
+    if (message.role === "assistant") {
       lines.push("--- ASSISTANT ---");
-      const assistantMsg = message as AssistantMessage;
-      for (const block of assistantMsg.content) {
-        if (block.type === "text") {
-          lines.push(block.text);
-        } else if (block.type === "toolCall") {
-          const toolCall = block as ToolCall;
-          lines.push(`[Tool call: ${toolCall.name}(${JSON.stringify(toolCall.arguments)})]`);
-        } else if (block.type === "thinking") {
+
+      const assistantMsg = message as AssistantMessageInput;
+      const parts = Array.isArray(assistantMsg.content)
+        ? assistantMsg.content
+        : [{ type: "text" as const, text: assistantMsg.content }];
+
+      for (const part of parts) {
+        if (part.type === "text") {
+          lines.push(part.text);
+        } else if (part.type === "tool_call") {
+          lines.push(`[Tool call: ${part.name}(${JSON.stringify(part.args)})]`);
+        } else if (part.type === "thinking") {
           // Skip thinking blocks for compression
         }
       }
+
       lines.push("");
-    } else if (message.role === "toolResult") {
-      const toolResult = message as ToolResultMessage;
+      continue;
+    }
+
+    if (message.role === "tool") {
+      const toolResult = message as ToolMessage;
       lines.push(`[Tool output: ${toolResult.toolName} (truncated)]`);
       lines.push("");
     }

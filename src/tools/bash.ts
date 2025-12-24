@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Tool } from "@markusylisiurunen/iota";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
@@ -11,6 +11,7 @@ import {
   truncateToBytesFromStart,
 } from "../utils/truncate.js";
 import type {
+  ToolCallPart,
   ToolDefinition,
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
@@ -405,11 +406,11 @@ export function createBashToolDefinition(): ToolDefinition {
   return {
     schema: BASH_TOOL,
     async dispatch(
-      toolCall: ToolCall,
+      toolCall: ToolCallPart,
       riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { command, safetyLevel, commandForDisplay } = parseBashArgs(toolCall.arguments);
+      const { command, safetyLevel, commandForDisplay } = parseBashArgs(toolCall.args);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -470,7 +471,7 @@ export function createBashToolDefinition(): ToolDefinition {
             const toolText = formatBashToolResultText({ truncationInfo, exitCode });
             const isError = exitCode !== null && exitCode !== 0;
 
-            const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, isError);
+            const toolResult = createToolResult(toolCall, toolText, isError);
             const uiEvent: ToolUiEvent = {
               type: "bash_execution",
               toolCallId: toolCall.id,

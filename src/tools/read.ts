@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
-import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Tool } from "@markusylisiurunen/iota";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { resolveRestrictedFilePath } from "../utils/restricted_fs.js";
 import { truncateMiddle, truncateMiddleForModel } from "../utils/truncate.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
+import type { ToolCallPart, ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
 
 export const READ_DISPLAY_MAX_LINES = 32;
 export const READ_DISPLAY_MAX_TOKENS = 5000;
@@ -85,8 +85,8 @@ function formatReadToolResultText(args: {
 export function createReadToolDefinition(): ToolDefinition {
   return {
     schema: READ_TOOL,
-    async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
-      const { path, startLine, endLine } = parseReadArgs(toolCall.arguments);
+    async dispatch(toolCall: ToolCallPart, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+      const { path, startLine, endLine } = parseReadArgs(toolCall.args);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -146,7 +146,7 @@ export function createReadToolDefinition(): ToolDefinition {
           truncation: modelTruncation,
         });
 
-        const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
+        const toolResult = createToolResult(toolCall, toolText, false);
         const uiEvent: ToolUiEvent = {
           type: "read_success",
           path: resolved.relPath,

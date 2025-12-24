@@ -1,11 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Tool, ToolCall } from "@mariozechner/pi-ai";
+import type { Tool } from "@markusylisiurunen/iota";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
+import type { ToolCallPart, ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
 
 const WRITE_DESCRIPTION = [
   "Write content to a file, creating the file if it doesn't exist or overwriting if it does.",
@@ -68,8 +68,8 @@ function buildPreview(content: string): PreviewResult {
 export function createWriteToolDefinition(): ToolDefinition {
   return {
     schema: WRITE_TOOL,
-    async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
-      const { path, content } = parseWriteArgs(toolCall.arguments);
+    async dispatch(toolCall: ToolCallPart, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+      const { path, content } = parseWriteArgs(toolCall.args);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);

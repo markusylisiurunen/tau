@@ -233,7 +233,7 @@ create your own personas by adding markdown files to `~/.config/tau/personas/` (
 ---
 id: my-assistant
 provider: anthropic
-model: claude-opus-4-5
+model: opus-4.5
 ---
 
 you are a helpful assistant specialized in my workflow.
@@ -252,7 +252,7 @@ you can also set model parameters via optional frontmatter fields:
   subagents:
     explore:
       provider: anthropic
-      model: claude-haiku-4-5
+      model: haiku-4.5
       reasoning: medium
   ```
 

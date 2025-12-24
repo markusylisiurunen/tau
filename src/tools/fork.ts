@@ -1,10 +1,9 @@
 import type {
   AssistantMessage,
+  AssistantMessageInput,
   Message,
   Tool,
-  ToolCall,
-  ToolResultMessage,
-} from "@mariozechner/pi-ai";
+} from "@markusylisiurunen/iota";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import { SessionEngine } from "../session/session_engine.js";
@@ -17,6 +16,7 @@ import {
   getToolResultFirstLine,
 } from "../utils/subagent_utils.js";
 import type {
+  ToolCallPart,
   ToolDefinition,
   ToolDispatchContext,
   ToolDispatchResult,
@@ -77,13 +77,17 @@ function stripToolCallFromHistory(history: readonly Message[], toolCallId: strin
       continue;
     }
 
-    const assistant = msg as AssistantMessage;
-    const hasCall = assistant.content.some((b) => b.type === "toolCall" && b.id === toolCallId);
+    const assistant = msg as AssistantMessageInput;
+    const parts = Array.isArray(assistant.content)
+      ? assistant.content
+      : [{ type: "text" as const, text: assistant.content }];
+
+    const hasCall = parts.some((b) => b.type === "tool_call" && b.id === toolCallId);
     if (!hasCall) {
       continue;
     }
 
-    const nextContent = assistant.content.filter((b) => b.type !== "toolCall");
+    const nextContent = parts.filter((b) => b.type !== "tool_call");
     if (nextContent.length === 0) {
       copied.splice(i, 1);
     } else {
@@ -100,12 +104,12 @@ export function createForkToolDefinition(): ToolDefinition {
   return {
     schema: FORK_TOOL,
     async dispatch(
-      toolCall: ToolCall,
+      toolCall: ToolCallPart,
       riskLevel: RiskLevel,
       signal?: AbortSignal,
       context?: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { title, prompt } = parseForkArgs(toolCall.arguments);
+      const { title, prompt } = parseForkArgs(toolCall.args);
 
       const blocked = (reason: string, details?: { title?: string }) => {
         const toolResult = createToolError(toolCall, reason);
@@ -216,8 +220,8 @@ export function createForkToolDefinition(): ToolDefinition {
             if (event.type === "assistant_final") {
               lastAssistantFinal = event.message;
               turns += 1;
-              costTotal += event.message.usage?.cost?.total ?? 0;
-              toolCalls += event.message.content.filter((c) => c.type === "toolCall").length;
+              costTotal += event.message.usage.cost.total;
+              toolCalls += event.message.content.filter((c) => c.type === "tool_call").length;
 
               const agentLine = extractAssistantTextForProgress(event.message);
               if (agentLine) {
@@ -249,13 +253,13 @@ export function createForkToolDefinition(): ToolDefinition {
             finalText = "Fork aborted.";
           } else if (!lastAssistantFinal) {
             throw new Error("fork did not produce a final response");
-          } else if (lastAssistantFinal.stopReason === "toolUse") {
+          } else if (lastAssistantFinal.stopReason === "tool_use") {
             throw new Error("fork stopped without producing a final non-tool response");
           } else {
             const text = extractAssistantText(lastAssistantFinal).trim();
             if (!text) {
               throw new Error(
-                `fork produced an empty response (stopReason: ${lastAssistantFinal.stopReason ?? "unknown"})`,
+                `fork produced an empty response (stopReason: ${lastAssistantFinal.stopReason})`,
               );
             }
             finalText = text;
@@ -272,7 +276,7 @@ export function createForkToolDefinition(): ToolDefinition {
           uiQueue.close();
         }
 
-        const toolResult: ToolResultMessage =
+        const toolResult =
           status === "success"
             ? createToolResult(toolCall, finalText, false)
             : createToolResult(toolCall, finalText, true);

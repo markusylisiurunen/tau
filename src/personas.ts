@@ -196,7 +196,9 @@ const PERSONA_SPECS: PersonaSpec[] = [
     description: "Claude Opus 4.5",
     model: getModel("anthropic", "opus-4.5"),
     allowedReasoningLevels: ["minimal", "medium", "high"],
-    settings: { reasoning: "medium" },
+    settings: {
+      reasoning: "medium",
+    },
     subagents: {
       explore: {
         model: getModel("anthropic", "haiku-4.5"),
@@ -213,7 +215,9 @@ const PERSONA_SPECS: PersonaSpec[] = [
     description: "Claude Haiku 4.5",
     model: getModel("anthropic", "haiku-4.5"),
     allowedReasoningLevels: ["low", "high"],
-    settings: { reasoning: "high" },
+    settings: {
+      reasoning: "high",
+    },
     subagents: {
       explore: {
         model: getModel("anthropic", "haiku-4.5"),
@@ -230,7 +234,29 @@ const PERSONA_SPECS: PersonaSpec[] = [
     description: "GPT-5.2",
     model: getModel("openai", "gpt-5.2"),
     allowedReasoningLevels: ["none", "low", "medium", "high", "xhigh"],
-    settings: { reasoning: "medium" },
+    settings: {
+      reasoning: "medium",
+    },
+    subagents: {
+      explore: {
+        model: getModel("openai", "gpt-5.2"),
+        reasoning: "none",
+      },
+      web: {
+        model: getModel("openai", "gpt-5.2"),
+        reasoning: "none",
+      },
+    },
+  },
+  {
+    id: "gpt-5.2-flex",
+    description: "GPT-5.2-Flex",
+    model: getModel("openai", "gpt-5.2"),
+    allowedReasoningLevels: ["none", "low", "medium", "high", "xhigh"],
+    settings: {
+      reasoning: "medium",
+      serviceTier: "flex",
+    },
     subagents: {
       explore: {
         model: getModel("openai", "gpt-5.2"),
@@ -247,7 +273,9 @@ const PERSONA_SPECS: PersonaSpec[] = [
     description: "Gemini 3 Pro",
     model: getModel("google", "gemini-3-pro-preview"),
     allowedReasoningLevels: ["low", "high"],
-    settings: { reasoning: "low" },
+    settings: {
+      reasoning: "low",
+    },
     subagents: {
       explore: {
         model: getModel("google", "gemini-3-flash-preview"),
@@ -264,7 +292,9 @@ const PERSONA_SPECS: PersonaSpec[] = [
     description: "Gemini 3 Flash",
     model: getModel("google", "gemini-3-flash-preview"),
     allowedReasoningLevels: ["minimal", "low", "medium", "high"],
-    settings: { reasoning: "high" },
+    settings: {
+      reasoning: "high",
+    },
     subagents: {
       explore: {
         model: getModel("google", "gemini-3-flash-preview"),

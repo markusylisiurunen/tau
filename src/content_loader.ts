@@ -260,6 +260,7 @@ const personaFrontMatterSchema = z
     model: z.string().trim().min(1),
     description: z.string().trim().optional(),
     reasoning: ReasoningEffortSchema.optional(),
+    serviceTier: z.enum(["flex", "standard", "priority"]).optional(),
     allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
     skills: z.unknown().optional(),
     subagents: z.unknown().optional(),
@@ -305,11 +306,22 @@ function parsePersona(
 
   const parsedFrontMatter = personaFrontMatterSchema.safeParse(frontMatter);
   if (!parsedFrontMatter.success) {
-    return { error: `${file}: missing required fields (id, provider, model). skipped.` };
+    const raw = frontMatter as Record<string, unknown>;
+    const hasRequired =
+      typeof raw.id === "string" &&
+      typeof raw.provider === "string" &&
+      typeof raw.model === "string";
+
+    return hasRequired
+      ? {
+          error: `${file}: invalid frontmatter: ${formatZodError(parsedFrontMatter.error)}. skipped.`,
+        }
+      : { error: `${file}: missing required fields (id, provider, model). skipped.` };
   }
 
   const { id, label, provider, model, description } = parsedFrontMatter.data;
   const reasoning = parsedFrontMatter.data.reasoning;
+  const serviceTier = parsedFrontMatter.data.serviceTier;
   const allowedReasoningLevels = parsedFrontMatter.data.allowedReasoningLevels;
   const skillsRaw = parsedFrontMatter.data.skills;
   const subagentsRaw = parsedFrontMatter.data.subagents;
@@ -326,6 +338,9 @@ function parsePersona(
   const settings: Persona["settings"] = {};
   if (reasoning) {
     settings.reasoning = reasoning;
+  }
+  if (serviceTier) {
+    settings.serviceTier = serviceTier;
   }
 
   const skillsParsed = skillsSchema.safeParse(skillsRaw);
@@ -366,7 +381,7 @@ function parsePersona(
 
       let subagentSettings: SubagentPersonaConfig["settings"] | undefined;
       if (cfg.reasoning !== undefined) {
-        subagentSettings = { reasoning: cfg.reasoning };
+        subagentSettings = { ...settings, reasoning: cfg.reasoning };
       } else {
         subagentSettings = settings;
       }

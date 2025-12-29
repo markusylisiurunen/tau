@@ -18,9 +18,9 @@
     "access": "public"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.27.2",
-    "@mariozechner/pi-tui": "^0.27.2",
-    "@sinclair/typebox": "^0.34.41",
+    "@mariozechner/pi-ai": "^0.30.2",
+    "@mariozechner/pi-tui": "^0.30.2",
+    "@sinclair/typebox": "^0.34.45",
     "chalk": "^5.6.2",
     "yaml": "^2.8.2",
     "zod": "^4.2.1"

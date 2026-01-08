@@ -38,8 +38,7 @@ export class ToolOutputComponent extends Container {
         extraComponent,
         paddingX,
         paddingY,
-      } =
-        props.compactView;
+      } = props.compactView;
       if (headerComponent) {
         this.addChild(headerComponent);
       } else if (segments) {

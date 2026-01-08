@@ -1,6 +1,6 @@
 import type { BashTruncationInfo } from "../tools/bash.js";
 import { formatBytes } from "../utils/truncate.js";
-import { WrappedSegmentsComponent, type OneLineSegment } from "./components/one_line_segments.js";
+import { type OneLineSegment, WrappedSegmentsComponent } from "./components/one_line_segments.js";
 import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";

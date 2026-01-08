@@ -1,7 +1,7 @@
 import type { OneLineSegment } from "./components/one_line_segments.js";
+import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
-import { inlineText } from "./inline.js";
 import {
   GREP_UI_MAX_LINES,
   GREP_UI_MAX_TOKENS,

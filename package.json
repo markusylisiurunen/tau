@@ -1,6 +1,6 @@
 {
   "name": "@markusylisiurunen/tau",
-  "version": "0.1.36",
+  "version": "0.1.37",
   "type": "module",
   "bin": {
     "tau": "./dist/main.js"

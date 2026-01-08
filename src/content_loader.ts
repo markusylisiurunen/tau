@@ -17,6 +17,7 @@ import { TASK_TOOL } from "./tools/task.js";
 import { WRITE_TOOL } from "./tools/write.js";
 import type { Persona, ReasoningEffort, Skill } from "./types.js";
 import { ReasoningEffortSchema } from "./types.js";
+import { getGitRoot } from "./utils/git.js";
 import { formatZodError } from "./utils/zod.js";
 
 interface FrontMatter {
@@ -233,6 +234,42 @@ function loadMarkdownFiles(dir: string): { files: MarkdownFile[]; error?: string
   }
 }
 
+function findProjectTauDirsFromCwd(args: { subdir: "personas" | "prompts" | "skills" }): string[] {
+  const cwd = process.cwd();
+  const cwdAbs = resolve(cwd);
+  const homeAbs = resolve(homedir());
+
+  const gitRoot = getGitRoot(cwd);
+  const gitRootAbs = gitRoot ? resolve(gitRoot) : undefined;
+
+  const stopAbs =
+    gitRootAbs && (cwdAbs === gitRootAbs || cwdAbs.startsWith(gitRootAbs + sep))
+      ? gitRootAbs
+      : cwdAbs === homeAbs || cwdAbs.startsWith(homeAbs + sep)
+        ? homeAbs
+        : cwdAbs;
+
+  const found: string[] = [];
+
+  let dir = cwdAbs;
+  // Closest-first order: cwd, parent, ..., stop.
+  while (true) {
+    const candidate = join(dir, ".tau", args.subdir);
+    if (existsSync(candidate)) {
+      found.push(candidate);
+    }
+
+    if (dir === stopAbs) break;
+
+    const parent = dirname(dir);
+    if (parent === dir) break;
+
+    dir = parent;
+  }
+
+  return found;
+}
+
 const personaFrontMatterSchema = z
   .object({
     id: z.string().trim().min(1),
@@ -445,22 +482,30 @@ export async function loadProjectPersonas(): Promise<{
   personas: Persona[];
   errors: string[];
 }> {
-  const personasDir = join(process.cwd(), ".tau", "personas");
-  const { files, error } = loadMarkdownFiles(personasDir);
-
-  if (error) {
-    return { personas: [], errors: [error] };
+  const personasDirs = findProjectTauDirsFromCwd({ subdir: "personas" });
+  if (personasDirs.length === 0) {
+    return { personas: [], errors: [] };
   }
 
   const personas: Persona[] = [];
   const errors: string[] = [];
 
-  for (const file of files) {
-    const result = parsePersona(file.name, file.content);
-    if (result.persona) {
-      personas.push(result.persona);
-    } else if (result.error) {
-      errors.push(result.error);
+  // Parent-first order, closest directory wins on conflicts.
+  for (const personasDir of personasDirs.slice().reverse()) {
+    const { files, error } = loadMarkdownFiles(personasDir);
+
+    if (error) {
+      errors.push(error);
+      continue;
+    }
+
+    for (const file of files) {
+      const result = parsePersona(file.name, file.content);
+      if (result.persona) {
+        personas.push(result.persona);
+      } else if (result.error) {
+        errors.push(result.error);
+      }
     }
   }
 
@@ -499,22 +544,30 @@ export async function loadProjectPrompts(): Promise<{
   prompts: PromptTemplate[];
   errors: string[];
 }> {
-  const promptsDir = join(process.cwd(), ".tau", "prompts");
-  const { files, error } = loadMarkdownFiles(promptsDir);
-
-  if (error) {
-    return { prompts: [], errors: [error] };
+  const promptsDirs = findProjectTauDirsFromCwd({ subdir: "prompts" });
+  if (promptsDirs.length === 0) {
+    return { prompts: [], errors: [] };
   }
 
   const prompts: PromptTemplate[] = [];
   const errors: string[] = [];
 
-  for (const file of files) {
-    const result = parsePrompt(file.name, file.content);
-    if (result.prompt) {
-      prompts.push(result.prompt);
-    } else if (result.error) {
-      errors.push(result.error);
+  // Parent-first order, closest directory wins on conflicts.
+  for (const promptsDir of promptsDirs.slice().reverse()) {
+    const { files, error } = loadMarkdownFiles(promptsDir);
+
+    if (error) {
+      errors.push(error);
+      continue;
+    }
+
+    for (const file of files) {
+      const result = parsePrompt(file.name, file.content);
+      if (result.prompt) {
+        prompts.push(result.prompt);
+      } else if (result.error) {
+        errors.push(result.error);
+      }
     }
   }
 
@@ -609,8 +662,22 @@ export async function loadProjectSkills(): Promise<{
   skills: Skill[];
   errors: string[];
 }> {
-  const skillsDir = join(process.cwd(), ".tau", "skills");
-  return loadSkillsFromDir(skillsDir);
+  const skillsDirs = findProjectTauDirsFromCwd({ subdir: "skills" });
+  if (skillsDirs.length === 0) {
+    return { skills: [], errors: [] };
+  }
+
+  const skills: Skill[] = [];
+  const errors: string[] = [];
+
+  // Parent-first order, closest directory wins on conflicts.
+  for (const skillsDir of skillsDirs.slice().reverse()) {
+    const result = loadSkillsFromDir(skillsDir);
+    skills.push(...result.skills);
+    errors.push(...result.errors);
+  }
+
+  return { skills, errors };
 }
 
 export async function loadAllContent(config?: Config): Promise<{

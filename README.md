@@ -212,7 +212,7 @@ the `userPreferences` field lets you set guidance that applies to every conversa
 
 ### project bash commands
 
-define shortcuts for common shell commands in `.tau/config.json` at your project root (or `~/.tau/config.json` globally):
+define shortcuts for common shell commands in `.tau/config.json` at your project root (or `~/.tau/config.json` globally). tau resolves the project root via git, so you can run tau from subdirectories and it will still pick up `.tau/config.json`:
 
 ```json
 {
@@ -227,7 +227,7 @@ run them with `/bash:check` or `/bash:test`.
 
 ### custom personas
 
-create your own personas by adding markdown files to `~/.config/tau/personas/` (user-level) or `.tau/personas/` (project-level):
+create your own personas by adding markdown files to `~/.config/tau/personas/` (user-level) or `.tau/personas/` (project-level). project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root:
 
 ```markdown
 ---
@@ -260,7 +260,7 @@ use it with `--persona my-assistant` or `/persona:my-assistant`. if a project pe
 
 ### custom prompts
 
-save reusable prompt templates in `~/.config/tau/prompts/` (user-level) or `.tau/prompts/` (project-level):
+save reusable prompt templates in `~/.config/tau/prompts/` (user-level) or `.tau/prompts/` (project-level). project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root:
 
 ```markdown
 ---
@@ -275,7 +275,7 @@ insert them with `/prompt:review`. if a project prompt id conflicts with a user 
 
 ### skills
 
-skills are optional directories discovered at `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and `.tau/skills/`. each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
+skills are optional directories discovered at `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and `.tau/skills/`. project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root. each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
 
 `SKILL.md` must start with yaml frontmatter:
 

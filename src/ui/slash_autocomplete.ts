@@ -25,8 +25,8 @@ export interface BashSuggestion {
 const STATIC_COMMANDS = [
   { value: "help", label: "help", description: "show help" },
   { value: "new", label: "new", description: "new session" },
-  { value: "fork:only-summary", label: "fork:only-summary", description: "fork with compressed summary" },
-  { value: "fork:with-last-turn", label: "fork:with-last-turn", description: "fork with summary and previous last turn" },
+  { value: "compact:only-summary", label: "compact:only-summary", description: "compact history to a summary" },
+  { value: "compact:with-last-turn", label: "compact:with-last-turn", description: "compact history, keep last turn" },
   { value: "reload", label: "reload", description: "reload personas and prompts from disk" },
   { value: "copy", label: "copy", description: "copy last assistant message" },
   { value: "copy:code", label: "copy:code", description: "copy code blocks from last assistant message" },

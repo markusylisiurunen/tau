@@ -150,22 +150,22 @@ tau will create or update AGENTS.md at your project root, integrating the new in
 
 tau supports slash commands for common actions:
 
-| command                | description                                    |
-| ---------------------- | ---------------------------------------------- |
-| `/help`                | show available commands                        |
-| `/new`                 | clear the session and start fresh              |
-| `/copy`                | copy the last assistant message                |
-| `/copy:code`           | copy just the code blocks                      |
-| `/reload`              | reload personas, prompts, and skills from disk |
-| `/fork:only-summary`   | compress history and continue with a summary   |
-| `/fork:with-last-turn` | compress history but keep the last exchange    |
-| `/persona:<id>`        | switch to a different persona                  |
-| `/prompt:<id>`         | insert a saved prompt template                 |
-| `/bash:<id>`           | run a saved shell command                      |
-| `/risk:<level>`        | change the risk level                          |
-| `!<cmd>`               | run a shell command directly                   |
+| command                   | description                                    |
+| ------------------------- | ---------------------------------------------- |
+| `/help`                   | show available commands                        |
+| `/new`                    | clear the session and start fresh              |
+| `/copy`                   | copy the last assistant message                |
+| `/copy:code`              | copy just the code blocks                      |
+| `/reload`                 | reload personas, prompts, and skills from disk |
+| `/compact:only-summary`   | compress history and continue with a summary   |
+| `/compact:with-last-turn` | compress history but keep the last exchange    |
+| `/persona:<id>`           | switch to a different persona                  |
+| `/prompt:<id>`            | insert a saved prompt template                 |
+| `/bash:<id>`              | run a saved shell command                      |
+| `/risk:<level>`           | change the risk level                          |
+| `!<cmd>`                  | run a shell command directly                   |
 
-the fork commands are useful when conversations get long. they compress everything into a summary so the model retains context without the overhead of a full history.
+the compact commands are useful when conversations get long. they compress everything into a summary so the model retains context without the overhead of a full history.
 
 ## keyboard shortcuts
 

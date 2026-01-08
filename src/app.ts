@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
-import { Spacer, Text, TUI } from "@mariozechner/pi-tui";
+import { Spacer, TUI } from "@mariozechner/pi-tui";
 import { type BashCommand, loadBashCommands } from "./bash_commands.js";
 import { copyTextToClipboard } from "./clipboard.js";
 import { buildHelpText, getRiskLevelDescription, parseCommand } from "./commands.js";
@@ -38,6 +38,7 @@ import {
   type RiskLevel,
   type Skill,
 } from "./types.js";
+import { AppIntroComponent } from "./ui/app_intro.js";
 import { AssistantMessageComponent } from "./ui/assistant_message.js";
 import {
   renderBashAborted,
@@ -67,9 +68,9 @@ import {
 import { SessionDividerComponent } from "./ui/session_divider.js";
 import { SessionSummaryComponent } from "./ui/session_summary.js";
 import { getFileAutocompleteToken, SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
-import { SystemMessageComponent } from "./ui/system_message.js";
+import { SystemMessageComponent, type SystemMessageKind } from "./ui/system_message.js";
 import { renderTaskBlocked, renderTaskFinished, renderTaskRunning } from "./ui/task_execution.js";
-import { editorBorderForReasoning, theme } from "./ui/theme.js";
+import { createUiTheme, type Theme } from "./ui/theme.js";
 import { UserMessageComponent } from "./ui/user_message.js";
 import {
   buildBaseSystemPrompt,
@@ -85,8 +86,6 @@ import { getGitRoot } from "./utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "./utils/messages.js";
 import { listProjectFiles, listProjectFilesAsync } from "./utils/project_files.js";
 import { APP_VERSION } from "./version.js";
-
-const { palette } = theme;
 
 type RunningBashComponent = {
   command: string;
@@ -119,6 +118,7 @@ export class ChatApp {
   private footer: FooterComponent;
   private queuedMessages: QueuedMessagesComponent;
   private editor: CustomEditor;
+  private uiTheme: Theme;
 
   private personas: Persona[];
   private currentPersona: Persona;
@@ -224,12 +224,13 @@ export class ChatApp {
       config: this.config,
     });
 
+    this.uiTheme = createUiTheme("ansi");
     this.ui = new TUI(createAppTerminal());
     this.chatContainer = new ChatContainerComponent();
     this.chatContainer.setCompactToolUi(this.compactToolUi);
-    this.footer = new FooterComponent(this.ui);
-    this.queuedMessages = new QueuedMessagesComponent(() => this.queuedUserMessages);
-    this.editor = new CustomEditor(theme.editorTheme);
+    this.footer = new FooterComponent(this.uiTheme, this.ui);
+    this.queuedMessages = new QueuedMessagesComponent(this.uiTheme, this.queuedUserMessages);
+    this.editor = new CustomEditor(this.uiTheme.editorTheme);
 
     this.setupUI();
     this.setupEditor();
@@ -242,10 +243,14 @@ export class ChatApp {
     this.ui.addChild(this.editor);
     this.ui.addChild(this.footer);
 
-    const headerText =
-      `\n${palette.accent("tau")} ${palette.muted(`– terminal chat (v${APP_VERSION})`)}\n\n` +
-      palette.muted(buildHelpText(this.agentsFiles, this.skills));
-    this.chatContainer.addMessage(new Text(headerText, 1, 0));
+    this.chatContainer.addMessage(
+      new AppIntroComponent(
+        this.uiTheme,
+        "tau",
+        APP_VERSION,
+        buildHelpText(this.agentsFiles, this.skills),
+      ),
+    );
 
     this.ui.setFocus(this.editor);
 
@@ -266,10 +271,7 @@ export class ChatApp {
     this.editor.onEscape = () => this.interruptAssistantTurn();
     this.editor.onCtrlF = () => {
       this.expandFileMentions().catch((err) => {
-        this.addSystemMessage(
-          `file expansion failed: ${(err as Error).message}`,
-          palette.noticeError,
-        );
+        this.addSystemMessage(`file expansion failed: ${(err as Error).message}`, "error");
       });
     };
 
@@ -356,50 +358,44 @@ export class ChatApp {
   // UI Updates ------------------------------------------------------------------------------------
 
   private updateFooter(): void {
-    const reasoningLabel = this.currentPersona.settings.reasoning || "default";
-    const toolLabel = this.formatRiskLevelLabel();
+    const reasoningLabel = this.currentPersona.settings.reasoning ?? "none";
     const contextUsage = this.getContextUsageString();
     const sessionCost = this.getSessionCostString();
     const cwd = formatCwd(process.cwd());
 
-    const left = palette.dim(`${cwd} · ${contextUsage} · ${sessionCost}`);
     const personaName = this.currentPersona.label || this.currentPersona.id;
-    const statusPart = palette.dim(`${personaName} · ${reasoningLabel} · `);
-    const right = `${statusPart}${toolLabel}`;
-
-    this.footer.setLeftRight(left, right);
+    this.footer.setStatus({
+      cwd,
+      contextUsage,
+      sessionCost,
+      personaLabel: personaName,
+      reasoningLabel,
+      riskLevel: this.riskLevel,
+    });
     this.ui.requestRender();
   }
 
-  private formatRiskLevelLabel(): string {
-    switch (this.riskLevel) {
-      case "restricted":
-        return palette.riskRestricted("restricted");
-      case "read-only":
-        return palette.riskReadOnly("read-only");
-      case "read-write":
-        return palette.riskReadWrite("read-write");
-    }
-  }
-
   private updateEditorBorderColor(): void {
+    const { palette } = this.uiTheme;
     if (this.isBashMode) {
       this.editor.borderColor = (s: string) => palette.bashRan(s);
     } else if (this.isMemoryMode) {
       this.editor.borderColor = (s: string) => palette.memoryMode(s);
     } else {
-      this.editor.borderColor = editorBorderForReasoning(this.currentPersona.settings.reasoning);
+      this.editor.borderColor = this.uiTheme.editorBorderForReasoning(
+        this.currentPersona.settings.reasoning,
+      );
     }
     this.ui.requestRender();
   }
 
-  private addSystemMessage(text: string, styleFn: (t: string) => string): void {
-    this.chatContainer.addMessage(new SystemMessageComponent(text, styleFn));
+  private addSystemMessage(text: string, kind: SystemMessageKind): void {
+    this.chatContainer.addMessage(new SystemMessageComponent(this.uiTheme, text, kind));
     this.ui.requestRender();
   }
 
   private addUserMessage(text: string, opts?: { isMemoryMode?: boolean }): void {
-    this.chatContainer.addMessage(new UserMessageComponent(text, opts));
+    this.chatContainer.addMessage(new UserMessageComponent(this.uiTheme, text, opts));
     this.ui.requestRender();
   }
 
@@ -531,7 +527,7 @@ export class ChatApp {
     }
 
     const description = getRiskLevelDescription(next);
-    this.addSystemMessage(`risk level: ${description} (ctrl+r to cycle)`, palette.noticeSuccess);
+    this.addSystemMessage(`risk level: ${description} (ctrl+r to cycle)`, "success");
     this.ui.requestRender();
   }
 
@@ -560,12 +556,12 @@ export class ChatApp {
     if (skillsContext.unknown.length > 0) {
       this.addSystemMessage(
         `warning: unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
-        palette.noticeWarn,
+        "warn",
       );
     }
 
     const label = this.currentPersona.label || this.currentPersona.id;
-    this.addSystemMessage(`switched to ${label} (ctrl+p to cycle)`, palette.noticeSuccess);
+    this.addSystemMessage(`switched to ${label} (ctrl+p to cycle)`, "success");
     this.ui.requestRender();
   }
 
@@ -616,7 +612,7 @@ export class ChatApp {
     const message = this.showThinking
       ? "thoughts visible (ctrl+t to hide)"
       : "thoughts hidden (ctrl+t to show)";
-    this.addSystemMessage(message, palette.noticeSuccess);
+    this.addSystemMessage(message, "success");
     this.ui.requestRender();
   }
 
@@ -626,14 +622,14 @@ export class ChatApp {
     const message = this.compactToolUi
       ? "compact tool UI enabled (ctrl+o to disable)"
       : "compact tool UI disabled (ctrl+o to enable)";
-    this.addSystemMessage(message, palette.noticeSuccess);
+    this.addSystemMessage(message, "success");
     this.ui.requestRender();
   }
 
   private interruptAssistantTurn(): void {
     if (!this.isStreaming || this.currentTurnAbort?.signal.aborted) return;
     this.currentTurnAbort?.abort();
-    this.addSystemMessage("interrupted.", palette.noticeError);
+    this.addSystemMessage("interrupted.", "error");
     this.ui.requestRender();
   }
 
@@ -739,7 +735,7 @@ export class ChatApp {
     if (trimmed.startsWith("#")) {
       const request = trimmed.slice(1).trim();
       if (!request) {
-        this.addSystemMessage("memory mode request was empty.", palette.noticeWarn);
+        this.addSystemMessage("memory mode request was empty.", "warn");
         return;
       }
 
@@ -831,11 +827,11 @@ export class ChatApp {
         this.clearSession();
         break;
 
-      case "forkOnlySummary":
+      case "compactOnlySummary":
         await this.forkSessionOnlySummary();
         break;
 
-      case "forkSummaryAndLastTurn":
+      case "compactSummaryAndLastTurn":
         await this.forkSessionSummaryAndLastTurn();
         break;
 
@@ -860,64 +856,55 @@ export class ChatApp {
         break;
 
       case "unknown":
-        this.addSystemMessage("unknown command. type /help.", palette.noticeError);
+        this.addSystemMessage("unknown command. type /help.", "error");
         break;
     }
   }
 
   private showHelp(): void {
-    this.addSystemMessage(
-      buildHelpText(this.agentsFiles, this.skills),
-      palette.muted, // Intentionally not a notice style
-    );
+    this.addSystemMessage(buildHelpText(this.agentsFiles, this.skills), "muted");
   }
 
   private async copyLastAssistantMessage(): Promise<void> {
     const lastAssistant = this.getLastAssistantMessage();
     if (!lastAssistant) {
-      this.addSystemMessage("no assistant message to copy yet.", palette.noticeWarn);
+      this.addSystemMessage("no assistant message to copy yet.", "warn");
       return;
     }
 
     const text = extractAssistantText(lastAssistant);
     if (!text.trim()) {
-      this.addSystemMessage("last assistant message was empty.", palette.noticeWarn);
+      this.addSystemMessage("last assistant message was empty.", "warn");
       return;
     }
 
     try {
       await copyTextToClipboard(text);
-      this.addSystemMessage("copied last assistant message to clipboard.", palette.noticeSuccess);
+      this.addSystemMessage("copied last assistant message to clipboard.", "success");
     } catch (err) {
-      this.addSystemMessage(
-        `clipboard copy failed: ${(err as Error).message}`,
-        palette.noticeError,
-      );
+      this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, "error");
     }
   }
 
   private async copyLastAssistantCodeBlock(): Promise<void> {
     const lastAssistant = this.getLastAssistantMessage();
     if (!lastAssistant) {
-      this.addSystemMessage("no assistant message to copy yet.", palette.noticeWarn);
+      this.addSystemMessage("no assistant message to copy yet.", "warn");
       return;
     }
 
     const text = extractAssistantText(lastAssistant);
     const code = extractAllFencedCodeBlocks(text);
     if (!code) {
-      this.addSystemMessage("no code block to copy yet.", palette.noticeWarn);
+      this.addSystemMessage("no code block to copy yet.", "warn");
       return;
     }
 
     try {
       await copyTextToClipboard(code);
-      this.addSystemMessage("copied all code blocks to clipboard.", palette.noticeSuccess);
+      this.addSystemMessage("copied all code blocks to clipboard.", "success");
     } catch (err) {
-      this.addSystemMessage(
-        `clipboard copy failed: ${(err as Error).message}`,
-        palette.noticeError,
-      );
+      this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, "error");
     }
   }
 
@@ -929,7 +916,7 @@ export class ChatApp {
     this.taskEvents.clear();
     this.subagentCostTotal = 0;
     this.expandedFilesInCurrentPrompt.clear();
-    this.chatContainer.addMessage(new SessionDividerComponent("new session"));
+    this.chatContainer.addMessage(new SessionDividerComponent(this.uiTheme, "new session"));
     this.isBashMode = false;
     this.isMemoryMode = false;
     this.previousSessionSummary = undefined;
@@ -1086,8 +1073,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.taskEvents.clear();
     this.subagentCostTotal = 0;
     this.expandedFilesInCurrentPrompt.clear();
-    this.chatContainer.addMessage(new SessionDividerComponent("new session"));
-    this.chatContainer.addMessage(new SessionSummaryComponent(this.previousSessionSummary));
+    this.chatContainer.addMessage(new SessionDividerComponent(this.uiTheme, "new session"));
+    this.chatContainer.addMessage(
+      new SessionSummaryComponent(this.uiTheme, this.previousSessionSummary),
+    );
     this.isBashMode = false;
     this.isMemoryMode = false;
 
@@ -1101,11 +1090,11 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
   private async forkSessionOnlySummary(): Promise<void> {
     const history = this.engine.history;
     if (history.length === 0) {
-      this.addSystemMessage("no conversation to fork.", palette.noticeWarn);
+      this.addSystemMessage("no conversation to fork.", "warn");
       return;
     }
 
-    this.addSystemMessage("summarizing session...", palette.noticeSuccess);
+    this.addSystemMessage("summarizing session...", "success");
     this.isStreaming = true;
     this.footer.startWorkingIcon();
 
@@ -1113,12 +1102,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const summary = await this.generateSummary(history);
       this.applySessionContext(summary);
 
-      this.addSystemMessage(
-        "session forked. previous context has been summarized.",
-        palette.noticeSuccess,
-      );
+      this.addSystemMessage("session forked. previous context has been summarized.", "success");
     } catch (err) {
-      this.addSystemMessage(`fork failed: ${(err as Error).message}`, palette.noticeError);
+      this.addSystemMessage(`fork failed: ${(err as Error).message}`, "error");
     } finally {
       this.footer.stop();
       this.isStreaming = false;
@@ -1130,11 +1116,11 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
   private async forkSessionSummaryAndLastTurn(): Promise<void> {
     const history = this.engine.history;
     if (history.length === 0) {
-      this.addSystemMessage("no conversation to fork.", palette.noticeWarn);
+      this.addSystemMessage("no conversation to fork.", "warn");
       return;
     }
 
-    this.addSystemMessage("summarizing session...", palette.noticeSuccess);
+    this.addSystemMessage("summarizing session...", "success");
     this.isStreaming = true;
     this.footer.startWorkingIcon();
 
@@ -1163,10 +1149,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
       this.addSystemMessage(
         "session forked. previous context and last turn have been included.",
-        palette.noticeSuccess,
+        "success",
       );
     } catch (err) {
-      this.addSystemMessage(`fork failed: ${(err as Error).message}`, palette.noticeError);
+      this.addSystemMessage(`fork failed: ${(err as Error).message}`, "error");
     } finally {
       this.footer.stop();
       this.isStreaming = false;
@@ -1191,14 +1177,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
 
     const details = getRiskLevelDescription(level);
-    this.addSystemMessage(`risk level set to '${level}': ${details}`, palette.noticeSuccess);
+    this.addSystemMessage(`risk level set to '${level}': ${details}`, "success");
   }
 
   private switchPersona(id: string): void {
     const persona = this.personas.find((p) => p.id.toLowerCase() === id.toLowerCase());
 
     if (!persona) {
-      this.addSystemMessage(`unknown persona '${id}'.`, palette.noticeError);
+      this.addSystemMessage(`unknown persona '${id}'.`, "error");
       return;
     }
 
@@ -1221,20 +1207,17 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     if (skillsContext.unknown.length > 0) {
       this.addSystemMessage(
         `warning: unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
-        palette.noticeWarn,
+        "warn",
       );
     }
 
-    this.addSystemMessage(
-      `switched to ${persona.label} (${persona.model.id})`,
-      palette.noticeSuccess,
-    );
+    this.addSystemMessage(`switched to ${persona.label} (${persona.model.id})`, "success");
   }
 
   private insertPrompt(id: string): void {
     const prompt = this.prompts.find((p) => p.id.toLowerCase() === id.toLowerCase());
     if (!prompt) {
-      this.addSystemMessage(`unknown prompt '${id}'.`, palette.noticeError);
+      this.addSystemMessage(`unknown prompt '${id}'.`, "error");
       return;
     }
     this.editor.setText(prompt.template);
@@ -1244,7 +1227,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
   private async runSavedBashCommand(id: string): Promise<void> {
     const saved = this.bashCommands.find((b) => b.id.toLowerCase() === id.toLowerCase());
     if (!saved) {
-      this.addSystemMessage(`unknown bash command '${id}'.`, palette.noticeError);
+      this.addSystemMessage(`unknown bash command '${id}'.`, "error");
       return;
     }
 
@@ -1253,10 +1236,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
   private async reloadContent(): Promise<void> {
     if (this.isStreaming) {
-      this.addSystemMessage(
-        "cannot reload while streaming. try again after the response.",
-        palette.noticeWarn,
-      );
+      this.addSystemMessage("cannot reload while streaming. try again after the response.", "warn");
       return;
     }
 
@@ -1285,7 +1265,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         this.clampPersonaReasoning(this.currentPersona);
         this.addSystemMessage(
           `previous persona no longer available; switched to ${this.currentPersona.label || this.currentPersona.id}.`,
-          palette.noticeWarn,
+          "warn",
         );
       }
 
@@ -1305,7 +1285,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       if (skillsContext.unknown.length > 0) {
         this.addSystemMessage(
           `warning: unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
-          palette.noticeWarn,
+          "warn",
         );
       }
 
@@ -1324,10 +1304,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
           ? `reloaded: ${personaCount} personas, ${promptCount} prompts, ${skillCount} skills, ${bashCount} bash commands (${errorCount} errors).`
           : `reloaded: ${personaCount} personas, ${promptCount} prompts, ${skillCount} skills, ${bashCount} bash commands.`;
 
-      this.addSystemMessage(summary, palette.noticeSuccess);
+      this.addSystemMessage(summary, "success");
       this.ui.requestRender();
     } catch (err) {
-      this.addSystemMessage(`reload failed: ${(err as Error).message}`, palette.noticeError);
+      this.addSystemMessage(`reload failed: ${(err as Error).message}`, "error");
     }
   }
 
@@ -1347,7 +1327,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       } => {
         if (currentAssistant) return currentAssistant;
         currentAssistant = {
-          component: new AssistantMessageComponent(undefined, this.showThinking),
+          component: new AssistantMessageComponent(this.uiTheme, undefined, this.showThinking),
           inserted: false,
         };
         return currentAssistant;
@@ -1367,7 +1347,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         switch (event.type) {
           case "assistant_start":
             currentAssistant = {
-              component: new AssistantMessageComponent(undefined, this.showThinking),
+              component: new AssistantMessageComponent(this.uiTheme, undefined, this.showThinking),
               inserted: false,
             };
             break;
@@ -1416,7 +1396,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
             const uiEvent = event.uiEvent;
             if (uiEvent.type === "bash_started") {
               this.chatContainer.addToolMessage(
-                (compact) => renderBashRunning(uiEvent.command, compact),
+                (compact) => renderBashRunning(this.uiTheme, uiEvent.command, compact),
                 uiEvent.toolCallId,
               );
               this.runningBashComponents.set(uiEvent.toolCallId, {
@@ -1427,6 +1407,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const running = this.runningBashComponents.get(uiEvent.toolCallId);
               this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
                 renderBashExecution(
+                  this.uiTheme,
                   uiEvent.command,
                   uiEvent.exitCode,
                   uiEvent.truncationInfo,
@@ -1441,14 +1422,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               if (uiEvent.toolCallId) {
                 const running = this.runningBashComponents.get(uiEvent.toolCallId);
                 this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
-                  renderBashBlocked(uiEvent.command, uiEvent.reason, compact),
+                  renderBashBlocked(this.uiTheme, uiEvent.command, uiEvent.reason, compact),
                 );
                 if (running) {
                   this.runningBashComponents.delete(uiEvent.toolCallId);
                 }
               } else {
                 this.chatContainer.addToolMessage((compact) =>
-                  renderBashBlocked(uiEvent.command, uiEvent.reason, compact),
+                  renderBashBlocked(this.uiTheme, uiEvent.command, uiEvent.reason, compact),
                 );
               }
               this.ui.requestRender();
@@ -1461,7 +1442,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
               this.chatContainer.addToolMessage(
                 (compact) =>
-                  renderTaskRunning(uiEvent.title, [], 0, 0, 0, compact, { kind, subagentName }),
+                  renderTaskRunning(this.uiTheme, uiEvent.title, [], 0, 0, 0, compact, {
+                    kind,
+                    subagentName,
+                  }),
                 uiEvent.toolCallId,
               );
               this.runningTaskComponents.set(uiEvent.toolCallId, {
@@ -1496,6 +1480,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
               this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
                 renderTaskRunning(
+                  this.uiTheme,
                   uiEvent.title,
                   events!,
                   uiEvent.costTotal,
@@ -1513,6 +1498,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
               this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
                 renderTaskFinished(
+                  this.uiTheme,
                   uiEvent.title,
                   uiEvent.costTotal,
                   uiEvent.turns,
@@ -1536,12 +1522,15 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
               if (running) {
                 this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
-                  renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, { kind, subagentName }),
+                  renderTaskBlocked(this.uiTheme, uiEvent.title, uiEvent.reason, compact, {
+                    kind,
+                    subagentName,
+                  }),
                 );
               } else {
                 this.chatContainer.addToolMessage(
                   (compact) =>
-                    renderTaskBlocked(uiEvent.title, uiEvent.reason, compact, {
+                    renderTaskBlocked(this.uiTheme, uiEvent.title, uiEvent.reason, compact, {
                       kind,
                       subagentName,
                     }),
@@ -1555,6 +1544,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
             } else if (uiEvent.type === "write_success") {
               this.chatContainer.addToolMessage((compact) =>
                 renderWriteSuccess(
+                  this.uiTheme,
                   uiEvent.path,
                   uiEvent.bytes,
                   uiEvent.lines,
@@ -1566,12 +1556,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "write_blocked") {
               this.chatContainer.addToolMessage((compact) =>
-                renderWriteBlocked(uiEvent.path, uiEvent.reason, compact),
+                renderWriteBlocked(this.uiTheme, uiEvent.path, uiEvent.reason, compact),
               );
               this.ui.requestRender();
             } else if (uiEvent.type === "edit_success") {
               this.chatContainer.addToolMessage((compact) =>
                 renderEditSuccess(
+                  this.uiTheme,
                   uiEvent.path,
                   uiEvent.oldLength,
                   uiEvent.newLength,
@@ -1583,12 +1574,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "edit_blocked") {
               this.chatContainer.addToolMessage((compact) =>
-                renderEditBlocked(uiEvent.path, uiEvent.reason, compact),
+                renderEditBlocked(this.uiTheme, uiEvent.path, uiEvent.reason, compact),
               );
               this.ui.requestRender();
             } else if (uiEvent.type === "read_success") {
               this.chatContainer.addToolMessage((compact) =>
                 renderReadSuccess(
+                  this.uiTheme,
                   uiEvent.path,
                   uiEvent.startLine,
                   uiEvent.endLine,
@@ -1601,12 +1593,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "read_blocked") {
               this.chatContainer.addToolMessage((compact) =>
-                renderReadBlocked(uiEvent.path, uiEvent.reason, compact),
+                renderReadBlocked(this.uiTheme, uiEvent.path, uiEvent.reason, compact),
               );
               this.ui.requestRender();
             } else if (uiEvent.type === "list_success") {
               this.chatContainer.addToolMessage((compact) =>
                 renderListSuccess(
+                  this.uiTheme,
                   uiEvent.path,
                   uiEvent.offset,
                   uiEvent.limit,
@@ -1619,18 +1612,19 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "list_blocked") {
               this.chatContainer.addToolMessage((compact) =>
-                renderListBlocked(uiEvent.path, uiEvent.reason, compact),
+                renderListBlocked(this.uiTheme, uiEvent.path, uiEvent.reason, compact),
               );
               this.ui.requestRender();
             } else if (uiEvent.type === "grep_started") {
               this.chatContainer.addToolMessage(
-                (compact) => renderGrepRunning(uiEvent.pattern, compact),
+                (compact) => renderGrepRunning(this.uiTheme, uiEvent.pattern, compact),
                 uiEvent.toolCallId,
               );
               this.ui.requestRender();
             } else if (uiEvent.type === "grep_finished") {
               this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
                 renderGrepFinished(
+                  this.uiTheme,
                   uiEvent.pattern,
                   uiEvent.status,
                   uiEvent.exitCode,
@@ -1645,7 +1639,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "grep_blocked") {
               this.chatContainer.addToolMessage(
-                (compact) => renderGrepBlocked(uiEvent.pattern, uiEvent.reason, compact),
+                (compact) =>
+                  renderGrepBlocked(this.uiTheme, uiEvent.pattern, uiEvent.reason, compact),
                 uiEvent.toolCallId,
               );
               this.ui.requestRender();
@@ -1654,13 +1649,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
           }
 
           case "notice": {
-            const style =
-              event.severity === "error"
-                ? palette.noticeError
-                : event.severity === "warn"
-                  ? palette.noticeWarn
-                  : palette.noticeSuccess;
-            this.addSystemMessage(event.text, style);
+            const kind: SystemMessageKind =
+              event.severity === "error" ? "error" : event.severity === "warn" ? "warn" : "success";
+            this.addSystemMessage(event.text, kind);
             break;
           }
 
@@ -1669,14 +1660,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         }
       }
     } catch (err) {
-      this.addSystemMessage(`error: ${(err as Error).message}`, palette.noticeError);
+      this.addSystemMessage(`error: ${(err as Error).message}`, "error");
     } finally {
       const wasAborted = this.currentTurnAbort?.signal.aborted ?? false;
       const reason = wasAborted ? "aborted" : "interrupted";
 
       for (const [id, running] of this.runningBashComponents.entries()) {
         this.chatContainer.replaceToolMessage(id, (compact) =>
-          renderBashAborted(running.command, reason, compact),
+          renderBashAborted(this.uiTheme, running.command, reason, compact),
         );
       }
 
@@ -1684,6 +1675,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       for (const [id, running] of this.runningTaskComponents.entries()) {
         this.chatContainer.replaceToolMessage(id, (compact) =>
           renderTaskFinished(
+            this.uiTheme,
             running.title,
             running.costTotal,
             running.turns,
@@ -1725,13 +1717,15 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         stderr: { maxLines: BASH_USER_MAX_STDERR_LINES, maxTokens: BASH_USER_MAX_STDERR_TOKENS },
       });
 
-      this.chatContainer.addMessage(renderBashExecution(command, exitCode, truncationInfo, false));
+      this.chatContainer.addMessage(
+        renderBashExecution(this.uiTheme, command, exitCode, truncationInfo, false),
+      );
 
       this.engine.addUserText(formatBashUserMessageText({ command, truncationInfo }));
 
       this.ui.requestRender();
     } catch (err) {
-      this.addSystemMessage(`bash error: ${(err as Error).message}`, palette.noticeError);
+      this.addSystemMessage(`bash error: ${(err as Error).message}`, "error");
     } finally {
       this.isStreaming = false;
       this.ui.requestRender();
@@ -1750,7 +1744,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     if (this.isStreaming) {
       this.addSystemMessage(
         "cannot expand files while streaming. try again after the response.",
-        palette.noticeWarn,
+        "warn",
       );
       return;
     }

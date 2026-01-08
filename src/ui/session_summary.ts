@@ -1,11 +1,11 @@
 import { Container, Markdown, Text } from "@mariozechner/pi-tui";
 import { DynamicBorder } from "./components/dynamic_border.js";
-import { theme } from "./theme.js";
+import type { Theme } from "./theme.js";
 
 export class SessionSummaryComponent extends Container {
-  constructor(summary: string) {
+  constructor(theme: Theme, summary: string) {
     super();
-    const { palette } = theme;
+    const { palette, text } = theme;
     const accentColor = (s: string) => palette.accent(s);
 
     this.addChild(new DynamicBorder(accentColor));
@@ -13,7 +13,7 @@ export class SessionSummaryComponent extends Container {
     const content = new Container();
     this.addChild(content);
 
-    const headerText = `\u001b[1m◆ context from previous session\u001b[22m`;
+    const headerText = text.bold("◆ context from previous session");
     content.addChild(new Text(accentColor(headerText), 1, 0));
 
     content.addChild(

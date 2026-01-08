@@ -1,15 +1,11 @@
 import type { OneLineSegment } from "./components/one_line_segments.js";
-import { theme } from "./theme.js";
+import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
 
 interface PreviewTruncation {
   truncated: boolean;
   totalLines: number;
   outputLines: number;
-}
-
-function bold(text: string): string {
-  return `\u001b[1m${text}\u001b[22m`;
 }
 
 function inline(text: string): string {
@@ -24,6 +20,7 @@ function formatRange(startLine: number, endLine?: number): string {
 }
 
 export function renderReadSuccess(
+  theme: Theme,
   path: string,
   startLine: number,
   endLine: number | undefined,
@@ -32,11 +29,11 @@ export function renderReadSuccess(
   modelTruncation: PreviewTruncation,
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const readColor = (s: string) => palette.toolFileRan(s);
 
   const expandedParts: string[] = [];
-  expandedParts.push(readColor(bold(`read ${path} (${formatRange(startLine, endLine)})`)));
+  expandedParts.push(readColor(text.bold(`read ${path} (${formatRange(startLine, endLine)})`)));
 
   const out = preview.trimEnd();
   if (out) {
@@ -96,14 +93,15 @@ export function renderReadSuccess(
 }
 
 export function renderReadBlocked(
+  theme: Theme,
   path: string,
   reason: string,
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const errorColor = (s: string) => palette.error(s);
 
-  const expandedParts: string[] = [errorColor(bold(`read ${path}`))];
+  const expandedParts: string[] = [errorColor(text.bold(`read ${path}`))];
   const msg = reason.trim();
   if (msg) {
     expandedParts.push("", errorColor(msg));
@@ -131,6 +129,7 @@ export function renderReadBlocked(
 }
 
 export function renderListSuccess(
+  theme: Theme,
   path: string,
   offset: number,
   limit: number,
@@ -139,11 +138,11 @@ export function renderListSuccess(
   entries: string[],
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const listColor = (s: string) => palette.toolFileRan(s);
 
   const expandedParts: string[] = [];
-  expandedParts.push(listColor(bold(`list ${path}`)));
+  expandedParts.push(listColor(text.bold(`list ${path}`)));
   expandedParts.push("");
   expandedParts.push(
     palette.muted(`${returned} of ${total} entries (offset ${offset}, limit ${limit})`),
@@ -191,14 +190,15 @@ export function renderListSuccess(
 }
 
 export function renderListBlocked(
+  theme: Theme,
   path: string,
   reason: string,
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const errorColor = (s: string) => palette.error(s);
 
-  const expandedParts: string[] = [errorColor(bold(`list ${path}`))];
+  const expandedParts: string[] = [errorColor(text.bold(`list ${path}`))];
   const msg = reason.trim();
   if (msg) {
     expandedParts.push("", errorColor(msg));
@@ -225,11 +225,15 @@ export function renderListBlocked(
   });
 }
 
-export function renderGrepRunning(pattern: string, compact: boolean): ToolOutputComponent {
-  const { palette } = theme;
+export function renderGrepRunning(
+  theme: Theme,
+  pattern: string,
+  compact: boolean,
+): ToolOutputComponent {
+  const { palette, text } = theme;
   const runningColor = (s: string) => palette.taskRunning(s);
 
-  const header = runningColor(bold(`grep ${pattern}`));
+  const header = runningColor(text.bold(`grep ${pattern}`));
 
   const patternInline = inline(pattern);
   const segments: OneLineSegment[] = [
@@ -251,6 +255,7 @@ export function renderGrepRunning(pattern: string, compact: boolean): ToolOutput
 }
 
 export function renderGrepFinished(
+  theme: Theme,
   pattern: string,
   status: "success" | "error",
   exitCode: number | null,
@@ -261,11 +266,11 @@ export function renderGrepFinished(
   captureTruncated: boolean,
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const grepColor = (s: string) => palette.toolFileRan(s);
 
   const expandedParts: string[] = [];
-  expandedParts.push(grepColor(bold(`grep ${pattern}`)));
+  expandedParts.push(grepColor(text.bold(`grep ${pattern}`)));
 
   const out = stdoutPreview.trimEnd();
   if (out) {
@@ -336,14 +341,15 @@ export function renderGrepFinished(
 }
 
 export function renderGrepBlocked(
+  theme: Theme,
   pattern: string,
   reason: string,
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const errorColor = (s: string) => palette.error(s);
 
-  const expandedParts: string[] = [errorColor(bold(`grep ${pattern}`))];
+  const expandedParts: string[] = [errorColor(text.bold(`grep ${pattern}`))];
   const msg = reason.trim();
   if (msg) {
     expandedParts.push("", errorColor(msg));

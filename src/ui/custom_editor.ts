@@ -1,14 +1,4 @@
-import {
-  Editor,
-  isCtrlC,
-  isCtrlO,
-  isCtrlP,
-  isCtrlT,
-  isEnter,
-  isEscape,
-  isShiftTab,
-} from "@mariozechner/pi-tui";
-import { isKittyCtrl } from "@mariozechner/pi-tui/dist/keys.js";
+import { Editor, Key, matchesKey } from "@mariozechner/pi-tui";
 
 export class CustomEditor extends Editor {
   public onCtrlC?: () => void;
@@ -31,65 +21,53 @@ export class CustomEditor extends Editor {
   }
 
   handleInput(data: string): void {
-    if ((isShiftTab(data) || data === "\x1b[1;2Z") && this.onShiftTab) {
+    if (matchesKey(data, Key.shift("tab")) && this.onShiftTab) {
       this.onShiftTab();
       return;
     }
 
-    if (isCtrlC(data) && this.onCtrlC) {
+    if (matchesKey(data, Key.ctrl("c")) && this.onCtrlC) {
       this.onCtrlC();
       return;
     }
 
-    if (isCtrlT(data) && this.onCtrlT) {
+    if (matchesKey(data, Key.ctrl("t")) && this.onCtrlT) {
       this.onCtrlT();
       return;
     }
 
-    if (isCtrlO(data) && this.onCtrlO && !this.isShowingAutocomplete()) {
+    if (matchesKey(data, Key.ctrl("o")) && this.onCtrlO && !this.isShowingAutocomplete()) {
       this.onCtrlO();
       return;
     }
 
-    if (
-      (data === "\x06" || isKittyCtrl(data, "f")) &&
-      this.onCtrlF &&
-      !this.isShowingAutocomplete()
-    ) {
+    if (matchesKey(data, Key.ctrl("f")) && this.onCtrlF && !this.isShowingAutocomplete()) {
       this.onCtrlF();
       return;
     }
 
-    if (
-      (data === "\x12" || isKittyCtrl(data, "r")) &&
-      this.onCtrlR &&
-      !this.isShowingAutocomplete()
-    ) {
+    if (matchesKey(data, Key.ctrl("r")) && this.onCtrlR && !this.isShowingAutocomplete()) {
       this.onCtrlR();
       return;
     }
 
-    if (isCtrlP(data) && this.onCtrlP && !this.isShowingAutocomplete()) {
+    if (matchesKey(data, Key.ctrl("p")) && this.onCtrlP && !this.isShowingAutocomplete()) {
       this.onCtrlP();
       return;
     }
 
-    if (
-      (data === "\x1b[1;3A" || data === "\x1b[1;9A") &&
-      this.onAltUp &&
-      !this.isShowingAutocomplete()
-    ) {
+    if (matchesKey(data, Key.alt("up")) && this.onAltUp && !this.isShowingAutocomplete()) {
       this.onAltUp();
       return;
     }
 
-    if (isEnter(data) && this.beforeSubmit && !this.isShowingAutocomplete()) {
+    if (matchesKey(data, Key.enter) && this.beforeSubmit && !this.isShowingAutocomplete()) {
       if (!this.beforeSubmit(this.getText())) {
         return;
       }
     }
 
-    if (isEscape(data) && this.onEscape && !this.isShowingAutocomplete()) {
+    if (matchesKey(data, Key.escape) && this.onEscape && !this.isShowingAutocomplete()) {
       this.onEscape();
       return;
     }

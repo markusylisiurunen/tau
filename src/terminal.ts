@@ -16,6 +16,7 @@ export class TauTerminal implements Terminal {
   private wasRaw = false;
   private inputHandler?: (data: string) => void;
   private resizeHandler?: () => void;
+  private _kittyProtocolActive = false;
 
   constructor(
     private input: InputStream,
@@ -74,6 +75,10 @@ export class TauTerminal implements Terminal {
     return this.output.rows || 24;
   }
 
+  get kittyProtocolActive(): boolean {
+    return this._kittyProtocolActive;
+  }
+
   moveBy(lines: number): void {
     if (lines > 0) {
       this.output.write(`\x1b[${lines}B`);
@@ -100,6 +105,16 @@ export class TauTerminal implements Terminal {
 
   clearScreen(): void {
     this.output.write("\x1b[2J\x1b[H");
+  }
+
+  setTitle(title: string): void {
+    const safeTitle = Array.from(title)
+      .filter((char) => {
+        const code = char.codePointAt(0);
+        return code !== undefined && !(code <= 0x1f || code === 0x7f);
+      })
+      .join("");
+    this.output.write(`\x1b]0;${safeTitle}\x07`);
   }
 }
 

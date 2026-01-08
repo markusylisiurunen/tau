@@ -1,8 +1,8 @@
 import { Container, Markdown } from "@mariozechner/pi-tui";
-import { theme } from "./theme.js";
+import type { Theme } from "./theme.js";
 
 export class UserMessageComponent extends Container {
-  constructor(text: string, opts?: { isMemoryMode?: boolean }) {
+  constructor(theme: Theme, text: string, opts?: { isMemoryMode?: boolean }) {
     super();
 
     const bgColor = opts?.isMemoryMode ? theme.palette.userMemoryBg : theme.palette.userBg;

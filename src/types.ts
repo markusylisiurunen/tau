@@ -1,17 +1,11 @@
-import type {
-  Api,
-  Model,
-  ReasoningEffort as PiReasoningEffort,
-  SimpleStreamOptions,
-  Tool,
-} from "@mariozechner/pi-ai";
+import type { Api, Model, SimpleStreamOptions, ThinkingLevel, Tool } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import type { SubagentConfigMap } from "./subagents/types.js";
 
 export const RiskLevelSchema = z.enum(["restricted", "read-only", "read-write"]);
 export type RiskLevel = z.infer<typeof RiskLevelSchema>;
 
-export type ReasoningEffort = PiReasoningEffort | "none";
+export type ReasoningEffort = ThinkingLevel | "none";
 
 export type PersonaSettings = Omit<SimpleStreamOptions, "reasoning"> & {
   reasoning?: ReasoningEffort;

@@ -3,7 +3,7 @@ import { Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { formatAdaptiveNumber } from "../utils/format.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";
 import { PaddedContainer } from "./components/padded_container.js";
-import { palette, theme } from "./theme.js";
+import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
 
 type TaskKind = "task" | "fork";
@@ -12,10 +12,6 @@ type TaskRenderOptions = {
   kind?: TaskKind;
   subagentName?: string;
 };
-
-function bold(text: string): string {
-  return `\u001b[1m${text}\u001b[22m`;
-}
 
 function formatCost(costTotal: number): string {
   return `$${formatAdaptiveNumber(costTotal, 2, 5)}`;
@@ -87,11 +83,15 @@ function formatEventsForDisplay(lastEvents: string[]): string[] {
 }
 
 class TruncatedText implements Component {
-  constructor(private text: string) {}
+  constructor(
+    private text: string,
+    private theme: Theme,
+  ) {}
 
   invalidate() {}
 
   render(width: number): string[] {
+    const { palette } = this.theme;
     const lines = this.text.split("\n");
     return lines.map((line) => {
       if (visibleWidth(line) > width) {
@@ -103,6 +103,7 @@ class TruncatedText implements Component {
 }
 
 export function renderTaskRunning(
+  theme: Theme,
   title: string,
   lastEvents: string[],
   costTotal: number,
@@ -111,7 +112,7 @@ export function renderTaskRunning(
   compact: boolean,
   opts?: TaskRenderOptions,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const runningColor = (s: string) => palette.taskRunning(s);
 
   const kind = opts?.kind ?? "task";
@@ -141,7 +142,7 @@ export function renderTaskRunning(
   }
   extraParts.push(costLine);
 
-  const expandedParts: string[] = [runningColor(bold(`${kind}: ${title}`))];
+  const expandedParts: string[] = [runningColor(text.bold(`${kind}: ${title}`))];
   if (subagentName) {
     expandedParts.push(palette.dim(`subagent: ${subagentName}`));
   }
@@ -161,12 +162,13 @@ export function renderTaskRunning(
     compactView: {
       segments,
       flexIndices: [7],
-      extraComponent: new PaddedContainer(new TruncatedText(extraParts.join("\n")), 4),
+      extraComponent: new PaddedContainer(new TruncatedText(extraParts.join("\n"), theme), 4),
     },
   });
 }
 
 export function renderTaskFinished(
+  theme: Theme,
   title: string,
   costTotal: number,
   turns: number,
@@ -176,7 +178,7 @@ export function renderTaskFinished(
   compact: boolean,
   opts?: TaskRenderOptions,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
 
   const kind = opts?.kind ?? "task";
   const subagentName = opts?.subagentName;
@@ -221,7 +223,7 @@ export function renderTaskFinished(
   }
   extraParts.push(costLine);
 
-  const expandedParts: string[] = [borderColor(bold(`${kind}: ${title}`))];
+  const expandedParts: string[] = [borderColor(text.bold(`${kind}: ${title}`))];
   if (subagentName) {
     expandedParts.push(palette.dim(`subagent: ${subagentName}`));
   }
@@ -248,12 +250,13 @@ export function renderTaskFinished(
 }
 
 export function renderTaskBlocked(
+  theme: Theme,
   title: string,
   reason: string,
   compact: boolean,
   opts?: TaskRenderOptions,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const errorColor = (s: string) => palette.error(s);
 
   const kind = opts?.kind ?? "task";
@@ -272,7 +275,7 @@ export function renderTaskBlocked(
     { text: title.trim(), style: palette.accent },
   ];
 
-  const expandedParts: string[] = [errorColor(bold(`${kind}: ${title}`))];
+  const expandedParts: string[] = [errorColor(text.bold(`${kind}: ${title}`))];
   if (subagentName) {
     expandedParts.push(palette.dim(`subagent: ${subagentName}`));
   }

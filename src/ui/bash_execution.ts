@@ -1,27 +1,24 @@
 import type { BashTruncationInfo } from "../tools/bash.js";
 import { formatBytes } from "../utils/truncate.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";
-import { theme } from "./theme.js";
+import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
-
-function bold(text: string): string {
-  return `\u001b[1m${text}\u001b[22m`;
-}
 
 function inline(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
 function buildBashExecutionExpandedText(
+  theme: Theme,
   command: string,
   exitCode: number | null,
   truncationInfo: BashTruncationInfo,
 ): string {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const bashColor = (s: string) => palette.bashRan(s);
 
   const parts: string[] = [];
-  parts.push(bashColor(bold(`$ ${command}`)));
+  parts.push(bashColor(text.bold(`$ ${command}`)));
 
   const out = truncationInfo.display.content.trimEnd();
   if (out) {
@@ -61,11 +58,15 @@ function buildBashExecutionExpandedText(
   return parts.join("\n");
 }
 
-export function renderBashRunning(command: string, compact: boolean): ToolOutputComponent {
-  const { palette } = theme;
+export function renderBashRunning(
+  theme: Theme,
+  command: string,
+  compact: boolean,
+): ToolOutputComponent {
+  const { palette, text } = theme;
   const runningColor = (s: string) => palette.bashRunning(s);
 
-  const header = runningColor(bold(`$ ${command}`));
+  const header = runningColor(text.bold(`$ ${command}`));
 
   const commandInline = inline(command);
   const segments: OneLineSegment[] = [
@@ -85,6 +86,7 @@ export function renderBashRunning(command: string, compact: boolean): ToolOutput
 }
 
 export function renderBashExecution(
+  theme: Theme,
   command: string,
   exitCode: number | null,
   truncationInfo: BashTruncationInfo,
@@ -125,21 +127,22 @@ export function renderBashExecution(
     compact,
     expanded: {
       borderColor: bashColor,
-      text: buildBashExecutionExpandedText(command, exitCode, truncationInfo),
+      text: buildBashExecutionExpandedText(theme, command, exitCode, truncationInfo),
     },
     compactView: { segments, flexIndices: [5], extraText: `    ${details}` },
   });
 }
 
 export function renderBashBlocked(
+  theme: Theme,
   command: string,
   reason: string,
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const errorColor = (s: string) => palette.error(s);
 
-  const parts: string[] = [errorColor(bold(`$ ${command}`))];
+  const parts: string[] = [errorColor(text.bold(`$ ${command}`))];
   const msg = reason.trim();
   if (msg) {
     parts.push("");
@@ -168,14 +171,15 @@ export function renderBashBlocked(
 }
 
 export function renderBashAborted(
+  theme: Theme,
   command: string,
   reason: string,
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const warnColor = (s: string) => palette.warn(s);
 
-  const parts: string[] = [warnColor(bold(`$ ${command}`))];
+  const parts: string[] = [warnColor(text.bold(`$ ${command}`))];
   const msg = reason.trim();
   if (msg) {
     parts.push("");

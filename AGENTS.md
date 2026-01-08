@@ -126,7 +126,7 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 ## Commands
 
 - `/help`, `/new`, `/copy`, `/copy:code`, `/reload`
-- `/fork:only-summary`, `/fork:with-last-turn` - Fork with compressed history
+- `/compact:only-summary`, `/compact:with-last-turn` - Compact history to continue
 - `/risk:restricted|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model)
 - `#<request>` - Memory mode for updating AGENTS.md
@@ -137,6 +137,7 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 
 - `npm run check` - Format (Biome) + typecheck
 - `npm run build` - Compile to dist/
+- `npm test` - Build + run UI tests
 
 **Do not run the app** (`npm start`, `node dist/main.js`) ever. It launches an interactive TUI that requires a real terminal.
 

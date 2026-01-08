@@ -1,5 +1,5 @@
 import { type Component, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { palette, theme } from "./theme.js";
+import type { Theme } from "./theme.js";
 
 function firstLine(text: string): string {
   const idx = text.indexOf("\n");
@@ -8,15 +8,18 @@ function firstLine(text: string): string {
 }
 
 export class QueuedMessagesComponent implements Component {
-  constructor(private getMessages: () => string[]) {}
+  constructor(
+    private theme: Theme,
+    private messages: string[],
+  ) {}
 
   invalidate() {}
 
   render(width: number): string[] {
-    const messages = this.getMessages();
-    if (messages.length === 0) return [];
+    if (this.messages.length === 0) return [];
 
-    return messages.map((message, index) => {
+    const { palette, markdownTheme } = this.theme;
+    return this.messages.map((message, index) => {
       const prefixRaw = `${index + 1}. `;
       const prefix = palette.dim(prefixRaw);
       const prefixWidth = visibleWidth(prefixRaw);
@@ -24,7 +27,7 @@ export class QueuedMessagesComponent implements Component {
       const line = firstLine(message);
       const available = Math.max(0, width - prefixWidth);
       const truncated = truncateToWidth(line, available, "…");
-      const styled = theme.markdownTheme.italic(palette.muted(truncated));
+      const styled = markdownTheme.italic(palette.muted(truncated));
       return `${prefix}${styled}`;
     });
   }

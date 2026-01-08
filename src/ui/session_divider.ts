@@ -1,8 +1,11 @@
 import type { Component } from "@mariozechner/pi-tui";
-import { theme } from "./theme.js";
+import type { Theme } from "./theme.js";
 
 export class SessionDividerComponent implements Component {
-  constructor(private label: string) {}
+  constructor(
+    private theme: Theme,
+    private label: string,
+  ) {}
 
   invalidate() {}
 
@@ -12,6 +15,6 @@ export class SessionDividerComponent implements Component {
     const remainingWidth = Math.max(1, width - labelWithSpace.length - leftDashes.length);
     const rightDashes = "─".repeat(remainingWidth);
     const dividerText = `${leftDashes}${labelWithSpace}${rightDashes}`;
-    return ["", theme.palette.muted(dividerText)];
+    return ["", this.theme.palette.muted(dividerText)];
   }
 }

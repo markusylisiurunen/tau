@@ -7,9 +7,9 @@ const HelpCommandSchema = z.object({ type: z.literal("help") });
 const CopyCommandSchema = z.object({ type: z.literal("copy") });
 const CopyCodeCommandSchema = z.object({ type: z.literal("copyCode") });
 const NewCommandSchema = z.object({ type: z.literal("new") });
-const ForkOnlySummaryCommandSchema = z.object({ type: z.literal("forkOnlySummary") });
-const ForkSummaryAndLastTurnCommandSchema = z.object({
-  type: z.literal("forkSummaryAndLastTurn"),
+const CompactOnlySummaryCommandSchema = z.object({ type: z.literal("compactOnlySummary") });
+const CompactSummaryAndLastTurnCommandSchema = z.object({
+  type: z.literal("compactSummaryAndLastTurn"),
 });
 const ReloadCommandSchema = z.object({ type: z.literal("reload") });
 const RiskCommandSchema = z.object({
@@ -38,8 +38,8 @@ export const CommandSchema = z.discriminatedUnion("type", [
   CopyCommandSchema,
   CopyCodeCommandSchema,
   NewCommandSchema,
-  ForkOnlySummaryCommandSchema,
-  ForkSummaryAndLastTurnCommandSchema,
+  CompactOnlySummaryCommandSchema,
+  CompactSummaryAndLastTurnCommandSchema,
   ReloadCommandSchema,
   RiskCommandSchema,
   BashCommandSchema,
@@ -69,12 +69,12 @@ export function parseCommand(raw: string): Command {
     return CommandSchema.parse({ type: "new" });
   }
 
-  if (trimmed === "/fork:only-summary") {
-    return CommandSchema.parse({ type: "forkOnlySummary" });
+  if (trimmed === "/compact:only-summary") {
+    return CommandSchema.parse({ type: "compactOnlySummary" });
   }
 
-  if (trimmed === "/fork:with-last-turn") {
-    return CommandSchema.parse({ type: "forkSummaryAndLastTurn" });
+  if (trimmed === "/compact:with-last-turn") {
+    return CommandSchema.parse({ type: "compactSummaryAndLastTurn" });
   }
 
   if (trimmed === "/reload") {
@@ -158,31 +158,42 @@ export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string 
   if (lines.length > 0) {
     lines.push("");
   }
-  lines.push(
-    "commands:",
-    "  /help                 show this help",
-    "  /new                  new session",
-    "  /fork:only-summary    summarize and start new session",
-    "  /fork:with-last-turn  summarize and include previous last turn",
-    "  /reload               reload personas, prompts, and skills from disk",
-    "  /copy                 copy last assistant message",
-    "  /copy:code            copy code blocks from last assistant message",
-    "  /risk:restricted      restricted tools only (read/grep/list)",
-    "  /risk:read-only       allow read-only tools",
-    "  /risk:read-write      allow all tools",
-    "  /bash:<id>            run saved bash command",
-    "  /persona:<id>         switch persona",
-    "  /prompt:<id>          insert prompt template",
-    "",
-    "keys:",
-    "  shift+tab             cycle reasoning effort",
-    "  ctrl+r                cycle risk level",
-    "  ctrl+p                cycle personality",
-    "  ctrl+t                toggle thoughts visibility",
-    "  ctrl+o                toggle compact tool UI",
-    "  ctrl+f                expand @file mentions",
-    "  esc                   interrupt assistant",
-  );
+  const commandEntries: Array<[string, string]> = [
+    ["/help", "show this help"],
+    ["/new", "new session"],
+    ["/compact:only-summary", "summarize and start new session"],
+    ["/compact:with-last-turn", "summarize and include previous last turn"],
+    ["/reload", "reload personas, prompts, and skills from disk"],
+    ["/copy", "copy last assistant message"],
+    ["/copy:code", "copy code blocks from last assistant message"],
+    ["/risk:restricted", "restricted tools only (read/grep/list)"],
+    ["/risk:read-only", "allow read-only tools"],
+    ["/risk:read-write", "allow all tools"],
+    ["/bash:<id>", "run saved bash command"],
+    ["/persona:<id>", "switch persona"],
+    ["/prompt:<id>", "insert prompt template"],
+  ];
+  const keyEntries: Array<[string, string]> = [
+    ["shift+tab", "cycle reasoning effort"],
+    ["ctrl+r", "cycle risk level"],
+    ["ctrl+p", "cycle personality"],
+    ["ctrl+t", "toggle thoughts visibility"],
+    ["ctrl+o", "toggle compact tool UI"],
+    ["ctrl+f", "expand @file mentions"],
+    ["esc", "interrupt assistant"],
+  ];
+
+  const commandPad = Math.max(...commandEntries.map(([cmd]) => cmd.length));
+  const keyPad = Math.max(...keyEntries.map(([key]) => key.length));
+
+  lines.push("commands:");
+  for (const [cmd, desc] of commandEntries) {
+    lines.push(`  ${cmd.padEnd(commandPad)}  ${desc}`);
+  }
+  lines.push("", "keys:");
+  for (const [key, desc] of keyEntries) {
+    lines.push(`  ${key.padEnd(keyPad)}  ${desc}`);
+  }
   return lines.join("\n");
 }
 

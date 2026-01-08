@@ -1,5 +1,5 @@
 import type { OneLineSegment } from "./components/one_line_segments.js";
-import { theme } from "./theme.js";
+import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
 
 interface PreviewTruncation {
@@ -14,15 +14,12 @@ interface DiffTruncation {
   outputLines: number;
 }
 
-function bold(text: string): string {
-  return `\u001b[1m${text}\u001b[22m`;
-}
-
 function inline(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
 export function renderWriteSuccess(
+  theme: Theme,
   path: string,
   bytes: number,
   lines: number,
@@ -30,11 +27,11 @@ export function renderWriteSuccess(
   previewTruncation: PreviewTruncation,
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const writeColor = (s: string) => palette.toolFileRan(s);
 
   const expandedParts: string[] = [];
-  expandedParts.push(writeColor(bold(`write ${path}`)));
+  expandedParts.push(writeColor(text.bold(`write ${path}`)));
   expandedParts.push("");
   expandedParts.push(palette.muted(`${bytes} bytes (${lines} lines)`));
 
@@ -90,14 +87,15 @@ export function renderWriteSuccess(
 }
 
 export function renderWriteBlocked(
+  theme: Theme,
   path: string,
   reason: string,
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const errorColor = (s: string) => palette.error(s);
 
-  const expandedParts: string[] = [errorColor(bold(`write ${path}`))];
+  const expandedParts: string[] = [errorColor(text.bold(`write ${path}`))];
   const msg = reason.trim();
   if (msg) {
     expandedParts.push("");
@@ -135,14 +133,14 @@ function countDiffChanges(diff: string): { added: number; removed: number } {
   return { added, removed };
 }
 
-function colorDiffLine(line: string): string {
-  const { palette } = theme;
+function colorDiffLine(palette: Theme["palette"], line: string): string {
   if (line.startsWith("- ")) return palette.diffRemoved(line);
   if (line.startsWith("+ ")) return palette.diffAdded(line);
   return palette.muted(line);
 }
 
 export function renderEditSuccess(
+  theme: Theme,
   path: string,
   oldLength: number,
   newLength: number,
@@ -150,7 +148,7 @@ export function renderEditSuccess(
   diffTruncation: DiffTruncation,
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const editColor = (s: string) => palette.toolFileRan(s);
 
   const sizeDiff = newLength - oldLength;
@@ -158,11 +156,16 @@ export function renderEditSuccess(
     sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
 
   const expandedParts: string[] = [];
-  expandedParts.push(editColor(bold(`edit ${path}`)));
+  expandedParts.push(editColor(text.bold(`edit ${path}`)));
   expandedParts.push("");
   expandedParts.push(palette.muted(`replaced ${oldLength} → ${newLength} chars (${diffStr})`));
   expandedParts.push("");
-  expandedParts.push(diff.split("\n").map(colorDiffLine).join("\n"));
+  expandedParts.push(
+    diff
+      .split("\n")
+      .map((line) => colorDiffLine(palette, line))
+      .join("\n"),
+  );
 
   if (diffTruncation.truncated) {
     const icon = palette.warn("◆");
@@ -218,14 +221,15 @@ export function renderEditSuccess(
 }
 
 export function renderEditBlocked(
+  theme: Theme,
   path: string,
   reason: string,
   compact: boolean,
 ): ToolOutputComponent {
-  const { palette } = theme;
+  const { palette, text } = theme;
   const errorColor = (s: string) => palette.error(s);
 
-  const expandedParts: string[] = [errorColor(bold(`edit ${path}`))];
+  const expandedParts: string[] = [errorColor(text.bold(`edit ${path}`))];
   const msg = reason.trim();
   if (msg) {
     expandedParts.push("");

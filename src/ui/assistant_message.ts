@@ -1,8 +1,9 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
-import { theme } from "./theme.js";
+import type { Theme } from "./theme.js";
 
 export class AssistantMessageComponent extends Container {
+  private theme: Theme;
   private contentContainer: Container;
   private thoughtsVisible: boolean;
   private currentMessage: AssistantMessage | null = null;
@@ -13,9 +14,10 @@ export class AssistantMessageComponent extends Container {
     return this._hasVisibleText;
   }
 
-  constructor(message?: AssistantMessage, thoughtsVisible = false) {
+  constructor(theme: Theme, message?: AssistantMessage, thoughtsVisible = false) {
     super();
 
+    this.theme = theme;
     this.contentContainer = new Container();
     this.thoughtsVisible = thoughtsVisible;
 
@@ -59,7 +61,7 @@ export class AssistantMessageComponent extends Container {
   }
 
   updateFromMessage(message: AssistantMessage): void {
-    const { palette, markdownTheme } = theme;
+    const { palette, markdownTheme } = this.theme;
 
     this.currentMessage = message;
     this.contentContainer.clear();

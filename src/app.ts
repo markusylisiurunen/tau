@@ -414,7 +414,7 @@ export class ChatApp {
       : this.currentPersona.model.contextWindow;
 
     const { input, read, write, output } = this.getSessionTotals();
-    const stats = `i${formatTokenWindow(input)} r${formatTokenWindow(read)} w${formatTokenWindow(write)} o${formatTokenWindow(output)}`;
+    const stats = `↓${formatTokenWindow(input)} ↑${formatTokenWindow(read)} w${formatTokenWindow(write)} o${formatTokenWindow(output)}`;
 
     const promptTokensSent = last
       ? (last.usage?.input ?? 0) + (last.usage?.cacheRead ?? 0) + (last.usage?.cacheWrite ?? 0)

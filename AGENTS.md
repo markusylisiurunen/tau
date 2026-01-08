@@ -160,9 +160,10 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 Publishing to npm happens automatically via GitHub Actions when a GitHub Release is published.
 
 1. Ensure you are on `main` with a clean working tree.
-2. Run verification and build:
+2. Run verification, build and tests:
    - `npm run check`
    - `npm run build`
+   - `npm test`
 3. Bump the version and create a tag:
    - `npm version patch|minor|major` (creates a `vX.Y.Z` tag)
 4. Push the commit and tag:

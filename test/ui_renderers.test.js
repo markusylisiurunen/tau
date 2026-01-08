@@ -18,25 +18,21 @@ test("renderBashRunning (compact) shows command and running status", () => {
 
 test("renderBashExecution (expanded) includes output and exit code", () => {
   const theme = createTagTheme();
+  const output = "output line";
   const truncationInfo = {
-    display: {
-      content: "output line",
-      truncated: false,
-      outputLines: 1,
-      outputBytes: 11,
-      totalLines: 1,
-      totalBytes: 11,
-    },
+    output,
     model: {
-      content: "output line",
+      content: output,
       truncated: false,
+      truncatedBy: null,
       outputLines: 1,
       outputBytes: 11,
       totalLines: 1,
       totalBytes: 11,
+      maxLines: 10,
+      maxTokens: 10,
     },
     captureTruncated: false,
-    hasStderr: false,
   };
   const component = renderBashExecution(theme, "echo hi", 1, truncationInfo, false);
   const text = renderText(component, 100);
@@ -53,7 +49,6 @@ test("renderWriteSuccess (compact) shows preview lines", () => {
     10,
     2,
     "first\nsecond",
-    noPreviewTruncation,
     true,
   );
   const text = renderText(component, 80);
@@ -64,8 +59,7 @@ test("renderWriteSuccess (compact) shows preview lines", () => {
 
 test("renderEditSuccess (expanded) highlights diffs", () => {
   const theme = createTagTheme();
-  const diff = "- old\n+ new\n  same";
-  const component = renderEditSuccess(theme, "notes.txt", 10, 12, diff, noPreviewTruncation, false);
+  const component = renderEditSuccess(theme, "notes.txt", 10, 12, "old", "new", false);
   const text = renderText(component, 100);
   expect(text).toContain("<diffRemoved>- old</diffRemoved>");
   expect(text).toContain("<diffAdded>+ new</diffAdded>");
@@ -79,7 +73,6 @@ test("renderReadSuccess (compact) shows file preview", () => {
     1,
     2,
     "alpha\nbeta",
-    noPreviewTruncation,
     noPreviewTruncation,
     true,
   );
@@ -113,9 +106,7 @@ test("renderGrepFinished (compact) surfaces error status", () => {
     "error",
     2,
     "",
-    { truncated: false, totalLines: 0, outputLines: 0 },
     "bad file",
-    { truncated: false, totalLines: 1, outputLines: 1 },
     false,
     true,
   );

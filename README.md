@@ -307,6 +307,7 @@ release steps:
 ```sh
 npm run check
 npm run build
+npm test
 ```
 
 - bump the version (creates a git tag):

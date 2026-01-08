@@ -3,6 +3,7 @@ import { formatBytes } from "../utils/truncate.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";
 import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
+import { BASH_UI_MAX_LINES, BASH_UI_MAX_TOKENS, truncateForUi } from "./tool_truncation.js";
 
 function inline(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -13,6 +14,7 @@ function buildBashExecutionExpandedText(
   command: string,
   exitCode: number | null,
   truncationInfo: BashTruncationInfo,
+  display: ReturnType<typeof truncateForUi>,
 ): string {
   const { palette, text } = theme;
   const bashColor = (s: string) => palette.bashRan(s);
@@ -20,13 +22,13 @@ function buildBashExecutionExpandedText(
   const parts: string[] = [];
   parts.push(bashColor(text.bold(`$ ${command}`)));
 
-  const out = truncationInfo.display.content.trimEnd();
+  const out = display.content.trimEnd();
   if (out) {
     parts.push("");
     parts.push(palette.bashOutput(out));
   }
 
-  const { display, model, captureTruncated } = truncationInfo;
+  const { model, captureTruncated } = truncationInfo;
 
   let truncatedNoticeAdded = false;
   if (display.truncated || captureTruncated) {
@@ -95,9 +97,15 @@ export function renderBashExecution(
   const { palette } = theme;
   const bashColor = (s: string) => palette.bashRan(s);
 
+  const display = truncateForUi(truncationInfo.output, {
+    maxLines: BASH_UI_MAX_LINES,
+    maxTokens: BASH_UI_MAX_TOKENS,
+    strategy: "middle",
+  });
+
   const commandInline = inline(command);
 
-  const { display, model, captureTruncated } = truncationInfo;
+  const { model, captureTruncated } = truncationInfo;
   const hasOutput = model.totalBytes > 0;
   const showTotals = display.truncated || model.truncated || captureTruncated;
   const outputLines = showTotals ? model.totalLines : model.outputLines;
@@ -127,7 +135,7 @@ export function renderBashExecution(
     compact,
     expanded: {
       borderColor: bashColor,
-      text: buildBashExecutionExpandedText(theme, command, exitCode, truncationInfo),
+      text: buildBashExecutionExpandedText(theme, command, exitCode, truncationInfo, display),
     },
     compactView: { segments, flexIndices: [5], extraText: `    ${details}` },
   });

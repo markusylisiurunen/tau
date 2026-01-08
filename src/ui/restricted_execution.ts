@@ -1,6 +1,13 @@
 import type { OneLineSegment } from "./components/one_line_segments.js";
 import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
+import {
+  GREP_UI_MAX_LINES,
+  GREP_UI_MAX_TOKENS,
+  READ_UI_MAX_LINES,
+  READ_UI_MAX_TOKENS,
+  truncateForUi,
+} from "./tool_truncation.js";
 
 interface PreviewTruncation {
   truncated: boolean;
@@ -24,18 +31,23 @@ export function renderReadSuccess(
   path: string,
   startLine: number,
   endLine: number | undefined,
-  preview: string,
-  previewTruncation: PreviewTruncation,
+  content: string,
   modelTruncation: PreviewTruncation,
   compact: boolean,
 ): ToolOutputComponent {
   const { palette, text } = theme;
   const readColor = (s: string) => palette.toolFileRan(s);
 
+  const previewTruncation = truncateForUi(content, {
+    maxLines: READ_UI_MAX_LINES,
+    maxTokens: READ_UI_MAX_TOKENS,
+    strategy: "middle",
+  });
+
   const expandedParts: string[] = [];
   expandedParts.push(readColor(text.bold(`read ${path} (${formatRange(startLine, endLine)})`)));
 
-  const out = preview.trimEnd();
+  const out = previewTruncation.content.trimEnd();
   if (out) {
     expandedParts.push("", palette.filePreview(out));
   }
@@ -57,6 +69,9 @@ export function renderReadSuccess(
   }
 
   const pathInline = inline(path);
+  const totalLinesForSummary = modelTruncation.truncated
+    ? modelTruncation.totalLines
+    : previewTruncation.totalLines;
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
     { text: "▪", style: readColor },
@@ -65,13 +80,13 @@ export function renderReadSuccess(
     { text: " ", style: (s) => s },
     { text: pathInline, style: palette.accent },
     { text: " ", style: (s) => s },
-    { text: `(${previewTruncation.totalLines} lines)`, style: palette.muted },
+    { text: `(${totalLinesForSummary} lines)`, style: palette.muted },
   ];
 
   const maxPreviewLines = 4;
   const previewLines = out ? out.split("\n") : [];
   const shownPreviewLines = previewLines.slice(0, maxPreviewLines);
-  const remaining = Math.max(0, previewTruncation.totalLines - shownPreviewLines.length);
+  const remaining = Math.max(0, totalLinesForSummary - shownPreviewLines.length);
 
   const compactLines: string[] = [];
   for (const l of shownPreviewLines) {
@@ -259,33 +274,43 @@ export function renderGrepFinished(
   pattern: string,
   status: "success" | "error",
   exitCode: number | null,
-  stdoutPreview: string,
-  stdoutPreviewTruncation: PreviewTruncation,
-  stderrPreview: string,
-  stderrPreviewTruncation: PreviewTruncation,
+  stdout: string,
+  stderr: string,
   captureTruncated: boolean,
   compact: boolean,
 ): ToolOutputComponent {
   const { palette, text } = theme;
   const grepColor = (s: string) => palette.toolFileRan(s);
 
+  const stdoutPreview = truncateForUi(stdout, {
+    maxLines: GREP_UI_MAX_LINES,
+    maxTokens: GREP_UI_MAX_TOKENS,
+    strategy: "middle",
+  });
+
+  const stderrPreview = truncateForUi(stderr, {
+    maxLines: GREP_UI_MAX_LINES,
+    maxTokens: GREP_UI_MAX_TOKENS,
+    strategy: "middle",
+  });
+
   const expandedParts: string[] = [];
   expandedParts.push(grepColor(text.bold(`grep ${pattern}`)));
 
-  const out = stdoutPreview.trimEnd();
+  const out = stdoutPreview.content.trimEnd();
   if (out) {
     expandedParts.push("", palette.filePreview(out));
   }
 
-  const err = stderrPreview.trimEnd();
+  const err = stderrPreview.content.trimEnd();
   if (err) {
     expandedParts.push("", palette.error("stderr:"), palette.error(err));
   }
 
-  if (stdoutPreviewTruncation.truncated || stderrPreviewTruncation.truncated || captureTruncated) {
+  if (stdoutPreview.truncated || stderrPreview.truncated || captureTruncated) {
     const icon = palette.warn("◆");
     const msg = palette.dim(
-      `truncated: ${stdoutPreviewTruncation.outputLines} of ${stdoutPreviewTruncation.totalLines} lines`,
+      `truncated: ${stdoutPreview.outputLines} of ${stdoutPreview.totalLines} lines`,
     );
     expandedParts.push("", `${icon} ${msg}`);
   }
@@ -316,7 +341,7 @@ export function renderGrepFinished(
     for (const l of errLines) {
       extra.push(palette.error(`    ${l}`));
     }
-    if (stderrPreviewTruncation.truncated) {
+    if (stderrPreview.truncated) {
       extra.push(palette.dim("    (stderr truncated)"));
     }
   } else if (out) {
@@ -324,7 +349,7 @@ export function renderGrepFinished(
     for (const l of outLines) {
       extra.push(palette.muted(`    ${l}`));
     }
-    if (stdoutPreviewTruncation.truncated) {
+    if (stdoutPreview.truncated) {
       extra.push(palette.dim("    (output truncated)"));
     }
   }

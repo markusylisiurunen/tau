@@ -1,12 +1,13 @@
+import { bytesToTokens } from "../utils/token.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";
 import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
-
-interface PreviewTruncation {
-  truncated: boolean;
-  totalLines: number;
-  outputLines: number;
-}
+import {
+  EDIT_DIFF_MAX_LINES,
+  EDIT_DIFF_MAX_TOKENS,
+  truncateForUi,
+  WRITE_UI_PREVIEW_LINES,
+} from "./tool_truncation.js";
 
 interface DiffTruncation {
   truncated: boolean;
@@ -14,8 +15,61 @@ interface DiffTruncation {
   outputLines: number;
 }
 
+interface DiffResult {
+  diff: string;
+  truncation: DiffTruncation;
+}
+
 function inline(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+function buildSimpleDiff(oldText: string, newText: string): DiffResult {
+  const oldLines = oldText.length === 0 ? ["(empty)"] : oldText.split("\n");
+  const newLines = newText.length === 0 ? ["(empty)"] : newText.split("\n");
+
+  const diffLines: string[] = [];
+  for (const line of oldLines) {
+    diffLines.push(`- ${line}`);
+  }
+  for (const line of newLines) {
+    diffLines.push(`+ ${line}`);
+  }
+
+  const totalLines = diffLines.length;
+  let outputLines = diffLines;
+  let truncated = false;
+
+  if (outputLines.length > EDIT_DIFF_MAX_LINES) {
+    const headCount = Math.floor(EDIT_DIFF_MAX_LINES / 2);
+    const tailCount = EDIT_DIFF_MAX_LINES - headCount;
+    outputLines = [...outputLines.slice(0, headCount), ...outputLines.slice(-tailCount)];
+    truncated = true;
+  }
+
+  let diff = outputLines.join("\n");
+
+  if (bytesToTokens(Buffer.byteLength(diff, "utf-8")) > EDIT_DIFF_MAX_TOKENS) {
+    const lines = diff.split("\n");
+    while (
+      bytesToTokens(Buffer.byteLength(lines.join("\n"), "utf-8")) > EDIT_DIFF_MAX_TOKENS &&
+      lines.length > 2
+    ) {
+      const mid = Math.floor(lines.length / 2);
+      lines.splice(mid, 1);
+    }
+    diff = lines.join("\n");
+    truncated = true;
+  }
+
+  return {
+    diff,
+    truncation: {
+      truncated,
+      totalLines,
+      outputLines: diff.split("\n").length,
+    },
+  };
 }
 
 export function renderWriteSuccess(
@@ -23,13 +77,18 @@ export function renderWriteSuccess(
   path: string,
   bytes: number,
   lines: number,
-  preview: string,
-  previewTruncation: PreviewTruncation,
+  content: string,
   compact: boolean,
 ): ToolOutputComponent {
   const { palette, text } = theme;
   const writeColor = (s: string) => palette.toolFileRan(s);
 
+  const previewTruncation = truncateForUi(content, {
+    maxLines: WRITE_UI_PREVIEW_LINES,
+    strategy: "head",
+  });
+
+  const preview = previewTruncation.content;
   const expandedParts: string[] = [];
   expandedParts.push(writeColor(text.bold(`write ${path}`)));
   expandedParts.push("");
@@ -144,12 +203,14 @@ export function renderEditSuccess(
   path: string,
   oldLength: number,
   newLength: number,
-  diff: string,
-  diffTruncation: DiffTruncation,
+  oldText: string,
+  newText: string,
   compact: boolean,
 ): ToolOutputComponent {
   const { palette, text } = theme;
   const editColor = (s: string) => palette.toolFileRan(s);
+
+  const { diff, truncation: diffTruncation } = buildSimpleDiff(oldText, newText);
 
   const sizeDiff = newLength - oldLength;
   const diffStr =

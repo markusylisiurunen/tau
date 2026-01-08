@@ -37,34 +37,6 @@ function parseWriteArgs(raw: unknown): { path: string; content: string } {
   return parsed.success ? parsed.data : { path: "", content: "" };
 }
 
-const PREVIEW_LINES = 16;
-
-interface PreviewResult {
-  preview: string;
-  truncation: {
-    truncated: boolean;
-    totalLines: number;
-    outputLines: number;
-  };
-}
-
-function buildPreview(content: string): PreviewResult {
-  const contentLines = content.split("\n");
-  const totalLines = contentLines.length;
-  const truncated = totalLines > PREVIEW_LINES;
-  const previewLines = truncated ? contentLines.slice(0, PREVIEW_LINES) : contentLines;
-  const preview = previewLines.join("\n");
-
-  return {
-    preview,
-    truncation: {
-      truncated,
-      totalLines,
-      outputLines: previewLines.length,
-    },
-  };
-}
-
 export function createWriteToolDefinition(): ToolDefinition {
   return {
     schema: WRITE_TOOL,
@@ -105,16 +77,13 @@ export function createWriteToolDefinition(): ToolDefinition {
         const lines = content.split("\n").length;
         const resultText = `Successfully wrote ${bytes} bytes (${lines} lines) to ${path}`;
 
-        const { preview, truncation: previewTruncation } = buildPreview(content);
-
         const toolResult = createToolSuccess(toolCall, resultText);
         const uiEvent: ToolUiEvent = {
           type: "write_success",
           path,
           bytes,
           lines,
-          preview,
-          previewTruncation,
+          content,
         };
         return { kind: "single", toolResult, uiEvent };
       } catch (e) {

@@ -5,14 +5,12 @@ import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { resolveRestrictedFilePath } from "../utils/restricted_fs.js";
-import { truncateMiddle, truncateMiddleForModel } from "../utils/truncate.js";
+import { truncateMiddleForModel, truncateToBytesFromStart } from "../utils/truncate.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
-
-export const READ_DISPLAY_MAX_LINES = 32;
-export const READ_DISPLAY_MAX_TOKENS = 5000;
 
 export const READ_TOOL_MAX_LINES = 4096;
 export const READ_TOOL_MAX_TOKENS = 25000;
+export const READ_MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
 
 const READ_DESCRIPTION = ["Read a file from the project safely."].join(" ");
 
@@ -126,16 +124,14 @@ export function createReadToolDefinition(): ToolDefinition {
         const startIndex = Math.max(0, start - 1);
         const endIndex = Math.min(totalLines, Math.max(startIndex, end));
 
-        const selected = allLines.slice(startIndex, endIndex).join("\n");
+        let selected = allLines.slice(startIndex, endIndex).join("\n");
+        if (Buffer.byteLength(selected, "utf-8") > READ_MAX_CAPTURE_BYTES) {
+          selected = truncateToBytesFromStart(selected, READ_MAX_CAPTURE_BYTES);
+        }
 
         const modelTruncation = truncateMiddleForModel(selected, {
           maxLines: READ_TOOL_MAX_LINES,
           maxTokens: READ_TOOL_MAX_TOKENS,
-        });
-
-        const displayTruncation = truncateMiddle(selected, {
-          maxLines: READ_DISPLAY_MAX_LINES,
-          maxTokens: READ_DISPLAY_MAX_TOKENS,
         });
 
         const toolText = formatReadToolResultText({
@@ -152,12 +148,7 @@ export function createReadToolDefinition(): ToolDefinition {
           path: resolved.relPath,
           startLine: start,
           endLine: endLine,
-          preview: displayTruncation.content,
-          previewTruncation: {
-            truncated: displayTruncation.truncated,
-            totalLines: displayTruncation.totalLines,
-            outputLines: displayTruncation.outputLines,
-          },
+          content: modelTruncation.content,
           modelTruncation: {
             truncated: modelTruncation.truncated,
             totalLines: modelTruncation.totalLines,

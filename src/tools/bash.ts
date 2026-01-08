@@ -6,7 +6,6 @@ import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import {
   type TruncationResult,
-  truncateMiddle,
   truncateMiddleForModel,
   truncateToBytesFromStart,
 } from "../utils/truncate.js";
@@ -18,9 +17,6 @@ import type {
 } from "./registry.js";
 
 export const BASH_MAX_CAPTURE_BYTES = 2 * 1024 * 1024; // 2MB
-
-export const BASH_DISPLAY_MAX_LINES = 32;
-export const BASH_DISPLAY_MAX_TOKENS = 5000;
 
 export const BASH_TOOL_MAX_STDOUT_LINES = 4096;
 export const BASH_TOOL_MAX_STDOUT_TOKENS = 25000;
@@ -119,10 +115,9 @@ export type BashToolResult = {
 export type BashSafetyLevel = "read" | "write";
 
 export interface BashTruncationInfo {
-  display: TruncationResult;
+  output: string;
   model: TruncationResult;
   captureTruncated: boolean;
-  hasStderr: boolean;
 }
 
 export function prepareBashOutput(
@@ -157,12 +152,12 @@ export function prepareBashOutput(
   const combined = combinedParts.join("\n");
 
   const combinedTotalParts: string[] = [];
-  const stdoutTotalHasOutput = stdout.trim().length > 0;
-  const stderrTotalHasOutput = stderr.trim().length > 0;
-  if (stdoutTotalHasOutput) {
+  const stdoutRawHasOutput = stdout.trim().length > 0;
+  const stderrRawHasOutput = stderr.trim().length > 0;
+  if (stdoutRawHasOutput) {
     combinedTotalParts.push(stdout);
   }
-  if (stderrTotalHasOutput) {
+  if (stderrRawHasOutput) {
     combinedTotalParts.push(`[stderr]\n${stderr}`);
   }
   const combinedTotal = combinedTotalParts.join("\n");
@@ -179,16 +174,10 @@ export function prepareBashOutput(
     maxTokens: limits.stdout.maxTokens + limits.stderr.maxTokens,
   };
 
-  const displayTruncation = truncateMiddle(modelTruncation.content, {
-    maxLines: BASH_DISPLAY_MAX_LINES,
-    maxTokens: BASH_DISPLAY_MAX_TOKENS,
-  });
-
   return {
-    display: displayTruncation,
+    output: combined,
     model: modelTruncation,
     captureTruncated,
-    hasStderr: stderr.trim().length > 0,
   };
 }
 

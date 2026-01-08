@@ -85,12 +85,7 @@ export type ToolUiEvent =
       path: string;
       startLine: number;
       endLine?: number;
-      preview: string;
-      previewTruncation: {
-        truncated: boolean;
-        totalLines: number;
-        outputLines: number;
-      };
+      content: string;
       modelTruncation: {
         truncated: boolean;
         totalLines: number;
@@ -119,18 +114,8 @@ export type ToolUiEvent =
       pattern: string;
       status: "success" | "error";
       exitCode: number | null;
-      stdoutPreview: string;
-      stdoutPreviewTruncation: {
-        truncated: boolean;
-        totalLines: number;
-        outputLines: number;
-      };
-      stderrPreview: string;
-      stderrPreviewTruncation: {
-        truncated: boolean;
-        totalLines: number;
-        outputLines: number;
-      };
+      stdout: string;
+      stderr: string;
       captureTruncated: boolean;
     }
   | {
@@ -144,12 +129,7 @@ export type ToolUiEvent =
       path: string;
       bytes: number;
       lines: number;
-      preview: string;
-      previewTruncation: {
-        truncated: boolean;
-        totalLines: number;
-        outputLines: number;
-      };
+      content: string;
     }
   | { type: "write_blocked"; path: string; reason: string }
   | {
@@ -157,12 +137,8 @@ export type ToolUiEvent =
       path: string;
       oldLength: number;
       newLength: number;
-      diff: string;
-      diffTruncation: {
-        truncated: boolean;
-        totalLines: number;
-        outputLines: number;
-      };
+      oldText: string;
+      newText: string;
     }
   | { type: "edit_blocked"; path: string; reason: string };
 

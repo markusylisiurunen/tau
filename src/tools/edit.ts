@@ -4,7 +4,6 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
-import { bytesToTokens } from "../utils/token.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
 
 const EDIT_DESCRIPTION = [
@@ -56,68 +55,6 @@ function countOccurrences(content: string, search: string): number {
     index = content.indexOf(search, pos);
   }
   return count;
-}
-
-const DIFF_MAX_LINES = 200;
-const DIFF_MAX_TOKENS = 5000;
-
-interface DiffResult {
-  diff: string;
-  truncation: {
-    truncated: boolean;
-    totalLines: number;
-    outputLines: number;
-  };
-}
-
-function buildSimpleDiff(oldText: string, newText: string): DiffResult {
-  const oldLines = oldText.length === 0 ? ["(empty)"] : oldText.split("\n");
-  const newLines = newText.length === 0 ? ["(empty)"] : newText.split("\n");
-
-  const diffLines: string[] = [];
-  for (const line of oldLines) {
-    diffLines.push(`- ${line}`);
-  }
-  for (const line of newLines) {
-    diffLines.push(`+ ${line}`);
-  }
-
-  const totalLines = diffLines.length;
-  let outputLines = diffLines;
-  let truncated = false;
-
-  // Truncate by lines first
-  if (outputLines.length > DIFF_MAX_LINES) {
-    const headCount = Math.floor(DIFF_MAX_LINES / 2);
-    const tailCount = DIFF_MAX_LINES - headCount;
-    outputLines = [...outputLines.slice(0, headCount), ...outputLines.slice(-tailCount)];
-    truncated = true;
-  }
-
-  let diff = outputLines.join("\n");
-
-  // Truncate by tokens if needed
-  if (bytesToTokens(Buffer.byteLength(diff, "utf-8")) > DIFF_MAX_TOKENS) {
-    const lines = diff.split("\n");
-    while (
-      bytesToTokens(Buffer.byteLength(lines.join("\n"), "utf-8")) > DIFF_MAX_TOKENS &&
-      lines.length > 2
-    ) {
-      const mid = Math.floor(lines.length / 2);
-      lines.splice(mid, 1);
-    }
-    diff = lines.join("\n");
-    truncated = true;
-  }
-
-  return {
-    diff,
-    truncation: {
-      truncated,
-      totalLines,
-      outputLines: diff.split("\n").length,
-    },
-  };
 }
 
 function findMatchContext(content: string, search: string, contextLines: number = 2): string {
@@ -238,16 +175,14 @@ export function createEditToolDefinition(): ToolDefinition {
 
         const resultText = `Successfully edited ${path}: replaced ${oldText.length} chars with ${newText.length} chars${lineDiffStr}`;
 
-        const { diff, truncation: diffTruncation } = buildSimpleDiff(oldText, newText);
-
         const toolResult = createToolSuccess(toolCall, resultText);
         const uiEvent: ToolUiEvent = {
           type: "edit_success",
           path,
           oldLength: oldText.length,
           newLength: newText.length,
-          diff,
-          diffTruncation,
+          oldText,
+          newText,
         };
         return { kind: "single", toolResult, uiEvent };
       } catch (e) {

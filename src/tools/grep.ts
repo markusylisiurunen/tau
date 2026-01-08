@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { resolveRestrictedPath } from "../utils/restricted_fs.js";
-import { truncateMiddle, truncateMiddleForModel } from "../utils/truncate.js";
+import { truncateMiddleForModel } from "../utils/truncate.js";
 import type {
   ToolDefinition,
   ToolDispatchResult,
@@ -14,9 +14,6 @@ import type {
 } from "./registry.js";
 
 export const GREP_MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
-
-export const GREP_DISPLAY_MAX_LINES = 32;
-export const GREP_DISPLAY_MAX_TOKENS = 5000;
 
 export const GREP_TOOL_MAX_LINES = 4096;
 export const GREP_TOOL_MAX_TOKENS = 25000;
@@ -360,16 +357,6 @@ export function createGrepToolDefinition(): ToolDefinition {
             maxTokens: GREP_TOOL_MAX_TOKENS,
           });
 
-          const stdoutDisplay = truncateMiddle(stdout, {
-            maxLines: GREP_DISPLAY_MAX_LINES,
-            maxTokens: GREP_DISPLAY_MAX_TOKENS,
-          });
-
-          const stderrDisplay = truncateMiddle(stderr, {
-            maxLines: GREP_DISPLAY_MAX_LINES,
-            maxTokens: GREP_DISPLAY_MAX_TOKENS,
-          });
-
           const toolText = formatGrepToolResultText({
             pattern: parsed.pattern,
             paths: resolvedPaths,
@@ -388,18 +375,8 @@ export function createGrepToolDefinition(): ToolDefinition {
             pattern: parsed.pattern,
             status: isError ? "error" : "success",
             exitCode,
-            stdoutPreview: stdoutDisplay.content,
-            stdoutPreviewTruncation: {
-              truncated: stdoutDisplay.truncated,
-              totalLines: stdoutDisplay.totalLines,
-              outputLines: stdoutDisplay.outputLines,
-            },
-            stderrPreview: stderrDisplay.content,
-            stderrPreviewTruncation: {
-              truncated: stderrDisplay.truncated,
-              totalLines: stderrDisplay.totalLines,
-              outputLines: stderrDisplay.outputLines,
-            },
+            stdout: stdoutModel.content,
+            stderr: stderrModel.content,
             captureTruncated,
           };
 

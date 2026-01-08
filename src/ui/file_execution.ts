@@ -1,5 +1,6 @@
 import { bytesToTokens } from "../utils/token.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";
+import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
 import {
@@ -18,10 +19,6 @@ interface DiffTruncation {
 interface DiffResult {
   diff: string;
   truncation: DiffTruncation;
-}
-
-function inline(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
 }
 
 function buildSimpleDiff(oldText: string, newText: string): DiffResult {
@@ -108,7 +105,7 @@ export function renderWriteSuccess(
     expandedParts.push(`${icon} ${msg}`);
   }
 
-  const pathInline = inline(path);
+  const pathInline = inlineText(path);
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
     { text: "▪", style: writeColor },
@@ -161,8 +158,8 @@ export function renderWriteBlocked(
     expandedParts.push(errorColor(msg));
   }
 
-  const pathInline = inline(path);
-  const whyInline = inline(reason);
+  const pathInline = inlineText(path);
+  const whyInline = inlineText(reason);
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
@@ -238,7 +235,7 @@ export function renderEditSuccess(
   }
 
   const { added, removed } = countDiffChanges(diff);
-  const pathInline = inline(path);
+  const pathInline = inlineText(path);
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
@@ -297,8 +294,8 @@ export function renderEditBlocked(
     expandedParts.push(errorColor(msg));
   }
 
-  const pathInline = inline(path);
-  const whyInline = inline(reason);
+  const pathInline = inlineText(path);
+  const whyInline = inlineText(reason);
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },

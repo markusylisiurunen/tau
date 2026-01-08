@@ -38,6 +38,37 @@ function normalizeInlineTextPreservePadding(text: string): string {
   return text.replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ");
 }
 
+function wrapTextByWidth(text: string, maxCols: number): string[] {
+  if (maxCols <= 0) return [""];
+  if (text.length === 0) return [""];
+
+  const graphemes = iterateGraphemes(text);
+  const lines: string[] = [];
+  let line = "";
+  let lineCols = 0;
+
+  for (const g of graphemes) {
+    const gCols = visibleWidth(g);
+    if (lineCols + gCols > maxCols && line.length > 0) {
+      lines.push(line);
+      line = "";
+      lineCols = 0;
+    }
+    if (gCols > maxCols && line.length === 0) {
+      lines.push(g);
+      continue;
+    }
+    line += g;
+    lineCols += gCols;
+  }
+
+  if (line.length > 0) {
+    lines.push(line);
+  }
+
+  return lines;
+}
+
 export class OneLineSegmentsComponent implements Component {
   constructor(
     private segments: OneLineSegment[],
@@ -81,5 +112,52 @@ export class OneLineSegmentsComponent implements Component {
     const visibleLen = total();
     const pad = Math.max(0, minWidth - visibleLen);
     return [`${rendered}${" ".repeat(pad)}`];
+  }
+}
+
+export class WrappedSegmentsComponent implements Component {
+  constructor(
+    private segments: OneLineSegment[],
+    private wrapIndex?: number,
+  ) {}
+
+  invalidate() {}
+
+  render(width: number): string[] {
+    const minWidth = Math.max(0, width);
+    if (this.segments.length === 0) {
+      return [" ".repeat(minWidth)];
+    }
+
+    const texts = this.segments.map((s) => normalizeInlineTextPreservePadding(s.text));
+    const wrapAt = this.wrapIndex ?? texts.length - 1;
+
+    if (wrapAt < 0 || wrapAt >= texts.length || wrapAt !== texts.length - 1) {
+      return new OneLineSegmentsComponent(this.segments, []).render(width);
+    }
+
+    const prefixTexts = texts.slice(0, wrapAt);
+    const wrapText = texts[wrapAt] ?? "";
+    const prefixWidth = visibleWidth(prefixTexts.join(""));
+    if (prefixWidth >= minWidth || minWidth <= 0) {
+      return new OneLineSegmentsComponent(this.segments, []).render(width);
+    }
+
+    const availableWidth = Math.max(1, minWidth - prefixWidth);
+    const wrapped = wrapTextByWidth(wrapText, availableWidth);
+    const prefixRendered = prefixTexts
+      .map((t, i) => {
+        const style = this.segments[i]?.style ?? ((s: string) => s);
+        return style(t);
+      })
+      .join("");
+    const wrapStyle = this.segments[wrapAt]?.style ?? ((s: string) => s);
+
+    return wrapped.map((line, index) => {
+      const leading = index === 0 ? prefixRendered : "";
+      const lineWidth = (index === 0 ? prefixWidth : 0) + visibleWidth(line);
+      const pad = Math.max(0, minWidth - lineWidth);
+      return `${leading}${wrapStyle(line)}${" ".repeat(pad)}`;
+    });
   }
 }

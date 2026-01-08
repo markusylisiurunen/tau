@@ -1,6 +1,7 @@
 import type { OneLineSegment } from "./components/one_line_segments.js";
 import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
+import { inlineText } from "./inline.js";
 import {
   GREP_UI_MAX_LINES,
   GREP_UI_MAX_TOKENS,
@@ -13,10 +14,6 @@ interface PreviewTruncation {
   truncated: boolean;
   totalLines: number;
   outputLines: number;
-}
-
-function inline(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
 }
 
 function formatRange(startLine: number, endLine?: number): string {
@@ -68,7 +65,7 @@ export function renderReadSuccess(
     expandedParts.push("", `${icon} ${msg}`);
   }
 
-  const pathInline = inline(path);
+  const pathInline = inlineText(path);
   const totalLinesForSummary = modelTruncation.truncated
     ? modelTruncation.totalLines
     : previewTruncation.totalLines;
@@ -122,8 +119,8 @@ export function renderReadBlocked(
     expandedParts.push("", errorColor(msg));
   }
 
-  const pathInline = inline(path);
-  const whyInline = inline(reason);
+  const pathInline = inlineText(path);
+  const whyInline = inlineText(reason);
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
@@ -168,7 +165,7 @@ export function renderListSuccess(
     expandedParts.push(palette.filePreview(entries.join("\n")));
   }
 
-  const pathInline = inline(path);
+  const pathInline = inlineText(path);
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
@@ -219,8 +216,8 @@ export function renderListBlocked(
     expandedParts.push("", errorColor(msg));
   }
 
-  const pathInline = inline(path);
-  const whyInline = inline(reason);
+  const pathInline = inlineText(path);
+  const whyInline = inlineText(reason);
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
@@ -250,7 +247,7 @@ export function renderGrepRunning(
 
   const header = runningColor(text.bold(`grep ${pattern}`));
 
-  const patternInline = inline(pattern);
+  const patternInline = inlineText(pattern);
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
     { text: "▪", style: runningColor },
@@ -319,7 +316,7 @@ export function renderGrepFinished(
     expandedParts.push("", palette.warn(`(exit ${exitCode})`));
   }
 
-  const patternInline = inline(pattern);
+  const patternInline = inlineText(pattern);
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
@@ -380,8 +377,8 @@ export function renderGrepBlocked(
     expandedParts.push("", errorColor(msg));
   }
 
-  const patternInline = inline(pattern);
-  const whyInline = inline(reason);
+  const patternInline = inlineText(pattern);
+  const whyInline = inlineText(reason);
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },

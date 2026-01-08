@@ -1,13 +1,10 @@
 import type { BashTruncationInfo } from "../tools/bash.js";
 import { formatBytes } from "../utils/truncate.js";
-import type { OneLineSegment } from "./components/one_line_segments.js";
+import { WrappedSegmentsComponent, type OneLineSegment } from "./components/one_line_segments.js";
+import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
 import { ToolOutputComponent } from "./tool_output.js";
 import { BASH_UI_MAX_LINES, BASH_UI_MAX_TOKENS, truncateForUi } from "./tool_truncation.js";
-
-function inline(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
 
 function buildBashExecutionExpandedText(
   theme: Theme,
@@ -70,7 +67,7 @@ export function renderBashRunning(
 
   const header = runningColor(text.bold(`$ ${command}`));
 
-  const commandInline = inline(command);
+  const commandInline = inlineText(command);
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
     { text: "▪", style: runningColor },
@@ -83,7 +80,7 @@ export function renderBashRunning(
   return new ToolOutputComponent({
     compact,
     expanded: { borderColor: runningColor, text: header },
-    compactView: { segments, flexIndices: [5] },
+    compactView: { headerComponent: new WrappedSegmentsComponent(segments) },
   });
 }
 
@@ -103,7 +100,7 @@ export function renderBashExecution(
     strategy: "middle",
   });
 
-  const commandInline = inline(command);
+  const commandInline = inlineText(command);
 
   const { model, captureTruncated } = truncationInfo;
   const hasOutput = model.totalBytes > 0;
@@ -111,7 +108,7 @@ export function renderBashExecution(
   const outputLines = showTotals ? model.totalLines : model.outputLines;
   const outputBytes = showTotals ? model.totalBytes : model.outputBytes;
   const outSummary = hasOutput ? `${outputLines} lines, ${formatBytes(outputBytes)}` : "no output";
-  const outSummaryInline = inline(outSummary);
+  const outSummaryInline = inlineText(outSummary);
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
@@ -137,7 +134,10 @@ export function renderBashExecution(
       borderColor: bashColor,
       text: buildBashExecutionExpandedText(theme, command, exitCode, truncationInfo, display),
     },
-    compactView: { segments, flexIndices: [5], extraText: `    ${details}` },
+    compactView: {
+      headerComponent: new WrappedSegmentsComponent(segments),
+      extraText: `    ${details}`,
+    },
   });
 }
 
@@ -157,8 +157,8 @@ export function renderBashBlocked(
     parts.push(errorColor(msg));
   }
 
-  const commandInline = inline(command);
-  const why = inline(reason);
+  const commandInline = inlineText(command);
+  const why = inlineText(reason);
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
@@ -174,7 +174,10 @@ export function renderBashBlocked(
   return new ToolOutputComponent({
     compact,
     expanded: { borderColor: errorColor, text: parts.join("\n") },
-    compactView: { segments, flexIndices: [5], extraText: details ? `    ${details}` : undefined },
+    compactView: {
+      headerComponent: new WrappedSegmentsComponent(segments),
+      extraText: details ? `    ${details}` : undefined,
+    },
   });
 }
 
@@ -194,14 +197,14 @@ export function renderBashAborted(
     parts.push(warnColor(msg));
   }
 
-  const commandInline = inline(command);
-  const why = inline(reason);
+  const commandInline = inlineText(command);
+  const why = inlineText(reason);
 
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
     { text: "▪", style: warnColor },
     { text: " ", style: (s) => s },
-    { text: inline(reason) || "aborted", style: palette.muted },
+    { text: inlineText(reason) || "aborted", style: palette.muted },
     { text: " ", style: (s) => s },
     { text: commandInline, style: palette.accent },
   ];
@@ -211,6 +214,9 @@ export function renderBashAborted(
   return new ToolOutputComponent({
     compact,
     expanded: { borderColor: warnColor, text: parts.join("\n") },
-    compactView: { segments, flexIndices: [5], extraText: details ? `    ${details}` : undefined },
+    compactView: {
+      headerComponent: new WrappedSegmentsComponent(segments),
+      extraText: details ? `    ${details}` : undefined,
+    },
   });
 }

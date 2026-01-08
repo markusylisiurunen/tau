@@ -10,7 +10,8 @@ export interface ToolOutputExpandedView {
 }
 
 export interface ToolOutputCompactView {
-  segments: OneLineSegment[];
+  headerComponent?: Component;
+  segments?: OneLineSegment[];
   flexIndices?: number[];
   extraText?: string;
   extraComponent?: Component;
@@ -29,9 +30,21 @@ export class ToolOutputComponent extends Container {
     super();
 
     if (props.compact) {
-      const { segments, flexIndices, extraText, extraComponent, paddingX, paddingY } =
+      const {
+        headerComponent,
+        segments,
+        flexIndices,
+        extraText,
+        extraComponent,
+        paddingX,
+        paddingY,
+      } =
         props.compactView;
-      this.addChild(new OneLineSegmentsComponent(segments, flexIndices ?? []));
+      if (headerComponent) {
+        this.addChild(headerComponent);
+      } else if (segments) {
+        this.addChild(new OneLineSegmentsComponent(segments, flexIndices ?? []));
+      }
 
       if (extraComponent) {
         this.addChild(extraComponent);

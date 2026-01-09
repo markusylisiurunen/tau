@@ -1,82 +1,98 @@
 import { type Component, Container, Spacer } from "@mariozechner/pi-tui";
 import { AssistantMessageComponent } from "./assistant_message.js";
+import {
+  type ChatMessageModel,
+  isAssistantMessageModel,
+  type RenderedMessage,
+  renderChatMessage,
+  updateAssistantComponent,
+} from "./chat_message_model.js";
+import type { Theme } from "./theme.js";
 
-type ChatMessageRecord =
-  | {
-      id: string;
-      type: "component";
-      component: Component;
-      isAssistant: boolean;
-    }
-  | {
-      id: string;
-      type: "tool";
-      render: (compactToolUi: boolean) => Component;
-      isAssistant: boolean;
-    };
+type ChatMessageRecord = {
+  id: string;
+  model: ChatMessageModel;
+  component?: Component;
+  rendered: boolean;
+};
 
 export class ChatContainerComponent extends Container {
   private chatContainer: Container;
+  private theme: Theme;
   private thoughtsVisible: boolean = false;
   private compactToolUi: boolean = false;
   private allMessages: ChatMessageRecord[] = [];
   private idToIndex: Map<string, number> = new Map();
 
-  constructor(thoughtsVisible = false) {
+  constructor(theme: Theme, thoughtsVisible = false) {
     super();
 
+    this.theme = theme;
     this.thoughtsVisible = thoughtsVisible;
 
     this.chatContainer = new Container();
     this.addChild(this.chatContainer);
   }
 
-  addMessage(message: Component): string {
-    const id = this.generateId();
-    const isAssistant = message instanceof AssistantMessageComponent;
-    this.allMessages.push({ id, type: "component", component: message, isAssistant });
-    this.idToIndex.set(id, this.allMessages.length - 1);
-
-    // Always add immediately (rebuild() will filter later if needed)
-    this.addSpacerIfNeeded();
-    this.chatContainer.addChild(message);
-
-    return id;
-  }
-
-  replaceMessage(id: string, newComponent: Component): void {
-    const index = this.idToIndex.get(id);
-    if (index === undefined) return;
-
-    const isAssistant = newComponent instanceof AssistantMessageComponent;
-    this.allMessages[index] = { id, type: "component", component: newComponent, isAssistant };
-
-    // Rebuild to update the display
-    this.rebuild();
-  }
-
-  addToolMessage(render: (compactToolUi: boolean) => Component, id?: string): string {
+  addMessage(model: ChatMessageModel, id?: string): string {
     const finalId = id ?? this.generateId();
-    this.allMessages.push({ id: finalId, type: "tool", render, isAssistant: false });
+    const record: ChatMessageRecord = { id: finalId, model, rendered: false };
+    this.allMessages.push(record);
     this.idToIndex.set(finalId, this.allMessages.length - 1);
 
-    const component = render(this.compactToolUi);
-    this.addSpacerIfNeeded();
-    this.chatContainer.addChild(component);
+    const rendered = this.renderMessage(record);
+    if (this.shouldShowMessage(rendered)) {
+      this.addSpacerIfNeeded();
+      this.chatContainer.addChild(rendered.component);
+      record.rendered = true;
+    }
 
     return finalId;
   }
 
-  replaceToolMessage(id: string, render: (compactToolUi: boolean) => Component): void {
+  replaceMessage(id: string, model: ChatMessageModel): void {
     const index = this.idToIndex.get(id);
     if (index === undefined) return;
 
-    this.allMessages[index] = {
-      id,
-      type: "tool",
-      render,
-      isAssistant: false,
-    };
+    this.allMessages[index] = { id, model, rendered: false };
+    this.rebuild();
+  }
+
+  updateMessage(id: string, model: ChatMessageModel): void {
+    const index = this.idToIndex.get(id);
+    if (index === undefined) return;
+
+    const record = this.allMessages[index];
+    if (!record) return;
+    record.model = model;
+
+    if (record.component instanceof AssistantMessageComponent && isAssistantMessageModel(model)) {
+      const wasVisible = record.component.hasVisibleText;
+      updateAssistantComponent(record.component, model, this.thoughtsVisible);
+      const shouldShow = this.shouldShowMessage({
+        component: record.component,
+        isAssistant: true,
+      });
+
+      if (record.rendered && shouldShow) {
+        if (!wasVisible && record.component.hasVisibleText) {
+          this.rebuild();
+        }
+        return;
+      }
+
+      if (!record.rendered && shouldShow) {
+        this.rebuild();
+        return;
+      }
+
+      if (record.rendered && !shouldShow) {
+        this.rebuild();
+      }
+
+      return;
+    }
+
     this.rebuild();
   }
 
@@ -102,22 +118,32 @@ export class ChatContainerComponent extends Container {
     this.chatContainer.clear();
 
     for (const record of this.allMessages) {
-      const component =
-        record.type === "component" ? record.component : record.render(this.compactToolUi);
-      const isAssistant = record.isAssistant;
-      if (this.shouldShowMessage(component, isAssistant)) {
+      record.rendered = false;
+      const rendered = this.renderMessage(record);
+      if (this.shouldShowMessage(rendered)) {
         this.addSpacerIfNeeded();
-        this.chatContainer.addChild(component);
+        this.chatContainer.addChild(rendered.component);
+        record.rendered = true;
       }
     }
   }
 
-  private shouldShowMessage(component: Component, isAssistant: boolean): boolean {
-    if (!isAssistant) return true;
+  private renderMessage(record: ChatMessageRecord): RenderedMessage {
+    const rendered = renderChatMessage(record.model, {
+      theme: this.theme,
+      thoughtsVisible: this.thoughtsVisible,
+      compactToolUi: this.compactToolUi,
+    });
+    record.component = rendered.component;
+    return rendered;
+  }
+
+  private shouldShowMessage(rendered: RenderedMessage): boolean {
+    if (!rendered.isAssistant) return true;
     if (this.thoughtsVisible) return true;
 
-    if (component instanceof AssistantMessageComponent) {
-      return component.hasVisibleText;
+    if (rendered.component instanceof AssistantMessageComponent) {
+      return rendered.component.hasVisibleText;
     }
     return true;
   }

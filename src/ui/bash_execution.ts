@@ -1,41 +1,39 @@
 import type { BashTruncationInfo } from "../tools/bash.js";
 import { formatBytes } from "../utils/truncate.js";
-import { type OneLineSegment, WrappedSegmentsComponent } from "./components/one_line_segments.js";
 import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
-import { ToolOutputComponent } from "./tool_output.js";
+import {
+  buildHeaderLine,
+  buildSection,
+  renderToolOutput,
+  type ToolOutputViewModel,
+} from "./tool_output_layout.js";
 import { BASH_UI_MAX_LINES, BASH_UI_MAX_TOKENS, truncateForUi } from "./tool_truncation.js";
 
-function buildBashExecutionExpandedText(
+function buildBashExecutionExpandedSections(
   theme: Theme,
-  command: string,
   exitCode: number | null,
   truncationInfo: BashTruncationInfo,
   display: ReturnType<typeof truncateForUi>,
-): string {
-  const { palette, text } = theme;
-  const bashColor = (s: string) => palette.bashRan(s);
+): string[] {
+  const { palette } = theme;
 
-  const parts: string[] = [];
-  parts.push(bashColor(text.bold(`$ ${command}`)));
+  const sections: Array<string | undefined> = [];
 
   const out = display.content.trimEnd();
   if (out) {
-    parts.push("");
-    parts.push(palette.bashOutput(out));
+    sections.push(palette.bashOutput(out));
   }
 
   const { model, captureTruncated } = truncationInfo;
 
-  let truncatedNoticeAdded = false;
+  const truncationNotices: string[] = [];
   if (display.truncated || captureTruncated) {
-    truncatedNoticeAdded = true;
     const shown = `${display.outputLines} lines (${formatBytes(display.outputBytes)})`;
     const total = `${display.totalLines} lines (${formatBytes(display.totalBytes)})`;
     const icon = palette.warn("◆");
     const msg = palette.dim(`truncated: ${shown} of ${total}`);
-    parts.push("");
-    parts.push(`${icon} ${msg}`);
+    truncationNotices.push(`${icon} ${msg}`);
   }
 
   if (model.truncated || captureTruncated) {
@@ -43,54 +41,47 @@ function buildBashExecutionExpandedText(
     const total = `${model.totalLines} lines (${formatBytes(model.totalBytes)})`;
     const icon = palette.warn("◆");
     const msg = palette.warn(`truncated for model: ${shown} of ${total}`);
-    if (!truncatedNoticeAdded) {
-      parts.push("");
-    }
-    parts.push(`${icon} ${msg}`);
+    truncationNotices.push(`${icon} ${msg}`);
+  }
+  const truncationSection = buildSection(truncationNotices);
+  if (truncationSection) {
+    sections.push(truncationSection);
   }
 
   if (exitCode !== null && exitCode !== 0) {
-    parts.push("");
-    parts.push(palette.warn(`(exit ${exitCode})`));
+    sections.push(palette.warn(`(exit ${exitCode})`));
   }
 
-  return parts.join("\n");
+  return sections.filter((section): section is string => Boolean(section));
 }
 
-export function renderBashRunning(
-  theme: Theme,
-  command: string,
-  compact: boolean,
-): ToolOutputComponent {
+export function buildBashRunningView(theme: Theme, command: string): ToolOutputViewModel {
   const { palette, text } = theme;
   const runningColor = (s: string) => palette.bashRunning(s);
 
-  const header = runningColor(text.bold(`$ ${command}`));
-
   const commandInline = inlineText(command);
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: runningColor },
-    { text: " ", style: (s) => s },
-    { text: "running", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: commandInline, style: palette.accent },
-  ];
-
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: runningColor, text: header },
-    compactView: { headerComponent: new WrappedSegmentsComponent(segments) },
+  const header = buildHeaderLine({
+    bulletStyle: runningColor,
+    label: "running",
+    labelStyle: palette.muted,
+    accent: commandInline,
+    accentStyle: palette.accent,
+    wrapIndex: 5,
   });
+
+  return {
+    borderColor: runningColor,
+    expanded: { title: runningColor(text.bold(`$ ${command}`)) },
+    compact: { header },
+  };
 }
 
-export function renderBashExecution(
+export function buildBashExecutionView(
   theme: Theme,
   command: string,
   exitCode: number | null,
   truncationInfo: BashTruncationInfo,
-  compact: boolean,
-): ToolOutputComponent {
+): ToolOutputViewModel {
   const { palette } = theme;
   const bashColor = (s: string) => palette.bashRan(s);
 
@@ -110,14 +101,14 @@ export function renderBashExecution(
   const outSummary = hasOutput ? `${outputLines} lines, ${formatBytes(outputBytes)}` : "no output";
   const outSummaryInline = inlineText(outSummary);
 
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: bashColor },
-    { text: " ", style: (s) => s },
-    { text: "ran", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: commandInline, style: palette.accent },
-  ];
+  const header = buildHeaderLine({
+    bulletStyle: bashColor,
+    label: "ran",
+    labelStyle: palette.muted,
+    accent: commandInline,
+    accentStyle: palette.accent,
+    wrapIndex: 5,
+  });
 
   const exitSummary = exitCode === null ? "exit ?" : `exit ${exitCode}`;
   const exitStyle = exitCode !== null && exitCode !== 0 ? palette.error : palette.muted;
@@ -128,17 +119,115 @@ export function renderBashExecution(
     palette.muted(`, ${outSummaryInline})`),
   ].join("");
 
-  return new ToolOutputComponent({
-    compact,
+  const sections = buildBashExecutionExpandedSections(theme, exitCode, truncationInfo, display);
+  return {
+    borderColor: bashColor,
     expanded: {
-      borderColor: bashColor,
-      text: buildBashExecutionExpandedText(theme, command, exitCode, truncationInfo, display),
+      title: bashColor(theme.text.bold(`$ ${command}`)),
+      sections,
     },
-    compactView: {
-      headerComponent: new WrappedSegmentsComponent(segments),
+    compact: {
+      header,
       extraText: `    ${details}`,
     },
+  };
+}
+
+export function buildBashBlockedView(
+  theme: Theme,
+  command: string,
+  reason: string,
+): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const errorColor = (s: string) => palette.error(s);
+
+  const msg = reason.trim();
+  const sections = buildSection(msg ? [errorColor(msg)] : []);
+
+  const commandInline = inlineText(command);
+  const why = inlineText(reason);
+
+  const details = why ? palette.muted(`(${why})`) : undefined;
+
+  const header = buildHeaderLine({
+    bulletStyle: errorColor,
+    label: "blocked",
+    labelStyle: palette.muted,
+    accent: commandInline,
+    accentStyle: palette.accent,
+    wrapIndex: 5,
   });
+
+  return {
+    borderColor: errorColor,
+    expanded: {
+      title: errorColor(text.bold(`$ ${command}`)),
+      sections: sections ? [sections] : [],
+    },
+    compact: {
+      header,
+      extraText: details ? `    ${details}` : undefined,
+    },
+  };
+}
+
+export function buildBashAbortedView(
+  theme: Theme,
+  command: string,
+  reason: string,
+): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const warnColor = (s: string) => palette.warn(s);
+
+  const msg = reason.trim();
+  const sections = buildSection(msg ? [warnColor(msg)] : []);
+
+  const commandInline = inlineText(command);
+  const why = inlineText(reason);
+
+  const details = why ? palette.muted(`(${why})`) : undefined;
+
+  const header = buildHeaderLine({
+    bulletStyle: warnColor,
+    label: inlineText(reason) || "aborted",
+    labelStyle: palette.muted,
+    accent: commandInline,
+    accentStyle: palette.accent,
+    wrapIndex: 5,
+  });
+
+  return {
+    borderColor: warnColor,
+    expanded: {
+      title: warnColor(text.bold(`$ ${command}`)),
+      sections: sections ? [sections] : [],
+    },
+    compact: {
+      header,
+      extraText: details ? `    ${details}` : undefined,
+    },
+  };
+}
+
+export function renderBashRunning(
+  theme: Theme,
+  command: string,
+  compact: boolean,
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(buildBashRunningView(theme, command), compact);
+}
+
+export function renderBashExecution(
+  theme: Theme,
+  command: string,
+  exitCode: number | null,
+  truncationInfo: BashTruncationInfo,
+  compact: boolean,
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(
+    buildBashExecutionView(theme, command, exitCode, truncationInfo),
+    compact,
+  );
 }
 
 export function renderBashBlocked(
@@ -146,39 +235,8 @@ export function renderBashBlocked(
   command: string,
   reason: string,
   compact: boolean,
-): ToolOutputComponent {
-  const { palette, text } = theme;
-  const errorColor = (s: string) => palette.error(s);
-
-  const parts: string[] = [errorColor(text.bold(`$ ${command}`))];
-  const msg = reason.trim();
-  if (msg) {
-    parts.push("");
-    parts.push(errorColor(msg));
-  }
-
-  const commandInline = inlineText(command);
-  const why = inlineText(reason);
-
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: errorColor },
-    { text: " ", style: (s) => s },
-    { text: "blocked", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: commandInline, style: palette.accent },
-  ];
-
-  const details = why ? palette.muted(`(${why})`) : undefined;
-
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: errorColor, text: parts.join("\n") },
-    compactView: {
-      headerComponent: new WrappedSegmentsComponent(segments),
-      extraText: details ? `    ${details}` : undefined,
-    },
-  });
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(buildBashBlockedView(theme, command, reason), compact);
 }
 
 export function renderBashAborted(
@@ -186,37 +244,6 @@ export function renderBashAborted(
   command: string,
   reason: string,
   compact: boolean,
-): ToolOutputComponent {
-  const { palette, text } = theme;
-  const warnColor = (s: string) => palette.warn(s);
-
-  const parts: string[] = [warnColor(text.bold(`$ ${command}`))];
-  const msg = reason.trim();
-  if (msg) {
-    parts.push("");
-    parts.push(warnColor(msg));
-  }
-
-  const commandInline = inlineText(command);
-  const why = inlineText(reason);
-
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: warnColor },
-    { text: " ", style: (s) => s },
-    { text: inlineText(reason) || "aborted", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: commandInline, style: palette.accent },
-  ];
-
-  const details = why ? palette.muted(`(${why})`) : undefined;
-
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: warnColor, text: parts.join("\n") },
-    compactView: {
-      headerComponent: new WrappedSegmentsComponent(segments),
-      extraText: details ? `    ${details}` : undefined,
-    },
-  });
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(buildBashAbortedView(theme, command, reason), compact);
 }

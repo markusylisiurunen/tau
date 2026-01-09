@@ -1,12 +1,16 @@
 import { bytesToTokens } from "../utils/token.js";
-import type { OneLineSegment } from "./components/one_line_segments.js";
 import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
-import { ToolOutputComponent } from "./tool_output.js";
+import {
+  buildHeaderLine,
+  buildSection,
+  renderToolOutput,
+  type ToolOutputViewModel,
+} from "./tool_output_layout.js";
+import { applyPreviewPolicy, buildCompactPreviewLines } from "./tool_output_preview.js";
 import {
   EDIT_DIFF_MAX_LINES,
   EDIT_DIFF_MAX_TOKENS,
-  truncateForUi,
   WRITE_UI_PREVIEW_LINES,
 } from "./tool_truncation.js";
 
@@ -69,31 +73,27 @@ function buildSimpleDiff(oldText: string, newText: string): DiffResult {
   };
 }
 
-export function renderWriteSuccess(
+export function buildWriteSuccessView(
   theme: Theme,
   path: string,
   bytes: number,
   lines: number,
   content: string,
-  compact: boolean,
-): ToolOutputComponent {
+): ToolOutputViewModel {
   const { palette, text } = theme;
   const writeColor = (s: string) => palette.toolFileRan(s);
 
-  const previewTruncation = truncateForUi(content, {
+  const { truncation: previewTruncation, previewLines } = applyPreviewPolicy(content, {
     maxLines: WRITE_UI_PREVIEW_LINES,
     strategy: "head",
   });
 
   const preview = previewTruncation.content;
-  const expandedParts: string[] = [];
-  expandedParts.push(writeColor(text.bold(`write ${path}`)));
-  expandedParts.push("");
-  expandedParts.push(palette.muted(`${bytes} bytes (${lines} lines)`));
+  const expandedSections: Array<string | undefined> = [];
+  expandedSections.push(palette.muted(`${bytes} bytes (${lines} lines)`));
 
   if (preview) {
-    expandedParts.push("");
-    expandedParts.push(palette.filePreview(preview));
+    expandedSections.push(palette.filePreview(preview));
   }
 
   if (previewTruncation.truncated) {
@@ -101,82 +101,76 @@ export function renderWriteSuccess(
     const msg = palette.dim(
       `preview: ${previewTruncation.outputLines} of ${previewTruncation.totalLines} lines`,
     );
-    expandedParts.push("");
-    expandedParts.push(`${icon} ${msg}`);
+    expandedSections.push(`${icon} ${msg}`);
   }
 
   const pathInline = inlineText(path);
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: writeColor },
-    { text: " ", style: (s) => s },
-    { text: "wrote", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: pathInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: `(${lines} lines)`, style: palette.muted },
-  ];
-
-  const maxPreviewLines = 4;
-  const previewLines = preview.trimEnd() ? preview.trimEnd().split("\n") : [];
-  const shownPreviewLines = previewLines.slice(0, maxPreviewLines);
-  const shownCount = Math.min(lines, shownPreviewLines.length);
-  const remaining = Math.max(0, lines - shownCount);
-
-  const compactLines: string[] = [];
-  for (const l of shownPreviewLines) {
-    compactLines.push(palette.muted(`    ${l}`));
-  }
-  if (remaining > 0) {
-    compactLines.push(palette.dim(`    (${remaining} more lines)`));
-  }
-
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: writeColor, text: expandedParts.join("\n") },
-    compactView: {
-      segments,
-      flexIndices: [5],
-      extraText: compactLines.length > 0 ? compactLines.join("\n") : undefined,
-    },
+  const header = buildHeaderLine({
+    bulletStyle: writeColor,
+    label: "wrote",
+    labelStyle: palette.muted,
+    accent: pathInline,
+    accentStyle: palette.accent,
+    tailSegments: [
+      { text: " ", style: (s) => s },
+      { text: `(${lines} lines)`, style: palette.muted },
+    ],
   });
+
+  const compactLines = buildCompactPreviewLines(previewLines, {
+    totalLines: lines,
+    lineStyle: palette.muted,
+    moreStyle: palette.dim,
+  });
+
+  return {
+    borderColor: writeColor,
+    expanded: {
+      title: writeColor(text.bold(`write ${path}`)),
+      sections: expandedSections,
+    },
+    compact: {
+      header,
+      extraText: compactLines,
+    },
+  };
 }
 
-export function renderWriteBlocked(
+export function buildWriteBlockedView(
   theme: Theme,
   path: string,
   reason: string,
-  compact: boolean,
-): ToolOutputComponent {
+): ToolOutputViewModel {
   const { palette, text } = theme;
   const errorColor = (s: string) => palette.error(s);
 
-  const expandedParts: string[] = [errorColor(text.bold(`write ${path}`))];
   const msg = reason.trim();
-  if (msg) {
-    expandedParts.push("");
-    expandedParts.push(errorColor(msg));
-  }
+  const section = buildSection(msg ? [errorColor(msg)] : []);
 
   const pathInline = inlineText(path);
   const whyInline = inlineText(reason);
 
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: errorColor },
-    { text: " ", style: (s) => s },
-    { text: "write", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: pathInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: `(blocked: ${whyInline})`, style: palette.muted },
-  ];
-
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: errorColor, text: expandedParts.join("\n") },
-    compactView: { segments, flexIndices: [5, 7] },
+  const header = buildHeaderLine({
+    bulletStyle: errorColor,
+    label: "write",
+    labelStyle: palette.muted,
+    accent: pathInline,
+    accentStyle: palette.accent,
+    tailSegments: [
+      { text: " ", style: (s) => s },
+      { text: `(blocked: ${whyInline})`, style: palette.muted },
+    ],
+    flexTailIndices: [1],
   });
+
+  return {
+    borderColor: errorColor,
+    expanded: {
+      title: errorColor(text.bold(`write ${path}`)),
+      sections: section ? [section] : [],
+    },
+    compact: { header },
+  };
 }
 
 function countDiffChanges(diff: string): { added: number; removed: number } {
@@ -195,15 +189,14 @@ function colorDiffLine(palette: Theme["palette"], line: string): string {
   return palette.muted(line);
 }
 
-export function renderEditSuccess(
+export function buildEditSuccessView(
   theme: Theme,
   path: string,
   oldLength: number,
   newLength: number,
   oldText: string,
   newText: string,
-  compact: boolean,
-): ToolOutputComponent {
+): ToolOutputViewModel {
   const { palette, text } = theme;
   const editColor = (s: string) => palette.toolFileRan(s);
 
@@ -213,12 +206,9 @@ export function renderEditSuccess(
   const diffStr =
     sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
 
-  const expandedParts: string[] = [];
-  expandedParts.push(editColor(text.bold(`edit ${path}`)));
-  expandedParts.push("");
-  expandedParts.push(palette.muted(`replaced ${oldLength} → ${newLength} chars (${diffStr})`));
-  expandedParts.push("");
-  expandedParts.push(
+  const expandedSections: Array<string | undefined> = [];
+  expandedSections.push(palette.muted(`replaced ${oldLength} → ${newLength} chars (${diffStr})`));
+  expandedSections.push(
     diff
       .split("\n")
       .map((line) => colorDiffLine(palette, line))
@@ -230,23 +220,23 @@ export function renderEditSuccess(
     const msg = palette.dim(
       `truncated: ${diffTruncation.outputLines} of ${diffTruncation.totalLines} lines`,
     );
-    expandedParts.push("");
-    expandedParts.push(`${icon} ${msg}`);
+    expandedSections.push(`${icon} ${msg}`);
   }
 
   const { added, removed } = countDiffChanges(diff);
   const pathInline = inlineText(path);
 
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: editColor },
-    { text: " ", style: (s) => s },
-    { text: "edited", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: pathInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: `(+${added}, -${removed})`, style: palette.muted },
-  ];
+  const header = buildHeaderLine({
+    bulletStyle: editColor,
+    label: "edited",
+    labelStyle: palette.muted,
+    accent: pathInline,
+    accentStyle: palette.accent,
+    tailSegments: [
+      { text: " ", style: (s) => s },
+      { text: `(+${added}, -${removed})`, style: palette.muted },
+    ],
+  });
 
   const diffLines = diff ? diff.split("\n") : [];
   const compactLines: string[] = [];
@@ -267,15 +257,89 @@ export function renderEditSuccess(
     compactLines.push(`    ${icon} ${msg}`);
   }
 
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: editColor, text: expandedParts.join("\n") },
-    compactView: {
-      segments,
-      flexIndices: [5],
+  return {
+    borderColor: editColor,
+    expanded: {
+      title: editColor(text.bold(`edit ${path}`)),
+      sections: expandedSections,
+    },
+    compact: {
+      header,
       extraText: compactLines.length > 0 ? compactLines.join("\n") : undefined,
     },
+  };
+}
+
+export function buildEditBlockedView(
+  theme: Theme,
+  path: string,
+  reason: string,
+): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const errorColor = (s: string) => palette.error(s);
+
+  const msg = reason.trim();
+  const section = buildSection(msg ? [errorColor(msg)] : []);
+
+  const pathInline = inlineText(path);
+  const whyInline = inlineText(reason);
+
+  const header = buildHeaderLine({
+    bulletStyle: errorColor,
+    label: "edit",
+    labelStyle: palette.muted,
+    accent: pathInline,
+    accentStyle: palette.accent,
+    tailSegments: [
+      { text: " ", style: (s) => s },
+      { text: `(blocked: ${whyInline})`, style: palette.muted },
+    ],
+    flexTailIndices: [1],
   });
+
+  return {
+    borderColor: errorColor,
+    expanded: {
+      title: errorColor(text.bold(`edit ${path}`)),
+      sections: section ? [section] : [],
+    },
+    compact: { header },
+  };
+}
+
+export function renderWriteSuccess(
+  theme: Theme,
+  path: string,
+  bytes: number,
+  lines: number,
+  content: string,
+  compact: boolean,
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(buildWriteSuccessView(theme, path, bytes, lines, content), compact);
+}
+
+export function renderWriteBlocked(
+  theme: Theme,
+  path: string,
+  reason: string,
+  compact: boolean,
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(buildWriteBlockedView(theme, path, reason), compact);
+}
+
+export function renderEditSuccess(
+  theme: Theme,
+  path: string,
+  oldLength: number,
+  newLength: number,
+  oldText: string,
+  newText: string,
+  compact: boolean,
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(
+    buildEditSuccessView(theme, path, oldLength, newLength, oldText, newText),
+    compact,
+  );
 }
 
 export function renderEditBlocked(
@@ -283,34 +347,6 @@ export function renderEditBlocked(
   path: string,
   reason: string,
   compact: boolean,
-): ToolOutputComponent {
-  const { palette, text } = theme;
-  const errorColor = (s: string) => palette.error(s);
-
-  const expandedParts: string[] = [errorColor(text.bold(`edit ${path}`))];
-  const msg = reason.trim();
-  if (msg) {
-    expandedParts.push("");
-    expandedParts.push(errorColor(msg));
-  }
-
-  const pathInline = inlineText(path);
-  const whyInline = inlineText(reason);
-
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: errorColor },
-    { text: " ", style: (s) => s },
-    { text: "edit", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: pathInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: `(blocked: ${whyInline})`, style: palette.muted },
-  ];
-
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: errorColor, text: expandedParts.join("\n") },
-    compactView: { segments, flexIndices: [5, 7] },
-  });
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(buildEditBlockedView(theme, path, reason), compact);
 }

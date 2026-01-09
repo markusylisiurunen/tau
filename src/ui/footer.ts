@@ -29,6 +29,8 @@ export class FooterComponent implements Component {
   }
 
   startWorkingIcon() {
+    if (this.iconIntervalId) return;
+    this.currentIconFrame = 0;
     this.ui.requestRender();
     this.iconIntervalId = setInterval(() => {
       this.currentIconFrame = (this.currentIconFrame + 1) % this.iconFrames.length;
@@ -47,6 +49,7 @@ export class FooterComponent implements Component {
 
   setStatus(status: FooterStatus) {
     this.status = status;
+    this.ui.requestRender();
   }
 
   invalidate() {}

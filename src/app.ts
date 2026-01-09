@@ -38,40 +38,40 @@ import {
   type RiskLevel,
   type Skill,
 } from "./types.js";
-import { AppIntroComponent } from "./ui/app_intro.js";
-import { AssistantMessageComponent } from "./ui/assistant_message.js";
 import {
-  renderBashAborted,
-  renderBashBlocked,
-  renderBashExecution,
-  renderBashRunning,
+  buildBashAbortedView,
+  buildBashBlockedView,
+  buildBashExecutionView,
+  buildBashRunningView,
 } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
+import type { AssistantMessageModel } from "./ui/chat_message_model.js";
 import { CustomEditor } from "./ui/custom_editor.js";
 import {
-  renderEditBlocked,
-  renderEditSuccess,
-  renderWriteBlocked,
-  renderWriteSuccess,
+  buildEditBlockedView,
+  buildEditSuccessView,
+  buildWriteBlockedView,
+  buildWriteSuccessView,
 } from "./ui/file_execution.js";
 import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
 import {
-  renderGrepBlocked,
-  renderGrepFinished,
-  renderGrepRunning,
-  renderListBlocked,
-  renderListSuccess,
-  renderReadBlocked,
-  renderReadSuccess,
+  buildGrepBlockedView,
+  buildGrepFinishedView,
+  buildGrepRunningView,
+  buildListBlockedView,
+  buildListSuccessView,
+  buildReadBlockedView,
+  buildReadSuccessView,
 } from "./ui/restricted_execution.js";
-import { SessionDividerComponent } from "./ui/session_divider.js";
-import { SessionSummaryComponent } from "./ui/session_summary.js";
 import { getFileAutocompleteToken, SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
-import { SystemMessageComponent, type SystemMessageKind } from "./ui/system_message.js";
-import { renderTaskBlocked, renderTaskFinished, renderTaskRunning } from "./ui/task_execution.js";
+import type { SystemMessageKind } from "./ui/system_message.js";
+import {
+  buildTaskBlockedView,
+  buildTaskFinishedView,
+  buildTaskRunningView,
+} from "./ui/task_execution.js";
 import { createUiTheme, type Theme } from "./ui/theme.js";
-import { UserMessageComponent } from "./ui/user_message.js";
 import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
@@ -129,7 +129,6 @@ export class ChatApp {
   private initialUserMessage?: string;
   private config: Config;
 
-  private assistantComponents: AssistantMessageComponent[] = [];
   private readonly engine: SessionEngine;
   private runningBashComponents: Map<string, RunningBashComponent> = new Map();
   private runningTaskComponents: Map<string, RunningTaskComponent> = new Map();
@@ -226,7 +225,7 @@ export class ChatApp {
 
     this.uiTheme = createUiTheme("ansi");
     this.ui = new TUI(createAppTerminal());
-    this.chatContainer = new ChatContainerComponent();
+    this.chatContainer = new ChatContainerComponent(this.uiTheme);
     this.chatContainer.setCompactToolUi(this.compactToolUi);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
     this.queuedMessages = new QueuedMessagesComponent(this.uiTheme, this.queuedUserMessages);
@@ -243,14 +242,12 @@ export class ChatApp {
     this.ui.addChild(this.editor);
     this.ui.addChild(this.footer);
 
-    this.chatContainer.addMessage(
-      new AppIntroComponent(
-        this.uiTheme,
-        "tau",
-        APP_VERSION,
-        buildHelpText(this.agentsFiles, this.skills),
-      ),
-    );
+    this.chatContainer.addMessage({
+      type: "app_intro",
+      appName: "tau",
+      version: APP_VERSION,
+      helpText: buildHelpText(this.agentsFiles, this.skills),
+    });
 
     this.ui.setFocus(this.editor);
 
@@ -390,18 +387,16 @@ export class ChatApp {
   }
 
   private addSystemMessage(text: string, kind: SystemMessageKind): void {
-    this.chatContainer.addMessage(new SystemMessageComponent(this.uiTheme, text, kind));
+    this.chatContainer.addMessage({ type: "system", text, kind });
     this.ui.requestRender();
   }
 
   private addUserMessage(text: string, opts?: { isMemoryMode?: boolean }): void {
-    this.chatContainer.addMessage(new UserMessageComponent(this.uiTheme, text, opts));
-    this.ui.requestRender();
-  }
-
-  private addAssistantComponent(component: AssistantMessageComponent): void {
-    this.chatContainer.addMessage(component);
-    this.assistantComponents.push(component);
+    this.chatContainer.addMessage({
+      type: "user",
+      text,
+      isMemoryMode: opts?.isMemoryMode,
+    });
     this.ui.requestRender();
   }
 
@@ -605,9 +600,6 @@ export class ChatApp {
 
   private toggleThinkingVisibility(): void {
     this.showThinking = !this.showThinking;
-    this.assistantComponents.forEach((c) => {
-      c.setThinkingVisibility(this.showThinking);
-    });
     this.chatContainer.setThinkingVisibility(this.showThinking);
     const message = this.showThinking
       ? "thoughts visible (ctrl+t to hide)"
@@ -910,13 +902,12 @@ export class ChatApp {
 
   private clearSession(): void {
     this.engine.reset();
-    this.assistantComponents = [];
     this.runningBashComponents.clear();
     this.runningTaskComponents.clear();
     this.taskEvents.clear();
     this.subagentCostTotal = 0;
     this.expandedFilesInCurrentPrompt.clear();
-    this.chatContainer.addMessage(new SessionDividerComponent(this.uiTheme, "new session"));
+    this.chatContainer.addMessage({ type: "session_divider", label: "new session" });
     this.isBashMode = false;
     this.isMemoryMode = false;
     this.previousSessionSummary = undefined;
@@ -1067,16 +1058,16 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     // Reset the session state but preserve history with divider and summary
     this.engine.reset();
-    this.assistantComponents = [];
     this.runningBashComponents.clear();
     this.runningTaskComponents.clear();
     this.taskEvents.clear();
     this.subagentCostTotal = 0;
     this.expandedFilesInCurrentPrompt.clear();
-    this.chatContainer.addMessage(new SessionDividerComponent(this.uiTheme, "new session"));
-    this.chatContainer.addMessage(
-      new SessionSummaryComponent(this.uiTheme, this.previousSessionSummary),
-    );
+    this.chatContainer.addMessage({ type: "session_divider", label: "new session" });
+    this.chatContainer.addMessage({
+      type: "session_summary",
+      summary: this.previousSessionSummary,
+    });
     this.isBashMode = false;
     this.isMemoryMode = false;
 
@@ -1319,26 +1310,22 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.footer.startWorkingIcon();
 
     try {
-      let currentAssistant: { component: AssistantMessageComponent; inserted: boolean } | undefined;
+      type AssistantState = { id?: string; inserted: boolean; model: AssistantMessageModel };
+      let currentAssistant: AssistantState | undefined;
 
-      const ensureCurrentAssistant = (): {
-        component: AssistantMessageComponent;
-        inserted: boolean;
-      } => {
+      const ensureCurrentAssistant = (): AssistantState => {
         if (currentAssistant) return currentAssistant;
         currentAssistant = {
-          component: new AssistantMessageComponent(this.uiTheme, undefined, this.showThinking),
           inserted: false,
+          model: { type: "assistant_partial", text: "", thinking: "" },
         };
         return currentAssistant;
       };
 
-      const ensureAssistantInserted = () => {
-        const state = ensureCurrentAssistant();
+      const ensureAssistantInserted = (state: AssistantState) => {
         if (state.inserted) return;
         state.inserted = true;
-        this.addAssistantComponent(state.component);
-        state.component.setThinkingVisibility(this.showThinking);
+        state.id = this.chatContainer.addMessage(state.model);
       };
 
       for await (const event of this.engine.processTurn(this.currentTurnAbort.signal)) {
@@ -1347,45 +1334,44 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         switch (event.type) {
           case "assistant_start":
             currentAssistant = {
-              component: new AssistantMessageComponent(this.uiTheme, undefined, this.showThinking),
               inserted: false,
+              model: { type: "assistant_partial", text: "", thinking: "" },
             };
             break;
 
           case "assistant_partial": {
             const state = ensureCurrentAssistant();
             const { snapshot } = event;
+            const model: AssistantMessageModel = {
+              type: "assistant_partial",
+              text: snapshot.hasTextStarted ? snapshot.text : "",
+              thinking: snapshot.thinking,
+            };
+            state.model = model;
 
             const shouldInsert =
               snapshot.hasTextStarted || (this.showThinking && snapshot.hasAnyThinking);
             if (shouldInsert && !state.inserted) {
-              ensureAssistantInserted();
+              ensureAssistantInserted(state);
             }
 
-            if (state.inserted) {
-              // Capture visibility state before update
-              const wasVisible = state.component.hasVisibleText;
-
-              state.component.updatePartial(
-                snapshot.hasTextStarted ? snapshot.text : "",
-                snapshot.thinking,
-              );
-
-              // If component became visible (e.g. text started after thoughts were hidden),
-              // rebuild the container to show it
-              if (!wasVisible && state.component.hasVisibleText) {
-                this.chatContainer.rebuild();
-              }
-
+            if (state.inserted && state.id) {
+              this.chatContainer.updateMessage(state.id, model);
               this.ui.requestRender();
             }
             break;
           }
 
           case "assistant_final": {
-            ensureAssistantInserted();
-            ensureCurrentAssistant().component.updateFromMessage(event.message);
-            this.chatContainer.rebuild();
+            const state = ensureCurrentAssistant();
+            const model: AssistantMessageModel = { type: "assistant", message: event.message };
+            state.model = model;
+            if (!state.inserted) {
+              ensureAssistantInserted(state);
+            }
+            if (state.id) {
+              this.chatContainer.updateMessage(state.id, model);
+            }
             this.updateFooter();
             this.ui.requestRender();
             currentAssistant = undefined;
@@ -1395,8 +1381,11 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
           case "tool_ui": {
             const uiEvent = event.uiEvent;
             if (uiEvent.type === "bash_started") {
-              this.chatContainer.addToolMessage(
-                (compact) => renderBashRunning(this.uiTheme, uiEvent.command, compact),
+              this.chatContainer.addMessage(
+                {
+                  type: "tool",
+                  view: buildBashRunningView(this.uiTheme, uiEvent.command),
+                },
                 uiEvent.toolCallId,
               );
               this.runningBashComponents.set(uiEvent.toolCallId, {
@@ -1405,15 +1394,15 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.ui.requestRender();
             } else if (uiEvent.type === "bash_execution") {
               const running = this.runningBashComponents.get(uiEvent.toolCallId);
-              this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
-                renderBashExecution(
+              this.chatContainer.replaceMessage(uiEvent.toolCallId, {
+                type: "tool",
+                view: buildBashExecutionView(
                   this.uiTheme,
                   uiEvent.command,
                   uiEvent.exitCode,
                   uiEvent.truncationInfo,
-                  compact,
                 ),
-              );
+              });
               if (running) {
                 this.runningBashComponents.delete(uiEvent.toolCallId);
               }
@@ -1421,16 +1410,18 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
             } else if (uiEvent.type === "bash_blocked") {
               if (uiEvent.toolCallId) {
                 const running = this.runningBashComponents.get(uiEvent.toolCallId);
-                this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
-                  renderBashBlocked(this.uiTheme, uiEvent.command, uiEvent.reason, compact),
-                );
+                this.chatContainer.replaceMessage(uiEvent.toolCallId, {
+                  type: "tool",
+                  view: buildBashBlockedView(this.uiTheme, uiEvent.command, uiEvent.reason),
+                });
                 if (running) {
                   this.runningBashComponents.delete(uiEvent.toolCallId);
                 }
               } else {
-                this.chatContainer.addToolMessage((compact) =>
-                  renderBashBlocked(this.uiTheme, uiEvent.command, uiEvent.reason, compact),
-                );
+                this.chatContainer.addMessage({
+                  type: "tool",
+                  view: buildBashBlockedView(this.uiTheme, uiEvent.command, uiEvent.reason),
+                });
               }
               this.ui.requestRender();
             } else if (uiEvent.type === "task_started") {
@@ -1440,12 +1431,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const kind = uiEvent.kind ?? "task";
               const subagentName = uiEvent.name.trim() || undefined;
 
-              this.chatContainer.addToolMessage(
-                (compact) =>
-                  renderTaskRunning(this.uiTheme, uiEvent.title, [], 0, 0, 0, compact, {
+              this.chatContainer.addMessage(
+                {
+                  type: "tool",
+                  view: buildTaskRunningView(this.uiTheme, uiEvent.title, [], 0, 0, 0, {
                     kind,
                     subagentName,
                   }),
+                },
                 uiEvent.toolCallId,
               );
               this.runningTaskComponents.set(uiEvent.toolCallId, {
@@ -1478,26 +1471,27 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                 running.toolCalls = uiEvent.toolCalls;
               }
 
-              this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
-                renderTaskRunning(
+              this.chatContainer.replaceMessage(uiEvent.toolCallId, {
+                type: "tool",
+                view: buildTaskRunningView(
                   this.uiTheme,
                   uiEvent.title,
                   events!,
                   uiEvent.costTotal,
                   uiEvent.turns,
                   uiEvent.toolCalls,
-                  compact,
                   { kind, subagentName },
                 ),
-              );
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "task_finished") {
               const running = this.runningTaskComponents.get(uiEvent.toolCallId);
               const kind = uiEvent.kind ?? running?.kind ?? "task";
               const subagentName = uiEvent.name.trim() || undefined;
 
-              this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
-                renderTaskFinished(
+              this.chatContainer.replaceMessage(uiEvent.toolCallId, {
+                type: "tool",
+                view: buildTaskFinishedView(
                   this.uiTheme,
                   uiEvent.title,
                   uiEvent.costTotal,
@@ -1505,10 +1499,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                   uiEvent.toolCalls,
                   uiEvent.status,
                   uiEvent.finalOutput,
-                  compact,
                   { kind, subagentName },
                 ),
-              );
+              });
 
               this.runningTaskComponents.delete(uiEvent.toolCallId);
               this.taskEvents.delete(uiEvent.toolCallId);
@@ -1521,19 +1514,22 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               const subagentName = uiEvent.name?.trim() || undefined;
 
               if (running) {
-                this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
-                  renderTaskBlocked(this.uiTheme, uiEvent.title, uiEvent.reason, compact, {
+                this.chatContainer.replaceMessage(uiEvent.toolCallId, {
+                  type: "tool",
+                  view: buildTaskBlockedView(this.uiTheme, uiEvent.title, uiEvent.reason, {
                     kind,
                     subagentName,
                   }),
-                );
+                });
               } else {
-                this.chatContainer.addToolMessage(
-                  (compact) =>
-                    renderTaskBlocked(this.uiTheme, uiEvent.title, uiEvent.reason, compact, {
+                this.chatContainer.addMessage(
+                  {
+                    type: "tool",
+                    view: buildTaskBlockedView(this.uiTheme, uiEvent.title, uiEvent.reason, {
                       kind,
                       subagentName,
                     }),
+                  },
                   uiEvent.toolCallId,
                 );
               }
@@ -1542,61 +1538,65 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
               this.taskEvents.delete(uiEvent.toolCallId);
               this.ui.requestRender();
             } else if (uiEvent.type === "write_success") {
-              this.chatContainer.addToolMessage((compact) =>
-                renderWriteSuccess(
+              this.chatContainer.addMessage({
+                type: "tool",
+                view: buildWriteSuccessView(
                   this.uiTheme,
                   uiEvent.path,
                   uiEvent.bytes,
                   uiEvent.lines,
                   uiEvent.content,
-                  compact,
                 ),
-              );
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "write_blocked") {
-              this.chatContainer.addToolMessage((compact) =>
-                renderWriteBlocked(this.uiTheme, uiEvent.path, uiEvent.reason, compact),
-              );
+              this.chatContainer.addMessage({
+                type: "tool",
+                view: buildWriteBlockedView(this.uiTheme, uiEvent.path, uiEvent.reason),
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "edit_success") {
-              this.chatContainer.addToolMessage((compact) =>
-                renderEditSuccess(
+              this.chatContainer.addMessage({
+                type: "tool",
+                view: buildEditSuccessView(
                   this.uiTheme,
                   uiEvent.path,
                   uiEvent.oldLength,
                   uiEvent.newLength,
                   uiEvent.oldText,
                   uiEvent.newText,
-                  compact,
                 ),
-              );
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "edit_blocked") {
-              this.chatContainer.addToolMessage((compact) =>
-                renderEditBlocked(this.uiTheme, uiEvent.path, uiEvent.reason, compact),
-              );
+              this.chatContainer.addMessage({
+                type: "tool",
+                view: buildEditBlockedView(this.uiTheme, uiEvent.path, uiEvent.reason),
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "read_success") {
-              this.chatContainer.addToolMessage((compact) =>
-                renderReadSuccess(
+              this.chatContainer.addMessage({
+                type: "tool",
+                view: buildReadSuccessView(
                   this.uiTheme,
                   uiEvent.path,
                   uiEvent.startLine,
                   uiEvent.endLine,
                   uiEvent.content,
                   uiEvent.modelTruncation,
-                  compact,
                 ),
-              );
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "read_blocked") {
-              this.chatContainer.addToolMessage((compact) =>
-                renderReadBlocked(this.uiTheme, uiEvent.path, uiEvent.reason, compact),
-              );
+              this.chatContainer.addMessage({
+                type: "tool",
+                view: buildReadBlockedView(this.uiTheme, uiEvent.path, uiEvent.reason),
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "list_success") {
-              this.chatContainer.addToolMessage((compact) =>
-                renderListSuccess(
+              this.chatContainer.addMessage({
+                type: "tool",
+                view: buildListSuccessView(
                   this.uiTheme,
                   uiEvent.path,
                   uiEvent.offset,
@@ -1604,24 +1604,28 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                   uiEvent.total,
                   uiEvent.returned,
                   uiEvent.entries,
-                  compact,
                 ),
-              );
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "list_blocked") {
-              this.chatContainer.addToolMessage((compact) =>
-                renderListBlocked(this.uiTheme, uiEvent.path, uiEvent.reason, compact),
-              );
+              this.chatContainer.addMessage({
+                type: "tool",
+                view: buildListBlockedView(this.uiTheme, uiEvent.path, uiEvent.reason),
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "grep_started") {
-              this.chatContainer.addToolMessage(
-                (compact) => renderGrepRunning(this.uiTheme, uiEvent.pattern, compact),
+              this.chatContainer.addMessage(
+                {
+                  type: "tool",
+                  view: buildGrepRunningView(this.uiTheme, uiEvent.pattern),
+                },
                 uiEvent.toolCallId,
               );
               this.ui.requestRender();
             } else if (uiEvent.type === "grep_finished") {
-              this.chatContainer.replaceToolMessage(uiEvent.toolCallId, (compact) =>
-                renderGrepFinished(
+              this.chatContainer.replaceMessage(uiEvent.toolCallId, {
+                type: "tool",
+                view: buildGrepFinishedView(
                   this.uiTheme,
                   uiEvent.pattern,
                   uiEvent.status,
@@ -1629,14 +1633,15 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                   uiEvent.stdout,
                   uiEvent.stderr,
                   uiEvent.captureTruncated,
-                  compact,
                 ),
-              );
+              });
               this.ui.requestRender();
             } else if (uiEvent.type === "grep_blocked") {
-              this.chatContainer.addToolMessage(
-                (compact) =>
-                  renderGrepBlocked(this.uiTheme, uiEvent.pattern, uiEvent.reason, compact),
+              this.chatContainer.addMessage(
+                {
+                  type: "tool",
+                  view: buildGrepBlockedView(this.uiTheme, uiEvent.pattern, uiEvent.reason),
+                },
                 uiEvent.toolCallId,
               );
               this.ui.requestRender();
@@ -1662,15 +1667,17 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const reason = wasAborted ? "aborted" : "interrupted";
 
       for (const [id, running] of this.runningBashComponents.entries()) {
-        this.chatContainer.replaceToolMessage(id, (compact) =>
-          renderBashAborted(this.uiTheme, running.command, reason, compact),
-        );
+        this.chatContainer.replaceMessage(id, {
+          type: "tool",
+          view: buildBashAbortedView(this.uiTheme, running.command, reason),
+        });
       }
 
       const taskStatus = wasAborted ? "aborted" : "error";
       for (const [id, running] of this.runningTaskComponents.entries()) {
-        this.chatContainer.replaceToolMessage(id, (compact) =>
-          renderTaskFinished(
+        this.chatContainer.replaceMessage(id, {
+          type: "tool",
+          view: buildTaskFinishedView(
             this.uiTheme,
             running.title,
             running.costTotal,
@@ -1678,10 +1685,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
             running.toolCalls,
             taskStatus,
             reason,
-            compact,
             { kind: running.kind, subagentName: running.name },
           ),
-        );
+        });
       }
 
       this.footer.stop();
@@ -1713,9 +1719,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         stderr: { maxLines: BASH_USER_MAX_STDERR_LINES, maxTokens: BASH_USER_MAX_STDERR_TOKENS },
       });
 
-      this.chatContainer.addMessage(
-        renderBashExecution(this.uiTheme, command, exitCode, truncationInfo, false),
-      );
+      this.chatContainer.addMessage({
+        type: "tool",
+        view: buildBashExecutionView(this.uiTheme, command, exitCode, truncationInfo),
+      });
 
       this.engine.addUserText(formatBashUserMessageText({ command, truncationInfo }));
 

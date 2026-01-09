@@ -1,10 +1,14 @@
 import type { Component } from "@mariozechner/pi-tui";
 import { Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { formatAdaptiveNumber } from "../utils/format.js";
-import type { OneLineSegment } from "./components/one_line_segments.js";
 import { PaddedContainer } from "./components/padded_container.js";
 import type { Theme } from "./theme.js";
-import { ToolOutputComponent } from "./tool_output.js";
+import {
+  buildHeaderLine,
+  buildSection,
+  renderToolOutput,
+  type ToolOutputViewModel,
+} from "./tool_output_layout.js";
 
 type TaskKind = "task" | "fork";
 
@@ -102,32 +106,28 @@ class TruncatedText implements Component {
   }
 }
 
-export function renderTaskRunning(
+export function buildTaskRunningView(
   theme: Theme,
   title: string,
   lastEvents: string[],
   costTotal: number,
   turns: number,
   toolCalls: number,
-  compact: boolean,
   opts?: TaskRenderOptions,
-): ToolOutputComponent {
+): ToolOutputViewModel {
   const { palette, text } = theme;
   const runningColor = (s: string) => palette.taskRunning(s);
 
   const kind = opts?.kind ?? "task";
   const subagentName = opts?.subagentName;
 
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: runningColor },
-    { text: " ", style: (s) => s },
-    { text: kind, style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: "running", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: title.trim(), style: palette.accent },
-  ];
+  const header = buildHeaderLine({
+    bulletStyle: runningColor,
+    label: `${kind} running`,
+    labelStyle: palette.muted,
+    accent: title.trim(),
+    accentStyle: palette.accent,
+  });
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
   const eventLines = formatEventsForDisplay(lastEvents).slice(-4);
@@ -142,32 +142,38 @@ export function renderTaskRunning(
   }
   extraParts.push(costLine);
 
-  const expandedParts: string[] = [runningColor(text.bold(`${kind}: ${title}`))];
-  if (subagentName) {
-    expandedParts.push(palette.dim(`subagent: ${subagentName}`));
-  }
-  if (eventLines.length > 0) {
-    expandedParts.push("");
-    expandedParts.push(palette.taskPreview(eventLines.join("\n")));
-  }
-  expandedParts.push("");
   const expandedCostLine = subagentName
     ? palette.dim(`${subagentName} · cost: ${formatCost(costTotal)}, ${stats}`)
     : palette.dim(`cost: ${formatCost(costTotal)}, ${stats}`);
-  expandedParts.push(expandedCostLine);
 
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: runningColor, text: expandedParts.join("\n") },
-    compactView: {
-      segments,
-      flexIndices: [7],
-      extraComponent: new PaddedContainer(new TruncatedText(extraParts.join("\n"), theme), 4),
+  const extraComponent =
+    extraParts.length > 0
+      ? new PaddedContainer(new TruncatedText(extraParts.join("\n"), theme), 4)
+      : undefined;
+
+  const expandedTitle = subagentName
+    ? `${runningColor(text.bold(`${kind}: ${title}`))}\n${palette.dim(`subagent: ${subagentName}`)}`
+    : runningColor(text.bold(`${kind}: ${title}`));
+  const expandedSections: Array<string | undefined> = [];
+  if (eventLines.length > 0) {
+    expandedSections.push(palette.taskPreview(eventLines.join("\n")));
+  }
+  expandedSections.push(expandedCostLine);
+
+  return {
+    borderColor: runningColor,
+    expanded: {
+      title: expandedTitle,
+      sections: expandedSections,
     },
-  });
+    compact: {
+      header,
+      extraComponent,
+    },
+  };
 }
 
-export function renderTaskFinished(
+export function buildTaskFinishedView(
   theme: Theme,
   title: string,
   costTotal: number,
@@ -175,9 +181,8 @@ export function renderTaskFinished(
   toolCalls: number,
   status: "success" | "error" | "aborted",
   finalOutput: string,
-  compact: boolean,
   opts?: TaskRenderOptions,
-): ToolOutputComponent {
+): ToolOutputViewModel {
   const { palette, text } = theme;
 
   const kind = opts?.kind ?? "task";
@@ -197,16 +202,13 @@ export function renderTaskFinished(
         ? palette.warn("aborted")
         : palette.error("error");
 
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: borderColor },
-    { text: " ", style: (s) => s },
-    { text: kind, style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: "finished", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: title.trim(), style: palette.accent },
-  ];
+  const header = buildHeaderLine({
+    bulletStyle: borderColor,
+    label: `${kind} finished`,
+    labelStyle: palette.muted,
+    accent: title.trim(),
+    accentStyle: palette.accent,
+  });
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
   const outputTrimmed = finalOutput.trim();
@@ -223,39 +225,41 @@ export function renderTaskFinished(
   }
   extraParts.push(costLine);
 
-  const expandedParts: string[] = [borderColor(text.bold(`${kind}: ${title}`))];
+  const expandedTitleLines = [borderColor(text.bold(`${kind}: ${title}`))];
   if (subagentName) {
-    expandedParts.push(palette.dim(`subagent: ${subagentName}`));
+    expandedTitleLines.push(palette.dim(`subagent: ${subagentName}`));
   }
-  expandedParts.push(palette.dim(`status: `) + statusLabel);
+  expandedTitleLines.push(palette.dim(`status: `) + statusLabel);
+  const expandedTitle = expandedTitleLines.join("\n");
+
+  const expandedSections: Array<string | undefined> = [];
   if (outputTrimmed) {
-    expandedParts.push("");
-    expandedParts.push(outputTrimmed);
+    expandedSections.push(outputTrimmed);
   }
-  expandedParts.push("");
   const expandedCostLine = subagentName
     ? palette.dim(`${subagentName} · cost: ${formatCost(costTotal)}, ${stats}`)
     : palette.dim(`cost: ${formatCost(costTotal)}, ${stats}`);
-  expandedParts.push(expandedCostLine);
+  expandedSections.push(expandedCostLine);
 
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor, text: expandedParts.join("\n") },
-    compactView: {
-      segments,
-      flexIndices: [7],
+  return {
+    borderColor,
+    expanded: {
+      title: expandedTitle,
+      sections: expandedSections,
+    },
+    compact: {
+      header,
       extraComponent: new PaddedContainer(new Text(extraParts.join("\n"), 0, 0), 4),
     },
-  });
+  };
 }
 
-export function renderTaskBlocked(
+export function buildTaskBlockedView(
   theme: Theme,
   title: string,
   reason: string,
-  compact: boolean,
   opts?: TaskRenderOptions,
-): ToolOutputComponent {
+): ToolOutputViewModel {
   const { palette, text } = theme;
   const errorColor = (s: string) => palette.error(s);
 
@@ -264,39 +268,82 @@ export function renderTaskBlocked(
 
   const why = reason.trim();
 
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: errorColor },
-    { text: " ", style: (s) => s },
-    { text: kind, style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: "blocked", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: title.trim(), style: palette.accent },
-  ];
+  const header = buildHeaderLine({
+    bulletStyle: errorColor,
+    label: `${kind} blocked`,
+    labelStyle: palette.muted,
+    accent: title.trim(),
+    accentStyle: palette.accent,
+  });
 
-  const expandedParts: string[] = [errorColor(text.bold(`${kind}: ${title}`))];
-  if (subagentName) {
-    expandedParts.push(palette.dim(`subagent: ${subagentName}`));
-  }
-  if (why) {
-    expandedParts.push("");
-    expandedParts.push(errorColor(why));
+  const expandedTitle = subagentName
+    ? `${errorColor(text.bold(`${kind}: ${title}`))}\n${palette.dim(`subagent: ${subagentName}`)}`
+    : errorColor(text.bold(`${kind}: ${title}`));
+
+  const expandedSections: Array<string | undefined> = [];
+  const whySection = buildSection(why ? [errorColor(why)] : []);
+  if (whySection) {
+    expandedSections.push(whySection);
   }
 
   const extraContent = why
     ? `${palette.muted("(")}${palette.error(why)}${palette.muted(")")}`
     : undefined;
 
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: errorColor, text: expandedParts.join("\n") },
-    compactView: {
-      segments,
-      flexIndices: [7],
+  return {
+    borderColor: errorColor,
+    expanded: {
+      title: expandedTitle,
+      sections: expandedSections,
+    },
+    compact: {
+      header,
       extraComponent: extraContent
         ? new PaddedContainer(new Text(extraContent, 0, 0), 4)
         : undefined,
     },
-  });
+  };
+}
+
+export function renderTaskRunning(
+  theme: Theme,
+  title: string,
+  lastEvents: string[],
+  costTotal: number,
+  turns: number,
+  toolCalls: number,
+  compact: boolean,
+  opts?: TaskRenderOptions,
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(
+    buildTaskRunningView(theme, title, lastEvents, costTotal, turns, toolCalls, opts),
+    compact,
+  );
+}
+
+export function renderTaskFinished(
+  theme: Theme,
+  title: string,
+  costTotal: number,
+  turns: number,
+  toolCalls: number,
+  status: "success" | "error" | "aborted",
+  finalOutput: string,
+  compact: boolean,
+  opts?: TaskRenderOptions,
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(
+    buildTaskFinishedView(theme, title, costTotal, turns, toolCalls, status, finalOutput, opts),
+    compact,
+  );
+}
+
+export function renderTaskBlocked(
+  theme: Theme,
+  title: string,
+  reason: string,
+  compact: boolean,
+  opts?: TaskRenderOptions,
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(buildTaskBlockedView(theme, title, reason, opts), compact);
 }

@@ -98,8 +98,29 @@ export class OneLineSegmentsComponent implements Component {
 
     // Last resort: width smaller than fixed parts; hard truncate the fully rendered line.
     if (excess > 0) {
-      const raw = texts.join("");
-      return [truncateFromEndByWidth(raw, minWidth)];
+      let remaining = minWidth;
+      let usedWidth = 0;
+      const styledParts: string[] = [];
+      for (let i = 0; i < texts.length && remaining > 0; i++) {
+        const segmentText = texts[i] ?? "";
+        const segmentWidth = visibleWidth(segmentText);
+        const style = this.segments[i]?.style ?? ((s: string) => s);
+
+        if (segmentWidth <= remaining) {
+          styledParts.push(style(segmentText));
+          remaining -= segmentWidth;
+          usedWidth += segmentWidth;
+        } else {
+          const truncated = truncateFromEndByWidth(segmentText, remaining);
+          const truncatedWidth = visibleWidth(truncated);
+          styledParts.push(style(truncated));
+          usedWidth += truncatedWidth;
+          remaining = Math.max(0, remaining - truncatedWidth);
+        }
+      }
+
+      const pad = Math.max(0, minWidth - usedWidth);
+      return [`${styledParts.join("")}${" ".repeat(pad)}`];
     }
 
     const rendered = texts

@@ -1,13 +1,17 @@
-import type { OneLineSegment } from "./components/one_line_segments.js";
 import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
-import { ToolOutputComponent } from "./tool_output.js";
+import {
+  buildHeaderLine,
+  buildSection,
+  renderToolOutput,
+  type ToolOutputViewModel,
+} from "./tool_output_layout.js";
+import { applyPreviewPolicy, buildCompactPreviewLines } from "./tool_output_preview.js";
 import {
   GREP_UI_MAX_LINES,
   GREP_UI_MAX_TOKENS,
   READ_UI_MAX_LINES,
   READ_UI_MAX_TOKENS,
-  truncateForUi,
 } from "./tool_truncation.js";
 
 interface PreviewTruncation {
@@ -23,6 +27,369 @@ function formatRange(startLine: number, endLine?: number): string {
   return `${startLine}-${endLine}`;
 }
 
+export function buildReadSuccessView(
+  theme: Theme,
+  path: string,
+  startLine: number,
+  endLine: number | undefined,
+  content: string,
+  modelTruncation: PreviewTruncation,
+): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const readColor = (s: string) => palette.toolFileRan(s);
+
+  const { truncation: previewTruncation, previewLines } = applyPreviewPolicy(content, {
+    maxLines: READ_UI_MAX_LINES,
+    maxTokens: READ_UI_MAX_TOKENS,
+    strategy: "middle",
+  });
+
+  const out = previewTruncation.content.trimEnd();
+  const expandedSections: Array<string | undefined> = [];
+  if (out) {
+    expandedSections.push(palette.filePreview(out));
+  }
+
+  if (previewTruncation.truncated) {
+    const icon = palette.warn("◆");
+    const msg = palette.dim(
+      `preview: ${previewTruncation.outputLines} of ${previewTruncation.totalLines} lines`,
+    );
+    expandedSections.push(`${icon} ${msg}`);
+  }
+
+  if (modelTruncation.truncated) {
+    const icon = palette.warn("◆");
+    const msg = palette.warn(
+      `truncated for model: ${modelTruncation.outputLines} of ${modelTruncation.totalLines} lines`,
+    );
+    expandedSections.push(`${icon} ${msg}`);
+  }
+
+  const pathInline = inlineText(path);
+  const totalLinesForSummary = modelTruncation.truncated
+    ? modelTruncation.totalLines
+    : previewTruncation.totalLines;
+  const header = buildHeaderLine({
+    bulletStyle: readColor,
+    label: "read",
+    labelStyle: palette.muted,
+    accent: pathInline,
+    accentStyle: palette.accent,
+    tailSegments: [
+      { text: " ", style: (s) => s },
+      { text: `(${totalLinesForSummary} lines)`, style: palette.muted },
+    ],
+  });
+
+  const compactLines = buildCompactPreviewLines(previewLines, {
+    totalLines: totalLinesForSummary,
+    lineStyle: palette.muted,
+    moreStyle: palette.dim,
+  });
+
+  return {
+    borderColor: readColor,
+    expanded: {
+      title: readColor(text.bold(`read ${path} (${formatRange(startLine, endLine)})`)),
+      sections: expandedSections,
+    },
+    compact: {
+      header,
+      extraText: compactLines,
+    },
+  };
+}
+
+export function buildReadBlockedView(
+  theme: Theme,
+  path: string,
+  reason: string,
+): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const errorColor = (s: string) => palette.error(s);
+
+  const msg = reason.trim();
+  const section = buildSection(msg ? [errorColor(msg)] : []);
+
+  const pathInline = inlineText(path);
+  const whyInline = inlineText(reason);
+
+  const header = buildHeaderLine({
+    bulletStyle: errorColor,
+    label: "read",
+    labelStyle: palette.muted,
+    accent: pathInline,
+    accentStyle: palette.accent,
+    tailSegments: [
+      { text: " ", style: (s) => s },
+      { text: `(blocked: ${whyInline})`, style: palette.muted },
+    ],
+    flexTailIndices: [1],
+  });
+
+  return {
+    borderColor: errorColor,
+    expanded: {
+      title: errorColor(text.bold(`read ${path}`)),
+      sections: section ? [section] : [],
+    },
+    compact: { header },
+  };
+}
+
+export function buildListSuccessView(
+  theme: Theme,
+  path: string,
+  offset: number,
+  limit: number,
+  total: number,
+  returned: number,
+  entries: string[],
+): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const listColor = (s: string) => palette.toolFileRan(s);
+
+  const expandedSections: Array<string | undefined> = [];
+  expandedSections.push(
+    palette.muted(`${returned} of ${total} entries (offset ${offset}, limit ${limit})`),
+  );
+
+  if (entries.length > 0) {
+    expandedSections.push(palette.filePreview(entries.join("\n")));
+  }
+
+  const pathInline = inlineText(path);
+
+  const header = buildHeaderLine({
+    bulletStyle: listColor,
+    label: "listed",
+    labelStyle: palette.muted,
+    accent: pathInline,
+    accentStyle: palette.accent,
+    tailSegments: [
+      { text: " ", style: (s) => s },
+      { text: `(${returned} entries)`, style: palette.muted },
+    ],
+  });
+
+  const compactLines = buildCompactPreviewLines(entries, {
+    totalLines: entries.length,
+    unitLabel: "entries",
+    lineStyle: palette.muted,
+    moreStyle: palette.dim,
+  });
+
+  return {
+    borderColor: listColor,
+    expanded: {
+      title: listColor(text.bold(`list ${path}`)),
+      sections: expandedSections,
+    },
+    compact: {
+      header,
+      extraText: compactLines,
+    },
+  };
+}
+
+export function buildListBlockedView(
+  theme: Theme,
+  path: string,
+  reason: string,
+): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const errorColor = (s: string) => palette.error(s);
+
+  const msg = reason.trim();
+  const section = buildSection(msg ? [errorColor(msg)] : []);
+
+  const pathInline = inlineText(path);
+  const whyInline = inlineText(reason);
+
+  const header = buildHeaderLine({
+    bulletStyle: errorColor,
+    label: "list",
+    labelStyle: palette.muted,
+    accent: pathInline,
+    accentStyle: palette.accent,
+    tailSegments: [
+      { text: " ", style: (s) => s },
+      { text: `(blocked: ${whyInline})`, style: palette.muted },
+    ],
+    flexTailIndices: [1],
+  });
+
+  return {
+    borderColor: errorColor,
+    expanded: {
+      title: errorColor(text.bold(`list ${path}`)),
+      sections: section ? [section] : [],
+    },
+    compact: { header },
+  };
+}
+
+export function buildGrepRunningView(theme: Theme, pattern: string): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const runningColor = (s: string) => palette.taskRunning(s);
+
+  const patternInline = inlineText(pattern);
+  const header = buildHeaderLine({
+    bulletStyle: runningColor,
+    label: "grep",
+    labelStyle: palette.muted,
+    accent: patternInline,
+    accentStyle: palette.accent,
+    tailSegments: [
+      { text: " ", style: (s) => s },
+      { text: "(running)", style: palette.muted },
+    ],
+  });
+
+  return {
+    borderColor: runningColor,
+    expanded: { title: runningColor(text.bold(`grep ${pattern}`)) },
+    compact: { header },
+  };
+}
+
+export function buildGrepFinishedView(
+  theme: Theme,
+  pattern: string,
+  status: "success" | "error",
+  exitCode: number | null,
+  stdout: string,
+  stderr: string,
+  captureTruncated: boolean,
+): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const grepColor = (s: string) => palette.toolFileRan(s);
+
+  const { truncation: stdoutPreview, previewLines: stdoutLines } = applyPreviewPolicy(stdout, {
+    maxLines: GREP_UI_MAX_LINES,
+    maxTokens: GREP_UI_MAX_TOKENS,
+    strategy: "middle",
+  });
+
+  const { truncation: stderrPreview, previewLines: stderrLines } = applyPreviewPolicy(stderr, {
+    maxLines: GREP_UI_MAX_LINES,
+    maxTokens: GREP_UI_MAX_TOKENS,
+    strategy: "middle",
+  });
+
+  const out = stdoutPreview.content.trimEnd();
+  const expandedSections: Array<string | undefined> = [];
+  if (out) {
+    expandedSections.push(palette.filePreview(out));
+  }
+
+  const err = stderrPreview.content.trimEnd();
+  if (err) {
+    const errSection = buildSection([palette.error("stderr:"), palette.error(err)]);
+    if (errSection) {
+      expandedSections.push(errSection);
+    }
+  }
+
+  if (stdoutPreview.truncated || stderrPreview.truncated || captureTruncated) {
+    const icon = palette.warn("◆");
+    const msg = palette.dim(
+      `truncated: ${stdoutPreview.outputLines} of ${stdoutPreview.totalLines} lines`,
+    );
+    expandedSections.push(`${icon} ${msg}`);
+  }
+
+  if (exitCode !== null && exitCode !== 0 && exitCode !== 1) {
+    expandedSections.push(palette.warn(`(exit ${exitCode})`));
+  }
+
+  const patternInline = inlineText(pattern);
+
+  const header = buildHeaderLine({
+    bulletStyle: grepColor,
+    label: "grep",
+    labelStyle: palette.muted,
+    accent: patternInline,
+    accentStyle: palette.accent,
+    tailSegments: [
+      { text: " ", style: (s) => s },
+      {
+        text: status === "success" ? "(ok)" : "(error)",
+        style: status === "success" ? palette.muted : palette.error,
+      },
+    ],
+  });
+
+  const extra: string[] = [];
+  if (err) {
+    const errLines = stderrLines.slice(0, 2);
+    for (const l of errLines) {
+      extra.push(palette.error(`    ${l}`));
+    }
+    if (stderrPreview.truncated) {
+      extra.push(palette.dim("    (stderr truncated)"));
+    }
+  } else if (out) {
+    const outLines = stdoutLines.slice(0, 2);
+    for (const l of outLines) {
+      extra.push(palette.muted(`    ${l}`));
+    }
+    if (stdoutPreview.truncated) {
+      extra.push(palette.dim("    (output truncated)"));
+    }
+  }
+
+  return {
+    borderColor: grepColor,
+    expanded: {
+      title: grepColor(text.bold(`grep ${pattern}`)),
+      sections: expandedSections,
+    },
+    compact: {
+      header,
+      extraText: extra.length > 0 ? extra.join("\n") : undefined,
+    },
+  };
+}
+
+export function buildGrepBlockedView(
+  theme: Theme,
+  pattern: string,
+  reason: string,
+): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const errorColor = (s: string) => palette.error(s);
+
+  const msg = reason.trim();
+  const section = buildSection(msg ? [errorColor(msg)] : []);
+
+  const patternInline = inlineText(pattern);
+  const whyInline = inlineText(reason);
+
+  const header = buildHeaderLine({
+    bulletStyle: errorColor,
+    label: "grep",
+    labelStyle: palette.muted,
+    accent: patternInline,
+    accentStyle: palette.accent,
+    tailSegments: [
+      { text: " ", style: (s) => s },
+      { text: `(blocked: ${whyInline})`, style: palette.muted },
+    ],
+    flexTailIndices: [1],
+  });
+
+  return {
+    borderColor: errorColor,
+    expanded: {
+      title: errorColor(text.bold(`grep ${pattern}`)),
+      sections: section ? [section] : [],
+    },
+    compact: { header },
+  };
+}
+
 export function renderReadSuccess(
   theme: Theme,
   path: string,
@@ -31,77 +398,11 @@ export function renderReadSuccess(
   content: string,
   modelTruncation: PreviewTruncation,
   compact: boolean,
-): ToolOutputComponent {
-  const { palette, text } = theme;
-  const readColor = (s: string) => palette.toolFileRan(s);
-
-  const previewTruncation = truncateForUi(content, {
-    maxLines: READ_UI_MAX_LINES,
-    maxTokens: READ_UI_MAX_TOKENS,
-    strategy: "middle",
-  });
-
-  const expandedParts: string[] = [];
-  expandedParts.push(readColor(text.bold(`read ${path} (${formatRange(startLine, endLine)})`)));
-
-  const out = previewTruncation.content.trimEnd();
-  if (out) {
-    expandedParts.push("", palette.filePreview(out));
-  }
-
-  if (previewTruncation.truncated) {
-    const icon = palette.warn("◆");
-    const msg = palette.dim(
-      `preview: ${previewTruncation.outputLines} of ${previewTruncation.totalLines} lines`,
-    );
-    expandedParts.push("", `${icon} ${msg}`);
-  }
-
-  if (modelTruncation.truncated) {
-    const icon = palette.warn("◆");
-    const msg = palette.warn(
-      `truncated for model: ${modelTruncation.outputLines} of ${modelTruncation.totalLines} lines`,
-    );
-    expandedParts.push("", `${icon} ${msg}`);
-  }
-
-  const pathInline = inlineText(path);
-  const totalLinesForSummary = modelTruncation.truncated
-    ? modelTruncation.totalLines
-    : previewTruncation.totalLines;
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: readColor },
-    { text: " ", style: (s) => s },
-    { text: "read", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: pathInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: `(${totalLinesForSummary} lines)`, style: palette.muted },
-  ];
-
-  const maxPreviewLines = 4;
-  const previewLines = out ? out.split("\n") : [];
-  const shownPreviewLines = previewLines.slice(0, maxPreviewLines);
-  const remaining = Math.max(0, totalLinesForSummary - shownPreviewLines.length);
-
-  const compactLines: string[] = [];
-  for (const l of shownPreviewLines) {
-    compactLines.push(palette.muted(`    ${l}`));
-  }
-  if (remaining > 0) {
-    compactLines.push(palette.dim(`    (${remaining} more lines)`));
-  }
-
-  return new ToolOutputComponent({
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(
+    buildReadSuccessView(theme, path, startLine, endLine, content, modelTruncation),
     compact,
-    expanded: { borderColor: readColor, text: expandedParts.join("\n") },
-    compactView: {
-      segments,
-      flexIndices: [5],
-      extraText: compactLines.length > 0 ? compactLines.join("\n") : undefined,
-    },
-  });
+  );
 }
 
 export function renderReadBlocked(
@@ -109,35 +410,8 @@ export function renderReadBlocked(
   path: string,
   reason: string,
   compact: boolean,
-): ToolOutputComponent {
-  const { palette, text } = theme;
-  const errorColor = (s: string) => palette.error(s);
-
-  const expandedParts: string[] = [errorColor(text.bold(`read ${path}`))];
-  const msg = reason.trim();
-  if (msg) {
-    expandedParts.push("", errorColor(msg));
-  }
-
-  const pathInline = inlineText(path);
-  const whyInline = inlineText(reason);
-
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: errorColor },
-    { text: " ", style: (s) => s },
-    { text: "read", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: pathInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: `(blocked: ${whyInline})`, style: palette.muted },
-  ];
-
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: errorColor, text: expandedParts.join("\n") },
-    compactView: { segments, flexIndices: [5, 7] },
-  });
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(buildReadBlockedView(theme, path, reason), compact);
 }
 
 export function renderListSuccess(
@@ -149,56 +423,11 @@ export function renderListSuccess(
   returned: number,
   entries: string[],
   compact: boolean,
-): ToolOutputComponent {
-  const { palette, text } = theme;
-  const listColor = (s: string) => palette.toolFileRan(s);
-
-  const expandedParts: string[] = [];
-  expandedParts.push(listColor(text.bold(`list ${path}`)));
-  expandedParts.push("");
-  expandedParts.push(
-    palette.muted(`${returned} of ${total} entries (offset ${offset}, limit ${limit})`),
-  );
-
-  if (entries.length > 0) {
-    expandedParts.push("");
-    expandedParts.push(palette.filePreview(entries.join("\n")));
-  }
-
-  const pathInline = inlineText(path);
-
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: listColor },
-    { text: " ", style: (s) => s },
-    { text: "listed", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: pathInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: `(${returned} entries)`, style: palette.muted },
-  ];
-
-  const maxPreviewLines = 4;
-  const shown = entries.slice(0, maxPreviewLines);
-  const remaining = Math.max(0, entries.length - shown.length);
-
-  const compactLines: string[] = [];
-  for (const l of shown) {
-    compactLines.push(palette.muted(`    ${l}`));
-  }
-  if (remaining > 0) {
-    compactLines.push(palette.dim(`    (${remaining} more entries)`));
-  }
-
-  return new ToolOutputComponent({
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(
+    buildListSuccessView(theme, path, offset, limit, total, returned, entries),
     compact,
-    expanded: { borderColor: listColor, text: expandedParts.join("\n") },
-    compactView: {
-      segments,
-      flexIndices: [5],
-      extraText: compactLines.length > 0 ? compactLines.join("\n") : undefined,
-    },
-  });
+  );
 }
 
 export function renderListBlocked(
@@ -206,64 +435,16 @@ export function renderListBlocked(
   path: string,
   reason: string,
   compact: boolean,
-): ToolOutputComponent {
-  const { palette, text } = theme;
-  const errorColor = (s: string) => palette.error(s);
-
-  const expandedParts: string[] = [errorColor(text.bold(`list ${path}`))];
-  const msg = reason.trim();
-  if (msg) {
-    expandedParts.push("", errorColor(msg));
-  }
-
-  const pathInline = inlineText(path);
-  const whyInline = inlineText(reason);
-
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: errorColor },
-    { text: " ", style: (s) => s },
-    { text: "list", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: pathInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: `(blocked: ${whyInline})`, style: palette.muted },
-  ];
-
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: errorColor, text: expandedParts.join("\n") },
-    compactView: { segments, flexIndices: [5, 7] },
-  });
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(buildListBlockedView(theme, path, reason), compact);
 }
 
 export function renderGrepRunning(
   theme: Theme,
   pattern: string,
   compact: boolean,
-): ToolOutputComponent {
-  const { palette, text } = theme;
-  const runningColor = (s: string) => palette.taskRunning(s);
-
-  const header = runningColor(text.bold(`grep ${pattern}`));
-
-  const patternInline = inlineText(pattern);
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: runningColor },
-    { text: " ", style: (s) => s },
-    { text: "grep", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: patternInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: "(running)", style: palette.muted },
-  ];
-
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: runningColor, text: header },
-    compactView: { segments, flexIndices: [5] },
-  });
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(buildGrepRunningView(theme, pattern), compact);
 }
 
 export function renderGrepFinished(
@@ -275,91 +456,11 @@ export function renderGrepFinished(
   stderr: string,
   captureTruncated: boolean,
   compact: boolean,
-): ToolOutputComponent {
-  const { palette, text } = theme;
-  const grepColor = (s: string) => palette.toolFileRan(s);
-
-  const stdoutPreview = truncateForUi(stdout, {
-    maxLines: GREP_UI_MAX_LINES,
-    maxTokens: GREP_UI_MAX_TOKENS,
-    strategy: "middle",
-  });
-
-  const stderrPreview = truncateForUi(stderr, {
-    maxLines: GREP_UI_MAX_LINES,
-    maxTokens: GREP_UI_MAX_TOKENS,
-    strategy: "middle",
-  });
-
-  const expandedParts: string[] = [];
-  expandedParts.push(grepColor(text.bold(`grep ${pattern}`)));
-
-  const out = stdoutPreview.content.trimEnd();
-  if (out) {
-    expandedParts.push("", palette.filePreview(out));
-  }
-
-  const err = stderrPreview.content.trimEnd();
-  if (err) {
-    expandedParts.push("", palette.error("stderr:"), palette.error(err));
-  }
-
-  if (stdoutPreview.truncated || stderrPreview.truncated || captureTruncated) {
-    const icon = palette.warn("◆");
-    const msg = palette.dim(
-      `truncated: ${stdoutPreview.outputLines} of ${stdoutPreview.totalLines} lines`,
-    );
-    expandedParts.push("", `${icon} ${msg}`);
-  }
-
-  if (exitCode !== null && exitCode !== 0 && exitCode !== 1) {
-    expandedParts.push("", palette.warn(`(exit ${exitCode})`));
-  }
-
-  const patternInline = inlineText(pattern);
-
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: grepColor },
-    { text: " ", style: (s) => s },
-    { text: "grep", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: patternInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    {
-      text: status === "success" ? "(ok)" : "(error)",
-      style: status === "success" ? palette.muted : palette.error,
-    },
-  ];
-
-  const extra: string[] = [];
-  if (err) {
-    const errLines = err.split("\n").slice(0, 2);
-    for (const l of errLines) {
-      extra.push(palette.error(`    ${l}`));
-    }
-    if (stderrPreview.truncated) {
-      extra.push(palette.dim("    (stderr truncated)"));
-    }
-  } else if (out) {
-    const outLines = out.split("\n").slice(0, 2);
-    for (const l of outLines) {
-      extra.push(palette.muted(`    ${l}`));
-    }
-    if (stdoutPreview.truncated) {
-      extra.push(palette.dim("    (output truncated)"));
-    }
-  }
-
-  return new ToolOutputComponent({
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(
+    buildGrepFinishedView(theme, pattern, status, exitCode, stdout, stderr, captureTruncated),
     compact,
-    expanded: { borderColor: grepColor, text: expandedParts.join("\n") },
-    compactView: {
-      segments,
-      flexIndices: [5],
-      extraText: extra.length > 0 ? extra.join("\n") : undefined,
-    },
-  });
+  );
 }
 
 export function renderGrepBlocked(
@@ -367,33 +468,6 @@ export function renderGrepBlocked(
   pattern: string,
   reason: string,
   compact: boolean,
-): ToolOutputComponent {
-  const { palette, text } = theme;
-  const errorColor = (s: string) => palette.error(s);
-
-  const expandedParts: string[] = [errorColor(text.bold(`grep ${pattern}`))];
-  const msg = reason.trim();
-  if (msg) {
-    expandedParts.push("", errorColor(msg));
-  }
-
-  const patternInline = inlineText(pattern);
-  const whyInline = inlineText(reason);
-
-  const segments: OneLineSegment[] = [
-    { text: " ", style: (s) => s },
-    { text: "▪", style: errorColor },
-    { text: " ", style: (s) => s },
-    { text: "grep", style: palette.muted },
-    { text: " ", style: (s) => s },
-    { text: patternInline, style: palette.accent },
-    { text: " ", style: (s) => s },
-    { text: `(blocked: ${whyInline})`, style: palette.muted },
-  ];
-
-  return new ToolOutputComponent({
-    compact,
-    expanded: { borderColor: errorColor, text: expandedParts.join("\n") },
-    compactView: { segments, flexIndices: [5, 7] },
-  });
+): ReturnType<typeof renderToolOutput> {
+  return renderToolOutput(buildGrepBlockedView(theme, pattern, reason), compact);
 }

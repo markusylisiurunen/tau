@@ -79,8 +79,9 @@ test("QueuedMessagesComponent renders numbered, italicized previews", () => {
   const theme = createTagTheme();
   const component = new QueuedMessagesComponent(theme, ["first line\nsecond", "third"]);
   const lines = renderLines(component, 80);
-  expect(lines[0]).toBe("<dim>1. </dim><italic><muted>first line</muted></italic>");
-  expect(lines[1]).toBe("<dim>2. </dim><italic><muted>third</muted></italic>");
+  expect(lines[0]).toBe("<dim> queued (2) — alt+up to edit next</dim>");
+  expect(lines[1]).toBe("<dim>  1› </dim><italic><muted>first line</muted></italic>");
+  expect(lines[2]).toBe("<dim>  2› </dim><italic><muted>third</muted></italic>");
 });
 
 test("FooterComponent renders risk label with styling", () => {

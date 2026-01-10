@@ -402,8 +402,26 @@ export class ChatApp {
   }
 
   private addSystemMessage(text: string, kind: SystemMessageKind): void {
-    this.chatContainer.addMessage({ type: "system", text, kind });
-    this.ui.requestRender();
+    const toastText = this.formatToastText(text);
+    if (kind !== "muted" && toastText.length > 0) {
+      this.footer.showToast(toastText, kind, 3000);
+    }
+
+    if (this.shouldPersistSystemMessage(text, kind)) {
+      this.chatContainer.addMessage({ type: "system", text, kind });
+      this.ui.requestRender();
+    }
+  }
+
+  private formatToastText(text: string): string {
+    const firstLine = text.split(/\r?\n/, 1)[0] ?? "";
+    return firstLine.replace(/\s+/g, " ").trim();
+  }
+
+  private shouldPersistSystemMessage(text: string, kind: SystemMessageKind): boolean {
+    if (kind === "muted" || kind === "error") return true;
+    if (text.includes("\n")) return true;
+    return text.length > 140;
   }
 
   private addUserMessage(text: string, opts?: { isMemoryMode?: boolean }): void {

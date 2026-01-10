@@ -46,6 +46,10 @@ export interface Palette {
   noticeSuccess: (text: string) => string;
   noticeWarn: (text: string) => string;
   noticeError: (text: string) => string;
+  noticeSuccessBg: (text: string) => string;
+  noticeWarnBg: (text: string) => string;
+  noticeErrorBg: (text: string) => string;
+  noticeMutedBg: (text: string) => string;
 
   // User message
   userBg: (text: string) => string;
@@ -135,6 +139,12 @@ function createPalette(mode: ThemeMode): Palette {
       noticeSuccess: chalk.hex(hslToHex(CODE_HUE, 64, 74)),
       noticeWarn: chalk.hex(hslToHex(WARN_HUE, 76, 68)),
       noticeError: chalk.hex(hslToHex(ERROR_HUE, 76, 68)),
+      noticeSuccessBg: chalk
+        .bgHex(hslToHex(CODE_HUE, 52, 28))
+        .hex(hslToHex(TEXT_HUE, 10, 92)),
+      noticeWarnBg: chalk.bgHex(hslToHex(WARN_HUE, 70, 28)).hex(hslToHex(TEXT_HUE, 10, 92)),
+      noticeErrorBg: chalk.bgHex(hslToHex(ERROR_HUE, 70, 28)).hex(hslToHex(TEXT_HUE, 10, 92)),
+      noticeMutedBg: chalk.bgHex(hslToHex(TEXT_HUE, 6, 24)).hex(hslToHex(TEXT_HUE, 10, 92)),
 
       // User message
       userBg: chalk.bgHex(hslToHex(TEXT_HUE, 6, 12)),
@@ -182,6 +192,10 @@ function createPalette(mode: ThemeMode): Palette {
     noticeSuccess: wrap("noticeSuccess"),
     noticeWarn: wrap("noticeWarn"),
     noticeError: wrap("noticeError"),
+    noticeSuccessBg: wrap("noticeSuccessBg"),
+    noticeWarnBg: wrap("noticeWarnBg"),
+    noticeErrorBg: wrap("noticeErrorBg"),
+    noticeMutedBg: wrap("noticeMutedBg"),
 
     // User message
     userBg: wrap("userBg"),

@@ -402,15 +402,21 @@ export class ChatApp {
   }
 
   private addSystemMessage(text: string, kind: SystemMessageKind): void {
-    const toastText = this.formatToastText(text);
+    const cleanedText = this.normalizeSystemMessageText(text, kind);
+    const toastText = this.formatToastText(cleanedText);
     if (kind !== "muted" && toastText.length > 0) {
       this.footer.showToast(toastText, kind, 3000);
     }
 
-    if (this.shouldPersistSystemMessage(text, kind)) {
-      this.chatContainer.addMessage({ type: "system", text, kind });
+    if (this.shouldPersistSystemMessage(cleanedText, kind)) {
+      this.chatContainer.addMessage({ type: "system", text: cleanedText, kind });
       this.ui.requestRender();
     }
+  }
+
+  private normalizeSystemMessageText(text: string, kind: SystemMessageKind): string {
+    if (kind !== "error") return text;
+    return text.replace(/^\s*error:\s*/i, "");
   }
 
   private formatToastText(text: string): string {
@@ -422,6 +428,11 @@ export class ChatApp {
     if (kind === "muted" || kind === "error") return true;
     if (text.includes("\n")) return true;
     return text.length > 140;
+  }
+
+  private formatRiskLevelNotice(level: RiskLevel): string {
+    const details = getRiskLevelDescription(level);
+    return details ? `risk level ${level} (${details})` : `risk level ${level}`;
   }
 
   private addUserMessage(text: string, opts?: { isMemoryMode?: boolean }): void {
@@ -554,8 +565,7 @@ export class ChatApp {
       }
     }
 
-    const description = getRiskLevelDescription(next);
-    this.addSystemMessage(`risk level: ${description} (ctrl+r to cycle)`, "success");
+    this.addSystemMessage(this.formatRiskLevelNotice(next), "success");
     this.ui.requestRender();
   }
 
@@ -589,7 +599,7 @@ export class ChatApp {
     }
 
     const label = this.currentPersona.label || this.currentPersona.id;
-    this.addSystemMessage(`switched to ${label} (ctrl+p to cycle)`, "success");
+    this.addSystemMessage(`switched to ${label}`, "success");
     this.ui.requestRender();
   }
 
@@ -634,9 +644,7 @@ export class ChatApp {
   private toggleThinkingVisibility(): void {
     this.showThinking = !this.showThinking;
     this.chatContainer.setThinkingVisibility(this.showThinking);
-    const message = this.showThinking
-      ? "thoughts visible (ctrl+t to hide)"
-      : "thoughts hidden (ctrl+t to show)";
+    const message = this.showThinking ? "thoughts visible" : "thoughts hidden";
     this.addSystemMessage(message, "success");
     this.ui.requestRender();
   }
@@ -644,9 +652,7 @@ export class ChatApp {
   private toggleCompactToolUi(): void {
     this.compactToolUi = !this.compactToolUi;
     this.chatContainer.setCompactToolUi(this.compactToolUi);
-    const message = this.compactToolUi
-      ? "compact tool UI enabled (ctrl+o to disable)"
-      : "compact tool UI disabled (ctrl+o to enable)";
+    const message = this.compactToolUi ? "compact tool UI enabled" : "compact tool UI disabled";
     this.addSystemMessage(message, "success");
     this.ui.requestRender();
   }
@@ -1200,8 +1206,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       }
     }
 
-    const details = getRiskLevelDescription(level);
-    this.addSystemMessage(`risk level set to '${level}': ${details}`, "success");
+    this.addSystemMessage(this.formatRiskLevelNotice(level), "success");
   }
 
   private switchPersona(id: string): void {
@@ -1695,7 +1700,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         }
       }
     } catch (err) {
-      this.addSystemMessage(`error: ${(err as Error).message}`, "error");
+      const message = (err as Error).message || "request failed.";
+      this.addSystemMessage(message, "error");
     } finally {
       const wasAborted = this.currentTurnAbort?.signal.aborted ?? false;
       const reason = wasAborted ? "aborted" : "interrupted";
@@ -1773,7 +1779,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
       this.ui.requestRender();
     } catch (err) {
-      this.addSystemMessage(`bash error: ${(err as Error).message}`, "error");
+      const message = (err as Error).message || "bash failed.";
+      this.addSystemMessage(`bash failed: ${message}`, "error");
     } finally {
       this.isStreaming = false;
       this.ui.requestRender();

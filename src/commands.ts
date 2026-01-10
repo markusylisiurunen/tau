@@ -200,10 +200,10 @@ export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string 
 export function getRiskLevelDescription(level: RiskLevel): string {
   switch (level) {
     case "restricted":
-      return "restricted tools only (read/grep/list)";
+      return "read/grep/list tools only";
     case "read-only":
-      return "read-only tools allowed";
+      return "read-only tools";
     case "read-write":
-      return "all tools allowed";
+      return "all tools";
   }
 }

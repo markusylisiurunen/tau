@@ -22,14 +22,14 @@ test("SessionDividerComponent renders a muted divider line", () => {
   const theme = createTagTheme();
   const component = new SessionDividerComponent(theme, "new session");
   const lines = renderLines(component, 20);
-  expect(lines[0]).toBe("<muted>─── new session ────</muted>");
+  expect(lines[0]).toBe("<muted>── new session ─────</muted>");
 });
 
 test("SessionSummaryComponent renders borders and summary text", () => {
   const theme = createTagTheme();
   const component = new SessionSummaryComponent(theme, "summary line");
   const text = renderText(component, 200);
-  expect(text).toContain("<accent><bold>◆ context from previous session</bold></accent>");
+  expect(text).toContain("<accent>context from previous session</accent>");
   expect(text).toContain("<italic><muted>summary line</muted></italic>");
 });
 

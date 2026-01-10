@@ -54,7 +54,7 @@ test("renderWriteSuccess (compact) shows preview lines", () => {
   const text = renderText(component, 80);
   expect(text).toContain("<diffAdded>✓</diffAdded>");
   expect(text).toContain("<accent>notes.txt</accent>");
-  expect(text).toContain("<muted>    first</muted>");
+  expect(text).toContain("<dim>    first</dim>");
 });
 
 test("renderEditSuccess (expanded) highlights diffs", () => {
@@ -77,7 +77,7 @@ test("renderReadSuccess (compact) shows file preview", () => {
     true,
   );
   const text = renderText(component, 80);
-  expect(text).toContain("<muted>    alpha</muted>");
+  expect(text).toContain("<dim>    alpha</dim>");
   expect(text).toContain("<accent>file.txt</accent>");
 });
 
@@ -95,7 +95,7 @@ test("renderListSuccess (compact) shows entries", () => {
   );
   const text = renderText(component, 80);
   expect(text).toContain("<accent>src</accent>");
-  expect(text).toContain("<muted>    a.ts</muted>");
+  expect(text).toContain("<dim>    a.ts</dim>");
 });
 
 test("renderGrepFinished (compact) surfaces error status", () => {

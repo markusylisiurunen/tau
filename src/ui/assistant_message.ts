@@ -93,15 +93,19 @@ export class AssistantMessageComponent extends Container {
       }
     }
 
-    if (message.stopReason === "aborted") {
-      this.contentContainer.addChild(new Spacer(1));
-      this.contentContainer.addChild(new Text(palette.warn("aborted"), 1, 0));
+    const appendStopReason = (line: string, style: (text: string) => string): void => {
+      if (this._hasVisibleText) {
+        this.contentContainer.addChild(new Spacer(1));
+      }
+      this.contentContainer.addChild(new Text(style(line), 1, 0));
       this._hasVisibleText = true;
+    };
+
+    if (message.stopReason === "aborted") {
+      appendStopReason("aborted", palette.warn);
     } else if (message.stopReason === "error") {
       const errorMsg = message.errorMessage || "unknown error";
-      this.contentContainer.addChild(new Spacer(1));
-      this.contentContainer.addChild(new Text(palette.error(`error: ${errorMsg}`), 1, 0));
-      this._hasVisibleText = true;
+      appendStopReason(`error: ${errorMsg}`, palette.error);
     }
   }
 }

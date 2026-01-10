@@ -177,6 +177,7 @@ the compact commands are useful when conversations get long. they compress every
 | `ctrl+t`    | toggle thinking visibility  |
 | `ctrl+o`    | toggle compact tool display |
 | `ctrl+f`    | expand @file mentions       |
+| `ctrl+s`    | stash input to clipboard    |
 | `alt+up`    | pop queued message          |
 | `esc`       | interrupt generation        |
 | `ctrl+c`    | exit                        |

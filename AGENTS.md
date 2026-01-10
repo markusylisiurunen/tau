@@ -136,7 +136,7 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 - `!<cmd>` - Direct bash execution (bypasses model)
 - `#<request>` - Memory mode for updating AGENTS.md
 
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @files), `Alt+Up` (pop queued message), `Escape` (interrupt), `Ctrl+C` (exit)
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @files), `Ctrl+S` (stash input to clipboard), `Alt+Up` (pop queued message), `Escape` (interrupt), `Ctrl+C` (exit)
 
 ## Development
 

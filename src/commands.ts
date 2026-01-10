@@ -180,6 +180,7 @@ export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string 
     ["ctrl+t", "toggle thoughts visibility"],
     ["ctrl+o", "toggle compact tool UI"],
     ["ctrl+f", "expand @file mentions"],
+    ["ctrl+s", "stash input to clipboard"],
     ["esc", "interrupt assistant"],
   ];
 

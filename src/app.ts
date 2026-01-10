@@ -265,6 +265,7 @@ export class ChatApp {
     this.editor.onShiftTab = () => this.cycleReasoningLevel();
     this.editor.onCtrlR = () => this.cycleRiskLevel();
     this.editor.onCtrlP = () => this.cyclePersonality();
+    this.editor.onCtrlS = () => void this.stashEditorToClipboard();
     this.editor.onEscape = () => this.interruptAssistantTurn();
     this.editor.onCtrlF = () => {
       this.expandFileMentions().catch((err) => {
@@ -415,8 +416,14 @@ export class ChatApp {
   }
 
   private normalizeSystemMessageText(text: string, kind: SystemMessageKind): string {
-    if (kind !== "error") return text;
-    return text.replace(/^\s*error:\s*/i, "");
+    const cleaned = kind !== "error" ? text : text.replace(/^\s*error:\s*/i, "");
+    return this.stripTrailingPunctuation(cleaned);
+  }
+
+  private stripTrailingPunctuation(text: string): string {
+    const trimmed = text.replace(/\s+$/, "");
+    if (!trimmed) return trimmed;
+    return trimmed.replace(/[.!?…,:;]+$/, "");
   }
 
   private formatToastText(text: string): string {
@@ -934,6 +941,22 @@ export class ChatApp {
     try {
       await copyTextToClipboard(code);
       this.addSystemMessage("copied all code blocks to clipboard.", "success");
+    } catch (err) {
+      this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, "error");
+    }
+  }
+
+  private async stashEditorToClipboard(): Promise<void> {
+    const text = this.editor.getText();
+    if (!text.trim()) {
+      this.addSystemMessage("no input to stash yet", "warn");
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(text);
+      this.editor.setText("");
+      this.addSystemMessage("stashed input to clipboard", "success");
     } catch (err) {
       this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, "error");
     }

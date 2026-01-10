@@ -18,6 +18,7 @@ export class CustomEditor extends Editor {
   public onCtrlF?: () => void;
   public onCtrlR?: () => void;
   public onCtrlP?: () => void;
+  public onCtrlS?: () => void;
   public onAltUp?: () => void;
   public beforeSubmit?: (text: string) => boolean;
 
@@ -126,6 +127,11 @@ export class CustomEditor extends Editor {
 
     if (matchesKey(data, Key.ctrl("p")) && this.onCtrlP && !this.isShowingAutocomplete()) {
       this.onCtrlP();
+      return;
+    }
+
+    if (matchesKey(data, Key.ctrl("s")) && this.onCtrlS && !this.isShowingAutocomplete()) {
+      this.onCtrlS();
       return;
     }
 

@@ -6,6 +6,11 @@ export function getFileAutocompleteToken(beforeCursor: string): string | null {
   return fileMatch?.[1] ?? null;
 }
 
+export function getSkillAutocompleteToken(beforeCursor: string): string | null {
+  const skillMatch = beforeCursor.match(/(?:^|[\t ])(\$[^\t ]*)$/);
+  return skillMatch?.[1] ?? null;
+}
+
 export interface PersonaSuggestion {
   id: string;
   label?: string;
@@ -46,17 +51,20 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
   private getPrompts: () => PromptSuggestion[];
   private getBashCommands: () => BashSuggestion[];
   private getFiles: () => string[];
+  private getSkills: () => string[];
 
   constructor(
     personas: () => PersonaSuggestion[],
     prompts: () => PromptSuggestion[] = () => [],
     bashCommands: () => BashSuggestion[] = () => [],
     files: () => string[] = () => [],
+    skills: () => string[] = () => [],
   ) {
     this.getPersonas = personas;
     this.getPrompts = prompts;
     this.getBashCommands = bashCommands;
     this.getFiles = files;
+    this.getSkills = skills;
   }
 
   getSuggestions(
@@ -66,6 +74,9 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
   ): { items: AutocompleteItem[]; prefix: string } | null {
     const line = lines[cursorLine] ?? "";
     const beforeCursor = line.slice(0, cursorCol);
+
+    const skillSuggestions = this.getSkillSuggestions(beforeCursor);
+    if (skillSuggestions) return skillSuggestions;
 
     const fileSuggestions = this.getFileSuggestions(beforeCursor);
     if (fileSuggestions) return fileSuggestions;
@@ -93,9 +104,13 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
 
     let insert = this.buildInsertText(item, prefix, beforePrefix);
 
-    if (prefix.startsWith("@") && afterCursor.length > 0 && !/^\s/.test(afterCursor)) {
+    if (
+      (prefix.startsWith("@") || prefix.startsWith("$")) &&
+      afterCursor.length > 0 &&
+      !/^\s/.test(afterCursor)
+    ) {
       insert += " ";
-    } else if (prefix.startsWith("@") && afterCursor.length === 0) {
+    } else if ((prefix.startsWith("@") || prefix.startsWith("$")) && afterCursor.length === 0) {
       insert += " ";
     }
 
@@ -118,6 +133,20 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
 
     const query = token.slice(1);
     const filtered = fuzzyFilter(this.getFiles(), query, (p) => p);
+    const items = filtered.slice(0, 25).map((p) => ({ value: p, label: p }));
+
+    if (items.length === 0) return null;
+    return { items, prefix: token };
+  }
+
+  private getSkillSuggestions(
+    beforeCursor: string,
+  ): { items: AutocompleteItem[]; prefix: string } | null {
+    const token = getSkillAutocompleteToken(beforeCursor);
+    if (!token) return null;
+
+    const query = token.slice(1);
+    const filtered = fuzzyFilter(this.getSkills(), query, (p) => p);
     const items = filtered.slice(0, 25).map((p) => ({ value: p, label: p }));
 
     if (items.length === 0) return null;
@@ -240,6 +269,10 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
   private buildInsertText(item: AutocompleteItem, prefix: string, beforePrefix: string): string {
     if (prefix.startsWith("@")) {
       return `@${item.value}`;
+    }
+
+    if (prefix.startsWith("$")) {
+      return `$${item.value}`;
     }
 
     const lowerBeforePrefix = beforePrefix.toLowerCase();

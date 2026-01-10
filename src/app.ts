@@ -156,6 +156,7 @@ export class ChatApp {
   private pendingRiskLevelChange?: { from: RiskLevel; to: RiskLevel };
   private previousSessionSummary?: string;
   private expandedFilesInCurrentPrompt: Set<string> = new Set();
+  private expandedSkillsInCurrentPrompt: Set<string> = new Set();
 
   constructor(options: ChatAppOptions) {
     this.personas = options.personas;
@@ -269,7 +270,7 @@ export class ChatApp {
     this.editor.onEscape = () => this.interruptAssistantTurn();
     this.editor.onCtrlF = () => {
       this.expandFileMentions().catch((err) => {
-        this.addSystemMessage(`file expansion failed: ${(err as Error).message}`, "error");
+        this.addSystemMessage(`mention expansion failed: ${(err as Error).message}`, "error");
       });
     };
 
@@ -311,6 +312,7 @@ export class ChatApp {
             description: b.description,
           })),
         () => this.projectFiles,
+        () => this.skills.map((skill) => skill.name),
       ),
     );
 
@@ -610,17 +612,14 @@ export class ChatApp {
     this.ui.requestRender();
   }
 
-  private getSkillsIndexBlockForPersona(persona: Persona): {
-    skillsBlock?: string;
-    unknown: string[];
-  } {
+  private getEnabledSkillsForPersona(persona: Persona): { skills: Skill[]; unknown: string[] } {
     const enabled = persona.skills;
     if (!enabled) {
-      return { unknown: [] };
+      return { skills: [], unknown: [] };
     }
 
     const skillsByName = new Map<string, Skill>();
-    for (const skill of this.skills) {
+    for (const skill of this.getEnabledSkillsForPersona(this.currentPersona).skills) {
       skillsByName.set(skill.name.toLowerCase(), skill);
     }
 
@@ -643,7 +642,15 @@ export class ChatApp {
       }
     }
 
-    return { skillsBlock: buildSkillsIndexBlock(selected), unknown };
+    return { skills: selected, unknown };
+  }
+
+  private getSkillsIndexBlockForPersona(persona: Persona): {
+    skillsBlock?: string;
+    unknown: string[];
+  } {
+    const { skills, unknown } = this.getEnabledSkillsForPersona(persona);
+    return { skillsBlock: buildSkillsIndexBlock(skills), unknown };
   }
 
   // User Actions ----------------------------------------------------------------------------------
@@ -792,6 +799,7 @@ export class ChatApp {
   ): Promise<void> {
     this.addUserMessage(text, { isMemoryMode: opts?.isMemoryMode });
     this.expandedFilesInCurrentPrompt.clear();
+    this.expandedSkillsInCurrentPrompt.clear();
 
     const systemNotice = this.pendingRiskLevelChange
       ? formatRiskLevelChangeNotice(this.pendingRiskLevelChange)
@@ -810,6 +818,8 @@ export class ChatApp {
     if (!trimmed || this.isStreaming) return;
 
     this.addUserMessage(trimmed);
+    this.expandedFilesInCurrentPrompt.clear();
+    this.expandedSkillsInCurrentPrompt.clear();
     this.engine.addUserText(trimmed);
 
     await this.runAssistantTurn();
@@ -969,6 +979,7 @@ export class ChatApp {
     this.taskEvents.clear();
     this.subagentCostTotal = 0;
     this.expandedFilesInCurrentPrompt.clear();
+    this.expandedSkillsInCurrentPrompt.clear();
     this.chatContainer.addMessage({ type: "session_divider", label: "new session" });
     this.isBashMode = false;
     this.isMemoryMode = false;
@@ -1125,6 +1136,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.taskEvents.clear();
     this.subagentCostTotal = 0;
     this.expandedFilesInCurrentPrompt.clear();
+    this.expandedSkillsInCurrentPrompt.clear();
     this.chatContainer.addMessage({ type: "session_divider", label: "new session" });
     this.chatContainer.addMessage({
       type: "session_summary",
@@ -1811,7 +1823,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
   }
 
-  // File Expansion (ctrl+f) -----------------------------------------------------------------------
+  // Mention Expansion (ctrl+f) --------------------------------------------------------------------
 
   private shellQuote(path: string): string {
     // Wrap in single quotes and escape any single quotes within the path
@@ -1821,7 +1833,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
   private async expandFileMentions(): Promise<void> {
     if (this.isStreaming) {
       this.addSystemMessage(
-        "cannot expand files while streaming. try again after the response.",
+        "cannot expand mentions while streaming. try again after the response.",
         "warn",
       );
       return;
@@ -1829,45 +1841,73 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     const editorText = this.editor.getText();
 
-    // Extract @path tokens
-    const tokenRegex = /@([^\s]+)/g;
-    const tokens: string[] = [];
+    // Extract @path and $skill tokens
+    const tokenRegex = /([@$])([^\s]+)/g;
+    const tokens: Array<{ type: "file" | "skill"; token: string }> = [];
     let match: RegExpExecArray | null = null;
     // biome-ignore lint/suspicious/noAssignInExpressions: regex iteration pattern
     while ((match = tokenRegex.exec(editorText)) !== null) {
-      tokens.push(match[1]!);
+      tokens.push({
+        type: match[1] === "@" ? "file" : "skill",
+        token: match[2]!,
+      });
     }
 
     if (tokens.length === 0) {
       return;
     }
 
-    // Filter to only valid project files and de-duplicate
+    // Filter to only valid project files / skills and de-duplicate
     const projectFilesSet = new Set(this.projectFiles);
-    const filesToExpand: string[] = [];
+    const skillsByName = new Map<string, Skill>();
+    for (const skill of this.skills) {
+      skillsByName.set(skill.name.toLowerCase(), skill);
+    }
 
-    for (const token of tokens) {
+    const expansions: Array<{ type: "file"; path: string } | { type: "skill"; skill: Skill }> = [];
+    const seenFiles = new Set(this.expandedFilesInCurrentPrompt);
+    const seenSkills = new Set(this.expandedSkillsInCurrentPrompt);
+
+    for (const entry of tokens) {
       // Strip trailing punctuation to handle cases like "@src/app.ts," or "(see @README.md)"
-      const cleanToken = token.replace(/[.,;:)}\]]+$/, "");
-      if (projectFilesSet.has(cleanToken) && !this.expandedFilesInCurrentPrompt.has(cleanToken)) {
-        filesToExpand.push(cleanToken);
+      const cleanToken = entry.token.replace(/[.,;:)}\]]+$/, "");
+      if (entry.type === "file") {
+        if (projectFilesSet.has(cleanToken) && !seenFiles.has(cleanToken)) {
+          expansions.push({ type: "file", path: cleanToken });
+          seenFiles.add(cleanToken);
+        }
+      } else {
+        const key = cleanToken.toLowerCase();
+        const skill = skillsByName.get(key);
+        if (skill && !seenSkills.has(key)) {
+          expansions.push({ type: "skill", skill });
+          seenSkills.add(key);
+        }
       }
     }
 
-    if (filesToExpand.length === 0) {
+    if (expansions.length === 0) {
       return;
     }
 
-    // Run bash commands sequentially for each file
-    for (const filePath of filesToExpand) {
-      const quotedPath = this.shellQuote(filePath);
-      // Format: blank line before header, header, content, blank line after
-      // Ensure trailing newline so multiple files don't run together
-      // Use -- to prevent cat from interpreting filenames starting with - as options
-      const command = `printf '\\n===== %s =====\\n' ${quotedPath}; cat -- ${quotedPath}; printf '\\n'`;
-      await this.runBashCommand(command);
-      // Track this file as expanded in the current prompt
-      this.expandedFilesInCurrentPrompt.add(filePath);
+    // Run bash commands sequentially for each expansion
+    for (const expansion of expansions) {
+      if (expansion.type === "file") {
+        const quotedPath = this.shellQuote(expansion.path);
+        // Format: blank line before header, header, content, blank line after
+        // Ensure trailing newline so multiple files don't run together
+        // Use -- to prevent cat from interpreting filenames starting with - as options
+        const command = `printf '\\n===== %s =====\\n' ${quotedPath}; cat -- ${quotedPath}; printf '\\n'`;
+        await this.runBashCommand(command);
+        // Track this file as expanded in the current prompt
+        this.expandedFilesInCurrentPrompt.add(expansion.path);
+      } else {
+        const label = this.shellQuote(`skill: ${expansion.skill.name}`);
+        const quotedPath = this.shellQuote(expansion.skill.path);
+        const command = `printf '\\n===== %s =====\\n' ${label}; cat -- ${quotedPath}; printf '\\n'`;
+        await this.runBashCommand(command);
+        this.expandedSkillsInCurrentPrompt.add(expansion.skill.name.toLowerCase());
+      }
     }
   }
 }

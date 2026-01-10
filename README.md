@@ -126,6 +126,8 @@ toggle visibility of the model's thinking with `ctrl+t`.
 
 reference files in your message by typing `@` followed by the filename. autocomplete helps you find the right path. press `ctrl+f` to expand file contents into the conversation, letting the model see the actual code.
 
+reference skills by typing `$` followed by the skill name (for example, `$skill-name`). autocomplete will suggest available skills. press `ctrl+f` to expand the skill's `SKILL.md` into the conversation.
+
 you can also pipe content directly:
 
 ```sh
@@ -176,7 +178,7 @@ the compact commands are useful when conversations get long. they compress every
 | `ctrl+p`    | cycle personality           |
 | `ctrl+t`    | toggle thinking visibility  |
 | `ctrl+o`    | toggle compact tool display |
-| `ctrl+f`    | expand @file mentions       |
+| `ctrl+f`    | expand @file and $skill mentions |
 | `ctrl+s`    | stash input to clipboard    |
 | `alt+up`    | pop queued message          |
 | `esc`       | interrupt generation        |

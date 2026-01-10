@@ -50,7 +50,7 @@ Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 
 - **Bash (assistant)**: 4,096 lines / 25,000 tokens for stdout and stderr separately.
-- **Bash (user/!/@)**: 16,384 lines / 100,000 tokens for stdout; 4,096 lines / 25,000 tokens for stderr.
+- **Bash (user/!/@/$)**: 16,384 lines / 100,000 tokens for stdout; 4,096 lines / 25,000 tokens for stderr.
 - **web_fetch**: 8,192 lines / 50,000 tokens.
 - **web_search**: 4,096 lines / 25,000 tokens.
 
@@ -136,7 +136,7 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 - `!<cmd>` - Direct bash execution (bypasses model)
 - `#<request>` - Memory mode for updating AGENTS.md
 
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @files), `Ctrl+S` (stash input to clipboard), `Alt+Up` (pop queued message), `Escape` (interrupt), `Ctrl+C` (exit)
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @files and $skills), `Ctrl+S` (stash input to clipboard), `Alt+Up` (pop queued message), `Escape` (interrupt), `Ctrl+C` (exit)
 
 ## Development
 

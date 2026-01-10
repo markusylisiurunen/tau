@@ -22,7 +22,7 @@ test("SessionDividerComponent renders a muted divider line", () => {
   const theme = createTagTheme();
   const component = new SessionDividerComponent(theme, "new session");
   const lines = renderLines(component, 20);
-  expect(lines[1]).toBe("<muted>─── new session ────</muted>");
+  expect(lines[0]).toBe("<muted>─── new session ────</muted>");
 });
 
 test("SessionSummaryComponent renders borders and summary text", () => {

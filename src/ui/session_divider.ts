@@ -11,7 +11,7 @@ export class SessionDividerComponent implements Component {
 
   render(width: number) {
     const labelWithSpace = ` ${this.label} `;
-    const leftDashes = "───";
+    const leftDashes = "──";
     const remainingWidth = Math.max(1, width - labelWithSpace.length - leftDashes.length);
     const rightDashes = "─".repeat(remainingWidth);
     const dividerText = `${leftDashes}${labelWithSpace}${rightDashes}`;

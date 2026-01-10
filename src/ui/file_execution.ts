@@ -183,18 +183,17 @@ export function buildWriteSuccessView(
     labelStyle: palette.muted,
     accent: pathInline,
     accentStyle: palette.accent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      { text: `(${lines} lines)`, style: palette.muted },
-    ],
   });
 
   const compactLines = buildCompactPreviewLines(previewLines, {
     totalLines: lines,
     maxLines: 16,
-    lineStyle: palette.muted,
+    lineStyle: palette.dim,
     moreStyle: palette.dim,
   });
+  const infoText = `${lines} lines · ${formatTokenEstimate(bytes)} · ${bytes} bytes`;
+  const summaryLine = `    ${palette.muted(`(${infoText})`)}`;
+  const compactText = [compactLines, summaryLine].filter(Boolean).join("\n");
 
   return {
     borderColor: writeColor,
@@ -204,7 +203,7 @@ export function buildWriteSuccessView(
     },
     compact: {
       header,
-      extraText: compactLines,
+      extraText: compactText,
     },
   };
 }
@@ -294,10 +293,6 @@ export function buildEditSuccessView(
     labelStyle: palette.muted,
     accent: pathInline,
     accentStyle: palette.accent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      { text: `(+${added}, -${removed})`, style: palette.muted },
-    ],
   });
 
   const compactLines: string[] = [];
@@ -317,6 +312,8 @@ export function buildEditSuccessView(
     );
     compactLines.push(`    ${icon} ${msg}`);
   }
+  const summaryLine = `    ${palette.muted(`(+${added}, -${removed})`)}`;
+  compactLines.push(summaryLine);
 
   return {
     borderColor: editColor,

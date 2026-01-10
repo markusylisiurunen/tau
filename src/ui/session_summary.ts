@@ -1,28 +1,32 @@
-import { Container, Markdown, Text } from "@mariozechner/pi-tui";
-import { DynamicBorder } from "./components/dynamic_border.js";
+import { type Component, Markdown } from "@mariozechner/pi-tui";
+import { HeaderBox } from "./components/header_box.js";
 import type { Theme } from "./theme.js";
 
-export class SessionSummaryComponent extends Container {
+export class SessionSummaryComponent implements Component {
+  private box: HeaderBox;
+
   constructor(theme: Theme, summary: string) {
-    super();
-    const { palette, text } = theme;
-    const accentColor = (s: string) => palette.accent(s);
+    const { palette } = theme;
+    const borderColor = (s: string) => palette.accent(s);
+    const headerText = "context from previous session";
+    const content = new Markdown(summary, 0, 0, theme.markdownTheme, {
+      color: (t: string) => palette.muted(t),
+      italic: true,
+    });
 
-    this.addChild(new DynamicBorder(accentColor));
+    this.box = new HeaderBox(content, {
+      borderColor,
+      headerLeft: headerText,
+      headerLeftStyle: borderColor,
+      paddingX: 1,
+    });
+  }
 
-    const content = new Container();
-    this.addChild(content);
+  invalidate() {
+    this.box.invalidate();
+  }
 
-    const headerText = text.bold("◆ context from previous session");
-    content.addChild(new Text(accentColor(headerText), 1, 0));
-
-    content.addChild(
-      new Markdown(summary, 1, 1, theme.markdownTheme, {
-        color: (t: string) => palette.muted(t),
-        italic: true,
-      }),
-    );
-
-    this.addChild(new DynamicBorder(accentColor));
+  render(width: number): string[] {
+    return this.box.render(width);
   }
 }

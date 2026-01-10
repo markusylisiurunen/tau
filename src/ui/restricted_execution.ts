@@ -78,18 +78,17 @@ export function buildReadSuccessView(
     labelStyle: palette.muted,
     accent: pathInline,
     accentStyle: palette.accent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      { text: `(${totalLinesForSummary} lines)`, style: palette.muted },
-    ],
   });
 
   const compactLines = buildCompactPreviewLines(previewLines, {
     totalLines: totalLinesForSummary,
     maxLines: 16,
-    lineStyle: palette.muted,
+    lineStyle: palette.dim,
     moreStyle: palette.dim,
   });
+  const infoText = `${totalLinesForSummary} lines · ${formatRange(startLine, endLine)}`;
+  const summaryLine = `    ${palette.muted(`(${infoText})`)}`;
+  const compactText = [compactLines, summaryLine].filter(Boolean).join("\n");
 
   return {
     borderColor: readColor,
@@ -99,7 +98,7 @@ export function buildReadSuccessView(
     },
     compact: {
       header,
-      extraText: compactLines,
+      extraText: compactText,
     },
   };
 }
@@ -172,19 +171,18 @@ export function buildListSuccessView(
     labelStyle: palette.muted,
     accent: pathInline,
     accentStyle: palette.accent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      { text: `(${returned} entries)`, style: palette.muted },
-    ],
   });
 
   const compactLines = buildCompactPreviewLines(entries, {
     totalLines: entries.length,
     maxLines: 16,
     unitLabel: "entries",
-    lineStyle: palette.muted,
+    lineStyle: palette.dim,
     moreStyle: palette.dim,
   });
+  const infoText = `${returned} of ${total} entries · offset ${offset} · limit ${limit}`;
+  const summaryLine = `    ${palette.muted(`(${infoText})`)}`;
+  const compactText = [compactLines, summaryLine].filter(Boolean).join("\n");
 
   return {
     borderColor: listColor,
@@ -194,7 +192,7 @@ export function buildListSuccessView(
     },
     compact: {
       header,
-      extraText: compactLines,
+      extraText: compactText,
     },
   };
 }
@@ -335,13 +333,13 @@ export function buildGrepFinishedView(
         totalLines: stderrPreview.totalLines,
         maxLines: 16,
         lineStyle: palette.error,
-        moreStyle: palette.dim,
+        moreStyle: palette.error,
       })
     : out
       ? buildCompactPreviewLines(stdoutLines, {
           totalLines: stdoutPreview.totalLines,
           maxLines: 16,
-          lineStyle: palette.muted,
+          lineStyle: palette.dim,
           moreStyle: palette.dim,
         })
       : undefined;

@@ -174,20 +174,14 @@ export class CustomEditor extends Editor {
     let metrics = measure();
 
     if (metrics.fixed > innerWidth && left) {
-      const allowed = Math.max(
-        0,
-        innerWidth - (1 + 1 + (right ? visibleWidth(right) + 2 : 0) + 2),
-      );
+      const allowed = Math.max(0, innerWidth - (1 + 1 + (right ? visibleWidth(right) + 2 : 0) + 2));
       left = truncateFromEndByWidth(left, allowed);
       if (visibleWidth(left) === 0) left = "";
       metrics = measure();
     }
 
     if (metrics.fixed > innerWidth && right) {
-      const allowed = Math.max(
-        0,
-        innerWidth - (1 + 1 + (left ? visibleWidth(left) + 2 : 0) + 2),
-      );
+      const allowed = Math.max(0, innerWidth - (1 + 1 + (left ? visibleWidth(left) + 2 : 0) + 2));
       right = truncateFromEndByWidth(right, allowed);
       if (visibleWidth(right) === 0) right = "";
       metrics = measure();

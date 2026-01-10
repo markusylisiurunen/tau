@@ -165,11 +165,11 @@ export function buildBashExecutionView(
   const exitSummary = exitCode === null ? "exit ?" : `exit ${exitCode}`;
   const exitStyle = exitCode !== null && exitCode !== 0 ? palette.error : palette.muted;
   const durationLabel = formatDurationMs(durationMs);
-  const lineLabel = hasOutput
-    ? `${outputLines} line${outputLines === 1 ? "" : "s"}`
-    : "no output";
+  const lineLabel = hasOutput ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "no output";
   const bytesLabel = hasOutput ? formatBytes(outputBytes).toLowerCase() : undefined;
-  const infoParts = bytesLabel ? [durationLabel, lineLabel, bytesLabel] : [durationLabel, lineLabel];
+  const infoParts = bytesLabel
+    ? [durationLabel, lineLabel, bytesLabel]
+    : [durationLabel, lineLabel];
   const infoText = infoParts.join(" · ");
   const details = [
     palette.muted("("),
@@ -185,9 +185,7 @@ export function buildBashExecutionView(
   );
   const outputBlock =
     outputLinesPreview.length > 0
-      ? outputLinesPreview
-          .map((line) => palette.dim(`    ${line}`))
-          .join("\n")
+      ? outputLinesPreview.map((line) => palette.dim(`    ${line}`)).join("\n")
       : undefined;
   const summaryLine = `    ${details}`;
   const compactText = [outputBlock, summaryLine].filter(Boolean).join("\n");

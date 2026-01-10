@@ -59,9 +59,7 @@ export class FooterComponent implements Component {
     const icon = this.iconIntervalId ? palette.accent(iconChar) : palette.dim(iconChar);
     const iconWidth = visibleWidth(iconChar);
 
-    const leftFull = this.status
-      ? `${this.status.contextUsage} · ${this.status.sessionCost}`
-      : "";
+    const leftFull = this.status ? `${this.status.contextUsage} · ${this.status.sessionCost}` : "";
     const rightPrefixRaw = "";
     const { riskText, riskStyled } = this.status
       ? this.formatRiskLabel(this.status.riskLevel)

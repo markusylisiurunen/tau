@@ -10,8 +10,8 @@ import { applyPreviewPolicy, buildCompactPreviewLines } from "./tool_output_prev
 import {
   EDIT_DIFF_MAX_LINES,
   EDIT_DIFF_MAX_TOKENS,
-  WRITE_UI_PREVIEW_LINES,
   truncateForUi,
+  WRITE_UI_PREVIEW_LINES,
 } from "./tool_truncation.js";
 
 interface DiffTruncation {
@@ -261,10 +261,7 @@ export function buildEditSuccessView(
   const editColor = (s: string) => palette.toolFileRan(s);
   const successBullet = (s: string) => palette.diffAdded(s);
 
-  const { diff, truncation: diffTruncation, added, removed } = buildSimpleDiff(
-    oldText,
-    newText,
-  );
+  const { diff, truncation: diffTruncation, added, removed } = buildSimpleDiff(oldText, newText);
   const diffLines = diff ? diff.split("\n") : [];
 
   const sizeDiff = newLength - oldLength;

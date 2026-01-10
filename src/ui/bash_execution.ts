@@ -1,4 +1,5 @@
 import type { BashTruncationInfo } from "../tools/bash.js";
+import { formatTokenEstimate } from "../utils/token.js";
 import { formatBytes } from "../utils/truncate.js";
 import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
@@ -68,6 +69,9 @@ function buildBashExecutionExpandedSections(
 
   const sections: Array<string | undefined> = [];
 
+  const formatSizeSummary = (lines: number, bytes: number): string =>
+    `${lines} lines (${formatTokenEstimate(bytes)} · ${formatBytes(bytes)})`;
+
   const out = truncateLinesForUi(display.content).trimEnd();
   if (out) {
     sections.push(palette.bashOutput(out));
@@ -77,16 +81,16 @@ function buildBashExecutionExpandedSections(
 
   const truncationNotices: string[] = [];
   if (display.truncated || captureTruncated) {
-    const shown = `${display.outputLines} lines (${formatBytes(display.outputBytes)})`;
-    const total = `${display.totalLines} lines (${formatBytes(display.totalBytes)})`;
+    const shown = formatSizeSummary(display.outputLines, display.outputBytes);
+    const total = formatSizeSummary(display.totalLines, display.totalBytes);
     const icon = palette.warn("◆");
     const msg = palette.dim(`truncated: ${shown} of ${total}`);
     truncationNotices.push(`${icon} ${msg}`);
   }
 
   if (model.truncated || captureTruncated) {
-    const shown = `${model.outputLines} lines (${formatBytes(model.outputBytes)})`;
-    const total = `${model.totalLines} lines (${formatBytes(model.totalBytes)})`;
+    const shown = formatSizeSummary(model.outputLines, model.outputBytes);
+    const total = formatSizeSummary(model.totalLines, model.totalBytes);
     const icon = palette.warn("◆");
     const msg = palette.warn(`truncated for model: ${shown} of ${total}`);
     truncationNotices.push(`${icon} ${msg}`);
@@ -167,8 +171,9 @@ export function buildBashExecutionView(
   const durationLabel = formatDurationMs(durationMs);
   const lineLabel = hasOutput ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "no output";
   const bytesLabel = hasOutput ? formatBytes(outputBytes).toLowerCase() : undefined;
+  const tokenLabel = hasOutput ? formatTokenEstimate(outputBytes) : "";
   const infoParts = bytesLabel
-    ? [durationLabel, lineLabel, bytesLabel]
+    ? [durationLabel, lineLabel, tokenLabel, bytesLabel]
     : [durationLabel, lineLabel];
   const infoText = infoParts.join(" · ");
   const details = [

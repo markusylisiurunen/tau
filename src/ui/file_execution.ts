@@ -1,3 +1,4 @@
+import { formatTokenEstimate } from "../utils/token.js";
 import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
 import {
@@ -158,7 +159,9 @@ export function buildWriteSuccessView(
 
   const preview = previewTruncation.content;
   const expandedSections: Array<string | undefined> = [];
-  expandedSections.push(palette.muted(`${bytes} bytes (${lines} lines)`));
+  expandedSections.push(
+    palette.muted(`${lines} lines · ${formatTokenEstimate(bytes)} · ${bytes} bytes`),
+  );
 
   if (preview) {
     expandedSections.push(palette.filePreview(preview));

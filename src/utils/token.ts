@@ -11,3 +11,9 @@ export function tokensToBytes(tokens: number): number {
 export function bytesToTokens(bytes: number): number {
   return Math.floor(bytes / BYTES_PER_TOKEN);
 }
+
+export function formatTokenEstimate(bytes: number): string {
+  const tokens = Math.max(0, bytesToTokens(bytes));
+  const label = tokens === 1 ? "token" : "tokens";
+  return `~${tokens} ${label}`;
+}

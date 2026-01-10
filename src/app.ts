@@ -229,7 +229,7 @@ export class ChatApp {
     this.chatContainer.setCompactToolUi(this.compactToolUi);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
     this.queuedMessages = new QueuedMessagesComponent(this.uiTheme, this.queuedUserMessages);
-    this.editor = new CustomEditor(this.uiTheme.editorTheme);
+    this.editor = new CustomEditor(this.uiTheme);
 
     this.setupUI();
     this.setupEditor();
@@ -362,13 +362,11 @@ export class ChatApp {
 
     const personaName = this.currentPersona.label || this.currentPersona.id;
     this.footer.setStatus({
-      cwd,
       contextUsage,
       sessionCost,
-      personaLabel: personaName,
-      reasoningLabel,
       riskLevel: this.riskLevel,
     });
+    this.updateEditorHeader(cwd, personaName, reasoningLabel);
     this.ui.requestRender();
   }
 
@@ -383,7 +381,24 @@ export class ChatApp {
         this.currentPersona.settings.reasoning,
       );
     }
+    this.updateEditorHeader();
     this.ui.requestRender();
+  }
+
+  private updateEditorHeader(
+    cwd: string = formatCwd(process.cwd()),
+    personaName: string = this.currentPersona.label || this.currentPersona.id,
+    reasoningLabel: string = this.currentPersona.settings.reasoning ?? "none",
+  ): void {
+    if (this.isBashMode) {
+      this.editor.setHeader("bash", "", { leftStyle: this.editor.borderColor });
+      return;
+    }
+    if (this.isMemoryMode) {
+      this.editor.setHeader("memoize", "", { leftStyle: this.editor.borderColor });
+      return;
+    }
+    this.editor.setHeader(cwd, `${personaName} (${reasoningLabel})`);
   }
 
   private addSystemMessage(text: string, kind: SystemMessageKind): void {
@@ -409,7 +424,7 @@ export class ChatApp {
       : this.currentPersona.model.contextWindow;
 
     const { input, read, write, output } = this.getSessionTotals();
-    const stats = `i${formatTokenWindow(input)} r${formatTokenWindow(read)} w${formatTokenWindow(write)} o${formatTokenWindow(output)}`;
+    const stats = `↑${formatTokenWindow(input)} ↓${formatTokenWindow(output)} cache ${formatTokenWindow(read)}/${formatTokenWindow(write)}`;
 
     const promptTokensSent = last
       ? (last.usage?.input ?? 0) + (last.usage?.cacheRead ?? 0) + (last.usage?.cacheWrite ?? 0)
@@ -417,7 +432,7 @@ export class ChatApp {
     const percent = windowTokens > 0 ? (promptTokensSent / windowTokens) * 100 : 0;
     const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;
 
-    return `${stats} ${percentStr}/${formatTokenWindow(windowTokens)}`;
+    return `${stats} · ${percentStr}/${formatTokenWindow(windowTokens)}`;
   }
 
   private getSessionCostString(): string {
@@ -1401,6 +1416,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
                   uiEvent.command,
                   uiEvent.exitCode,
                   uiEvent.truncationInfo,
+                  uiEvent.durationMs,
                 ),
               });
               if (running) {
@@ -1708,12 +1724,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.isStreaming = true;
 
     try {
+      const startedAt = Date.now();
       const {
         stdout,
         stderr,
         exitCode,
         truncated: captureTruncated,
       } = await executeBashTool(command, { cwd: opts?.cwd });
+      const durationMs = Math.max(0, Date.now() - startedAt);
       const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {
         stdout: { maxLines: BASH_USER_MAX_STDOUT_LINES, maxTokens: BASH_USER_MAX_STDOUT_TOKENS },
         stderr: { maxLines: BASH_USER_MAX_STDERR_LINES, maxTokens: BASH_USER_MAX_STDERR_TOKENS },
@@ -1721,7 +1739,16 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
       this.chatContainer.addMessage({
         type: "tool",
-        view: buildBashExecutionView(this.uiTheme, command, exitCode, truncationInfo),
+        view: buildBashExecutionView(
+          this.uiTheme,
+          command,
+          exitCode,
+          truncationInfo,
+          durationMs,
+          "you ran",
+          12,
+          12,
+        ),
       });
 
       this.engine.addUserText(formatBashUserMessageText({ command, truncationInfo }));

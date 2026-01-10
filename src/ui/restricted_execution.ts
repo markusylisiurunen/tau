@@ -37,6 +37,7 @@ export function buildReadSuccessView(
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const readColor = (s: string) => palette.toolFileRan(s);
+  const successBullet = (s: string) => palette.diffAdded(s);
 
   const { truncation: previewTruncation, previewLines } = applyPreviewPolicy(content, {
     maxLines: READ_UI_MAX_LINES,
@@ -71,7 +72,8 @@ export function buildReadSuccessView(
     ? modelTruncation.totalLines
     : previewTruncation.totalLines;
   const header = buildHeaderLine({
-    bulletStyle: readColor,
+    bulletStyle: successBullet,
+    bullet: "✓",
     label: "read",
     labelStyle: palette.muted,
     accent: pathInline,
@@ -84,6 +86,7 @@ export function buildReadSuccessView(
 
   const compactLines = buildCompactPreviewLines(previewLines, {
     totalLines: totalLinesForSummary,
+    maxLines: 16,
     lineStyle: palette.muted,
     moreStyle: palette.dim,
   });
@@ -149,6 +152,7 @@ export function buildListSuccessView(
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const listColor = (s: string) => palette.toolFileRan(s);
+  const successBullet = (s: string) => palette.diffAdded(s);
 
   const expandedSections: Array<string | undefined> = [];
   expandedSections.push(
@@ -162,7 +166,8 @@ export function buildListSuccessView(
   const pathInline = inlineText(path);
 
   const header = buildHeaderLine({
-    bulletStyle: listColor,
+    bulletStyle: successBullet,
+    bullet: "✓",
     label: "listed",
     labelStyle: palette.muted,
     accent: pathInline,
@@ -175,6 +180,7 @@ export function buildListSuccessView(
 
   const compactLines = buildCompactPreviewLines(entries, {
     totalLines: entries.length,
+    maxLines: 16,
     unitLabel: "entries",
     lineStyle: palette.muted,
     moreStyle: palette.dim,
@@ -265,6 +271,8 @@ export function buildGrepFinishedView(
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const grepColor = (s: string) => palette.toolFileRan(s);
+  const successBullet = (s: string) => palette.diffAdded(s);
+  const isSuccess = status === "success";
 
   const { truncation: stdoutPreview, previewLines: stdoutLines } = applyPreviewPolicy(stdout, {
     maxLines: GREP_UI_MAX_LINES,
@@ -307,7 +315,8 @@ export function buildGrepFinishedView(
   const patternInline = inlineText(pattern);
 
   const header = buildHeaderLine({
-    bulletStyle: grepColor,
+    bulletStyle: isSuccess ? successBullet : grepColor,
+    bullet: isSuccess ? "✓" : undefined,
     label: "grep",
     labelStyle: palette.muted,
     accent: patternInline,
@@ -321,24 +330,21 @@ export function buildGrepFinishedView(
     ],
   });
 
-  const extra: string[] = [];
-  if (err) {
-    const errLines = stderrLines.slice(0, 2);
-    for (const l of errLines) {
-      extra.push(palette.error(`    ${l}`));
-    }
-    if (stderrPreview.truncated) {
-      extra.push(palette.dim("    (stderr truncated)"));
-    }
-  } else if (out) {
-    const outLines = stdoutLines.slice(0, 2);
-    for (const l of outLines) {
-      extra.push(palette.muted(`    ${l}`));
-    }
-    if (stdoutPreview.truncated) {
-      extra.push(palette.dim("    (output truncated)"));
-    }
-  }
+  const extraText = err
+    ? buildCompactPreviewLines(stderrLines, {
+        totalLines: stderrPreview.totalLines,
+        maxLines: 16,
+        lineStyle: palette.error,
+        moreStyle: palette.dim,
+      })
+    : out
+      ? buildCompactPreviewLines(stdoutLines, {
+          totalLines: stdoutPreview.totalLines,
+          maxLines: 16,
+          lineStyle: palette.muted,
+          moreStyle: palette.dim,
+        })
+      : undefined;
 
   return {
     borderColor: grepColor,
@@ -348,7 +354,7 @@ export function buildGrepFinishedView(
     },
     compact: {
       header,
-      extraText: extra.length > 0 ? extra.join("\n") : undefined,
+      extraText,
     },
   };
 }

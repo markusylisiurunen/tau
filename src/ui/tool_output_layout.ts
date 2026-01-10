@@ -26,6 +26,7 @@ export interface ToolOutputViewModel {
 
 export interface HeaderSegmentsSpec {
   bulletStyle: (text: string) => string;
+  bullet?: string;
   label: string;
   labelStyle: (text: string) => string;
   accent: string;
@@ -43,9 +44,10 @@ export function buildHeaderSegments(spec: HeaderSegmentsSpec): {
   segments: OneLineSegment[];
   accentIndex: number;
 } {
+  const bullet = spec.bullet ?? "▪";
   const segments: OneLineSegment[] = [
     { text: " ", style: (s) => s },
-    { text: "▪", style: spec.bulletStyle },
+    { text: bullet, style: spec.bulletStyle },
     { text: " ", style: (s) => s },
     { text: spec.label, style: spec.labelStyle },
     { text: " ", style: (s) => s },

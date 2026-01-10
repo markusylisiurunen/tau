@@ -56,9 +56,10 @@ Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The
 
 **UI truncation**:
 
-- **Bash**: 32 lines / 5,000 tokens from the middle.
-- **write**: 16 lines preview from the start.
-- **edit**: 200 lines / 5,000 tokens from the middle.
+- **Bash (compact)**: 4 head + 4 tail lines plus a summary line.
+- **Bash (expanded)**: 32 lines / 5,000 tokens from the middle.
+- **read/list/grep/write (compact)**: 16 lines preview from the start.
+- **edit**: full diff (no UI truncation).
 
 **Subagent-only tools**: the `web` subagent uses `web_search` and `web_fetch` (see `src/tools/web_search.ts`, `src/tools/web_fetch.ts`) via the subagent tool registry in `src/subagents/subagent_engine.ts`.
 

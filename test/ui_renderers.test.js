@@ -34,7 +34,7 @@ test("renderBashExecution (expanded) includes output and exit code", () => {
     },
     captureTruncated: false,
   };
-  const component = renderBashExecution(theme, "echo hi", 1, truncationInfo, false);
+  const component = renderBashExecution(theme, "echo hi", 1, truncationInfo, undefined, false);
   const text = renderText(component, 100);
   expect(text).toContain("<bashRan><bold>$ echo hi</bold></bashRan>");
   expect(text).toContain("<bashOutput>output line</bashOutput>");
@@ -52,7 +52,7 @@ test("renderWriteSuccess (compact) shows preview lines", () => {
     true,
   );
   const text = renderText(component, 80);
-  expect(text).toContain("<toolFileRan>▪</toolFileRan>");
+  expect(text).toContain("<diffAdded>✓</diffAdded>");
   expect(text).toContain("<accent>notes.txt</accent>");
   expect(text).toContain("<muted>    first</muted>");
 });

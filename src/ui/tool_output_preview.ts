@@ -56,7 +56,7 @@ export function buildCompactPreviewLines(
   }
 
   if (remaining > 0) {
-    output.push(moreStyle(`${pad}(${remaining} more ${unitLabel})`));
+    output.push(moreStyle(`${pad}…${remaining} more ${unitLabel}…`));
   }
 
   return output.length > 0 ? output.join("\n") : undefined;

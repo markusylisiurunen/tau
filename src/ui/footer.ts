@@ -4,11 +4,8 @@ import { truncateFromEndByWidth } from "./components/one_line_segments.js";
 import type { Theme } from "./theme.js";
 
 export interface FooterStatus {
-  cwd: string;
   contextUsage: string;
   sessionCost: string;
-  personaLabel: string;
-  reasoningLabel: string;
   riskLevel: RiskLevel;
 }
 
@@ -62,25 +59,16 @@ export class FooterComponent implements Component {
     const icon = this.iconIntervalId ? palette.accent(iconChar) : palette.dim(iconChar);
     const iconWidth = visibleWidth(iconChar);
 
-    const fullCwd = this.status?.cwd ?? "";
-    const compactCwd = this.compactCwd(fullCwd);
     const leftFull = this.status
-      ? `${fullCwd} · ${this.status.contextUsage} · ${this.status.sessionCost}`
+      ? `${this.status.contextUsage} · ${this.status.sessionCost}`
       : "";
-    const leftCompact = this.status
-      ? `${compactCwd} · ${this.status.contextUsage} · ${this.status.sessionCost}`
-      : "";
-    const rightPrefixRaw = this.status
-      ? `${this.status.personaLabel} · ${this.status.reasoningLabel} · `
-      : "";
+    const rightPrefixRaw = "";
     const { riskText, riskStyled } = this.status
       ? this.formatRiskLabel(this.status.riskLevel)
       : { riskText: "", riskStyled: "" };
 
     const rightWidth = visibleWidth(`${rightPrefixRaw}${riskText}`);
-    const fits = (leftValue: string) =>
-      1 + iconWidth + 1 + visibleWidth(leftValue) + rightWidth + 1 + 1 <= width;
-    const leftRaw = fits(leftFull) ? leftFull : leftCompact;
+    const leftRaw = leftFull;
     const leftWidth = visibleWidth(leftRaw);
 
     let line: string;
@@ -105,19 +93,6 @@ export class FooterComponent implements Component {
     }
 
     return [line];
-  }
-
-  private compactCwd(cwd: string): string {
-    if (!cwd) return "";
-    if (cwd === "~") return "~";
-    const trimmed = cwd.replace(/[\\/]+$/, "");
-    if (trimmed === "") return cwd;
-    if (trimmed === "~") return "~";
-    if (trimmed === "/") return "/";
-    const lastSlash = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-    if (lastSlash === -1) return trimmed;
-    const base = trimmed.slice(lastSlash + 1);
-    return base || trimmed;
   }
 
   private formatRiskLabel(riskLevel: RiskLevel): { riskText: string; riskStyled: string } {

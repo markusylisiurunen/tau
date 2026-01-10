@@ -16,6 +16,7 @@ export type ToolUiEvent =
       command: string;
       exitCode: number | null;
       truncationInfo: import("./bash.js").BashTruncationInfo;
+      durationMs?: number;
     }
   | { type: "bash_blocked"; command: string; reason: string; toolCallId?: string }
   | {

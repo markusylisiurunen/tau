@@ -10,6 +10,54 @@ import {
 } from "./tool_output_layout.js";
 import { BASH_UI_MAX_LINES, BASH_UI_MAX_TOKENS, truncateForUi } from "./tool_truncation.js";
 
+const COMPACT_OUTPUT_HEAD_LINES = 4;
+const COMPACT_OUTPUT_TAIL_LINES = 4;
+const BASH_UI_MAX_LINE_LENGTH: number = 256;
+
+function truncateLineToMax(line: string): string {
+  if (BASH_UI_MAX_LINE_LENGTH <= 0) return "";
+  const chars = Array.from(line);
+  if (chars.length <= BASH_UI_MAX_LINE_LENGTH) return line;
+  if (BASH_UI_MAX_LINE_LENGTH === 1) return "…";
+  return `${chars.slice(0, BASH_UI_MAX_LINE_LENGTH - 1).join("")}…`;
+}
+
+function truncateLinesForUi(text: string): string {
+  if (!text) return text;
+  return text
+    .split("\n")
+    .map((line) => truncateLineToMax(line))
+    .join("\n");
+}
+
+function formatDurationMs(durationMs: number | null | undefined): string {
+  if (durationMs === null || durationMs === undefined || !Number.isFinite(durationMs)) {
+    return "?ms";
+  }
+  const ms = Math.max(0, Math.round(durationMs));
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms / 1000)}s`;
+}
+
+function buildCompactOutputLines(
+  output: string,
+  headCount: number = COMPACT_OUTPUT_HEAD_LINES,
+  tailCount: number = COMPACT_OUTPUT_TAIL_LINES,
+): string[] {
+  const cleaned = output.replace(/\n+$/, "");
+  if (cleaned.trim().length === 0) return [];
+  const lines = cleaned.split("\n");
+  const total = lines.length;
+  if (total <= headCount + tailCount) return lines.map(truncateLineToMax);
+
+  const head = lines.slice(0, headCount).map(truncateLineToMax);
+  const tail = lines.slice(Math.max(total - tailCount, headCount)).map(truncateLineToMax);
+  const remaining = Math.max(0, total - head.length - tail.length);
+  const label = remaining === 1 ? "line" : "lines";
+  return [...head, `…${remaining} more ${label}…`, ...tail];
+}
+
 function buildBashExecutionExpandedSections(
   theme: Theme,
   exitCode: number | null,
@@ -20,7 +68,7 @@ function buildBashExecutionExpandedSections(
 
   const sections: Array<string | undefined> = [];
 
-  const out = display.content.trimEnd();
+  const out = truncateLinesForUi(display.content).trimEnd();
   if (out) {
     sections.push(palette.bashOutput(out));
   }
@@ -81,9 +129,15 @@ export function buildBashExecutionView(
   command: string,
   exitCode: number | null,
   truncationInfo: BashTruncationInfo,
+  durationMs?: number,
+  labelOverride?: string,
+  compactHeadLines?: number,
+  compactTailLines?: number,
 ): ToolOutputViewModel {
   const { palette } = theme;
   const bashColor = (s: string) => palette.bashRan(s);
+  const successBullet = (s: string) => palette.diffAdded(s);
+  const isSuccess = exitCode === 0;
 
   const display = truncateForUi(truncationInfo.output, {
     maxLines: BASH_UI_MAX_LINES,
@@ -98,12 +152,10 @@ export function buildBashExecutionView(
   const showTotals = display.truncated || model.truncated || captureTruncated;
   const outputLines = showTotals ? model.totalLines : model.outputLines;
   const outputBytes = showTotals ? model.totalBytes : model.outputBytes;
-  const outSummary = hasOutput ? `${outputLines} lines, ${formatBytes(outputBytes)}` : "no output";
-  const outSummaryInline = inlineText(outSummary);
-
   const header = buildHeaderLine({
-    bulletStyle: bashColor,
-    label: "ran",
+    bulletStyle: isSuccess ? successBullet : bashColor,
+    bullet: isSuccess ? "✓" : undefined,
+    label: labelOverride ?? "ran",
     labelStyle: palette.muted,
     accent: commandInline,
     accentStyle: palette.accent,
@@ -112,12 +164,33 @@ export function buildBashExecutionView(
 
   const exitSummary = exitCode === null ? "exit ?" : `exit ${exitCode}`;
   const exitStyle = exitCode !== null && exitCode !== 0 ? palette.error : palette.muted;
-
+  const durationLabel = formatDurationMs(durationMs);
+  const lineLabel = hasOutput
+    ? `${outputLines} line${outputLines === 1 ? "" : "s"}`
+    : "no output";
+  const bytesLabel = hasOutput ? formatBytes(outputBytes).toLowerCase() : undefined;
+  const infoParts = bytesLabel ? [durationLabel, lineLabel, bytesLabel] : [durationLabel, lineLabel];
+  const infoText = infoParts.join(" · ");
   const details = [
     palette.muted("("),
     exitStyle(exitSummary),
-    palette.muted(`, ${outSummaryInline})`),
+    palette.muted(` · ${inlineText(infoText)}`),
+    palette.muted(")"),
   ].join("");
+
+  const outputLinesPreview = buildCompactOutputLines(
+    truncationInfo.output,
+    compactHeadLines,
+    compactTailLines,
+  );
+  const outputBlock =
+    outputLinesPreview.length > 0
+      ? outputLinesPreview
+          .map((line) => palette.dim(`    ${line}`))
+          .join("\n")
+      : undefined;
+  const summaryLine = `    ${details}`;
+  const compactText = [outputBlock, summaryLine].filter(Boolean).join("\n");
 
   const sections = buildBashExecutionExpandedSections(theme, exitCode, truncationInfo, display);
   return {
@@ -128,7 +201,7 @@ export function buildBashExecutionView(
     },
     compact: {
       header,
-      extraText: `    ${details}`,
+      extraText: compactText,
     },
   };
 }
@@ -222,10 +295,11 @@ export function renderBashExecution(
   command: string,
   exitCode: number | null,
   truncationInfo: BashTruncationInfo,
+  durationMs: number | undefined,
   compact: boolean,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(
-    buildBashExecutionView(theme, command, exitCode, truncationInfo),
+    buildBashExecutionView(theme, command, exitCode, truncationInfo, durationMs),
     compact,
   );
 }

@@ -184,6 +184,8 @@ export function buildTaskFinishedView(
   opts?: TaskRenderOptions,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
+  const successBullet = (s: string) => palette.diffAdded(s);
+  const isSuccess = status === "success";
 
   const kind = opts?.kind ?? "task";
   const subagentName = opts?.subagentName;
@@ -203,7 +205,8 @@ export function buildTaskFinishedView(
         : palette.error("error");
 
   const header = buildHeaderLine({
-    bulletStyle: borderColor,
+    bulletStyle: isSuccess ? successBullet : borderColor,
+    bullet: isSuccess ? "✓" : undefined,
     label: `${kind} finished`,
     labelStyle: palette.muted,
     accent: title.trim(),

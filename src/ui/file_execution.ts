@@ -1,4 +1,3 @@
-import { bytesToTokens } from "../utils/token.js";
 import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
 import {
@@ -12,6 +11,7 @@ import {
   EDIT_DIFF_MAX_LINES,
   EDIT_DIFF_MAX_TOKENS,
   WRITE_UI_PREVIEW_LINES,
+  truncateForUi,
 } from "./tool_truncation.js";
 
 interface DiffTruncation {
@@ -23,53 +23,120 @@ interface DiffTruncation {
 interface DiffResult {
   diff: string;
   truncation: DiffTruncation;
+  added: number;
+  removed: number;
+}
+
+function* iterateTextLinesForDiff(text: string): Iterable<string> {
+  if (text.length === 0) return;
+
+  let start = 0;
+  while (true) {
+    const idx = text.indexOf("\n", start);
+    if (idx === -1) {
+      yield text.slice(start);
+      break;
+    }
+    yield text.slice(start, idx);
+    start = idx + 1;
+    if (start === text.length) {
+      yield "";
+      break;
+    }
+  }
 }
 
 function buildSimpleDiff(oldText: string, newText: string): DiffResult {
-  const oldLines = oldText.length === 0 ? ["(empty)"] : oldText.split("\n");
-  const newLines = newText.length === 0 ? ["(empty)"] : newText.split("\n");
+  const safeMaxLines = Math.max(1, EDIT_DIFF_MAX_LINES);
+  const headCount = Math.floor(safeMaxLines / 2);
+  const tailCount = safeMaxLines - headCount;
 
-  const diffLines: string[] = [];
-  for (const line of oldLines) {
-    diffLines.push(`- ${line}`);
-  }
-  for (const line of newLines) {
-    diffLines.push(`+ ${line}`);
-  }
+  let totalLines = 0;
+  let added = 0;
+  let removed = 0;
 
-  const totalLines = diffLines.length;
-  let outputLines = diffLines;
-  let truncated = false;
+  let allLines: string[] | undefined = [];
+  const headLines: string[] = [];
 
-  if (outputLines.length > EDIT_DIFF_MAX_LINES) {
-    const headCount = Math.floor(EDIT_DIFF_MAX_LINES / 2);
-    const tailCount = EDIT_DIFF_MAX_LINES - headCount;
-    outputLines = [...outputLines.slice(0, headCount), ...outputLines.slice(-tailCount)];
-    truncated = true;
-  }
+  const tailBuffer = tailCount > 0 ? new Array<string>(tailCount) : [];
+  let tailSize = 0;
+  let tailPos = 0;
 
-  let diff = outputLines.join("\n");
+  const handleLine = (line: string): void => {
+    totalLines++;
 
-  if (bytesToTokens(Buffer.byteLength(diff, "utf-8")) > EDIT_DIFF_MAX_TOKENS) {
-    const lines = diff.split("\n");
-    while (
-      bytesToTokens(Buffer.byteLength(lines.join("\n"), "utf-8")) > EDIT_DIFF_MAX_TOKENS &&
-      lines.length > 2
-    ) {
-      const mid = Math.floor(lines.length / 2);
-      lines.splice(mid, 1);
+    if (allLines) {
+      allLines.push(line);
+      if (allLines.length > safeMaxLines) {
+        allLines = undefined;
+      }
     }
-    diff = lines.join("\n");
-    truncated = true;
+
+    if (headLines.length < headCount) {
+      headLines.push(line);
+    }
+
+    if (tailCount > 0) {
+      tailBuffer[tailPos] = line;
+      tailPos = (tailPos + 1) % tailCount;
+      tailSize = Math.min(tailSize + 1, tailCount);
+    }
+  };
+
+  for (const line of iterateTextLinesForDiff(oldText)) {
+    removed++;
+    handleLine(`- ${line}`);
   }
+
+  for (const line of iterateTextLinesForDiff(newText)) {
+    added++;
+    handleLine(`+ ${line}`);
+  }
+
+  if (totalLines === 0) {
+    return {
+      diff: "",
+      truncation: {
+        truncated: false,
+        totalLines: 0,
+        outputLines: 0,
+      },
+      added,
+      removed,
+    };
+  }
+
+  const truncatedByLines = totalLines > safeMaxLines;
+
+  let diffCandidate: string;
+  if (!truncatedByLines) {
+    diffCandidate = (allLines ?? []).join("\n");
+  } else {
+    const tailLines: string[] = [];
+    for (let i = 0; i < tailSize; i++) {
+      const idx = (tailPos - tailSize + i + tailCount) % tailCount;
+      tailLines.push(tailBuffer[idx]!);
+    }
+    diffCandidate = [...headLines, ...tailLines].join("\n");
+  }
+
+  const display = truncateForUi(diffCandidate, {
+    maxLines: Math.min(totalLines, safeMaxLines),
+    maxTokens: EDIT_DIFF_MAX_TOKENS,
+    strategy: "middle",
+  });
+
+  const truncated = truncatedByLines || display.truncated;
 
   return {
-    diff,
+    diff: display.content,
     truncation: {
       truncated,
       totalLines,
-      outputLines: diff.split("\n").length,
+      outputLines: display.outputLines,
     },
+    added,
+    removed,
   };
 }
 
@@ -82,6 +149,7 @@ export function buildWriteSuccessView(
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const writeColor = (s: string) => palette.toolFileRan(s);
+  const successBullet = (s: string) => palette.diffAdded(s);
 
   const { truncation: previewTruncation, previewLines } = applyPreviewPolicy(content, {
     maxLines: WRITE_UI_PREVIEW_LINES,
@@ -106,7 +174,8 @@ export function buildWriteSuccessView(
 
   const pathInline = inlineText(path);
   const header = buildHeaderLine({
-    bulletStyle: writeColor,
+    bulletStyle: successBullet,
+    bullet: "✓",
     label: "wrote",
     labelStyle: palette.muted,
     accent: pathInline,
@@ -119,6 +188,7 @@ export function buildWriteSuccessView(
 
   const compactLines = buildCompactPreviewLines(previewLines, {
     totalLines: lines,
+    maxLines: 16,
     lineStyle: palette.muted,
     moreStyle: palette.dim,
   });
@@ -173,16 +243,6 @@ export function buildWriteBlockedView(
   };
 }
 
-function countDiffChanges(diff: string): { added: number; removed: number } {
-  let added = 0;
-  let removed = 0;
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+ ")) added++;
-    else if (line.startsWith("- ")) removed++;
-  }
-  return { added, removed };
-}
-
 function colorDiffLine(palette: Theme["palette"], line: string): string {
   if (line.startsWith("- ")) return palette.diffRemoved(line);
   if (line.startsWith("+ ")) return palette.diffAdded(line);
@@ -199,8 +259,13 @@ export function buildEditSuccessView(
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const editColor = (s: string) => palette.toolFileRan(s);
+  const successBullet = (s: string) => palette.diffAdded(s);
 
-  const { diff, truncation: diffTruncation } = buildSimpleDiff(oldText, newText);
+  const { diff, truncation: diffTruncation, added, removed } = buildSimpleDiff(
+    oldText,
+    newText,
+  );
+  const diffLines = diff ? diff.split("\n") : [];
 
   const sizeDiff = newLength - oldLength;
   const diffStr =
@@ -208,12 +273,9 @@ export function buildEditSuccessView(
 
   const expandedSections: Array<string | undefined> = [];
   expandedSections.push(palette.muted(`replaced ${oldLength} → ${newLength} chars (${diffStr})`));
-  expandedSections.push(
-    diff
-      .split("\n")
-      .map((line) => colorDiffLine(palette, line))
-      .join("\n"),
-  );
+  if (diffLines.length > 0) {
+    expandedSections.push(diffLines.map((line) => colorDiffLine(palette, line)).join("\n"));
+  }
 
   if (diffTruncation.truncated) {
     const icon = palette.warn("◆");
@@ -223,11 +285,11 @@ export function buildEditSuccessView(
     expandedSections.push(`${icon} ${msg}`);
   }
 
-  const { added, removed } = countDiffChanges(diff);
   const pathInline = inlineText(path);
 
   const header = buildHeaderLine({
-    bulletStyle: editColor,
+    bulletStyle: successBullet,
+    bullet: "✓",
     label: "edited",
     labelStyle: palette.muted,
     accent: pathInline,
@@ -238,7 +300,6 @@ export function buildEditSuccessView(
     ],
   });
 
-  const diffLines = diff ? diff.split("\n") : [];
   const compactLines: string[] = [];
   for (const l of diffLines) {
     if (l.startsWith("- ")) {
@@ -290,11 +351,6 @@ export function buildEditBlockedView(
     labelStyle: palette.muted,
     accent: pathInline,
     accentStyle: palette.accent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      { text: `(blocked: ${whyInline})`, style: palette.muted },
-    ],
-    flexTailIndices: [1],
   });
 
   return {
@@ -303,7 +359,10 @@ export function buildEditBlockedView(
       title: errorColor(text.bold(`edit ${path}`)),
       sections: section ? [section] : [],
     },
-    compact: { header },
+    compact: {
+      header,
+      extraText: whyInline ? errorColor(`    blocked: ${whyInline}`) : undefined,
+    },
   };
 }
 

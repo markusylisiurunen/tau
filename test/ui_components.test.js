@@ -88,16 +88,13 @@ test("FooterComponent renders risk label with styling", () => {
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
-    cwd: "/repo",
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
-    personaLabel: "Default",
-    reasoningLabel: "low",
     riskLevel: "read-only",
   });
   const line = renderLines(footer, 120)[0];
   expect(line).toContain("<riskReadOnly>read-only</riskReadOnly>");
-  expect(line).toContain("<dim>/repo · ctx 10/100 · $0.01</dim>");
+  expect(line).toContain("<dim>ctx 10/100 · $0.01</dim>");
 });
 
 test("FooterComponent compacts cwd before truncating and keeps ellipsis styled", () => {
@@ -105,17 +102,19 @@ test("FooterComponent compacts cwd before truncating and keeps ellipsis styled",
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
-    cwd: "~/Code/tau",
     contextUsage: "ctx",
     sessionCost: "$0.01",
-    personaLabel: "Default",
-    reasoningLabel: "low",
     riskLevel: "read-only",
   });
 
   const compactLine = renderLines(footer, 50)[0];
-  expect(compactLine).toContain("<dim>tau · ctx · $0.01</dim>");
-  expect(compactLine).not.toContain("~/Code/tau");
+  expect(compactLine).toContain("<dim>ctx · $0.01</dim>");
+
+  footer.setStatus({
+    contextUsage: "this is a very long context usage string",
+    sessionCost: "$0.01",
+    riskLevel: "read-only",
+  });
 
   const truncatedLine = renderLines(footer, 40)[0];
   expect(truncatedLine).toContain("<dim>");

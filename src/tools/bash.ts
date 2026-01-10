@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
+import stripAnsi from "strip-ansi";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
@@ -129,12 +130,15 @@ export function prepareBashOutput(
     stderr: { maxLines: number; maxTokens: number };
   },
 ): BashTruncationInfo {
-  const stdoutTrunc = truncateMiddleForModel(stdout, {
+  const cleanStdout = stripAnsi(stdout);
+  const cleanStderr = stripAnsi(stderr);
+
+  const stdoutTrunc = truncateMiddleForModel(cleanStdout, {
     maxLines: limits.stdout.maxLines,
     maxTokens: limits.stdout.maxTokens,
   });
 
-  const stderrTrunc = truncateMiddleForModel(stderr, {
+  const stderrTrunc = truncateMiddleForModel(cleanStderr, {
     maxLines: limits.stderr.maxLines,
     maxTokens: limits.stderr.maxTokens,
   });
@@ -152,13 +156,13 @@ export function prepareBashOutput(
   const combined = combinedParts.join("\n");
 
   const combinedTotalParts: string[] = [];
-  const stdoutRawHasOutput = stdout.trim().length > 0;
-  const stderrRawHasOutput = stderr.trim().length > 0;
+  const stdoutRawHasOutput = cleanStdout.trim().length > 0;
+  const stderrRawHasOutput = cleanStderr.trim().length > 0;
   if (stdoutRawHasOutput) {
-    combinedTotalParts.push(stdout);
+    combinedTotalParts.push(cleanStdout);
   }
   if (stderrRawHasOutput) {
-    combinedTotalParts.push(`[stderr]\n${stderr}`);
+    combinedTotalParts.push(`[stderr]\n${cleanStderr}`);
   }
   const combinedTotal = combinedTotalParts.join("\n");
 
@@ -439,12 +443,14 @@ export function createBashToolDefinition(): ToolDefinition {
         },
         run: (async () => {
           try {
+            const startedAt = Date.now();
             const {
               stdout,
               stderr,
               exitCode,
               truncated: captureTruncated,
             } = await executeBashTool(command, { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS });
+            const durationMs = Math.max(0, Date.now() - startedAt);
 
             const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {
               stdout: {
@@ -466,6 +472,7 @@ export function createBashToolDefinition(): ToolDefinition {
               command,
               exitCode,
               truncationInfo,
+              durationMs,
             };
             return { kind: "single", toolResult, uiEvent };
           } catch (e) {

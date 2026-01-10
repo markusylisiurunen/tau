@@ -619,7 +619,7 @@ export class ChatApp {
     }
 
     const skillsByName = new Map<string, Skill>();
-    for (const skill of this.getEnabledSkillsForPersona(this.currentPersona).skills) {
+    for (const skill of this.skills) {
       skillsByName.set(skill.name.toLowerCase(), skill);
     }
 
@@ -1879,10 +1879,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       } else {
         const key = cleanToken.toLowerCase();
         const skill = skillsByName.get(key);
-        if (skill && !seenSkills.has(key)) {
-          expansions.push({ type: "skill", skill });
-          seenSkills.add(key);
-        }
+        if (!skill) continue; // Only expand $mentions that match a loaded skill.
+        if (seenSkills.has(key)) continue;
+        expansions.push({ type: "skill", skill });
+        seenSkills.add(key);
       }
     }
 

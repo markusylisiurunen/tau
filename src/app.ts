@@ -157,6 +157,9 @@ export class ChatApp {
   private previousSessionSummary?: string;
   private expandedFilesInCurrentPrompt: Set<string> = new Set();
   private expandedSkillsInCurrentPrompt: Set<string> = new Set();
+  private currentTurnStartedAt?: number;
+  private lastTurnDurationMs = 0;
+  private turnTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: ChatAppOptions) {
     this.personas = options.personas;
@@ -362,11 +365,13 @@ export class ChatApp {
     const contextUsage = this.getContextUsageString();
     const sessionCost = this.getSessionCostString();
     const cwd = formatCwd(process.cwd());
+    const duration = this.getTurnDurationString();
 
     const personaName = this.currentPersona.label || this.currentPersona.id;
     this.footer.setStatus({
       contextUsage,
       sessionCost,
+      duration,
       riskLevel: this.riskLevel,
     });
     this.updateEditorHeader(cwd, personaName, reasoningLabel);
@@ -481,6 +486,52 @@ export class ChatApp {
       }
     }
     return `$${formatAdaptiveNumber(total + this.subagentCostTotal, 2, 5)}`;
+  }
+
+  private getTurnDurationString(): string {
+    const now = Date.now();
+    const elapsed =
+      this.currentTurnStartedAt !== undefined
+        ? Math.max(0, now - this.currentTurnStartedAt)
+        : Math.max(0, this.lastTurnDurationMs);
+    return this.formatDurationMs(elapsed);
+  }
+
+  private formatDurationMs(ms: number): string {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const seconds = totalSeconds % 60;
+    const minutesTotal = Math.floor(totalSeconds / 60);
+    const minutes = minutesTotal % 60;
+    const hours = Math.floor(minutesTotal / 60);
+
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${seconds}s`;
+    }
+    if (minutes > 0) {
+      return `${minutes}m ${seconds}s`;
+    }
+    return `${seconds}s`;
+  }
+
+  private startTurnTimer(): void {
+    this.currentTurnStartedAt = Date.now();
+    this.lastTurnDurationMs = 0;
+    if (this.turnTimer) {
+      clearInterval(this.turnTimer);
+    }
+    this.turnTimer = setInterval(() => this.updateFooter(), 1000);
+  }
+
+  private stopTurnTimer(): void {
+    if (this.currentTurnStartedAt !== undefined) {
+      this.lastTurnDurationMs = Math.max(0, Date.now() - this.currentTurnStartedAt);
+    }
+    this.currentTurnStartedAt = undefined;
+    if (this.turnTimer) {
+      clearInterval(this.turnTimer);
+      this.turnTimer = undefined;
+    }
+    this.updateFooter();
   }
 
   private getSessionTotals(): { input: number; read: number; write: number; output: number } {
@@ -1381,6 +1432,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.isStreaming = true;
     this.currentTurnAbort = new AbortController();
     this.footer.startWorkingIcon();
+    this.startTurnTimer();
 
     try {
       type AssistantState = { id?: string; inserted: boolean; model: AssistantMessageModel };
@@ -1766,6 +1818,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       }
 
       this.footer.stop();
+      this.stopTurnTimer();
       this.isStreaming = false;
       this.currentTurnAbort = undefined;
       this.runningBashComponents.clear();
@@ -1779,8 +1832,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
   // Direct Bash Execution (user ! commands) -------------------------------------------------------
 
-  private async runBashCommand(command: string, opts?: { cwd?: string }): Promise<void> {
+  private async runBashCommand(command: string, opts?: { cwd?: string }): Promise<boolean> {
     this.isStreaming = true;
+    const abortController = new AbortController();
+    this.currentTurnAbort = abortController;
+    let wasAborted = false;
+    this.startTurnTimer();
 
     try {
       const startedAt = Date.now();
@@ -1789,7 +1846,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         stderr,
         exitCode,
         truncated: captureTruncated,
-      } = await executeBashTool(command, { cwd: opts?.cwd });
+      } = await executeBashTool(command, { cwd: opts?.cwd, signal: abortController.signal });
       const durationMs = Math.max(0, Date.now() - startedAt);
       const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {
         stdout: { maxLines: BASH_USER_MAX_STDOUT_LINES, maxTokens: BASH_USER_MAX_STDOUT_TOKENS },
@@ -1817,10 +1874,16 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const message = (err as Error).message || "bash failed.";
       this.addSystemMessage(`bash failed: ${message}`, "error");
     } finally {
+      wasAborted = abortController.signal.aborted;
       this.isStreaming = false;
+      if (this.currentTurnAbort === abortController) {
+        this.currentTurnAbort = undefined;
+      }
+      this.stopTurnTimer();
       this.ui.requestRender();
       void this.drainQueuedUserMessages();
     }
+    return wasAborted;
   }
 
   // Mention Expansion (ctrl+f) --------------------------------------------------------------------
@@ -1898,14 +1961,20 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         // Ensure trailing newline so multiple files don't run together
         // Use -- to prevent cat from interpreting filenames starting with - as options
         const command = `printf '\\n===== %s =====\\n' ${quotedPath}; cat -- ${quotedPath}; printf '\\n'`;
-        await this.runBashCommand(command);
+        const aborted = await this.runBashCommand(command);
+        if (aborted) {
+          break;
+        }
         // Track this file as expanded in the current prompt
         this.expandedFilesInCurrentPrompt.add(expansion.path);
       } else {
         const label = this.shellQuote(`skill: ${expansion.skill.name}`);
         const quotedPath = this.shellQuote(expansion.skill.path);
         const command = `printf '\\n===== %s =====\\n' ${label}; cat -- ${quotedPath}; printf '\\n'`;
-        await this.runBashCommand(command);
+        const aborted = await this.runBashCommand(command);
+        if (aborted) {
+          break;
+        }
         this.expandedSkillsInCurrentPrompt.add(expansion.skill.name.toLowerCase());
       }
     }

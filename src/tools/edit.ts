@@ -61,18 +61,8 @@ function findMatchContext(content: string, search: string, contextLines: number 
   const index = content.indexOf(search);
   if (index === -1) return "";
 
-  const lines = content.split("\n");
-  let currentPos = 0;
-  let matchLineIndex = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const lineEnd = currentPos + lines[i]!.length + 1; // +1 for newline
-    if (index < lineEnd) {
-      matchLineIndex = i;
-      break;
-    }
-    currentPos = lineEnd;
-  }
+  const lines = content.split(/\r?\n/);
+  const matchLineIndex = content.slice(0, index).split(/\r?\n/).length - 1;
 
   const startLine = Math.max(0, matchLineIndex - contextLines);
   const endLine = Math.min(lines.length - 1, matchLineIndex + contextLines);

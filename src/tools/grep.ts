@@ -284,7 +284,9 @@ function formatGrepToolResultText(args: {
     parts.push("", `truncated for model: ${shown}`);
   }
 
-  if (args.exitCode !== null && args.exitCode !== 0 && args.exitCode !== 1) {
+  if (args.exitCode === null) {
+    parts.push("", "(terminated)");
+  } else if (args.exitCode !== 0 && args.exitCode !== 1) {
     parts.push("", `(exit ${args.exitCode})`);
   }
 
@@ -366,7 +368,7 @@ export function createGrepToolDefinition(): ToolDefinition {
             captureTruncated,
           });
 
-          const isError = exitCode !== null && exitCode !== 0 && exitCode !== 1;
+          const isError = exitCode === null || (exitCode !== 0 && exitCode !== 1);
           const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, isError);
 
           const uiEvent: ToolUiEvent = {

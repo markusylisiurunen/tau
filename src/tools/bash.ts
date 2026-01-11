@@ -463,7 +463,7 @@ export function createBashToolDefinition(): ToolDefinition {
               },
             });
             const toolText = formatBashToolResultText({ truncationInfo, exitCode });
-            const isError = exitCode !== null && exitCode !== 0;
+            const isError = exitCode === null || exitCode !== 0;
 
             const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, isError);
             const uiEvent: ToolUiEvent = {

@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { readdirSync, statSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readdirSync, realpathSync, statSync } from "node:fs";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 const DEFAULT_IGNORED_DIRS = new Set([".git", "node_modules"]);
@@ -146,8 +146,19 @@ async function listProjectFilesFromGitAsync(cwd: string): Promise<string[]> {
 
 function listProjectFilesByWalking(cwd: string): string[] {
   const out: string[] = [];
+  const realpathStack = new Set<string>();
 
   const walk = (dirAbs: string, dirRel: string) => {
+    let dirReal: string;
+    try {
+      dirReal = realpathSync(dirAbs);
+    } catch {
+      return;
+    }
+
+    if (realpathStack.has(dirReal)) return;
+    realpathStack.add(dirReal);
+
     try {
       const entries = readdirSync(dirAbs, { withFileTypes: true, encoding: "utf8" });
 
@@ -193,6 +204,8 @@ function listProjectFilesByWalking(cwd: string): string[] {
       }
     } catch {
       return;
+    } finally {
+      realpathStack.delete(dirReal);
     }
   };
 
@@ -203,8 +216,19 @@ function listProjectFilesByWalking(cwd: string): string[] {
 
 async function listProjectFilesByWalkingAsync(cwd: string): Promise<string[]> {
   const out: string[] = [];
+  const realpathStack = new Set<string>();
 
   const walk = async (dirAbs: string, dirRel: string): Promise<void> => {
+    let dirReal: string;
+    try {
+      dirReal = await realpath(dirAbs);
+    } catch {
+      return;
+    }
+
+    if (realpathStack.has(dirReal)) return;
+    realpathStack.add(dirReal);
+
     try {
       const entries = await readdir(dirAbs, { withFileTypes: true, encoding: "utf8" });
 
@@ -247,6 +271,8 @@ async function listProjectFilesByWalkingAsync(cwd: string): Promise<string[]> {
       }
     } catch {
       return;
+    } finally {
+      realpathStack.delete(dirReal);
     }
   };
 

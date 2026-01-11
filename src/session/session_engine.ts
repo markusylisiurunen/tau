@@ -239,56 +239,69 @@ export class SessionEngine {
       validToolCalls.push({ index: i, toolCall, def });
     }
 
-    // Step 2: Separate task-like and non-task tools
+    // Step 2: Execute tools in original order, only parallelizing adjacent task/fork calls.
     const taskLikeToolNames = new Set(["task", "fork"]);
-    const taskCalls = validToolCalls.filter((v) => taskLikeToolNames.has(v.toolCall.name));
-    const nonTaskCalls = validToolCalls.filter((v) => !taskLikeToolNames.has(v.toolCall.name));
 
-    // Step 3: Start all task calls and begin streaming their UI
-    interface TaskExecution {
-      index: number;
-      toolCall: ToolCall;
-      startedUiEvent?: ToolUiEvent;
-      uiEventsIterable?: AsyncIterable<ToolUiEvent>;
-      runPromise: Promise<ToolDispatchResult>;
-    }
+    let i = 0;
+    while (i < validToolCalls.length && !signal.aborted) {
+      const entry = validToolCalls[i]!;
 
-    const taskExecutions: TaskExecution[] = [];
-
-    for (const { index, toolCall, def } of taskCalls) {
-      const result = await def.dispatch(toolCall, this.riskLevel, signal, dispatchContext);
-
-      if (result.kind === "phased") {
-        taskExecutions.push({
-          index,
-          toolCall,
-          startedUiEvent: result.startedUiEvent,
-          uiEventsIterable: result.uiEvents,
-          runPromise: result.run,
-        });
-
-        if (result.startedUiEvent) {
-          yield { type: "tool_ui", uiEvent: result.startedUiEvent };
+      if (taskLikeToolNames.has(entry.toolCall.name)) {
+        // Collect a contiguous block of task-like calls.
+        const block: typeof validToolCalls = [];
+        while (i < validToolCalls.length) {
+          const nextEntry = validToolCalls[i]!;
+          if (!taskLikeToolNames.has(nextEntry.toolCall.name)) break;
+          block.push(nextEntry);
+          i++;
         }
-      } else {
-        // Single-phase task (unlikely but handle it)
-        const { toolResult, uiEvent } = result;
-        resultsByIndex.set(index, toolResult);
-        if (uiEvent) {
-          yield { type: "tool_ui", uiEvent };
+
+        interface TaskExecution {
+          index: number;
+          toolCall: ToolCall;
+          startedUiEvent?: ToolUiEvent;
+          uiEventsIterable?: AsyncIterable<ToolUiEvent>;
+          runPromise: Promise<ToolDispatchResult>;
         }
+
+        const taskExecutions: TaskExecution[] = [];
+
+        for (const { index, toolCall, def } of block) {
+          if (signal.aborted) break;
+
+          const result = await def.dispatch(toolCall, this.riskLevel, signal, dispatchContext);
+
+          if (result.kind === "phased") {
+            taskExecutions.push({
+              index,
+              toolCall,
+              startedUiEvent: result.startedUiEvent,
+              uiEventsIterable: result.uiEvents,
+              runPromise: result.run,
+            });
+
+            if (result.startedUiEvent) {
+              yield { type: "tool_ui", uiEvent: result.startedUiEvent };
+            }
+          } else {
+            // Single-phase task (unlikely but handle it)
+            const { toolResult, uiEvent } = result;
+            resultsByIndex.set(index, toolResult);
+            if (uiEvent) {
+              yield { type: "tool_ui", uiEvent };
+            }
+          }
+        }
+
+        if (taskExecutions.length > 0 && !signal.aborted) {
+          yield* this.streamAndFinalizeTaskCalls(taskExecutions, resultsByIndex, signal);
+        }
+
+        continue;
       }
-    }
 
-    // Step 4: Stream task UI events in parallel and finalize each task as it completes.
-    if (taskExecutions.length > 0 && !signal.aborted) {
-      yield* this.streamAndFinalizeTaskCalls(taskExecutions, resultsByIndex, signal);
-    }
-
-    // Step 5: Execute non-task tools sequentially
-    for (const { index, toolCall, def } of nonTaskCalls) {
-      if (signal.aborted) break;
-
+      // Non-task tools execute sequentially.
+      const { index, toolCall, def } = entry;
       const result = await def.dispatch(toolCall, this.riskLevel, signal, dispatchContext);
 
       if (result.kind === "phased") {
@@ -315,6 +328,8 @@ export class SessionEngine {
           yield { type: "tool_ui", uiEvent };
         }
       }
+
+      i++;
     }
 
     // Step 6: Append all results to conversation history in original order

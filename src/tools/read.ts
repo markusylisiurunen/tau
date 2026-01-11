@@ -121,6 +121,12 @@ export function createReadToolDefinition(): ToolDefinition {
         const start = startLine ?? 1;
         const end = endLine ?? totalLines;
 
+        if (start > totalLines) {
+          return blocked(
+            `Read tool error: startLine (${start}) exceeds total lines (${totalLines}).`,
+          );
+        }
+
         const startIndex = Math.max(0, start - 1);
         const endIndex = Math.min(totalLines, Math.max(startIndex, end));
 

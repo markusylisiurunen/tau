@@ -11,8 +11,8 @@ import {
 } from "./tool_output_layout.js";
 import { BASH_UI_MAX_LINES, BASH_UI_MAX_TOKENS, truncateForUi } from "./tool_truncation.js";
 
-const COMPACT_OUTPUT_HEAD_LINES = 4;
-const COMPACT_OUTPUT_TAIL_LINES = 4;
+const COMPACT_OUTPUT_HEAD_LINES = 3;
+const COMPACT_OUTPUT_TAIL_LINES = 3;
 const BASH_UI_MAX_LINE_LENGTH: number = 256;
 
 function truncateLineToMax(line: string): string {
@@ -223,11 +223,9 @@ export function buildBashBlockedView(
   const commandInline = inlineText(command);
   const why = inlineText(reason);
 
-  const details = why ? palette.muted(`(${why})`) : undefined;
-
   const header = buildHeaderLine({
     bulletStyle: errorColor,
-    label: "blocked",
+    label: "bash blocked",
     labelStyle: palette.muted,
     accent: commandInline,
     accentStyle: palette.accent,
@@ -242,7 +240,7 @@ export function buildBashBlockedView(
     },
     compact: {
       header,
-      extraText: details ? `    ${details}` : undefined,
+      extraText: why ? `    ${errorColor(why)}` : undefined,
     },
   };
 }

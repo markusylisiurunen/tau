@@ -99,7 +99,7 @@ class TruncatedText implements Component {
     const lines = this.text.split("\n");
     return lines.map((line) => {
       if (visibleWidth(line) > width) {
-        return truncateToWidth(line, Math.max(1, width - 1), palette.taskPreview("…"));
+        return truncateToWidth(line, Math.max(1, width - 1), palette.dim("…"));
       }
       return line;
     });
@@ -130,21 +130,21 @@ export function buildTaskRunningView(
   });
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
-  const eventLines = formatEventsForDisplay(lastEvents).slice(-4);
-  const costPart = `cost: ${formatCost(costTotal)}`;
+  const eventLines = formatEventsForDisplay(lastEvents).slice(-8);
+  const costPart = formatCost(costTotal);
   const costLine = subagentName
-    ? palette.dim(`${subagentName} · ${costPart} (${stats})`)
-    : palette.dim(`${costPart} (${stats})`);
+    ? palette.muted(`${subagentName} · ${costPart} (${stats})`)
+    : palette.muted(`${costPart} (${stats})`);
 
   const extraParts: string[] = [];
   if (eventLines.length > 0) {
-    extraParts.push(palette.taskPreview(eventLines.join("\n")));
+    extraParts.push(palette.dim(eventLines.join("\n")));
   }
   extraParts.push(costLine);
 
   const expandedCostLine = subagentName
-    ? palette.dim(`${subagentName} · cost: ${formatCost(costTotal)}, ${stats}`)
-    : palette.dim(`cost: ${formatCost(costTotal)}, ${stats}`);
+    ? palette.muted(`${subagentName} · ${formatCost(costTotal)} (${stats})`)
+    : palette.muted(`${formatCost(costTotal)} (${stats})`);
 
   const extraComponent =
     extraParts.length > 0
@@ -156,7 +156,7 @@ export function buildTaskRunningView(
     : runningColor(text.bold(`${kind}: ${title}`));
   const expandedSections: Array<string | undefined> = [];
   if (eventLines.length > 0) {
-    expandedSections.push(palette.taskPreview(eventLines.join("\n")));
+    expandedSections.push(palette.dim(eventLines.join("\n")));
   }
   expandedSections.push(expandedCostLine);
 
@@ -197,17 +197,17 @@ export function buildTaskFinishedView(
         ? (s: string) => palette.warn(s)
         : (s: string) => palette.error(s);
 
-  const statusLabel =
+  const statusText =
     status === "success"
-      ? palette.muted("done")
+      ? `${kind} finished`
       : status === "aborted"
-        ? palette.warn("aborted")
-        : palette.error("error");
+        ? `${kind} aborted`
+        : `${kind} failed`;
 
   const header = buildHeaderLine({
     bulletStyle: isSuccess ? successBullet : borderColor,
     bullet: isSuccess ? "✓" : undefined,
-    label: `${kind} finished`,
+    label: statusText,
     labelStyle: palette.muted,
     accent: title.trim(),
     accentStyle: palette.accent,
@@ -217,14 +217,12 @@ export function buildTaskFinishedView(
   const outputTrimmed = finalOutput.trim();
   const outputPreview = outputTrimmed.split("\n").slice(0, 8).join("\n").trim();
   const costLine = subagentName
-    ? palette.dim(`${subagentName} · cost: ${formatCost(costTotal)} (`) +
-      statusLabel +
-      palette.dim(`, ${stats})`)
-    : palette.dim(`cost: ${formatCost(costTotal)} (`) + statusLabel + palette.dim(`, ${stats})`);
+    ? palette.muted(`${subagentName} · ${formatCost(costTotal)} (${stats})`)
+    : palette.muted(`${formatCost(costTotal)} (${stats})`);
 
   const extraParts: string[] = [];
   if (outputPreview) {
-    extraParts.push(palette.taskPreview(outputPreview));
+    extraParts.push(palette.dim(outputPreview));
   }
   extraParts.push(costLine);
 
@@ -232,16 +230,15 @@ export function buildTaskFinishedView(
   if (subagentName) {
     expandedTitleLines.push(palette.dim(`subagent: ${subagentName}`));
   }
-  expandedTitleLines.push(palette.dim(`status: `) + statusLabel);
   const expandedTitle = expandedTitleLines.join("\n");
 
   const expandedSections: Array<string | undefined> = [];
   if (outputTrimmed) {
-    expandedSections.push(outputTrimmed);
+    expandedSections.push(palette.dim(outputTrimmed));
   }
   const expandedCostLine = subagentName
-    ? palette.dim(`${subagentName} · cost: ${formatCost(costTotal)}, ${stats}`)
-    : palette.dim(`cost: ${formatCost(costTotal)}, ${stats}`);
+    ? palette.muted(`${subagentName} · ${formatCost(costTotal)} (${stats})`)
+    : palette.muted(`${formatCost(costTotal)} (${stats})`);
   expandedSections.push(expandedCostLine);
 
   return {
@@ -289,10 +286,6 @@ export function buildTaskBlockedView(
     expandedSections.push(whySection);
   }
 
-  const extraContent = why
-    ? `${palette.muted("(")}${palette.error(why)}${palette.muted(")")}`
-    : undefined;
-
   return {
     borderColor: errorColor,
     expanded: {
@@ -301,9 +294,7 @@ export function buildTaskBlockedView(
     },
     compact: {
       header,
-      extraComponent: extraContent
-        ? new PaddedContainer(new Text(extraContent, 0, 0), 4)
-        : undefined,
+      extraText: why ? `    ${errorColor(why)}` : undefined,
     },
   };
 }

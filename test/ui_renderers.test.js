@@ -111,7 +111,6 @@ test("renderGrepFinished (compact) surfaces error status", () => {
     true,
   );
   const text = renderText(component, 100);
-  expect(text).toContain("<error>(error)</error>");
   expect(text).toContain("<error>    bad file</error>");
 });
 
@@ -128,7 +127,7 @@ test("renderTaskRunning and renderTaskFinished include cost and status", () => {
   );
   const runningText = renderText(running, 120);
   expect(runningText).toContain("$ echo ok");
-  expect(runningText).toContain("cost: $0.12");
+  expect(runningText).toContain("$0.12");
 
   const finished = renderTaskFinished(
     theme,
@@ -141,6 +140,6 @@ test("renderTaskRunning and renderTaskFinished include cost and status", () => {
     false,
   );
   const finishedText = renderText(finished, 120);
-  expect(finishedText).toContain("<muted>done</muted>");
-  expect(finishedText).toContain("status: ");
+  expect(finishedText).toContain("<dim>done</dim>");
+  expect(finishedText).toContain("$0.12");
 });

@@ -224,15 +224,10 @@ export function buildWriteBlockedView(
 
   const header = buildHeaderLine({
     bulletStyle: errorColor,
-    label: "write",
+    label: "write blocked",
     labelStyle: palette.muted,
     accent: pathInline,
     accentStyle: palette.accent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      { text: `(blocked: ${whyInline})`, style: palette.muted },
-    ],
-    flexTailIndices: [1],
   });
 
   return {
@@ -241,7 +236,10 @@ export function buildWriteBlockedView(
       title: errorColor(text.bold(`write ${path}`)),
       sections: section ? [section] : [],
     },
-    compact: { header },
+    compact: {
+      header,
+      extraText: whyInline ? `    ${errorColor(whyInline)}` : undefined,
+    },
   };
 }
 
@@ -344,7 +342,7 @@ export function buildEditBlockedView(
 
   const header = buildHeaderLine({
     bulletStyle: errorColor,
-    label: "edit",
+    label: "edit blocked",
     labelStyle: palette.muted,
     accent: pathInline,
     accentStyle: palette.accent,
@@ -358,7 +356,7 @@ export function buildEditBlockedView(
     },
     compact: {
       header,
-      extraText: whyInline ? errorColor(`    blocked: ${whyInline}`) : undefined,
+      extraText: whyInline ? `    ${errorColor(whyInline)}` : undefined,
     },
   };
 }

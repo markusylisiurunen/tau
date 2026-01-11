@@ -72,6 +72,7 @@ import {
   buildTaskRunningView,
 } from "./ui/task_execution.js";
 import { createUiTheme, type Theme } from "./ui/theme.js";
+import { buildThemePreviewMessages } from "./ui/theme_preview.js";
 import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
@@ -109,6 +110,7 @@ export interface ChatAppOptions {
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
   withContext?: boolean;
+  themePreview?: boolean;
   config?: Config;
 }
 
@@ -160,6 +162,7 @@ export class ChatApp {
   private currentTurnStartedAt?: number;
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
+  private themePreview: boolean;
 
   constructor(options: ChatAppOptions) {
     this.personas = options.personas;
@@ -170,6 +173,14 @@ export class ChatApp {
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
     this.compactToolUi = this.config.toolDisplayMode !== "full";
+    this.themePreview = options.themePreview ?? false;
+    this.showThinking = this.themePreview;
+    if (this.themePreview) {
+      this.queuedUserMessages.push(
+        "Queue: adjust muted contrast and preview again",
+        "Queue: verify tool error colors",
+      );
+    }
 
     if (options.initialRiskLevel) {
       this.riskLevel = options.initialRiskLevel;
@@ -229,7 +240,7 @@ export class ChatApp {
 
     this.uiTheme = createUiTheme("ansi");
     this.ui = new TUI(createAppTerminal());
-    this.chatContainer = new ChatContainerComponent(this.uiTheme);
+    this.chatContainer = new ChatContainerComponent(this.uiTheme, this.showThinking);
     this.chatContainer.setCompactToolUi(this.compactToolUi);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
     this.queuedMessages = new QueuedMessagesComponent(this.uiTheme, this.queuedUserMessages);
@@ -246,12 +257,19 @@ export class ChatApp {
     this.ui.addChild(this.editor);
     this.ui.addChild(this.footer);
 
-    this.chatContainer.addMessage({
-      type: "app_intro",
-      appName: "tau",
-      version: APP_VERSION,
-      helpText: buildHelpText(this.agentsFiles, this.skills),
-    });
+    if (this.themePreview) {
+      const messages = buildThemePreviewMessages(this.uiTheme);
+      for (const message of messages) {
+        this.chatContainer.addMessage(message);
+      }
+    } else {
+      this.chatContainer.addMessage({
+        type: "app_intro",
+        appName: "tau",
+        version: APP_VERSION,
+        helpText: buildHelpText(this.agentsFiles, this.skills),
+      });
+    }
 
     this.ui.setFocus(this.editor);
 
@@ -279,6 +297,9 @@ export class ChatApp {
 
     this.editor.onAltUp = () => this.popQueuedUserMessageIntoEditor();
     this.editor.beforeSubmit = (text: string) => {
+      if (this.themePreview) {
+        return false;
+      }
       if (!this.isStreaming) return true;
       const trimmed = text.trimStart();
       return !trimmed.startsWith("/") && !trimmed.startsWith("!");
@@ -349,6 +370,10 @@ export class ChatApp {
   async start(): Promise<void> {
     this.ui.start();
 
+    if (this.themePreview) {
+      return;
+    }
+
     if (this.initialUserMessage) {
       await this.sendInitialUserMessage(this.initialUserMessage);
     }
@@ -398,6 +423,14 @@ export class ChatApp {
     personaName: string = this.currentPersona.label || this.currentPersona.id,
     reasoningLabel: string = this.currentPersona.settings.reasoning ?? "none",
   ): void {
+    if (this.themePreview) {
+      const labelStyle = this.uiTheme.palette.muted;
+      this.editor.setHeader("theme preview", "model disabled", {
+        leftStyle: labelStyle,
+        rightStyle: labelStyle,
+      });
+      return;
+    }
     if (this.isBashMode) {
       this.editor.setHeader("bash", "", { leftStyle: this.editor.borderColor });
       return;
@@ -467,7 +500,7 @@ export class ChatApp {
       : this.currentPersona.model.contextWindow;
 
     const { input, read, write, output } = this.getSessionTotals();
-    const stats = `↑${formatTokenWindow(input)} ↓${formatTokenWindow(output)} cache ${formatTokenWindow(read)}/${formatTokenWindow(write)}`;
+    const stats = `↑${formatTokenWindow(input)} ↓${formatTokenWindow(output)} (cache r${formatTokenWindow(read)} w${formatTokenWindow(write)})`;
 
     const promptTokensSent = last
       ? (last.usage?.input ?? 0) + (last.usage?.cacheRead ?? 0) + (last.usage?.cacheWrite ?? 0)
@@ -806,6 +839,9 @@ export class ChatApp {
   }
 
   private async handleSubmit(text: string): Promise<void> {
+    if (this.themePreview) {
+      return;
+    }
     const trimmed = text.trim();
     if (!trimmed) return;
 

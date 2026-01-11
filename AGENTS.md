@@ -124,6 +124,7 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 - `--debug` - Print debug info (loaded personas, prompts, bash commands, skills, full system prompt, tool schemas) and exit
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
 - `--risk <level>`, `-r` - Set initial risk level (`restricted`, `read-only`, `read-write`)
+- `--theme-preview` - Start in theme preview mode (no model calls)
 - `--with-context` - Inject AGENTS.md into the system prompt
 
 The `--debug` flag respects `--persona` and `--with-context`, so you can inspect exactly what system prompt a given configuration produces.

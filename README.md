@@ -57,6 +57,17 @@ npm run build
 npm start
 ```
 
+## theme preview
+
+run a model-free UI preview for theme iteration:
+
+```sh
+tau --theme-preview
+```
+
+theme preview renders a fixed set of UI fixtures and disables model calls so you can tweak colors and spacing
+without asking the model for visible content.
+
 ## risk levels
 
 tau uses risk levels to control what the model can do. this lets you stay in control while working alongside AI.

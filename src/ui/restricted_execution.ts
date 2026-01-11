@@ -119,15 +119,10 @@ export function buildReadBlockedView(
 
   const header = buildHeaderLine({
     bulletStyle: errorColor,
-    label: "read",
+    label: "read blocked",
     labelStyle: palette.muted,
     accent: pathInline,
     accentStyle: palette.accent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      { text: `(blocked: ${whyInline})`, style: palette.muted },
-    ],
-    flexTailIndices: [1],
   });
 
   return {
@@ -136,7 +131,10 @@ export function buildReadBlockedView(
       title: errorColor(text.bold(`read ${path}`)),
       sections: section ? [section] : [],
     },
-    compact: { header },
+    compact: {
+      header,
+      extraText: whyInline ? `    ${errorColor(whyInline)}` : undefined,
+    },
   };
 }
 
@@ -213,15 +211,10 @@ export function buildListBlockedView(
 
   const header = buildHeaderLine({
     bulletStyle: errorColor,
-    label: "list",
+    label: "list blocked",
     labelStyle: palette.muted,
     accent: pathInline,
     accentStyle: palette.accent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      { text: `(blocked: ${whyInline})`, style: palette.muted },
-    ],
-    flexTailIndices: [1],
   });
 
   return {
@@ -230,7 +223,10 @@ export function buildListBlockedView(
       title: errorColor(text.bold(`list ${path}`)),
       sections: section ? [section] : [],
     },
-    compact: { header },
+    compact: {
+      header,
+      extraText: whyInline ? `    ${errorColor(whyInline)}` : undefined,
+    },
   };
 }
 
@@ -269,8 +265,10 @@ export function buildGrepFinishedView(
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const grepColor = (s: string) => palette.toolFileRan(s);
+  const errorColor = (s: string) => palette.error(s);
   const successBullet = (s: string) => palette.diffAdded(s);
   const isSuccess = status === "success";
+  const borderColor = isSuccess ? grepColor : errorColor;
 
   const { truncation: stdoutPreview, previewLines: stdoutLines } = applyPreviewPolicy(stdout, {
     maxLines: GREP_UI_MAX_LINES,
@@ -313,19 +311,12 @@ export function buildGrepFinishedView(
   const patternInline = inlineText(pattern);
 
   const header = buildHeaderLine({
-    bulletStyle: isSuccess ? successBullet : grepColor,
+    bulletStyle: isSuccess ? successBullet : errorColor,
     bullet: isSuccess ? "✓" : undefined,
     label: "grep",
     labelStyle: palette.muted,
     accent: patternInline,
     accentStyle: palette.accent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      {
-        text: status === "success" ? "(ok)" : "(error)",
-        style: status === "success" ? palette.muted : palette.error,
-      },
-    ],
   });
 
   const extraText = err
@@ -345,9 +336,9 @@ export function buildGrepFinishedView(
       : undefined;
 
   return {
-    borderColor: grepColor,
+    borderColor,
     expanded: {
-      title: grepColor(text.bold(`grep ${pattern}`)),
+      title: borderColor(text.bold(`grep ${pattern}`)),
       sections: expandedSections,
     },
     compact: {
@@ -373,15 +364,10 @@ export function buildGrepBlockedView(
 
   const header = buildHeaderLine({
     bulletStyle: errorColor,
-    label: "grep",
+    label: "grep blocked",
     labelStyle: palette.muted,
     accent: patternInline,
     accentStyle: palette.accent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      { text: `(blocked: ${whyInline})`, style: palette.muted },
-    ],
-    flexTailIndices: [1],
   });
 
   return {
@@ -390,7 +376,10 @@ export function buildGrepBlockedView(
       title: errorColor(text.bold(`grep ${pattern}`)),
       sections: section ? [section] : [],
     },
-    compact: { header },
+    compact: {
+      header,
+      extraText: whyInline ? `    ${errorColor(whyInline)}` : undefined,
+    },
   };
 }
 

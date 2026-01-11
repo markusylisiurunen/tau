@@ -161,6 +161,7 @@ const app = new ChatApp({
   initialUserMessage,
   initialRiskLevel,
   withContext: cli.withContext,
+  themePreview: cli.themePreview,
   config,
 });
 

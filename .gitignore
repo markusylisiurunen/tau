@@ -1,4 +1,4 @@
-.tau/config.json
+.tau-bedrock/config.json
 dist/
 node_modules/
 src/version.ts

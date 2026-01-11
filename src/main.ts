@@ -3,10 +3,10 @@ import { ChatApp } from "./app.js";
 import { loadBashCommands } from "./bash_commands.js";
 import type { CliOptions } from "./cli.js";
 import { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
-import { isGoogleAuthAvailable, loadConfig } from "./config.js";
+import { loadConfig } from "./config.js";
 import { loadAllContent } from "./content_loader.js";
 import { printDebugInfo } from "./debug.js";
-import { applyGeminiSubagents, personas as builtinPersonas } from "./personas.js";
+import { personas as builtinPersonas } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
 import { prompts as builtinPrompts } from "./prompts.js";
 import { createBashToolDefinition } from "./tools/bash.js";
@@ -51,10 +51,7 @@ try {
   console.error(`warning: failed to load user content: ${(err as Error).message}`);
   // eslint-disable-next-line no-console
   console.error("using built-in personas and prompts only.");
-  const effectiveBuiltins = isGoogleAuthAvailable(config)
-    ? applyGeminiSubagents(builtinPersonas)
-    : builtinPersonas;
-  personas = effectiveBuiltins;
+  personas = builtinPersonas;
   prompts = builtinPrompts;
   skills = [];
 }

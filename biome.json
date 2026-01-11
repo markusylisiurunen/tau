@@ -2,7 +2,7 @@
   "$schema": "https://biomejs.dev/schemas/2.3.11/schema.json",
   "files": {
     "includes": [
-      ".tau/*.json",
+      ".tau-bedrock/*.json",
       ".zed/*.json",
       "src/**/*.ts",
       "src/**/*.js",

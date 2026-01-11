@@ -1,9 +1,9 @@
 {
-  "name": "@markusylisiurunen/tau",
+  "name": "@markusylisiurunen/tau-bedrock",
   "version": "0.1.53",
   "type": "module",
   "bin": {
-    "tau": "./dist/main.js"
+    "tau-bedrock": "./dist/main.js"
   },
   "files": [
     "dist/"

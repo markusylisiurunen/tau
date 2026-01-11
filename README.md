@@ -150,13 +150,13 @@ cat src/app.ts | tau --persona opus-4.5-chat
 
 for project-aware sessions, use `--with-context` to inject your AGENTS.md into the system prompt. tau searches for this file in the current directory and parent directories up to your home folder.
 
-you can also include additional `AGENTS.md` files via `.tau/config.json` (when that config is in scope for the current working directory):
+you can also include additional `AGENTS.md` files via `.tau-bedrock/config.json` (when that config is in scope for the current working directory):
 
 ```json
 { "agents": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/`.
+paths are resolved relative to the directory containing `.tau-bedrock/`.
 
 run `tau --help` to see all available options, or `tau --debug` to inspect loaded personas, prompts, skills, and the full system prompt for debugging configuration issues.
 
@@ -238,7 +238,7 @@ the `userPreferences` field lets you set guidance that applies to every conversa
 
 ### project bash commands
 
-define shortcuts for common shell commands in `.tau/config.json` at your project root (or `~/.tau/config.json` globally). tau resolves the project root via git, so you can run tau from subdirectories and it will still pick up `.tau/config.json`:
+define shortcuts for common shell commands in `.tau-bedrock/config.json` at your project root (or `~/.tau-bedrock/config.json` globally). tau resolves the project root via git, so you can run tau from subdirectories and it will still pick up `.tau-bedrock/config.json`:
 
 ```json
 {
@@ -253,17 +253,17 @@ run them with `/bash:check` or `/bash:test`.
 
 ### additional agents context
 
-if you use `--with-context`, you can tell tau to always include extra `AGENTS.md` files by adding an `agents` list to `.tau/config.json`:
+if you use `--with-context`, you can tell tau to always include extra `AGENTS.md` files by adding an `agents` list to `.tau-bedrock/config.json`:
 
 ```json
 { "agents": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/`.
+paths are resolved relative to the directory containing `.tau-bedrock/`.
 
 ### custom personas
 
-create your own personas by adding markdown files to `~/.config/tau/personas/` (user-level) or `.tau/personas/` (project-level). project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root:
+create your own personas by adding markdown files to `~/.config/tau/personas/` (user-level) or `.tau-bedrock/personas/` (project-level). project-level `.tau-bedrock/` directories are discovered by walking up from the current working directory to the git repo root:
 
 ```markdown
 ---
@@ -297,7 +297,7 @@ use it with `--persona my-assistant` or `/persona:my-assistant`. if a project pe
 
 ### custom prompts
 
-save reusable prompt templates in `~/.config/tau/prompts/` (user-level) or `.tau/prompts/` (project-level). project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root:
+save reusable prompt templates in `~/.config/tau/prompts/` (user-level) or `.tau-bedrock/prompts/` (project-level). project-level `.tau-bedrock/` directories are discovered by walking up from the current working directory to the git repo root:
 
 ```markdown
 ---
@@ -312,7 +312,7 @@ insert them with `/prompt:review`. if a project prompt id conflicts with a user 
 
 ### skills
 
-skills are optional directories discovered at `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and `.tau/skills/`. project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root. each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
+skills are optional directories discovered at `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and `.tau-bedrock/skills/`. project-level `.tau-bedrock/` directories are discovered by walking up from the current working directory to the git repo root. each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
 
 `SKILL.md` must start with yaml frontmatter:
 

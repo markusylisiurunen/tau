@@ -122,8 +122,8 @@ export function parseCommand(raw: string): Command {
 
 function formatSkillPath(fullPath: string): string {
   const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  const globalSkillsDir = join(configHome, "tau", "skills");
-  const projectSkillsDir = join(process.cwd(), ".tau", "skills");
+  const globalSkillsDir = join(configHome, "tau-bedrock", "skills");
+  const projectSkillsDir = join(process.cwd(), ".tau-bedrock", "skills");
 
   // Check if path is in project skills directory
   if (fullPath.startsWith(projectSkillsDir)) {

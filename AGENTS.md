@@ -67,7 +67,7 @@ Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The
 
 **Built-in**: 5 models (Claude Opus/Haiku 4.5, GPT-5.2, Gemini 3 Pro/Flash) × 2 variants (chat, coder) = 10 personas. Both variants include the **web** subagent (max 64 turns, trigger: explicit) for agentic web research, and coder variants also include the **explore** subagent (max 64 turns, trigger: eager) for multi-turn read-only codebase investigation. Built-in personas have `skills: "*"` to enable all discovered skills by default. See trigger sensitivity below for how subagent and skill activation is controlled.
 
-Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields:
+Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau-bedrock/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields:
 
 - `label`, `description`: metadata
 - `reasoning`: default reasoning effort level
@@ -85,10 +85,10 @@ On conflicts, project personas override user and built-in personas.
   - `apiKeys.parallel` (optional): Parallel API key for the `web` subagent.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`restricted`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
-- **Project Context**: `AGENTS.md` (searched from current directory up to home), plus optional additional `AGENTS.md` files configured via `.tau/config.json` with `{ "agents": ["path/to/AGENTS.md"] }` (paths resolved relative to the directory containing `.tau/`)
-- **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
-- **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (project `.tau/` dirs are discovered by walking up from cwd to the git repo root, project overrides on conflicts)
-- **Skills**: user `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and project `.tau/skills/` (project `.tau/` dirs are discovered by walking up from cwd to the git repo root). Each skill is a directory containing `SKILL.md` with required YAML frontmatter:
+- **Project Context**: `AGENTS.md` (searched from current directory up to home), plus optional additional `AGENTS.md` files configured via `.tau-bedrock/config.json` with `{ "agents": ["path/to/AGENTS.md"] }` (paths resolved relative to the directory containing `.tau-bedrock/`)
+- **Bash commands**: `.tau-bedrock/config.json` or `~/.tau-bedrock/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
+- **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau-bedrock/prompts/*.md` (project `.tau-bedrock/` dirs are discovered by walking up from cwd to the git repo root, project overrides on conflicts)
+- **Skills**: user `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and project `.tau-bedrock/skills/` (project `.tau-bedrock/` dirs are discovered by walking up from cwd to the git repo root). Each skill is a directory containing `SKILL.md` with required YAML frontmatter:
   - `name` (1-64 chars, `a-z0-9-`, must match directory name)
   - `description` (1-1024 chars)
 

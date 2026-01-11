@@ -6,8 +6,7 @@ import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { Config } from "./config.js";
-import { isGoogleAuthAvailable } from "./config.js";
-import { applyGeminiSubagents, personas as builtinPersonas } from "./personas.js";
+import { personas as builtinPersonas } from "./personas.js";
 import type { PromptTemplate } from "./prompts.js";
 import { prompts as builtinPrompts } from "./prompts.js";
 import type { SubagentConfigMap, SubagentPersonaConfig } from "./subagents/types.js";
@@ -301,7 +300,7 @@ function findProjectTauDirsFromCwd(args: { subdir: "personas" | "prompts" | "ski
   let dir = cwdAbs;
   // Closest-first order: cwd, parent, ..., stop.
   while (true) {
-    const candidate = join(dir, ".tau", args.subdir);
+    const candidate = join(dir, ".tau-bedrock", args.subdir);
     if (existsSync(candidate)) {
       found.push(candidate);
     }
@@ -787,14 +786,9 @@ export async function loadAllContent(config?: Config): Promise<{
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
     );
 
-    const effectiveBuiltins =
-      config && isGoogleAuthAvailable(config)
-        ? applyGeminiSubagents(builtinPersonas)
-        : builtinPersonas;
-
     return {
       personas: mergeById(
-        effectiveBuiltins,
+        builtinPersonas,
         userPersonasResult.personas,
         projectPersonasResult.personas,
       ),
@@ -803,12 +797,8 @@ export async function loadAllContent(config?: Config): Promise<{
       errors: allErrors,
     };
   } catch (err) {
-    const effectiveBuiltins =
-      config && isGoogleAuthAvailable(config)
-        ? applyGeminiSubagents(builtinPersonas)
-        : builtinPersonas;
     return {
-      personas: effectiveBuiltins,
+      personas: builtinPersonas,
       prompts: builtinPrompts,
       skills: [],
       errors: [`unexpected error loading user content: ${(err as Error).message}`],

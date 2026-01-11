@@ -199,16 +199,18 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "opus-4.5",
     description: "Claude Opus 4.5",
-    model: getModel("anthropic", "claude-opus-4-5"),
+    model: getModel("anthropic-bedrock", "eu.anthropic.claude-opus-4-5-20251101-v1:0"),
     allowedReasoningLevels: ["minimal", "medium", "high"],
-    settings: { reasoning: "medium" },
+    settings: {
+      reasoning: "medium",
+    },
     subagents: {
       explore: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
+        model: getModel("anthropic-bedrock", "eu.anthropic.claude-haiku-4-5-20251001-v1:0"),
         reasoning: "medium",
       },
       web: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
+        model: getModel("anthropic-bedrock", "eu.anthropic.claude-haiku-4-5-20251001-v1:0"),
         reasoning: "medium",
       },
     },
@@ -216,68 +218,19 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "haiku-4.5",
     description: "Claude Haiku 4.5",
-    model: getModel("anthropic", "claude-haiku-4-5"),
+    model: getModel("anthropic-bedrock", "eu.anthropic.claude-haiku-4-5-20251001-v1:0"),
     allowedReasoningLevels: ["low", "high"],
-    settings: { reasoning: "high" },
+    settings: {
+      reasoning: "high",
+    },
     subagents: {
       explore: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
+        model: getModel("anthropic-bedrock", "eu.anthropic.claude-haiku-4-5-20251001-v1:0"),
         reasoning: "medium",
       },
       web: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
+        model: getModel("anthropic-bedrock", "eu.anthropic.claude-haiku-4-5-20251001-v1:0"),
         reasoning: "medium",
-      },
-    },
-  },
-  {
-    id: "gpt-5.2",
-    description: "GPT-5.2",
-    model: getModel("openai", "gpt-5.2"),
-    allowedReasoningLevels: ["none", "low", "medium", "high", "xhigh"],
-    settings: { reasoning: "medium" },
-    subagents: {
-      explore: {
-        model: getModel("openai", "gpt-5.2"),
-        reasoning: "none",
-      },
-      web: {
-        model: getModel("openai", "gpt-5.2"),
-        reasoning: "none",
-      },
-    },
-  },
-  {
-    id: "gemini-3-pro",
-    description: "Gemini 3 Pro",
-    model: getModel("google", "gemini-3-pro-preview"),
-    allowedReasoningLevels: ["low", "high"],
-    settings: { reasoning: "low" },
-    subagents: {
-      explore: {
-        model: getModel("google", "gemini-3-flash-preview"),
-        reasoning: "low",
-      },
-      web: {
-        model: getModel("google", "gemini-3-flash-preview"),
-        reasoning: "low",
-      },
-    },
-  },
-  {
-    id: "gemini-3-flash",
-    description: "Gemini 3 Flash",
-    model: getModel("google", "gemini-3-flash-preview"),
-    allowedReasoningLevels: ["minimal", "low", "medium", "high"],
-    settings: { reasoning: "high" },
-    subagents: {
-      explore: {
-        model: getModel("google", "gemini-3-flash-preview"),
-        reasoning: "low",
-      },
-      web: {
-        model: getModel("google", "gemini-3-flash-preview"),
-        reasoning: "low",
       },
     },
   },
@@ -359,45 +312,4 @@ export const personas: Persona[] = PERSONA_SPECS.flatMap((spec) => [
 
 export function getPersonaById(id: string): Persona | undefined {
   return personas.find((p) => p.id === id);
-}
-
-const GEMINI_SUBAGENT_TARGET_IDS = new Set([
-  "opus-4.5-chat",
-  "opus-4.5-coder",
-  "haiku-4.5-chat",
-  "haiku-4.5-coder",
-  "gpt-5.2-chat",
-  "gpt-5.2-coder",
-]);
-
-export function applyGeminiSubagents(personas: Persona[]): Persona[] {
-  const geminiModel = getModel("google", "gemini-3-flash-preview");
-  const geminiSettings = { reasoning: "low" as const };
-
-  return personas.map((persona) => {
-    if (!GEMINI_SUBAGENT_TARGET_IDS.has(persona.id) || !persona.subagents) {
-      return persona;
-    }
-
-    const newSubagents: SubagentConfigMap = {};
-
-    if (persona.subagents.explore) {
-      newSubagents.explore = {
-        model: geminiModel,
-        settings: geminiSettings,
-      };
-    }
-
-    if (persona.subagents.web) {
-      newSubagents.web = {
-        model: geminiModel,
-        settings: geminiSettings,
-      };
-    }
-
-    return {
-      ...persona,
-      subagents: newSubagents,
-    };
-  });
 }

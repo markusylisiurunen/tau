@@ -122,8 +122,8 @@ export function loadBashCommands(cwd: string): {
   const errors: string[] = [];
 
   const repoRoot = getGitRoot(cwd);
-  const repoConfigPath = repoRoot ? join(repoRoot, ".tau", "config.json") : undefined;
-  const homeConfigPath = join(homedir(), ".tau", "config.json");
+  const repoConfigPath = repoRoot ? join(repoRoot, ".tau-bedrock", "config.json") : undefined;
+  const homeConfigPath = join(homedir(), ".tau-bedrock", "config.json");
 
   const repoRes = repoConfigPath
     ? loadBashCommandsFile(repoConfigPath, resolve(repoConfigPath))

@@ -195,7 +195,7 @@ function findTauConfigFilesFromCwd(args: {
 
   let dir = cwdAbs;
   while (true) {
-    const candidate = join(dir, ".tau", "config.json");
+    const candidate = join(dir, ".tau-bedrock", "config.json");
     if (existsSync(candidate)) {
       found.push(candidate);
     }

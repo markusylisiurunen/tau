@@ -73,7 +73,7 @@ export class AssistantMessageComponent extends Container {
       if (this.thoughtsVisible && content.type === "thinking" && content.thinking.trim()) {
         this.contentContainer.addChild(
           new Markdown(content.thinking.trim(), 1, 0, markdownTheme, {
-            color: (t: string) => palette.thinking(t),
+            color: (t: string) => palette.thinkingText(t),
             italic: true,
           }),
         );
@@ -102,10 +102,10 @@ export class AssistantMessageComponent extends Container {
     };
 
     if (message.stopReason === "aborted") {
-      appendStopReason("aborted", palette.warn);
+      appendStopReason("aborted", palette.statusWarn);
     } else if (message.stopReason === "error") {
       const errorMsg = message.errorMessage || "unknown error";
-      appendStopReason(`error: ${errorMsg}`, palette.error);
+      appendStopReason(`error: ${errorMsg}`, palette.statusError);
     }
   }
 }

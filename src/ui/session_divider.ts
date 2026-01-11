@@ -15,6 +15,6 @@ export class SessionDividerComponent implements Component {
     const remainingWidth = Math.max(1, width - labelWithSpace.length - leftDashes.length);
     const rightDashes = "─".repeat(remainingWidth);
     const dividerText = `${leftDashes}${labelWithSpace}${rightDashes}`;
-    return [this.theme.palette.muted(dividerText)];
+    return [this.theme.palette.textMuted(dividerText)];
   }
 }

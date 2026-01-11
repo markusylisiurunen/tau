@@ -76,7 +76,7 @@ export class FooterComponent implements Component {
 
     const { palette } = this.theme;
     const iconChar = this.iconIntervalId ? this.iconFrames[this.currentIconFrame]! : this.idleIcon;
-    const icon = this.iconIntervalId ? palette.accent(iconChar) : palette.dim(iconChar);
+    const icon = this.iconIntervalId ? palette.brandAccent(iconChar) : palette.textDim(iconChar);
     const iconWidth = visibleWidth(iconChar);
 
     const leftFull = this.status
@@ -98,8 +98,8 @@ export class FooterComponent implements Component {
     if (totalContentWidth > width) {
       const availableLeft = Math.max(0, width - 1 - iconWidth - 1 - rightWidth - 1 - 1);
       const truncatedLeft = truncateFromEndByWidth(leftRaw, availableLeft);
-      const leftStyled = palette.dim(truncatedLeft);
-      const rightStyled = `${palette.dim(rightPrefixRaw)}${riskStyled}`;
+      const leftStyled = palette.textDim(truncatedLeft);
+      const rightStyled = `${palette.textDim(rightPrefixRaw)}${riskStyled}`;
 
       line = ` ${icon} ${leftStyled} ${rightStyled} `;
     } else {
@@ -107,8 +107,8 @@ export class FooterComponent implements Component {
         Math.max(1, width - 1 - iconWidth - 1 - leftWidth - rightWidth - 1),
       );
 
-      const leftStyled = palette.dim(leftRaw);
-      const rightStyled = `${palette.dim(rightPrefixRaw)}${riskStyled}`;
+      const leftStyled = palette.textDim(leftRaw);
+      const rightStyled = `${palette.textDim(rightPrefixRaw)}${riskStyled}`;
       line = ` ${icon} ${leftStyled + spaces}${rightStyled} `;
     }
 
@@ -119,12 +119,12 @@ export class FooterComponent implements Component {
     const { palette } = this.theme;
     const style =
       kind === "error"
-        ? palette.noticeErrorBg
+        ? palette.toastErrorBg
         : kind === "warn"
-          ? palette.noticeWarnBg
+          ? palette.toastWarnBg
           : kind === "muted"
-            ? palette.noticeMutedBg
-            : palette.noticeSuccessBg;
+            ? palette.toastMutedBg
+            : palette.toastSuccessBg;
 
     if (width <= 1) {
       return style(" ".repeat(Math.max(0, width)));
@@ -140,11 +140,11 @@ export class FooterComponent implements Component {
     const { palette } = this.theme;
     switch (riskLevel) {
       case "restricted":
-        return { riskText: "restricted", riskStyled: palette.riskRestricted("restricted") };
+        return { riskText: "restricted", riskStyled: palette.riskRestrictedText("restricted") };
       case "read-only":
-        return { riskText: "read-only", riskStyled: palette.riskReadOnly("read-only") };
+        return { riskText: "read-only", riskStyled: palette.riskReadOnlyText("read-only") };
       case "read-write":
-        return { riskText: "read-write", riskStyled: palette.riskReadWrite("read-write") };
+        return { riskText: "read-write", riskStyled: palette.riskReadWriteText("read-write") };
     }
   }
 }

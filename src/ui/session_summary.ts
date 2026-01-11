@@ -7,10 +7,10 @@ export class SessionSummaryComponent implements Component {
 
   constructor(theme: Theme, summary: string) {
     const { palette } = theme;
-    const borderColor = (s: string) => palette.accent(s);
+    const borderColor = (s: string) => palette.brandAccent(s);
     const headerText = "context from previous session";
     const content = new Markdown(summary, 0, 0, theme.markdownTheme, {
-      color: (t: string) => palette.muted(t),
+      color: (t: string) => palette.textMuted(t),
       italic: true,
     });
 

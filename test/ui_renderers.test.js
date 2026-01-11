@@ -11,9 +11,9 @@ test("renderBashRunning (compact) shows command and running status", () => {
   const theme = createTagTheme();
   const component = renderBashRunning(theme, "ls -la", true);
   const text = renderText(component, 80);
-  expect(text).toContain("<bashRunning>▪</bashRunning>");
-  expect(text).toContain("<accent>ls -la</accent>");
-  expect(text).toContain("<muted>running</muted>");
+  expect(text).toContain("<actionRunning>▪</actionRunning>");
+  expect(text).toContain("<brandAccent>ls -la</brandAccent>");
+  expect(text).toContain("<textMuted>running</textMuted>");
 });
 
 test("renderBashExecution (expanded) includes output and exit code", () => {
@@ -36,9 +36,9 @@ test("renderBashExecution (expanded) includes output and exit code", () => {
   };
   const component = renderBashExecution(theme, "echo hi", 1, truncationInfo, undefined, false);
   const text = renderText(component, 100);
-  expect(text).toContain("<bashRan><bold>$ echo hi</bold></bashRan>");
-  expect(text).toContain("<bashOutput>output line</bashOutput>");
-  expect(text).toContain("<warn>(exit 1)</warn>");
+  expect(text).toContain("<actionError><bold>$ echo hi</bold></actionError>");
+  expect(text).toContain("<actionOutput>output line</actionOutput>");
+  expect(text).toContain("<actionError>(exit 1)</actionError>");
 });
 
 test("renderWriteSuccess (compact) shows preview lines", () => {
@@ -52,17 +52,17 @@ test("renderWriteSuccess (compact) shows preview lines", () => {
     true,
   );
   const text = renderText(component, 80);
-  expect(text).toContain("<diffAdded>✓</diffAdded>");
-  expect(text).toContain("<accent>notes.txt</accent>");
-  expect(text).toContain("<dim>    first</dim>");
+  expect(text).toContain("<actionSuccess>✓</actionSuccess>");
+  expect(text).toContain("<brandAccent>notes.txt</brandAccent>");
+  expect(text).toContain("<textDim>    first</textDim>");
 });
 
 test("renderEditSuccess (expanded) highlights diffs", () => {
   const theme = createTagTheme();
   const component = renderEditSuccess(theme, "notes.txt", 10, 12, "old", "new", false);
   const text = renderText(component, 100);
-  expect(text).toContain("<diffRemoved>- old</diffRemoved>");
-  expect(text).toContain("<diffAdded>+ new</diffAdded>");
+  expect(text).toContain("<diffRemove>- old</diffRemove>");
+  expect(text).toContain("<diffAdd>+ new</diffAdd>");
 });
 
 test("renderReadSuccess (compact) shows file preview", () => {
@@ -77,8 +77,8 @@ test("renderReadSuccess (compact) shows file preview", () => {
     true,
   );
   const text = renderText(component, 80);
-  expect(text).toContain("<dim>    alpha</dim>");
-  expect(text).toContain("<accent>file.txt</accent>");
+  expect(text).toContain("<textDim>    alpha</textDim>");
+  expect(text).toContain("<brandAccent>file.txt</brandAccent>");
 });
 
 test("renderListSuccess (compact) shows entries", () => {
@@ -94,8 +94,8 @@ test("renderListSuccess (compact) shows entries", () => {
     true,
   );
   const text = renderText(component, 80);
-  expect(text).toContain("<accent>src</accent>");
-  expect(text).toContain("<dim>    a.ts</dim>");
+  expect(text).toContain("<brandAccent>src</brandAccent>");
+  expect(text).toContain("<textDim>    a.ts</textDim>");
 });
 
 test("renderGrepFinished (compact) surfaces error status", () => {
@@ -111,7 +111,7 @@ test("renderGrepFinished (compact) surfaces error status", () => {
     true,
   );
   const text = renderText(component, 100);
-  expect(text).toContain("<error>    bad file</error>");
+  expect(text).toContain("<actionError>    bad file</actionError>");
 });
 
 test("renderTaskRunning and renderTaskFinished include cost and status", () => {
@@ -140,6 +140,6 @@ test("renderTaskRunning and renderTaskFinished include cost and status", () => {
     false,
   );
   const finishedText = renderText(finished, 120);
-  expect(finishedText).toContain("<dim>done</dim>");
+  expect(finishedText).toContain("<textDim>done</textDim>");
   expect(finishedText).toContain("$0.12");
 });

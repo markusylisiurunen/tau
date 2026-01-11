@@ -418,9 +418,9 @@ export class ChatApp {
   private updateEditorBorderColor(): void {
     const { palette } = this.uiTheme;
     if (this.isBashMode) {
-      this.editor.borderColor = (s: string) => palette.bashRan(s);
+      this.editor.borderColor = (s: string) => palette.modeBash(s);
     } else if (this.isMemoryMode) {
-      this.editor.borderColor = (s: string) => palette.memoryMode(s);
+      this.editor.borderColor = (s: string) => palette.modeMemory(s);
     } else {
       this.editor.borderColor = this.uiTheme.editorBorderForReasoning(
         this.currentPersona.settings.reasoning,
@@ -436,7 +436,7 @@ export class ChatApp {
     reasoningLabel: string = this.currentPersona.settings.reasoning ?? "none",
   ): void {
     if (this.themePreview) {
-      const labelStyle = this.uiTheme.palette.muted;
+      const labelStyle = this.uiTheme.palette.textMuted;
       this.editor.setHeader("theme preview", "model disabled", {
         leftStyle: labelStyle,
         rightStyle: labelStyle,

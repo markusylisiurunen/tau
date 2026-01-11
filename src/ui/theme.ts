@@ -3,6 +3,7 @@ import { Chalk } from "chalk";
 import type { ReasoningEffort } from "../types.js";
 import { hslToHex } from "../utils/color.js";
 import { assertNever } from "../utils/never.js";
+import { PALETTE_COLORS, type PaletteTokenName } from "./palette_tokens.js";
 
 const chalk = new Chalk({ level: 3 });
 
@@ -16,51 +17,50 @@ export interface TextStyles {
 }
 
 export interface Palette {
-  // Primary colors
-  accent: (text: string) => string;
-  muted: (text: string) => string;
-  dim: (text: string) => string;
-  link: (text: string) => string;
-  thinking: (text: string) => string;
-  codeInline: (text: string) => string;
-  codeBlock: (text: string) => string;
+  // Core
+  brandAccent: (text: string) => string;
+  textMuted: (text: string) => string;
+  textDim: (text: string) => string;
+  linkText: (text: string) => string;
+  thinkingText: (text: string) => string;
+  codeInlineText: (text: string) => string;
+  codeBlockText: (text: string) => string;
+  textDefault: (text: string) => string;
 
-  // Semantic colors
-  warn: (text: string) => string;
-  error: (text: string) => string;
-  memoryMode: (text: string) => string;
-  bashRunning: (text: string) => string;
-  bashRan: (text: string) => string;
-  bashOutput: (text: string) => string;
-  toolFileRan: (text: string) => string;
-  filePreview: (text: string) => string;
-  taskRunning: (text: string) => string;
-  taskRan: (text: string) => string;
-  taskPreview: (text: string) => string;
+  // Status
+  statusWarn: (text: string) => string;
+  statusError: (text: string) => string;
+  modeMemory: (text: string) => string;
+  modeBash: (text: string) => string;
 
-  // Diff colors
-  diffAdded: (text: string) => string;
-  diffRemoved: (text: string) => string;
+  // Action
+  actionRunning: (text: string) => string;
+  actionSuccess: (text: string) => string;
+  actionError: (text: string) => string;
+  actionOutput: (text: string) => string;
 
-  // Notices
-  noticeSuccess: (text: string) => string;
-  noticeWarn: (text: string) => string;
-  noticeError: (text: string) => string;
-  noticeSuccessBg: (text: string) => string;
-  noticeWarnBg: (text: string) => string;
-  noticeErrorBg: (text: string) => string;
-  noticeMutedBg: (text: string) => string;
+  // Diff
+  diffAdd: (text: string) => string;
+  diffRemove: (text: string) => string;
 
-  // User message
-  userBg: (text: string) => string;
-  userText: (text: string) => string;
-  userMemoryBg: (text: string) => string;
+  // Toasts
+  toastSuccess: (text: string) => string;
+  toastWarn: (text: string) => string;
+  toastError: (text: string) => string;
+  toastSuccessBg: (text: string) => string;
+  toastWarnBg: (text: string) => string;
+  toastErrorBg: (text: string) => string;
+  toastMutedBg: (text: string) => string;
+
+  // User
+  userSurface: (text: string) => string;
+  userMemorySurface: (text: string) => string;
   userMemoryText: (text: string) => string;
 
   // Risk level indicators
-  riskRestricted: (text: string) => string;
-  riskReadOnly: (text: string) => string;
-  riskReadWrite: (text: string) => string;
+  riskRestrictedText: (text: string) => string;
+  riskReadOnlyText: (text: string) => string;
+  riskReadWriteText: (text: string) => string;
 }
 
 export interface Theme {
@@ -72,69 +72,65 @@ export interface Theme {
   editorBorderForReasoning: (effort?: ReasoningEffort) => (text: string) => string;
 }
 
-const ACCENT_HUE = 28;
-const TEXT_HUE = 24;
-const LINK_HUE = 328;
-const CODE_HUE = 224;
-const WARN_HUE = 24;
-const ERROR_HUE = 0;
+const paletteByName = new Map<PaletteTokenName, (typeof PALETTE_COLORS)[number]>(
+  PALETTE_COLORS.map((color) => [color.name, color] as const),
+);
 
-export interface ColorDef {
-  name: string;
-  h: number;
-  s: number;
-  l: number;
-}
-
-export const PALETTE_COLORS: ColorDef[] = [
-  // Primary colors
-  { name: "accent", h: ACCENT_HUE, s: 92, l: 72 },
-  { name: "muted", h: TEXT_HUE, s: 8, l: 56 },
-  { name: "dim", h: TEXT_HUE, s: 6, l: 42 },
-  { name: "link", h: LINK_HUE, s: 84, l: 72 },
-  { name: "thinking", h: TEXT_HUE, s: 8, l: 56 },
-  { name: "codeInline", h: CODE_HUE, s: 64, l: 74 },
-  { name: "codeBlock", h: CODE_HUE, s: 64, l: 74 },
-  // Semantic colors
-  { name: "warn", h: WARN_HUE, s: 76, l: 68 },
-  { name: "error", h: ERROR_HUE, s: 76, l: 68 },
-  { name: "memoryMode", h: 280, s: 80, l: 72 },
-  { name: "bashRunning", h: 48, s: 80, l: 72 },
-  { name: "bashRan", h: 192, s: 80, l: 72 },
-  { name: "bashOutput", h: TEXT_HUE, s: 8, l: 56 },
-  { name: "toolFileRan", h: 192, s: 80, l: 72 },
-  { name: "filePreview", h: TEXT_HUE, s: 8, l: 56 },
-  { name: "taskRunning", h: 48, s: 80, l: 72 },
-  { name: "taskRan", h: 192, s: 80, l: 72 },
-  { name: "taskPreview", h: TEXT_HUE, s: 8, l: 56 },
-  // Diff colors
-  { name: "diffAdded", h: 72, s: 40, l: 46 },
-  { name: "diffRemoved", h: 6, s: 44, l: 52 },
-  // Notices
-  { name: "noticeSuccess", h: CODE_HUE, s: 64, l: 74 },
-  { name: "noticeWarn", h: WARN_HUE, s: 76, l: 68 },
-  { name: "noticeError", h: ERROR_HUE, s: 76, l: 68 },
-  { name: "noticeSuccessBg", h: CODE_HUE, s: 52, l: 28 },
-  { name: "noticeWarnBg", h: WARN_HUE, s: 70, l: 28 },
-  { name: "noticeErrorBg", h: ERROR_HUE, s: 70, l: 28 },
-  { name: "noticeMutedBg", h: TEXT_HUE, s: 6, l: 24 },
-  // User message
-  { name: "userBg", h: TEXT_HUE, s: 6, l: 12 },
-  { name: "userMemoryBg", h: 280, s: 18, l: 18 },
-  { name: "userMemoryText", h: 280, s: 42, l: 82 },
-  // Risk level indicators
-  { name: "riskRestricted", h: TEXT_HUE, s: 6, l: 42 },
-  { name: "riskReadOnly", h: 72, s: 16, l: 44 },
-  { name: "riskReadWrite", h: 8, s: 20, l: 56 },
+const PALETTE_GROUPS: Array<{ label: string; names: PaletteTokenName[] }> = [
+  {
+    label: "core",
+    names: [
+      "brandAccent",
+      "textMuted",
+      "textDim",
+      "linkText",
+      "thinkingText",
+      "codeInlineText",
+      "codeBlockText",
+    ],
+  },
+  {
+    label: "status",
+    names: ["statusWarn", "statusError", "modeMemory", "modeBash"],
+  },
+  {
+    label: "action",
+    names: ["actionRunning", "actionSuccess", "actionError", "actionOutput"],
+  },
+  { label: "diff", names: ["diffAdd", "diffRemove"] },
+  { label: "toasts", names: ["toastSuccess", "toastWarn", "toastError"] },
+  {
+    label: "toast backgrounds",
+    names: ["toastSuccessBg", "toastWarnBg", "toastErrorBg", "toastMutedBg"],
+  },
+  { label: "user", names: ["userSurface", "userMemorySurface", "userMemoryText"] },
+  {
+    label: "risk",
+    names: ["riskRestrictedText", "riskReadOnlyText", "riskReadWriteText"],
+  },
 ];
 
 export function buildPalettePreview(): string {
+  const columnGap = "  ";
+  const indent = "  ";
+  const nameWidth = Math.max(...PALETTE_COLORS.map((color) => color.name.length));
+  const hslWidth = Math.max(
+    ...PALETTE_COLORS.map((color) => `hsl(${color.h}, ${color.s}%, ${color.l}%)`.length),
+  );
   const lines: string[] = [];
-  for (const color of PALETTE_COLORS) {
-    const hex = hslToHex(color.h, color.s, color.l);
-    const block = chalk.bgHex(hex)(" ");
-    const hsl = `hsl(${color.h}, ${color.s}%, ${color.l}%)`;
-    lines.push(` ${block} ${color.name.padEnd(16)} ${hsl.padEnd(22)} ${hex}`);
+  for (const group of PALETTE_GROUPS) {
+    lines.push(`${group.label}:`);
+    for (const name of group.names) {
+      const color = paletteByName.get(name);
+      if (!color) {
+        throw new Error(`unknown palette token in preview group '${group.label}': ${name}`);
+      }
+      const hex = hslToHex(color.h, color.s, color.l);
+      const block = chalk.bgHex(hex)("   ");
+      const hsl = `hsl(${color.h}, ${color.s}%, ${color.l}%)`;
+      const line = [block, name.padEnd(nameWidth), hsl.padEnd(hslWidth), hex].join(columnGap);
+      lines.push(`${indent}${line}`);
+    }
   }
   return lines.join("\n");
 }
@@ -166,122 +162,148 @@ function createTextStyles(mode: ThemeMode): TextStyles {
   };
 }
 
+type PaletteColorToken = Exclude<keyof Palette, "textDefault">;
+
+type _assertPaletteTokensMatch =
+  Exclude<PaletteColorToken, PaletteTokenName> extends never
+    ? Exclude<PaletteTokenName, PaletteColorToken> extends never
+      ? true
+      : never
+    : never;
+const _assertPaletteTokensMatch: _assertPaletteTokensMatch = true;
+
+const PALETTE_TEXT_TOKENS = [
+  "brandAccent",
+  "textMuted",
+  "textDim",
+  "linkText",
+  "thinkingText",
+  "codeInlineText",
+  "codeBlockText",
+  "statusWarn",
+  "statusError",
+  "modeMemory",
+  "modeBash",
+  "actionRunning",
+  "actionSuccess",
+  "actionError",
+  "actionOutput",
+  "diffAdd",
+  "diffRemove",
+  "toastSuccess",
+  "toastWarn",
+  "toastError",
+  "userMemoryText",
+  "riskRestrictedText",
+  "riskReadOnlyText",
+  "riskReadWriteText",
+] as const satisfies readonly PaletteColorToken[];
+
+const PALETTE_BG_TOKENS = [
+  "toastSuccessBg",
+  "toastWarnBg",
+  "toastErrorBg",
+  "toastMutedBg",
+  "userSurface",
+  "userMemorySurface",
+] as const satisfies readonly PaletteColorToken[];
+
+const ALL_PALETTE_TOKENS: readonly PaletteColorToken[] = [
+  ...PALETTE_TEXT_TOKENS,
+  ...PALETTE_BG_TOKENS,
+];
+
+type _assertAllPaletteTokensCovered =
+  Exclude<
+    PaletteColorToken,
+    (typeof PALETTE_TEXT_TOKENS)[number] | (typeof PALETTE_BG_TOKENS)[number]
+  > extends never
+    ? true
+    : never;
+const _assertAllPaletteTokensCovered: _assertAllPaletteTokensCovered = true;
+
+function buildPaletteLookup(): Record<PaletteTokenName, string> {
+  return PALETTE_COLORS.reduce<Record<PaletteTokenName, string>>(
+    (acc, color) => {
+      acc[color.name] = hslToHex(color.h, color.s, color.l);
+      return acc;
+    },
+    {} as Record<PaletteTokenName, string>,
+  );
+}
+
 function createPalette(mode: ThemeMode): Palette {
+  const validate = (palette: Palette): void => {
+    for (const token of ALL_PALETTE_TOKENS) {
+      if (typeof palette[token] !== "function") {
+        throw new Error(`missing palette implementation: ${String(token)}`);
+      }
+    }
+    if (typeof palette.textDefault !== "function") {
+      throw new Error("missing palette implementation: textDefault");
+    }
+  };
+
   if (mode === "ansi") {
-    return {
-      // Primary colors
-      accent: chalk.hex(hslToHex(ACCENT_HUE, 92, 72)),
-      muted: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
-      dim: chalk.hex(hslToHex(TEXT_HUE, 6, 42)),
-      link: chalk.hex(hslToHex(LINK_HUE, 84, 72)),
-      thinking: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
-      codeInline: chalk.hex(hslToHex(CODE_HUE, 64, 74)),
-      codeBlock: chalk.hex(hslToHex(CODE_HUE, 64, 74)),
-
-      // Semantic colors
-      warn: chalk.hex(hslToHex(WARN_HUE, 76, 68)),
-      error: chalk.hex(hslToHex(ERROR_HUE, 76, 68)),
-      memoryMode: chalk.hex(hslToHex(280, 80, 72)),
-      bashRunning: chalk.hex(hslToHex(48, 80, 72)),
-      bashRan: chalk.hex(hslToHex(192, 80, 72)),
-      bashOutput: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
-      toolFileRan: chalk.hex(hslToHex(192, 80, 72)),
-      filePreview: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
-      taskRunning: chalk.hex(hslToHex(48, 80, 72)),
-      taskRan: chalk.hex(hslToHex(192, 80, 72)),
-      taskPreview: chalk.hex(hslToHex(TEXT_HUE, 8, 56)),
-
-      // Diff colors
-      diffAdded: chalk.hex(hslToHex(72, 40, 46)),
-      diffRemoved: chalk.hex(hslToHex(6, 44, 52)),
-
-      // Notices
-      noticeSuccess: chalk.hex(hslToHex(CODE_HUE, 64, 74)),
-      noticeWarn: chalk.hex(hslToHex(WARN_HUE, 76, 68)),
-      noticeError: chalk.hex(hslToHex(ERROR_HUE, 76, 68)),
-      noticeSuccessBg: chalk.bgHex(hslToHex(CODE_HUE, 52, 28)).hex(hslToHex(TEXT_HUE, 10, 92)),
-      noticeWarnBg: chalk.bgHex(hslToHex(WARN_HUE, 70, 28)).hex(hslToHex(TEXT_HUE, 10, 92)),
-      noticeErrorBg: chalk.bgHex(hslToHex(ERROR_HUE, 70, 28)).hex(hslToHex(TEXT_HUE, 10, 92)),
-      noticeMutedBg: chalk.bgHex(hslToHex(TEXT_HUE, 6, 24)).hex(hslToHex(TEXT_HUE, 10, 92)),
-
-      // User message
-      userBg: chalk.bgHex(hslToHex(TEXT_HUE, 6, 12)),
-      userText: (text) => text,
-      userMemoryBg: chalk.bgHex(hslToHex(280, 18, 18)),
-      userMemoryText: chalk.hex(hslToHex(280, 42, 82)),
-
-      // Risk level indicators
-      riskRestricted: chalk.hex(hslToHex(TEXT_HUE, 6, 42)),
-      riskReadOnly: chalk.hex(hslToHex(72, 16, 44)),
-      riskReadWrite: chalk.hex(hslToHex(8, 20, 56)),
+    const lookup = buildPaletteLookup();
+    const getHex = (name: PaletteTokenName): string => {
+      const hex = lookup[name];
+      if (!hex) {
+        throw new Error(`missing palette token: ${name}`);
+      }
+      return hex;
     };
+    const makeText = (name: PaletteTokenName) => chalk.hex(getHex(name));
+    const makeBg = (name: PaletteTokenName) => chalk.bgHex(getHex(name));
+    const palette = {} as Palette;
+
+    for (const token of PALETTE_TEXT_TOKENS) {
+      palette[token] = makeText(token);
+    }
+    for (const token of PALETTE_BG_TOKENS) {
+      palette[token] = makeBg(token);
+    }
+    palette.textDefault = (text) => text;
+
+    const lightText = hslToHex(26, 10, 86);
+    palette.toastSuccessBg = chalk.bgHex(getHex("toastSuccessBg")).hex(lightText);
+    palette.toastWarnBg = chalk.bgHex(getHex("toastWarnBg")).hex(lightText);
+    palette.toastErrorBg = chalk.bgHex(getHex("toastErrorBg")).hex(lightText);
+    palette.toastMutedBg = chalk.bgHex(getHex("toastMutedBg")).hex(lightText);
+
+    validate(palette);
+    return palette;
   }
 
   const wrap = (label: string) => (mode === "tags" ? tagWrapper(label) : plainWrapper());
+  const palette = {} as Palette;
 
-  return {
-    // Primary colors
-    accent: wrap("accent"),
-    muted: wrap("muted"),
-    dim: wrap("dim"),
-    link: wrap("link"),
-    thinking: wrap("thinking"),
-    codeInline: wrap("codeInline"),
-    codeBlock: wrap("codeBlock"),
+  for (const token of PALETTE_TEXT_TOKENS) {
+    palette[token] = wrap(token);
+  }
+  for (const token of PALETTE_BG_TOKENS) {
+    palette[token] = wrap(token);
+  }
+  palette.textDefault = (text) => text;
 
-    // Semantic colors
-    warn: wrap("warn"),
-    error: wrap("error"),
-    memoryMode: wrap("memoryMode"),
-    bashRunning: wrap("bashRunning"),
-    bashRan: wrap("bashRan"),
-    bashOutput: wrap("bashOutput"),
-    toolFileRan: wrap("toolFileRan"),
-    filePreview: wrap("filePreview"),
-    taskRunning: wrap("taskRunning"),
-    taskRan: wrap("taskRan"),
-    taskPreview: wrap("taskPreview"),
-
-    // Diff colors
-    diffAdded: wrap("diffAdded"),
-    diffRemoved: wrap("diffRemoved"),
-
-    // Notices
-    noticeSuccess: wrap("noticeSuccess"),
-    noticeWarn: wrap("noticeWarn"),
-    noticeError: wrap("noticeError"),
-    noticeSuccessBg: wrap("noticeSuccessBg"),
-    noticeWarnBg: wrap("noticeWarnBg"),
-    noticeErrorBg: wrap("noticeErrorBg"),
-    noticeMutedBg: wrap("noticeMutedBg"),
-
-    // User message
-    userBg: wrap("userBg"),
-    userText: (text) => text,
-    userMemoryBg: wrap("userMemoryBg"),
-    userMemoryText: wrap("userMemoryText"),
-
-    // Risk level indicators
-    riskRestricted: wrap("riskRestricted"),
-    riskReadOnly: wrap("riskReadOnly"),
-    riskReadWrite: wrap("riskReadWrite"),
-  };
+  validate(palette);
+  return palette;
 }
 
 function createMarkdownTheme(palette: Palette, text: TextStyles): MarkdownTheme {
   return {
     bold: (textValue) => text.bold(textValue),
-    code: (textValue) => palette.codeInline(textValue),
-    codeBlock: (textValue) => palette.codeBlock(textValue),
-    codeBlockBorder: (textValue) => palette.dim(textValue),
-    heading: (textValue) => text.bold(palette.accent(textValue)),
-    hr: (textValue) => palette.dim(textValue),
+    code: (textValue) => palette.codeInlineText(textValue),
+    codeBlock: (textValue) => palette.codeBlockText(textValue),
+    codeBlockBorder: (textValue) => palette.textDim(textValue),
+    heading: (textValue) => text.bold(palette.brandAccent(textValue)),
+    hr: (textValue) => palette.textDim(textValue),
     italic: (textValue) => text.italic(textValue),
-    link: (textValue) => palette.link(textValue),
-    linkUrl: (textValue) => palette.dim(textValue),
-    listBullet: (textValue) => palette.accent(textValue),
-    quote: (textValue) => text.italic(palette.muted(textValue)),
-    quoteBorder: (textValue) => palette.dim(textValue),
+    link: (textValue) => palette.linkText(textValue),
+    linkUrl: (textValue) => palette.textDim(textValue),
+    listBullet: (textValue) => palette.brandAccent(textValue),
+    quote: (textValue) => text.italic(palette.textMuted(textValue)),
+    quoteBorder: (textValue) => palette.textDim(textValue),
     strikethrough: (textValue) => text.strikethrough(textValue),
     underline: (textValue) => text.underline(textValue),
   };
@@ -289,11 +311,11 @@ function createMarkdownTheme(palette: Palette, text: TextStyles): MarkdownTheme 
 
 function createSelectListTheme(palette: Palette, text: TextStyles): SelectListTheme {
   return {
-    selectedPrefix: (textValue) => text.bold(palette.accent(textValue)),
-    selectedText: (textValue) => text.bold(palette.accent(textValue)),
-    description: (textValue) => palette.muted(textValue),
-    scrollInfo: (textValue) => palette.dim(textValue),
-    noMatch: (textValue) => palette.muted(textValue),
+    selectedPrefix: (textValue) => text.bold(palette.brandAccent(textValue)),
+    selectedText: (textValue) => text.bold(palette.brandAccent(textValue)),
+    description: (textValue) => palette.textMuted(textValue),
+    scrollInfo: (textValue) => palette.textDim(textValue),
+    noMatch: (textValue) => palette.textMuted(textValue),
   };
 }
 
@@ -305,9 +327,14 @@ function createEditorBorderForReasoning(
     return (effort?: ReasoningEffort) => wrap(`editorBorder-${effort ?? "none"}`);
   }
 
-  const [MIN_H, MAX_H] = [20, 28];
-  const [MIN_S, MAX_S] = [8, 76];
-  const [MIN_L, MAX_L] = [24, 52];
+  const accent = paletteByName.get("brandAccent");
+  const dim = paletteByName.get("textDim");
+  if (!accent || !dim) {
+    return () => (text) => text;
+  }
+  const [MIN_H, MAX_H] = [dim.h, accent.h];
+  const [MIN_S, MAX_S] = [dim.s, accent.s];
+  const [MIN_L, MAX_L] = [dim.l, accent.l];
   const [RANGE_H, RANGE_S, RANGE_L] = [MAX_H - MIN_H, MAX_S - MIN_S, MAX_L - MIN_L];
   const h = (x: number) => MIN_H + RANGE_H * x;
   const s = (x: number) => MIN_S + RANGE_S * x;

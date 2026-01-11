@@ -1,4 +1,27 @@
+import { type ColorDef, PALETTE_COLORS, type PaletteTokenName } from "../ui/palette_tokens.js";
 import type { ExportEntry, ExportMetadata, ExportToolCall } from "./types.js";
+
+const paletteByName = new Map<PaletteTokenName, ColorDef>(
+  PALETTE_COLORS.map((color) => [color.name, color] as const),
+);
+
+function hsl(name: PaletteTokenName): string {
+  const color = paletteByName.get(name);
+  if (!color) {
+    throw new Error(`missing palette token: ${name}`);
+  }
+  return `hsl(${color.h} ${color.s}% ${color.l}%)`;
+}
+
+const HTML_EXPORT_COLORS = {
+  bg: "hsl(26 8% 8%)",
+  panel: "hsl(26 8% 12%)",
+  user: "hsl(26 8% 16%)",
+  assistant: "hsl(26 8% 10%)",
+  tool: "hsl(26 8% 12%)",
+  border: "hsl(26 8% 18%)",
+  text: "hsl(26 10% 86%)",
+} as const;
 
 function escapeHtml(value: string): string {
   return value
@@ -154,17 +177,17 @@ export function renderHtmlExport(entries: ExportEntry[], metadata: ExportMetadat
     `  <title>${escapeHtml(title)}</title>`,
     "  <style>",
     "    :root {",
-    "      --bg: hsl(24 6% 8%);",
-    "      --panel: hsl(24 6% 12%);",
-    "      --user: hsl(24 6% 16%);",
-    "      --assistant: hsl(24 6% 10%);",
-    "      --tool: hsl(24 6% 12%);",
-    "      --border: hsl(24 6% 18%);",
-    "      --text: hsl(24 10% 86%);",
-    "      --muted: hsl(24 6% 56%);",
-    "      --accent: hsl(28 92% 72%);",
-    "      --link: hsl(328 84% 72%);",
-    "      --error: hsl(0 76% 68%);",
+    `      --bg: ${HTML_EXPORT_COLORS.bg};`,
+    `      --panel: ${HTML_EXPORT_COLORS.panel};`,
+    `      --user: ${HTML_EXPORT_COLORS.user};`,
+    `      --assistant: ${HTML_EXPORT_COLORS.assistant};`,
+    `      --tool: ${HTML_EXPORT_COLORS.tool};`,
+    `      --border: ${HTML_EXPORT_COLORS.border};`,
+    `      --text: ${HTML_EXPORT_COLORS.text};`,
+    `      --muted: ${hsl("textMuted")};`,
+    `      --accent: ${hsl("brandAccent")};`,
+    `      --link: ${hsl("linkText")};`,
+    `      --error: ${hsl("statusError")};`,
     "    }",
     "    * { box-sizing: border-box; }",
     "    body {",

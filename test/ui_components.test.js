@@ -13,31 +13,31 @@ test("AppIntroComponent renders header and help text", () => {
   const theme = createTagTheme();
   const component = new AppIntroComponent(theme, "tau", "1.0.0", "help text");
   const text = renderText(component, 80);
-  expect(text).toContain("<accent>tau</accent>");
-  expect(text).toContain("<muted>– terminal chat (v1.0.0)</muted>");
-  expect(text).toContain("<muted>help text</muted>");
+  expect(text).toContain("<brandAccent>tau</brandAccent>");
+  expect(text).toContain("<textMuted>– terminal chat (v1.0.0)</textMuted>");
+  expect(text).toContain("<textMuted>help text</textMuted>");
 });
 
 test("SessionDividerComponent renders a muted divider line", () => {
   const theme = createTagTheme();
   const component = new SessionDividerComponent(theme, "new session");
   const lines = renderLines(component, 20);
-  expect(lines[0]).toBe("<muted>── new session ─────</muted>");
+  expect(lines[0]).toBe("<textMuted>── new session ─────</textMuted>");
 });
 
 test("SessionSummaryComponent renders borders and summary text", () => {
   const theme = createTagTheme();
   const component = new SessionSummaryComponent(theme, "summary line");
   const text = renderText(component, 200);
-  expect(text).toContain("<accent>context from previous session</accent>");
-  expect(text).toContain("<italic><muted>summary line</muted></italic>");
+  expect(text).toContain("<brandAccent>context from previous session</brandAccent>");
+  expect(text).toContain("<italic><textMuted>summary line</textMuted></italic>");
 });
 
 test("UserMessageComponent applies memory mode styling", () => {
   const theme = createTagTheme();
   const component = new UserMessageComponent(theme, "remember this", { isMemoryMode: true });
   const text = renderText(component, 60);
-  expect(text).toContain("<userMemoryBg>");
+  expect(text).toContain("<userMemorySurface>");
   expect(text).toContain("<userMemoryText>remember this</userMemoryText>");
 });
 
@@ -79,9 +79,9 @@ test("QueuedMessagesComponent renders numbered, italicized previews", () => {
   const theme = createTagTheme();
   const component = new QueuedMessagesComponent(theme, ["first line\nsecond", "third"]);
   const lines = renderLines(component, 80);
-  expect(lines[0]).toBe("<dim> queued (2) — alt+up to edit next</dim>");
-  expect(lines[1]).toBe("<dim>  1› </dim><italic><muted>first line</muted></italic>");
-  expect(lines[2]).toBe("<dim>  2› </dim><italic><muted>third</muted></italic>");
+  expect(lines[0]).toBe("<textDim> queued (2) — alt+up to edit next</textDim>");
+  expect(lines[1]).toBe("<textDim>  1› </textDim><italic><textMuted>first line</textMuted></italic>");
+  expect(lines[2]).toBe("<textDim>  2› </textDim><italic><textMuted>third</textMuted></italic>");
 });
 
 test("FooterComponent renders risk label with styling", () => {
@@ -94,8 +94,8 @@ test("FooterComponent renders risk label with styling", () => {
     riskLevel: "read-only",
   });
   const line = renderLines(footer, 120)[0];
-  expect(line).toContain("<riskReadOnly>read-only</riskReadOnly>");
-  expect(line).toContain("<dim>ctx 10/100 · $0.01</dim>");
+  expect(line).toContain("<riskReadOnlyText>read-only</riskReadOnlyText>");
+  expect(line).toContain("<textDim>ctx 10/100 · $0.01</textDim>");
 });
 
 test("FooterComponent compacts cwd before truncating and keeps ellipsis styled", () => {
@@ -109,7 +109,7 @@ test("FooterComponent compacts cwd before truncating and keeps ellipsis styled",
   });
 
   const compactLine = renderLines(footer, 50)[0];
-  expect(compactLine).toContain("<dim>ctx · $0.01</dim>");
+  expect(compactLine).toContain("<textDim>ctx · $0.01</textDim>");
 
   footer.setStatus({
     contextUsage: "this is a very long context usage string",
@@ -118,9 +118,9 @@ test("FooterComponent compacts cwd before truncating and keeps ellipsis styled",
   });
 
   const truncatedLine = renderLines(footer, 40)[0];
-  expect(truncatedLine).toContain("<dim>");
-  expect(truncatedLine).toContain("…</dim>");
-  expect(truncatedLine).not.toContain("</dim>…");
+  expect(truncatedLine).toContain("<textDim>");
+  expect(truncatedLine).toContain("…</textDim>");
+  expect(truncatedLine).not.toContain("</textDim>…");
 });
 
 test("OneLineSegmentsComponent truncates flex segments", () => {

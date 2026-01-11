@@ -149,8 +149,8 @@ export function buildWriteSuccessView(
   content: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
-  const writeColor = (s: string) => palette.toolFileRan(s);
-  const successBullet = (s: string) => palette.diffAdded(s);
+  const writeColor = (s: string) => palette.actionSuccess(s);
+  const successBullet = (s: string) => palette.actionSuccess(s);
 
   const { truncation: previewTruncation, previewLines } = applyPreviewPolicy(content, {
     maxLines: WRITE_UI_PREVIEW_LINES,
@@ -160,16 +160,16 @@ export function buildWriteSuccessView(
   const preview = previewTruncation.content;
   const expandedSections: Array<string | undefined> = [];
   expandedSections.push(
-    palette.muted(`${lines} lines · ${formatTokenEstimate(bytes)} · ${bytes} bytes`),
+    palette.textMuted(`${lines} lines · ${formatTokenEstimate(bytes)} · ${bytes} bytes`),
   );
 
   if (preview) {
-    expandedSections.push(palette.filePreview(preview));
+    expandedSections.push(palette.actionOutput(preview));
   }
 
   if (previewTruncation.truncated) {
-    const icon = palette.warn("◆");
-    const msg = palette.dim(
+    const icon = palette.statusWarn("◆");
+    const msg = palette.textDim(
       `preview: ${previewTruncation.outputLines} of ${previewTruncation.totalLines} lines`,
     );
     expandedSections.push(`${icon} ${msg}`);
@@ -180,19 +180,19 @@ export function buildWriteSuccessView(
     bulletStyle: successBullet,
     bullet: "✓",
     label: "wrote",
-    labelStyle: palette.muted,
+    labelStyle: palette.textMuted,
     accent: pathInline,
-    accentStyle: palette.accent,
+    accentStyle: palette.brandAccent,
   });
 
   const compactLines = buildCompactPreviewLines(previewLines, {
     totalLines: lines,
     maxLines: 16,
-    lineStyle: palette.dim,
-    moreStyle: palette.dim,
+    lineStyle: palette.textDim,
+    moreStyle: palette.textDim,
   });
   const infoText = `${lines} lines · ${formatTokenEstimate(bytes)} · ${bytes} bytes`;
-  const summaryLine = `    ${palette.muted(`(${infoText})`)}`;
+  const summaryLine = `    ${palette.textMuted(`(${infoText})`)}`;
   const compactText = [compactLines, summaryLine].filter(Boolean).join("\n");
 
   return {
@@ -214,7 +214,7 @@ export function buildWriteBlockedView(
   reason: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
-  const errorColor = (s: string) => palette.error(s);
+  const errorColor = (s: string) => palette.actionError(s);
 
   const msg = reason.trim();
   const section = buildSection(msg ? [errorColor(msg)] : []);
@@ -225,9 +225,9 @@ export function buildWriteBlockedView(
   const header = buildHeaderLine({
     bulletStyle: errorColor,
     label: "write blocked",
-    labelStyle: palette.muted,
+    labelStyle: palette.textMuted,
     accent: pathInline,
-    accentStyle: palette.accent,
+    accentStyle: palette.brandAccent,
   });
 
   return {
@@ -244,9 +244,9 @@ export function buildWriteBlockedView(
 }
 
 function colorDiffLine(palette: Theme["palette"], line: string): string {
-  if (line.startsWith("- ")) return palette.diffRemoved(line);
-  if (line.startsWith("+ ")) return palette.diffAdded(line);
-  return palette.muted(line);
+  if (line.startsWith("- ")) return palette.diffRemove(line);
+  if (line.startsWith("+ ")) return palette.diffAdd(line);
+  return palette.textMuted(line);
 }
 
 export function buildEditSuccessView(
@@ -258,8 +258,8 @@ export function buildEditSuccessView(
   newText: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
-  const editColor = (s: string) => palette.toolFileRan(s);
-  const successBullet = (s: string) => palette.diffAdded(s);
+  const editColor = (s: string) => palette.actionSuccess(s);
+  const successBullet = (s: string) => palette.actionSuccess(s);
 
   const { diff, truncation: diffTruncation, added, removed } = buildSimpleDiff(oldText, newText);
   const diffLines = diff ? diff.split("\n") : [];
@@ -269,14 +269,16 @@ export function buildEditSuccessView(
     sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
 
   const expandedSections: Array<string | undefined> = [];
-  expandedSections.push(palette.muted(`replaced ${oldLength} → ${newLength} chars (${diffStr})`));
+  expandedSections.push(
+    palette.textMuted(`replaced ${oldLength} → ${newLength} chars (${diffStr})`),
+  );
   if (diffLines.length > 0) {
     expandedSections.push(diffLines.map((line) => colorDiffLine(palette, line)).join("\n"));
   }
 
   if (diffTruncation.truncated) {
-    const icon = palette.warn("◆");
-    const msg = palette.dim(
+    const icon = palette.statusWarn("◆");
+    const msg = palette.textDim(
       `truncated: ${diffTruncation.outputLines} of ${diffTruncation.totalLines} lines`,
     );
     expandedSections.push(`${icon} ${msg}`);
@@ -288,29 +290,29 @@ export function buildEditSuccessView(
     bulletStyle: successBullet,
     bullet: "✓",
     label: "edited",
-    labelStyle: palette.muted,
+    labelStyle: palette.textMuted,
     accent: pathInline,
-    accentStyle: palette.accent,
+    accentStyle: palette.brandAccent,
   });
 
   const compactLines: string[] = [];
   for (const l of diffLines) {
     if (l.startsWith("- ")) {
-      compactLines.push(palette.diffRemoved(`    ${l}`));
+      compactLines.push(palette.diffRemove(`    ${l}`));
     } else if (l.startsWith("+ ")) {
-      compactLines.push(palette.diffAdded(`    ${l}`));
+      compactLines.push(palette.diffAdd(`    ${l}`));
     } else {
-      compactLines.push(palette.muted(`    ${l}`));
+      compactLines.push(palette.textMuted(`    ${l}`));
     }
   }
   if (diffTruncation.truncated) {
-    const icon = palette.warn("◆");
-    const msg = palette.dim(
+    const icon = palette.statusWarn("◆");
+    const msg = palette.textDim(
       `truncated: ${diffTruncation.outputLines} of ${diffTruncation.totalLines} lines`,
     );
     compactLines.push(`    ${icon} ${msg}`);
   }
-  const summaryLine = `    ${palette.muted(`(+${added}, -${removed})`)}`;
+  const summaryLine = `    ${palette.textMuted(`(+${added}, -${removed})`)}`;
   compactLines.push(summaryLine);
 
   return {
@@ -332,7 +334,7 @@ export function buildEditBlockedView(
   reason: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
-  const errorColor = (s: string) => palette.error(s);
+  const errorColor = (s: string) => palette.actionError(s);
 
   const msg = reason.trim();
   const section = buildSection(msg ? [errorColor(msg)] : []);
@@ -343,9 +345,9 @@ export function buildEditBlockedView(
   const header = buildHeaderLine({
     bulletStyle: errorColor,
     label: "edit blocked",
-    labelStyle: palette.muted,
+    labelStyle: palette.textMuted,
     accent: pathInline,
-    accentStyle: palette.accent,
+    accentStyle: palette.brandAccent,
   });
 
   return {

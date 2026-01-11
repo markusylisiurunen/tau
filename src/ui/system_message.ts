@@ -9,12 +9,12 @@ export class SystemMessageComponent extends Container {
     const { palette } = theme;
     const style =
       kind === "error"
-        ? palette.noticeError
+        ? palette.toastError
         : kind === "warn"
-          ? palette.noticeWarn
+          ? palette.toastWarn
           : kind === "muted"
-            ? palette.muted
-            : palette.noticeSuccess;
+            ? palette.textMuted
+            : palette.toastSuccess;
     this.addChild(new Text(style(text), 1, 0));
   }
 }

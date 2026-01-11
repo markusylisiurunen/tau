@@ -200,8 +200,8 @@ export class CustomEditor extends Editor {
     }
 
     const fillWidth = Math.max(0, innerWidth - metrics.fixed);
-    const leftStyle = this.headerLeftStyle ?? this.uiTheme.palette.dim;
-    const rightStyle = this.headerRightStyle ?? this.uiTheme.palette.dim;
+    const leftStyle = this.headerLeftStyle ?? this.uiTheme.palette.textDim;
+    const rightStyle = this.headerRightStyle ?? this.uiTheme.palette.textDim;
     const leftSegment = left ? ` ${leftStyle(left)} ` : "";
     const rightSegment = right ? ` ${rightStyle(right)} ` : "";
     const fill = dash.repeat(fillWidth);

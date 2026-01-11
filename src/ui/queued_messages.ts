@@ -23,17 +23,17 @@ export class QueuedMessagesComponent implements Component {
     const headerRaw = `queued (${this.messages.length}) — alt+up to edit next`;
     const headerPad = " ";
     const headerWidth = Math.max(0, width - visibleWidth(headerPad));
-    lines.push(palette.dim(`${headerPad}${truncateToWidth(headerRaw, headerWidth, "…")}`));
+    lines.push(palette.textDim(`${headerPad}${truncateToWidth(headerRaw, headerWidth, "…")}`));
 
     for (const [index, message] of this.messages.entries()) {
       const prefixRawArrow = `  ${index + 1}› `;
-      const prefix = palette.dim(prefixRawArrow);
+      const prefix = palette.textDim(prefixRawArrow);
       const prefixWidth = visibleWidth(prefixRawArrow);
 
       const line = firstLine(message);
       const available = Math.max(0, width - prefixWidth);
       const truncated = truncateToWidth(line, available, "…");
-      const styled = markdownTheme.italic(palette.muted(truncated));
+      const styled = markdownTheme.italic(palette.textMuted(truncated));
       lines.push(`${prefix}${styled}`);
     }
 

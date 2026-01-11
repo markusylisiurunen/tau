@@ -99,7 +99,7 @@ class TruncatedText implements Component {
     const lines = this.text.split("\n");
     return lines.map((line) => {
       if (visibleWidth(line) > width) {
-        return truncateToWidth(line, Math.max(1, width - 1), palette.dim("…"));
+        return truncateToWidth(line, Math.max(1, width - 1), palette.textDim("…"));
       }
       return line;
     });
@@ -116,7 +116,7 @@ export function buildTaskRunningView(
   opts?: TaskRenderOptions,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
-  const runningColor = (s: string) => palette.taskRunning(s);
+  const runningColor = (s: string) => palette.actionRunning(s);
 
   const kind = opts?.kind ?? "task";
   const subagentName = opts?.subagentName;
@@ -124,27 +124,27 @@ export function buildTaskRunningView(
   const header = buildHeaderLine({
     bulletStyle: runningColor,
     label: `${kind} running`,
-    labelStyle: palette.muted,
+    labelStyle: palette.textMuted,
     accent: title.trim(),
-    accentStyle: palette.accent,
+    accentStyle: palette.brandAccent,
   });
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
   const eventLines = formatEventsForDisplay(lastEvents).slice(-8);
   const costPart = formatCost(costTotal);
   const costLine = subagentName
-    ? palette.muted(`${subagentName} · ${costPart} (${stats})`)
-    : palette.muted(`${costPart} (${stats})`);
+    ? palette.textMuted(`${subagentName} · ${costPart} (${stats})`)
+    : palette.textMuted(`${costPart} (${stats})`);
 
   const extraParts: string[] = [];
   if (eventLines.length > 0) {
-    extraParts.push(palette.dim(eventLines.join("\n")));
+    extraParts.push(palette.textDim(eventLines.join("\n")));
   }
   extraParts.push(costLine);
 
   const expandedCostLine = subagentName
-    ? palette.muted(`${subagentName} · ${formatCost(costTotal)} (${stats})`)
-    : palette.muted(`${formatCost(costTotal)} (${stats})`);
+    ? palette.textMuted(`${subagentName} · ${formatCost(costTotal)} (${stats})`)
+    : palette.textMuted(`${formatCost(costTotal)} (${stats})`);
 
   const extraComponent =
     extraParts.length > 0
@@ -152,11 +152,11 @@ export function buildTaskRunningView(
       : undefined;
 
   const expandedTitle = subagentName
-    ? `${runningColor(text.bold(`${kind}: ${title}`))}\n${palette.dim(`subagent: ${subagentName}`)}`
+    ? `${runningColor(text.bold(`${kind}: ${title}`))}\n${palette.textDim(`subagent: ${subagentName}`)}`
     : runningColor(text.bold(`${kind}: ${title}`));
   const expandedSections: Array<string | undefined> = [];
   if (eventLines.length > 0) {
-    expandedSections.push(palette.dim(eventLines.join("\n")));
+    expandedSections.push(palette.textDim(eventLines.join("\n")));
   }
   expandedSections.push(expandedCostLine);
 
@@ -184,7 +184,7 @@ export function buildTaskFinishedView(
   opts?: TaskRenderOptions,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
-  const successBullet = (s: string) => palette.diffAdded(s);
+  const successBullet = (s: string) => palette.actionSuccess(s);
   const isSuccess = status === "success";
 
   const kind = opts?.kind ?? "task";
@@ -192,10 +192,10 @@ export function buildTaskFinishedView(
 
   const borderColor =
     status === "success"
-      ? (s: string) => palette.taskRan(s)
+      ? (s: string) => palette.actionSuccess(s)
       : status === "aborted"
-        ? (s: string) => palette.warn(s)
-        : (s: string) => palette.error(s);
+        ? (s: string) => palette.statusWarn(s)
+        : (s: string) => palette.actionError(s);
 
   const statusText =
     status === "success"
@@ -208,37 +208,37 @@ export function buildTaskFinishedView(
     bulletStyle: isSuccess ? successBullet : borderColor,
     bullet: isSuccess ? "✓" : undefined,
     label: statusText,
-    labelStyle: palette.muted,
+    labelStyle: palette.textMuted,
     accent: title.trim(),
-    accentStyle: palette.accent,
+    accentStyle: palette.brandAccent,
   });
 
   const stats = `turns: ${turns}, tool calls: ${toolCalls}`;
   const outputTrimmed = finalOutput.trim();
   const outputPreview = outputTrimmed.split("\n").slice(0, 8).join("\n").trim();
   const costLine = subagentName
-    ? palette.muted(`${subagentName} · ${formatCost(costTotal)} (${stats})`)
-    : palette.muted(`${formatCost(costTotal)} (${stats})`);
+    ? palette.textMuted(`${subagentName} · ${formatCost(costTotal)} (${stats})`)
+    : palette.textMuted(`${formatCost(costTotal)} (${stats})`);
 
   const extraParts: string[] = [];
   if (outputPreview) {
-    extraParts.push(palette.dim(outputPreview));
+    extraParts.push(palette.textDim(outputPreview));
   }
   extraParts.push(costLine);
 
   const expandedTitleLines = [borderColor(text.bold(`${kind}: ${title}`))];
   if (subagentName) {
-    expandedTitleLines.push(palette.dim(`subagent: ${subagentName}`));
+    expandedTitleLines.push(palette.textDim(`subagent: ${subagentName}`));
   }
   const expandedTitle = expandedTitleLines.join("\n");
 
   const expandedSections: Array<string | undefined> = [];
   if (outputTrimmed) {
-    expandedSections.push(palette.dim(outputTrimmed));
+    expandedSections.push(palette.textDim(outputTrimmed));
   }
   const expandedCostLine = subagentName
-    ? palette.muted(`${subagentName} · ${formatCost(costTotal)} (${stats})`)
-    : palette.muted(`${formatCost(costTotal)} (${stats})`);
+    ? palette.textMuted(`${subagentName} · ${formatCost(costTotal)} (${stats})`)
+    : palette.textMuted(`${formatCost(costTotal)} (${stats})`);
   expandedSections.push(expandedCostLine);
 
   return {
@@ -261,7 +261,7 @@ export function buildTaskBlockedView(
   opts?: TaskRenderOptions,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
-  const errorColor = (s: string) => palette.error(s);
+  const errorColor = (s: string) => palette.actionError(s);
 
   const kind = opts?.kind ?? "task";
   const subagentName = opts?.subagentName;
@@ -271,13 +271,13 @@ export function buildTaskBlockedView(
   const header = buildHeaderLine({
     bulletStyle: errorColor,
     label: `${kind} blocked`,
-    labelStyle: palette.muted,
+    labelStyle: palette.textMuted,
     accent: title.trim(),
-    accentStyle: palette.accent,
+    accentStyle: palette.brandAccent,
   });
 
   const expandedTitle = subagentName
-    ? `${errorColor(text.bold(`${kind}: ${title}`))}\n${palette.dim(`subagent: ${subagentName}`)}`
+    ? `${errorColor(text.bold(`${kind}: ${title}`))}\n${palette.textDim(`subagent: ${subagentName}`)}`
     : errorColor(text.bold(`${kind}: ${title}`));
 
   const expandedSections: Array<string | undefined> = [];

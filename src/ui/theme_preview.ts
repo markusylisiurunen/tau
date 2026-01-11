@@ -48,7 +48,7 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     "> quoted text",
     "",
     "```ts",
-    'const accent = palette.accent("hello");',
+    'const accent = palette.brandAccent("hello");',
     "```",
   ].join("\n");
 
@@ -86,15 +86,15 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
 
   const writeContent = [
     "export const previewPalette = {",
-    '  accent: "#f09d4f",',
-    '  muted: "#a0897a",',
+    '  brandAccent: "brandAccent",',
+    '  textMuted: "textMuted",',
     "};",
   ].join("\n");
   const writeLines = countLines(writeContent);
   const writeBytes = Buffer.byteLength(writeContent, "utf8");
 
-  const oldText = ["const accent = 0.8;", "const muted = 0.4;"].join("\n");
-  const newText = ["const accent = 0.9;", "const muted = 0.55;"].join("\n");
+  const oldText = ["const brandAccent = 0.8;", "const textMuted = 0.4;"].join("\n");
+  const newText = ["const brandAccent = 0.9;", "const textMuted = 0.55;"].join("\n");
 
   return [
     { type: "system", text: "theme preview mode: model calls disabled", kind: "muted" },

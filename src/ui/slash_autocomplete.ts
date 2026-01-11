@@ -35,6 +35,7 @@ const STATIC_COMMANDS = [
   { value: "reload", label: "reload", description: "reload personas and prompts from disk" },
   { value: "copy", label: "copy", description: "copy last assistant message" },
   { value: "copy:code", label: "copy:code", description: "copy code blocks from last assistant message" },
+  { value: "export:html", label: "export:html", description: "export chat history to HTML" },
   { value: "risk:restricted", label: "risk:restricted", description: "restricted tools only (read/grep/list)" },
   { value: "risk:read-only", label: "risk:read-only", description: "allow read-only tools" },
   { value: "risk:read-write", label: "risk:read-write", description: "allow all tools" },

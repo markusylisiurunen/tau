@@ -169,6 +169,7 @@ tau supports slash commands for common actions:
 | `/new`                    | clear the session and start fresh              |
 | `/copy`                   | copy the last assistant message                |
 | `/copy:code`              | copy just the code blocks                      |
+| `/export:html`            | export chat history to html                    |
 | `/reload`                 | reload personas, prompts, and skills from disk |
 | `/compact:only-summary`   | compress history and continue with a summary   |
 | `/compact:with-last-turn` | compress history but keep the last exchange    |

@@ -79,6 +79,66 @@ const CODE_HUE = 224;
 const WARN_HUE = 24;
 const ERROR_HUE = 0;
 
+export interface ColorDef {
+  name: string;
+  h: number;
+  s: number;
+  l: number;
+}
+
+export const PALETTE_COLORS: ColorDef[] = [
+  // Primary colors
+  { name: "accent", h: ACCENT_HUE, s: 92, l: 72 },
+  { name: "muted", h: TEXT_HUE, s: 8, l: 56 },
+  { name: "dim", h: TEXT_HUE, s: 6, l: 42 },
+  { name: "link", h: LINK_HUE, s: 84, l: 72 },
+  { name: "thinking", h: TEXT_HUE, s: 8, l: 56 },
+  { name: "codeInline", h: CODE_HUE, s: 64, l: 74 },
+  { name: "codeBlock", h: CODE_HUE, s: 64, l: 74 },
+  // Semantic colors
+  { name: "warn", h: WARN_HUE, s: 76, l: 68 },
+  { name: "error", h: ERROR_HUE, s: 76, l: 68 },
+  { name: "memoryMode", h: 280, s: 80, l: 72 },
+  { name: "bashRunning", h: 48, s: 80, l: 72 },
+  { name: "bashRan", h: 192, s: 80, l: 72 },
+  { name: "bashOutput", h: TEXT_HUE, s: 8, l: 56 },
+  { name: "toolFileRan", h: 192, s: 80, l: 72 },
+  { name: "filePreview", h: TEXT_HUE, s: 8, l: 56 },
+  { name: "taskRunning", h: 48, s: 80, l: 72 },
+  { name: "taskRan", h: 192, s: 80, l: 72 },
+  { name: "taskPreview", h: TEXT_HUE, s: 8, l: 56 },
+  // Diff colors
+  { name: "diffAdded", h: 72, s: 40, l: 46 },
+  { name: "diffRemoved", h: 6, s: 44, l: 52 },
+  // Notices
+  { name: "noticeSuccess", h: CODE_HUE, s: 64, l: 74 },
+  { name: "noticeWarn", h: WARN_HUE, s: 76, l: 68 },
+  { name: "noticeError", h: ERROR_HUE, s: 76, l: 68 },
+  { name: "noticeSuccessBg", h: CODE_HUE, s: 52, l: 28 },
+  { name: "noticeWarnBg", h: WARN_HUE, s: 70, l: 28 },
+  { name: "noticeErrorBg", h: ERROR_HUE, s: 70, l: 28 },
+  { name: "noticeMutedBg", h: TEXT_HUE, s: 6, l: 24 },
+  // User message
+  { name: "userBg", h: TEXT_HUE, s: 6, l: 12 },
+  { name: "userMemoryBg", h: 280, s: 18, l: 18 },
+  { name: "userMemoryText", h: 280, s: 42, l: 82 },
+  // Risk level indicators
+  { name: "riskRestricted", h: TEXT_HUE, s: 6, l: 42 },
+  { name: "riskReadOnly", h: 72, s: 16, l: 44 },
+  { name: "riskReadWrite", h: 8, s: 20, l: 56 },
+];
+
+export function buildPalettePreview(): string {
+  const lines: string[] = [];
+  for (const color of PALETTE_COLORS) {
+    const hex = hslToHex(color.h, color.s, color.l);
+    const block = chalk.bgHex(hex)(" ");
+    const hsl = `hsl(${color.h}, ${color.s}%, ${color.l}%)`;
+    lines.push(` ${block} ${color.name.padEnd(16)} ${hsl.padEnd(22)} ${hex}`);
+  }
+  return lines.join("\n");
+}
+
 function tagWrapper(label: string): (text: string) => string {
   return (text) => `<${label}>${text}</${label}>`;
 }

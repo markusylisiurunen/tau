@@ -1,4 +1,5 @@
-import { homedir } from "node:os";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
@@ -9,6 +10,8 @@ import { buildHelpText, getRiskLevelDescription, parseCommand } from "./commands
 import type { Config } from "./config.js";
 import { getApiKeyForProvider } from "./config.js";
 import { loadAllContent } from "./content_loader.js";
+import { buildExportEntriesFromHistory } from "./export/engine_history.js";
+import { renderExport } from "./export/index.js";
 import type { PromptTemplate } from "./prompts.js";
 import { SessionEngine } from "./session/session_engine.js";
 import { formatSubagentsForPrompt } from "./subagents/registry.js";
@@ -958,6 +961,10 @@ export class ChatApp {
         await this.copyLastAssistantCodeBlock();
         break;
 
+      case "export":
+        await this.exportSessionHtml();
+        break;
+
       case "new":
         this.clearSession();
         break;
@@ -1040,6 +1047,33 @@ export class ChatApp {
       this.addSystemMessage("copied all code blocks to clipboard.", "success");
     } catch (err) {
       this.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, "error");
+    }
+  }
+
+  private async exportSessionHtml(): Promise<void> {
+    const history = this.engine.history;
+    if (history.length === 0) {
+      this.addSystemMessage("no conversation to export.", "warn");
+      return;
+    }
+
+    try {
+      const entries = buildExportEntriesFromHistory(history);
+      if (entries.length === 0) {
+        this.addSystemMessage("no conversation to export.", "warn");
+        return;
+      }
+
+      const html = renderExport("html", entries, {
+        title: "tau chat export",
+        generatedAt: Date.now(),
+      });
+      const dir = await mkdtemp(join(tmpdir(), "tau-export-"));
+      const filePath = join(dir, "index.html");
+      await writeFile(filePath, html, "utf8");
+      this.addSystemMessage(filePath, "muted");
+    } catch (err) {
+      this.addSystemMessage(`export failed: ${(err as Error).message}`, "error");
     }
   }
 

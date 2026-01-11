@@ -30,7 +30,7 @@ import {
   buildTaskFinishedView,
   buildTaskRunningView,
 } from "./task_execution.js";
-import type { Theme } from "./theme.js";
+import { buildPalettePreview, type Theme } from "./theme.js";
 
 function countLines(text: string): number {
   if (!text) return 0;
@@ -98,6 +98,8 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
 
   return [
     { type: "system", text: "theme preview mode: model calls disabled", kind: "muted" },
+    { type: "session_divider", label: "Palette" },
+    { type: "assistant_partial", text: buildPalettePreview() },
     { type: "session_divider", label: "Theme Preview" },
     { type: "user", text: "Can you summarize the UI state and highlight any warnings?" },
     { type: "assistant_partial", text: assistantMarkdown },

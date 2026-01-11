@@ -131,7 +131,7 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 
 ## Commands
 
-- `/help`, `/new`, `/copy`, `/copy:code`, `/reload`
+- `/help`, `/new`, `/copy`, `/copy:code`, `/export:html`, `/reload`
 - `/compact:only-summary`, `/compact:with-last-turn` - Compact history to continue
 - `/risk:restricted|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model)

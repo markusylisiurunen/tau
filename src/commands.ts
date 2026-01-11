@@ -6,6 +6,7 @@ import { type RiskLevel, RiskLevelSchema, type Skill } from "./types.js";
 const HelpCommandSchema = z.object({ type: z.literal("help") });
 const CopyCommandSchema = z.object({ type: z.literal("copy") });
 const CopyCodeCommandSchema = z.object({ type: z.literal("copyCode") });
+const ExportCommandSchema = z.object({ type: z.literal("export") });
 const NewCommandSchema = z.object({ type: z.literal("new") });
 const CompactOnlySummaryCommandSchema = z.object({ type: z.literal("compactOnlySummary") });
 const CompactSummaryAndLastTurnCommandSchema = z.object({
@@ -37,6 +38,7 @@ export const CommandSchema = z.discriminatedUnion("type", [
   HelpCommandSchema,
   CopyCommandSchema,
   CopyCodeCommandSchema,
+  ExportCommandSchema,
   NewCommandSchema,
   CompactOnlySummaryCommandSchema,
   CompactSummaryAndLastTurnCommandSchema,
@@ -63,6 +65,10 @@ export function parseCommand(raw: string): Command {
 
   if (trimmed === "/copy:code") {
     return CommandSchema.parse({ type: "copyCode" });
+  }
+
+  if (trimmed === "/export:html") {
+    return CommandSchema.parse({ type: "export" });
   }
 
   if (trimmed === "/new") {
@@ -166,6 +172,7 @@ export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string 
     ["/reload", "reload personas, prompts, and skills from disk"],
     ["/copy", "copy last assistant message"],
     ["/copy:code", "copy code blocks from last assistant message"],
+    ["/export:html", "export chat history to HTML"],
     ["/risk:restricted", "restricted tools only (read/grep/list)"],
     ["/risk:read-only", "allow read-only tools"],
     ["/risk:read-write", "allow all tools"],

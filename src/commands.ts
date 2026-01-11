@@ -144,7 +144,11 @@ function formatSkillPath(fullPath: string): string {
   return fullPath;
 }
 
-export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string {
+export function buildHelpText(
+  agentsFiles?: string[],
+  skills?: Skill[],
+  riskLevels?: RiskLevel[],
+): string {
   const lines: string[] = [];
   if (agentsFiles && agentsFiles.length > 0) {
     lines.push("context:");
@@ -164,7 +168,7 @@ export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string 
   if (lines.length > 0) {
     lines.push("");
   }
-  const commandEntries: Array<[string, string]> = [
+  const baseCommandEntries: Array<[string, string]> = [
     ["/help", "show this help"],
     ["/new", "new session"],
     ["/compact:only-summary", "summarize and start new session"],
@@ -173,13 +177,23 @@ export function buildHelpText(agentsFiles?: string[], skills?: Skill[]): string 
     ["/copy", "copy last assistant message"],
     ["/copy:code", "copy code blocks from last assistant message"],
     ["/export:html", "export chat history to HTML"],
-    ["/risk:restricted", "restricted tools only (read/grep/list)"],
-    ["/risk:read-only", "allow read-only tools"],
-    ["/risk:read-write", "allow all tools"],
+  ];
+  const trailingCommandEntries: Array<[string, string]> = [
     ["/bash:<id>", "run saved bash command"],
     ["/persona:<id>", "switch persona"],
     ["/prompt:<id>", "insert prompt template"],
   ];
+  const allowedRiskLevels = riskLevels ?? ["restricted", "read-only", "read-write"];
+  const riskDescriptions: Record<RiskLevel, string> = {
+    restricted: "restricted tools only (read/grep/list)",
+    "read-only": "allow read-only tools",
+    "read-write": "allow all tools",
+  };
+  const riskEntries: Array<[string, string]> = allowedRiskLevels.map((level) => [
+    `/risk:${level}`,
+    riskDescriptions[level],
+  ]);
+  const commandEntries = [...baseCommandEntries, ...riskEntries, ...trailingCommandEntries];
   const keyEntries: Array<[string, string]> = [
     ["shift+tab", "cycle reasoning effort"],
     ["ctrl+r", "cycle risk level"],

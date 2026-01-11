@@ -192,11 +192,11 @@ export class ToolRegistry {
   }
 
   getEnabledToolSchemas(riskLevel: RiskLevel, personaTools?: Tool[]): Tool[] {
+    const baseTools = personaTools ?? this.schemas;
     if (riskLevel === "restricted") {
-      return this.schemas.filter((tool) => restrictedToolNames.has(tool.name));
+      return baseTools.filter((tool) => restrictedToolNames.has(tool.name));
     }
 
-    const baseTools = personaTools ?? this.schemas;
     return baseTools.filter((tool) => !restrictedToolNames.has(tool.name));
   }
 }

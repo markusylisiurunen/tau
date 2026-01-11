@@ -1,4 +1,5 @@
 import type { AutocompleteItem, AutocompleteProvider } from "@mariozechner/pi-tui";
+import type { RiskLevel } from "../types.js";
 import { fuzzyFilter } from "../utils/fuzzy.js";
 
 export function getFileAutocompleteToken(beforeCursor: string): string | null {
@@ -36,12 +37,9 @@ const STATIC_COMMANDS = [
   { value: "copy", label: "copy", description: "copy last assistant message" },
   { value: "copy:code", label: "copy:code", description: "copy code blocks from last assistant message" },
   { value: "export:html", label: "export:html", description: "export chat history to HTML" },
-  { value: "risk:restricted", label: "risk:restricted", description: "restricted tools only (read/grep/list)" },
-  { value: "risk:read-only", label: "risk:read-only", description: "allow read-only tools" },
-  { value: "risk:read-write", label: "risk:read-write", description: "allow all tools" },
 ];
 
-const RISK_OPTIONS = [
+const RISK_OPTIONS: Array<{ id: RiskLevel; description: string }> = [
   { id: "restricted", description: "restricted tools only (read/grep/list)" },
   { id: "read-only", description: "allow read-only tools" },
   { id: "read-write", description: "allow all tools" },
@@ -53,6 +51,7 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
   private getBashCommands: () => BashSuggestion[];
   private getFiles: () => string[];
   private getSkills: () => string[];
+  private getRiskLevels: () => RiskLevel[];
 
   constructor(
     personas: () => PersonaSuggestion[],
@@ -60,12 +59,14 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
     bashCommands: () => BashSuggestion[] = () => [],
     files: () => string[] = () => [],
     skills: () => string[] = () => [],
+    riskLevels: () => RiskLevel[] = () => ["restricted", "read-only", "read-write"],
   ) {
     this.getPersonas = personas;
     this.getPrompts = prompts;
     this.getBashCommands = bashCommands;
     this.getFiles = files;
     this.getSkills = skills;
+    this.getRiskLevels = riskLevels;
   }
 
   getSuggestions(
@@ -201,7 +202,9 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
   private buildRiskSuggestions(
     argPrefix: string,
   ): { items: AutocompleteItem[]; prefix: string } | null {
-    const filtered = fuzzyFilter(RISK_OPTIONS, argPrefix, (o) => `${o.id} ${o.description}`);
+    const allowed = new Set(this.getRiskLevels());
+    const options = RISK_OPTIONS.filter((option) => allowed.has(option.id));
+    const filtered = fuzzyFilter(options, argPrefix, (o) => `${o.id} ${o.description}`);
     const items = filtered.map((o) => ({
       value: o.id,
       label: o.id,
@@ -221,6 +224,16 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
       candidates.push({
         item: { value: cmd.value, label: cmd.label, description: cmd.description },
         searchText: cmd.value,
+      });
+    }
+
+    const allowed = new Set(this.getRiskLevels());
+    for (const option of RISK_OPTIONS) {
+      if (!allowed.has(option.id)) continue;
+      const value = `risk:${option.id}`;
+      candidates.push({
+        item: { value, label: value, description: option.description },
+        searchText: `${value} ${option.description}`,
       });
     }
 

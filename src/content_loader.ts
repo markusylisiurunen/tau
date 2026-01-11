@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
-import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
+import type { Api, KnownProvider, Model, Tool } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
@@ -13,6 +13,10 @@ import { prompts as builtinPrompts } from "./prompts.js";
 import type { SubagentConfigMap, SubagentPersonaConfig } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
+import { FORK_TOOL } from "./tools/fork.js";
+import { GREP_TOOL } from "./tools/grep.js";
+import { LIST_TOOL } from "./tools/list.js";
+import { READ_TOOL } from "./tools/read.js";
 import { TASK_TOOL } from "./tools/task.js";
 import { WRITE_TOOL } from "./tools/write.js";
 import type { Persona, ReasoningEffort, Skill } from "./types.js";
@@ -191,6 +195,49 @@ function parseSubagentConfig(subagentsRaw: unknown): {
   return { error: "subagents must be a list or object" };
 }
 
+function parsePersonaTools(toolsRaw: unknown): { tools?: Tool[]; error?: string } {
+  if (toolsRaw === undefined) {
+    return {};
+  }
+
+  const parsed = toolsSchema.safeParse(toolsRaw);
+  if (!parsed.success) {
+    return { error: "tools must be a string or list of strings" };
+  }
+
+  if (parsed.data === undefined) {
+    return {};
+  }
+
+  const rawList = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
+  const cleaned = rawList.map((tool) => tool.trim().toLowerCase()).filter(Boolean);
+  if (cleaned.length === 0) {
+    return { tools: [] };
+  }
+
+  const selected: Tool[] = [];
+  const unknown: string[] = [];
+  const seen = new Set<string>();
+
+  for (const name of cleaned) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const tool = PERSONA_TOOL_DEFINITIONS.get(name);
+    if (tool) {
+      selected.push(tool);
+    } else {
+      unknown.push(name);
+    }
+  }
+
+  if (unknown.length > 0) {
+    const allowed = Array.from(PERSONA_TOOL_DEFINITIONS.keys()).join(", ");
+    return { error: `unknown tool(s): ${unknown.join(", ")}. allowed: ${allowed}` };
+  }
+
+  return { tools: selected };
+}
+
 function resolveModel(provider: string, modelId: string): Model<Api> | undefined {
   if (!isKnownProvider(provider)) return undefined;
   return getModels(provider).find((m) => m.id === modelId) as Model<Api> | undefined;
@@ -281,6 +328,7 @@ const personaFrontMatterSchema = z
     allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
     skills: z.unknown().optional(),
     subagents: z.unknown().optional(),
+    tools: z.unknown().optional(),
   })
   .passthrough();
 
@@ -314,10 +362,26 @@ const skillFrontMatterSchema = z
   })
   .passthrough();
 
+const toolsSchema = z.union([z.string(), z.array(z.string())]).optional();
+
+const PERSONA_TOOL_DEFINITIONS = new Map([
+  ["bash", BASH_TOOL],
+  ["write", WRITE_TOOL],
+  ["edit", EDIT_TOOL],
+  ["read", READ_TOOL],
+  ["list", LIST_TOOL],
+  ["grep", GREP_TOOL],
+  ["task", TASK_TOOL],
+  ["fork", FORK_TOOL],
+]);
+
+const DEFAULT_PERSONA_TOOLS = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
+
 function parsePersona(
   file: string,
   content: string,
-  forbiddenIds?: Set<string>,
+  forbiddenIds: Set<string> | undefined,
+  source: "user" | "project",
 ): { persona?: Persona; error?: string } {
   const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
 
@@ -331,6 +395,7 @@ function parsePersona(
   const allowedReasoningLevels = parsedFrontMatter.data.allowedReasoningLevels;
   const skillsRaw = parsedFrontMatter.data.skills;
   const subagentsRaw = parsedFrontMatter.data.subagents;
+  const toolsRaw = parsedFrontMatter.data.tools;
 
   if (forbiddenIds?.has(id.toLowerCase())) {
     return { error: `${file}: persona id "${id}" conflicts with built-in. skipped.` };
@@ -374,6 +439,11 @@ function parsePersona(
     return { error: `${file}: ${subagentsResult.error}. skipped.` };
   }
 
+  const toolsResult = parsePersonaTools(toolsRaw);
+  if (toolsResult.error) {
+    return { error: `${file}: ${toolsResult.error}. skipped.` };
+  }
+
   // Fill in main persona's model for subagents that don't specify one
   let finalSubagents: SubagentConfigMap | undefined;
   if (subagentsResult.config && Object.keys(subagentsResult.config).length > 0) {
@@ -400,9 +470,10 @@ function parsePersona(
     }
   }
 
-  const tools = finalSubagents
-    ? [BASH_TOOL, WRITE_TOOL, EDIT_TOOL, TASK_TOOL]
-    : [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
+  const defaultTools = finalSubagents
+    ? [...DEFAULT_PERSONA_TOOLS, TASK_TOOL]
+    : DEFAULT_PERSONA_TOOLS;
+  const tools = toolsResult.tools ?? defaultTools;
 
   const persona: Persona = {
     id,
@@ -417,6 +488,7 @@ function parsePersona(
       : {}),
     ...(finalSubagents && { subagents: finalSubagents }),
     ...(skills && { skills }),
+    source,
   };
 
   return { persona };
@@ -467,7 +539,7 @@ export async function loadUserPersonas(): Promise<{
   const errors: string[] = [];
 
   for (const file of files) {
-    const result = parsePersona(file.name, file.content, builtinIds);
+    const result = parsePersona(file.name, file.content, builtinIds, "user");
     if (result.persona) {
       personas.push(result.persona);
     } else if (result.error) {
@@ -500,7 +572,7 @@ export async function loadProjectPersonas(): Promise<{
     }
 
     for (const file of files) {
-      const result = parsePersona(file.name, file.content);
+      const result = parsePersona(file.name, file.content, undefined, "project");
       if (result.persona) {
         personas.push(result.persona);
       } else if (result.error) {

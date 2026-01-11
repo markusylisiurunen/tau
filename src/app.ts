@@ -185,17 +185,6 @@ export class ChatApp {
       );
     }
 
-    if (options.initialRiskLevel) {
-      this.riskLevel = options.initialRiskLevel;
-    }
-    this.initialRiskLevel = this.riskLevel;
-
-    this.environmentTag = buildEnvironmentTag({
-      riskLevel: this.initialRiskLevel,
-      cwd: process.cwd(),
-      datetime: new Date().toISOString(),
-    });
-
     this.agentsFiles = options.withContext
       ? findAgentsFilesFromCwdToHome(process.cwd(), homedir())
       : [];
@@ -213,6 +202,21 @@ export class ChatApp {
         )) ||
       this.personas[0]!;
     this.clampPersonaReasoning(this.currentPersona);
+
+    if (options.initialRiskLevel) {
+      this.riskLevel = options.initialRiskLevel;
+    }
+    const allowedRiskLevels = this.getAllowedRiskLevelsForPersona(this.currentPersona);
+    if (!allowedRiskLevels.includes(this.riskLevel)) {
+      this.riskLevel = allowedRiskLevels[0] ?? "read-only";
+    }
+    this.initialRiskLevel = this.riskLevel;
+
+    this.environmentTag = buildEnvironmentTag({
+      riskLevel: this.initialRiskLevel,
+      cwd: process.cwd(),
+      datetime: new Date().toISOString(),
+    });
 
     this.baseSystemPrompt = buildBaseSystemPrompt({
       personaSystemPrompt: this.currentPersona.systemPrompt,
@@ -270,7 +274,11 @@ export class ChatApp {
         type: "app_intro",
         appName: "tau",
         version: APP_VERSION,
-        helpText: buildHelpText(this.agentsFiles, this.skills),
+        helpText: buildHelpText(
+          this.agentsFiles,
+          this.skills,
+          this.getAllowedRiskLevelsForPersona(this.currentPersona),
+        ),
       });
     }
 
@@ -340,6 +348,7 @@ export class ChatApp {
           })),
         () => this.projectFiles,
         () => this.skills.map((skill) => skill.name),
+        () => this.getAllowedRiskLevelsForPersona(this.currentPersona),
       ),
     );
 
@@ -641,13 +650,23 @@ export class ChatApp {
     }
   }
 
+  private isCustomPersona(persona: Persona): boolean {
+    return persona.source !== "builtin";
+  }
+
+  private getAllowedRiskLevelsForPersona(persona: Persona): RiskLevel[] {
+    return this.isCustomPersona(persona)
+      ? ["read-only", "read-write"]
+      : ["restricted", "read-only", "read-write"];
+  }
+
   // Risk Level Management ---------------------------------------------------------------
 
   private cycleRiskLevel(): void {
-    const levels: RiskLevel[] = ["restricted", "read-only", "read-write"];
+    const levels = this.getAllowedRiskLevelsForPersona(this.currentPersona);
     const previous = this.riskLevel;
     const index = levels.indexOf(this.riskLevel);
-    const next = levels[(index + 1) % levels.length]!;
+    const next = levels[(index + 1) % levels.length] ?? levels[0]!;
     this.riskLevel = next;
     this.engine.setRiskLevel(next);
     this.updateFooter();
@@ -673,6 +692,13 @@ export class ChatApp {
 
     this.currentPersona = next;
     this.clampPersonaReasoning(this.currentPersona);
+    const allowedRiskLevels = this.getAllowedRiskLevelsForPersona(this.currentPersona);
+    if (!allowedRiskLevels.includes(this.riskLevel)) {
+      this.setRiskLevel(this.riskLevel, {
+        force: true,
+        reason: "restricted risk level is not available for custom personas.",
+      });
+    }
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
     this.baseSystemPrompt = buildBaseSystemPrompt({
       personaSystemPrompt: this.currentPersona.systemPrompt,
@@ -1004,7 +1030,14 @@ export class ChatApp {
   }
 
   private showHelp(): void {
-    this.addSystemMessage(buildHelpText(this.agentsFiles, this.skills), "muted");
+    this.addSystemMessage(
+      buildHelpText(
+        this.agentsFiles,
+        this.skills,
+        this.getAllowedRiskLevelsForPersona(this.currentPersona),
+      ),
+      "muted",
+    );
   }
 
   private async copyLastAssistantMessage(): Promise<void> {
@@ -1347,22 +1380,58 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
   }
 
-  private setRiskLevel(level: RiskLevel): void {
+  private setRiskLevel(
+    level: RiskLevel,
+    options?: { force?: boolean; silent?: boolean; reason?: string },
+  ): void {
+    const allowed = this.getAllowedRiskLevelsForPersona(this.currentPersona);
+    let target = level;
+    let forced = false;
+
+    if (!allowed.includes(level)) {
+      if (!options?.force) {
+        if (!options?.silent) {
+          this.addSystemMessage(
+            `risk level '${level}' is not available for the current persona. allowed: ${allowed.join(", ")}.`,
+            "error",
+          );
+        }
+        return;
+      }
+      target = allowed[0] ?? "read-only";
+      forced = true;
+    }
+
     const previous = this.riskLevel;
-    this.riskLevel = level;
-    this.engine.setRiskLevel(level);
+    this.riskLevel = target;
+    this.engine.setRiskLevel(target);
     this.updateFooter();
 
-    if (previous !== level) {
+    if (previous !== target) {
       const from = this.pendingRiskLevelChange?.from ?? previous;
-      if (from === level) {
+      if (from === target) {
         this.pendingRiskLevelChange = undefined;
       } else {
-        this.pendingRiskLevelChange = { from, to: level };
+        this.pendingRiskLevelChange = { from, to: target };
       }
     }
 
-    this.addSystemMessage(this.formatRiskLevelNotice(level), "success");
+    if (options?.silent) {
+      return;
+    }
+
+    if (forced) {
+      const reason =
+        options?.reason ?? `risk level '${level}' is not available for the current persona.`;
+      const msg =
+        previous === target
+          ? `${reason} staying at ${target}.`
+          : `${reason} switched to ${target}.`;
+      this.addSystemMessage(msg, "warn");
+      return;
+    }
+
+    this.addSystemMessage(this.formatRiskLevelNotice(target), "success");
   }
 
   private switchPersona(id: string): void {
@@ -1375,6 +1444,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     this.currentPersona = persona;
     this.clampPersonaReasoning(this.currentPersona);
+    const allowedRiskLevels = this.getAllowedRiskLevelsForPersona(this.currentPersona);
+    if (!allowedRiskLevels.includes(this.riskLevel)) {
+      this.setRiskLevel(this.riskLevel, {
+        force: true,
+        reason: "restricted risk level is not available for custom personas.",
+      });
+    }
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
     this.baseSystemPrompt = buildBaseSystemPrompt({
       personaSystemPrompt: this.currentPersona.systemPrompt,
@@ -1452,6 +1528,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
           `previous persona no longer available; switched to ${this.currentPersona.label || this.currentPersona.id}.`,
           "warn",
         );
+      }
+      const allowedRiskLevels = this.getAllowedRiskLevelsForPersona(this.currentPersona);
+      if (!allowedRiskLevels.includes(this.riskLevel)) {
+        this.setRiskLevel(this.riskLevel, {
+          force: true,
+          reason: "restricted risk level is not available for custom personas.",
+        });
       }
 
       // Rebuild system prompt and update the engine

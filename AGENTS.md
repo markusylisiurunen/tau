@@ -74,6 +74,8 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `allowedReasoningLevels`: list of reasoning levels shown in the UI
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
 - `subagents`: enable sub-agents (`explore` for codebase investigation, `web` for web research). specify as a list `[explore]`, `[web]`, or `[explore, web]` to use the main persona's model, or as an object with custom model/reasoning per sub-agent.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `read`, `list`, `grep`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
+- Custom personas only allow `read-only` and `read-write` risk levels. If `restricted` is requested, tau keeps the risk level at `read-only`.
 
 On conflicts, project personas override user and built-in personas.
 

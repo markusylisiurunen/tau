@@ -86,6 +86,8 @@ or change it during a session with `/risk:restricted`, `/risk:read-only`, or `/r
 
 the default is read-only because it lets the model investigate your code and answer questions without risk of unintended changes. bump it to read-write when you're ready to let the model make edits.
 
+custom personas (loaded from disk) only allow `read-only` and `read-write` risk levels. if you try to use `restricted` with a custom persona, tau will keep the risk level at `read-only`.
+
 ## personas
 
 tau comes with several built-in personas across different models:
@@ -270,6 +272,7 @@ you can also set model parameters via optional frontmatter fields:
       model: claude-haiku-4-5
       reasoning: medium
   ```
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `read`, `list`, `grep`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
 
 use it with `--persona my-assistant` or `/persona:my-assistant`. if a project persona id conflicts with a user or built-in persona, the project persona wins.
 

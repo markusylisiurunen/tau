@@ -7,6 +7,8 @@ export type RiskLevel = z.infer<typeof RiskLevelSchema>;
 
 export type ReasoningEffort = ThinkingLevel | "none";
 
+export type PersonaSource = "builtin" | "user" | "project";
+
 export type PersonaSettings = Omit<SimpleStreamOptions, "reasoning"> & {
   reasoning?: ReasoningEffort;
 };
@@ -41,4 +43,5 @@ export interface Persona {
   subagents?: SubagentConfigMap;
   tools?: Tool[];
   skills?: string[] | "*";
+  source: PersonaSource;
 }

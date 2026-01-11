@@ -3,6 +3,9 @@ import type { SubagentConfigMap } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
 import { FORK_TOOL } from "./tools/fork.js";
+import { GREP_TOOL } from "./tools/grep.js";
+import { LIST_TOOL } from "./tools/list.js";
+import { READ_TOOL } from "./tools/read.js";
 import { TASK_TOOL } from "./tools/task.js";
 import { WRITE_TOOL } from "./tools/write.js";
 import type { Persona, ReasoningEffort } from "./types.js";
@@ -287,7 +290,14 @@ const VARIANT_CONFIG: Record<Variant, { suffix: string; systemPrompt: string }> 
   coder: { suffix: "-coder", systemPrompt: CODER_SYSTEM_PROMPT },
 };
 
-const BASE_TOOLS: NonNullable<Persona["tools"]> = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
+const BASE_TOOLS: NonNullable<Persona["tools"]> = [
+  BASH_TOOL,
+  WRITE_TOOL,
+  EDIT_TOOL,
+  READ_TOOL,
+  LIST_TOOL,
+  GREP_TOOL,
+];
 
 function pickExploreReasoning(allowed: ReasoningEffort[]): ReasoningEffort {
   const preferred: ReasoningEffort[] = ["minimal", "low", "none", "medium", "high", "xhigh"];
@@ -338,6 +348,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
     skills,
     subagents,
     tools,
+    source: "builtin",
   };
 }
 

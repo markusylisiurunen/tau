@@ -251,7 +251,7 @@ export function renderHtmlExport(entries: ExportEntry[], metadata: ExportMetadat
     "      list-style: none;",
     "    }",
     "    summary::marker {",
-    "      content: \"\";",
+    '      content: "";',
     "    }",
     "    summary::before {",
     '      content: "▸ ";',

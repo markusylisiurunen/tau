@@ -76,6 +76,7 @@ function sanitizeEnvironment(): NodeJS.ProcessEnv {
 
 const BASH_DESCRIPTION = [
   "Execute a shell command in the current working directory and return stdout/stderr.",
+  "Interactive commands are not supported (no TTY/stdin); commands that prompt or open editors will hang or fail.",
   "CRITICAL: Always evaluate and provide an accurate safetyLevel assessment.",
 ].join(" ");
 
@@ -229,7 +230,15 @@ export function executeBashTool(
     const child = spawn(command, {
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: sanitizeEnvironment(),
+      env: {
+        ...sanitizeEnvironment(),
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_EDITOR: "true",
+        GIT_SEQUENCE_EDITOR: "true",
+        GIT_PAGER: "cat",
+        GIT_ASKPASS: "true",
+        GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+      },
       detached: true,
       cwd,
     });

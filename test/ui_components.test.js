@@ -1,13 +1,20 @@
+import { visibleWidth } from "@mariozechner/pi-tui";
 import { expect, test } from "vitest";
 import { AppIntroComponent } from "../dist/ui/app_intro.js";
 import { AssistantMessageComponent } from "../dist/ui/assistant_message.js";
+import { CustomEditor } from "../dist/ui/custom_editor.js";
 import { FooterComponent } from "../dist/ui/footer.js";
 import { OneLineSegmentsComponent, truncateFromEndByWidth } from "../dist/ui/components/one_line_segments.js";
 import { QueuedMessagesComponent } from "../dist/ui/queued_messages.js";
 import { SessionDividerComponent } from "../dist/ui/session_divider.js";
 import { SessionSummaryComponent } from "../dist/ui/session_summary.js";
 import { UserMessageComponent } from "../dist/ui/user_message.js";
+import stripAnsi from "strip-ansi";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
+
+function stripTags(text) {
+  return stripAnsi(text.replace(/<[^>]+>/g, ""));
+}
 
 test("AppIntroComponent renders header and help text", () => {
   const theme = createTagTheme();
@@ -139,4 +146,38 @@ test("truncateFromEndByWidth respects max width", () => {
   expect(truncateFromEndByWidth("hello", 1)).toBe("…");
   expect(truncateFromEndByWidth("hello", 4)).toBe("hel…");
   expect(truncateFromEndByWidth("hello", 5)).toBe("hello");
+});
+
+test("CustomEditor clamps wrapped lines to the inner width", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  editor.setText("1234567890ABCDEFGHIJ");
+
+  const width = 12;
+  const lines = editor.render(width).map(stripTags);
+  for (const line of lines) {
+    expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+  }
+});
+
+test("CustomEditor preserves leading indentation for wrapped lines", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  editor.setText(
+    "- this is the first line\n  - this is the second line with a larger width than the text input has",
+  );
+
+  const width = 50;
+  const lines = editor.render(width).map(stripTags);
+  const contentLines = lines.slice(1, -1).map((line) => line.replace(/\s+$/g, ""));
+  const secondLine = contentLines.find((line) => line.includes("second line"));
+  expect(secondLine).toBeDefined();
+  expect(secondLine).toContain("│  - this is the second line");
+});
+
+test("CustomEditor strips ANSI sequences from input", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  editor.handleInput("hello \u001b[31mred\u001b[0m");
+  expect(editor.getLines()[0]).toBe("hello red");
 });

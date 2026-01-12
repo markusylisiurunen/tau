@@ -85,7 +85,7 @@ On conflicts, project personas override user and built-in personas.
   - `apiKeys.parallel` (optional): Parallel API key for the `web` subagent.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`restricted`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
-- **Project Context**: `AGENTS.md` (searched from current directory up to home)
+- **Project Context**: `AGENTS.md` (searched from current directory up to home), plus optional additional `AGENTS.md` files configured via `.tau/config.json` with `{ "agents": ["path/to/AGENTS.md"] }` (paths resolved relative to the directory containing `.tau/`)
 - **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
 - **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (project `.tau/` dirs are discovered by walking up from cwd to the git repo root, project overrides on conflicts)
 - **Skills**: user `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and project `.tau/skills/` (project `.tau/` dirs are discovered by walking up from cwd to the git repo root). Each skill is a directory containing `SKILL.md` with required YAML frontmatter:

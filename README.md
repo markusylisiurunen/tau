@@ -150,6 +150,14 @@ cat src/app.ts | tau --persona opus-4.5-chat
 
 for project-aware sessions, use `--with-context` to inject your AGENTS.md into the system prompt. tau searches for this file in the current directory and parent directories up to your home folder.
 
+you can also include additional `AGENTS.md` files via `.tau/config.json` (when that config is in scope for the current working directory):
+
+```json
+{ "agents": ["packages/pkg1/AGENTS.md"] }
+```
+
+paths are resolved relative to the directory containing `.tau/`.
+
 run `tau --help` to see all available options, or `tau --debug` to inspect loaded personas, prompts, skills, and the full system prompt for debugging configuration issues.
 
 ## memory mode
@@ -242,6 +250,16 @@ define shortcuts for common shell commands in `.tau/config.json` at your project
 ```
 
 run them with `/bash:check` or `/bash:test`.
+
+### additional agents context
+
+if you use `--with-context`, you can tell tau to always include extra `AGENTS.md` files by adding an `agents` list to `.tau/config.json`:
+
+```json
+{ "agents": ["packages/pkg1/AGENTS.md"] }
+```
+
+paths are resolved relative to the directory containing `.tau/`.
 
 ### custom personas
 

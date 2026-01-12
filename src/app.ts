@@ -81,7 +81,7 @@ import {
   buildEnvironmentTag,
   buildProjectContextBlock,
   buildSkillsIndexBlock,
-  findAgentsFilesFromCwdToHome,
+  findAgentsFilesInScopeDetailed,
   formatRiskLevelChangeNotice,
 } from "./utils/context.js";
 import { formatHistoryForCompression } from "./utils/fork.js";
@@ -157,6 +157,7 @@ export class ChatApp {
   private isRefreshingProjectFiles = false;
   private isInFileAutocomplete = false;
   private readonly agentsFiles: string[];
+  private readonly agentsConfigErrors: string[];
   private baseSystemPrompt: string;
   private pendingRiskLevelChange?: { from: RiskLevel; to: RiskLevel };
   private previousSessionSummary?: string;
@@ -185,12 +186,21 @@ export class ChatApp {
       );
     }
 
-    this.agentsFiles = options.withContext
-      ? findAgentsFilesFromCwdToHome(process.cwd(), homedir())
-      : [];
+    if (options.withContext) {
+      const res = findAgentsFilesInScopeDetailed(process.cwd(), homedir(), this.repoRoot);
+      this.agentsFiles = res.files;
+      this.agentsConfigErrors = res.errors;
+    } else {
+      this.agentsFiles = [];
+      this.agentsConfigErrors = [];
+    }
 
     this.projectContextBlock = options.withContext
-      ? buildProjectContextBlock({ cwd: process.cwd(), home: homedir() })
+      ? buildProjectContextBlock({
+          cwd: process.cwd(),
+          home: homedir(),
+          agentsFiles: this.agentsFiles,
+        })
       : undefined;
 
     this.projectFiles = listProjectFiles(process.cwd());
@@ -280,6 +290,13 @@ export class ChatApp {
           this.getAllowedRiskLevelsForPersona(this.currentPersona),
         ),
       });
+
+      if (this.agentsConfigErrors.length > 0) {
+        this.addSystemMessage(
+          ["agents config warnings:", ...this.agentsConfigErrors.map((e) => `- ${e}`)].join("\n"),
+          "warn",
+        );
+      }
     }
 
     this.ui.setFocus(this.editor);

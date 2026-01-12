@@ -41,7 +41,8 @@ environment variables take precedence over the config file.
 - **model trust**: the bash tool relies on the model honestly declaring whether a command is a read or write. there's no runtime validation that the command actually matches the declared intent. a model could declare `safetyLevel="read"` while running `rm -rf /`.
 - **no command analysis**: the system doesn't inspect command content. it trusts the declared safety level without verifying what the command actually does.
 - **full system access**: there is no sandboxing or directory restriction. the model can access any file on your system that your user account can read or write, not just the current working directory.
-- **user bypasses**: the `!` prefix executes shell commands directly, completely bypassing risk level checks. this is intentional for interactive use, but means risk levels only constrain the model, not the user.
+- **no tty / non-interactive tools**: tool commands run with stdin ignored and no TTY. anything that prompts for input or opens an editor can hang or fail (for example `sudo`, `ssh` password prompts, `git` credential prompts). tau also forces git into non-interactive mode (no prompt/editor/pager, batch-mode ssh).
+- **user bypasses**: the `!` prefix executes shell commands directly, completely bypassing risk level checks. this is intentional for direct use, but means risk levels only constrain the model, not the user.
 
 note that there is no confirmation step before tool execution. the model runs commands immediately, and you can only observe the results after the fact.
 

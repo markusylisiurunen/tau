@@ -45,7 +45,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
 
-**Bash limits**: 2MB raw capture, 60s timeout. Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/tools/bash.ts`).
+**Bash limits**: 2MB raw capture, 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/tools/bash.ts`), git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 

@@ -14,7 +14,7 @@ you'll need an API key from at least one provider. set it via environment variab
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
-# or OPENAI_API_KEY, or GOOGLE_API_KEY
+# or OPENAI_API_KEY, or GEMINI_API_KEY
 ```
 
 or store keys in `~/.config/tau/config.json`:

@@ -6,7 +6,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 - **ChatApp** (`src/app.ts`): Main orchestrator handling UI, commands, and state
 - **SessionEngine** (`src/session/session_engine.ts`): Manages LLM streaming and tool dispatch via async generator events
-- **ToolRegistry** (`src/tools/registry.ts`): Registers bash, write, edit, task, and fork tools
+- **ToolRegistry** (`src/tools/registry.ts`): Registers bash, write, edit, task, fork, and restricted tools (read, grep, list)
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/ui/`
 - **Chat UI models** (`src/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/ui/tool_output_layout.ts`): Shared compact/expanded tool UI layout and header building

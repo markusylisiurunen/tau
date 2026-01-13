@@ -19,8 +19,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "0.45.3",
-    "@mariozechner/pi-tui": "0.45.3",
+    "@mariozechner/pi-ai": "0.45.7",
+    "@mariozechner/pi-tui": "0.45.7",
     "@sinclair/typebox": "^0.34.47",
     "chalk": "^5.6.2",
     "strip-ansi": "^7.1.2",

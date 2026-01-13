@@ -248,6 +248,23 @@ const PERSONA_SPECS: PersonaSpec[] = [
     },
   },
   {
+    id: "gpt-5.2-flex",
+    description: "GPT-5.2 (flex)",
+    model: getModel("openai", "gpt-5.2"),
+    allowedReasoningLevels: ["none", "low", "medium", "high", "xhigh"],
+    settings: { reasoning: "medium", serviceTier: "flex" },
+    subagents: {
+      explore: {
+        model: getModel("openai", "gpt-5.2"),
+        reasoning: "none",
+      },
+      web: {
+        model: getModel("openai", "gpt-5.2"),
+        reasoning: "none",
+      },
+    },
+  },
+  {
     id: "gemini-3-pro",
     description: "Gemini 3 Pro",
     model: getModel("google", "gemini-3-pro-preview"),
@@ -311,6 +328,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   const config = VARIANT_CONFIG[variant];
   const skills = "*";
   const settings = structuredClone(spec.settings);
+  const { serviceTier: _serviceTier, ...subagentSettings } = settings;
 
   const subagents: SubagentConfigMap = {};
 
@@ -321,14 +339,17 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
       exploreSpec.reasoning ?? pickExploreReasoning(spec.allowedReasoningLevels);
     subagents.explore = {
       model: exploreModel,
-      settings: { reasoning: exploreEffort },
+      settings: { ...subagentSettings, reasoning: exploreEffort },
     };
   }
 
   const webSpec = spec.subagents?.web ?? {};
   const webModel = webSpec.model ?? spec.model;
 
-  const webSettings = webSpec.reasoning !== undefined ? { reasoning: webSpec.reasoning } : settings;
+  const webSettings = {
+    ...subagentSettings,
+    ...(webSpec.reasoning !== undefined && { reasoning: webSpec.reasoning }),
+  };
 
   subagents.web = {
     model: webModel,
@@ -368,6 +389,8 @@ const GEMINI_SUBAGENT_TARGET_IDS = new Set([
   "haiku-4.5-coder",
   "gpt-5.2-chat",
   "gpt-5.2-coder",
+  "gpt-5.2-flex-chat",
+  "gpt-5.2-flex-coder",
 ]);
 
 export function applyGeminiSubagents(personas: Persona[]): Persona[] {

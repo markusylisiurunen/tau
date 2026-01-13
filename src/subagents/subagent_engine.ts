@@ -1,12 +1,11 @@
+import { randomUUID } from "node:crypto";
 import type {
   AssistantMessage,
   Context,
   KnownProvider,
   Message,
-  SimpleStreamOptions,
   ToolCall,
 } from "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
 import { createBashToolDefinition } from "../tools/bash.js";
@@ -21,6 +20,8 @@ import { createWebFetchToolDefinition } from "../tools/web_fetch.js";
 import { createWebSearchToolDefinition } from "../tools/web_search.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, extractAssistantText } from "../utils/messages.js";
+import { streamModel } from "../utils/model_stream.js";
+import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import {
   extractAssistantTextForProgress,
@@ -46,7 +47,7 @@ export type SubagentRunResult = {
   costTotal: number;
 };
 
-function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): SimpleStreamOptions {
+function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): TauStreamOptions {
   const merged = { ...(settings ?? {}) } as Record<string, unknown>;
   return parseStreamingSettings(merged);
 }
@@ -127,6 +128,8 @@ export async function runSubagentToCompletion(options: {
   const formatIssueSummary = (): string =>
     issues.length > 0 ? ` (recent issues: ${issues.slice(-3).join("; ")})` : "";
 
+  const sessionId = `tau-subagent-${definition.name}-${randomUUID()}`;
+
   for (let subturn = 1; subturn <= maxSubturns && !signal.aborted; subturn++) {
     emit("assistant: thinking");
 
@@ -137,23 +140,47 @@ export async function runSubagentToCompletion(options: {
     };
 
     const apiKey = getApiKeyForProvider(config, personaConfig.model.provider as KnownProvider);
-    const stream = streamSimple(personaConfig.model, context, {
+    const baseOptions: TauStreamOptions = {
       ...getStreamingSettings(personaConfig.settings),
       signal,
+      sessionId,
+      serviceTier: undefined,
       ...(apiKey && { apiKey }),
-    });
+    };
 
-    let finalMessage: AssistantMessage;
-    try {
+    const runAttempt = async (options: TauStreamOptions): Promise<AssistantMessage> => {
+      const stream = streamModel(personaConfig.model, context, options);
       for await (const _event of stream) {
         if (signal.aborted) break;
       }
-      finalMessage = await stream.result();
+      return stream.result();
+    };
+
+    const shouldRetryFlex =
+      personaConfig.model.api === "openai-responses" && baseOptions.serviceTier === "flex";
+
+    let didRetry = false;
+    let finalMessage: AssistantMessage;
+    try {
+      finalMessage = await runAttempt(baseOptions);
     } catch (err) {
       if (signal.aborted) {
         throw new Error("sub-agent aborted");
       }
-      throw err;
+
+      if (!shouldRetryFlex) {
+        throw err;
+      }
+
+      didRetry = true;
+      emit("assistant: retrying without service tier");
+      finalMessage = await runAttempt({ ...baseOptions, serviceTier: undefined });
+    }
+
+    if (shouldRetryFlex && !didRetry && !signal.aborted && finalMessage.stopReason === "error") {
+      didRetry = true;
+      emit("assistant: retrying without service tier");
+      finalMessage = await runAttempt({ ...baseOptions, serviceTier: undefined });
     }
 
     messages.push(finalMessage);

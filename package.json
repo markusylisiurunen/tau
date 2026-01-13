@@ -19,8 +19,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.42.4",
-    "@mariozechner/pi-tui": "^0.42.4",
+    "@mariozechner/pi-ai": "^0.45.3",
+    "@mariozechner/pi-tui": "^0.45.3",
     "@sinclair/typebox": "^0.34.47",
     "chalk": "^5.6.2",
     "strip-ansi": "^7.1.2",
@@ -29,9 +29,9 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.11",
-    "@types/node": "^24.10.7",
+    "@types/node": "^24.10.8",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.16"
+    "vitest": "^4.0.17"
   },
   "engines": {
     "node": ">=20.0.0"

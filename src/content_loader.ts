@@ -411,6 +411,8 @@ function parsePersona(
     settings.reasoning = reasoning;
   }
 
+  const { serviceTier: _serviceTier, ...subagentBaseSettings } = settings;
+
   const skillsParsed = skillsSchema.safeParse(skillsRaw);
 
   let skills: string[] | "*" | undefined;
@@ -456,7 +458,7 @@ function parsePersona(
       if (cfg.reasoning !== undefined) {
         subagentSettings = { reasoning: cfg.reasoning };
       } else {
-        subagentSettings = settings;
+        subagentSettings = subagentBaseSettings;
       }
 
       finalSubagents[name] = {

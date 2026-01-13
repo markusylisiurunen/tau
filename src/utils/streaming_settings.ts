@@ -1,9 +1,13 @@
-import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
+import type { OpenAIResponsesOptions, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { z } from "zod";
+
+export type TauStreamOptions = SimpleStreamOptions & {
+  serviceTier?: OpenAIResponsesOptions["serviceTier"];
+};
 
 const StreamingSettingsSchema = z
   .record(z.string(), z.unknown())
-  .transform((data): SimpleStreamOptions => {
+  .transform((data): TauStreamOptions => {
     const result = { ...data } as Record<string, unknown>;
 
     // Handle reasoning field: convert "none" to undefined for pi-ai compatibility
@@ -11,9 +15,9 @@ const StreamingSettingsSchema = z
       delete result.reasoning;
     }
 
-    return result as unknown as SimpleStreamOptions;
+    return result as unknown as TauStreamOptions;
   });
 
-export function parseStreamingSettings(settings: Record<string, unknown>): SimpleStreamOptions {
+export function parseStreamingSettings(settings: Record<string, unknown>): TauStreamOptions {
   return StreamingSettingsSchema.parse(settings);
 }

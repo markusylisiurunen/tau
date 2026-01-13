@@ -1,13 +1,12 @@
+import { randomUUID } from "node:crypto";
 import type {
   AssistantMessage,
   Context,
   KnownProvider,
   Message,
-  SimpleStreamOptions,
   ToolCall,
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
 import type {
@@ -19,6 +18,8 @@ import type {
 } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
+import { streamModel } from "../utils/model_stream.js";
+import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import { type AssistantPartialSnapshot, MessageAccumulator } from "./message_accumulator.js";
 
@@ -77,6 +78,7 @@ export class SessionEngine {
   private readonly toolRegistry: ToolRegistry;
   private config: Config;
   private messages: Message[] = [];
+  private sessionId = `tau-main-${randomUUID()}`;
 
   constructor(options: SessionEngineOptions) {
     this.persona = options.persona;
@@ -88,6 +90,7 @@ export class SessionEngine {
 
   reset(): void {
     this.messages = [];
+    this.sessionId = `tau-main-${randomUUID()}`;
   }
 
   setPersona(persona: Persona, systemPrompt: string): void {
@@ -115,7 +118,7 @@ export class SessionEngine {
     return this.messages;
   }
 
-  private getStreamingSettings(persona: Persona): SimpleStreamOptions {
+  private getStreamingSettings(persona: Persona): TauStreamOptions {
     const merged = { ...persona.settings } as Record<string, unknown>;
     return parseStreamingSettings(merged);
   }
@@ -169,22 +172,65 @@ export class SessionEngine {
     };
 
     const apiKey = getApiKeyForProvider(this.config, this.persona.model.provider as KnownProvider);
-    const stream = streamSimple(this.persona.model, context, {
+    const baseOptions: TauStreamOptions = {
       ...this.getStreamingSettings(this.persona),
       signal,
+      sessionId: this.sessionId,
       ...(apiKey && { apiKey }),
-    });
+    };
 
-    const accumulator = new MessageAccumulator();
-    try {
+    const model = this.persona.model;
+
+    const runAttempt = async function* (
+      options: TauStreamOptions,
+    ): AsyncGenerator<
+      EngineEvent,
+      { finalMessage: AssistantMessage; didEmitAnyOutput: boolean },
+      void
+    > {
+      const stream = streamModel(model, context, options);
+      const accumulator = new MessageAccumulator();
+      let didEmitAnyOutput = false;
+
       for await (const event of stream) {
         accumulator.processEvent(event);
         if (event.type === "text_delta" || event.type.startsWith("thinking_")) {
+          didEmitAnyOutput = true;
           yield { type: "assistant_partial", snapshot: accumulator.snapshot };
         }
       }
 
       const finalMessage = await stream.result();
+      return { finalMessage, didEmitAnyOutput };
+    };
+
+    const shouldRetryFlex = (
+      options: TauStreamOptions,
+      didEmitAnyOutput: boolean,
+      msg?: AssistantMessage,
+    ) =>
+      this.persona.model.api === "openai-responses" &&
+      options.serviceTier === "flex" &&
+      !didEmitAnyOutput &&
+      msg?.stopReason === "error" &&
+      !signal.aborted;
+
+    try {
+      let { finalMessage, didEmitAnyOutput } = yield* runAttempt(baseOptions);
+
+      if (shouldRetryFlex(baseOptions, didEmitAnyOutput, finalMessage)) {
+        yield {
+          type: "notice",
+          severity: "info",
+          text: "flex tier request failed, retrying without service tier.",
+        };
+
+        ({ finalMessage } = yield* runAttempt({
+          ...baseOptions,
+          serviceTier: undefined,
+        }));
+      }
+
       this.messages.push(finalMessage);
       yield { type: "assistant_final", message: finalMessage };
       return { finalMessage };

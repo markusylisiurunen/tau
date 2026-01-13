@@ -1,8 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
 import { type BashCommand, loadBashCommands } from "./bash_commands.js";
 import { copyTextToClipboard } from "./clipboard.js";
@@ -88,6 +88,7 @@ import { formatHistoryForCompression } from "./utils/fork.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "./utils/format.js";
 import { getGitRoot } from "./utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "./utils/messages.js";
+import { streamModel } from "./utils/model_stream.js";
 import { listProjectFiles, listProjectFilesAsync } from "./utils/project_files.js";
 import { APP_VERSION } from "./version.js";
 
@@ -1272,7 +1273,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.config,
       this.currentPersona.model.provider as KnownProvider,
     );
-    const stream = streamSimple(
+    const stream = streamModel(
       this.currentPersona.model,
       {
         systemPrompt: [
@@ -1290,7 +1291,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
           },
         ],
       },
-      { reasoning: "medium", ...(apiKey && { apiKey }) },
+      { reasoning: "medium", sessionId: `tau-summary-${randomUUID()}`, ...(apiKey && { apiKey }) },
     );
 
     const final = await stream.result();

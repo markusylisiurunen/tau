@@ -465,7 +465,22 @@ function parsePersona(
   // Fill in main persona's model for subagents that don't specify one
   let finalSubagents: SubagentConfigMap | undefined;
   if (subagentsRaw === undefined) {
-    finalSubagents = basePersona?.subagents;
+    if (basePersona?.subagents) {
+      finalSubagents = {};
+
+      for (const [name, cfg] of Object.entries(basePersona.subagents)) {
+        if (!isSubagentName(name) || !cfg) continue;
+
+        finalSubagents[name] = {
+          model: modelObj,
+          ...(cfg.settings ? { settings: cfg.settings } : { settings: subagentBaseSettings }),
+        };
+      }
+
+      if (Object.keys(finalSubagents).length === 0) {
+        finalSubagents = undefined;
+      }
+    }
   } else if (subagentsResult.config && Object.keys(subagentsResult.config).length > 0) {
     finalSubagents = {};
 

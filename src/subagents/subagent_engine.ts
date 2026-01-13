@@ -19,6 +19,7 @@ import { ToolRegistry } from "../tools/registry.js";
 import { createWebFetchToolDefinition } from "../tools/web_fetch.js";
 import { createWebSearchToolDefinition } from "../tools/web_search.js";
 import type { RiskLevel } from "../types.js";
+import { isFlexRetryEnabled } from "../utils/flex_retry.js";
 import { createToolError, extractAssistantText } from "../utils/messages.js";
 import { streamModel } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
@@ -156,8 +157,11 @@ export async function runSubagentToCompletion(options: {
       return stream.result();
     };
 
-    const shouldRetryFlex =
-      personaConfig.model.api === "openai-responses" && baseOptions.serviceTier === "flex";
+    const shouldRetryFlex = isFlexRetryEnabled({
+      modelApi: personaConfig.model.api,
+      serviceTier: baseOptions.serviceTier,
+      signal,
+    });
 
     let didRetry = false;
     let finalMessage: AssistantMessage;

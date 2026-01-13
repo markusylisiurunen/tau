@@ -1,10 +1,10 @@
-import { spawn } from "node:child_process";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import stripAnsi from "strip-ansi";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
+import { spawnWithCapture } from "../utils/spawn_capture.js";
 import {
   type TruncationResult,
   truncateMiddleForModel,
@@ -222,12 +222,17 @@ export function executeBashTool(
   command: string,
   options: { timeoutMs?: number; signal?: AbortSignal; cwd?: string } = {},
 ): Promise<BashToolResult> {
-  return new Promise((resolve, reject) => {
+  return (async () => {
     const timeoutMs = options.timeoutMs;
     const signal = options.signal;
     const cwd = options.cwd;
 
-    const child = spawn(command, {
+    const effectiveTimeoutMs =
+      typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? timeoutMs
+        : undefined;
+
+    const result = await spawnWithCapture(command, [], {
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
@@ -240,138 +245,53 @@ export function executeBashTool(
         GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
       },
       detached: true,
+      killProcessGroup: true,
       cwd,
+      signal,
+      timeoutMs: effectiveTimeoutMs,
+      maxCaptureBytes: BASH_MAX_CAPTURE_BYTES,
+      maxCaptureMode: "ignore",
+      killGraceMs: BASH_KILL_GRACE_MS,
     });
 
-    let stdout = "";
-    let stderr = "";
-    let truncated = false;
+    let stdout = result.stdout;
+    let stderr = result.stderr;
+    let truncated = result.captureLimitExceeded;
+
+    if (result.captureLimitExceeded) {
+      stdout = truncateToBytesFromStart(stdout, BASH_MAX_CAPTURE_BYTES / 2);
+      stderr = truncateToBytesFromStart(stderr, BASH_MAX_CAPTURE_BYTES / 2);
+    }
+
     let terminationNote: string | undefined;
+    if (result.timedOut && effectiveTimeoutMs !== undefined) {
+      terminationNote = `(tau) timed out after ${effectiveTimeoutMs}ms`;
+    } else if (result.aborted) {
+      terminationNote = "(tau) aborted";
+    } else if (result.closeSignal) {
+      terminationNote = `(tau) terminated by signal ${result.closeSignal}`;
+    }
 
-    const truncateIfNeeded = () => {
-      const totalBytes = Buffer.byteLength(stdout, "utf-8") + Buffer.byteLength(stderr, "utf-8");
-      if (totalBytes > BASH_MAX_CAPTURE_BYTES) {
-        truncated = true;
-        stdout = truncateToBytesFromStart(stdout, BASH_MAX_CAPTURE_BYTES / 2);
-        stderr = truncateToBytesFromStart(stderr, BASH_MAX_CAPTURE_BYTES / 2);
-      }
-    };
-
-    const appendStdout = (chunk: string) => {
-      if (truncated) return;
-      if (!chunk) return;
-      stdout += chunk;
-      truncateIfNeeded();
-    };
-
-    const appendStderr = (chunk: string) => {
-      if (truncated) return;
-      if (!chunk) return;
-      stderr += chunk;
-      truncateIfNeeded();
-    };
-
-    const ensureTerminationNote = () => {
-      const note = terminationNote?.trim();
-      if (!note) return;
-      if (stdout.includes(note) || stderr.includes(note)) return;
-
+    const note = terminationNote?.trim();
+    if (note && !stdout.includes(note) && !stderr.includes(note)) {
       const noteText = `${stderr && !stderr.endsWith("\n") ? "\n" : ""}${note}\n`;
       const noteBytes = Buffer.byteLength(noteText, "utf-8");
-
       const currentBytes = Buffer.byteLength(stdout, "utf-8") + Buffer.byteLength(stderr, "utf-8");
 
       if (currentBytes + noteBytes > BASH_MAX_CAPTURE_BYTES) {
         truncated = true;
-
         const remaining = Math.max(0, BASH_MAX_CAPTURE_BYTES - noteBytes);
         const stdoutBudget = Math.floor(remaining / 2);
         const stderrBudget = remaining - stdoutBudget;
-
         stdout = truncateToBytesFromStart(stdout, stdoutBudget);
         stderr = truncateToBytesFromStart(stderr, stderrBudget);
       }
 
       stderr += noteText;
-    };
-
-    const killProcess = (sig: NodeJS.Signals) => {
-      if (child.killed) return;
-
-      if (child.pid) {
-        try {
-          // Kill the whole process group, not just the shell.
-          process.kill(-child.pid, sig);
-          return;
-        } catch {
-          // Fall back to killing only the child.
-        }
-      }
-
-      try {
-        child.kill(sig);
-      } catch {
-        // ignore
-      }
-    };
-
-    let terminationRequested = false;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const requestTermination = (note: string) => {
-      if (terminationRequested) return;
-      terminationRequested = true;
-      terminationNote = note;
-
-      killProcess("SIGTERM");
-      killTimer = setTimeout(() => killProcess("SIGKILL"), BASH_KILL_GRACE_MS);
-    };
-
-    const abortHandler = () => requestTermination("(tau) aborted");
-
-    const timeoutId =
-      typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
-        ? setTimeout(() => requestTermination(`(tau) timed out after ${timeoutMs}ms`), timeoutMs)
-        : undefined;
-
-    const cleanup = () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-      if (killTimer) {
-        clearTimeout(killTimer);
-      }
-      if (signal) {
-        signal.removeEventListener("abort", abortHandler);
-      }
-    };
-
-    if (signal) {
-      if (signal.aborted) {
-        abortHandler();
-      } else {
-        signal.addEventListener("abort", abortHandler, { once: true });
-      }
     }
 
-    child.stdout?.on("data", (d) => appendStdout(d.toString()));
-    child.stderr?.on("data", (d) => appendStderr(d.toString()));
-
-    child.on("error", (err) => {
-      cleanup();
-      reject(err);
-    });
-
-    child.on("close", (exitCode, closeSignal) => {
-      if (!terminationNote && closeSignal) {
-        terminationNote = `(tau) terminated by signal ${closeSignal}`;
-      }
-
-      cleanup();
-      ensureTerminationNote();
-      resolve({ stdout, stderr, exitCode, truncated });
-    });
-  });
+    return { stdout, stderr, exitCode: result.exitCode, truncated };
+  })();
 }
 
 function getMissingArgsMessage(command: string, safetyLevel: BashSafetyLevel | undefined): string {

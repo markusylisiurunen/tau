@@ -1,10 +1,10 @@
-import { spawn } from "node:child_process";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { resolveRestrictedPath } from "../utils/restricted_fs.js";
+import { spawnWithCapture } from "../utils/spawn_capture.js";
 import { truncateMiddleForModel } from "../utils/truncate.js";
 import type {
   ToolDefinition,
@@ -114,94 +114,34 @@ type GrepExecResult = {
   captureTruncated: boolean;
 };
 
-function abortChildProcess(child: ReturnType<typeof spawn>): void {
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    // ignore
-  }
-
-  setTimeout(() => {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // ignore
-    }
-  }, GREP_KILL_GRACE_MS).unref();
-}
-
 async function executeGrep(
   args: string[],
   options: { cwd: string; signal?: AbortSignal; timeoutMs: number },
 ): Promise<GrepExecResult> {
-  return new Promise<GrepExecResult>((resolvePromise) => {
-    const child = spawn("rg", args, {
+  try {
+    const result = await spawnWithCapture("rg", args, {
       cwd: options.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      maxCaptureBytes: GREP_MAX_CAPTURE_BYTES,
+      killGraceMs: GREP_KILL_GRACE_MS,
     });
 
-    let stdout = "";
-    let stderr = "";
-    let captureBytes = 0;
-    let captureTruncated = false;
-
-    const onData = (chunk: Buffer, target: "stdout" | "stderr") => {
-      if (captureTruncated) {
-        return;
-      }
-
-      captureBytes += chunk.length;
-      if (captureBytes > GREP_MAX_CAPTURE_BYTES) {
-        captureTruncated = true;
-        abortChildProcess(child);
-        return;
-      }
-
-      const text = chunk.toString("utf-8");
-      if (target === "stdout") {
-        stdout += text;
-      } else {
-        stderr += text;
-      }
+    return {
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      captureTruncated: result.captureLimitExceeded || result.timedOut,
     };
-
-    child.stdout?.on("data", (chunk) => onData(chunk as Buffer, "stdout"));
-    child.stderr?.on("data", (chunk) => onData(chunk as Buffer, "stderr"));
-
-    const timeout = setTimeout(() => {
-      captureTruncated = true;
-      abortChildProcess(child);
-    }, options.timeoutMs);
-
-    const onAbort = () => {
-      abortChildProcess(child);
+  } catch (err) {
+    return {
+      stdout: "",
+      stderr: err instanceof Error ? err.message : String(err),
+      exitCode: 2,
+      captureTruncated: false,
     };
-
-    if (options.signal) {
-      if (options.signal.aborted) {
-        onAbort();
-      } else {
-        options.signal.addEventListener("abort", onAbort, { once: true });
-      }
-    }
-
-    child.on("close", (code) => {
-      clearTimeout(timeout);
-      if (options.signal) {
-        options.signal.removeEventListener("abort", onAbort);
-      }
-      resolvePromise({ stdout, stderr, exitCode: code, captureTruncated });
-    });
-
-    child.on("error", (err) => {
-      clearTimeout(timeout);
-      if (options.signal) {
-        options.signal.removeEventListener("abort", onAbort);
-      }
-      resolvePromise({ stdout: "", stderr: err.message, exitCode: 2, captureTruncated: false });
-    });
-  });
+  }
 }
 
 function buildGrepArgs(raw: z.infer<typeof grepArgsSchema>): {

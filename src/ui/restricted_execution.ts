@@ -1,5 +1,6 @@
 import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
+import { buildBlockedToolView } from "./tool_output_helpers.js";
 import {
   buildHeaderLine,
   buildSection,
@@ -108,34 +109,13 @@ export function buildReadBlockedView(
   path: string,
   reason: string,
 ): ToolOutputViewModel {
-  const { palette, text } = theme;
-  const errorColor = (s: string) => palette.actionError(s);
-
-  const msg = reason.trim();
-  const section = buildSection(msg ? [errorColor(msg)] : []);
-
-  const pathInline = inlineText(path);
-  const whyInline = inlineText(reason);
-
-  const header = buildHeaderLine({
-    bulletStyle: errorColor,
+  return buildBlockedToolView({
+    theme,
     label: "read blocked",
-    labelStyle: palette.textMuted,
-    accent: pathInline,
-    accentStyle: palette.brandAccent,
+    title: `read ${path}`,
+    accent: path,
+    reason,
   });
-
-  return {
-    borderColor: errorColor,
-    expanded: {
-      title: errorColor(text.bold(`read ${path}`)),
-      sections: section ? [section] : [],
-    },
-    compact: {
-      header,
-      extraText: whyInline ? `    ${errorColor(whyInline)}` : undefined,
-    },
-  };
 }
 
 export function buildListSuccessView(
@@ -200,34 +180,13 @@ export function buildListBlockedView(
   path: string,
   reason: string,
 ): ToolOutputViewModel {
-  const { palette, text } = theme;
-  const errorColor = (s: string) => palette.actionError(s);
-
-  const msg = reason.trim();
-  const section = buildSection(msg ? [errorColor(msg)] : []);
-
-  const pathInline = inlineText(path);
-  const whyInline = inlineText(reason);
-
-  const header = buildHeaderLine({
-    bulletStyle: errorColor,
+  return buildBlockedToolView({
+    theme,
     label: "list blocked",
-    labelStyle: palette.textMuted,
-    accent: pathInline,
-    accentStyle: palette.brandAccent,
+    title: `list ${path}`,
+    accent: path,
+    reason,
   });
-
-  return {
-    borderColor: errorColor,
-    expanded: {
-      title: errorColor(text.bold(`list ${path}`)),
-      sections: section ? [section] : [],
-    },
-    compact: {
-      header,
-      extraText: whyInline ? `    ${errorColor(whyInline)}` : undefined,
-    },
-  };
 }
 
 export function buildGrepRunningView(theme: Theme, pattern: string): ToolOutputViewModel {
@@ -353,34 +312,13 @@ export function buildGrepBlockedView(
   pattern: string,
   reason: string,
 ): ToolOutputViewModel {
-  const { palette, text } = theme;
-  const errorColor = (s: string) => palette.actionError(s);
-
-  const msg = reason.trim();
-  const section = buildSection(msg ? [errorColor(msg)] : []);
-
-  const patternInline = inlineText(pattern);
-  const whyInline = inlineText(reason);
-
-  const header = buildHeaderLine({
-    bulletStyle: errorColor,
+  return buildBlockedToolView({
+    theme,
     label: "grep blocked",
-    labelStyle: palette.textMuted,
-    accent: patternInline,
-    accentStyle: palette.brandAccent,
+    title: `grep ${pattern}`,
+    accent: pattern,
+    reason,
   });
-
-  return {
-    borderColor: errorColor,
-    expanded: {
-      title: errorColor(text.bold(`grep ${pattern}`)),
-      sections: section ? [section] : [],
-    },
-    compact: {
-      header,
-      extraText: whyInline ? `    ${errorColor(whyInline)}` : undefined,
-    },
-  };
 }
 
 export function renderReadSuccess(

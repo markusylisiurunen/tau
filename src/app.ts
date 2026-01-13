@@ -16,6 +16,7 @@ import type { PromptTemplate } from "./prompts.js";
 import { SessionEngine } from "./session/session_engine.js";
 import { formatSubagentsForPrompt } from "./subagents/registry.js";
 import { createAppTerminal } from "./terminal.js";
+import { ToolUiRouter } from "./tool_ui_router.js";
 import {
   BASH_USER_MAX_STDERR_LINES,
   BASH_USER_MAX_STDERR_TOKENS,
@@ -41,39 +42,14 @@ import {
   type RiskLevel,
   type Skill,
 } from "./types.js";
-import {
-  buildBashAbortedView,
-  buildBashBlockedView,
-  buildBashExecutionView,
-  buildBashRunningView,
-} from "./ui/bash_execution.js";
+import { buildBashExecutionView } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import type { AssistantMessageModel } from "./ui/chat_message_model.js";
 import { CustomEditor } from "./ui/custom_editor.js";
-import {
-  buildEditBlockedView,
-  buildEditSuccessView,
-  buildWriteBlockedView,
-  buildWriteSuccessView,
-} from "./ui/file_execution.js";
 import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
-import {
-  buildGrepBlockedView,
-  buildGrepFinishedView,
-  buildGrepRunningView,
-  buildListBlockedView,
-  buildListSuccessView,
-  buildReadBlockedView,
-  buildReadSuccessView,
-} from "./ui/restricted_execution.js";
 import { getFileAutocompleteToken, SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
-import {
-  buildTaskBlockedView,
-  buildTaskFinishedView,
-  buildTaskRunningView,
-} from "./ui/task_execution.js";
 import { createUiTheme, type Theme } from "./ui/theme.js";
 import { buildThemePreviewMessages } from "./ui/theme_preview.js";
 import {
@@ -89,21 +65,8 @@ import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "./utils/form
 import { getGitRoot } from "./utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "./utils/messages.js";
 import { streamModel } from "./utils/model_stream.js";
-import { listProjectFiles, listProjectFilesAsync } from "./utils/project_files.js";
+import { listProjectFilesAsync } from "./utils/project_files.js";
 import { APP_VERSION } from "./version.js";
-
-type RunningBashComponent = {
-  command: string;
-};
-
-type RunningTaskComponent = {
-  kind: "task" | "fork";
-  name?: string;
-  title: string;
-  costTotal: number;
-  turns: number;
-  toolCalls: number;
-};
 
 export interface ChatAppOptions {
   personas: Persona[];
@@ -125,6 +88,7 @@ export class ChatApp {
   private queuedMessages: QueuedMessagesComponent;
   private editor: CustomEditor;
   private uiTheme: Theme;
+  private toolUiRouter: ToolUiRouter;
 
   private personas: Persona[];
   private currentPersona: Persona;
@@ -136,11 +100,6 @@ export class ChatApp {
   private config: Config;
 
   private readonly engine: SessionEngine;
-  private runningBashComponents: Map<string, RunningBashComponent> = new Map();
-  private runningTaskComponents: Map<string, RunningTaskComponent> = new Map();
-  private taskEvents: Map<string, string[]> = new Map(); // toolCallId -> accumulated events
-  private subagentCostTotal = 0;
-
   private isStreaming = false;
   private queuedUserMessages: string[] = [];
   private isDrainingQueuedUserMessages = false;
@@ -204,7 +163,8 @@ export class ChatApp {
         })
       : undefined;
 
-    this.projectFiles = listProjectFiles(process.cwd());
+    this.projectFiles = [];
+    this.refreshProjectFilesInBackground();
 
     this.currentPersona =
       (options.initialPersonaId &&
@@ -263,6 +223,12 @@ export class ChatApp {
     this.footer = new FooterComponent(this.uiTheme, this.ui);
     this.queuedMessages = new QueuedMessagesComponent(this.uiTheme, this.queuedUserMessages);
     this.editor = new CustomEditor(this.uiTheme);
+    this.toolUiRouter = new ToolUiRouter({
+      theme: this.uiTheme,
+      chatContainer: this.chatContainer,
+      requestRender: () => this.ui.requestRender(),
+      onCostUpdated: () => this.updateFooter(),
+    });
 
     this.setupUI();
     this.setupEditor();
@@ -388,6 +354,7 @@ export class ChatApp {
     void listProjectFilesAsync(process.cwd())
       .then((files) => {
         this.projectFiles = files;
+        this.ui.requestRender();
       })
       .catch(() => {
         // Ignore refresh errors; autocomplete will keep using the existing cache.
@@ -548,7 +515,7 @@ export class ChatApp {
         total += (m as AssistantMessage).usage?.cost?.total ?? 0;
       }
     }
-    return `$${formatAdaptiveNumber(total + this.subagentCostTotal, 2, 5)}`;
+    return `$${formatAdaptiveNumber(total + this.toolUiRouter.getSubagentCostTotal(), 2, 5)}`;
   }
 
   private getTurnDurationString(): string {
@@ -1146,10 +1113,7 @@ export class ChatApp {
 
   private clearSession(): void {
     this.engine.reset();
-    this.runningBashComponents.clear();
-    this.runningTaskComponents.clear();
-    this.taskEvents.clear();
-    this.subagentCostTotal = 0;
+    this.toolUiRouter.resetSession();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
     this.chatContainer.addMessage({ type: "session_divider", label: "new session" });
@@ -1303,10 +1267,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     // Reset the session state but preserve history with divider and summary
     this.engine.reset();
-    this.runningBashComponents.clear();
-    this.runningTaskComponents.clear();
-    this.taskEvents.clear();
-    this.subagentCostTotal = 0;
+    this.toolUiRouter.resetSession();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
     this.chatContainer.addMessage({ type: "session_divider", label: "new session" });
@@ -1675,274 +1636,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
           }
 
           case "tool_ui": {
-            const uiEvent = event.uiEvent;
-            if (uiEvent.type === "bash_started") {
-              this.chatContainer.addMessage(
-                {
-                  type: "tool",
-                  view: buildBashRunningView(this.uiTheme, uiEvent.command),
-                },
-                uiEvent.toolCallId,
-              );
-              this.runningBashComponents.set(uiEvent.toolCallId, {
-                command: uiEvent.command,
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "bash_execution") {
-              const running = this.runningBashComponents.get(uiEvent.toolCallId);
-              this.chatContainer.replaceMessage(uiEvent.toolCallId, {
-                type: "tool",
-                view: buildBashExecutionView(
-                  this.uiTheme,
-                  uiEvent.command,
-                  uiEvent.exitCode,
-                  uiEvent.truncationInfo,
-                  uiEvent.durationMs,
-                ),
-              });
-              if (running) {
-                this.runningBashComponents.delete(uiEvent.toolCallId);
-              }
-              this.ui.requestRender();
-            } else if (uiEvent.type === "bash_blocked") {
-              if (uiEvent.toolCallId) {
-                const running = this.runningBashComponents.get(uiEvent.toolCallId);
-                this.chatContainer.replaceMessage(uiEvent.toolCallId, {
-                  type: "tool",
-                  view: buildBashBlockedView(this.uiTheme, uiEvent.command, uiEvent.reason),
-                });
-                if (running) {
-                  this.runningBashComponents.delete(uiEvent.toolCallId);
-                }
-              } else {
-                this.chatContainer.addMessage({
-                  type: "tool",
-                  view: buildBashBlockedView(this.uiTheme, uiEvent.command, uiEvent.reason),
-                });
-              }
-              this.ui.requestRender();
-            } else if (uiEvent.type === "task_started") {
-              if (!this.taskEvents.has(uiEvent.toolCallId)) {
-                this.taskEvents.set(uiEvent.toolCallId, []);
-              }
-              const kind = uiEvent.kind ?? "task";
-              const subagentName = uiEvent.name.trim() || undefined;
-
-              this.chatContainer.addMessage(
-                {
-                  type: "tool",
-                  view: buildTaskRunningView(this.uiTheme, uiEvent.title, [], 0, 0, 0, {
-                    kind,
-                    subagentName,
-                  }),
-                },
-                uiEvent.toolCallId,
-              );
-              this.runningTaskComponents.set(uiEvent.toolCallId, {
-                kind,
-                name: subagentName,
-                title: uiEvent.title,
-                costTotal: 0,
-                turns: 0,
-                toolCalls: 0,
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "task_progress") {
-              let events = this.taskEvents.get(uiEvent.toolCallId);
-              if (!events) {
-                events = [];
-                this.taskEvents.set(uiEvent.toolCallId, events);
-              }
-              events.push(uiEvent.event);
-
-              const running = this.runningTaskComponents.get(uiEvent.toolCallId);
-              const kind = uiEvent.kind ?? running?.kind ?? "task";
-              const subagentName = uiEvent.name.trim() || undefined;
-
-              if (running) {
-                running.kind = kind;
-                running.name = subagentName;
-                running.title = uiEvent.title;
-                running.costTotal = uiEvent.costTotal;
-                running.turns = uiEvent.turns;
-                running.toolCalls = uiEvent.toolCalls;
-              }
-
-              this.chatContainer.replaceMessage(uiEvent.toolCallId, {
-                type: "tool",
-                view: buildTaskRunningView(
-                  this.uiTheme,
-                  uiEvent.title,
-                  events!,
-                  uiEvent.costTotal,
-                  uiEvent.turns,
-                  uiEvent.toolCalls,
-                  { kind, subagentName },
-                ),
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "task_finished") {
-              const running = this.runningTaskComponents.get(uiEvent.toolCallId);
-              const kind = uiEvent.kind ?? running?.kind ?? "task";
-              const subagentName = uiEvent.name.trim() || undefined;
-
-              this.chatContainer.replaceMessage(uiEvent.toolCallId, {
-                type: "tool",
-                view: buildTaskFinishedView(
-                  this.uiTheme,
-                  uiEvent.title,
-                  uiEvent.costTotal,
-                  uiEvent.turns,
-                  uiEvent.toolCalls,
-                  uiEvent.status,
-                  uiEvent.finalOutput,
-                  { kind, subagentName },
-                ),
-              });
-
-              this.runningTaskComponents.delete(uiEvent.toolCallId);
-              this.taskEvents.delete(uiEvent.toolCallId);
-              this.subagentCostTotal += uiEvent.costTotal;
-              this.updateFooter();
-              this.ui.requestRender();
-            } else if (uiEvent.type === "task_blocked") {
-              const running = this.runningTaskComponents.get(uiEvent.toolCallId);
-              const kind = uiEvent.kind ?? running?.kind ?? "task";
-              const subagentName = uiEvent.name?.trim() || undefined;
-
-              if (running) {
-                this.chatContainer.replaceMessage(uiEvent.toolCallId, {
-                  type: "tool",
-                  view: buildTaskBlockedView(this.uiTheme, uiEvent.title, uiEvent.reason, {
-                    kind,
-                    subagentName,
-                  }),
-                });
-              } else {
-                this.chatContainer.addMessage(
-                  {
-                    type: "tool",
-                    view: buildTaskBlockedView(this.uiTheme, uiEvent.title, uiEvent.reason, {
-                      kind,
-                      subagentName,
-                    }),
-                  },
-                  uiEvent.toolCallId,
-                );
-              }
-
-              this.runningTaskComponents.delete(uiEvent.toolCallId);
-              this.taskEvents.delete(uiEvent.toolCallId);
-              this.ui.requestRender();
-            } else if (uiEvent.type === "write_success") {
-              this.chatContainer.addMessage({
-                type: "tool",
-                view: buildWriteSuccessView(
-                  this.uiTheme,
-                  uiEvent.path,
-                  uiEvent.bytes,
-                  uiEvent.lines,
-                  uiEvent.content,
-                ),
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "write_blocked") {
-              this.chatContainer.addMessage({
-                type: "tool",
-                view: buildWriteBlockedView(this.uiTheme, uiEvent.path, uiEvent.reason),
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "edit_success") {
-              this.chatContainer.addMessage({
-                type: "tool",
-                view: buildEditSuccessView(
-                  this.uiTheme,
-                  uiEvent.path,
-                  uiEvent.oldLength,
-                  uiEvent.newLength,
-                  uiEvent.oldText,
-                  uiEvent.newText,
-                ),
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "edit_blocked") {
-              this.chatContainer.addMessage({
-                type: "tool",
-                view: buildEditBlockedView(this.uiTheme, uiEvent.path, uiEvent.reason),
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "read_success") {
-              this.chatContainer.addMessage({
-                type: "tool",
-                view: buildReadSuccessView(
-                  this.uiTheme,
-                  uiEvent.path,
-                  uiEvent.startLine,
-                  uiEvent.endLine,
-                  uiEvent.content,
-                  uiEvent.modelTruncation,
-                ),
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "read_blocked") {
-              this.chatContainer.addMessage({
-                type: "tool",
-                view: buildReadBlockedView(this.uiTheme, uiEvent.path, uiEvent.reason),
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "list_success") {
-              this.chatContainer.addMessage({
-                type: "tool",
-                view: buildListSuccessView(
-                  this.uiTheme,
-                  uiEvent.path,
-                  uiEvent.offset,
-                  uiEvent.limit,
-                  uiEvent.total,
-                  uiEvent.returned,
-                  uiEvent.entries,
-                ),
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "list_blocked") {
-              this.chatContainer.addMessage({
-                type: "tool",
-                view: buildListBlockedView(this.uiTheme, uiEvent.path, uiEvent.reason),
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "grep_started") {
-              this.chatContainer.addMessage(
-                {
-                  type: "tool",
-                  view: buildGrepRunningView(this.uiTheme, uiEvent.pattern),
-                },
-                uiEvent.toolCallId,
-              );
-              this.ui.requestRender();
-            } else if (uiEvent.type === "grep_finished") {
-              this.chatContainer.replaceMessage(uiEvent.toolCallId, {
-                type: "tool",
-                view: buildGrepFinishedView(
-                  this.uiTheme,
-                  uiEvent.pattern,
-                  uiEvent.status,
-                  uiEvent.exitCode,
-                  uiEvent.stdout,
-                  uiEvent.stderr,
-                  uiEvent.captureTruncated,
-                ),
-              });
-              this.ui.requestRender();
-            } else if (uiEvent.type === "grep_blocked") {
-              this.chatContainer.addMessage(
-                {
-                  type: "tool",
-                  view: buildGrepBlockedView(this.uiTheme, uiEvent.pattern, uiEvent.reason),
-                },
-                uiEvent.toolCallId,
-              );
-              this.ui.requestRender();
-            }
+            this.toolUiRouter.handle(event.uiEvent);
             break;
           }
 
@@ -1964,37 +1658,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const wasAborted = this.currentTurnAbort?.signal.aborted ?? false;
       const reason = wasAborted ? "aborted" : "interrupted";
 
-      for (const [id, running] of this.runningBashComponents.entries()) {
-        this.chatContainer.replaceMessage(id, {
-          type: "tool",
-          view: buildBashAbortedView(this.uiTheme, running.command, reason),
-        });
-      }
-
-      const taskStatus = wasAborted ? "aborted" : "error";
-      for (const [id, running] of this.runningTaskComponents.entries()) {
-        this.chatContainer.replaceMessage(id, {
-          type: "tool",
-          view: buildTaskFinishedView(
-            this.uiTheme,
-            running.title,
-            running.costTotal,
-            running.turns,
-            running.toolCalls,
-            taskStatus,
-            reason,
-            { kind: running.kind, subagentName: running.name },
-          ),
-        });
-      }
+      this.toolUiRouter.finalizePending(reason);
 
       this.footer.stop();
       this.stopTurnTimer();
       this.isStreaming = false;
       this.currentTurnAbort = undefined;
-      this.runningBashComponents.clear();
-      this.runningTaskComponents.clear();
-      this.taskEvents.clear();
+      this.toolUiRouter.clearTransientState();
       this.pendingIdleNotification = true;
       this.ui.requestRender();
       void this.drainQueuedUserMessages();

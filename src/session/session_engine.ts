@@ -17,6 +17,7 @@ import type {
   ToolUiEvent,
 } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
+import { shouldRetryFlexAfterResponse } from "../utils/flex_retry.js";
 import { createToolError } from "../utils/messages.js";
 import { streamModel } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
@@ -204,21 +205,18 @@ export class SessionEngine {
       return { finalMessage, didEmitAnyOutput };
     };
 
-    const shouldRetryFlex = (
-      options: TauStreamOptions,
-      didEmitAnyOutput: boolean,
-      msg?: AssistantMessage,
-    ) =>
-      this.persona.model.api === "openai-responses" &&
-      options.serviceTier === "flex" &&
-      !didEmitAnyOutput &&
-      msg?.stopReason === "error" &&
-      !signal.aborted;
-
     try {
       let { finalMessage, didEmitAnyOutput } = yield* runAttempt(baseOptions);
 
-      if (shouldRetryFlex(baseOptions, didEmitAnyOutput, finalMessage)) {
+      if (
+        shouldRetryFlexAfterResponse({
+          modelApi: this.persona.model.api,
+          serviceTier: baseOptions.serviceTier,
+          signal,
+          didEmitAnyOutput,
+          stopReason: finalMessage.stopReason,
+        })
+      ) {
         yield {
           type: "notice",
           severity: "info",

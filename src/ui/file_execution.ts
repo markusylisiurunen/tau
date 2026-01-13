@@ -1,9 +1,9 @@
 import { formatTokenEstimate } from "../utils/token.js";
 import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
+import { buildBlockedToolView } from "./tool_output_helpers.js";
 import {
   buildHeaderLine,
-  buildSection,
   renderToolOutput,
   type ToolOutputViewModel,
 } from "./tool_output_layout.js";
@@ -213,34 +213,13 @@ export function buildWriteBlockedView(
   path: string,
   reason: string,
 ): ToolOutputViewModel {
-  const { palette, text } = theme;
-  const errorColor = (s: string) => palette.actionError(s);
-
-  const msg = reason.trim();
-  const section = buildSection(msg ? [errorColor(msg)] : []);
-
-  const pathInline = inlineText(path);
-  const whyInline = inlineText(reason);
-
-  const header = buildHeaderLine({
-    bulletStyle: errorColor,
+  return buildBlockedToolView({
+    theme,
     label: "write blocked",
-    labelStyle: palette.textMuted,
-    accent: pathInline,
-    accentStyle: palette.brandAccent,
+    title: `write ${path}`,
+    accent: path,
+    reason,
   });
-
-  return {
-    borderColor: errorColor,
-    expanded: {
-      title: errorColor(text.bold(`write ${path}`)),
-      sections: section ? [section] : [],
-    },
-    compact: {
-      header,
-      extraText: whyInline ? `    ${errorColor(whyInline)}` : undefined,
-    },
-  };
 }
 
 function colorDiffLine(palette: Theme["palette"], line: string): string {
@@ -333,34 +312,13 @@ export function buildEditBlockedView(
   path: string,
   reason: string,
 ): ToolOutputViewModel {
-  const { palette, text } = theme;
-  const errorColor = (s: string) => palette.actionError(s);
-
-  const msg = reason.trim();
-  const section = buildSection(msg ? [errorColor(msg)] : []);
-
-  const pathInline = inlineText(path);
-  const whyInline = inlineText(reason);
-
-  const header = buildHeaderLine({
-    bulletStyle: errorColor,
+  return buildBlockedToolView({
+    theme,
     label: "edit blocked",
-    labelStyle: palette.textMuted,
-    accent: pathInline,
-    accentStyle: palette.brandAccent,
+    title: `edit ${path}`,
+    accent: path,
+    reason,
   });
-
-  return {
-    borderColor: errorColor,
-    expanded: {
-      title: errorColor(text.bold(`edit ${path}`)),
-      sections: section ? [section] : [],
-    },
-    compact: {
-      header,
-      extraText: whyInline ? `    ${errorColor(whyInline)}` : undefined,
-    },
-  };
 }
 
 export function renderWriteSuccess(

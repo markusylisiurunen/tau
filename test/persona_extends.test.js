@@ -78,8 +78,8 @@ describe("custom personas", () => {
     for (const [name, cfg] of Object.entries(clone.subagents ?? {})) {
       const baseCfg = base.subagents?.[name];
       expect(baseCfg).toBeTruthy();
-      expect(cfg.model.provider).toBe(baseCfg.model.provider);
-      expect(cfg.model.id).toBe(baseCfg.model.id);
+      expect(cfg.model.provider).toBe(clone.model.provider);
+      expect(cfg.model.id).toBe(clone.model.id);
     }
   });
 

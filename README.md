@@ -237,7 +237,7 @@ the `userPreferences` field lets you set guidance that applies to every conversa
 
 `toolDisplayMode` controls how tool calls appear: `"compact"` (default) shows one-line summaries, `"full"` shows detailed blocks.
 
-if `disableBuiltinPersonas` is set to `true`, tau will not load any built-in personas. only personas from `~/.config/tau/personas/` and `.tau/personas/` will be available.
+if `disableBuiltinPersonas` is set to `true`, tau will not load any built-in personas. only personas from `~/.config/tau/personas/` and `.tau/personas/` will be available. you can also set `disableBuiltinPersonas` in `.tau/config.json` at the repo root to disable built-ins for that project (overrides the global value).
 
 ### project bash commands
 

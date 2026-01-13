@@ -13,6 +13,14 @@ function isOpenAIResponsesModel(model: Model<Api>): model is Model<"openai-respo
   return model.api === "openai-responses";
 }
 
+function isBedrockModel(model: Model<Api>): model is Model<"bedrock-converse-stream"> {
+  return model.api === "bedrock-converse-stream" || model.provider === "amazon-bedrock";
+}
+
+function isBedrockAnthropicModel(model: Model<Api>): boolean {
+  return isBedrockModel(model) && model.id.includes("anthropic.");
+}
+
 function clampReasoning(effort: ThinkingLevel): Exclude<ThinkingLevel, "xhigh"> {
   return effort === "xhigh" ? "high" : effort;
 }
@@ -35,6 +43,17 @@ export function streamModel<TApi extends Api>(
     } satisfies OpenAIResponsesOptions;
 
     return stream(model, context, providerOptions);
+  }
+
+  if (isBedrockModel(model)) {
+    const { serviceTier: _serviceTier, ...rest } = options;
+    const providerOptions = {
+      ...rest,
+      maxTokens: rest.maxTokens || Math.min(model.maxTokens, 32000),
+      ...(isBedrockAnthropicModel(model) ? { interleavedThinking: true } : {}),
+    };
+
+    return stream(model as Model<"bedrock-converse-stream">, context, providerOptions as any);
   }
 
   return streamSimple(model, context, options);

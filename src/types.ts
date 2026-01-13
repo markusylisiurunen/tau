@@ -19,6 +19,7 @@ export type PersonaSource = "builtin" | "user" | "project";
 export type PersonaSettings = Omit<SimpleStreamOptions, "reasoning"> & {
   reasoning?: ReasoningEffort;
   serviceTier?: OpenAIResponsesOptions["serviceTier"];
+  interleavedThinking?: boolean;
 };
 
 export const REASONING_LEVELS_TUPLE = [

@@ -87,6 +87,7 @@ On conflicts, project personas override user and built-in personas.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`restricted`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `disableBuiltinPersonas` (optional): If true, tau will not load any built-in personas, only personas from disk.
+- **Project config**: `.tau/config.json` at the repo root can also set `disableBuiltinPersonas` to disable built-in personas for that project (overrides the global value when present).
 - **Project Context**: `AGENTS.md` (searched from current directory up to home), plus optional additional `AGENTS.md` files configured via `.tau/config.json` with `{ "agents": ["path/to/AGENTS.md"] }` (paths resolved relative to the directory containing `.tau/`)
 - **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
 - **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (project `.tau/` dirs are discovered by walking up from cwd to the git repo root, project overrides on conflicts)

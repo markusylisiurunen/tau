@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { KnownProvider } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import { type RiskLevel, RiskLevelSchema } from "./types.js";
+import { getGitRoot } from "./utils/git.js";
 
 export type ToolDisplayMode = "compact" | "full";
 
@@ -41,10 +42,7 @@ const configSchema = z
   })
   .passthrough();
 
-export function loadConfig(): Config {
-  const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  const configPath = join(configDir, "tau", "config.json");
-
+function loadConfigFile(configPath: string): Config {
   try {
     if (!existsSync(configPath)) {
       return {};
@@ -56,10 +54,26 @@ export function loadConfig(): Config {
 
     const parsed = configSchema.safeParse(json);
     return parsed.success ? (parsed.data as Config) : {};
-  } catch (err) {
+  } catch {
     // If there's an error reading or parsing, silently return empty config
     return {};
   }
+}
+
+export function loadConfig(cwd: string = process.cwd()): Config {
+  const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const userConfigPath = join(configDir, "tau", "config.json");
+  const userConfig = loadConfigFile(userConfigPath);
+
+  const repoRoot = getGitRoot(cwd);
+  const projectConfigPath = repoRoot ? join(repoRoot, ".tau", "config.json") : undefined;
+  const projectConfig = projectConfigPath ? loadConfigFile(projectConfigPath) : {};
+
+  if (projectConfig.disableBuiltinPersonas !== undefined) {
+    return { ...userConfig, disableBuiltinPersonas: projectConfig.disableBuiltinPersonas };
+  }
+
+  return userConfig;
 }
 
 export function getApiKeyForProvider(config: Config, provider: KnownProvider): string | undefined {

@@ -467,7 +467,7 @@ function parsePersona(
   if (subagentsRaw === undefined) {
     finalSubagents = basePersona?.subagents;
   } else if (subagentsResult.config && Object.keys(subagentsResult.config).length > 0) {
-    finalSubagents = basePersona?.subagents ? { ...basePersona.subagents } : {};
+    finalSubagents = {};
 
     for (const [name, cfg] of Object.entries(subagentsResult.config)) {
       if (!isSubagentName(name)) continue; // Validate name is a known subagent
@@ -805,16 +805,19 @@ export async function loadAllContent(config?: Config): Promise<{
   errors: string[];
 }> {
   try {
-    const baseBuiltins =
+    const builtinBasePersonas = builtinPersonas;
+    const builtinDisplayPersonas =
       config && isGoogleAuthAvailable(config)
-        ? applyGeminiSubagents(builtinPersonas)
-        : builtinPersonas;
+        ? applyGeminiSubagents(builtinBasePersonas)
+        : builtinBasePersonas;
 
-    const basePersonasById = new Map(baseBuiltins.map((p) => [p.id.toLowerCase(), p] as const));
+    const basePersonasById = new Map(
+      builtinBasePersonas.map((p) => [p.id.toLowerCase(), p] as const),
+    );
 
     const includeBuiltins = !config?.disableBuiltinPersonas;
     const forbiddenIds = includeBuiltins
-      ? new Set(baseBuiltins.map((p) => p.id.toLowerCase()))
+      ? new Set(builtinBasePersonas.map((p) => p.id.toLowerCase()))
       : undefined;
 
     const userPersonasResult = await loadUserPersonas({ basePersonasById, forbiddenIds });
@@ -845,7 +848,7 @@ export async function loadAllContent(config?: Config): Promise<{
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
     );
 
-    const effectiveBuiltins = includeBuiltins ? baseBuiltins : [];
+    const effectiveBuiltins = includeBuiltins ? builtinDisplayPersonas : [];
 
     return {
       personas: mergeById(

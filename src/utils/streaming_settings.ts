@@ -3,6 +3,7 @@ import { z } from "zod";
 
 export type TauStreamOptions = SimpleStreamOptions & {
   serviceTier?: OpenAIResponsesOptions["serviceTier"];
+  interleavedThinking?: boolean;
 };
 
 const StreamingSettingsSchema = z

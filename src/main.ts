@@ -21,7 +21,7 @@ import { createWriteToolDefinition } from "./tools/write.js";
 import type { Persona, ReasoningEffort, Skill } from "./types.js";
 
 // Load configuration from file
-const config = loadConfig();
+const config = loadConfig(process.cwd());
 
 const bashCommands = loadBashCommands(process.cwd()).commands;
 

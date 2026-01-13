@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 export type SpawnCaptureResult = {
   stdout: string;
@@ -55,6 +56,9 @@ export async function spawnWithCapture(
 
     let stdout = "";
     let stderr = "";
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
+
     let captureBytes = 0;
     let captureLimitExceeded = false;
     let captureFrozen = false;
@@ -135,7 +139,7 @@ export async function spawnWithCapture(
         return;
       }
 
-      const text = chunk.toString("utf-8");
+      const text = (target === "stdout" ? stdoutDecoder : stderrDecoder).write(chunk);
       if (target === "stdout") {
         stdout += text;
       } else {
@@ -161,6 +165,10 @@ export async function spawnWithCapture(
       if (settled) return;
       settled = true;
       cleanup();
+
+      stdout += stdoutDecoder.end();
+      stderr += stderrDecoder.end();
+
       resolve({
         stdout,
         stderr,

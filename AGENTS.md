@@ -69,6 +69,7 @@ Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The
 
 Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields:
 
+- `extends`: inherit from a built-in persona id. only optional fields are inherited; `provider` and `model` are still required on the extending persona. if the markdown body is empty, the base persona's system prompt is used.
 - `label`, `description`: metadata
 - `reasoning`: default reasoning effort level
 - `allowedReasoningLevels`: list of reasoning levels shown in the UI
@@ -81,10 +82,11 @@ On conflicts, project personas override user and built-in personas.
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `toolDisplayMode`, `defaultPersona`, `defaultRisk`)
+- **Global**: `~/.config/tau/config.json` (API keys, `toolDisplayMode`, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`)
   - `apiKeys.parallel` (optional): Parallel API key for the `web` subagent.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`restricted`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
+  - `disableBuiltinPersonas` (optional): If true, tau will not load any built-in personas, only personas from disk.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home), plus optional additional `AGENTS.md` files configured via `.tau/config.json` with `{ "agents": ["path/to/AGENTS.md"] }` (paths resolved relative to the directory containing `.tau/`)
 - **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
 - **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (project `.tau/` dirs are discovered by walking up from cwd to the git repo root, project overrides on conflicts)

@@ -49,11 +49,19 @@ try {
   // Safeguard: loadAllContent should not throw, but wrap to ensure tau --help works
   // eslint-disable-next-line no-console
   console.error(`warning: failed to load user content: ${(err as Error).message}`);
-  // eslint-disable-next-line no-console
-  console.error("using built-in personas and prompts only.");
-  const effectiveBuiltins = isGoogleAuthAvailable(config)
+
+  const baseBuiltins = isGoogleAuthAvailable(config)
     ? applyGeminiSubagents(builtinPersonas)
     : builtinPersonas;
+  const effectiveBuiltins = config.disableBuiltinPersonas ? [] : baseBuiltins;
+
+  // eslint-disable-next-line no-console
+  console.error(
+    effectiveBuiltins.length > 0
+      ? "using built-in personas and prompts only."
+      : "no built-in personas available (disableBuiltinPersonas is enabled).",
+  );
+
   personas = effectiveBuiltins;
   prompts = builtinPrompts;
   skills = [];
@@ -95,12 +103,15 @@ if (cli.debug) {
     debugReasoningOverride = cli.reasoningOverride;
   }
 
-  const debugPersona = debugPersonaId
-    ? (personas.find((p) => p.id === debugPersonaId) ?? personas[0]!)
-    : personas[0]!;
+  let debugPersona: Persona | undefined;
+  if (personas.length > 0) {
+    debugPersona = debugPersonaId
+      ? (personas.find((p) => p.id === debugPersonaId) ?? personas[0]!)
+      : personas[0]!;
 
-  if (debugReasoningOverride !== undefined) {
-    debugPersona.settings.reasoning = debugReasoningOverride;
+    if (debugReasoningOverride !== undefined) {
+      debugPersona.settings.reasoning = debugReasoningOverride;
+    }
   }
 
   const debugRiskLevel = cli.riskLevel ?? config.defaultRisk ?? "read-only";
@@ -125,6 +136,14 @@ if (cli.debug) {
     toolRegistry: debugToolRegistry,
   });
   process.exit(0);
+}
+
+if (personas.length === 0) {
+  // eslint-disable-next-line no-console
+  console.error(
+    "error: no personas available. Add a custom persona in ~/.config/tau/personas or .tau/personas, or unset disableBuiltinPersonas.",
+  );
+  process.exit(1);
 }
 
 let initialPersonaId: string | undefined;

@@ -320,6 +320,7 @@ function findProjectTauDirsFromCwd(args: { subdir: "personas" | "prompts" | "ski
 const personaFrontMatterSchema = z
   .object({
     id: z.string().trim().min(1),
+    extends: z.string().trim().min(1).optional(),
     label: z.string().trim().optional(),
     provider: z.string().trim().min(1),
     model: z.string().trim().min(1),
@@ -382,6 +383,7 @@ function parsePersona(
   content: string,
   forbiddenIds: Set<string> | undefined,
   source: "user" | "project",
+  basePersonasById?: Map<string, Persona>,
 ): { persona?: Persona; error?: string } {
   const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
 
@@ -390,12 +392,18 @@ function parsePersona(
     return { error: `${file}: missing required fields (id, provider, model). skipped.` };
   }
 
-  const { id, label, provider, model, description } = parsedFrontMatter.data;
+  const { id, extends: extendsId, label, provider, model, description } = parsedFrontMatter.data;
   const reasoning = parsedFrontMatter.data.reasoning;
   const allowedReasoningLevels = parsedFrontMatter.data.allowedReasoningLevels;
   const skillsRaw = parsedFrontMatter.data.skills;
   const subagentsRaw = parsedFrontMatter.data.subagents;
   const toolsRaw = parsedFrontMatter.data.tools;
+
+  const basePersona = extendsId ? basePersonasById?.get(extendsId.toLowerCase()) : undefined;
+
+  if (extendsId && !basePersona) {
+    return { error: `${file}: extends "${extendsId}" not found. skipped.` };
+  }
 
   if (forbiddenIds?.has(id.toLowerCase())) {
     return { error: `${file}: persona id "${id}" conflicts with built-in. skipped.` };
@@ -406,33 +414,41 @@ function parsePersona(
     return { error: `${file}: failed to load model "${provider}:${model}". skipped.` };
   }
 
-  const settings: Persona["settings"] = {};
+  const settings: Persona["settings"] = basePersona ? { ...basePersona.settings } : {};
   if (reasoning) {
     settings.reasoning = reasoning;
   }
 
+  if (modelObj.provider !== "openai" && settings.serviceTier !== undefined) {
+    delete settings.serviceTier;
+  }
+
   const { serviceTier: _serviceTier, ...subagentBaseSettings } = settings;
 
-  const skillsParsed = skillsSchema.safeParse(skillsRaw);
-
   let skills: string[] | "*" | undefined;
-  if (skillsParsed.success) {
-    const val = skillsParsed.data;
+  if (skillsRaw === undefined && basePersona?.skills !== undefined) {
+    skills = Array.isArray(basePersona.skills) ? [...basePersona.skills] : basePersona.skills;
+  } else {
+    const skillsParsed = skillsSchema.safeParse(skillsRaw);
 
-    if (val === "*") {
-      skills = "*";
-    } else if (typeof val === "string") {
-      const trimmed = val.trim();
-      skills = trimmed ? [trimmed] : undefined;
-    } else if (Array.isArray(val)) {
-      const trimmed = val.map((s) => s.trim()).filter(Boolean);
-      skills = trimmed.length > 0 ? trimmed : undefined;
+    if (skillsParsed.success) {
+      const val = skillsParsed.data;
+
+      if (val === "*") {
+        skills = "*";
+      } else if (typeof val === "string") {
+        const trimmed = val.trim();
+        skills = trimmed ? [trimmed] : undefined;
+      } else if (Array.isArray(val)) {
+        const trimmed = val.map((s) => s.trim()).filter(Boolean);
+        skills = trimmed.length > 0 ? trimmed : undefined;
+      }
+    } else if (skillsRaw !== undefined) {
+      if (Array.isArray(skillsRaw)) {
+        return { error: `${file}: skills must contain only strings. skipped.` };
+      }
+      return { error: `${file}: skills must be a string, "*", or list of strings. skipped.` };
     }
-  } else if (skillsRaw !== undefined) {
-    if (Array.isArray(skillsRaw)) {
-      return { error: `${file}: skills must contain only strings. skipped.` };
-    }
-    return { error: `${file}: skills must be a string, "*", or list of strings. skipped.` };
   }
 
   // Parse subagents
@@ -448,8 +464,11 @@ function parsePersona(
 
   // Fill in main persona's model for subagents that don't specify one
   let finalSubagents: SubagentConfigMap | undefined;
-  if (subagentsResult.config && Object.keys(subagentsResult.config).length > 0) {
-    finalSubagents = {};
+  if (subagentsRaw === undefined) {
+    finalSubagents = basePersona?.subagents;
+  } else if (subagentsResult.config && Object.keys(subagentsResult.config).length > 0) {
+    finalSubagents = basePersona?.subagents ? { ...basePersona.subagents } : {};
+
     for (const [name, cfg] of Object.entries(subagentsResult.config)) {
       if (!isSubagentName(name)) continue; // Validate name is a known subagent
       const subagentModel = cfg.model ?? modelObj;
@@ -475,19 +494,28 @@ function parsePersona(
   const defaultTools = finalSubagents
     ? [...DEFAULT_PERSONA_TOOLS, TASK_TOOL]
     : DEFAULT_PERSONA_TOOLS;
-  const tools = toolsResult.tools ?? defaultTools;
+
+  const inheritedTools = toolsRaw === undefined ? basePersona?.tools : undefined;
+  const tools = toolsResult.tools ?? inheritedTools ?? defaultTools;
+
+  const finalLabel = label || basePersona?.label || "custom";
+  const finalDescription = description ?? basePersona?.description;
+  const finalSystemPrompt = body.trim() ? body : (basePersona?.systemPrompt ?? body);
+
+  const finalAllowedReasoningLevels =
+    allowedReasoningLevels && allowedReasoningLevels.length > 0
+      ? allowedReasoningLevels
+      : basePersona?.allowedReasoningLevels;
 
   const persona: Persona = {
     id,
-    label: label || "custom",
+    label: finalLabel,
     model: modelObj,
-    systemPrompt: body,
+    systemPrompt: finalSystemPrompt,
     settings,
     tools,
-    ...(description && { description }),
-    ...(allowedReasoningLevels && allowedReasoningLevels.length > 0
-      ? { allowedReasoningLevels: allowedReasoningLevels }
-      : {}),
+    ...(finalDescription && { description: finalDescription }),
+    ...(finalAllowedReasoningLevels ? { allowedReasoningLevels: finalAllowedReasoningLevels } : {}),
     ...(finalSubagents && { subagents: finalSubagents }),
     ...(skills && { skills }),
     source,
@@ -524,7 +552,10 @@ function parsePrompt(
   return { prompt };
 }
 
-export async function loadUserPersonas(): Promise<{
+export async function loadUserPersonas(args?: {
+  basePersonasById?: Map<string, Persona>;
+  forbiddenIds?: Set<string>;
+}): Promise<{
   personas: Persona[];
   errors: string[];
 }> {
@@ -536,12 +567,20 @@ export async function loadUserPersonas(): Promise<{
     return { personas: [], errors: [error] };
   }
 
-  const builtinIds = new Set(builtinPersonas.map((p) => p.id.toLowerCase()));
   const personas: Persona[] = [];
   const errors: string[] = [];
 
+  const basePersonasById =
+    args?.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
+
   for (const file of files) {
-    const result = parsePersona(file.name, file.content, builtinIds, "user");
+    const result = parsePersona(
+      file.name,
+      file.content,
+      args?.forbiddenIds,
+      "user",
+      basePersonasById,
+    );
     if (result.persona) {
       personas.push(result.persona);
     } else if (result.error) {
@@ -552,7 +591,9 @@ export async function loadUserPersonas(): Promise<{
   return { personas, errors };
 }
 
-export async function loadProjectPersonas(): Promise<{
+export async function loadProjectPersonas(args?: {
+  basePersonasById?: Map<string, Persona>;
+}): Promise<{
   personas: Persona[];
   errors: string[];
 }> {
@@ -564,6 +605,9 @@ export async function loadProjectPersonas(): Promise<{
   const personas: Persona[] = [];
   const errors: string[] = [];
 
+  const basePersonasById =
+    args?.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
+
   // Parent-first order, closest directory wins on conflicts.
   for (const personasDir of personasDirs.slice().reverse()) {
     const { files, error } = loadMarkdownFiles(personasDir);
@@ -574,7 +618,7 @@ export async function loadProjectPersonas(): Promise<{
     }
 
     for (const file of files) {
-      const result = parsePersona(file.name, file.content, undefined, "project");
+      const result = parsePersona(file.name, file.content, undefined, "project", basePersonasById);
       if (result.persona) {
         personas.push(result.persona);
       } else if (result.error) {
@@ -761,8 +805,20 @@ export async function loadAllContent(config?: Config): Promise<{
   errors: string[];
 }> {
   try {
-    const userPersonasResult = await loadUserPersonas();
-    const projectPersonasResult = await loadProjectPersonas();
+    const baseBuiltins =
+      config && isGoogleAuthAvailable(config)
+        ? applyGeminiSubagents(builtinPersonas)
+        : builtinPersonas;
+
+    const basePersonasById = new Map(baseBuiltins.map((p) => [p.id.toLowerCase(), p] as const));
+
+    const includeBuiltins = !config?.disableBuiltinPersonas;
+    const forbiddenIds = includeBuiltins
+      ? new Set(baseBuiltins.map((p) => p.id.toLowerCase()))
+      : undefined;
+
+    const userPersonasResult = await loadUserPersonas({ basePersonasById, forbiddenIds });
+    const projectPersonasResult = await loadProjectPersonas({ basePersonasById });
     const userPromptsResult = await loadUserPrompts();
     const projectPromptsResult = await loadProjectPrompts();
     const userSkillsResult = await loadUserSkills();
@@ -789,10 +845,7 @@ export async function loadAllContent(config?: Config): Promise<{
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
     );
 
-    const effectiveBuiltins =
-      config && isGoogleAuthAvailable(config)
-        ? applyGeminiSubagents(builtinPersonas)
-        : builtinPersonas;
+    const effectiveBuiltins = includeBuiltins ? baseBuiltins : [];
 
     return {
       personas: mergeById(
@@ -805,10 +858,13 @@ export async function loadAllContent(config?: Config): Promise<{
       errors: allErrors,
     };
   } catch (err) {
-    const effectiveBuiltins =
+    const baseBuiltins =
       config && isGoogleAuthAvailable(config)
         ? applyGeminiSubagents(builtinPersonas)
         : builtinPersonas;
+
+    const effectiveBuiltins = config?.disableBuiltinPersonas ? [] : baseBuiltins;
+
     return {
       personas: effectiveBuiltins,
       prompts: builtinPrompts,

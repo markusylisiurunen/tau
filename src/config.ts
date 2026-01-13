@@ -18,6 +18,7 @@ export interface Config {
   toolDisplayMode?: ToolDisplayMode;
   defaultPersona?: string;
   defaultRisk?: RiskLevel;
+  disableBuiltinPersonas?: boolean;
 }
 
 const configSchema = z
@@ -36,6 +37,7 @@ const configSchema = z
     toolDisplayMode: z.enum(["compact", "full"]).optional().catch(undefined),
     defaultPersona: z.string().optional().catch(undefined),
     defaultRisk: RiskLevelSchema.optional().catch(undefined),
+    disableBuiltinPersonas: z.boolean().optional().catch(undefined),
   })
   .passthrough();
 

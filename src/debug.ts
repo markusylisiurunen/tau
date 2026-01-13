@@ -69,8 +69,8 @@ function formatToolSchema(tool: Tool): string {
   return lines.join("\n");
 }
 
-function getActiveSkills(persona: Persona, skills: Skill[]): Skill[] {
-  if (!persona.skills) return [];
+function getActiveSkills(persona: Persona | undefined, skills: Skill[]): Skill[] {
+  if (!persona?.skills) return [];
   if (persona.skills === "*") return skills;
   const enabledNames = new Set(persona.skills.map((s) => s.toLowerCase()));
   return skills.filter((s) => enabledNames.has(s.name.toLowerCase()));
@@ -81,7 +81,7 @@ export function printDebugInfo(args: {
   prompts: PromptTemplate[];
   bashCommands: BashCommand[];
   skills: Skill[];
-  selectedPersona: Persona;
+  selectedPersona?: Persona;
   withContext: boolean;
   riskLevel?: RiskLevel;
   toolRegistry: ToolRegistry;
@@ -102,9 +102,14 @@ export function printDebugInfo(args: {
 
   // Personas
   section(`Personas (${personas.length})`);
-  for (const p of personas) {
-    console.log(`\n- ${p.id}${p.id === selectedPersona.id ? " [SELECTED]" : ""}`);
-    console.log(formatPersona(p));
+  if (personas.length === 0) {
+    console.log("\n  (none)");
+  } else {
+    for (const p of personas) {
+      const selected = selectedPersona && p.id === selectedPersona.id ? " [SELECTED]" : "";
+      console.log(`\n- ${p.id}${selected}`);
+      console.log(formatPersona(p));
+    }
   }
 
   // Prompts
@@ -137,18 +142,27 @@ export function printDebugInfo(args: {
     const activeSkills = getActiveSkills(selectedPersona, skills);
     const activeNames = new Set(activeSkills.map((s) => s.name));
     for (const s of skills) {
-      const isActive = activeNames.has(s.name);
+      const isActive = selectedPersona ? activeNames.has(s.name) : false;
       console.log(`\n- ${s.name}${isActive ? " [ACTIVE]" : ""}`);
       console.log(formatSkill(s));
     }
   }
 
   // Selected persona details
-  section(`Selected persona: ${selectedPersona.id}`);
-  console.log(formatPersona(selectedPersona));
+  section(`Selected persona: ${selectedPersona?.id ?? "(none)"}`);
+  if (selectedPersona) {
+    console.log(formatPersona(selectedPersona));
+  } else {
+    console.log("\n  (no persona loaded)");
+  }
 
   // Build and print full system prompt
   section("Full system prompt");
+
+  if (!selectedPersona) {
+    console.log("\n  (skipped: no persona loaded)");
+    return;
+  }
 
   const activeSkills = getActiveSkills(selectedPersona, skills);
   const skillsBlock = buildSkillsIndexBlock(activeSkills);

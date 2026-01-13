@@ -224,6 +224,7 @@ store settings in `~/.config/tau/config.json`:
   "defaultPersona": "gpt-5.2-chat",
   "defaultRisk": "read-write",
   "toolDisplayMode": "compact",
+  "disableBuiltinPersonas": false,
   "userPreferences": "prefer concise responses. use TypeScript for examples."
 }
 ```
@@ -235,6 +236,8 @@ the `defaultRisk` field sets the initial risk level (`restricted`, `read-only`, 
 the `userPreferences` field lets you set guidance that applies to every conversation: preferred languages, response style, or domain context.
 
 `toolDisplayMode` controls how tool calls appear: `"compact"` (default) shows one-line summaries, `"full"` shows detailed blocks.
+
+if `disableBuiltinPersonas` is set to `true`, tau will not load any built-in personas. only personas from `~/.config/tau/personas/` and `.tau/personas/` will be available.
 
 ### project bash commands
 
@@ -280,6 +283,7 @@ the frontmatter defines the persona's id, provider, and model. the markdown body
 
 you can also set model parameters via optional frontmatter fields:
 
+- `extends`: inherit settings from a built-in persona id (for example `gpt-5.2-coder`). only optional fields are inherited; `provider` and `model` are still required on the extending persona. if the markdown body is empty, the base persona's system prompt is used.
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
@@ -294,6 +298,20 @@ you can also set model parameters via optional frontmatter fields:
 - `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `read`, `list`, `grep`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
 
 use it with `--persona my-assistant` or `/persona:my-assistant`. if a project persona id conflicts with a user or built-in persona, the project persona wins.
+
+to clone a built-in persona but swap the provider/model, use `extends`:
+
+```markdown
+---
+id: my-haiku-coder
+extends: gpt-5.2-coder
+provider: anthropic
+model: claude-haiku-4-5
+---
+
+```
+
+by default, user-level personas can’t use built-in persona ids. if you set `disableBuiltinPersonas: true`, those ids become available for custom personas.
 
 ### custom prompts
 

@@ -279,15 +279,21 @@ you are a helpful assistant specialized in my workflow.
 focus on clarity and efficiency.
 ```
 
-the frontmatter defines the persona's id, provider, and model. the markdown body becomes the system prompt.
+the frontmatter defines the persona. required fields:
 
-you can also set model parameters via optional frontmatter fields:
+- `id`: unique id used by `--persona` and `/persona:<id>`
+- `provider`: model provider id (for example `openai`, `anthropic`, `google`)
+- `model`: model id for the provider (for example `gpt-5.2`, `claude-opus-4-5`)
 
-- `extends`: inherit settings from a built-in persona id (for example `gpt-5.2-coder`). only optional fields are inherited; `provider` and `model` are still required on the extending persona. if the markdown body is empty, the base persona's system prompt is used.
+optional frontmatter fields:
+
+- `label`: display name shown in the ui (defaults to the base persona label if `extends` is used)
+- `description`: human-readable description used in lists/autocomplete
+- `extends`: inherit optional fields from a built-in persona id (for example `gpt-5.2-coder`). `provider` and `model` are still required. if the markdown body is empty, the base persona's system prompt is used.
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
-- `subagents`: enable sub-agents (`explore` for multi-turn codebase investigation, `web` for web research). you can specify as a list (`subagents: [explore]`, `subagents: [web]`, or `subagents: [explore, web]`) to use the main persona's model, or as an object to customize each sub-agent's model and reasoning. example:
+- `subagents`: enable sub-agents (`explore` for multi-turn codebase investigation, `web` for web research). you can specify as a list (`subagents: [explore]`, `subagents: [web]`, or `subagents: [explore, web]`) to use the main persona's model, or as an object to customize each sub-agent's model and reasoning. when specifying a model for a subagent, `provider` and `model` must be provided together. example:
   ```yaml
   subagents:
     explore:
@@ -296,6 +302,8 @@ you can also set model parameters via optional frontmatter fields:
       reasoning: medium
   ```
 - `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `read`, `list`, `grep`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
+
+the markdown body becomes the system prompt.
 
 use it with `--persona my-assistant` or `/persona:my-assistant`. if a project persona id conflicts with a user or built-in persona, the project persona wins.
 

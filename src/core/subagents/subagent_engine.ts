@@ -8,20 +8,15 @@ import type {
 } from "@mariozechner/pi-ai";
 import type { Config } from "../config.js";
 import { getApiKeyForProvider } from "../config.js";
+import { type RunnerEvent, runModelSubturn, runToolCalls } from "../session/runner.js";
 import { createBashToolDefinition } from "../tools/bash.js";
-import type {
-  ToolDefinition,
-  ToolDispatchResult,
-  ToolDispatchResultWithPhases,
-  ToolUiEvent,
-} from "../tools/registry.js";
+import type { ToolDefinition, ToolUiEvent } from "../tools/registry.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { createWebFetchToolDefinition } from "../tools/web_fetch.js";
 import { createWebSearchToolDefinition } from "../tools/web_search.js";
 import type { RiskLevel } from "../types.js";
 import { isFlexRetryEnabled } from "../utils/flex_retry.js";
-import { createToolError, extractAssistantText } from "../utils/messages.js";
-import { streamModel } from "../utils/model_stream.js";
+import { extractAssistantText } from "../utils/messages.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import {
@@ -78,12 +73,6 @@ function buildToolRegistryForAllowedTools(
 
 function isToolCall(block: AssistantMessage["content"][number]): block is ToolCall {
   return block.type === "toolCall";
-}
-
-function isPhased(
-  result: ToolDispatchResult | ToolDispatchResultWithPhases,
-): result is ToolDispatchResultWithPhases {
-  return result.kind === "phased";
 }
 
 export async function runSubagentToCompletion(options: {
@@ -149,42 +138,38 @@ export async function runSubagentToCompletion(options: {
       ...(apiKey && { apiKey }),
     };
 
-    const runAttempt = async (options: TauStreamOptions): Promise<AssistantMessage> => {
-      const stream = streamModel(personaConfig.model, context, options);
-      for await (const _event of stream) {
-        if (signal.aborted) break;
-      }
-      return stream.result();
-    };
-
     const shouldRetryFlex = isFlexRetryEnabled({
       modelApi: personaConfig.model.api,
       serviceTier: baseOptions.serviceTier,
       signal,
     });
 
-    let didRetry = false;
+    const runner = runModelSubturn({
+      model: personaConfig.model,
+      context,
+      streamOptions: baseOptions,
+      signal,
+      emitPartials: false,
+      retry: {
+        notice: { text: "assistant: retrying without service tier", severity: "info" },
+        shouldRetryAfterError: () => shouldRetryFlex,
+        shouldRetryAfterResponse: ({ finalMessage }) =>
+          shouldRetryFlex && finalMessage.stopReason === "error",
+      },
+    });
+
     let finalMessage: AssistantMessage;
     try {
-      finalMessage = await runAttempt(baseOptions);
+      finalMessage = await consumeRunner(runner, (event) => {
+        if (event.type === "notice") {
+          emit(event.text);
+        }
+      });
     } catch (err) {
       if (signal.aborted) {
         throw new Error("sub-agent aborted");
       }
-
-      if (!shouldRetryFlex) {
-        throw err;
-      }
-
-      didRetry = true;
-      emit("assistant: retrying without service tier");
-      finalMessage = await runAttempt({ ...baseOptions, serviceTier: undefined });
-    }
-
-    if (shouldRetryFlex && !didRetry && !signal.aborted && finalMessage.stopReason === "error") {
-      didRetry = true;
-      emit("assistant: retrying without service tier");
-      finalMessage = await runAttempt({ ...baseOptions, serviceTier: undefined });
+      throw err;
     }
 
     messages.push(finalMessage);
@@ -221,73 +206,67 @@ export async function runSubagentToCompletion(options: {
 
     const riskLevel = definition.riskLevel as RiskLevel;
 
-    for (const call of messageToolCalls) {
+    const handleUi = (uiEvent: ToolUiEvent | undefined) => {
+      if (!uiEvent) return;
+
+      if (
+        (uiEvent.type === "web_search_finished" || uiEvent.type === "web_fetch_finished") &&
+        typeof uiEvent.costUsd === "number" &&
+        Number.isFinite(uiEvent.costUsd) &&
+        uiEvent.costUsd > 0
+      ) {
+        costTotal += uiEvent.costUsd;
+      }
+
+      const text = formatToolUiEventForProgress(uiEvent);
+      if (text) {
+        if (/\b(blocked|failed):/.test(text)) {
+          recordIssue(text);
+        }
+        emit(text);
+      }
+    };
+
+    const toolRunner = runToolCalls({
+      toolCalls: messageToolCalls,
+      toolRegistry,
+      enabledTools: toolRegistry.getEnabledToolSchemas(riskLevel),
+      riskLevel,
+      signal,
+      toolErrorMessages: {
+        notEnabled: (toolCall) => `tool '${toolCall.name}' is not available to this sub-agent.`,
+        unsupported: (toolCall) => `tool '${toolCall.name}' is not available to this sub-agent.`,
+      },
+    });
+
+    for await (const event of toolRunner) {
       if (signal.aborted) break;
 
-      const toolDef = toolRegistry.get(call.name);
-      if (!toolDef) {
-        const msg = `tool '${call.name}' is not available to this sub-agent.`;
-        messages.push(createToolError(call, msg));
-        recordIssue(msg);
-        emit(`tool blocked: ${msg}`);
+      if (event.type === "tool_ui") {
+        handleUi(event.uiEvent);
         continue;
       }
 
-      const dispatchResult = await toolDef.dispatch(call, riskLevel, signal);
-
-      const handleUi = (uiEvent: ToolUiEvent | undefined) => {
-        if (!uiEvent) return;
-
-        if (
-          (uiEvent.type === "web_search_finished" || uiEvent.type === "web_fetch_finished") &&
-          typeof uiEvent.costUsd === "number" &&
-          Number.isFinite(uiEvent.costUsd) &&
-          uiEvent.costUsd > 0
-        ) {
-          costTotal += uiEvent.costUsd;
-        }
-
-        const text = formatToolUiEventForProgress(uiEvent);
-        if (text) {
-          if (/\b(blocked|failed):/.test(text)) {
-            recordIssue(text);
-          }
-          emit(text);
-        }
-      };
-
-      if (isPhased(dispatchResult)) {
-        handleUi(dispatchResult.startedUiEvent);
-
-        if (dispatchResult.uiEvents) {
-          for await (const uiEvent of dispatchResult.uiEvents) {
-            if (signal.aborted) break;
-            handleUi(uiEvent);
-          }
-        }
-
-        const { toolResult, uiEvent } = await dispatchResult.run;
-        messages.push(toolResult);
-        if (toolResult.isError) {
-          const firstLine = getToolResultFirstLine(toolResult);
+      if (event.type === "tool_result") {
+        messages.push(event.message);
+        if (event.message.isError) {
+          const firstLine = getToolResultFirstLine(event.message);
           const issue = firstLine
-            ? `${call.name}: ${firstLine}`
-            : `${call.name}: tool returned an error`;
+            ? `${event.message.toolName}: ${firstLine}`
+            : `${event.message.toolName}: tool returned an error`;
           recordIssue(issue);
         }
-        handleUi(uiEvent);
         continue;
       }
 
-      messages.push(dispatchResult.toolResult);
-      if (dispatchResult.toolResult.isError) {
-        const firstLine = getToolResultFirstLine(dispatchResult.toolResult);
-        const issue = firstLine
-          ? `${call.name}: ${firstLine}`
-          : `${call.name}: tool returned an error`;
-        recordIssue(issue);
+      if (event.type === "notice") {
+        if (event.severity === "error") {
+          recordIssue(event.text);
+          emit(`tool blocked: ${event.text}`);
+        } else {
+          emit(event.text);
+        }
       }
-      handleUi(dispatchResult.uiEvent);
     }
   }
 
@@ -309,4 +288,17 @@ export async function runSubagentToCompletion(options: {
   throw new Error(
     `sub-agent stopped after ${maxSubturns} subturns without producing a final response.${lastNote}${formatIssueSummary()}`,
   );
+}
+
+async function consumeRunner(
+  runner: AsyncGenerator<RunnerEvent, AssistantMessage, void>,
+  onEvent: (event: RunnerEvent) => void,
+): Promise<AssistantMessage> {
+  while (true) {
+    const next = await runner.next();
+    if (next.done) {
+      return next.value;
+    }
+    onEvent(next.value);
+  }
 }

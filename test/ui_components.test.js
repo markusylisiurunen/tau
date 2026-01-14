@@ -1,14 +1,17 @@
 import { visibleWidth } from "@mariozechner/pi-tui";
 import { expect, test } from "vitest";
-import { AppIntroComponent } from "../dist/ui/app_intro.js";
-import { AssistantMessageComponent } from "../dist/ui/assistant_message.js";
-import { CustomEditor } from "../dist/ui/custom_editor.js";
-import { FooterComponent } from "../dist/ui/footer.js";
-import { OneLineSegmentsComponent, truncateFromEndByWidth } from "../dist/ui/components/one_line_segments.js";
-import { QueuedMessagesComponent } from "../dist/ui/queued_messages.js";
-import { SessionDividerComponent } from "../dist/ui/session_divider.js";
-import { SessionSummaryComponent } from "../dist/ui/session_summary.js";
-import { UserMessageComponent } from "../dist/ui/user_message.js";
+import { AppIntroComponent } from "../dist/tui/ui/app_intro.js";
+import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
+import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
+import { FooterComponent } from "../dist/tui/ui/footer.js";
+import {
+  OneLineSegmentsComponent,
+  truncateFromEndByWidth,
+} from "../dist/tui/ui/components/one_line_segments.js";
+import { QueuedMessagesComponent } from "../dist/tui/ui/queued_messages.js";
+import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
+import { SessionSummaryComponent } from "../dist/tui/ui/session_summary.js";
+import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
 import stripAnsi from "strip-ansi";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
 

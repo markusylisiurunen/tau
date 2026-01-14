@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
@@ -18,6 +18,7 @@ import {
   loadBashCommands,
 } from "../core/config/index.js";
 import type { PromptTemplate } from "../core/prompts.js";
+import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { CoreSession } from "../core/session/core_session.js";
 import { formatSubagentsForPrompt } from "../core/subagents/registry.js";
 import {
@@ -104,6 +105,7 @@ export class ChatApp {
   private readonly commandRegistry: CommandRegistry<CommandDispatchContext>;
   private readonly commandHandlers: CommandDispatchContext;
   private readonly toolBackend: ToolExecutionBackend;
+  private readonly deps: CoreDeps;
   private isStreaming = false;
   private queuedUserMessages: string[] = [];
   private isDrainingQueuedUserMessages = false;
@@ -133,11 +135,15 @@ export class ChatApp {
   private themePreview: boolean;
 
   constructor(options: ChatAppOptions) {
+    this.deps = createDefaultCoreDeps();
+    const cwd = this.deps.env.cwd();
+    const home = this.deps.env.home();
+
     this.personas = options.personas;
     this.prompts = options.prompts ?? [];
     this.skills = options.skills ?? [];
     this.bashCommands = options.bashCommands ?? [];
-    this.repoRoot = getGitRoot(process.cwd()) ?? process.cwd();
+    this.repoRoot = getGitRoot(cwd) ?? cwd;
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
     this.compactToolUi = this.config.toolDisplayMode !== "full";
@@ -151,7 +157,7 @@ export class ChatApp {
     }
 
     if (options.withContext) {
-      const res = findAgentsFilesInScopeDetailed(process.cwd(), homedir(), this.repoRoot);
+      const res = findAgentsFilesInScopeDetailed(cwd, home, this.repoRoot);
       this.agentsFiles = res.files;
       this.agentsConfigErrors = res.errors;
     } else {
@@ -161,9 +167,10 @@ export class ChatApp {
 
     this.projectContextBlock = options.withContext
       ? buildProjectContextBlock({
-          cwd: process.cwd(),
-          home: homedir(),
+          cwd,
+          home,
           agentsFiles: this.agentsFiles,
+          readFile: this.deps.fs.readFile,
         })
       : undefined;
 
@@ -189,8 +196,10 @@ export class ChatApp {
 
     this.environmentTag = buildEnvironmentTag({
       riskLevel: this.initialRiskLevel,
-      cwd: process.cwd(),
-      datetime: new Date().toISOString(),
+      cwd,
+      datetime: new Date(this.deps.clock.now()).toISOString(),
+      platform: this.deps.env.platform(),
+      nodeVersion: this.deps.env.nodeVersion(),
     });
 
     this.baseSystemPrompt = buildBaseSystemPrompt({
@@ -202,7 +211,10 @@ export class ChatApp {
       subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });
 
-    this.toolBackend = createLocalToolExecutionBackend();
+    this.toolBackend = createLocalToolExecutionBackend({
+      spawn: this.deps.spawn,
+      env: this.deps.env,
+    });
     const toolRegistry = ToolCatalog.createRegistry(this.toolBackend);
     this.engine = new CoreSession({
       persona: this.currentPersona,
@@ -210,6 +222,7 @@ export class ChatApp {
       riskLevel: this.riskLevel,
       toolRegistry,
       config: this.config,
+      deps: this.deps,
     });
 
     this.commandRegistry = createCommandRegistry();
@@ -365,7 +378,7 @@ export class ChatApp {
 
     this.isRefreshingProjectFiles = true;
 
-    void listProjectFilesAsync(process.cwd())
+    void listProjectFilesAsync(this.deps.env.cwd())
       .then((files) => {
         this.projectFiles = files;
         this.ui.requestRender();
@@ -400,7 +413,7 @@ export class ChatApp {
     const reasoningLabel = this.currentPersona.settings.reasoning ?? "none";
     const contextUsage = this.getContextUsageString();
     const sessionCost = this.getSessionCostString();
-    const cwd = formatCwd(process.cwd());
+    const cwd = formatCwd(this.deps.env.cwd());
     const duration = this.getTurnDurationString();
 
     const personaName = this.currentPersona.label || this.currentPersona.id;
@@ -430,7 +443,7 @@ export class ChatApp {
   }
 
   private updateEditorHeader(
-    cwd: string = formatCwd(process.cwd()),
+    cwd: string = formatCwd(this.deps.env.cwd()),
     personaName: string = this.currentPersona.label || this.currentPersona.id,
     reasoningLabel: string = this.currentPersona.settings.reasoning ?? "none",
   ): void {
@@ -941,7 +954,7 @@ export class ChatApp {
   }
 
   private getMemoryModeFilePath(): string {
-    const cwd = process.cwd();
+    const cwd = this.deps.env.cwd();
     const gitRoot = getGitRoot(cwd);
 
     if (gitRoot) {
@@ -1155,8 +1168,10 @@ export class ChatApp {
   private rebuildSystemPrompt(previousSessionSummary?: string): void {
     this.environmentTag = buildEnvironmentTag({
       riskLevel: this.riskLevel,
-      cwd: process.cwd(),
-      datetime: new Date().toISOString(),
+      cwd: this.deps.env.cwd(),
+      datetime: new Date(this.deps.clock.now()).toISOString(),
+      platform: this.deps.env.platform(),
+      nodeVersion: this.deps.env.nodeVersion(),
     });
     this.baseSystemPrompt = buildBaseSystemPrompt({
       personaSystemPrompt: this.currentPersona.systemPrompt,
@@ -1442,10 +1457,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
 
     try {
-      const result = await loadAllContent(this.config, { cwd: process.cwd() });
+      const result = await loadAllContent(this.config, { cwd: this.deps.env.cwd() });
       const { personas, prompts, skills, errors } = result;
 
-      const bashResult = loadBashCommands(process.cwd());
+      const bashResult = loadBashCommands(this.deps.env.cwd());
       this.bashCommands = bashResult.commands;
 
       // Update the personas and prompts lists

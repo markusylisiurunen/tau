@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { loadAllContent } from "../dist/content_loader.js";
+import { loadAllContent } from "../dist/core/config/index.js";
 
 function setupFixture() {
   const home = mkdtempSync(join(tmpdir(), "tau-personas-home-"));

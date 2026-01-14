@@ -8,6 +8,8 @@ import type {
 } from "@mariozechner/pi-ai";
 import type { Config } from "../config/index.js";
 import { getApiKeyForProvider } from "../config/index.js";
+import type { CoreDeps } from "../runtime/deps.js";
+import { createDefaultCoreDeps } from "../runtime/deps.js";
 import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import { shouldRetryFlexAfterResponse } from "../utils/flex_retry.js";
@@ -34,6 +36,7 @@ export type SessionEngineOptions = {
   riskLevel: RiskLevel;
   toolRegistry: ToolRegistry;
   config?: Config;
+  deps?: CoreDeps;
 };
 
 export class SessionEngine {
@@ -42,6 +45,7 @@ export class SessionEngine {
   private riskLevel: RiskLevel;
   private readonly toolRegistry: ToolRegistry;
   private config: Config;
+  private readonly deps: CoreDeps;
   private messages: Message[] = [];
   private sessionId = `tau-main-${randomUUID()}`;
 
@@ -51,6 +55,7 @@ export class SessionEngine {
     this.riskLevel = options.riskLevel;
     this.toolRegistry = options.toolRegistry;
     this.config = options.config ?? {};
+    this.deps = options.deps ?? createDefaultCoreDeps();
   }
 
   reset(): void {
@@ -71,7 +76,7 @@ export class SessionEngine {
     this.messages.push({
       role: "user",
       content: [{ type: "text", text: textForModel }],
-      timestamp: Date.now(),
+      timestamp: this.deps.clock.now(),
     });
   }
 

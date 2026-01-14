@@ -1,8 +1,12 @@
 import { expect, test } from "vitest";
-import { renderBashExecution, renderBashRunning } from "../dist/ui/bash_execution.js";
-import { renderEditSuccess, renderWriteSuccess } from "../dist/ui/file_execution.js";
-import { renderGrepFinished, renderReadSuccess, renderListSuccess } from "../dist/ui/restricted_execution.js";
-import { renderTaskFinished, renderTaskRunning } from "../dist/ui/task_execution.js";
+import { renderBashExecution, renderBashRunning } from "../dist/tui/ui/bash_execution.js";
+import { renderEditSuccess, renderWriteSuccess } from "../dist/tui/ui/file_execution.js";
+import {
+  renderGrepFinished,
+  renderListSuccess,
+  renderReadSuccess,
+} from "../dist/tui/ui/restricted_execution.js";
+import { renderTaskFinished, renderTaskRunning } from "../dist/tui/ui/task_execution.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
 
 const noPreviewTruncation = { truncated: false, totalLines: 2, outputLines: 2 };

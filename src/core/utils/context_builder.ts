@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import type { RiskLevel, Skill } from "../types.js";
 import { findAgentsFilesInScope } from "./agents_files.js";
 
@@ -106,16 +105,18 @@ export function buildProjectContextBlock(args: {
   cwd: string;
   home: string;
   agentsFiles?: string[];
+  readFile: (path: string) => string;
 }): string | undefined {
   const agentsFiles = args.agentsFiles ?? findAgentsFilesInScope(args.cwd, args.home);
   if (agentsFiles.length === 0) return undefined;
 
   const lines: string[] = ["### Project context", ""];
+  const readFile = args.readFile;
 
   for (const filePath of agentsFiles) {
     let content = "";
     try {
-      content = readFileSync(filePath, "utf-8");
+      content = readFile(filePath);
     } catch {
       continue;
     }
@@ -144,10 +145,12 @@ export function buildEnvironmentTag(args: {
   datetime: string;
   cwd: string;
   riskLevel: RiskLevel;
+  platform: NodeJS.Platform;
+  nodeVersion: string;
 }): string {
   const riskDesc = describeRiskLevel(args.riskLevel);
-  const nodeVersion = process.version;
-  const platform = process.platform;
+  const nodeVersion = args.nodeVersion;
+  const platform = args.platform;
   return [
     "<environment>",
     `  <datetime>${args.datetime}</datetime>`,

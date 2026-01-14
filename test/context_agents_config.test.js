@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { findAgentsFilesInScope } from "../dist/utils/context.js";
+import { findAgentsFilesInScope } from "../dist/core/utils/context.js";
 
 function setupFixture() {
   const home = mkdtempSync(join(tmpdir(), "tau-context-home-"));

@@ -1,7 +1,7 @@
-import { homedir } from "node:os";
 import type { Tool } from "@mariozechner/pi-ai";
 import type { BashCommand } from "./config/index.js";
 import type { PromptTemplate } from "./prompts.js";
+import { createDefaultCoreDeps } from "./runtime/deps.js";
 import { formatSubagentsForPrompt } from "./subagents/registry.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import type { Persona, RiskLevel, Skill } from "./types.js";
@@ -97,8 +97,12 @@ export function printDebugInfo(args: {
     toolRegistry,
   } = args;
 
+  const deps = createDefaultCoreDeps();
+  const cwd = deps.env.cwd();
+  const home = deps.env.home();
+
   console.log("tau debug info");
-  console.log(`cwd: ${process.cwd()}`);
+  console.log(`cwd: ${cwd}`);
 
   // Personas
   section(`Personas (${personas.length})`);
@@ -167,13 +171,15 @@ export function printDebugInfo(args: {
   const activeSkills = getActiveSkills(selectedPersona, skills);
   const skillsBlock = buildSkillsIndexBlock(activeSkills);
   const projectContextBlock = withContext
-    ? buildProjectContextBlock({ cwd: process.cwd(), home: homedir() })
+    ? buildProjectContextBlock({ cwd, home, readFile: deps.fs.readFile })
     : undefined;
   const effectiveRiskLevel: RiskLevel = riskLevel ?? "read-only";
   const environmentTag = buildEnvironmentTag({
     riskLevel: effectiveRiskLevel,
-    cwd: process.cwd(),
-    datetime: new Date().toISOString(),
+    cwd,
+    datetime: new Date(deps.clock.now()).toISOString(),
+    platform: deps.env.platform(),
+    nodeVersion: deps.env.nodeVersion(),
   });
 
   const subagentsBlock = formatSubagentsForPrompt(selectedPersona);

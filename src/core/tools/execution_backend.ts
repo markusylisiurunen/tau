@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { CoreDeps } from "../runtime/deps.js";
 import {
   resolveRestrictedDirPath,
   resolveRestrictedFilePath,
@@ -37,9 +38,9 @@ const ALLOWED_ENV_VARS = new Set([
   "XDG_CACHE_HOME",
 ]);
 
-function sanitizeEnvironment(): NodeJS.ProcessEnv {
+function sanitizeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const sanitized: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(env)) {
     if (value === undefined) continue;
     if (ALLOWED_ENV_VARS.has(key)) {
       sanitized[key] = value;
@@ -109,7 +110,15 @@ export interface ToolExecutionBackend {
   }): Promise<GrepExecutionResult>;
 }
 
-export function createLocalToolExecutionBackend(): ToolExecutionBackend {
+type LocalBackendDeps = Pick<CoreDeps, "spawn" | "env">;
+
+export function createLocalToolExecutionBackend(
+  deps?: Partial<LocalBackendDeps>,
+): ToolExecutionBackend {
+  const envProvider = deps?.env?.env ?? (() => process.env);
+  const cwdProvider = deps?.env?.cwd ?? (() => process.cwd());
+  const spawnCapture = deps?.spawn ?? spawnWithCapture;
+
   return {
     async runBash(command, options = {}) {
       const timeoutMs = options.timeoutMs;
@@ -121,11 +130,11 @@ export function createLocalToolExecutionBackend(): ToolExecutionBackend {
           ? timeoutMs
           : undefined;
 
-      const result = await spawnWithCapture(command, [], {
+      const result = await spawnCapture(command, [], {
         shell: true,
         stdio: ["ignore", "pipe", "pipe"],
         env: {
-          ...sanitizeEnvironment(),
+          ...sanitizeEnvironment(envProvider()),
           GIT_TERMINAL_PROMPT: "0",
           GIT_EDITOR: "true",
           GIT_SEQUENCE_EDITOR: "true",
@@ -229,7 +238,7 @@ export function createLocalToolExecutionBackend(): ToolExecutionBackend {
       const { baseArgs, pattern, paths, signal, timeoutMs, dryRun } = options;
 
       const resolvedPaths: string[] = [];
-      let rootReal = process.cwd();
+      let rootReal = cwdProvider();
 
       for (const p of paths) {
         const resolved = resolveRestrictedPath(p, { mustExist: true });
@@ -250,7 +259,7 @@ export function createLocalToolExecutionBackend(): ToolExecutionBackend {
       }
 
       try {
-        const result = await spawnWithCapture("rg", fullArgs, {
+        const result = await spawnCapture("rg", fullArgs, {
           cwd: rootReal,
           windowsHide: true,
           signal,

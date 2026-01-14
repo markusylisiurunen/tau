@@ -1,5 +1,6 @@
 import type { Message } from "@mariozechner/pi-ai";
 import type { Config } from "../config/index.js";
+import type { CoreDeps } from "../runtime/deps.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import type { EngineEvent } from "./session_engine.js";
@@ -13,6 +14,7 @@ export type CoreSessionOptions = {
   riskLevel: RiskLevel;
   toolRegistry: ToolRegistry;
   config?: Config;
+  deps?: CoreDeps;
 };
 
 export class CoreSession {

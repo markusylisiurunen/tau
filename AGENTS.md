@@ -4,7 +4,9 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 ## Architecture
 
-- **ChatApp** (`src/tui/app.ts`): Main orchestrator handling UI, commands, and state
+- **ChatApp** (`src/tui/app.ts`): Thin wiring between the controller and TUI view adapter
+- **ChatController** (`src/tui/chat_controller.ts`): Orchestrates session state, commands, and core events
+- **TuiChatView** (`src/tui/chat_view.ts`): TUI adapter for rendering, editor, and tool UI
 - **CoreSession** (`src/core/session/core_session.ts`): Owns session state and emits core events for consumers
 - **SessionEngine** (`src/core/session/session_engine.ts`): Internal streaming/tool dispatch runner used by CoreSession
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
@@ -14,7 +16,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output_layout.ts`): Shared compact/expanded tool UI layout and header building
 
-**Data flow**: User input → `ChatApp.onUserInput()` → `CoreSession.events()` (yields core events) → ModeAdapter `onEvent()` → UI rendering.
+**Data flow**: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering.
 
 **Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
 
@@ -30,6 +32,8 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - `src/core/tools/` - Tool implementations (bash, write, edit, task, fork, web_search, web_fetch)
 - `src/core/subagents/` - Isolated agent execution (`explore`, `web`) and runtime (`src/core/subagents/subagent_engine.ts`)
 - `src/tui/ui/` - Terminal components, themes, autocomplete
+- `src/tui/chat_controller.ts` - UI-agnostic controller for session orchestration
+- `src/tui/chat_view.ts` - TUI view adapter used by ChatApp
 - `src/tui/ui/chat_message_model.ts` - Message view models and renderer for the chat UI
 - `src/tui/ui/tool_output_layout.ts` - Shared tool output layout primitives
 - `src/core/utils/project_files.ts` - Project file discovery for `@file` autocomplete

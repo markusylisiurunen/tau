@@ -58,6 +58,8 @@ npm run build
 npm start
 ```
 
+`npm start` launches the interactive TUI and expects a real terminal.
+
 ## theme preview
 
 run a model-free UI preview for theme iteration:
@@ -114,7 +116,7 @@ tau also supports an internal `fork` tool, which runs an autonomous fork of the 
 - `explore`: read-only, multi-turn codebase investigation
 - `web`: high-threshold web research using Parallel Search/Extract (`web_search`/`web_fetch`)
 
-to use the web sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when needed or when you explicitly ask for web research.
+to use the web sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when you explicitly ask for web research.
 
 ## trigger sensitivity
 

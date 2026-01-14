@@ -11,10 +11,13 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **SessionEngine** (`src/core/session/session_engine.ts`): Internal streaming/tool dispatch runner used by CoreSession
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface and RPC stub for alternate front-ends
-- **ToolRegistry** (`src/core/tools/registry.ts`): Registers bash, write, edit, task, fork, and restricted tools (read, grep, list)
+- **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
+- **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Local execution backend for filesystem/process tools
+- **ToolRegistry** (`src/core/tools/registry.ts`): Registers bash, write, edit, task, fork, web_search/web_fetch, and restricted tools (read, grep, list)
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output_layout.ts`): Shared compact/expanded tool UI layout and header building
+- **Tool UI registry** (`src/tui/ui/tool_ui_registry.ts`): Maps ToolUiEvent types to tool output view models
 
 **Data flow**: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering.
 
@@ -24,11 +27,14 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
 - `src/core/personas.ts` - Built-in persona definitions and system prompt blocks
-- `src/core/config/content_loader.ts` - User/project content loading (personas, prompts, skills)
+- `src/core/config/runtime.ts` - Runtime config loader (config + content)
+- `src/core/config/paths.ts` - Config path resolution and layered search roots
 - `src/core/commands/registry.ts` - Slash command parsing and dispatch
 - `src/core/events/` - Core event protocol types and serialization
 - `src/core/modes/` - Mode adapter interfaces and RPC stub
 - `src/core/session/` - Turn processing and message accumulation
+- `src/core/tools/catalog.ts` - Tool registry construction
+- `src/core/tools/execution_backend.ts` - Tool execution backend abstraction + local implementation
 - `src/core/tools/` - Tool implementations (bash, write, edit, task, fork, web_search, web_fetch)
 - `src/core/subagents/` - Isolated agent execution (`explore`, `web`) and runtime (`src/core/subagents/subagent_engine.ts`)
 - `src/tui/ui/` - Terminal components, themes, autocomplete
@@ -36,6 +42,8 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - `src/tui/chat_view.ts` - TUI view adapter used by ChatApp
 - `src/tui/ui/chat_message_model.ts` - Message view models and renderer for the chat UI
 - `src/tui/ui/tool_output_layout.ts` - Shared tool output layout primitives
+- `src/tui/ui/tool_ui_registry.ts` - Tool UI renderer registry
+- `src/tui/tool_ui_router.ts` - Tool UI event sequencing and routing
 - `src/core/utils/project_files.ts` - Project file discovery for `@file` autocomplete
 - `src/core/utils/` - Helpers for truncation, fuzzy matching, context building
 
@@ -165,9 +173,9 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 
 ## Adding a slash command
 
-1. `src/core/commands.ts`: Add to `Command` type, `parseCommand()`, `buildHelpText()`
-2. `src/tui/ui/slash_autocomplete.ts`: Add to `STATIC_COMMANDS`
-3. `src/tui/app.ts`: Add case in `handleCommand()`, implement handler
+1. `src/core/commands/registry.ts`: Add to `Command` type and register it in `createCommandRegistry()`
+2. `src/tui/chat_controller.ts`: Wire the handler in `commandHandlers`
+3. `src/tui/ui/slash_autocomplete.ts`: If the command needs argument suggestions, extend the parser
 
 ## Security
 

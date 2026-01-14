@@ -9,9 +9,20 @@ export {
   loadRuntimeConfig,
 } from "./config/index.js";
 export { printDebugInfo } from "./debug.js";
+export type {
+  CoreEvent,
+  CoreEventEnvelope,
+  CoreEventVersion,
+  RunnerEvent,
+} from "./events/index.js";
+export { CORE_EVENT_VERSION, serializeCoreEvent, wrapCoreEvent } from "./events/index.js";
+export type { ModeAdapter, RpcAdapterOptions } from "./modes/index.js";
+export { RpcAdapter } from "./modes/index.js";
 export { applyGeminiSubagents, personas } from "./personas.js";
 export type { PromptTemplate } from "./prompts.js";
 export { prompts } from "./prompts.js";
+export type { CoreDeps } from "./runtime/deps.js";
+export { createDefaultCoreDeps } from "./runtime/deps.js";
 export { createBashToolDefinition } from "./tools/bash.js";
 export { ToolCatalog } from "./tools/catalog.js";
 export { createEditToolDefinition } from "./tools/edit.js";

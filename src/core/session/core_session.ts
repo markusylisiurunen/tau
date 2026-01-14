@@ -1,12 +1,12 @@
 import type { Message } from "@mariozechner/pi-ai";
 import type { Config } from "../config/index.js";
+import type { CoreEvent } from "../events/types.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
-import type { EngineEvent } from "./session_engine.js";
 import { SessionEngine } from "./session_engine.js";
 
-export type CoreEvent = EngineEvent;
+export type { CoreEvent };
 
 export type CoreSessionOptions = {
   persona: Persona;

@@ -7,21 +7,25 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **ChatApp** (`src/tui/app.ts`): Main orchestrator handling UI, commands, and state
 - **CoreSession** (`src/core/session/core_session.ts`): Owns session state and emits core events for consumers
 - **SessionEngine** (`src/core/session/session_engine.ts`): Internal streaming/tool dispatch runner used by CoreSession
+- **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
+- **Mode adapters** (`src/core/modes/`): ModeAdapter interface and RPC stub for alternate front-ends
 - **ToolRegistry** (`src/core/tools/registry.ts`): Registers bash, write, edit, task, fork, and restricted tools (read, grep, list)
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output_layout.ts`): Shared compact/expanded tool UI layout and header building
 
-**Data flow**: User input → `ChatApp.handleSubmit()` → `CoreSession.events()` (yields events) → tool dispatch → UI rendering.
+**Data flow**: User input → `ChatApp.onUserInput()` → `CoreSession.events()` (yields core events) → ModeAdapter `onEvent()` → UI rendering.
 
-**Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
+**Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
 
 ## Key modules
 
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
 - `src/core/personas.ts` - Built-in persona definitions and system prompt blocks
-- `src/core/content_loader.ts` - User/project content loading (personas, prompts, skills)
-- `src/core/commands.ts` - Slash command parsing
+- `src/core/config/content_loader.ts` - User/project content loading (personas, prompts, skills)
+- `src/core/commands/registry.ts` - Slash command parsing and dispatch
+- `src/core/events/` - Core event protocol types and serialization
+- `src/core/modes/` - Mode adapter interfaces and RPC stub
 - `src/core/session/` - Turn processing and message accumulation
 - `src/core/tools/` - Tool implementations (bash, write, edit, task, fork, web_search, web_fetch)
 - `src/core/subagents/` - Isolated agent execution (`explore`, `web`) and runtime (`src/core/subagents/subagent_engine.ts`)

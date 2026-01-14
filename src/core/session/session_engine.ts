@@ -8,6 +8,7 @@ import type {
 } from "@mariozechner/pi-ai";
 import type { Config } from "../config/index.js";
 import { getApiKeyForProvider } from "../config/index.js";
+import type { CoreEvent } from "../events/types.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
@@ -15,20 +16,9 @@ import type { Persona, RiskLevel } from "../types.js";
 import { shouldRetryFlexAfterResponse } from "../utils/flex_retry.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
-import { type RunnerEvent, runModelSubturn, runToolCalls } from "./runner.js";
+import { runModelSubturn, runToolCalls } from "./runner.js";
 
 const MAX_ASSISTANT_SUBTURNS = 128;
-
-export type EngineAssistantStartEvent = {
-  type: "assistant_start";
-};
-
-export type EngineAssistantFinalEvent = {
-  type: "assistant_final";
-  message: AssistantMessage;
-};
-
-export type EngineEvent = RunnerEvent | EngineAssistantStartEvent | EngineAssistantFinalEvent;
 
 export type SessionEngineOptions = {
   persona: Persona;
@@ -97,7 +87,7 @@ export class SessionEngine {
     return this.toolRegistry.getEnabledToolSchemas(this.riskLevel, this.persona.tools);
   }
 
-  async *processTurn(signal: AbortSignal): AsyncGenerator<EngineEvent> {
+  async *processTurn(signal: AbortSignal): AsyncGenerator<CoreEvent> {
     let subturns = 0;
 
     while (subturns < MAX_ASSISTANT_SUBTURNS && !signal.aborted) {
@@ -152,7 +142,7 @@ export class SessionEngine {
 
   private async *runSingleSubturn(
     signal: AbortSignal,
-  ): AsyncGenerator<EngineEvent, { finalMessage?: AssistantMessage }, void> {
+  ): AsyncGenerator<CoreEvent, { finalMessage?: AssistantMessage }, void> {
     yield { type: "assistant_start" };
     const tools = this.getEnabledToolSchemas();
 

@@ -8,6 +8,7 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
+import type { CoreNoticeEvent, RunnerEvent as CoreRunnerEvent } from "../events/types.js";
 import type {
   ToolDefinition,
   ToolDispatchContext,
@@ -19,37 +20,12 @@ import type { RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
 import { streamModel } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
-import { type AssistantPartialSnapshot, MessageAccumulator } from "./message_accumulator.js";
+import { MessageAccumulator } from "./message_accumulator.js";
 
-export type RunnerNoticeEvent = {
-  type: "notice";
-  severity: "info" | "warn" | "error";
-  text: string;
-};
-
-export type RunnerAssistantPartialEvent = {
-  type: "assistant_partial";
-  snapshot: AssistantPartialSnapshot;
-};
-
-export type RunnerToolUiEvent = {
-  type: "tool_ui";
-  uiEvent: ToolUiEvent;
-};
-
-export type RunnerToolResultEvent = {
-  type: "tool_result";
-  message: ToolResultMessage;
-};
-
-export type RunnerEvent =
-  | RunnerNoticeEvent
-  | RunnerAssistantPartialEvent
-  | RunnerToolUiEvent
-  | RunnerToolResultEvent;
+export type RunnerEvent = CoreRunnerEvent;
 
 export type FlexRetryOptions = {
-  notice?: { text: string; severity?: RunnerNoticeEvent["severity"] };
+  notice?: { text: string; severity?: CoreNoticeEvent["severity"] };
   shouldRetryAfterError?: (args: { error: unknown }) => boolean;
   shouldRetryAfterResponse?: (args: {
     finalMessage: AssistantMessage;

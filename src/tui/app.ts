@@ -17,6 +17,8 @@ import {
   loadAllContent,
   loadBashCommands,
 } from "../core/config/index.js";
+import type { CoreEvent } from "../core/events/types.js";
+import type { ModeAdapter } from "../core/modes/mode_adapter.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { CoreSession } from "../core/session/core_session.js";
@@ -83,7 +85,9 @@ export interface ChatAppOptions {
   config?: Config;
 }
 
-export class ChatApp {
+type AssistantState = { id?: string; inserted: boolean; model: AssistantMessageModel };
+
+export class ChatApp implements ModeAdapter {
   private ui: TUI;
   private chatContainer: ChatContainerComponent;
   private footer: FooterComponent;
@@ -129,6 +133,7 @@ export class ChatApp {
   private previousSessionSummary?: string;
   private expandedFilesInCurrentPrompt: Set<string> = new Set();
   private expandedSkillsInCurrentPrompt: Set<string> = new Set();
+  private assistantState?: AssistantState;
   private currentTurnStartedAt?: number;
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
@@ -309,7 +314,7 @@ export class ChatApp {
     this.editor.onCtrlR = () => this.cycleRiskLevel();
     this.editor.onCtrlP = () => this.cyclePersonality();
     this.editor.onCtrlS = () => void this.stashEditorToClipboard();
-    this.editor.onEscape = () => this.interruptAssistantTurn();
+    this.editor.onEscape = () => this.onInterrupt();
     this.editor.onCtrlF = () => {
       this.expandFileMentions().catch((err) => {
         this.addSystemMessage(`mention expansion failed: ${(err as Error).message}`, "error");
@@ -363,7 +368,7 @@ export class ChatApp {
       ),
     );
 
-    this.editor.onSubmit = (text) => this.handleSubmit(text);
+    this.editor.onSubmit = (text) => void this.onUserInput(text);
   }
 
   private getEditorTextBeforeCursor(): string {
@@ -803,6 +808,96 @@ export class ChatApp {
     this.ui.requestRender();
   }
 
+  // Mode Adapter ---------------------------------------------------------------------------------
+
+  public async onUserInput(text: string): Promise<void> {
+    await this.handleSubmit(text);
+  }
+
+  public onInterrupt(): void {
+    this.interruptAssistantTurn();
+  }
+
+  public onEvent(event: CoreEvent): void {
+    switch (event.type) {
+      case "assistant_start":
+        this.assistantState = {
+          inserted: false,
+          model: { type: "assistant_partial", text: "", thinking: "" },
+        };
+        return;
+
+      case "assistant_partial": {
+        const state = this.ensureAssistantState();
+        const { snapshot } = event;
+        const model: AssistantMessageModel = {
+          type: "assistant_partial",
+          text: snapshot.hasTextStarted ? snapshot.text : "",
+          thinking: snapshot.thinking,
+        };
+        state.model = model;
+
+        const shouldInsert =
+          snapshot.hasTextStarted || (this.showThinking && snapshot.hasAnyThinking);
+        if (shouldInsert && !state.inserted) {
+          this.ensureAssistantInserted(state);
+        }
+
+        if (state.inserted && state.id) {
+          this.chatContainer.updateMessage(state.id, model);
+          this.ui.requestRender();
+        }
+        return;
+      }
+
+      case "assistant_final": {
+        const state = this.ensureAssistantState();
+        const model: AssistantMessageModel = { type: "assistant", message: event.message };
+        state.model = model;
+        if (!state.inserted) {
+          this.ensureAssistantInserted(state);
+        }
+        if (state.id) {
+          this.chatContainer.updateMessage(state.id, model);
+        }
+        this.updateFooter();
+        this.ui.requestRender();
+        this.assistantState = undefined;
+        return;
+      }
+
+      case "tool_ui":
+        this.toolUiRouter.handle(event.uiEvent);
+        return;
+
+      case "notice": {
+        const kind: SystemMessageKind =
+          event.severity === "error" ? "error" : event.severity === "warn" ? "warn" : "success";
+        this.addSystemMessage(event.text, kind);
+        return;
+      }
+
+      case "tool_result":
+        return;
+    }
+  }
+
+  private ensureAssistantState(): AssistantState {
+    if (this.assistantState) return this.assistantState;
+    const state: AssistantState = {
+      inserted: false,
+      model: { type: "assistant_partial", text: "", thinking: "" },
+    };
+    this.assistantState = state;
+    return state;
+  }
+
+  private ensureAssistantInserted(state: AssistantState): void {
+    if (state.inserted) return;
+    state.inserted = true;
+    state.id = this.chatContainer.addMessage(state.model);
+  }
+
   // Input Handling --------------------------------------------------------------------------------
 
   private queueUserMessage(text: string): void {
@@ -863,7 +958,7 @@ export class ChatApp {
         if (!next) return;
 
         this.ui.requestRender();
-        await this.handleSubmit(next);
+        await this.onUserInput(next);
       }
     } finally {
       this.isDrainingQueuedUserMessages = false;
@@ -1541,91 +1636,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.currentTurnAbort = new AbortController();
     this.footer.startWorkingIcon();
     this.startTurnTimer();
+    this.assistantState = undefined;
 
     try {
-      type AssistantState = { id?: string; inserted: boolean; model: AssistantMessageModel };
-      let currentAssistant: AssistantState | undefined;
-
-      const ensureCurrentAssistant = (): AssistantState => {
-        if (currentAssistant) return currentAssistant;
-        currentAssistant = {
-          inserted: false,
-          model: { type: "assistant_partial", text: "", thinking: "" },
-        };
-        return currentAssistant;
-      };
-
-      const ensureAssistantInserted = (state: AssistantState) => {
-        if (state.inserted) return;
-        state.inserted = true;
-        state.id = this.chatContainer.addMessage(state.model);
-      };
-
       for await (const event of this.engine.events(this.currentTurnAbort.signal)) {
         if (this.currentTurnAbort.signal.aborted) break;
-
-        switch (event.type) {
-          case "assistant_start":
-            currentAssistant = {
-              inserted: false,
-              model: { type: "assistant_partial", text: "", thinking: "" },
-            };
-            break;
-
-          case "assistant_partial": {
-            const state = ensureCurrentAssistant();
-            const { snapshot } = event;
-            const model: AssistantMessageModel = {
-              type: "assistant_partial",
-              text: snapshot.hasTextStarted ? snapshot.text : "",
-              thinking: snapshot.thinking,
-            };
-            state.model = model;
-
-            const shouldInsert =
-              snapshot.hasTextStarted || (this.showThinking && snapshot.hasAnyThinking);
-            if (shouldInsert && !state.inserted) {
-              ensureAssistantInserted(state);
-            }
-
-            if (state.inserted && state.id) {
-              this.chatContainer.updateMessage(state.id, model);
-              this.ui.requestRender();
-            }
-            break;
-          }
-
-          case "assistant_final": {
-            const state = ensureCurrentAssistant();
-            const model: AssistantMessageModel = { type: "assistant", message: event.message };
-            state.model = model;
-            if (!state.inserted) {
-              ensureAssistantInserted(state);
-            }
-            if (state.id) {
-              this.chatContainer.updateMessage(state.id, model);
-            }
-            this.updateFooter();
-            this.ui.requestRender();
-            currentAssistant = undefined;
-            break;
-          }
-
-          case "tool_ui": {
-            this.toolUiRouter.handle(event.uiEvent);
-            break;
-          }
-
-          case "notice": {
-            const kind: SystemMessageKind =
-              event.severity === "error" ? "error" : event.severity === "warn" ? "warn" : "success";
-            this.addSystemMessage(event.text, kind);
-            break;
-          }
-
-          case "tool_result":
-            break;
-        }
+        await this.onEvent(event);
       }
     } catch (err) {
       const message = (err as Error).message || "request failed.";

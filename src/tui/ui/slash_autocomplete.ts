@@ -1,4 +1,6 @@
 import type { AutocompleteItem, AutocompleteProvider } from "@mariozechner/pi-tui";
+import type { CommandRegistry } from "../../core/commands/index.js";
+import { getRiskLevelAutocompleteOptions } from "../../core/commands/index.js";
 import type { RiskLevel } from "../../core/types.js";
 import { fuzzyFilter } from "../../core/utils/fuzzy.js";
 
@@ -27,25 +29,8 @@ export interface BashSuggestion {
   description?: string;
 }
 
-// biome-ignore format: keep array items on single lines for readability
-const STATIC_COMMANDS = [
-  { value: "help", label: "help", description: "show help" },
-  { value: "new", label: "new", description: "new session" },
-  { value: "compact:only-summary", label: "compact:only-summary", description: "compact history to a summary" },
-  { value: "compact:with-last-turn", label: "compact:with-last-turn", description: "compact history, keep last turn" },
-  { value: "reload", label: "reload", description: "reload personas and prompts from disk" },
-  { value: "copy", label: "copy", description: "copy last assistant message" },
-  { value: "copy:code", label: "copy:code", description: "copy code blocks from last assistant message" },
-  { value: "export:html", label: "export:html", description: "export chat history to HTML" },
-];
-
-const RISK_OPTIONS: Array<{ id: RiskLevel; description: string }> = [
-  { id: "restricted", description: "restricted tools only (read/grep/list)" },
-  { id: "read-only", description: "allow read-only tools" },
-  { id: "read-write", description: "allow all tools" },
-];
-
-export class SlashAutocompleteProvider implements AutocompleteProvider {
+export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompleteProvider {
+  private commandRegistry: CommandRegistry<Ctx>;
   private getPersonas: () => PersonaSuggestion[];
   private getPrompts: () => PromptSuggestion[];
   private getBashCommands: () => BashSuggestion[];
@@ -54,6 +39,7 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
   private getRiskLevels: () => RiskLevel[];
 
   constructor(
+    commandRegistry: CommandRegistry<Ctx>,
     personas: () => PersonaSuggestion[],
     prompts: () => PromptSuggestion[] = () => [],
     bashCommands: () => BashSuggestion[] = () => [],
@@ -61,6 +47,7 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
     skills: () => string[] = () => [],
     riskLevels: () => RiskLevel[] = () => ["restricted", "read-only", "read-write"],
   ) {
+    this.commandRegistry = commandRegistry;
     this.getPersonas = personas;
     this.getPrompts = prompts;
     this.getBashCommands = bashCommands;
@@ -202,8 +189,7 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
   private buildRiskSuggestions(
     argPrefix: string,
   ): { items: AutocompleteItem[]; prefix: string } | null {
-    const allowed = new Set(this.getRiskLevels());
-    const options = RISK_OPTIONS.filter((option) => allowed.has(option.id));
+    const options = getRiskLevelAutocompleteOptions(this.getRiskLevels());
     const filtered = fuzzyFilter(options, argPrefix, (o) => `${o.id} ${o.description}`);
     const items = filtered.map((o) => ({
       value: o.id,
@@ -220,57 +206,73 @@ export class SlashAutocompleteProvider implements AutocompleteProvider {
   ): { items: AutocompleteItem[]; prefix: string } | null {
     const candidates: Array<{ item: AutocompleteItem; searchText: string }> = [];
 
-    for (const cmd of STATIC_COMMANDS) {
+    const commandInfos = this.commandRegistry.list();
+
+    for (const command of commandInfos) {
+      if (command.argument !== "none") continue;
+      const value = command.usage.startsWith("/") ? command.usage.slice(1) : command.usage;
+      const description = command.autocompleteDescription ?? command.description;
       candidates.push({
-        item: { value: cmd.value, label: cmd.label, description: cmd.description },
-        searchText: cmd.value,
+        item: { value, label: value, description },
+        searchText: `${value} ${description}`,
       });
     }
 
-    const allowed = new Set(this.getRiskLevels());
-    for (const option of RISK_OPTIONS) {
-      if (!allowed.has(option.id)) continue;
-      const value = `risk:${option.id}`;
-      candidates.push({
-        item: { value, label: value, description: option.description },
-        searchText: `${value} ${option.description}`,
-      });
+    const hasRisk = commandInfos.some((command) => command.argument === "risk");
+    if (hasRisk) {
+      const options = getRiskLevelAutocompleteOptions(this.getRiskLevels());
+      for (const option of options) {
+        const value = `risk:${option.id}`;
+        candidates.push({
+          item: { value, label: value, description: option.description },
+          searchText: `${value} ${option.description}`,
+        });
+      }
     }
 
-    for (const p of this.getPersonas()) {
-      const full = `persona:${p.id}`;
-      candidates.push({
-        item: {
-          value: full,
-          label: full,
-          description: p.label ? `switch to ${p.label}` : "switch persona",
-        },
-        searchText: `${p.id} ${p.label ?? ""} ${full}`,
-      });
+    const hasPersona = commandInfos.some((command) => command.argument === "persona");
+    if (hasPersona) {
+      for (const p of this.getPersonas()) {
+        const full = `persona:${p.id}`;
+        candidates.push({
+          item: {
+            value: full,
+            label: full,
+            description: p.label ? `switch to ${p.label}` : "switch persona",
+          },
+          searchText: `${p.id} ${p.label ?? ""} ${full}`,
+        });
+      }
     }
 
-    for (const t of this.getPrompts()) {
-      const full = `prompt:${t.id}`;
-      candidates.push({
-        item: {
-          value: full,
-          label: full,
-          description: t.label ? `insert ${t.label}` : "insert prompt template",
-        },
-        searchText: `${t.id} ${t.label ?? ""} ${full}`,
-      });
+    const hasPrompt = commandInfos.some((command) => command.argument === "prompt");
+    if (hasPrompt) {
+      for (const t of this.getPrompts()) {
+        const full = `prompt:${t.id}`;
+        candidates.push({
+          item: {
+            value: full,
+            label: full,
+            description: t.label ? `insert ${t.label}` : "insert prompt template",
+          },
+          searchText: `${t.id} ${t.label ?? ""} ${full}`,
+        });
+      }
     }
 
-    for (const b of this.getBashCommands()) {
-      const full = `bash:${b.id}`;
-      candidates.push({
-        item: {
-          value: full,
-          label: full,
-          description: b.description ? b.description : "run saved bash command",
-        },
-        searchText: `${b.id} ${b.description ?? ""} ${full}`,
-      });
+    const hasBash = commandInfos.some((command) => command.argument === "bash");
+    if (hasBash) {
+      for (const b of this.getBashCommands()) {
+        const full = `bash:${b.id}`;
+        candidates.push({
+          item: {
+            value: full,
+            label: full,
+            description: b.description ? b.description : "run saved bash command",
+          },
+          searchText: `${b.id} ${b.description ?? ""} ${full}`,
+        });
+      }
     }
 
     const filteredCandidates = fuzzyFilter(candidates, afterSlash, (c) => c.searchText);

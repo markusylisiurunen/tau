@@ -5,7 +5,12 @@ import { join, resolve } from "node:path";
 import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
 import { type BashCommand, loadBashCommands } from "../core/bash_commands.js";
-import { buildHelpText, getRiskLevelDescription, parseCommand } from "../core/commands.js";
+import {
+  type CommandDispatchContext,
+  type CommandRegistry,
+  createCommandRegistry,
+  getRiskLevelDescription,
+} from "../core/commands/index.js";
 import type { Config } from "../core/config.js";
 import { getApiKeyForProvider } from "../core/config.js";
 import { loadAllContent } from "../core/content_loader.js";
@@ -100,6 +105,8 @@ export class ChatApp {
   private config: Config;
 
   private readonly engine: CoreSession;
+  private readonly commandRegistry: CommandRegistry<CommandDispatchContext>;
+  private readonly commandHandlers: CommandDispatchContext;
   private isStreaming = false;
   private queuedUserMessages: string[] = [];
   private isDrainingQueuedUserMessages = false;
@@ -216,6 +223,23 @@ export class ChatApp {
       config: this.config,
     });
 
+    this.commandRegistry = createCommandRegistry();
+    this.commandHandlers = {
+      help: () => this.showHelp(),
+      copy: () => this.copyLastAssistantMessage(),
+      copyCode: () => this.copyLastAssistantCodeBlock(),
+      export: () => this.exportSessionHtml(),
+      newSession: () => this.clearSession(),
+      compactOnlySummary: () => this.forkSessionOnlySummary(),
+      compactSummaryAndLastTurn: () => this.forkSessionSummaryAndLastTurn(),
+      reload: () => this.reloadContent(),
+      risk: (level) => this.setRiskLevel(level),
+      persona: (id) => this.switchPersona(id),
+      prompt: (id) => this.insertPrompt(id),
+      bash: (id) => this.runSavedBashCommand(id),
+      unknown: () => this.addSystemMessage("unknown command. type /help.", "error"),
+    };
+
     this.uiTheme = createUiTheme("ansi");
     this.ui = new TUI(createAppTerminal());
     this.chatContainer = new ChatContainerComponent(this.uiTheme, this.showThinking);
@@ -251,11 +275,11 @@ export class ChatApp {
         type: "app_intro",
         appName: "tau",
         version: APP_VERSION,
-        helpText: buildHelpText(
-          this.agentsFiles,
-          this.skills,
-          this.getAllowedRiskLevelsForPersona(this.currentPersona),
-        ),
+        helpText: this.commandRegistry.buildHelpText({
+          agentsFiles: this.agentsFiles,
+          skills: this.skills,
+          riskLevels: this.getAllowedRiskLevelsForPersona(this.currentPersona),
+        }),
       });
 
       if (this.agentsConfigErrors.length > 0) {
@@ -323,6 +347,7 @@ export class ChatApp {
 
     this.editor.setAutocompleteProvider(
       new SlashAutocompleteProvider(
+        this.commandRegistry,
         () => this.personas.map((p) => ({ id: p.id, label: p.label })),
         () => this.prompts.map((t) => ({ id: t.id, label: t.label })),
         () =>
@@ -957,70 +982,17 @@ export class ChatApp {
   // Command Handling ------------------------------------------------------------------------------
 
   private async handleCommand(raw: string): Promise<void> {
-    const cmd = parseCommand(raw);
-
-    switch (cmd.type) {
-      case "help":
-        this.showHelp();
-        break;
-
-      case "copy":
-        await this.copyLastAssistantMessage();
-        break;
-
-      case "copyCode":
-        await this.copyLastAssistantCodeBlock();
-        break;
-
-      case "export":
-        await this.exportSessionHtml();
-        break;
-
-      case "new":
-        this.clearSession();
-        break;
-
-      case "compactOnlySummary":
-        await this.forkSessionOnlySummary();
-        break;
-
-      case "compactSummaryAndLastTurn":
-        await this.forkSessionSummaryAndLastTurn();
-        break;
-
-      case "risk":
-        this.setRiskLevel(cmd.level);
-        break;
-
-      case "persona":
-        this.switchPersona(cmd.id);
-        break;
-
-      case "prompt":
-        this.insertPrompt(cmd.id);
-        break;
-
-      case "bash":
-        await this.runSavedBashCommand(cmd.id);
-        break;
-
-      case "reload":
-        await this.reloadContent();
-        break;
-
-      case "unknown":
-        this.addSystemMessage("unknown command. type /help.", "error");
-        break;
-    }
+    const cmd = this.commandRegistry.parse(raw);
+    await this.commandRegistry.dispatch(cmd, this.commandHandlers);
   }
 
   private showHelp(): void {
     this.addSystemMessage(
-      buildHelpText(
-        this.agentsFiles,
-        this.skills,
-        this.getAllowedRiskLevelsForPersona(this.currentPersona),
-      ),
+      this.commandRegistry.buildHelpText({
+        agentsFiles: this.agentsFiles,
+        skills: this.skills,
+        riskLevels: this.getAllowedRiskLevelsForPersona(this.currentPersona),
+      }),
       "muted",
     );
   }

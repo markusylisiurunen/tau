@@ -5,15 +5,16 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 ## Architecture
 
 - **ChatApp** (`src/tui/app.ts`): Main orchestrator handling UI, commands, and state
-- **SessionEngine** (`src/core/session/session_engine.ts`): Manages LLM streaming and tool dispatch via async generator events
+- **CoreSession** (`src/core/session/core_session.ts`): Owns session state and emits core events for consumers
+- **SessionEngine** (`src/core/session/session_engine.ts`): Internal streaming/tool dispatch runner used by CoreSession
 - **ToolRegistry** (`src/core/tools/registry.ts`): Registers bash, write, edit, task, fork, and restricted tools (read, grep, list)
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output_layout.ts`): Shared compact/expanded tool UI layout and header building
 
-**Data flow**: User input → `ChatApp.handleSubmit()` → `SessionEngine.processTurn()` (yields events) → tool dispatch → UI rendering.
+**Data flow**: User input → `ChatApp.handleSubmit()` → `CoreSession.events()` (yields events) → tool dispatch → UI rendering.
 
-**Engine events**: `processTurn()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
+**Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
 
 ## Key modules
 

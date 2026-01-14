@@ -10,7 +10,7 @@ import type { Config } from "../core/config.js";
 import { getApiKeyForProvider } from "../core/config.js";
 import { loadAllContent } from "../core/content_loader.js";
 import type { PromptTemplate } from "../core/prompts.js";
-import { SessionEngine } from "../core/session/session_engine.js";
+import { CoreSession } from "../core/session/core_session.js";
 import { formatSubagentsForPrompt } from "../core/subagents/registry.js";
 import {
   BASH_USER_MAX_STDERR_LINES,
@@ -99,7 +99,7 @@ export class ChatApp {
   private initialUserMessage?: string;
   private config: Config;
 
-  private readonly engine: SessionEngine;
+  private readonly engine: CoreSession;
   private isStreaming = false;
   private queuedUserMessages: string[] = [];
   private isDrainingQueuedUserMessages = false;
@@ -208,7 +208,7 @@ export class ChatApp {
       createGrepToolDefinition(),
       createListToolDefinition(),
     ]);
-    this.engine = new SessionEngine({
+    this.engine = new CoreSession({
       persona: this.currentPersona,
       systemPrompt: this.baseSystemPrompt,
       riskLevel: this.riskLevel,
@@ -1585,7 +1585,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         state.id = this.chatContainer.addMessage(state.model);
       };
 
-      for await (const event of this.engine.processTurn(this.currentTurnAbort.signal)) {
+      for await (const event of this.engine.events(this.currentTurnAbort.signal)) {
         if (this.currentTurnAbort.signal.aborted) break;
 
         switch (event.type) {

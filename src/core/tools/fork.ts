@@ -7,7 +7,7 @@ import type {
 } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
-import { SessionEngine } from "../session/session_engine.js";
+import { CoreSession } from "../session/core_session.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult, extractAssistantText } from "../utils/messages.js";
 import {
@@ -180,7 +180,7 @@ export function createForkToolDefinition(): ToolDefinition {
 
           const forkHistory = stripToolCallFromHistory(context.history, toolCall.id);
 
-          const forkEngine = new SessionEngine({
+          const forkEngine = new CoreSession({
             persona: forkPersona,
             systemPrompt: context.systemPrompt,
             riskLevel,
@@ -208,7 +208,7 @@ export function createForkToolDefinition(): ToolDefinition {
 
           let lastAssistantFinal: AssistantMessage | undefined;
 
-          for await (const event of forkEngine.processTurn(runSignal)) {
+          for await (const event of forkEngine.events(runSignal)) {
             if (runSignal.aborted) {
               break;
             }

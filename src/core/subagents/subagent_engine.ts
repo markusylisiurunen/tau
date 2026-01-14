@@ -9,11 +9,9 @@ import type {
 import type { Config } from "../config/index.js";
 import { getApiKeyForProvider } from "../config/index.js";
 import { type RunnerEvent, runModelSubturn, runToolCalls } from "../session/runner.js";
-import { createBashToolDefinition } from "../tools/bash.js";
-import type { ToolDefinition, ToolUiEvent } from "../tools/registry.js";
-import { ToolRegistry } from "../tools/registry.js";
-import { createWebFetchToolDefinition } from "../tools/web_fetch.js";
-import { createWebSearchToolDefinition } from "../tools/web_search.js";
+import { ToolCatalog } from "../tools/catalog.js";
+import { createLocalToolExecutionBackend } from "../tools/execution_backend.js";
+import type { ToolRegistry, ToolUiEvent } from "../tools/registry.js";
 import type { RiskLevel } from "../types.js";
 import { isFlexRetryEnabled } from "../utils/flex_retry.js";
 import { extractAssistantText } from "../utils/messages.js";
@@ -52,23 +50,8 @@ function buildToolRegistryForAllowedTools(
   allowedTools: AllowedSubagentToolName[],
   config: Config,
 ): ToolRegistry {
-  const definitions: ToolDefinition[] = [];
-
-  for (const tool of allowedTools) {
-    switch (tool) {
-      case "bash":
-        definitions.push(createBashToolDefinition());
-        break;
-      case "web_search":
-        definitions.push(createWebSearchToolDefinition(config));
-        break;
-      case "web_fetch":
-        definitions.push(createWebFetchToolDefinition(config));
-        break;
-    }
-  }
-
-  return new ToolRegistry(definitions);
+  const backend = createLocalToolExecutionBackend();
+  return ToolCatalog.createSubagentRegistry(allowedTools, config, backend);
 }
 
 function isToolCall(block: AssistantMessage["content"][number]): block is ToolCall {

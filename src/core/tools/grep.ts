@@ -3,9 +3,8 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { resolveRestrictedPath } from "../utils/restricted_fs.js";
-import { spawnWithCapture } from "../utils/spawn_capture.js";
 import { truncateMiddleForModel } from "../utils/truncate.js";
+import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
   ToolDispatchResult,
@@ -13,13 +12,10 @@ import type {
   ToolUiEvent,
 } from "./registry.js";
 
-export const GREP_MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
-
 export const GREP_TOOL_MAX_LINES = 4096;
 export const GREP_TOOL_MAX_TOKENS = 25000;
 
 export const GREP_DEFAULT_TIMEOUT_MS = 60_000;
-export const GREP_KILL_GRACE_MS = 2_000;
 
 const GREP_DESCRIPTION = ["Search the project with ripgrep (rg).", "Runs without a shell."].join(
   " ",
@@ -105,43 +101,6 @@ type GrepArgs = {
 function parseGrepArgs(raw: unknown): GrepArgs {
   const parsed = grepArgsSchema.safeParse(raw);
   return parsed.success ? parsed.data : { pattern: "" };
-}
-
-type GrepExecResult = {
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  captureTruncated: boolean;
-};
-
-async function executeGrep(
-  args: string[],
-  options: { cwd: string; signal?: AbortSignal; timeoutMs: number },
-): Promise<GrepExecResult> {
-  try {
-    const result = await spawnWithCapture("rg", args, {
-      cwd: options.cwd,
-      windowsHide: true,
-      signal: options.signal,
-      timeoutMs: options.timeoutMs,
-      maxCaptureBytes: GREP_MAX_CAPTURE_BYTES,
-      killGraceMs: GREP_KILL_GRACE_MS,
-    });
-
-    return {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      exitCode: result.exitCode,
-      captureTruncated: result.captureLimitExceeded || result.timedOut,
-    };
-  } catch (err) {
-    return {
-      stdout: "",
-      stderr: err instanceof Error ? err.message : String(err),
-      exitCode: 2,
-      captureTruncated: false,
-    };
-  }
 }
 
 function buildGrepArgs(raw: z.infer<typeof grepArgsSchema>): {
@@ -233,7 +192,7 @@ function formatGrepToolResultText(args: {
   return parts.join("\n");
 }
 
-export function createGrepToolDefinition(): ToolDefinition {
+export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: GREP_TOOL,
     async dispatch(
@@ -259,22 +218,18 @@ export function createGrepToolDefinition(): ToolDefinition {
       }
 
       const { args: baseArgs, paths } = buildGrepArgs(parsed);
-
-      let rootReal = process.cwd();
-      const resolvedPaths: string[] = [];
-
       try {
-        for (const p of paths) {
-          const resolved = resolveRestrictedPath(p, { mustExist: true });
-          rootReal = resolved.rootReal;
-          resolvedPaths.push(resolved.relPath);
-        }
+        await backend.grep({
+          baseArgs,
+          pattern: parsed.pattern,
+          paths,
+          timeoutMs: GREP_DEFAULT_TIMEOUT_MS,
+          dryRun: true,
+        });
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
         return blocked(`Grep tool failed: ${errorMessage}`);
       }
-
-      const fullArgs = [...baseArgs, "--", parsed.pattern, ...resolvedPaths];
 
       return {
         kind: "phased",
@@ -284,11 +239,21 @@ export function createGrepToolDefinition(): ToolDefinition {
           pattern: parsed.pattern,
         },
         run: (async () => {
-          const { stdout, stderr, exitCode, captureTruncated } = await executeGrep(fullArgs, {
-            cwd: rootReal,
-            signal,
-            timeoutMs: GREP_DEFAULT_TIMEOUT_MS,
-          });
+          let result: Awaited<ReturnType<ToolExecutionBackend["grep"]>>;
+          try {
+            result = await backend.grep({
+              baseArgs,
+              pattern: parsed.pattern,
+              paths,
+              signal,
+              timeoutMs: GREP_DEFAULT_TIMEOUT_MS,
+            });
+          } catch (e) {
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            return blocked(`Grep tool failed: ${errorMessage}`);
+          }
+
+          const { stdout, stderr, exitCode, captureTruncated, resolvedPaths } = result;
 
           const stdoutModel = truncateMiddleForModel(stdout, {
             maxLines: GREP_TOOL_MAX_LINES,

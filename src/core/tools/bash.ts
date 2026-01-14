@@ -4,20 +4,14 @@ import stripAnsi from "strip-ansi";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { spawnWithCapture } from "../utils/spawn_capture.js";
-import {
-  type TruncationResult,
-  truncateMiddleForModel,
-  truncateToBytesFromStart,
-} from "../utils/truncate.js";
+import { type TruncationResult, truncateMiddleForModel } from "../utils/truncate.js";
+import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
   ToolUiEvent,
 } from "./registry.js";
-
-export const BASH_MAX_CAPTURE_BYTES = 2 * 1024 * 1024; // 2MB
 
 export const BASH_TOOL_MAX_STDOUT_LINES = 4096;
 export const BASH_TOOL_MAX_STDOUT_TOKENS = 25000;
@@ -30,49 +24,6 @@ export const BASH_USER_MAX_STDERR_LINES = 4096;
 export const BASH_USER_MAX_STDERR_TOKENS = 25000;
 
 export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
-export const BASH_KILL_GRACE_MS = 2_000;
-
-const SENSITIVE_ENV_PATTERNS = [/_KEY$/, /_SECRET$/, /_TOKEN$/, /_PASSWORD$/, /^API_KEY$/];
-const ALLOWED_ENV_VARS = new Set([
-  "PATH",
-  "HOME",
-  "USER",
-  "SHELL",
-  "TERM",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
-  "TMPDIR",
-  "TMP",
-  "TEMP",
-  "PWD",
-  "OLDPWD",
-  "EDITOR",
-  "VISUAL",
-  "PAGER",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "XDG_CACHE_HOME",
-]);
-
-function sanitizeEnvironment(): NodeJS.ProcessEnv {
-  const sanitized: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value === undefined) continue;
-    // Always include explicitly allowed vars
-    if (ALLOWED_ENV_VARS.has(key)) {
-      sanitized[key] = value;
-      continue;
-    }
-    // Exclude vars matching sensitive patterns
-    if (SENSITIVE_ENV_PATTERNS.some((pattern) => pattern.test(key))) {
-      continue;
-    }
-    // Include other vars (e.g., npm config, go paths, etc.)
-    sanitized[key] = value;
-  }
-  return sanitized;
-}
 
 const BASH_DESCRIPTION = [
   "Execute a shell command in the current working directory and return stdout/stderr.",
@@ -105,13 +56,6 @@ export const BASH_TOOL: Tool = {
     },
     { additionalProperties: false },
   ),
-};
-
-export type BashToolResult = {
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  truncated: boolean;
 };
 
 export type BashSafetyLevel = "read" | "write";
@@ -218,82 +162,6 @@ export function formatBashUserMessageText(args: {
   return `Bash command output:\n${bashContextText}`;
 }
 
-export function executeBashTool(
-  command: string,
-  options: { timeoutMs?: number; signal?: AbortSignal; cwd?: string } = {},
-): Promise<BashToolResult> {
-  return (async () => {
-    const timeoutMs = options.timeoutMs;
-    const signal = options.signal;
-    const cwd = options.cwd;
-
-    const effectiveTimeoutMs =
-      typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
-        ? timeoutMs
-        : undefined;
-
-    const result = await spawnWithCapture(command, [], {
-      shell: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...sanitizeEnvironment(),
-        GIT_TERMINAL_PROMPT: "0",
-        GIT_EDITOR: "true",
-        GIT_SEQUENCE_EDITOR: "true",
-        GIT_PAGER: "cat",
-        GIT_ASKPASS: "true",
-        GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
-      },
-      detached: true,
-      killProcessGroup: true,
-      cwd,
-      signal,
-      timeoutMs: effectiveTimeoutMs,
-      maxCaptureBytes: BASH_MAX_CAPTURE_BYTES,
-      maxCaptureMode: "ignore",
-      killGraceMs: BASH_KILL_GRACE_MS,
-    });
-
-    let stdout = result.stdout;
-    let stderr = result.stderr;
-    let truncated = result.captureLimitExceeded;
-
-    if (result.captureLimitExceeded) {
-      stdout = truncateToBytesFromStart(stdout, BASH_MAX_CAPTURE_BYTES / 2);
-      stderr = truncateToBytesFromStart(stderr, BASH_MAX_CAPTURE_BYTES / 2);
-    }
-
-    let terminationNote: string | undefined;
-    if (result.timedOut && effectiveTimeoutMs !== undefined) {
-      terminationNote = `(tau) timed out after ${effectiveTimeoutMs}ms`;
-    } else if (result.aborted) {
-      terminationNote = "(tau) aborted";
-    } else if (result.closeSignal) {
-      terminationNote = `(tau) terminated by signal ${result.closeSignal}`;
-    }
-
-    const note = terminationNote?.trim();
-    if (note && !stdout.includes(note) && !stderr.includes(note)) {
-      const noteText = `${stderr && !stderr.endsWith("\n") ? "\n" : ""}${note}\n`;
-      const noteBytes = Buffer.byteLength(noteText, "utf-8");
-      const currentBytes = Buffer.byteLength(stdout, "utf-8") + Buffer.byteLength(stderr, "utf-8");
-
-      if (currentBytes + noteBytes > BASH_MAX_CAPTURE_BYTES) {
-        truncated = true;
-        const remaining = Math.max(0, BASH_MAX_CAPTURE_BYTES - noteBytes);
-        const stdoutBudget = Math.floor(remaining / 2);
-        const stderrBudget = remaining - stdoutBudget;
-        stdout = truncateToBytesFromStart(stdout, stdoutBudget);
-        stderr = truncateToBytesFromStart(stderr, stderrBudget);
-      }
-
-      stderr += noteText;
-    }
-
-    return { stdout, stderr, exitCode: result.exitCode, truncated };
-  })();
-}
-
 function getMissingArgsMessage(command: string, safetyLevel: BashSafetyLevel | undefined): string {
   if (!command && !safetyLevel) {
     return "bash tool call missing valid 'command' and 'safetyLevel' fields.";
@@ -323,7 +191,7 @@ function parseBashArgs(raw: unknown): {
   return { command, safetyLevel, commandForDisplay };
 }
 
-export function createBashToolDefinition(): ToolDefinition {
+export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: BASH_TOOL,
     async dispatch(
@@ -378,7 +246,7 @@ export function createBashToolDefinition(): ToolDefinition {
               stderr,
               exitCode,
               truncated: captureTruncated,
-            } = await executeBashTool(command, { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS });
+            } = await backend.runBash(command, { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS });
             const durationMs = Math.max(0, Date.now() - startedAt);
 
             const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {

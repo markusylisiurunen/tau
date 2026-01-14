@@ -1,9 +1,9 @@
-import { readFileSync, writeFileSync } from "node:fs";
 import type { Tool, ToolCall } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
+import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
 
 const EDIT_DESCRIPTION = [
@@ -71,7 +71,7 @@ function findMatchContext(content: string, search: string, contextLines: number 
   return `Lines ${startLine + 1}-${endLine + 1}:\n${contextSnippet}`;
 }
 
-export function createEditToolDefinition(): ToolDefinition {
+export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: EDIT_TOOL,
     async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
@@ -105,7 +105,8 @@ export function createEditToolDefinition(): ToolDefinition {
 
       let content: string;
       try {
-        content = readFileSync(path, "utf-8");
+        const result = await backend.readFile(path, { restricted: false });
+        content = result.content;
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
         if ((e as NodeJS.ErrnoException).code === "ENOENT") {
@@ -155,7 +156,7 @@ export function createEditToolDefinition(): ToolDefinition {
       const newContent = content.replace(oldText, newText);
 
       try {
-        writeFileSync(path, newContent, "utf-8");
+        await backend.writeFile(path, newContent);
 
         const oldLines = oldText.split("\n").length;
         const newLines = newText.split("\n").length;

@@ -13,7 +13,12 @@ export { applyGeminiSubagents, personas } from "./personas.js";
 export type { PromptTemplate } from "./prompts.js";
 export { prompts } from "./prompts.js";
 export { createBashToolDefinition } from "./tools/bash.js";
+export { ToolCatalog } from "./tools/catalog.js";
 export { createEditToolDefinition } from "./tools/edit.js";
+export {
+  createLocalToolExecutionBackend,
+  createSandboxToolExecutionBackend,
+} from "./tools/execution_backend.js";
 export { createForkToolDefinition } from "./tools/fork.js";
 export { createGrepToolDefinition } from "./tools/grep.js";
 export { createListToolDefinition } from "./tools/list.js";

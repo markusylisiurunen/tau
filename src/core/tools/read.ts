@@ -1,11 +1,10 @@
-import { readFileSync } from "node:fs";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { resolveRestrictedFilePath } from "../utils/restricted_fs.js";
 import { truncateMiddleForModel, truncateToBytesFromStart } from "../utils/truncate.js";
+import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
 
 export const READ_TOOL_MAX_LINES = 4096;
@@ -80,7 +79,7 @@ function formatReadToolResultText(args: {
   return parts.join("\n");
 }
 
-export function createReadToolDefinition(): ToolDefinition {
+export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: READ_TOOL,
     async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
@@ -113,8 +112,7 @@ export function createReadToolDefinition(): ToolDefinition {
       }
 
       try {
-        const resolved = resolveRestrictedFilePath(path);
-        const rawContent = readFileSync(resolved.realPath, "utf-8");
+        const { path: resolvedPath, content: rawContent } = await backend.readFile(path);
 
         const allLines = rawContent.split("\n");
         const totalLines = allLines.length;
@@ -141,7 +139,7 @@ export function createReadToolDefinition(): ToolDefinition {
         });
 
         const toolText = formatReadToolResultText({
-          path: resolved.relPath,
+          path: resolvedPath,
           startLine: start,
           endLine: endLine,
           content: modelTruncation.content,
@@ -151,7 +149,7 @@ export function createReadToolDefinition(): ToolDefinition {
         const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
         const uiEvent: ToolUiEvent = {
           type: "read_success",
-          path: resolved.relPath,
+          path: resolvedPath,
           startLine: start,
           endLine: endLine,
           content: modelTruncation.content,

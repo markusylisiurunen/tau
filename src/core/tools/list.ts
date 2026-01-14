@@ -1,10 +1,9 @@
-import { readdirSync } from "node:fs";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { resolveRestrictedDirPath } from "../utils/restricted_fs.js";
+import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
 
 export const LIST_MAX_ENTRIES = 256;
@@ -70,7 +69,7 @@ function formatListToolResultText(args: {
   return parts.join("\n");
 }
 
-export function createListToolDefinition(): ToolDefinition {
+export function createListToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: LIST_TOOL,
     async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
@@ -98,13 +97,12 @@ export function createListToolDefinition(): ToolDefinition {
       const effectiveLimit = Math.min(Math.max(1, limit), LIST_MAX_ENTRIES);
 
       try {
-        const resolved = resolveRestrictedDirPath(path);
-        const dirents = readdirSync(resolved.realPath, { withFileTypes: true });
+        const { path: resolvedPath, entries: dirents } = await backend.listDir(path);
 
         const entries = dirents
           .map((d) => ({
             name: d.name,
-            suffix: d.isDirectory() ? "/" : d.isSymbolicLink() ? "@" : "",
+            suffix: d.isDirectory ? "/" : d.isSymlink ? "@" : "",
           }))
           .sort((a, b) => a.name.localeCompare(b.name))
           .map((e) => `${e.name}${e.suffix}`);
@@ -113,7 +111,7 @@ export function createListToolDefinition(): ToolDefinition {
         const windowed = entries.slice(offset, offset + effectiveLimit);
 
         const toolText = formatListToolResultText({
-          path: resolved.relPath,
+          path: resolvedPath,
           offset,
           limit: effectiveLimit,
           total,
@@ -124,7 +122,7 @@ export function createListToolDefinition(): ToolDefinition {
         const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
         const uiEvent: ToolUiEvent = {
           type: "list_success",
-          path: resolved.relPath,
+          path: resolvedPath,
           offset,
           limit: effectiveLimit,
           total,

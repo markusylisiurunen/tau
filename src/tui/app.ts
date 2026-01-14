@@ -25,19 +25,12 @@ import {
   BASH_USER_MAX_STDERR_TOKENS,
   BASH_USER_MAX_STDOUT_LINES,
   BASH_USER_MAX_STDOUT_TOKENS,
-  createBashToolDefinition,
-  executeBashTool,
   formatBashUserMessageText,
   prepareBashOutput,
 } from "../core/tools/bash.js";
-import { createEditToolDefinition } from "../core/tools/edit.js";
-import { createForkToolDefinition } from "../core/tools/fork.js";
-import { createGrepToolDefinition } from "../core/tools/grep.js";
-import { createListToolDefinition } from "../core/tools/list.js";
-import { createReadToolDefinition } from "../core/tools/read.js";
-import { ToolRegistry } from "../core/tools/registry.js";
-import { createTaskToolDefinition } from "../core/tools/task.js";
-import { createWriteToolDefinition } from "../core/tools/write.js";
+import { ToolCatalog } from "../core/tools/catalog.js";
+import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
+import { createLocalToolExecutionBackend } from "../core/tools/execution_backend.js";
 import {
   type Persona,
   REASONING_LEVELS,
@@ -110,6 +103,7 @@ export class ChatApp {
   private readonly engine: CoreSession;
   private readonly commandRegistry: CommandRegistry<CommandDispatchContext>;
   private readonly commandHandlers: CommandDispatchContext;
+  private readonly toolBackend: ToolExecutionBackend;
   private isStreaming = false;
   private queuedUserMessages: string[] = [];
   private isDrainingQueuedUserMessages = false;
@@ -208,16 +202,8 @@ export class ChatApp {
       subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });
 
-    const toolRegistry = new ToolRegistry([
-      createBashToolDefinition(),
-      createWriteToolDefinition(),
-      createEditToolDefinition(),
-      createTaskToolDefinition(),
-      createForkToolDefinition(),
-      createReadToolDefinition(),
-      createGrepToolDefinition(),
-      createListToolDefinition(),
-    ]);
+    this.toolBackend = createLocalToolExecutionBackend();
+    const toolRegistry = ToolCatalog.createRegistry(this.toolBackend);
     this.engine = new CoreSession({
       persona: this.currentPersona,
       systemPrompt: this.baseSystemPrompt,
@@ -1662,7 +1648,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         stderr,
         exitCode,
         truncated: captureTruncated,
-      } = await executeBashTool(command, { cwd: opts?.cwd, signal: abortController.signal });
+      } = await this.toolBackend.runBash(command, {
+        cwd: opts?.cwd,
+        signal: abortController.signal,
+      });
       const durationMs = Math.max(0, Date.now() - startedAt);
       const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {
         stdout: { maxLines: BASH_USER_MAX_STDOUT_LINES, maxTokens: BASH_USER_MAX_STDOUT_TOKENS },

@@ -13,14 +13,7 @@ import {
   personas as builtinPersonas,
   prompts as builtinPrompts,
   CliError,
-  createBashToolDefinition,
-  createEditToolDefinition,
-  createForkToolDefinition,
-  createGrepToolDefinition,
-  createListToolDefinition,
-  createReadToolDefinition,
-  createTaskToolDefinition,
-  createWriteToolDefinition,
+  createLocalToolExecutionBackend,
   isGoogleAuthAvailable,
   loadBashCommands,
   loadConfig,
@@ -29,7 +22,7 @@ import {
   parsePersonaString,
   printDebugInfo,
   printHelp,
-  ToolRegistry,
+  ToolCatalog,
 } from "./core/index.js";
 import { ChatApp } from "./tui/index.js";
 
@@ -134,16 +127,8 @@ if (cli.debug) {
   }
 
   const debugRiskLevel = cli.riskLevel ?? config.defaultRisk ?? "read-only";
-  const debugToolRegistry = new ToolRegistry([
-    createBashToolDefinition(),
-    createWriteToolDefinition(),
-    createEditToolDefinition(),
-    createTaskToolDefinition(),
-    createForkToolDefinition(),
-    createReadToolDefinition(),
-    createGrepToolDefinition(),
-    createListToolDefinition(),
-  ]);
+  const debugBackend = createLocalToolExecutionBackend();
+  const debugToolRegistry = ToolCatalog.createRegistry(debugBackend);
   printDebugInfo({
     personas,
     prompts,

@@ -1,10 +1,9 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import type { Tool, ToolCall } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
+import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
 
 const WRITE_DESCRIPTION = [
@@ -37,7 +36,7 @@ function parseWriteArgs(raw: unknown): { path: string; content: string } {
   return parsed.success ? parsed.data : { path: "", content: "" };
 }
 
-export function createWriteToolDefinition(): ToolDefinition {
+export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: WRITE_TOOL,
     async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
@@ -66,15 +65,7 @@ export function createWriteToolDefinition(): ToolDefinition {
       }
 
       try {
-        const dir = dirname(path);
-        if (dir && dir !== ".") {
-          mkdirSync(dir, { recursive: true });
-        }
-
-        writeFileSync(path, content, "utf-8");
-
-        const bytes = Buffer.byteLength(content, "utf-8");
-        const lines = content.split("\n").length;
+        const { bytes, lines } = await backend.writeFile(path, content);
         const resultText = `Successfully wrote ${bytes} bytes (${lines} lines) to ${path}`;
 
         const toolResult = createToolSuccess(toolCall, resultText);

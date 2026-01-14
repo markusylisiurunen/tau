@@ -6,8 +6,8 @@ import type {
   Message,
   ToolCall,
 } from "@mariozechner/pi-ai";
-import type { Config } from "../config.js";
-import { getApiKeyForProvider } from "../config.js";
+import type { Config } from "../config/index.js";
+import { getApiKeyForProvider } from "../config/index.js";
 import { type RunnerEvent, runModelSubturn, runToolCalls } from "../session/runner.js";
 import { createBashToolDefinition } from "../tools/bash.js";
 import type { ToolDefinition, ToolUiEvent } from "../tools/registry.js";

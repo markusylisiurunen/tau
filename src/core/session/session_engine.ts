@@ -6,8 +6,8 @@ import type {
   Message,
   ToolCall,
 } from "@mariozechner/pi-ai";
-import type { Config } from "../config.js";
-import { getApiKeyForProvider } from "../config.js";
+import type { Config } from "../config/index.js";
+import { getApiKeyForProvider } from "../config/index.js";
 import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import { shouldRetryFlexAfterResponse } from "../utils/flex_retry.js";

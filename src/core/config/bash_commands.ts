@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import { getGitRoot } from "./utils/git.js";
+import { getGitRoot } from "../utils/git.js";
 
 export interface BashCommand {
   id: string;

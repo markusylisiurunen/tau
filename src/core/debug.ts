@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import type { Tool } from "@mariozechner/pi-ai";
-import type { BashCommand } from "./bash_commands.js";
+import type { BashCommand } from "./config/index.js";
 import type { PromptTemplate } from "./prompts.js";
 import { formatSubagentsForPrompt } from "./subagents/registry.js";
 import type { ToolRegistry } from "./tools/registry.js";

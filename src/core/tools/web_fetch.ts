@@ -1,8 +1,8 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
-import type { Config } from "../config.js";
-import { getParallelApiKey } from "../config.js";
+import type { Config } from "../config/index.js";
+import { getParallelApiKey } from "../config/index.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import {

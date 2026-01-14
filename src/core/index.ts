@@ -1,9 +1,13 @@
-export type { BashCommand } from "./bash_commands.js";
-export { loadBashCommands } from "./bash_commands.js";
 export type { CliOptions } from "./cli.js";
 export { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
-export { isGoogleAuthAvailable, loadConfig } from "./config.js";
-export { loadAllContent } from "./content_loader.js";
+export type { BashCommand, Config } from "./config/index.js";
+export {
+  isGoogleAuthAvailable,
+  loadAllContent,
+  loadBashCommands,
+  loadConfig,
+  loadRuntimeConfig,
+} from "./config/index.js";
 export { printDebugInfo } from "./debug.js";
 export { applyGeminiSubagents, personas } from "./personas.js";
 export type { PromptTemplate } from "./prompts.js";

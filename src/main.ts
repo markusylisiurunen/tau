@@ -1,5 +1,13 @@
 #!/usr/bin/env node
-import type { CliOptions, Persona, PromptTemplate, ReasoningEffort, Skill } from "./core/index.js";
+import type {
+  BashCommand,
+  CliOptions,
+  Config,
+  Persona,
+  PromptTemplate,
+  ReasoningEffort,
+  Skill,
+} from "./core/index.js";
 import {
   applyGeminiSubagents,
   personas as builtinPersonas,
@@ -14,9 +22,9 @@ import {
   createTaskToolDefinition,
   createWriteToolDefinition,
   isGoogleAuthAvailable,
-  loadAllContent,
   loadBashCommands,
   loadConfig,
+  loadRuntimeConfig,
   parseCliArgs,
   parsePersonaString,
   printDebugInfo,
@@ -25,10 +33,11 @@ import {
 } from "./core/index.js";
 import { ChatApp } from "./tui/index.js";
 
-// Load configuration from file
-const config = loadConfig(process.cwd());
+const cwd = process.cwd();
 
-const bashCommands = loadBashCommands(process.cwd()).commands;
+// Load configuration + content from file
+let config: Config;
+let bashCommands: BashCommand[] = [];
 
 async function readPipedStdin(): Promise<string | undefined> {
   if (process.stdin.isTTY) return undefined;
@@ -46,14 +55,19 @@ let personas: Persona[];
 let prompts: PromptTemplate[];
 let skills: Skill[];
 try {
-  const content = await loadAllContent(config);
-  personas = content.personas;
-  prompts = content.prompts;
-  skills = content.skills;
+  const runtime = await loadRuntimeConfig(cwd);
+  config = runtime.config;
+  personas = runtime.personas;
+  prompts = runtime.prompts;
+  skills = runtime.skills;
+  bashCommands = runtime.bashCommands;
 } catch (err) {
-  // Safeguard: loadAllContent should not throw, but wrap to ensure tau --help works
+  // Safeguard: loadRuntimeConfig should not throw, but wrap to ensure tau --help works
   // eslint-disable-next-line no-console
   console.error(`warning: failed to load user content: ${(err as Error).message}`);
+
+  config = loadConfig(cwd);
+  bashCommands = loadBashCommands(cwd).commands;
 
   const baseBuiltins = isGoogleAuthAvailable(config)
     ? applyGeminiSubagents(builtinPersonas)

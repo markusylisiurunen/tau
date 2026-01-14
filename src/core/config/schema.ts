@@ -3,8 +3,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { KnownProvider } from "@mariozechner/pi-ai";
 import { z } from "zod";
-import { type RiskLevel, RiskLevelSchema } from "./types.js";
-import { getGitRoot } from "./utils/git.js";
+import { type RiskLevel, RiskLevelSchema } from "../types.js";
+import { getGitRoot } from "../utils/git.js";
 
 export type ToolDisplayMode = "compact" | "full";
 
@@ -60,6 +60,15 @@ function loadConfigFile(configPath: string): Config {
   }
 }
 
+function mergeConfig(userConfig: Config, projectConfig: Config): Config {
+  // Project config only overrides disableBuiltinPersonas; all other fields come from user config.
+  if (projectConfig.disableBuiltinPersonas !== undefined) {
+    return { ...userConfig, disableBuiltinPersonas: projectConfig.disableBuiltinPersonas };
+  }
+
+  return userConfig;
+}
+
 export function loadConfig(cwd: string = process.cwd()): Config {
   const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
   const userConfigPath = join(configDir, "tau", "config.json");
@@ -69,11 +78,7 @@ export function loadConfig(cwd: string = process.cwd()): Config {
   const projectConfigPath = repoRoot ? join(repoRoot, ".tau", "config.json") : undefined;
   const projectConfig = projectConfigPath ? loadConfigFile(projectConfigPath) : {};
 
-  if (projectConfig.disableBuiltinPersonas !== undefined) {
-    return { ...userConfig, disableBuiltinPersonas: projectConfig.disableBuiltinPersonas };
-  }
-
-  return userConfig;
+  return mergeConfig(userConfig, projectConfig);
 }
 
 export function getApiKeyForProvider(config: Config, provider: KnownProvider): string | undefined {

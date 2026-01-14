@@ -1,5 +1,5 @@
 import type { Message, Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import type { Config } from "../config.js";
+import type { Config } from "../config/index.js";
 import type { Persona, RiskLevel } from "../types.js";
 
 const restrictedToolNames = new Set(["read", "grep", "list"]);

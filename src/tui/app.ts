@@ -4,16 +4,19 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
-import { type BashCommand, loadBashCommands } from "../core/bash_commands.js";
 import {
   type CommandDispatchContext,
   type CommandRegistry,
   createCommandRegistry,
   getRiskLevelDescription,
 } from "../core/commands/index.js";
-import type { Config } from "../core/config.js";
-import { getApiKeyForProvider } from "../core/config.js";
-import { loadAllContent } from "../core/content_loader.js";
+import {
+  type BashCommand,
+  type Config,
+  getApiKeyForProvider,
+  loadAllContent,
+  loadBashCommands,
+} from "../core/config/index.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { CoreSession } from "../core/session/core_session.js";
 import { formatSubagentsForPrompt } from "../core/subagents/registry.js";
@@ -1453,7 +1456,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
 
     try {
-      const result = await loadAllContent();
+      const result = await loadAllContent(this.config, { cwd: process.cwd() });
       const { personas, prompts, skills, errors } = result;
 
       const bashResult = loadBashCommands(process.cwd());

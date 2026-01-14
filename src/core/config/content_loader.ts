@@ -5,24 +5,24 @@ import type { Api, KnownProvider, Model, Tool } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import type { Config } from "./config.js";
-import { isGoogleAuthAvailable } from "./config.js";
-import { applyGeminiSubagents, personas as builtinPersonas } from "./personas.js";
-import type { PromptTemplate } from "./prompts.js";
-import { prompts as builtinPrompts } from "./prompts.js";
-import type { SubagentConfigMap, SubagentPersonaConfig } from "./subagents/types.js";
-import { BASH_TOOL } from "./tools/bash.js";
-import { EDIT_TOOL } from "./tools/edit.js";
-import { FORK_TOOL } from "./tools/fork.js";
-import { GREP_TOOL } from "./tools/grep.js";
-import { LIST_TOOL } from "./tools/list.js";
-import { READ_TOOL } from "./tools/read.js";
-import { TASK_TOOL } from "./tools/task.js";
-import { WRITE_TOOL } from "./tools/write.js";
-import type { Persona, ReasoningEffort, Skill } from "./types.js";
-import { ReasoningEffortSchema } from "./types.js";
-import { getGitRoot } from "./utils/git.js";
-import { formatZodError } from "./utils/zod.js";
+import { applyGeminiSubagents, personas as builtinPersonas } from "../personas.js";
+import type { PromptTemplate } from "../prompts.js";
+import { prompts as builtinPrompts } from "../prompts.js";
+import type { SubagentConfigMap, SubagentPersonaConfig } from "../subagents/types.js";
+import { BASH_TOOL } from "../tools/bash.js";
+import { EDIT_TOOL } from "../tools/edit.js";
+import { FORK_TOOL } from "../tools/fork.js";
+import { GREP_TOOL } from "../tools/grep.js";
+import { LIST_TOOL } from "../tools/list.js";
+import { READ_TOOL } from "../tools/read.js";
+import { TASK_TOOL } from "../tools/task.js";
+import { WRITE_TOOL } from "../tools/write.js";
+import type { Persona, ReasoningEffort, Skill } from "../types.js";
+import { ReasoningEffortSchema } from "../types.js";
+import { getGitRoot } from "../utils/git.js";
+import { formatZodError } from "../utils/zod.js";
+import type { Config } from "./schema.js";
+import { isGoogleAuthAvailable } from "./schema.js";
 
 interface FrontMatter {
   [key: string]: unknown;
@@ -281,8 +281,11 @@ function loadMarkdownFiles(dir: string): { files: MarkdownFile[]; error?: string
   }
 }
 
-function findProjectTauDirsFromCwd(args: { subdir: "personas" | "prompts" | "skills" }): string[] {
-  const cwd = process.cwd();
+function findProjectTauDirsFromCwd(args: {
+  subdir: "personas" | "prompts" | "skills";
+  cwd?: string;
+}): string[] {
+  const cwd = args.cwd ?? process.cwd();
   const cwdAbs = resolve(cwd);
   const homeAbs = resolve(homedir());
 
@@ -608,11 +611,15 @@ export async function loadUserPersonas(args?: {
 
 export async function loadProjectPersonas(args?: {
   basePersonasById?: Map<string, Persona>;
+  cwd?: string;
 }): Promise<{
   personas: Persona[];
   errors: string[];
 }> {
-  const personasDirs = findProjectTauDirsFromCwd({ subdir: "personas" });
+  const personasDirs = findProjectTauDirsFromCwd({
+    subdir: "personas",
+    cwd: args?.cwd,
+  });
   if (personasDirs.length === 0) {
     return { personas: [], errors: [] };
   }
@@ -673,11 +680,14 @@ export async function loadUserPrompts(): Promise<{
   return { prompts, errors };
 }
 
-export async function loadProjectPrompts(): Promise<{
+export async function loadProjectPrompts(args?: { cwd?: string }): Promise<{
   prompts: PromptTemplate[];
   errors: string[];
 }> {
-  const promptsDirs = findProjectTauDirsFromCwd({ subdir: "prompts" });
+  const promptsDirs = findProjectTauDirsFromCwd({
+    subdir: "prompts",
+    cwd: args?.cwd,
+  });
   if (promptsDirs.length === 0) {
     return { prompts: [], errors: [] };
   }
@@ -791,11 +801,14 @@ export async function loadUserSkills(): Promise<{
   return loadSkillsFromDir(skillsDir);
 }
 
-export async function loadProjectSkills(): Promise<{
+export async function loadProjectSkills(args?: { cwd?: string }): Promise<{
   skills: Skill[];
   errors: string[];
 }> {
-  const skillsDirs = findProjectTauDirsFromCwd({ subdir: "skills" });
+  const skillsDirs = findProjectTauDirsFromCwd({
+    subdir: "skills",
+    cwd: args?.cwd,
+  });
   if (skillsDirs.length === 0) {
     return { skills: [], errors: [] };
   }
@@ -813,13 +826,17 @@ export async function loadProjectSkills(): Promise<{
   return { skills, errors };
 }
 
-export async function loadAllContent(config?: Config): Promise<{
+export async function loadAllContent(
+  config?: Config,
+  options?: { cwd?: string },
+): Promise<{
   personas: Persona[];
   prompts: PromptTemplate[];
   skills: Skill[];
   errors: string[];
 }> {
   try {
+    const cwd = options?.cwd;
     const builtinBasePersonas = builtinPersonas;
     const builtinDisplayPersonas =
       config && isGoogleAuthAvailable(config)
@@ -836,11 +853,11 @@ export async function loadAllContent(config?: Config): Promise<{
       : undefined;
 
     const userPersonasResult = await loadUserPersonas({ basePersonasById, forbiddenIds });
-    const projectPersonasResult = await loadProjectPersonas({ basePersonasById });
+    const projectPersonasResult = await loadProjectPersonas({ basePersonasById, cwd });
     const userPromptsResult = await loadUserPrompts();
-    const projectPromptsResult = await loadProjectPrompts();
+    const projectPromptsResult = await loadProjectPrompts({ cwd });
     const userSkillsResult = await loadUserSkills();
-    const projectSkillsResult = await loadProjectSkills();
+    const projectSkillsResult = await loadProjectSkills({ cwd });
 
     const allErrors = [
       ...userPersonasResult.errors,
@@ -865,6 +882,7 @@ export async function loadAllContent(config?: Config): Promise<{
 
     const effectiveBuiltins = includeBuiltins ? builtinDisplayPersonas : [];
 
+    // Precedence: built-ins < user < project.
     return {
       personas: mergeById(
         effectiveBuiltins,

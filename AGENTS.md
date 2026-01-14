@@ -4,12 +4,12 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 ## Architecture
 
-- **ChatApp** (`src/app.ts`): Main orchestrator handling UI, commands, and state
-- **SessionEngine** (`src/session/session_engine.ts`): Manages LLM streaming and tool dispatch via async generator events
-- **ToolRegistry** (`src/tools/registry.ts`): Registers bash, write, edit, task, fork, and restricted tools (read, grep, list)
-- **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/ui/`
-- **Chat UI models** (`src/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
-- **Tool output layout** (`src/ui/tool_output_layout.ts`): Shared compact/expanded tool UI layout and header building
+- **ChatApp** (`src/tui/app.ts`): Main orchestrator handling UI, commands, and state
+- **SessionEngine** (`src/core/session/session_engine.ts`): Manages LLM streaming and tool dispatch via async generator events
+- **ToolRegistry** (`src/core/tools/registry.ts`): Registers bash, write, edit, task, fork, and restricted tools (read, grep, list)
+- **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
+- **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
+- **Tool output layout** (`src/tui/ui/tool_output_layout.ts`): Shared compact/expanded tool UI layout and header building
 
 **Data flow**: User input → `ChatApp.handleSubmit()` → `SessionEngine.processTurn()` (yields events) → tool dispatch → UI rendering.
 
@@ -18,17 +18,17 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 ## Key modules
 
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
-- `src/personas.ts` - Built-in persona definitions and system prompt blocks
-- `src/content_loader.ts` - User/project content loading (personas, prompts, skills)
-- `src/commands.ts` - Slash command parsing
-- `src/session/` - Turn processing and message accumulation
-- `src/tools/` - Tool implementations (bash, write, edit, task, fork, web_search, web_fetch)
-- `src/subagents/` - Isolated agent execution (`explore`, `web`) and runtime (`src/subagents/subagent_engine.ts`)
-- `src/ui/` - Terminal components, themes, autocomplete
-- `src/ui/chat_message_model.ts` - Message view models and renderer for the chat UI
-- `src/ui/tool_output_layout.ts` - Shared tool output layout primitives
-- `src/utils/project_files.ts` - Project file discovery for `@file` autocomplete
-- `src/utils/` - Helpers for truncation, fuzzy matching, context building
+- `src/core/personas.ts` - Built-in persona definitions and system prompt blocks
+- `src/core/content_loader.ts` - User/project content loading (personas, prompts, skills)
+- `src/core/commands.ts` - Slash command parsing
+- `src/core/session/` - Turn processing and message accumulation
+- `src/core/tools/` - Tool implementations (bash, write, edit, task, fork, web_search, web_fetch)
+- `src/core/subagents/` - Isolated agent execution (`explore`, `web`) and runtime (`src/core/subagents/subagent_engine.ts`)
+- `src/tui/ui/` - Terminal components, themes, autocomplete
+- `src/tui/ui/chat_message_model.ts` - Message view models and renderer for the chat UI
+- `src/tui/ui/tool_output_layout.ts` - Shared tool output layout primitives
+- `src/core/utils/project_files.ts` - Project file discovery for `@file` autocomplete
+- `src/core/utils/` - Helpers for truncation, fuzzy matching, context building
 
 ## Tool system
 
@@ -45,7 +45,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
 
-**Bash limits**: 2MB raw capture, 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/tools/bash.ts`), git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
+**Bash limits**: 2MB raw capture, 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/core/tools/bash.ts`), git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 
@@ -61,7 +61,7 @@ Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The
 - **read/list/grep/write (compact)**: 16 lines preview from the start.
 - **edit**: full diff (no UI truncation).
 
-**Subagent-only tools**: the `web` subagent uses `web_search` and `web_fetch` (see `src/tools/web_search.ts`, `src/tools/web_fetch.ts`) via the subagent tool registry in `src/subagents/subagent_engine.ts`.
+**Subagent-only tools**: the `web` subagent uses `web_search` and `web_fetch` (see `src/core/tools/web_search.ts`, `src/core/tools/web_fetch.ts`) via the subagent tool registry in `src/core/subagents/subagent_engine.ts`.
 
 ## Personas and subagents
 
@@ -156,9 +156,9 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 
 ## Adding a slash command
 
-1. `src/commands.ts`: Add to `Command` type, `parseCommand()`, `buildHelpText()`
-2. `src/ui/slash_autocomplete.ts`: Add to `STATIC_COMMANDS`
-3. `src/app.ts`: Add case in `handleCommand()`, implement handler
+1. `src/core/commands.ts`: Add to `Command` type, `parseCommand()`, `buildHelpText()`
+2. `src/tui/ui/slash_autocomplete.ts`: Add to `STATIC_COMMANDS`
+3. `src/tui/app.ts`: Add case in `handleCommand()`, implement handler
 
 ## Security
 

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageJsonPath = join(__dirname, "../package.json");
-const versionFile = join(__dirname, "../src/version.ts");
+const versionFile = join(__dirname, "../src/core/version.ts");
 
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
 const versionTs = `export const APP_VERSION = "${packageJson.version}";\n`;

@@ -4,19 +4,14 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
-import { type BashCommand, loadBashCommands } from "./bash_commands.js";
-import { copyTextToClipboard } from "./clipboard.js";
-import { buildHelpText, getRiskLevelDescription, parseCommand } from "./commands.js";
-import type { Config } from "./config.js";
-import { getApiKeyForProvider } from "./config.js";
-import { loadAllContent } from "./content_loader.js";
-import { buildExportEntriesFromHistory } from "./export/engine_history.js";
-import { renderExport } from "./export/index.js";
-import type { PromptTemplate } from "./prompts.js";
-import { SessionEngine } from "./session/session_engine.js";
-import { formatSubagentsForPrompt } from "./subagents/registry.js";
-import { createAppTerminal } from "./terminal.js";
-import { ToolUiRouter } from "./tool_ui_router.js";
+import { type BashCommand, loadBashCommands } from "../core/bash_commands.js";
+import { buildHelpText, getRiskLevelDescription, parseCommand } from "../core/commands.js";
+import type { Config } from "../core/config.js";
+import { getApiKeyForProvider } from "../core/config.js";
+import { loadAllContent } from "../core/content_loader.js";
+import type { PromptTemplate } from "../core/prompts.js";
+import { SessionEngine } from "../core/session/session_engine.js";
+import { formatSubagentsForPrompt } from "../core/subagents/registry.js";
 import {
   BASH_USER_MAX_STDERR_LINES,
   BASH_USER_MAX_STDERR_TOKENS,
@@ -26,22 +21,42 @@ import {
   executeBashTool,
   formatBashUserMessageText,
   prepareBashOutput,
-} from "./tools/bash.js";
-import { createEditToolDefinition } from "./tools/edit.js";
-import { createForkToolDefinition } from "./tools/fork.js";
-import { createGrepToolDefinition } from "./tools/grep.js";
-import { createListToolDefinition } from "./tools/list.js";
-import { createReadToolDefinition } from "./tools/read.js";
-import { ToolRegistry } from "./tools/registry.js";
-import { createTaskToolDefinition } from "./tools/task.js";
-import { createWriteToolDefinition } from "./tools/write.js";
+} from "../core/tools/bash.js";
+import { createEditToolDefinition } from "../core/tools/edit.js";
+import { createForkToolDefinition } from "../core/tools/fork.js";
+import { createGrepToolDefinition } from "../core/tools/grep.js";
+import { createListToolDefinition } from "../core/tools/list.js";
+import { createReadToolDefinition } from "../core/tools/read.js";
+import { ToolRegistry } from "../core/tools/registry.js";
+import { createTaskToolDefinition } from "../core/tools/task.js";
+import { createWriteToolDefinition } from "../core/tools/write.js";
 import {
   type Persona,
   REASONING_LEVELS,
   type ReasoningEffort,
   type RiskLevel,
   type Skill,
-} from "./types.js";
+} from "../core/types.js";
+import {
+  buildBaseSystemPrompt,
+  buildEnvironmentTag,
+  buildProjectContextBlock,
+  buildSkillsIndexBlock,
+  findAgentsFilesInScopeDetailed,
+  formatRiskLevelChangeNotice,
+} from "../core/utils/context.js";
+import { formatHistoryForCompression } from "../core/utils/fork.js";
+import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
+import { getGitRoot } from "../core/utils/git.js";
+import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
+import { streamModel } from "../core/utils/model_stream.js";
+import { listProjectFilesAsync } from "../core/utils/project_files.js";
+import { APP_VERSION } from "../core/version.js";
+import { copyTextToClipboard } from "./clipboard.js";
+import { buildExportEntriesFromHistory } from "./export/engine_history.js";
+import { renderExport } from "./export/index.js";
+import { createAppTerminal } from "./terminal.js";
+import { ToolUiRouter } from "./tool_ui_router.js";
 import { buildBashExecutionView } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import type { AssistantMessageModel } from "./ui/chat_message_model.js";
@@ -52,21 +67,6 @@ import { getFileAutocompleteToken, SlashAutocompleteProvider } from "./ui/slash_
 import type { SystemMessageKind } from "./ui/system_message.js";
 import { createUiTheme, type Theme } from "./ui/theme.js";
 import { buildThemePreviewMessages } from "./ui/theme_preview.js";
-import {
-  buildBaseSystemPrompt,
-  buildEnvironmentTag,
-  buildProjectContextBlock,
-  buildSkillsIndexBlock,
-  findAgentsFilesInScopeDetailed,
-  formatRiskLevelChangeNotice,
-} from "./utils/context.js";
-import { formatHistoryForCompression } from "./utils/fork.js";
-import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "./utils/format.js";
-import { getGitRoot } from "./utils/git.js";
-import { extractAllFencedCodeBlocks, extractAssistantText } from "./utils/messages.js";
-import { streamModel } from "./utils/model_stream.js";
-import { listProjectFilesAsync } from "./utils/project_files.js";
-import { APP_VERSION } from "./version.js";
 
 export interface ChatAppOptions {
   personas: Persona[];
@@ -1773,7 +1773,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     const seenSkills = new Set(this.expandedSkillsInCurrentPrompt);
 
     for (const entry of tokens) {
-      // Strip trailing punctuation to handle cases like "@src/app.ts," or "(see @README.md)"
+      // Strip trailing punctuation to handle cases like "@src/tui/app.ts," or "(see @README.md)"
       const cleanToken = entry.token.replace(/[.,;:)}\]]+$/, "");
       if (entry.type === "file") {
         if (projectFilesSet.has(cleanToken) && !seenFiles.has(cleanToken)) {

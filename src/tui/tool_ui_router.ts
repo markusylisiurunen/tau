@@ -1,4 +1,4 @@
-import type { ToolUiEvent } from "./tools/registry.js";
+import type { ToolUiEvent } from "../core/tools/registry.js";
 import {
   buildBashAbortedView,
   buildBashBlockedView,

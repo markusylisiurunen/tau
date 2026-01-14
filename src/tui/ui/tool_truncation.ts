@@ -3,7 +3,7 @@ import {
   truncateHead,
   truncateMiddle,
   truncateTail,
-} from "../utils/truncate.js";
+} from "../../core/utils/truncate.js";
 
 export type UiTruncationStrategy = "head" | "middle" | "tail";
 

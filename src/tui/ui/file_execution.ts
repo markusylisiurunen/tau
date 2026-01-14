@@ -1,4 +1,4 @@
-import { formatTokenEstimate } from "../utils/token.js";
+import { formatTokenEstimate } from "../../core/utils/token.js";
 import { inlineText } from "./inline.js";
 import type { Theme } from "./theme.js";
 import { buildBlockedToolView } from "./tool_output_helpers.js";

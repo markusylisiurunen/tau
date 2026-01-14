@@ -1,4 +1,4 @@
-import { assertNever } from "../utils/never.js";
+import { assertNever } from "../../core/utils/never.js";
 import { renderHtmlExport } from "./html.js";
 import type { ExportEntry, ExportMetadata } from "./types.js";
 

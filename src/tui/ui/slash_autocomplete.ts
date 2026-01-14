@@ -1,6 +1,6 @@
 import type { AutocompleteItem, AutocompleteProvider } from "@mariozechner/pi-tui";
-import type { RiskLevel } from "../types.js";
-import { fuzzyFilter } from "../utils/fuzzy.js";
+import type { RiskLevel } from "../../core/types.js";
+import { fuzzyFilter } from "../../core/utils/fuzzy.js";
 
 export function getFileAutocompleteToken(beforeCursor: string): string | null {
   const fileMatch = beforeCursor.match(/(?:^|[\t ])(@[^\t ]*)$/);

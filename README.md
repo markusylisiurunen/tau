@@ -145,7 +145,7 @@ reference skills by typing `$` followed by the skill name (for example, `$skill-
 you can also pipe content directly:
 
 ```sh
-cat src/app.ts | tau --persona opus-4.5-chat
+cat src/tui/app.ts | tau --persona opus-4.5-chat
 ```
 
 for project-aware sessions, use `--with-context` to inject your AGENTS.md into the system prompt. tau searches for this file in the current directory and parent directories up to your home folder.

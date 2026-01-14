@@ -1,4 +1,4 @@
-import type { TruncationResult } from "../utils/truncate.js";
+import type { TruncationResult } from "../../core/utils/truncate.js";
 import { truncateForUi, type UiTruncationOptions } from "./tool_truncation.js";
 
 export const DEFAULT_COMPACT_PREVIEW_LINES = 4;

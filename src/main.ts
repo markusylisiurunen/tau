@@ -1,24 +1,29 @@
 #!/usr/bin/env node
-import { ChatApp } from "./app.js";
-import { loadBashCommands } from "./bash_commands.js";
-import type { CliOptions } from "./cli.js";
-import { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
-import { isGoogleAuthAvailable, loadConfig } from "./config.js";
-import { loadAllContent } from "./content_loader.js";
-import { printDebugInfo } from "./debug.js";
-import { applyGeminiSubagents, personas as builtinPersonas } from "./personas.js";
-import type { PromptTemplate } from "./prompts.js";
-import { prompts as builtinPrompts } from "./prompts.js";
-import { createBashToolDefinition } from "./tools/bash.js";
-import { createEditToolDefinition } from "./tools/edit.js";
-import { createForkToolDefinition } from "./tools/fork.js";
-import { createGrepToolDefinition } from "./tools/grep.js";
-import { createListToolDefinition } from "./tools/list.js";
-import { createReadToolDefinition } from "./tools/read.js";
-import { ToolRegistry } from "./tools/registry.js";
-import { createTaskToolDefinition } from "./tools/task.js";
-import { createWriteToolDefinition } from "./tools/write.js";
-import type { Persona, ReasoningEffort, Skill } from "./types.js";
+import type { CliOptions, Persona, PromptTemplate, ReasoningEffort, Skill } from "./core/index.js";
+import {
+  applyGeminiSubagents,
+  personas as builtinPersonas,
+  prompts as builtinPrompts,
+  CliError,
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createForkToolDefinition,
+  createGrepToolDefinition,
+  createListToolDefinition,
+  createReadToolDefinition,
+  createTaskToolDefinition,
+  createWriteToolDefinition,
+  isGoogleAuthAvailable,
+  loadAllContent,
+  loadBashCommands,
+  loadConfig,
+  parseCliArgs,
+  parsePersonaString,
+  printDebugInfo,
+  printHelp,
+  ToolRegistry,
+} from "./core/index.js";
+import { ChatApp } from "./tui/index.js";
 
 // Load configuration from file
 const config = loadConfig(process.cwd());

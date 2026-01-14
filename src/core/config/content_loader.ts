@@ -1,5 +1,3 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import type { Api, KnownProvider, Model, Tool } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
@@ -19,8 +17,11 @@ import { TASK_TOOL } from "../tools/task.js";
 import { WRITE_TOOL } from "../tools/write.js";
 import type { Persona, ReasoningEffort, Skill } from "../types.js";
 import { ReasoningEffortSchema } from "../types.js";
-import { getGitRoot } from "../utils/git.js";
 import { formatZodError } from "../utils/zod.js";
+import type { ConfigDeps } from "./deps.js";
+import { createDefaultConfigDeps } from "./deps.js";
+import type { ConfigPaths } from "./paths.js";
+import { resolveConfigPaths } from "./paths.js";
 import type { Config } from "./schema.js";
 import { isGoogleAuthAvailable } from "./schema.js";
 
@@ -263,17 +264,20 @@ function mergeById<T extends { id: string }>(base: T[], overlay: T[], overlay2?:
   return Array.from(map.values());
 }
 
-function loadMarkdownFiles(dir: string): { files: MarkdownFile[]; error?: string } {
-  if (!existsSync(dir)) {
+function loadMarkdownFiles(
+  dir: string,
+  deps: ConfigDeps,
+): { files: MarkdownFile[]; error?: string } {
+  if (!deps.fs.exists(dir)) {
     return { files: [] };
   }
 
   try {
-    const names = readdirSync(dir).filter((f) => f.endsWith(".md"));
+    const names = deps.fs.listDir(dir).filter((f) => f.endsWith(".md"));
     return {
       files: names.map((name) => ({
         name,
-        content: readFileSync(join(dir, name), "utf-8"),
+        content: deps.fs.readFile(join(dir, name)),
       })),
     };
   } catch {
@@ -281,43 +285,14 @@ function loadMarkdownFiles(dir: string): { files: MarkdownFile[]; error?: string
   }
 }
 
-function findProjectTauDirsFromCwd(args: {
-  subdir: "personas" | "prompts" | "skills";
+function resolveContentContext(options?: {
+  deps?: ConfigDeps;
+  paths?: ConfigPaths;
   cwd?: string;
-}): string[] {
-  const cwd = args.cwd ?? process.cwd();
-  const cwdAbs = resolve(cwd);
-  const homeAbs = resolve(homedir());
-
-  const gitRoot = getGitRoot(cwd);
-  const gitRootAbs = gitRoot ? resolve(gitRoot) : undefined;
-
-  const stopAbs =
-    gitRootAbs && (cwdAbs === gitRootAbs || cwdAbs.startsWith(gitRootAbs + sep))
-      ? gitRootAbs
-      : cwdAbs === homeAbs || cwdAbs.startsWith(homeAbs + sep)
-        ? homeAbs
-        : cwdAbs;
-
-  const found: string[] = [];
-
-  let dir = cwdAbs;
-  // Closest-first order: cwd, parent, ..., stop.
-  while (true) {
-    const candidate = join(dir, ".tau", args.subdir);
-    if (existsSync(candidate)) {
-      found.push(candidate);
-    }
-
-    if (dir === stopAbs) break;
-
-    const parent = dirname(dir);
-    if (parent === dir) break;
-
-    dir = parent;
-  }
-
-  return found;
+}): { deps: ConfigDeps; paths: ConfigPaths } {
+  const deps = options?.deps ?? createDefaultConfigDeps();
+  const paths = options?.paths ?? resolveConfigPaths(deps, { cwd: options?.cwd });
+  return { deps, paths };
 }
 
 const personaFrontMatterSchema = z
@@ -573,13 +548,20 @@ function parsePrompt(
 export async function loadUserPersonas(args?: {
   basePersonasById?: Map<string, Persona>;
   forbiddenIds?: Set<string>;
+  deps?: ConfigDeps;
+  paths?: ConfigPaths;
+  cwd?: string;
 }): Promise<{
   personas: Persona[];
   errors: string[];
 }> {
-  const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  const personasDir = join(configDir, "tau", "personas");
-  const { files, error } = loadMarkdownFiles(personasDir);
+  const { deps, paths } = resolveContentContext({
+    deps: args?.deps,
+    paths: args?.paths,
+    cwd: args?.cwd,
+  });
+  const personasDir = paths.userContentDirs.personas;
+  const { files, error } = loadMarkdownFiles(personasDir, deps);
 
   if (error) {
     return { personas: [], errors: [error] };
@@ -612,14 +594,19 @@ export async function loadUserPersonas(args?: {
 export async function loadProjectPersonas(args?: {
   basePersonasById?: Map<string, Persona>;
   cwd?: string;
+  deps?: ConfigDeps;
+  paths?: ConfigPaths;
 }): Promise<{
   personas: Persona[];
   errors: string[];
 }> {
-  const personasDirs = findProjectTauDirsFromCwd({
-    subdir: "personas",
+  const { deps, paths } = resolveContentContext({
+    deps: args?.deps,
+    paths: args?.paths,
     cwd: args?.cwd,
   });
+
+  const personasDirs = paths.projectContentDirs.personas;
   if (personasDirs.length === 0) {
     return { personas: [], errors: [] };
   }
@@ -632,7 +619,7 @@ export async function loadProjectPersonas(args?: {
 
   // Parent-first order, closest directory wins on conflicts.
   for (const personasDir of personasDirs.slice().reverse()) {
-    const { files, error } = loadMarkdownFiles(personasDir);
+    const { files, error } = loadMarkdownFiles(personasDir, deps);
 
     if (error) {
       errors.push(error);
@@ -652,13 +639,21 @@ export async function loadProjectPersonas(args?: {
   return { personas, errors };
 }
 
-export async function loadUserPrompts(): Promise<{
+export async function loadUserPrompts(args?: {
+  deps?: ConfigDeps;
+  paths?: ConfigPaths;
+  cwd?: string;
+}): Promise<{
   prompts: PromptTemplate[];
   errors: string[];
 }> {
-  const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  const promptsDir = join(configDir, "tau", "prompts");
-  const { files, error } = loadMarkdownFiles(promptsDir);
+  const { deps, paths } = resolveContentContext({
+    deps: args?.deps,
+    paths: args?.paths,
+    cwd: args?.cwd,
+  });
+  const promptsDir = paths.userContentDirs.prompts;
+  const { files, error } = loadMarkdownFiles(promptsDir, deps);
 
   if (error) {
     return { prompts: [], errors: [error] };
@@ -680,14 +675,21 @@ export async function loadUserPrompts(): Promise<{
   return { prompts, errors };
 }
 
-export async function loadProjectPrompts(args?: { cwd?: string }): Promise<{
+export async function loadProjectPrompts(args?: {
+  cwd?: string;
+  deps?: ConfigDeps;
+  paths?: ConfigPaths;
+}): Promise<{
   prompts: PromptTemplate[];
   errors: string[];
 }> {
-  const promptsDirs = findProjectTauDirsFromCwd({
-    subdir: "prompts",
+  const { deps, paths } = resolveContentContext({
+    deps: args?.deps,
+    paths: args?.paths,
     cwd: args?.cwd,
   });
+
+  const promptsDirs = paths.projectContentDirs.prompts;
   if (promptsDirs.length === 0) {
     return { prompts: [], errors: [] };
   }
@@ -697,7 +699,7 @@ export async function loadProjectPrompts(args?: { cwd?: string }): Promise<{
 
   // Parent-first order, closest directory wins on conflicts.
   for (const promptsDir of promptsDirs.slice().reverse()) {
-    const { files, error } = loadMarkdownFiles(promptsDir);
+    const { files, error } = loadMarkdownFiles(promptsDir, deps);
 
     if (error) {
       errors.push(error);
@@ -743,14 +745,17 @@ function parseSkill(filePath: string, content: string): { skill?: Skill; error?:
   };
 }
 
-function loadSkillsFromDir(skillsDir: string): { skills: Skill[]; errors: string[] } {
-  if (!existsSync(skillsDir)) {
+function loadSkillsFromDir(
+  skillsDir: string,
+  deps: ConfigDeps,
+): { skills: Skill[]; errors: string[] } {
+  if (!deps.fs.exists(skillsDir)) {
     return { skills: [], errors: [] };
   }
 
   let entries: string[];
   try {
-    entries = readdirSync(skillsDir);
+    entries = deps.fs.listDir(skillsDir);
   } catch {
     return { skills: [], errors: [`failed to read directory: ${skillsDir}`] };
   }
@@ -763,7 +768,7 @@ function loadSkillsFromDir(skillsDir: string): { skills: Skill[]; errors: string
 
     let isDir = false;
     try {
-      isDir = statSync(skillDir).isDirectory();
+      isDir = deps.fs.stat(skillDir).isDirectory();
     } catch {
       continue;
     }
@@ -771,11 +776,11 @@ function loadSkillsFromDir(skillsDir: string): { skills: Skill[]; errors: string
     if (!isDir) continue;
 
     const filePath = join(skillDir, "SKILL.md");
-    if (!existsSync(filePath)) continue;
+    if (!deps.fs.exists(filePath)) continue;
 
     let content = "";
     try {
-      content = readFileSync(filePath, "utf-8");
+      content = deps.fs.readFile(filePath);
     } catch {
       errors.push(`failed to read file: ${filePath}`);
       continue;
@@ -792,23 +797,37 @@ function loadSkillsFromDir(skillsDir: string): { skills: Skill[]; errors: string
   return { skills, errors };
 }
 
-export async function loadUserSkills(): Promise<{
+export async function loadUserSkills(args?: {
+  deps?: ConfigDeps;
+  paths?: ConfigPaths;
+  cwd?: string;
+}): Promise<{
   skills: Skill[];
   errors: string[];
 }> {
-  const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  const skillsDir = join(configDir, "tau", "skills");
-  return loadSkillsFromDir(skillsDir);
-}
-
-export async function loadProjectSkills(args?: { cwd?: string }): Promise<{
-  skills: Skill[];
-  errors: string[];
-}> {
-  const skillsDirs = findProjectTauDirsFromCwd({
-    subdir: "skills",
+  const { deps, paths } = resolveContentContext({
+    deps: args?.deps,
+    paths: args?.paths,
     cwd: args?.cwd,
   });
+  const skillsDir = paths.userContentDirs.skills;
+  return loadSkillsFromDir(skillsDir, deps);
+}
+
+export async function loadProjectSkills(args?: {
+  cwd?: string;
+  deps?: ConfigDeps;
+  paths?: ConfigPaths;
+}): Promise<{
+  skills: Skill[];
+  errors: string[];
+}> {
+  const { deps, paths } = resolveContentContext({
+    deps: args?.deps,
+    paths: args?.paths,
+    cwd: args?.cwd,
+  });
+  const skillsDirs = paths.projectContentDirs.skills;
   if (skillsDirs.length === 0) {
     return { skills: [], errors: [] };
   }
@@ -818,7 +837,7 @@ export async function loadProjectSkills(args?: { cwd?: string }): Promise<{
 
   // Parent-first order, closest directory wins on conflicts.
   for (const skillsDir of skillsDirs.slice().reverse()) {
-    const result = loadSkillsFromDir(skillsDir);
+    const result = loadSkillsFromDir(skillsDir, deps);
     skills.push(...result.skills);
     errors.push(...result.errors);
   }
@@ -828,18 +847,23 @@ export async function loadProjectSkills(args?: { cwd?: string }): Promise<{
 
 export async function loadAllContent(
   config?: Config,
-  options?: { cwd?: string },
+  options?: { cwd?: string; deps?: ConfigDeps; paths?: ConfigPaths },
 ): Promise<{
   personas: Persona[];
   prompts: PromptTemplate[];
   skills: Skill[];
   errors: string[];
 }> {
+  const { deps, paths } = resolveContentContext({
+    deps: options?.deps,
+    paths: options?.paths,
+    cwd: options?.cwd,
+  });
+
   try {
-    const cwd = options?.cwd;
     const builtinBasePersonas = builtinPersonas;
     const builtinDisplayPersonas =
-      config && isGoogleAuthAvailable(config)
+      config && isGoogleAuthAvailable(config, deps)
         ? applyGeminiSubagents(builtinBasePersonas)
         : builtinBasePersonas;
 
@@ -852,12 +876,17 @@ export async function loadAllContent(
       ? new Set(builtinBasePersonas.map((p) => p.id.toLowerCase()))
       : undefined;
 
-    const userPersonasResult = await loadUserPersonas({ basePersonasById, forbiddenIds });
-    const projectPersonasResult = await loadProjectPersonas({ basePersonasById, cwd });
-    const userPromptsResult = await loadUserPrompts();
-    const projectPromptsResult = await loadProjectPrompts({ cwd });
-    const userSkillsResult = await loadUserSkills();
-    const projectSkillsResult = await loadProjectSkills({ cwd });
+    const userPersonasResult = await loadUserPersonas({
+      basePersonasById,
+      forbiddenIds,
+      deps,
+      paths,
+    });
+    const projectPersonasResult = await loadProjectPersonas({ basePersonasById, deps, paths });
+    const userPromptsResult = await loadUserPrompts({ deps, paths });
+    const projectPromptsResult = await loadProjectPrompts({ deps, paths });
+    const userSkillsResult = await loadUserSkills({ deps, paths });
+    const projectSkillsResult = await loadProjectSkills({ deps, paths });
 
     const allErrors = [
       ...userPersonasResult.errors,
@@ -895,7 +924,7 @@ export async function loadAllContent(
     };
   } catch (err) {
     const baseBuiltins =
-      config && isGoogleAuthAvailable(config)
+      config && isGoogleAuthAvailable(config, deps)
         ? applyGeminiSubagents(builtinPersonas)
         : builtinPersonas;
 

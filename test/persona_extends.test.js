@@ -1,7 +1,16 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { loadAllContent } from "../dist/core/config/index.js";
 
@@ -20,87 +29,97 @@ function setupFixture() {
 }
 
 describe("custom personas", () => {
-  const oldXdgConfigHome = process.env.XDG_CONFIG_HOME;
-  const oldCwd = process.cwd();
-
-  let fx;
-
-  beforeEach(() => {
-    fx = setupFixture();
-
-    process.env.XDG_CONFIG_HOME = fx.home;
-    process.chdir(fx.cwd);
-
-    mkdirSync(join(fx.home, "tau", "personas"), { recursive: true });
-  });
-
-  afterEach(() => {
-    if (oldXdgConfigHome === undefined) {
-      delete process.env.XDG_CONFIG_HOME;
-    } else {
-      process.env.XDG_CONFIG_HOME = oldXdgConfigHome;
-    }
-
-    process.chdir(oldCwd);
-    fx.cleanup();
-  });
+  function createConfigDeps({ cwd, home }) {
+    return {
+      fs: {
+        readFile: (path) => readFileSync(path, "utf-8"),
+        exists: (path) => existsSync(path),
+        listDir: (path) => readdirSync(path),
+        stat: (path) => statSync(path),
+      },
+      env: {
+        getEnv: () => ({ XDG_CONFIG_HOME: home }),
+        cwd: () => cwd,
+        home: () => home,
+      },
+    };
+  }
 
   it("supports extends from built-in personas", async () => {
-    writeFileSync(
-      join(fx.home, "tau", "personas", "clone.md"),
-      [
-        "---",
-        "id: haiku-clone-of-gpt-coder",
-        "extends: gpt-5.2-coder",
-        "provider: anthropic",
-        "model: claude-haiku-4-5",
-        "---",
-        "",
-      ].join("\n"),
-    );
+    const fx = setupFixture();
 
-    const { personas, errors } = await loadAllContent({});
-    expect(errors).toEqual([]);
+    try {
+      mkdirSync(join(fx.home, "tau", "personas"), { recursive: true });
+      writeFileSync(
+        join(fx.home, "tau", "personas", "clone.md"),
+        [
+          "---",
+          "id: haiku-clone-of-gpt-coder",
+          "extends: gpt-5.2-coder",
+          "provider: anthropic",
+          "model: claude-haiku-4-5",
+          "---",
+          "",
+        ].join("\n"),
+      );
 
-    const base = personas.find((p) => p.id === "gpt-5.2-coder");
-    const clone = personas.find((p) => p.id === "haiku-clone-of-gpt-coder");
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
 
-    expect(base).toBeTruthy();
-    expect(clone).toBeTruthy();
+      const base = personas.find((p) => p.id === "gpt-5.2-coder");
+      const clone = personas.find((p) => p.id === "haiku-clone-of-gpt-coder");
 
-    expect(clone.model.provider).toBe("anthropic");
-    expect(clone.systemPrompt).toBe(base.systemPrompt);
+      expect(base).toBeTruthy();
+      expect(clone).toBeTruthy();
 
-    expect(clone.tools.map((t) => t.name)).toEqual(base.tools.map((t) => t.name));
+      expect(clone.model.provider).toBe("anthropic");
+      expect(clone.systemPrompt).toBe(base.systemPrompt);
 
-    expect(Object.keys(clone.subagents ?? {})).toEqual(Object.keys(base.subagents ?? {}));
+      expect(clone.tools.map((t) => t.name)).toEqual(base.tools.map((t) => t.name));
 
-    for (const [name, cfg] of Object.entries(clone.subagents ?? {})) {
-      const baseCfg = base.subagents?.[name];
-      expect(baseCfg).toBeTruthy();
-      expect(cfg.model.provider).toBe(clone.model.provider);
-      expect(cfg.model.id).toBe(clone.model.id);
+      expect(Object.keys(clone.subagents ?? {})).toEqual(Object.keys(base.subagents ?? {}));
+
+      for (const [name, cfg] of Object.entries(clone.subagents ?? {})) {
+        const baseCfg = base.subagents?.[name];
+        expect(baseCfg).toBeTruthy();
+        expect(cfg.model.provider).toBe(clone.model.provider);
+        expect(cfg.model.id).toBe(clone.model.id);
+      }
+    } finally {
+      fx.cleanup();
     }
   });
 
   it("can disable built-in personas and still load custom personas (including builtin ids)", async () => {
-    writeFileSync(
-      join(fx.home, "tau", "personas", "override.md"),
-      [
-        "---",
-        "id: gpt-5.2-chat",
-        "provider: anthropic",
-        "model: claude-haiku-4-5",
-        "---",
-        "custom prompt",
-        "",
-      ].join("\n"),
-    );
+    const fx = setupFixture();
 
-    const { personas, errors } = await loadAllContent({ disableBuiltinPersonas: true });
-    expect(errors).toEqual([]);
+    try {
+      mkdirSync(join(fx.home, "tau", "personas"), { recursive: true });
+      writeFileSync(
+        join(fx.home, "tau", "personas", "override.md"),
+        [
+          "---",
+          "id: gpt-5.2-chat",
+          "provider: anthropic",
+          "model: claude-haiku-4-5",
+          "---",
+          "custom prompt",
+          "",
+        ].join("\n"),
+      );
 
-    expect(personas.map((p) => p.id)).toEqual(["gpt-5.2-chat"]);
-    expect(personas[0].source).toBe("user");
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContent(
+        { disableBuiltinPersonas: true },
+        { deps, cwd: fx.cwd },
+      );
+      expect(errors).toEqual([]);
+
+      expect(personas.map((p) => p.id)).toEqual(["gpt-5.2-chat"]);
+      expect(personas[0].source).toBe("user");
+    } finally {
+      fx.cleanup();
+    }
   });
 });

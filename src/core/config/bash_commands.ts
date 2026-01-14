@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { getGitRoot } from "../utils/git.js";
+import type { ConfigDeps } from "./deps.js";
+import { createDefaultConfigDeps } from "./deps.js";
 
 export interface BashCommand {
   id: string;
@@ -91,16 +91,17 @@ function parseBashCommandsFromJson(
 function loadBashCommandsFile(
   path: string,
   sourceLabel: string,
+  deps: ConfigDeps,
 ): {
   commands: BashCommand[];
   errors: string[];
 } {
   try {
-    if (!existsSync(path)) {
+    if (!deps.fs.exists(path)) {
       return { commands: [], errors: [] };
     }
 
-    const content = readFileSync(path, "utf-8");
+    const content = deps.fs.readFile(path);
     const json = JSON.parse(content) as unknown;
 
     return parseBashCommandsFromJson(json, sourceLabel);
@@ -114,21 +115,22 @@ function loadBashCommandsFile(
   }
 }
 
-export function loadBashCommands(cwd: string): {
+export function loadBashCommands(cwd: string, deps?: ConfigDeps): {
   commands: BashCommand[];
   errors: string[];
   repoRoot?: string;
 } {
+  const resolvedDeps = deps ?? createDefaultConfigDeps();
   const errors: string[] = [];
 
   const repoRoot = getGitRoot(cwd);
   const repoConfigPath = repoRoot ? join(repoRoot, ".tau", "config.json") : undefined;
-  const homeConfigPath = join(homedir(), ".tau", "config.json");
+  const homeConfigPath = join(resolvedDeps.env.home(), ".tau", "config.json");
 
   const repoRes = repoConfigPath
-    ? loadBashCommandsFile(repoConfigPath, resolve(repoConfigPath))
+    ? loadBashCommandsFile(repoConfigPath, resolve(repoConfigPath), resolvedDeps)
     : { commands: [], errors: [] };
-  const homeRes = loadBashCommandsFile(homeConfigPath, resolve(homeConfigPath));
+  const homeRes = loadBashCommandsFile(homeConfigPath, resolve(homeConfigPath), resolvedDeps);
 
   errors.push(...repoRes.errors, ...homeRes.errors);
 

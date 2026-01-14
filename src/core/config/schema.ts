@@ -1,10 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { KnownProvider } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import { type RiskLevel, RiskLevelSchema } from "../types.js";
-import { getGitRoot } from "../utils/git.js";
+import type { ConfigDeps } from "./deps.js";
+import { createDefaultConfigDeps } from "./deps.js";
+import { resolveConfigPaths } from "./paths.js";
 
 export type ToolDisplayMode = "compact" | "full";
 
@@ -42,21 +41,60 @@ const configSchema = z
   })
   .passthrough();
 
-function loadConfigFile(configPath: string): Config {
+type ConfigDiagnostics = {
+  config: Config;
+  errors: string[];
+};
+
+function parseConfigJson(content: string, sourceLabel: string): {
+  data?: unknown;
+  errors: string[];
+} {
   try {
-    if (!existsSync(configPath)) {
-      return {};
+    return { data: JSON.parse(content) as unknown, errors: [] };
+  } catch (err) {
+    return {
+      errors: [
+        `${sourceLabel}: failed to parse json: ${err instanceof Error ? err.message : String(err)}`,
+      ],
+    };
+  }
+}
+
+function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostics {
+  if (typeof raw !== "object" || raw === null) {
+    return { config: {}, errors: [`${sourceLabel}: config must be an object.`] };
+  }
+
+  const parsed = configSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { config: {}, errors: [`${sourceLabel}: config did not match schema.`] };
+  }
+
+  return { config: parsed.data as Config, errors: [] };
+}
+
+function loadConfigFile(configPath: string, deps: ConfigDeps, sourceLabel: string): ConfigDiagnostics {
+  try {
+    if (!deps.fs.exists(configPath)) {
+      return { config: {}, errors: [] };
     }
 
-    const content = readFileSync(configPath, "utf-8");
-    const json = JSON.parse(content) as unknown;
-    if (typeof json !== "object" || json === null) return {};
+    const content = deps.fs.readFile(configPath);
+    const parsed = parseConfigJson(content, sourceLabel);
+    if (parsed.data === undefined) {
+      return { config: {}, errors: parsed.errors };
+    }
 
-    const parsed = configSchema.safeParse(json);
-    return parsed.success ? (parsed.data as Config) : {};
-  } catch {
-    // If there's an error reading or parsing, silently return empty config
-    return {};
+    const validated = validateConfigData(parsed.data, sourceLabel);
+    return { config: validated.config, errors: [...parsed.errors, ...validated.errors] };
+  } catch (err) {
+    return {
+      config: {},
+      errors: [
+        `${sourceLabel}: failed to read config: ${err instanceof Error ? err.message : String(err)}`,
+      ],
+    };
   }
 }
 
@@ -69,16 +107,27 @@ function mergeConfig(userConfig: Config, projectConfig: Config): Config {
   return userConfig;
 }
 
-export function loadConfig(cwd: string = process.cwd()): Config {
-  const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  const userConfigPath = join(configDir, "tau", "config.json");
-  const userConfig = loadConfigFile(userConfigPath);
+export function loadConfigWithDiagnostics(
+  cwd?: string,
+  deps?: ConfigDeps,
+): { config: Config; errors: string[] } {
+  const resolvedDeps = deps ?? createDefaultConfigDeps();
+  const resolvedCwd = cwd ?? resolvedDeps.env.cwd();
+  const paths = resolveConfigPaths(resolvedDeps, { cwd: resolvedCwd });
 
-  const repoRoot = getGitRoot(cwd);
-  const projectConfigPath = repoRoot ? join(repoRoot, ".tau", "config.json") : undefined;
-  const projectConfig = projectConfigPath ? loadConfigFile(projectConfigPath) : {};
+  const userResult = loadConfigFile(paths.userConfigPath, resolvedDeps, paths.userConfigPath);
+  const projectResult = paths.projectConfigPath
+    ? loadConfigFile(paths.projectConfigPath, resolvedDeps, paths.projectConfigPath)
+    : { config: {}, errors: [] };
 
-  return mergeConfig(userConfig, projectConfig);
+  return {
+    config: mergeConfig(userResult.config, projectResult.config),
+    errors: [...userResult.errors, ...projectResult.errors],
+  };
+}
+
+export function loadConfig(cwd?: string, deps?: ConfigDeps): Config {
+  return loadConfigWithDiagnostics(cwd, deps).config;
 }
 
 export function getApiKeyForProvider(config: Config, provider: KnownProvider): string | undefined {
@@ -99,6 +148,8 @@ export function getParallelApiKey(config: Config): string | undefined {
   return config.apiKeys?.parallel;
 }
 
-export function isGoogleAuthAvailable(config: Config): boolean {
-  return !!(config.apiKeys?.google || process.env.GEMINI_API_KEY);
+export function isGoogleAuthAvailable(config: Config, deps?: ConfigDeps): boolean {
+  const resolvedDeps = deps ?? createDefaultConfigDeps();
+  const env = resolvedDeps.env.getEnv();
+  return !!(config.apiKeys?.google || env.GEMINI_API_KEY);
 }

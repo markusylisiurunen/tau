@@ -16,7 +16,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **ToolRegistry** (`src/core/tools/registry.ts`): Registers bash, write, edit, task, fork, web_search/web_fetch, and restricted tools (read, grep, list)
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
-- **Tool output layout** (`src/tui/ui/tool_output_layout.ts`): Shared compact/expanded tool UI layout and header building
+- **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
 - **Tool UI registry** (`src/tui/ui/tool_ui_registry.ts`): Maps ToolUiEvent types to tool output view models
 
 **Data flow**: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering.
@@ -41,10 +41,11 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - `src/tui/chat_controller.ts` - UI-agnostic controller for session orchestration
 - `src/tui/chat_view.ts` - TUI view adapter used by ChatApp
 - `src/tui/ui/chat_message_model.ts` - Message view models and renderer for the chat UI
-- `src/tui/ui/tool_output_layout.ts` - Shared tool output layout primitives
+- `src/tui/ui/tool_output.ts` - Shared tool output layout primitives
 - `src/tui/ui/tool_ui_registry.ts` - Tool UI renderer registry
 - `src/tui/tool_ui_router.ts` - Tool UI event sequencing and routing
 - `src/core/utils/project_files.ts` - Project file discovery for `@file` autocomplete
+- `src/core/utils/tool_preview.ts` - Tool UI preview truncation helpers used by core tools
 - `src/core/utils/` - Helpers for truncation, fuzzy matching, context building
 
 ## Tool system
@@ -71,12 +72,12 @@ Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The
 - **web_fetch**: 8,192 lines / 50,000 tokens.
 - **web_search**: 4,096 lines / 25,000 tokens.
 
-**UI truncation**:
+**Tool UI preview formatting**:
 
-- **Bash (compact)**: 4 head + 4 tail lines plus a summary line.
-- **Bash (expanded)**: 32 lines / 5,000 tokens from the middle.
-- **read/list/grep/write (compact)**: 16 lines preview from the start.
-- **edit**: full diff (no UI truncation).
+- Output-capable tools emit `ToolUiText` with `previewText` (compact) and `fullText` (expanded).
+- Preview truncation/formatting happens in core tools via `src/core/utils/tool_preview.ts`.
+- The TUI only styles output: compact uses `previewText`, expanded uses raw `fullText` (no extra UI truncation).
+- Current preview shapes: bash uses head/tail lines plus a summary; read/list/grep/write show up to 16 preview lines with a summary; edit uses a truncated diff preview with counts.
 
 **Subagent-only tools**: the `web` subagent uses `web_search` and `web_fetch` (see `src/core/tools/web_search.ts`, `src/core/tools/web_fetch.ts`) via the subagent tool registry in `src/core/subagents/subagent_engine.ts`.
 

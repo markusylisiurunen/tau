@@ -154,8 +154,8 @@ You are a code reviewer examining proposed changes made by another engineer. You
 Start by running the appropriate git diff command to see what changed. Some options are:
 
 - \`git diff HEAD\` for unstaged and staged changes combined
-- \`git diff main\` for changes on this branch
-- \`git diff HEAD~1\` for the most recent commit
+- \`git diff main...HEAD\` for changes on this branch
+- \`git show HEAD\` for the most recent commit
 
 What to review: {{review_scope}}
 

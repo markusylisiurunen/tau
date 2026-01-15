@@ -77,6 +77,7 @@ function plainWrapper(): (text: string) => string {
 }
 
 type PaletteColorToken = Exclude<keyof Palette, "textDefault">;
+export type PaletteOverrides = Partial<Record<PaletteTokenName, string>>;
 
 type _assertPaletteTokensMatch =
   Exclude<PaletteColorToken, PaletteTokenName> extends never
@@ -126,6 +127,7 @@ const ALL_PALETTE_TOKENS: readonly PaletteColorToken[] = [
   ...PALETTE_TEXT_TOKENS,
   ...PALETTE_BG_TOKENS,
 ];
+const ALL_PALETTE_TOKEN_SET = new Set<string>(ALL_PALETTE_TOKENS);
 
 type _assertAllPaletteTokensCovered =
   Exclude<
@@ -152,7 +154,40 @@ export function getPaletteToken(
   return paletteByName.get(name);
 }
 
-export function createPalette(mode: ThemeMode): Palette {
+function normalizeHex(value: string): string | undefined {
+  const cleaned = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(cleaned) || /^#[0-9a-fA-F]{3}$/.test(cleaned)) {
+    return cleaned;
+  }
+  if (/^[0-9a-fA-F]{6}$/.test(cleaned) || /^[0-9a-fA-F]{3}$/.test(cleaned)) {
+    return `#${cleaned}`;
+  }
+  return undefined;
+}
+
+export function coercePaletteOverrides(raw?: Record<string, string>): PaletteOverrides | undefined {
+  if (!raw) return undefined;
+  const overrides: PaletteOverrides = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!ALL_PALETTE_TOKEN_SET.has(key)) continue;
+    const hex = normalizeHex(value);
+    if (!hex) continue;
+    overrides[key as PaletteTokenName] = hex;
+  }
+  return overrides;
+}
+
+function resolveOverrideHex(
+  overrides: PaletteOverrides | undefined,
+  token: PaletteTokenName,
+): string | undefined {
+  if (!overrides) return undefined;
+  const raw = overrides[token];
+  if (!raw) return undefined;
+  return normalizeHex(raw) ?? undefined;
+}
+
+export function createPalette(mode: ThemeMode, overrides?: PaletteOverrides): Palette {
   const validate = (palette: Palette): void => {
     for (const token of ALL_PALETTE_TOKENS) {
       if (typeof palette[token] !== "function") {
@@ -163,6 +198,41 @@ export function createPalette(mode: ThemeMode): Palette {
       throw new Error("missing palette implementation: textDefault");
     }
   };
+
+  if (mode === "ansi" && overrides !== undefined) {
+    const palette = {} as Palette;
+
+    for (const token of PALETTE_TEXT_TOKENS) {
+      const hex = resolveOverrideHex(overrides, token);
+      palette[token] = hex ? chalk.hex(hex) : (text) => text;
+    }
+    for (const token of PALETTE_BG_TOKENS) {
+      const hex = resolveOverrideHex(overrides, token);
+      palette[token] = hex ? chalk.bgHex(hex) : (text) => text;
+    }
+    palette.textDefault = (text) => text;
+
+    const lightText = hslToHex(26, 10, 86);
+    const toastSuccessHex = resolveOverrideHex(overrides, "toastSuccessBg");
+    const toastWarnHex = resolveOverrideHex(overrides, "toastWarnBg");
+    const toastErrorHex = resolveOverrideHex(overrides, "toastErrorBg");
+    const toastMutedHex = resolveOverrideHex(overrides, "toastMutedBg");
+    if (toastSuccessHex) {
+      palette.toastSuccessBg = chalk.bgHex(toastSuccessHex).hex(lightText);
+    }
+    if (toastWarnHex) {
+      palette.toastWarnBg = chalk.bgHex(toastWarnHex).hex(lightText);
+    }
+    if (toastErrorHex) {
+      palette.toastErrorBg = chalk.bgHex(toastErrorHex).hex(lightText);
+    }
+    if (toastMutedHex) {
+      palette.toastMutedBg = chalk.bgHex(toastMutedHex).hex(lightText);
+    }
+
+    validate(palette);
+    return palette;
+  }
 
   if (mode === "ansi") {
     const lookup = buildPaletteLookup();

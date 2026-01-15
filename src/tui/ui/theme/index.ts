@@ -1,4 +1,10 @@
-export { buildPalettePreview, createPalette, getPaletteToken } from "./palette.js";
+export {
+  buildPalettePreview,
+  coercePaletteOverrides,
+  createPalette,
+  getPaletteToken,
+  type PaletteOverrides,
+} from "./palette.js";
 export { buildThemePreviewMessages } from "./preview.js";
 export {
   createUiTheme,

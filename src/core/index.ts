@@ -1,6 +1,6 @@
 export type { CliOptions } from "./cli.js";
 export { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
-export type { BashCommand, Config, ConfigDeps } from "./config/index.js";
+export type { BashCommand, Config, ConfigDeps, ThemeDefinition } from "./config/index.js";
 export {
   createDefaultConfigDeps,
   isGoogleAuthAvailable,

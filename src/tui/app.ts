@@ -1,4 +1,4 @@
-import type { BashCommand, Config } from "../core/config/index.js";
+import type { BashCommand, Config, ThemeDefinition } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { ModeAdapter } from "../core/modes/mode_adapter.js";
 import type { PromptTemplate } from "../core/prompts.js";
@@ -11,6 +11,7 @@ export interface ChatAppOptions {
   personas: Persona[];
   prompts?: PromptTemplate[];
   skills?: Skill[];
+  themes?: ThemeDefinition[];
   bashCommands?: BashCommand[];
   initialPersonaId?: string;
   initialUserMessage?: string;
@@ -31,6 +32,8 @@ export class ChatApp implements ModeAdapter {
       compactToolUi: true,
       showThinking: options.themePreview ?? false,
       themePreview: options.themePreview ?? false,
+      themeId: options.config?.theme,
+      themes: options.themes ?? [],
     });
 
     this.controller = new ChatController({

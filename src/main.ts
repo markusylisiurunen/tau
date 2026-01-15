@@ -7,6 +7,7 @@ import type {
   PromptTemplate,
   ReasoningEffort,
   Skill,
+  ThemeDefinition,
 } from "./core/index.js";
 import {
   applyGeminiSubagents,
@@ -46,12 +47,14 @@ async function readPipedStdin(): Promise<string | undefined> {
 let personas: Persona[];
 let prompts: PromptTemplate[];
 let skills: Skill[];
+let themes: ThemeDefinition[] = [];
 try {
   const runtime = await loadRuntimeConfig(cwd);
   config = runtime.config;
   personas = runtime.personas;
   prompts = runtime.prompts;
   skills = runtime.skills;
+  themes = runtime.themes;
   bashCommands = runtime.bashCommands;
 } catch (err) {
   // Safeguard: loadRuntimeConfig should not throw, but wrap to ensure tau --help works
@@ -76,6 +79,7 @@ try {
   personas = effectiveBuiltins;
   prompts = builtinPrompts;
   skills = [];
+  themes = [];
 }
 
 let cli: CliOptions;
@@ -178,6 +182,7 @@ const app = new ChatApp({
   personas,
   prompts,
   skills,
+  themes,
   bashCommands,
   initialPersonaId,
   initialUserMessage,

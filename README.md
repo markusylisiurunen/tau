@@ -71,6 +71,31 @@ tau --theme-preview
 theme preview renders a fixed set of UI fixtures and disables model calls so you can tweak colors and spacing
 without asking the model for visible content.
 
+## themes
+
+tau can load custom palette overrides from theme files. create a theme at:
+
+- `.tau/themes/<id>.json` (project)
+- `~/.config/tau/themes/<id>.json` (global)
+
+then set `"theme": "<id>"` in config. any palette token not defined in the file renders as plain text.
+
+example theme file (`.tau/themes/solarized.json`):
+
+```json
+{
+  "brandAccent": "#b58900",
+  "textMuted": "#586e75",
+  "textDim": "#657b83"
+}
+```
+
+and in config (`.tau/config.json` or `~/.config/tau/config.json`):
+
+```json
+{ "theme": "solarized" }
+```
+
 ## risk levels
 
 tau uses risk levels to control what the model can do. this lets you stay in control while working alongside AI.
@@ -228,7 +253,8 @@ settings merge from least-specific to most-specific.
   },
   "defaultPersona": "gpt-5.2-chat",
   "defaultRisk": "read-write",
-  "disableBuiltinPersonas": false
+  "disableBuiltinPersonas": false,
+  "theme": "solarized"
 }
 ```
 

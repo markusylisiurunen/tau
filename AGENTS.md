@@ -74,10 +74,10 @@ Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The
 
 **Tool UI preview formatting**:
 
-- Output-capable tools emit `ToolUiText` with `previewText` (compact) and `fullText` (expanded).
+- Output-capable tools emit `ToolUiText` with `previewText`, `statusLine`, and `fullText`.
 - Preview truncation/formatting happens in core tools via `src/core/utils/tool_preview.ts`.
-- The TUI only styles output: compact uses `previewText`, expanded uses raw `fullText` (no extra UI truncation).
-- Current preview shapes: bash uses head/tail lines plus a summary; read/list/grep/write show up to 16 preview lines with a summary; edit uses a truncated diff preview with counts.
+- The TUI only styles output: compact uses `previewText` + `statusLine`, expanded uses raw `fullText`.
+- Current preview shapes: bash uses head/tail output plus a status line; read/list/grep/write show up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
 
 **Subagent-only tools**: the `web` subagent uses `web_search` and `web_fetch` (see `src/core/tools/web_search.ts`, `src/core/tools/web_fetch.ts`) via the subagent tool registry in `src/core/subagents/subagent_engine.ts`.
 
@@ -100,15 +100,17 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `bashCommands`, `agentContextFiles`). This level is only included when cwd is inside home.
+- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `theme`, `bashCommands`, `agentContextFiles`). This level is only included when cwd is inside home.
   - `apiKeys.parallel` (optional): Parallel API key for the `web` subagent.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`restricted`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `disableBuiltinPersonas` (optional): If true, tau will not load any built-in personas, only personas from disk.
+  - `theme` (optional): Theme id to load from `.tau/themes/<id>.json` or `~/.config/tau/themes/<id>.json`.
 - **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys` merge per provider; `bashCommands` merge by `id`; `agentContextFiles` are additive.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`).
 - **Prompts**: `~/.config/tau/prompts/*.md` and `.tau/prompts/*.md` (discovered by walking up from cwd to home/root; most specific wins on conflicts).
+- **Themes**: `~/.config/tau/themes/*.json` and `.tau/themes/*.json` (same discovery rules as prompts/config). Missing palette tokens render as plain text when a theme is selected.
 - **Skills**: `~/.config/tau/skills/` and `.tau/skills/` (discovered by walking up from cwd to home/root). Each skill is a directory containing `SKILL.md` with required YAML frontmatter:
   - `name` (1-64 chars, `a-z0-9-`, must match directory name)
   - `description` (1-1024 chars)

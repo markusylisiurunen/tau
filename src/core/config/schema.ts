@@ -18,6 +18,7 @@ export interface Config {
   defaultPersona?: string;
   defaultRisk?: RiskLevel;
   disableBuiltinPersonas?: boolean;
+  theme?: string;
   bashCommands?: BashCommand[];
   agentContextFiles?: string[];
 }
@@ -98,6 +99,14 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
       config.disableBuiltinPersonas = data.disableBuiltinPersonas;
     } else {
       errors.push(`${sourceLabel}: 'disableBuiltinPersonas' must be a boolean.`);
+    }
+  }
+
+  if (data.theme !== undefined) {
+    if (typeof data.theme === "string") {
+      config.theme = data.theme;
+    } else {
+      errors.push(`${sourceLabel}: 'theme' must be a string.`);
     }
   }
 
@@ -227,6 +236,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
     if (config.disableBuiltinPersonas !== undefined) {
       merged.disableBuiltinPersonas = config.disableBuiltinPersonas;
+    }
+
+    if (config.theme !== undefined) {
+      merged.theme = config.theme;
     }
 
     if (config.bashCommands) {

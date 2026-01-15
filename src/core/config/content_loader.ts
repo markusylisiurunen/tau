@@ -1,4 +1,4 @@
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Api, KnownProvider, Model, Tool } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { parse as parseYaml } from "yaml";
@@ -20,7 +20,7 @@ import { ReasoningEffortSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
 import { createDefaultConfigDeps } from "./deps.js";
-import type { ConfigLevel } from "./paths.js";
+import type { ConfigLevel, ConfigLevelScope } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
 import { isGoogleAuthAvailable } from "./schema.js";
@@ -38,6 +38,23 @@ type MarkdownPathsResult = {
   paths: string[];
   errors: string[];
 };
+
+interface JsonEntry {
+  path: string;
+  content: string;
+}
+
+type JsonPathsResult = {
+  paths: string[];
+  errors: string[];
+};
+
+export interface ThemeDefinition {
+  id: string;
+  tokens: Record<string, string>;
+  sourcePath: string;
+  scope: ConfigLevelScope;
+}
 
 function parseMarkdownWithFrontMatter(content: string): { frontMatter: FrontMatter; body: string } {
   const lines = content.split("\n");
@@ -278,6 +295,15 @@ function listMarkdownFiles(dir: string, deps: ConfigDeps): MarkdownPathsResult {
   }
 }
 
+function listJsonFiles(dir: string, deps: ConfigDeps): JsonPathsResult {
+  try {
+    const names = deps.fs.listDir(dir).filter((f) => f.endsWith(".json"));
+    return { paths: names.map((name) => join(dir, name)), errors: [] };
+  } catch {
+    return { paths: [], errors: [`failed to read directory: ${dir}`] };
+  }
+}
+
 function listSkillFiles(dir: string, deps: ConfigDeps): MarkdownPathsResult {
   let entries: string[];
   try {
@@ -320,6 +346,29 @@ function loadMarkdownEntries(
 
   const { paths, errors } = listFiles(dir, deps);
   const entries: MarkdownEntry[] = [];
+
+  for (const path of paths) {
+    try {
+      entries.push({ path, content: deps.fs.readFile(path) });
+    } catch {
+      errors.push(`failed to read file: ${path}`);
+    }
+  }
+
+  return { entries, errors };
+}
+
+function loadJsonEntries(
+  dir: string,
+  deps: ConfigDeps,
+  listFiles: (dir: string, deps: ConfigDeps) => JsonPathsResult,
+): { entries: JsonEntry[]; errors: string[] } {
+  if (!deps.fs.exists(dir)) {
+    return { entries: [], errors: [] };
+  }
+
+  const { paths, errors } = listFiles(dir, deps);
+  const entries: JsonEntry[] = [];
 
   for (const path of paths) {
     try {
@@ -579,6 +628,52 @@ function parsePrompt(file: string, content: string): { prompt?: PromptTemplate; 
   return { prompt };
 }
 
+function parseTheme(
+  entry: JsonEntry,
+  scope: ConfigLevelScope,
+): {
+  theme?: ThemeDefinition;
+  error?: string;
+} {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(entry.content) as unknown;
+  } catch (err) {
+    return {
+      error: `${entry.path}: failed to parse json: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { error: `${entry.path}: theme must be a json object of palette tokens.` };
+  }
+
+  const tokens: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const cleanedKey = key.trim();
+    const cleanedValue = value.trim();
+    if (!cleanedKey) continue;
+    tokens[cleanedKey] = cleanedValue;
+  }
+
+  const id = basename(entry.path, ".json").trim();
+  if (!id) {
+    return { error: `${entry.path}: theme id is missing.` };
+  }
+
+  return {
+    theme: {
+      id,
+      tokens,
+      sourcePath: entry.path,
+      scope,
+    },
+  };
+}
+
 export async function loadUserPersonas(args?: {
   basePersonasById?: Map<string, Persona>;
   deps?: ConfigDeps;
@@ -743,6 +838,79 @@ export async function loadProjectPrompts(args?: {
   return { prompts, errors };
 }
 
+export async function loadUserThemes(args?: {
+  deps?: ConfigDeps;
+  levels?: ConfigLevel[];
+  cwd?: string;
+}): Promise<{
+  themes: ThemeDefinition[];
+  errors: string[];
+}> {
+  const { deps, levels } = resolveContentContext({
+    deps: args?.deps,
+    levels: args?.levels,
+    cwd: args?.cwd,
+  });
+  const globalLevel = levels.find((level) => level.scope === "global");
+  if (!globalLevel) {
+    return { themes: [], errors: [] };
+  }
+  const { entries, errors } = loadJsonEntries(globalLevel.themesDir, deps, listJsonFiles);
+
+  const themes: ThemeDefinition[] = [];
+
+  for (const entry of entries) {
+    const result = parseTheme(entry, "global");
+    if (result.theme) {
+      themes.push(result.theme);
+    } else if (result.error) {
+      errors.push(result.error);
+    }
+  }
+
+  return { themes, errors };
+}
+
+export async function loadProjectThemes(args?: {
+  cwd?: string;
+  deps?: ConfigDeps;
+  levels?: ConfigLevel[];
+}): Promise<{
+  themes: ThemeDefinition[];
+  errors: string[];
+}> {
+  const { deps, levels } = resolveContentContext({
+    deps: args?.deps,
+    levels: args?.levels,
+    cwd: args?.cwd,
+  });
+
+  const projectLevels = levels.filter((level) => level.scope === "project");
+  if (projectLevels.length === 0) {
+    return { themes: [], errors: [] };
+  }
+
+  const themes: ThemeDefinition[] = [];
+  const errors: string[] = [];
+
+  // Parent-first order, closest directory wins on conflicts.
+  for (const level of projectLevels) {
+    const { entries, errors: entryErrors } = loadJsonEntries(level.themesDir, deps, listJsonFiles);
+    errors.push(...entryErrors);
+
+    for (const entry of entries) {
+      const result = parseTheme(entry, "project");
+      if (result.theme) {
+        themes.push(result.theme);
+      } else if (result.error) {
+        errors.push(result.error);
+      }
+    }
+  }
+
+  return { themes, errors };
+}
+
 function parseSkill(filePath: string, content: string): { skill?: Skill; error?: string } {
   const { frontMatter } = parseMarkdownWithFrontMatter(content);
 
@@ -851,6 +1019,7 @@ export async function loadAllContent(
   personas: Persona[];
   prompts: PromptTemplate[];
   skills: Skill[];
+  themes: ThemeDefinition[];
   errors: string[];
 }> {
   const { deps, levels } = resolveContentContext({
@@ -882,6 +1051,8 @@ export async function loadAllContent(
     const projectPromptsResult = await loadProjectPrompts({ deps, levels });
     const userSkillsResult = await loadUserSkills({ deps, levels });
     const projectSkillsResult = await loadProjectSkills({ deps, levels });
+    const userThemesResult = await loadUserThemes({ deps, levels });
+    const projectThemesResult = await loadProjectThemes({ deps, levels });
 
     const allErrors = [
       ...userPersonasResult.errors,
@@ -890,6 +1061,8 @@ export async function loadAllContent(
       ...projectPromptsResult.errors,
       ...userSkillsResult.errors,
       ...projectSkillsResult.errors,
+      ...userThemesResult.errors,
+      ...projectThemesResult.errors,
     ];
 
     const skillsByName = new Map<string, Skill>();
@@ -915,6 +1088,7 @@ export async function loadAllContent(
       ),
       prompts: mergeById(builtinPrompts, userPromptsResult.prompts, projectPromptsResult.prompts),
       skills,
+      themes: mergeById(userThemesResult.themes, projectThemesResult.themes),
       errors: allErrors,
     };
   } catch (err) {
@@ -929,6 +1103,7 @@ export async function loadAllContent(
       personas: effectiveBuiltins,
       prompts: builtinPrompts,
       skills: [],
+      themes: [],
       errors: [`unexpected error loading user content: ${(err as Error).message}`],
     };
   }

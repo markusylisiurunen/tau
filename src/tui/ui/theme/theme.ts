@@ -3,7 +3,7 @@ import { Chalk } from "chalk";
 import type { ReasoningEffort } from "../../../core/types.js";
 import { hslToHex } from "../../../core/utils/color.js";
 import { assertNever } from "../../../core/utils/never.js";
-import { createPalette, getPaletteToken } from "./palette.js";
+import { createPalette, getPaletteToken, type PaletteOverrides } from "./palette.js";
 
 const chalk = new Chalk({ level: 3 });
 
@@ -130,10 +130,30 @@ function createSelectListTheme(palette: Palette, text: TextStyles): SelectListTh
 
 function createEditorBorderForReasoning(
   mode: ThemeMode,
+  palette: Palette,
+  usePaletteOverrides: boolean,
 ): (effort?: ReasoningEffort) => (text: string) => string {
   if (mode !== "ansi") {
     const wrap = (label: string) => (mode === "tags" ? tagWrapper(label) : plainWrapper());
     return (effort?: ReasoningEffort) => wrap(`editorBorder-${effort ?? "none"}`);
+  }
+
+  if (usePaletteOverrides) {
+    return (effort?: ReasoningEffort) => {
+      switch (effort) {
+        case undefined:
+        case "none":
+        case "minimal":
+          return palette.textDim;
+        case "low":
+        case "medium":
+        case "high":
+        case "xhigh":
+          return palette.brandAccent;
+        default:
+          assertNever(effort);
+      }
+    };
   }
 
   const accent = getPaletteToken("brandAccent");
@@ -169,12 +189,16 @@ function createEditorBorderForReasoning(
   };
 }
 
-export function createUiTheme(mode: ThemeMode = "ansi"): Theme {
-  const palette = createPalette(mode);
+export function createUiTheme(mode: ThemeMode = "ansi", overrides?: PaletteOverrides): Theme {
+  const palette = createPalette(mode, overrides);
   const text = createTextStyles(mode);
   const markdownTheme = createMarkdownTheme(palette, text);
   const selectListTheme = createSelectListTheme(palette, text);
-  const editorBorderForReasoning = createEditorBorderForReasoning(mode);
+  const editorBorderForReasoning = createEditorBorderForReasoning(
+    mode,
+    palette,
+    overrides !== undefined,
+  );
 
   const editorTheme: EditorTheme = {
     borderColor: (textValue) => editorBorderForReasoning("none")(textValue),

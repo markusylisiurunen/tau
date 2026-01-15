@@ -1,5 +1,6 @@
 import type { AutocompleteProvider } from "@mariozechner/pi-tui";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
+import type { ThemeDefinition } from "../core/config/index.js";
 import type { ToolUiEvent, ToolUiText } from "../core/tools/registry.js";
 import type { ReasoningEffort, RiskLevel } from "../core/types.js";
 import { createAppTerminal } from "./terminal.js";
@@ -11,7 +12,12 @@ import { CustomEditor } from "./ui/custom_editor.js";
 import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
-import { buildThemePreviewMessages, createUiTheme, type Theme } from "./ui/theme/index.js";
+import {
+  buildThemePreviewMessages,
+  coercePaletteOverrides,
+  createUiTheme,
+  type Theme,
+} from "./ui/theme/index.js";
 
 export type ChatInputMode = "normal" | "bash" | "memory";
 
@@ -79,6 +85,17 @@ export interface ChatView {
   }): void;
 }
 
+function resolveThemeTokens(
+  themeId: string | undefined,
+  themes: ThemeDefinition[] | undefined,
+): Record<string, string> | undefined {
+  if (!themeId || !themes || themes.length === 0) {
+    return undefined;
+  }
+  const match = themes.find((theme) => theme.id.toLowerCase() === themeId.toLowerCase());
+  return match?.tokens;
+}
+
 export class TuiChatView implements ChatView {
   private ui: TUI;
   private chatContainer: ChatContainerComponent;
@@ -94,9 +111,13 @@ export class TuiChatView implements ChatView {
     compactToolUi: boolean;
     showThinking: boolean;
     themePreview: boolean;
+    themeId?: string;
+    themes?: ThemeDefinition[];
   }) {
     this.themePreview = options.themePreview;
-    this.uiTheme = createUiTheme("ansi");
+    const themeTokens = resolveThemeTokens(options.themeId, options.themes);
+    const paletteOverrides = coercePaletteOverrides(themeTokens);
+    this.uiTheme = createUiTheme("ansi", paletteOverrides);
     this.ui = new TUI(createAppTerminal());
     this.chatContainer = new ChatContainerComponent(this.uiTheme, options.showThinking);
     this.chatContainer.setCompactToolUi(options.compactToolUi);

@@ -10,6 +10,7 @@ export type ConfigLevel = {
   personasDir: string;
   promptsDir: string;
   skillsDir: string;
+  themesDir: string;
   scope: ConfigLevelScope;
 };
 
@@ -23,6 +24,7 @@ function buildLevel(levelRoot: string, configDir: string, scope: ConfigLevelScop
     personasDir: join(dir, "personas"),
     promptsDir: join(dir, "prompts"),
     skillsDir: join(dir, "skills"),
+    themesDir: join(dir, "themes"),
     scope,
   };
 }

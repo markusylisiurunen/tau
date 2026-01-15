@@ -1,4 +1,5 @@
 export type { BashCommand } from "./bash_commands.js";
+export type { ThemeDefinition } from "./content_loader.js";
 export { loadAllContent } from "./content_loader.js";
 export type { ConfigDeps } from "./deps.js";
 export { createDefaultConfigDeps } from "./deps.js";

@@ -5,7 +5,7 @@ import { getSkillAutocompleteToken } from "./slash_autocomplete.js";
 import type { Theme } from "./theme/index.js";
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-const DEFAULT_EDITOR_MAX_LINES = 25;
+const DEFAULT_EDITOR_MAX_LINES = 22;
 const MIN_EDITOR_LINES = 3;
 
 export class CustomEditor extends Editor {

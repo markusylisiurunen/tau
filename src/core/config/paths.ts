@@ -45,7 +45,10 @@ export function resolveConfigLevels(deps: ConfigDeps, options?: { cwd?: string }
   const withinHome = cwdAbs === homeAbs || cwdAbs.startsWith(homeAbs + sep);
   const stopAbs = withinHome ? homeAbs : parse(cwdAbs).root;
 
-  const levels: ConfigLevel[] = [buildLevel(homeAbs, join(homeAbs, ".config", "tau"), "global")];
+  const levels: ConfigLevel[] = [];
+  if (withinHome) {
+    levels.push(buildLevel(homeAbs, join(homeAbs, ".config", "tau"), "global"));
+  }
 
   const projectLevels: ConfigLevel[] = [];
   let dir = cwdAbs;

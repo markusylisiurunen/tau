@@ -252,7 +252,7 @@ export class ChatController {
 
       if (this.agentsConfigErrors.length > 0) {
         this.view.addSystemMessage(
-          ["agents config warnings:", ...this.agentsConfigErrors.map((e) => `- ${e}`)].join("\n"),
+          ["config warnings:", ...this.agentsConfigErrors.map((e) => `- ${e}`)].join("\n"),
           "warn",
         );
       }

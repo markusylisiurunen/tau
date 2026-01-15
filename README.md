@@ -158,7 +158,7 @@ you can also include additional `AGENTS.md` files via config (when that config i
 { "agentContextFiles": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config). entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
+paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
 
 run `tau --help` to see all available options, or `tau --debug` to inspect loaded personas, prompts, skills, and the full system prompt for debugging configuration issues.
 
@@ -213,8 +213,9 @@ the compact commands are useful when conversations get long. they compress every
 
 ### global config
 
-tau loads config from `~/.config/tau/config.json` plus any `.tau/config.json` found by walking
-from the current working directory up to home (or the filesystem root when cwd is outside home).
+tau loads config from `~/.config/tau/config.json` only when the current working directory is
+inside your home directory. it also loads any `.tau/config.json` found by walking up from the
+current working directory to home (or to the filesystem root when cwd is outside home).
 settings merge from least-specific to most-specific.
 
 ```json
@@ -239,7 +240,7 @@ if `disableBuiltinPersonas` is set to `true`, tau will not load any built-in per
 
 ### project bash commands
 
-define shortcuts for common shell commands in any in-scope config file (`~/.config/tau/config.json` or `.tau/config.json` in the cwd ancestry). entries merge by `id` with the most specific level winning:
+define shortcuts for common shell commands in any in-scope config file (`~/.config/tau/config.json` when cwd is under home, or `.tau/config.json` in the cwd ancestry). entries merge by `id` with the most specific level winning:
 
 ```json
 {
@@ -260,12 +261,12 @@ if you use `--with-context`, you can tell tau to always include extra `AGENTS.md
 { "agentContextFiles": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config). entries must point at `AGENTS.md`.
+paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries must point at `AGENTS.md`.
 entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
 
 ### custom personas
 
-create your own personas by adding markdown files to `~/.config/tau/personas/` (global) or `.tau/personas/` (project). `.tau/` directories are discovered by walking up from the current working directory to home (or filesystem root if cwd is outside home):
+create your own personas by adding markdown files to `~/.config/tau/personas/` (global, only when cwd is under home) or `.tau/personas/` (project). `.tau/` directories are discovered by walking up from the current working directory to home (or filesystem root if cwd is outside home):
 
 ```markdown
 ---
@@ -322,7 +323,7 @@ when persona ids collide across levels, the most specific level wins (for exampl
 
 ### custom prompts
 
-save reusable prompt templates in `~/.config/tau/prompts/` (global) or `.tau/prompts/` (project). `.tau/` directories are discovered by walking up from the current working directory to home (or filesystem root if cwd is outside home):
+save reusable prompt templates in `~/.config/tau/prompts/` (global, only when cwd is under home) or `.tau/prompts/` (project). `.tau/` directories are discovered by walking up from the current working directory to home (or filesystem root if cwd is outside home):
 
 ```markdown
 ---
@@ -337,7 +338,7 @@ insert them with `/prompt:review`. if a prompt id conflicts across levels (inclu
 
 ### skills
 
-skills are optional directories discovered at `~/.config/tau/skills/` and `.tau/skills/` in the cwd ancestry (up to home, or filesystem root if cwd is outside home). each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
+skills are optional directories discovered at `~/.config/tau/skills/` (only when cwd is under home) and `.tau/skills/` in the cwd ancestry (up to home, or filesystem root if cwd is outside home). each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
 
 `SKILL.md` must start with yaml frontmatter:
 

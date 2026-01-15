@@ -29,10 +29,15 @@ interface FrontMatter {
   [key: string]: unknown;
 }
 
-interface MarkdownFile {
-  name: string;
+interface MarkdownEntry {
+  path: string;
   content: string;
 }
+
+type MarkdownPathsResult = {
+  paths: string[];
+  errors: string[];
+};
 
 function parseMarkdownWithFrontMatter(content: string): { frontMatter: FrontMatter; body: string } {
   const lines = content.split("\n");
@@ -264,25 +269,67 @@ function mergeById<T extends { id: string }>(base: T[], overlay: T[], overlay2?:
   return Array.from(map.values());
 }
 
-function loadMarkdownFiles(
-  dir: string,
-  deps: ConfigDeps,
-): { files: MarkdownFile[]; error?: string } {
-  if (!deps.fs.exists(dir)) {
-    return { files: [] };
-  }
-
+function listMarkdownFiles(dir: string, deps: ConfigDeps): MarkdownPathsResult {
   try {
     const names = deps.fs.listDir(dir).filter((f) => f.endsWith(".md"));
-    return {
-      files: names.map((name) => ({
-        name,
-        content: deps.fs.readFile(join(dir, name)),
-      })),
-    };
+    return { paths: names.map((name) => join(dir, name)), errors: [] };
   } catch {
-    return { files: [], error: `failed to read directory: ${dir}` };
+    return { paths: [], errors: [`failed to read directory: ${dir}`] };
   }
+}
+
+function listSkillFiles(dir: string, deps: ConfigDeps): MarkdownPathsResult {
+  let entries: string[];
+  try {
+    entries = deps.fs.listDir(dir);
+  } catch {
+    return { paths: [], errors: [`failed to read directory: ${dir}`] };
+  }
+
+  const paths: string[] = [];
+
+  for (const entry of entries) {
+    const skillDir = join(dir, entry);
+
+    let isDir = false;
+    try {
+      isDir = deps.fs.stat(skillDir).isDirectory();
+    } catch {
+      continue;
+    }
+
+    if (!isDir) continue;
+
+    const filePath = join(skillDir, "SKILL.md");
+    if (!deps.fs.exists(filePath)) continue;
+
+    paths.push(filePath);
+  }
+
+  return { paths, errors: [] };
+}
+
+function loadMarkdownEntries(
+  dir: string,
+  deps: ConfigDeps,
+  listFiles: (dir: string, deps: ConfigDeps) => MarkdownPathsResult,
+): { entries: MarkdownEntry[]; errors: string[] } {
+  if (!deps.fs.exists(dir)) {
+    return { entries: [], errors: [] };
+  }
+
+  const { paths, errors } = listFiles(dir, deps);
+  const entries: MarkdownEntry[] = [];
+
+  for (const path of paths) {
+    try {
+      entries.push({ path, content: deps.fs.readFile(path) });
+    } catch {
+      errors.push(`failed to read file: ${path}`);
+    }
+  }
+
+  return { entries, errors };
 }
 
 function resolveContentContext(options?: {
@@ -554,20 +601,15 @@ export async function loadUserPersonas(args?: {
     return { personas: [], errors: [] };
   }
   const personasDir = globalLevel.personasDir;
-  const { files, error } = loadMarkdownFiles(personasDir, deps);
-
-  if (error) {
-    return { personas: [], errors: [error] };
-  }
+  const { entries, errors } = loadMarkdownEntries(personasDir, deps, listMarkdownFiles);
 
   const personas: Persona[] = [];
-  const errors: string[] = [];
 
   const basePersonasById =
     args?.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
 
-  for (const file of files) {
-    const result = parsePersona(file.name, file.content, "user", basePersonasById);
+  for (const file of entries) {
+    const result = parsePersona(file.path, file.content, "user", basePersonasById);
     if (result.persona) {
       personas.push(result.persona);
     } else if (result.error) {
@@ -606,15 +648,15 @@ export async function loadProjectPersonas(args?: {
 
   // Parent-first order, closest directory wins on conflicts.
   for (const level of projectLevels) {
-    const { files, error } = loadMarkdownFiles(level.personasDir, deps);
+    const { entries, errors: entryErrors } = loadMarkdownEntries(
+      level.personasDir,
+      deps,
+      listMarkdownFiles,
+    );
+    errors.push(...entryErrors);
 
-    if (error) {
-      errors.push(error);
-      continue;
-    }
-
-    for (const file of files) {
-      const result = parsePersona(file.name, file.content, "project", basePersonasById);
+    for (const file of entries) {
+      const result = parsePersona(file.path, file.content, "project", basePersonasById);
       if (result.persona) {
         personas.push(result.persona);
       } else if (result.error) {
@@ -644,17 +686,12 @@ export async function loadUserPrompts(args?: {
     return { prompts: [], errors: [] };
   }
   const promptsDir = globalLevel.promptsDir;
-  const { files, error } = loadMarkdownFiles(promptsDir, deps);
-
-  if (error) {
-    return { prompts: [], errors: [error] };
-  }
+  const { entries, errors } = loadMarkdownEntries(promptsDir, deps, listMarkdownFiles);
 
   const prompts: PromptTemplate[] = [];
-  const errors: string[] = [];
 
-  for (const file of files) {
-    const result = parsePrompt(file.name, file.content);
+  for (const file of entries) {
+    const result = parsePrompt(file.path, file.content);
     if (result.prompt) {
       prompts.push(result.prompt);
     } else if (result.error) {
@@ -689,15 +726,15 @@ export async function loadProjectPrompts(args?: {
 
   // Parent-first order, closest directory wins on conflicts.
   for (const level of projectLevels) {
-    const { files, error } = loadMarkdownFiles(level.promptsDir, deps);
+    const { entries, errors: entryErrors } = loadMarkdownEntries(
+      level.promptsDir,
+      deps,
+      listMarkdownFiles,
+    );
+    errors.push(...entryErrors);
 
-    if (error) {
-      errors.push(error);
-      continue;
-    }
-
-    for (const file of files) {
-      const result = parsePrompt(file.name, file.content);
+    for (const file of entries) {
+      const result = parsePrompt(file.path, file.content);
       if (result.prompt) {
         prompts.push(result.prompt);
       } else if (result.error) {
@@ -735,58 +772,6 @@ function parseSkill(filePath: string, content: string): { skill?: Skill; error?:
   };
 }
 
-function loadSkillsFromDir(
-  skillsDir: string,
-  deps: ConfigDeps,
-): { skills: Skill[]; errors: string[] } {
-  if (!deps.fs.exists(skillsDir)) {
-    return { skills: [], errors: [] };
-  }
-
-  let entries: string[];
-  try {
-    entries = deps.fs.listDir(skillsDir);
-  } catch {
-    return { skills: [], errors: [`failed to read directory: ${skillsDir}`] };
-  }
-
-  const skills: Skill[] = [];
-  const errors: string[] = [];
-
-  for (const entry of entries) {
-    const skillDir = join(skillsDir, entry);
-
-    let isDir = false;
-    try {
-      isDir = deps.fs.stat(skillDir).isDirectory();
-    } catch {
-      continue;
-    }
-
-    if (!isDir) continue;
-
-    const filePath = join(skillDir, "SKILL.md");
-    if (!deps.fs.exists(filePath)) continue;
-
-    let content = "";
-    try {
-      content = deps.fs.readFile(filePath);
-    } catch {
-      errors.push(`failed to read file: ${filePath}`);
-      continue;
-    }
-
-    const result = parseSkill(filePath, content);
-    if (result.skill) {
-      skills.push(result.skill);
-    } else if (result.error) {
-      errors.push(result.error);
-    }
-  }
-
-  return { skills, errors };
-}
-
 export async function loadUserSkills(args?: {
   deps?: ConfigDeps;
   levels?: ConfigLevel[];
@@ -804,7 +789,19 @@ export async function loadUserSkills(args?: {
   if (!globalLevel) {
     return { skills: [], errors: [] };
   }
-  return loadSkillsFromDir(globalLevel.skillsDir, deps);
+  const { entries, errors } = loadMarkdownEntries(globalLevel.skillsDir, deps, listSkillFiles);
+  const skills: Skill[] = [];
+
+  for (const entry of entries) {
+    const result = parseSkill(entry.path, entry.content);
+    if (result.skill) {
+      skills.push(result.skill);
+    } else if (result.error) {
+      errors.push(result.error);
+    }
+  }
+
+  return { skills, errors };
 }
 
 export async function loadProjectSkills(args?: {
@@ -830,9 +827,21 @@ export async function loadProjectSkills(args?: {
 
   // Parent-first order, closest directory wins on conflicts.
   for (const level of projectLevels) {
-    const result = loadSkillsFromDir(level.skillsDir, deps);
-    skills.push(...result.skills);
-    errors.push(...result.errors);
+    const { entries, errors: entryErrors } = loadMarkdownEntries(
+      level.skillsDir,
+      deps,
+      listSkillFiles,
+    );
+    errors.push(...entryErrors);
+
+    for (const entry of entries) {
+      const result = parseSkill(entry.path, entry.content);
+      if (result.skill) {
+        skills.push(result.skill);
+      } else if (result.error) {
+        errors.push(result.error);
+      }
+    }
   }
 
   return { skills, errors };

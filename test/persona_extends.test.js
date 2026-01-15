@@ -15,14 +15,14 @@ import { loadAllContent } from "../dist/core/config/index.js";
 
 function setupFixture() {
   const home = mkdtempSync(join(tmpdir(), "tau-personas-home-"));
-  const cwd = mkdtempSync(join(tmpdir(), "tau-personas-cwd-"));
+  const cwd = join(home, "repo");
+  mkdirSync(cwd, { recursive: true });
 
   return {
     home: resolve(home),
     cwd: resolve(cwd),
     cleanup: () => {
       rmSync(home, { recursive: true, force: true });
-      rmSync(cwd, { recursive: true, force: true });
     },
   };
 }

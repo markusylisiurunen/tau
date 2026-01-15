@@ -85,7 +85,6 @@ describe("config paths", () => {
 
       const levels = resolveConfigLevels(deps, { cwd: fx.repo });
       expect(levels.map((level) => level.configDir)).toEqual([
-        join(fx.home, ".config", "tau"),
         join(fx.repo, ".tau"),
       ]);
     } finally {
@@ -170,11 +169,8 @@ describe("loadConfig", () => {
     const fx = setupFixture();
 
     try {
-      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
-      writeFileSync(join(fx.home, ".config", "tau", "config.json"), "{invalid json");
-
       mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-      writeFileSync(join(fx.repo, ".tau", "config.json"), JSON.stringify({}));
+      writeFileSync(join(fx.repo, ".tau", "config.json"), "{invalid json");
 
       const deps = createConfigDeps({
         cwd: fx.repo,

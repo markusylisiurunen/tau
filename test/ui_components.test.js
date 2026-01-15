@@ -185,6 +185,26 @@ test("CustomEditor preserves leading indentation for wrapped lines", () => {
   expect(secondLine).toContain("│  - this is the second line");
 });
 
+test("CustomEditor caps height and scrolls within the viewport", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  editor.setMaxVisibleLines(6);
+
+  const linesInput = Array.from({ length: 12 }, (_, i) => {
+    const label = String(i + 1).padStart(2, "0");
+    return `line-${label}`;
+  }).join("\n");
+
+  editor.setText(linesInput);
+
+  const lines = editor.render(40).map(stripTags);
+  expect(lines).toHaveLength(6);
+
+  const content = lines.slice(1, -1).join("\n");
+  expect(content).toContain("line-12");
+  expect(content).not.toContain("line-01");
+});
+
 test("CustomEditor strips ANSI sequences from input", () => {
   const theme = createTagTheme();
   const editor = new CustomEditor(theme);

@@ -5,6 +5,8 @@ import { getSkillAutocompleteToken } from "./slash_autocomplete.js";
 import type { Theme } from "./theme/index.js";
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const DEFAULT_EDITOR_MAX_LINES = 12;
+const MIN_EDITOR_LINES = 3;
 
 export class CustomEditor extends Editor {
   private uiTheme: Theme;
@@ -14,6 +16,8 @@ export class CustomEditor extends Editor {
   private headerRightStyle?: (text: string) => string;
 
   private lastContentWidth = 80;
+  private maxVisibleLines = DEFAULT_EDITOR_MAX_LINES;
+  private scrollTop = 0;
 
   public onCtrlC?: () => void;
   public onCtrlT?: () => void;
@@ -30,6 +34,15 @@ export class CustomEditor extends Editor {
   constructor(theme: Theme) {
     super(theme.editorTheme);
     this.uiTheme = theme;
+  }
+
+  setMaxVisibleLines(lines?: number): void {
+    if (!lines || !Number.isFinite(lines)) {
+      this.maxVisibleLines = DEFAULT_EDITOR_MAX_LINES;
+      return;
+    }
+    const normalized = Math.floor(lines);
+    this.maxVisibleLines = normalized > 0 ? normalized : DEFAULT_EDITOR_MAX_LINES;
   }
 
   setHeader(
@@ -73,7 +86,9 @@ export class CustomEditor extends Editor {
       }
     }
 
-    const contentLines = this.renderEditorContent(innerWidth);
+    const maxVisibleLines = this.getMaxVisibleLines();
+    const maxContentLines = Math.max(1, maxVisibleLines - 2);
+    const contentLines = this.renderEditorContent(innerWidth, maxContentLines);
     const trailingLines = baseLines.slice(bottomIndex + 1);
 
     const vertical = this.borderColor("│");
@@ -591,12 +606,13 @@ export class CustomEditor extends Editor {
     return null;
   }
 
-  private renderEditorContent(width: number): string[] {
+  private renderEditorContent(width: number, maxContentLines: number): string[] {
     if (width <= 0) return [""];
     const layoutLines = this.layoutTextPreserveIndent(width);
+    const visibleLines = this.sliceVisibleLayoutLines(layoutLines, maxContentLines);
     const lines: string[] = [];
 
-    for (const layoutLine of layoutLines) {
+    for (const layoutLine of visibleLines) {
       let displayText = layoutLine.text;
       let lineVisibleWidth = visibleWidth(layoutLine.text);
 
@@ -630,6 +646,41 @@ export class CustomEditor extends Editor {
     }
 
     return lines.length > 0 ? lines : [""];
+  }
+
+  private sliceVisibleLayoutLines(
+    layoutLines: Array<{ text: string; hasCursor: boolean; cursorPos?: number }>,
+    maxContentLines: number,
+  ): Array<{ text: string; hasCursor: boolean; cursorPos?: number }> {
+    if (maxContentLines <= 0) return layoutLines.slice(0, 1);
+    if (layoutLines.length <= maxContentLines) {
+      this.scrollTop = 0;
+      return layoutLines;
+    }
+
+    const cursorIndex = layoutLines.findIndex((line) => line.hasCursor);
+    let nextScrollTop = this.scrollTop;
+    if (cursorIndex >= 0) {
+      if (cursorIndex < nextScrollTop) {
+        nextScrollTop = cursorIndex;
+      } else if (cursorIndex >= nextScrollTop + maxContentLines) {
+        nextScrollTop = cursorIndex - maxContentLines + 1;
+      }
+    }
+
+    const maxScrollTop = Math.max(0, layoutLines.length - maxContentLines);
+    nextScrollTop = Math.max(0, Math.min(nextScrollTop, maxScrollTop));
+    this.scrollTop = nextScrollTop;
+    return layoutLines.slice(nextScrollTop, nextScrollTop + maxContentLines);
+  }
+
+  private getMaxVisibleLines(): number {
+    const configured = this.maxVisibleLines > 0 ? this.maxVisibleLines : DEFAULT_EDITOR_MAX_LINES;
+    const terminalRows =
+      typeof process !== "undefined" && process.stdout?.rows ? process.stdout.rows : undefined;
+    const terminalCap = terminalRows && terminalRows > 0 ? terminalRows : configured;
+    const minLines = Math.min(MIN_EDITOR_LINES, terminalCap);
+    return Math.max(minLines, Math.min(configured, terminalCap));
   }
 
   private layoutTextPreserveIndent(

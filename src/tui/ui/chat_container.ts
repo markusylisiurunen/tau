@@ -1,18 +1,15 @@
-import { type Component, Container, Spacer } from "@mariozechner/pi-tui";
-import { AssistantMessageComponent } from "./assistant_message.js";
+import { Container, Spacer } from "@mariozechner/pi-tui";
 import {
   type ChatMessageModel,
-  isAssistantMessageModel,
   type RenderedMessage,
   renderChatMessage,
-  updateAssistantComponent,
 } from "./chat_message_model.js";
 import type { Theme } from "./theme/index.js";
 
 type ChatMessageRecord = {
   id: string;
   model: ChatMessageModel;
-  component?: Component;
+  renderedMessage?: RenderedMessage;
   rendered: boolean;
 };
 
@@ -66,31 +63,36 @@ export class ChatContainerComponent extends Container {
     if (!record) return;
     record.model = model;
 
-    if (record.component instanceof AssistantMessageComponent && isAssistantMessageModel(model)) {
-      const wasVisible = record.component.hasVisibleText;
-      updateAssistantComponent(record.component, model, this.thoughtsVisible);
-      const shouldShow = this.shouldShowMessage({
-        component: record.component,
-        isAssistant: true,
+    const rendered = record.renderedMessage;
+    if (rendered?.update) {
+      const wasVisible = rendered.hasVisibleText ? rendered.hasVisibleText() : true;
+      const updated = rendered.update(model, {
+        theme: this.theme,
+        thoughtsVisible: this.thoughtsVisible,
+        compactToolUi: this.compactToolUi,
       });
 
-      if (record.rendered && shouldShow) {
-        if (!wasVisible && record.component.hasVisibleText) {
+      if (updated) {
+        const shouldShow = this.shouldShowMessage(rendered);
+        const isVisibleNow = rendered.hasVisibleText ? rendered.hasVisibleText() : true;
+
+        if (record.rendered && shouldShow) {
+          if (!wasVisible && isVisibleNow) {
+            this.rebuild();
+          }
+          return;
+        }
+
+        if (!record.rendered && shouldShow) {
+          this.rebuild();
+          return;
+        }
+
+        if (record.rendered && !shouldShow) {
           this.rebuild();
         }
         return;
       }
-
-      if (!record.rendered && shouldShow) {
-        this.rebuild();
-        return;
-      }
-
-      if (record.rendered && !shouldShow) {
-        this.rebuild();
-      }
-
-      return;
     }
 
     this.rebuild();
@@ -134,7 +136,7 @@ export class ChatContainerComponent extends Container {
       thoughtsVisible: this.thoughtsVisible,
       compactToolUi: this.compactToolUi,
     });
-    record.component = rendered.component;
+    record.renderedMessage = rendered;
     return rendered;
   }
 
@@ -142,8 +144,8 @@ export class ChatContainerComponent extends Container {
     if (!rendered.isAssistant) return true;
     if (this.thoughtsVisible) return true;
 
-    if (rendered.component instanceof AssistantMessageComponent) {
-      return rendered.component.hasVisibleText;
+    if (rendered.hasVisibleText) {
+      return rendered.hasVisibleText();
     }
     return true;
   }

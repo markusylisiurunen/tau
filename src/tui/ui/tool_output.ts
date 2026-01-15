@@ -5,6 +5,7 @@ import { DynamicBorder } from "./components/dynamic_border.js";
 import { HeaderLineComponent, type HeaderLineModel } from "./components/header_line.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";
 import { OneLineSegmentsComponent } from "./components/one_line_segments.js";
+import type { UiComponent } from "./components/ui_component.js";
 import type { Theme } from "./theme/index.js";
 
 export function inlineText(text: string): string {
@@ -219,10 +220,14 @@ export interface ToolOutputProps {
   compactView: ToolOutputCompactView;
 }
 
-export class ToolOutputComponent extends Container {
+export class ToolOutputComponent extends Container implements UiComponent<ToolOutputProps> {
   constructor(props: ToolOutputProps) {
     super();
+    this.update(props);
+  }
 
+  update(props: ToolOutputProps): void {
+    this.clear();
     if (props.compact) {
       const {
         headerComponent,
@@ -261,29 +266,7 @@ function isComponent(value: HeaderLineModel | Component): value is Component {
 }
 
 export function renderToolOutput(view: ToolOutputViewModel, compact: boolean): ToolOutputComponent {
-  const header =
-    view.compact.header === undefined
-      ? undefined
-      : isComponent(view.compact.header)
-        ? view.compact.header
-        : new HeaderLineComponent(view.compact.header);
-
-  return new ToolOutputComponent({
-    compact,
-    expanded: {
-      borderColor: view.borderColor,
-      text: buildExpandedText(view.expanded),
-      paddingX: view.expanded.paddingX,
-      paddingY: view.expanded.paddingY,
-    },
-    compactView: {
-      headerComponent: header,
-      extraText: view.compact.extraText,
-      extraComponent: view.compact.extraComponent,
-      paddingX: view.compact.paddingX,
-      paddingY: view.compact.paddingY,
-    },
-  });
+  return new ToolOutputComponent(buildToolOutputProps(view, compact));
 }
 
 export function buildBlockedToolView(args: {
@@ -320,6 +303,35 @@ export function buildBlockedToolView(args: {
     compact: {
       header,
       extraText: whyInline ? `    ${errorColor(whyInline)}` : undefined,
+    },
+  };
+}
+
+export function buildToolOutputProps(
+  view: ToolOutputViewModel,
+  compact: boolean,
+): ToolOutputProps {
+  const header =
+    view.compact.header === undefined
+      ? undefined
+      : isComponent(view.compact.header)
+        ? view.compact.header
+        : new HeaderLineComponent(view.compact.header);
+
+  return {
+    compact,
+    expanded: {
+      borderColor: view.borderColor,
+      text: buildExpandedText(view.expanded),
+      paddingX: view.expanded.paddingX,
+      paddingY: view.expanded.paddingY,
+    },
+    compactView: {
+      headerComponent: header,
+      extraText: view.compact.extraText,
+      extraComponent: view.compact.extraComponent,
+      paddingX: view.compact.paddingX,
+      paddingY: view.compact.paddingY,
     },
   };
 }

@@ -21,7 +21,11 @@ function stripTags(text) {
 
 test("AppIntroComponent renders header and help text", () => {
   const theme = createTagTheme();
-  const component = new AppIntroComponent(theme, "tau", "1.0.0", "help text");
+  const component = new AppIntroComponent(theme, {
+    appName: "tau",
+    version: "1.0.0",
+    helpText: "help text",
+  });
   const text = renderText(component, 80);
   expect(text).toContain("<brandAccent>tau</brandAccent>");
   expect(text).toContain("<textMuted>– terminal chat (v1.0.0)</textMuted>");
@@ -30,14 +34,14 @@ test("AppIntroComponent renders header and help text", () => {
 
 test("SessionDividerComponent renders a muted divider line", () => {
   const theme = createTagTheme();
-  const component = new SessionDividerComponent(theme, "new session");
+  const component = new SessionDividerComponent(theme, { label: "new session" });
   const lines = renderLines(component, 20);
   expect(lines[0]).toBe("<textMuted>── new session ─────</textMuted>");
 });
 
 test("SessionSummaryComponent renders borders and summary text", () => {
   const theme = createTagTheme();
-  const component = new SessionSummaryComponent(theme, "summary line");
+  const component = new SessionSummaryComponent(theme, { summary: "summary line" });
   const text = renderText(component, 200);
   expect(text).toContain("<brandAccent>context from previous session</brandAccent>");
   expect(text).toContain("<italic><textMuted>summary line</textMuted></italic>");
@@ -45,7 +49,10 @@ test("SessionSummaryComponent renders borders and summary text", () => {
 
 test("UserMessageComponent applies memory mode styling", () => {
   const theme = createTagTheme();
-  const component = new UserMessageComponent(theme, "remember this", { isMemoryMode: true });
+  const component = new UserMessageComponent(theme, {
+    text: "remember this",
+    isMemoryMode: true,
+  });
   const text = renderText(component, 60);
   expect(text).toContain("<userMemorySurface>");
   expect(text).toContain("<userMemoryText>remember this</userMemoryText>");
@@ -75,7 +82,7 @@ test("AssistantMessageComponent toggles thinking visibility", () => {
     ],
   };
 
-  component.updateFromMessage(message);
+  component.update({ type: "assistant", message });
   let text = renderText(component, 80);
   expect(text).not.toContain("hmm");
   expect(text).toContain("hello");

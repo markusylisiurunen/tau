@@ -1,20 +1,34 @@
 import { Container, Text } from "@mariozechner/pi-tui";
+import type { UiComponent } from "./components/ui_component.js";
 import type { Theme } from "./theme/index.js";
 
 export type SystemMessageKind = "success" | "warn" | "error" | "muted";
 
-export class SystemMessageComponent extends Container {
-  constructor(theme: Theme, text: string, kind: SystemMessageKind) {
+export type SystemMessageModel = {
+  text: string;
+  kind: SystemMessageKind;
+};
+
+export class SystemMessageComponent extends Container implements UiComponent<SystemMessageModel> {
+  private theme: Theme;
+
+  constructor(theme: Theme, model: SystemMessageModel) {
     super();
-    const { palette } = theme;
+    this.theme = theme;
+    this.update(model);
+  }
+
+  update(model: SystemMessageModel): void {
+    const { palette } = this.theme;
     const style =
-      kind === "error"
+      model.kind === "error"
         ? palette.toastError
-        : kind === "warn"
+        : model.kind === "warn"
           ? palette.toastWarn
-          : kind === "muted"
+          : model.kind === "muted"
             ? palette.textMuted
             : palette.toastSuccess;
-    this.addChild(new Text(style(text), 1, 0));
+    this.clear();
+    this.addChild(new Text(style(model.text), 1, 0));
   }
 }

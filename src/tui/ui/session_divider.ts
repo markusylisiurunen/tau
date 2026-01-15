@@ -1,16 +1,24 @@
-import type { Component } from "@mariozechner/pi-tui";
+import type { UiComponent } from "./components/ui_component.js";
 import type { Theme } from "./theme/index.js";
 
-export class SessionDividerComponent implements Component {
+export type SessionDividerModel = {
+  label: string;
+};
+
+export class SessionDividerComponent implements UiComponent<SessionDividerModel> {
   constructor(
     private theme: Theme,
-    private label: string,
+    private model: SessionDividerModel,
   ) {}
+
+  update(model: SessionDividerModel): void {
+    this.model = model;
+  }
 
   invalidate() {}
 
   render(width: number) {
-    const labelWithSpace = ` ${this.label} `;
+    const labelWithSpace = ` ${this.model.label} `;
     const leftDashes = "──";
     const remainingWidth = Math.max(1, width - labelWithSpace.length - leftDashes.length);
     const rightDashes = "─".repeat(remainingWidth);

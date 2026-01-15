@@ -1,8 +1,20 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
+import type { UiComponent } from "./components/ui_component.js";
 import type { Theme } from "./theme/index.js";
 
-export class AssistantMessageComponent extends Container {
+export type AssistantMessageModel =
+  | {
+      type: "assistant";
+      message: AssistantMessage;
+    }
+  | {
+      type: "assistant_partial";
+      text: string;
+      thinking?: string;
+    };
+
+export class AssistantMessageComponent extends Container implements UiComponent<AssistantMessageModel> {
   private theme: Theme;
   private contentContainer: Container;
   private thoughtsVisible: boolean;
@@ -14,7 +26,7 @@ export class AssistantMessageComponent extends Container {
     return this._hasVisibleText;
   }
 
-  constructor(theme: Theme, message?: AssistantMessage, thoughtsVisible = false) {
+  constructor(theme: Theme, model?: AssistantMessageModel, thoughtsVisible = false) {
     super();
 
     this.theme = theme;
@@ -23,8 +35,8 @@ export class AssistantMessageComponent extends Container {
 
     this.addChild(this.contentContainer);
 
-    if (message) {
-      this.updateFromMessage(message);
+    if (model) {
+      this.update(model);
     }
   }
 
@@ -36,7 +48,15 @@ export class AssistantMessageComponent extends Container {
     }
   }
 
-  updatePartial(text: string, thinking?: string): void {
+  update(model: AssistantMessageModel): void {
+    if (model.type === "assistant") {
+      this.updateFromMessage(model.message);
+    } else {
+      this.updatePartial(model.text, model.thinking);
+    }
+  }
+
+  private updatePartial(text: string, thinking?: string): void {
     const partial: AssistantMessage = {
       role: "assistant",
       api: "openai-responses",
@@ -60,7 +80,7 @@ export class AssistantMessageComponent extends Container {
     this.updateFromMessage(partial);
   }
 
-  updateFromMessage(message: AssistantMessage): void {
+  private updateFromMessage(message: AssistantMessage): void {
     const { palette, markdownTheme } = this.theme;
 
     this.currentMessage = message;

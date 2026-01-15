@@ -37,7 +37,7 @@ describe("custom personas", () => {
         stat: (path) => statSync(path),
       },
       env: {
-        getEnv: () => ({ XDG_CONFIG_HOME: home }),
+        getEnv: () => ({}),
         cwd: () => cwd,
         home: () => home,
       },
@@ -48,9 +48,9 @@ describe("custom personas", () => {
     const fx = setupFixture();
 
     try {
-      mkdirSync(join(fx.home, "tau", "personas"), { recursive: true });
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
       writeFileSync(
-        join(fx.home, "tau", "personas", "clone.md"),
+        join(fx.home, ".config", "tau", "personas", "clone.md"),
         [
           "---",
           "id: haiku-clone-of-gpt-coder",
@@ -94,9 +94,9 @@ describe("custom personas", () => {
     const fx = setupFixture();
 
     try {
-      mkdirSync(join(fx.home, "tau", "personas"), { recursive: true });
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
       writeFileSync(
-        join(fx.home, "tau", "personas", "override.md"),
+        join(fx.home, ".config", "tau", "personas", "override.md"),
         [
           "---",
           "id: gpt-5.2-chat",

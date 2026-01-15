@@ -15,7 +15,6 @@ import {
   CliError,
   createLocalToolExecutionBackend,
   isGoogleAuthAvailable,
-  loadBashCommands,
   loadConfig,
   loadRuntimeConfig,
   parseCliArgs,
@@ -60,7 +59,7 @@ try {
   console.error(`warning: failed to load user content: ${(err as Error).message}`);
 
   config = loadConfig(cwd);
-  bashCommands = loadBashCommands(cwd).commands;
+  bashCommands = config.bashCommands ?? [];
 
   const baseBuiltins = isGoogleAuthAvailable(config)
     ? applyGeminiSubagents(builtinPersonas)

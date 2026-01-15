@@ -5,10 +5,9 @@ export {
   createDefaultConfigDeps,
   isGoogleAuthAvailable,
   loadAllContent,
-  loadBashCommands,
   loadConfig,
   loadRuntimeConfig,
-  resolveConfigPaths,
+  resolveConfigLevels,
 } from "./config/index.js";
 export { printDebugInfo } from "./debug.js";
 export type {

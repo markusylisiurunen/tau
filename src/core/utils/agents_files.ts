@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
-import { getGitRoot } from "./git.js";
+import { existsSync, readFileSync, realpathSync, readdirSync, statSync } from "node:fs";
+import { basename, dirname, join, parse, resolve, sep } from "node:path";
+import type { ConfigDeps } from "../config/deps.js";
+import { resolveConfigLevels } from "../config/paths.js";
 
 type TauAgentsConfigParseResult = {
   paths: string[];
@@ -12,62 +13,34 @@ type AgentsFilesInScopeResult = {
   errors: string[];
 };
 
+function createAgentsConfigDeps(cwd: string, home: string): ConfigDeps {
+  return {
+    fs: {
+      readFile: (path) => readFileSync(path, "utf-8"),
+      exists: (path) => existsSync(path),
+      listDir: (path) => readdirSync(path),
+      stat: (path) => statSync(path),
+    },
+    env: {
+      getEnv: () => ({}),
+      cwd: () => cwd,
+      home: () => home,
+    },
+  };
+}
+
 export function findAgentsFilesFromCwdToHome(cwd: string, home: string): string[] {
   const cwdAbs = resolve(cwd);
   const homeAbs = resolve(home);
-
-  // If we're not inside the user's home directory, don't walk beyond it.
-  if (cwdAbs !== homeAbs && !cwdAbs.startsWith(homeAbs + sep)) {
-    return [];
-  }
+  const withinHome = cwdAbs === homeAbs || cwdAbs.startsWith(homeAbs + sep);
+  const stopAbs = withinHome ? homeAbs : parse(cwdAbs).root;
 
   const found: string[] = [];
 
   let dir = cwdAbs;
-  // Closest-first order: cwd, parent, ..., home.
+  // Closest-first order: cwd, parent, ..., home/root.
   while (true) {
     const candidate = join(dir, "AGENTS.md");
-    if (existsSync(candidate)) {
-      found.push(candidate);
-    }
-
-    if (dir === homeAbs) break;
-
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    // Stay within home.
-    if (parent !== homeAbs && !parent.startsWith(homeAbs + sep)) break;
-
-    dir = parent;
-  }
-
-  return found;
-}
-
-function findTauConfigFilesFromCwd(args: {
-  cwd: string;
-  home: string;
-  gitRootAbs?: string;
-}): string[] {
-  const cwdAbs = resolve(args.cwd);
-  const homeAbs = resolve(args.home);
-
-  if (cwdAbs !== homeAbs && !cwdAbs.startsWith(homeAbs + sep)) {
-    return [];
-  }
-
-  const gitRootAbs = args.gitRootAbs ?? getGitRoot(cwdAbs);
-
-  const stopAbs =
-    gitRootAbs && (cwdAbs === gitRootAbs || cwdAbs.startsWith(gitRootAbs + sep))
-      ? gitRootAbs
-      : homeAbs;
-
-  const found: string[] = [];
-
-  let dir = cwdAbs;
-  while (true) {
-    const candidate = join(dir, ".tau", "config.json");
     if (existsSync(candidate)) {
       found.push(candidate);
     }
@@ -76,7 +49,6 @@ function findTauConfigFilesFromCwd(args: {
 
     const parent = dirname(dir);
     if (parent === dir) break;
-    if (parent !== homeAbs && !parent.startsWith(homeAbs + sep)) break;
 
     dir = parent;
   }
@@ -84,23 +56,33 @@ function findTauConfigFilesFromCwd(args: {
   return found;
 }
 
-function getAgentsPathsFromTauConfig(configPath: string): TauAgentsConfigParseResult {
+function getAgentContextPathsFromConfig(
+  configPath: string,
+  deps: ConfigDeps,
+): TauAgentsConfigParseResult {
   try {
-    if (!existsSync(configPath)) return { paths: [] };
+    if (!deps.fs.exists(configPath)) return { paths: [] };
 
-    const content = readFileSync(configPath, "utf-8");
+    const content = deps.fs.readFile(configPath);
     const json = JSON.parse(content) as unknown;
     if (!json || typeof json !== "object") {
       return { paths: [], error: `${configPath}: config must be a JSON object.` };
     }
 
-    const agentsRaw = (json as { agents?: unknown }).agents;
+    const agentContextRaw = (json as { agentContextFiles?: unknown }).agentContextFiles;
 
     const rawList =
-      typeof agentsRaw === "string" ? [agentsRaw] : Array.isArray(agentsRaw) ? agentsRaw : [];
+      typeof agentContextRaw === "string"
+        ? [agentContextRaw]
+        : Array.isArray(agentContextRaw)
+          ? agentContextRaw
+          : [];
 
-    if (agentsRaw !== undefined && rawList.length === 0) {
-      return { paths: [], error: `${configPath}: 'agents' must be a string or string array.` };
+    if (agentContextRaw !== undefined && rawList.length === 0) {
+      return {
+        paths: [],
+        error: `${configPath}: 'agentContextFiles' must be a string or string array.`,
+      };
     }
 
     return {
@@ -117,13 +99,12 @@ function getAgentsPathsFromTauConfig(configPath: string): TauAgentsConfigParseRe
   }
 }
 
-function resolveAgentsFilePath(args: {
-  configPath: string;
+function resolveAgentContextFilePath(args: {
+  levelRoot: string;
   pathRaw: string;
   homeAbs: string;
 }): string | undefined {
-  const scopeDir = dirname(dirname(args.configPath));
-  const candidateAbs = resolve(scopeDir, args.pathRaw);
+  const candidateAbs = resolve(args.levelRoot, args.pathRaw);
 
   // Guard the *path* first to prevent obvious escapes before filesystem ops.
   if (candidateAbs !== args.homeAbs && !candidateAbs.startsWith(args.homeAbs + sep)) {
@@ -159,25 +140,26 @@ function resolveAgentsFilePath(args: {
   return candidateAbs;
 }
 
-function findAdditionalAgentsFilesFromTauConfigsDetailed(args: {
+function findAdditionalAgentsFilesFromConfigsDetailed(args: {
   cwd: string;
   home: string;
-  gitRootAbs?: string;
 }): AgentsFilesInScopeResult {
   const homeAbs = resolve(args.home);
-
-  const configPaths = findTauConfigFilesFromCwd(args);
-  if (configPaths.length === 0) return { files: [], errors: [] };
-
+  const deps = createAgentsConfigDeps(args.cwd, args.home);
+  const levels = resolveConfigLevels(deps, { cwd: args.cwd });
   const files: string[] = [];
   const errors: string[] = [];
 
-  for (const configPath of configPaths) {
-    const { paths, error } = getAgentsPathsFromTauConfig(configPath);
+  for (const level of levels) {
+    const { paths, error } = getAgentContextPathsFromConfig(level.configPath, deps);
     if (error) errors.push(error);
 
     for (const pathRaw of paths) {
-      const resolved = resolveAgentsFilePath({ configPath, pathRaw, homeAbs });
+      const resolved = resolveAgentContextFilePath({
+        levelRoot: level.levelRoot,
+        pathRaw,
+        homeAbs,
+      });
       if (!resolved) continue;
       files.push(resolved);
     }
@@ -186,13 +168,9 @@ function findAdditionalAgentsFilesFromTauConfigsDetailed(args: {
   return { files, errors };
 }
 
-export function findAgentsFilesInScopeDetailed(
-  cwd: string,
-  home: string,
-  gitRootAbs?: string,
-): AgentsFilesInScopeResult {
+export function findAgentsFilesInScopeDetailed(cwd: string, home: string): AgentsFilesInScopeResult {
   const base = findAgentsFilesFromCwdToHome(cwd, home);
-  const extra = findAdditionalAgentsFilesFromTauConfigsDetailed({ cwd, home, gitRootAbs });
+  const extra = findAdditionalAgentsFilesFromConfigsDetailed({ cwd, home });
 
   const seen = new Set<string>();
   const files: string[] = [];
@@ -206,6 +184,6 @@ export function findAgentsFilesInScopeDetailed(
   return { files, errors: extra.errors };
 }
 
-export function findAgentsFilesInScope(cwd: string, home: string, gitRootAbs?: string): string[] {
-  return findAgentsFilesInScopeDetailed(cwd, home, gitRootAbs).files;
+export function findAgentsFilesInScope(cwd: string, home: string): string[] {
+  return findAgentsFilesInScopeDetailed(cwd, home).files;
 }

@@ -150,15 +150,15 @@ you can also pipe content directly:
 cat src/tui/app.ts | tau --persona opus-4.5-chat
 ```
 
-for project-aware sessions, use `--with-context` to inject your AGENTS.md into the system prompt. tau searches for this file in the current directory and parent directories up to your home folder.
+for project-aware sessions, use `--with-context` to inject your AGENTS.md into the system prompt. tau searches for this file in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home).
 
-you can also include additional `AGENTS.md` files via `.tau/config.json` (when that config is in scope for the current working directory):
+you can also include additional `AGENTS.md` files via config (when that config is in scope for the current working directory):
 
 ```json
-{ "agents": ["packages/pkg1/AGENTS.md"] }
+{ "agentContextFiles": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/`.
+paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config).
 
 run `tau --help` to see all available options, or `tau --debug` to inspect loaded personas, prompts, skills, and the full system prompt for debugging configuration issues.
 
@@ -213,7 +213,9 @@ the compact commands are useful when conversations get long. they compress every
 
 ### global config
 
-store settings in `~/.config/tau/config.json`:
+tau loads config from `~/.config/tau/config.json` plus any `.tau/config.json` found by walking
+from the current working directory up to home (or the filesystem root when cwd is outside home).
+settings merge from least-specific to most-specific.
 
 ```json
 {
@@ -225,9 +227,7 @@ store settings in `~/.config/tau/config.json`:
   },
   "defaultPersona": "gpt-5.2-chat",
   "defaultRisk": "read-write",
-  "toolDisplayMode": "compact",
-  "disableBuiltinPersonas": false,
-  "userPreferences": "prefer concise responses. use TypeScript for examples."
+  "disableBuiltinPersonas": false
 }
 ```
 
@@ -235,19 +235,15 @@ the `defaultPersona` field specifies which persona to use when starting the app.
 
 the `defaultRisk` field sets the initial risk level (`restricted`, `read-only`, or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 
-the `userPreferences` field lets you set guidance that applies to every conversation: preferred languages, response style, or domain context.
-
-`toolDisplayMode` controls how tool calls appear: `"compact"` (default) shows one-line summaries, `"full"` shows detailed blocks.
-
-if `disableBuiltinPersonas` is set to `true`, tau will not load any built-in personas. only personas from `~/.config/tau/personas/` and `.tau/personas/` will be available. you can also set `disableBuiltinPersonas` in `.tau/config.json` at the repo root to disable built-ins for that project (overrides the global value).
+if `disableBuiltinPersonas` is set to `true`, tau will not load any built-in personas. only personas from `~/.config/tau/personas/` and `.tau/personas/` will be available. you can also set `disableBuiltinPersonas` in any `.tau/config.json`; the most specific value wins.
 
 ### project bash commands
 
-define shortcuts for common shell commands in `.tau/config.json` at your project root (or `~/.tau/config.json` globally). tau resolves the project root via git, so you can run tau from subdirectories and it will still pick up `.tau/config.json`:
+define shortcuts for common shell commands in any in-scope config file (`~/.config/tau/config.json` or `.tau/config.json` in the cwd ancestry). entries merge by `id` with the most specific level winning:
 
 ```json
 {
-  "bash": [
+  "bashCommands": [
     { "id": "check", "description": "lint + typecheck", "cmd": "npm run check" },
     { "id": "test", "cmd": "npm test" }
   ]
@@ -258,17 +254,17 @@ run them with `/bash:check` or `/bash:test`.
 
 ### additional agents context
 
-if you use `--with-context`, you can tell tau to always include extra `AGENTS.md` files by adding an `agents` list to `.tau/config.json`:
+if you use `--with-context`, you can tell tau to always include extra `AGENTS.md` files by adding an `agentContextFiles` list to a config file in scope:
 
 ```json
-{ "agents": ["packages/pkg1/AGENTS.md"] }
+{ "agentContextFiles": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/`.
+paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config). entries must point at `AGENTS.md`.
 
 ### custom personas
 
-create your own personas by adding markdown files to `~/.config/tau/personas/` (user-level) or `.tau/personas/` (project-level). project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root:
+create your own personas by adding markdown files to `~/.config/tau/personas/` (global) or `.tau/personas/` (project). `.tau/` directories are discovered by walking up from the current working directory to home (or filesystem root if cwd is outside home):
 
 ```markdown
 ---
@@ -321,11 +317,11 @@ model: claude-haiku-4-5
 
 ```
 
-by default, user-level personas can’t use built-in persona ids. if you set `disableBuiltinPersonas: true`, those ids become available for custom personas.
+when persona ids collide across levels, the most specific level wins (for example, a `.tau/personas/` entry overrides a global or built-in persona).
 
 ### custom prompts
 
-save reusable prompt templates in `~/.config/tau/prompts/` (user-level) or `.tau/prompts/` (project-level). project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root:
+save reusable prompt templates in `~/.config/tau/prompts/` (global) or `.tau/prompts/` (project). `.tau/` directories are discovered by walking up from the current working directory to home (or filesystem root if cwd is outside home):
 
 ```markdown
 ---
@@ -336,11 +332,11 @@ review this code for bugs, edge cases, and style issues.
 suggest specific improvements with code examples.
 ```
 
-insert them with `/prompt:review`. if a project prompt id conflicts with a user or built-in prompt, the project prompt wins.
+insert them with `/prompt:review`. if a prompt id conflicts across levels (including built-ins), the most specific level wins.
 
 ### skills
 
-skills are optional directories discovered at `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and `.tau/skills/`. project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root. each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
+skills are optional directories discovered at `~/.config/tau/skills/` and `.tau/skills/` in the cwd ancestry (up to home, or filesystem root if cwd is outside home). each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
 
 `SKILL.md` must start with yaml frontmatter:
 

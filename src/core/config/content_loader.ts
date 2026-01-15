@@ -20,8 +20,8 @@ import { ReasoningEffortSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
 import { createDefaultConfigDeps } from "./deps.js";
-import type { ConfigPaths } from "./paths.js";
-import { resolveConfigPaths } from "./paths.js";
+import type { ConfigLevel } from "./paths.js";
+import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
 import { isGoogleAuthAvailable } from "./schema.js";
 
@@ -287,12 +287,12 @@ function loadMarkdownFiles(
 
 function resolveContentContext(options?: {
   deps?: ConfigDeps;
-  paths?: ConfigPaths;
+  levels?: ConfigLevel[];
   cwd?: string;
-}): { deps: ConfigDeps; paths: ConfigPaths } {
+}): { deps: ConfigDeps; levels: ConfigLevel[] } {
   const deps = options?.deps ?? createDefaultConfigDeps();
-  const paths = options?.paths ?? resolveConfigPaths(deps, { cwd: options?.cwd });
-  return { deps, paths };
+  const levels = options?.levels ?? resolveConfigLevels(deps, { cwd: options?.cwd });
+  return { deps, levels };
 }
 
 const personaFrontMatterSchema = z
@@ -359,7 +359,6 @@ const DEFAULT_PERSONA_TOOLS = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
 function parsePersona(
   file: string,
   content: string,
-  forbiddenIds: Set<string> | undefined,
   source: "user" | "project",
   basePersonasById?: Map<string, Persona>,
 ): { persona?: Persona; error?: string } {
@@ -381,10 +380,6 @@ function parsePersona(
 
   if (extendsId && !basePersona) {
     return { error: `${file}: extends "${extendsId}" not found. skipped.` };
-  }
-
-  if (forbiddenIds?.has(id.toLowerCase())) {
-    return { error: `${file}: persona id "${id}" conflicts with built-in. skipped.` };
   }
 
   const modelObj = resolveModel(provider, model);
@@ -520,7 +515,6 @@ function parsePersona(
 function parsePrompt(
   file: string,
   content: string,
-  forbiddenIds?: Set<string>,
 ): { prompt?: PromptTemplate; error?: string } {
   const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
 
@@ -530,10 +524,6 @@ function parsePrompt(
   }
 
   const { id, label, description } = parsedFrontMatter.data;
-
-  if (forbiddenIds?.has(id.toLowerCase())) {
-    return { error: `${file}: prompt id "${id}" conflicts with built-in. skipped.` };
-  }
 
   const prompt: PromptTemplate = {
     id,
@@ -547,20 +537,23 @@ function parsePrompt(
 
 export async function loadUserPersonas(args?: {
   basePersonasById?: Map<string, Persona>;
-  forbiddenIds?: Set<string>;
   deps?: ConfigDeps;
-  paths?: ConfigPaths;
+  levels?: ConfigLevel[];
   cwd?: string;
 }): Promise<{
   personas: Persona[];
   errors: string[];
 }> {
-  const { deps, paths } = resolveContentContext({
+  const { deps, levels } = resolveContentContext({
     deps: args?.deps,
-    paths: args?.paths,
+    levels: args?.levels,
     cwd: args?.cwd,
   });
-  const personasDir = paths.userContentDirs.personas;
+  const globalLevel = levels.find((level) => level.scope === "global");
+  if (!globalLevel) {
+    return { personas: [], errors: [] };
+  }
+  const personasDir = globalLevel.personasDir;
   const { files, error } = loadMarkdownFiles(personasDir, deps);
 
   if (error) {
@@ -574,13 +567,7 @@ export async function loadUserPersonas(args?: {
     args?.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
 
   for (const file of files) {
-    const result = parsePersona(
-      file.name,
-      file.content,
-      args?.forbiddenIds,
-      "user",
-      basePersonasById,
-    );
+    const result = parsePersona(file.name, file.content, "user", basePersonasById);
     if (result.persona) {
       personas.push(result.persona);
     } else if (result.error) {
@@ -595,19 +582,19 @@ export async function loadProjectPersonas(args?: {
   basePersonasById?: Map<string, Persona>;
   cwd?: string;
   deps?: ConfigDeps;
-  paths?: ConfigPaths;
+  levels?: ConfigLevel[];
 }): Promise<{
   personas: Persona[];
   errors: string[];
 }> {
-  const { deps, paths } = resolveContentContext({
+  const { deps, levels } = resolveContentContext({
     deps: args?.deps,
-    paths: args?.paths,
+    levels: args?.levels,
     cwd: args?.cwd,
   });
 
-  const personasDirs = paths.projectContentDirs.personas;
-  if (personasDirs.length === 0) {
+  const projectLevels = levels.filter((level) => level.scope === "project");
+  if (projectLevels.length === 0) {
     return { personas: [], errors: [] };
   }
 
@@ -618,8 +605,8 @@ export async function loadProjectPersonas(args?: {
     args?.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
 
   // Parent-first order, closest directory wins on conflicts.
-  for (const personasDir of personasDirs.slice().reverse()) {
-    const { files, error } = loadMarkdownFiles(personasDir, deps);
+  for (const level of projectLevels) {
+    const { files, error } = loadMarkdownFiles(level.personasDir, deps);
 
     if (error) {
       errors.push(error);
@@ -627,7 +614,7 @@ export async function loadProjectPersonas(args?: {
     }
 
     for (const file of files) {
-      const result = parsePersona(file.name, file.content, undefined, "project", basePersonasById);
+      const result = parsePersona(file.name, file.content, "project", basePersonasById);
       if (result.persona) {
         personas.push(result.persona);
       } else if (result.error) {
@@ -641,30 +628,33 @@ export async function loadProjectPersonas(args?: {
 
 export async function loadUserPrompts(args?: {
   deps?: ConfigDeps;
-  paths?: ConfigPaths;
+  levels?: ConfigLevel[];
   cwd?: string;
 }): Promise<{
   prompts: PromptTemplate[];
   errors: string[];
 }> {
-  const { deps, paths } = resolveContentContext({
+  const { deps, levels } = resolveContentContext({
     deps: args?.deps,
-    paths: args?.paths,
+    levels: args?.levels,
     cwd: args?.cwd,
   });
-  const promptsDir = paths.userContentDirs.prompts;
+  const globalLevel = levels.find((level) => level.scope === "global");
+  if (!globalLevel) {
+    return { prompts: [], errors: [] };
+  }
+  const promptsDir = globalLevel.promptsDir;
   const { files, error } = loadMarkdownFiles(promptsDir, deps);
 
   if (error) {
     return { prompts: [], errors: [error] };
   }
 
-  const builtinIds = new Set(builtinPrompts.map((p) => p.id.toLowerCase()));
   const prompts: PromptTemplate[] = [];
   const errors: string[] = [];
 
   for (const file of files) {
-    const result = parsePrompt(file.name, file.content, builtinIds);
+    const result = parsePrompt(file.name, file.content);
     if (result.prompt) {
       prompts.push(result.prompt);
     } else if (result.error) {
@@ -678,19 +668,19 @@ export async function loadUserPrompts(args?: {
 export async function loadProjectPrompts(args?: {
   cwd?: string;
   deps?: ConfigDeps;
-  paths?: ConfigPaths;
+  levels?: ConfigLevel[];
 }): Promise<{
   prompts: PromptTemplate[];
   errors: string[];
 }> {
-  const { deps, paths } = resolveContentContext({
+  const { deps, levels } = resolveContentContext({
     deps: args?.deps,
-    paths: args?.paths,
+    levels: args?.levels,
     cwd: args?.cwd,
   });
 
-  const promptsDirs = paths.projectContentDirs.prompts;
-  if (promptsDirs.length === 0) {
+  const projectLevels = levels.filter((level) => level.scope === "project");
+  if (projectLevels.length === 0) {
     return { prompts: [], errors: [] };
   }
 
@@ -698,8 +688,8 @@ export async function loadProjectPrompts(args?: {
   const errors: string[] = [];
 
   // Parent-first order, closest directory wins on conflicts.
-  for (const promptsDir of promptsDirs.slice().reverse()) {
-    const { files, error } = loadMarkdownFiles(promptsDir, deps);
+  for (const level of projectLevels) {
+    const { files, error } = loadMarkdownFiles(level.promptsDir, deps);
 
     if (error) {
       errors.push(error);
@@ -799,36 +789,39 @@ function loadSkillsFromDir(
 
 export async function loadUserSkills(args?: {
   deps?: ConfigDeps;
-  paths?: ConfigPaths;
+  levels?: ConfigLevel[];
   cwd?: string;
 }): Promise<{
   skills: Skill[];
   errors: string[];
 }> {
-  const { deps, paths } = resolveContentContext({
+  const { deps, levels } = resolveContentContext({
     deps: args?.deps,
-    paths: args?.paths,
+    levels: args?.levels,
     cwd: args?.cwd,
   });
-  const skillsDir = paths.userContentDirs.skills;
-  return loadSkillsFromDir(skillsDir, deps);
+  const globalLevel = levels.find((level) => level.scope === "global");
+  if (!globalLevel) {
+    return { skills: [], errors: [] };
+  }
+  return loadSkillsFromDir(globalLevel.skillsDir, deps);
 }
 
 export async function loadProjectSkills(args?: {
   cwd?: string;
   deps?: ConfigDeps;
-  paths?: ConfigPaths;
+  levels?: ConfigLevel[];
 }): Promise<{
   skills: Skill[];
   errors: string[];
 }> {
-  const { deps, paths } = resolveContentContext({
+  const { deps, levels } = resolveContentContext({
     deps: args?.deps,
-    paths: args?.paths,
+    levels: args?.levels,
     cwd: args?.cwd,
   });
-  const skillsDirs = paths.projectContentDirs.skills;
-  if (skillsDirs.length === 0) {
+  const projectLevels = levels.filter((level) => level.scope === "project");
+  if (projectLevels.length === 0) {
     return { skills: [], errors: [] };
   }
 
@@ -836,8 +829,8 @@ export async function loadProjectSkills(args?: {
   const errors: string[] = [];
 
   // Parent-first order, closest directory wins on conflicts.
-  for (const skillsDir of skillsDirs.slice().reverse()) {
-    const result = loadSkillsFromDir(skillsDir, deps);
+  for (const level of projectLevels) {
+    const result = loadSkillsFromDir(level.skillsDir, deps);
     skills.push(...result.skills);
     errors.push(...result.errors);
   }
@@ -847,16 +840,16 @@ export async function loadProjectSkills(args?: {
 
 export async function loadAllContent(
   config?: Config,
-  options?: { cwd?: string; deps?: ConfigDeps; paths?: ConfigPaths },
+  options?: { cwd?: string; deps?: ConfigDeps; levels?: ConfigLevel[] },
 ): Promise<{
   personas: Persona[];
   prompts: PromptTemplate[];
   skills: Skill[];
   errors: string[];
 }> {
-  const { deps, paths } = resolveContentContext({
+  const { deps, levels } = resolveContentContext({
     deps: options?.deps,
-    paths: options?.paths,
+    levels: options?.levels,
     cwd: options?.cwd,
   });
 
@@ -872,21 +865,17 @@ export async function loadAllContent(
     );
 
     const includeBuiltins = !config?.disableBuiltinPersonas;
-    const forbiddenIds = includeBuiltins
-      ? new Set(builtinBasePersonas.map((p) => p.id.toLowerCase()))
-      : undefined;
 
     const userPersonasResult = await loadUserPersonas({
       basePersonasById,
-      forbiddenIds,
       deps,
-      paths,
+      levels,
     });
-    const projectPersonasResult = await loadProjectPersonas({ basePersonasById, deps, paths });
-    const userPromptsResult = await loadUserPrompts({ deps, paths });
-    const projectPromptsResult = await loadProjectPrompts({ deps, paths });
-    const userSkillsResult = await loadUserSkills({ deps, paths });
-    const projectSkillsResult = await loadProjectSkills({ deps, paths });
+    const projectPersonasResult = await loadProjectPersonas({ basePersonasById, deps, levels });
+    const userPromptsResult = await loadUserPrompts({ deps, levels });
+    const projectPromptsResult = await loadProjectPrompts({ deps, levels });
+    const userSkillsResult = await loadUserSkills({ deps, levels });
+    const projectSkillsResult = await loadProjectSkills({ deps, levels });
 
     const allErrors = [
       ...userPersonasResult.errors,
@@ -911,7 +900,7 @@ export async function loadAllContent(
 
     const effectiveBuiltins = includeBuiltins ? builtinDisplayPersonas : [];
 
-    // Precedence: built-ins < user < project.
+    // Precedence: built-ins < global < nearest .tau levels.
     return {
       personas: mergeById(
         effectiveBuiltins,

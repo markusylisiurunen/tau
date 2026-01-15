@@ -28,7 +28,7 @@ export class ChatApp implements ModeAdapter {
     const queuedUserMessages: string[] = [];
     this.view = new TuiChatView({
       queuedUserMessages,
-      compactToolUi: options.config?.toolDisplayMode !== "full",
+      compactToolUi: true,
       showThinking: options.themePreview ?? false,
       themePreview: options.themePreview ?? false,
     });

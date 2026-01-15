@@ -1,11 +1,12 @@
 import type { KnownProvider } from "@mariozechner/pi-ai";
-import { z } from "zod";
+import { resolve } from "node:path";
 import { type RiskLevel, RiskLevelSchema } from "../types.js";
+import type { BashCommand } from "./bash_commands.js";
+import { parseBashCommands } from "./bash_commands.js";
 import type { ConfigDeps } from "./deps.js";
 import { createDefaultConfigDeps } from "./deps.js";
-import { resolveConfigPaths } from "./paths.js";
-
-export type ToolDisplayMode = "compact" | "full";
+import type { ConfigLevel } from "./paths.js";
+import { resolveConfigLevels } from "./paths.js";
 
 export interface Config {
   apiKeys?: {
@@ -14,32 +15,12 @@ export interface Config {
     openai?: string;
     parallel?: string;
   };
-  userPreferences?: string;
-  toolDisplayMode?: ToolDisplayMode;
   defaultPersona?: string;
   defaultRisk?: RiskLevel;
   disableBuiltinPersonas?: boolean;
+  bashCommands?: BashCommand[];
+  agentContextFiles?: string[];
 }
-
-const configSchema = z
-  .object({
-    apiKeys: z
-      .object({
-        anthropic: z.string().optional().catch(undefined),
-        google: z.string().optional().catch(undefined),
-        openai: z.string().optional().catch(undefined),
-        parallel: z.string().optional().catch(undefined),
-      })
-      .passthrough()
-      .optional()
-      .catch(undefined),
-    userPreferences: z.string().optional().catch(undefined),
-    toolDisplayMode: z.enum(["compact", "full"]).optional().catch(undefined),
-    defaultPersona: z.string().optional().catch(undefined),
-    defaultRisk: RiskLevelSchema.optional().catch(undefined),
-    disableBuiltinPersonas: z.boolean().optional().catch(undefined),
-  })
-  .passthrough();
 
 type ConfigDiagnostics = {
   config: Config;
@@ -66,21 +47,120 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
     return { config: {}, errors: [`${sourceLabel}: config must be an object.`] };
   }
 
-  const parsed = configSchema.safeParse(raw);
-  if (!parsed.success) {
-    return { config: {}, errors: [`${sourceLabel}: config did not match schema.`] };
+  const data = raw as Record<string, unknown>;
+  const config: Config = {};
+  const errors: string[] = [];
+
+  if (data.apiKeys !== undefined) {
+    if (typeof data.apiKeys !== "object" || data.apiKeys === null) {
+      errors.push(`${sourceLabel}: 'apiKeys' must be an object.`);
+    } else {
+      const apiKeys: Config["apiKeys"] = {};
+      const keys = data.apiKeys as Record<string, unknown>;
+      const providers = ["anthropic", "google", "openai", "parallel"] as const;
+      for (const provider of providers) {
+        const value = keys[provider];
+        if (value === undefined) continue;
+        if (typeof value !== "string") {
+          errors.push(`${sourceLabel}: apiKeys.${provider} must be a string.`);
+          continue;
+        }
+        apiKeys[provider] = value;
+      }
+      if (Object.keys(apiKeys).length > 0) {
+        config.apiKeys = apiKeys;
+      }
+    }
   }
 
-  return { config: parsed.data as Config, errors: [] };
+  if (data.defaultPersona !== undefined) {
+    if (typeof data.defaultPersona === "string") {
+      config.defaultPersona = data.defaultPersona;
+    } else {
+      errors.push(`${sourceLabel}: 'defaultPersona' must be a string.`);
+    }
+  }
+
+  if (data.defaultRisk !== undefined) {
+    const parsed = RiskLevelSchema.safeParse(data.defaultRisk);
+    if (parsed.success) {
+      config.defaultRisk = parsed.data;
+    } else {
+      errors.push(`${sourceLabel}: 'defaultRisk' must be a valid risk level.`);
+    }
+  }
+
+  if (data.disableBuiltinPersonas !== undefined) {
+    if (typeof data.disableBuiltinPersonas === "boolean") {
+      config.disableBuiltinPersonas = data.disableBuiltinPersonas;
+    } else {
+      errors.push(`${sourceLabel}: 'disableBuiltinPersonas' must be a boolean.`);
+    }
+  }
+
+  const bashResult = parseBashCommands(data.bashCommands, sourceLabel);
+  if (bashResult.commands.length > 0) {
+    config.bashCommands = bashResult.commands;
+  }
+  errors.push(...bashResult.errors);
+
+  const agentResult = parseAgentContextFiles(data.agentContextFiles, sourceLabel);
+  if (agentResult.paths.length > 0) {
+    config.agentContextFiles = agentResult.paths;
+  }
+  errors.push(...agentResult.errors);
+
+  return { config, errors };
 }
 
-function loadConfigFile(configPath: string, deps: ConfigDeps, sourceLabel: string): ConfigDiagnostics {
+function parseAgentContextFiles(
+  raw: unknown,
+  sourceLabel: string,
+): { paths: string[]; errors: string[] } {
+  if (raw === undefined) {
+    return { paths: [], errors: [] };
+  }
+
+  const list =
+    typeof raw === "string"
+      ? [raw]
+      : Array.isArray(raw)
+        ? raw
+        : undefined;
+
+  if (!list) {
+    return {
+      paths: [],
+      errors: [`${sourceLabel}: 'agentContextFiles' must be a string or string array.`],
+    };
+  }
+
+  const cleaned = list
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (cleaned.length === 0) {
+    return {
+      paths: [],
+      errors: [`${sourceLabel}: 'agentContextFiles' must be a string or string array.`],
+    };
+  }
+
+  return { paths: cleaned, errors: [] };
+}
+
+function loadConfigFile(
+  level: ConfigLevel,
+  deps: ConfigDeps,
+  sourceLabel: string,
+): ConfigDiagnostics {
   try {
-    if (!deps.fs.exists(configPath)) {
+    if (!deps.fs.exists(level.configPath)) {
       return { config: {}, errors: [] };
     }
 
-    const content = deps.fs.readFile(configPath);
+    const content = deps.fs.readFile(level.configPath);
     const parsed = parseConfigJson(content, sourceLabel);
     if (parsed.data === undefined) {
       return { config: {}, errors: parsed.errors };
@@ -98,13 +178,83 @@ function loadConfigFile(configPath: string, deps: ConfigDeps, sourceLabel: strin
   }
 }
 
-function mergeConfig(userConfig: Config, projectConfig: Config): Config {
-  // Project config only overrides disableBuiltinPersonas; all other fields come from user config.
-  if (projectConfig.disableBuiltinPersonas !== undefined) {
-    return { ...userConfig, disableBuiltinPersonas: projectConfig.disableBuiltinPersonas };
+function mergeApiKeys(
+  target: Config["apiKeys"] | undefined,
+  overlay: Config["apiKeys"] | undefined,
+): Config["apiKeys"] | undefined {
+  if (!target && !overlay) {
+    return undefined;
   }
 
-  return userConfig;
+  return {
+    ...(target ?? {}),
+    ...(overlay ?? {}),
+  };
+}
+
+function resolveAgentContextPaths(level: ConfigLevel, rawPaths: string[]): string[] {
+  return rawPaths.map((entry) => resolve(level.levelRoot, entry));
+}
+
+function dedupePaths(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const path of paths) {
+    if (seen.has(path)) continue;
+    seen.add(path);
+    unique.push(path);
+  }
+  return unique;
+}
+
+function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
+  const merged: Config = {};
+  let apiKeys: Config["apiKeys"] | undefined;
+  const bashCommands = new Map<string, BashCommand>();
+  const agentContextFiles: string[] = [];
+
+  for (let i = 0; i < levels.length; i += 1) {
+    const level = levels[i]!;
+    const config = configs[i] ?? {};
+
+    apiKeys = mergeApiKeys(apiKeys, config.apiKeys);
+
+    if (config.defaultPersona !== undefined) {
+      merged.defaultPersona = config.defaultPersona;
+    }
+
+    if (config.defaultRisk !== undefined) {
+      merged.defaultRisk = config.defaultRisk;
+    }
+
+    if (config.disableBuiltinPersonas !== undefined) {
+      merged.disableBuiltinPersonas = config.disableBuiltinPersonas;
+    }
+
+    if (config.bashCommands) {
+      for (const cmd of config.bashCommands) {
+        bashCommands.set(cmd.id.toLowerCase(), cmd);
+      }
+    }
+
+    if (config.agentContextFiles) {
+      agentContextFiles.push(...resolveAgentContextPaths(level, config.agentContextFiles));
+    }
+  }
+
+  if (apiKeys && Object.keys(apiKeys).length > 0) {
+    merged.apiKeys = apiKeys;
+  }
+
+  if (bashCommands.size > 0) {
+    merged.bashCommands = Array.from(bashCommands.values());
+  }
+
+  if (agentContextFiles.length > 0) {
+    merged.agentContextFiles = dedupePaths(agentContextFiles);
+  }
+
+  return merged;
 }
 
 export function loadConfigWithDiagnostics(
@@ -113,16 +263,18 @@ export function loadConfigWithDiagnostics(
 ): { config: Config; errors: string[] } {
   const resolvedDeps = deps ?? createDefaultConfigDeps();
   const resolvedCwd = cwd ?? resolvedDeps.env.cwd();
-  const paths = resolveConfigPaths(resolvedDeps, { cwd: resolvedCwd });
+  const levels = resolveConfigLevels(resolvedDeps, { cwd: resolvedCwd });
 
-  const userResult = loadConfigFile(paths.userConfigPath, resolvedDeps, paths.userConfigPath);
-  const projectResult = paths.projectConfigPath
-    ? loadConfigFile(paths.projectConfigPath, resolvedDeps, paths.projectConfigPath)
-    : { config: {}, errors: [] };
+  const results = levels.map((level) =>
+    loadConfigFile(level, resolvedDeps, level.configPath),
+  );
 
   return {
-    config: mergeConfig(userResult.config, projectResult.config),
-    errors: [...userResult.errors, ...projectResult.errors],
+    config: mergeConfigLevels(
+      levels,
+      results.map((result) => result.config),
+    ),
+    errors: results.flatMap((result) => result.errors),
   };
 }
 

@@ -1,70 +1,59 @@
-import { dirname, join, resolve, sep } from "node:path";
-import { getGitRoot } from "../utils/git.js";
+import { dirname, join, parse, resolve, sep } from "node:path";
 import type { ConfigDeps } from "./deps.js";
 
-export type UserContentDirs = {
-  personas: string;
-  prompts: string;
-  skills: string;
+export type ConfigLevelScope = "global" | "project";
+
+export type ConfigLevel = {
+  levelRoot: string;
+  configDir: string;
+  configPath: string;
+  personasDir: string;
+  promptsDir: string;
+  skillsDir: string;
+  scope: ConfigLevelScope;
 };
 
-export type ProjectContentDirs = {
-  personas: string[];
-  prompts: string[];
-  skills: string[];
-};
-
-export type ConfigPaths = {
-  configHome: string;
-  userConfigDir: string;
-  userConfigPath: string;
-  projectConfigDir?: string;
-  projectConfigPath?: string;
-  userContentDirs: UserContentDirs;
-  projectContentDirs: ProjectContentDirs;
-  repoRoot?: string;
-};
-
-function resolveConfigHome(env: NodeJS.ProcessEnv, home: string): string {
-  const xdgConfigHome = env.XDG_CONFIG_HOME;
-  if (xdgConfigHome && xdgConfigHome.trim()) {
-    return xdgConfigHome;
-  }
-  return join(home, ".config");
+function buildLevel(levelRoot: string, configDir: string, scope: ConfigLevelScope): ConfigLevel {
+  const root = resolve(levelRoot);
+  const dir = resolve(configDir);
+  return {
+    levelRoot: root,
+    configDir: dir,
+    configPath: join(dir, "config.json"),
+    personasDir: join(dir, "personas"),
+    promptsDir: join(dir, "prompts"),
+    skillsDir: join(dir, "skills"),
+    scope,
+  };
 }
 
-function resolveSearchStop(cwdAbs: string, homeAbs: string, repoRootAbs?: string): string {
-  if (repoRootAbs && (cwdAbs === repoRootAbs || cwdAbs.startsWith(repoRootAbs + sep))) {
-    return repoRootAbs;
+function isDirectory(deps: ConfigDeps, path: string): boolean {
+  if (!deps.fs.exists(path)) {
+    return false;
   }
-
-  if (cwdAbs === homeAbs || cwdAbs.startsWith(homeAbs + sep)) {
-    return homeAbs;
+  try {
+    return deps.fs.stat(path).isDirectory();
+  } catch {
+    return false;
   }
-
-  return cwdAbs;
 }
 
-function findProjectTauDirs(args: {
-  deps: ConfigDeps;
-  cwd: string;
-  home: string;
-  repoRoot?: string;
-  subdir: "personas" | "prompts" | "skills";
-}): string[] {
-  const cwdAbs = resolve(args.cwd);
-  const homeAbs = resolve(args.home);
-  const repoRootAbs = args.repoRoot ? resolve(args.repoRoot) : undefined;
+export function resolveConfigLevels(deps: ConfigDeps, options?: { cwd?: string }): ConfigLevel[] {
+  const cwdAbs = resolve(options?.cwd ?? deps.env.cwd());
+  const homeAbs = resolve(deps.env.home());
 
-  const stopAbs = resolveSearchStop(cwdAbs, homeAbs, repoRootAbs);
+  const withinHome = cwdAbs === homeAbs || cwdAbs.startsWith(homeAbs + sep);
+  const stopAbs = withinHome ? homeAbs : parse(cwdAbs).root;
 
-  const found: string[] = [];
+  const levels: ConfigLevel[] = [buildLevel(homeAbs, join(homeAbs, ".config", "tau"), "global")];
+
+  const projectLevels: ConfigLevel[] = [];
   let dir = cwdAbs;
 
   while (true) {
-    const candidate = join(dir, ".tau", args.subdir);
-    if (args.deps.fs.exists(candidate)) {
-      found.push(candidate);
+    const configDir = join(dir, ".tau");
+    if (isDirectory(deps, configDir)) {
+      projectLevels.push(buildLevel(dir, configDir, "project"));
     }
 
     if (dir === stopAbs) break;
@@ -75,45 +64,8 @@ function findProjectTauDirs(args: {
     dir = parent;
   }
 
-  return found;
-}
+  projectLevels.reverse();
+  levels.push(...projectLevels);
 
-export function resolveConfigPaths(
-  deps: ConfigDeps,
-  options?: { cwd?: string; repoRoot?: string },
-): ConfigPaths {
-  const cwd = options?.cwd ?? deps.env.cwd();
-  const home = deps.env.home();
-  const env = deps.env.getEnv();
-
-  const configHome = resolveConfigHome(env, home);
-  const userConfigDir = join(configHome, "tau");
-  const userConfigPath = join(userConfigDir, "config.json");
-
-  const repoRoot = options?.repoRoot ?? getGitRoot(cwd);
-  const projectConfigDir = repoRoot ? join(repoRoot, ".tau") : undefined;
-  const projectConfigPath = projectConfigDir ? join(projectConfigDir, "config.json") : undefined;
-
-  const userContentDirs = {
-    personas: join(userConfigDir, "personas"),
-    prompts: join(userConfigDir, "prompts"),
-    skills: join(userConfigDir, "skills"),
-  };
-
-  const projectContentDirs = {
-    personas: findProjectTauDirs({ deps, cwd, home, repoRoot, subdir: "personas" }),
-    prompts: findProjectTauDirs({ deps, cwd, home, repoRoot, subdir: "prompts" }),
-    skills: findProjectTauDirs({ deps, cwd, home, repoRoot, subdir: "skills" }),
-  };
-
-  return {
-    configHome,
-    userConfigDir,
-    userConfigPath,
-    projectConfigDir,
-    projectConfigPath,
-    userContentDirs,
-    projectContentDirs,
-    repoRoot,
-  };
+  return levels;
 }

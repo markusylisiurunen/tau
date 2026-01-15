@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { relative, sep } from "node:path";
 import { type RiskLevel, RiskLevelSchema, type Skill } from "../types.js";
 
 export type Command =
@@ -86,21 +86,16 @@ export function getRiskLevelAutocompleteOptions(
 }
 
 function formatSkillPath(fullPath: string): string {
-  const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  const globalSkillsDir = join(configHome, "tau", "skills");
-  const projectSkillsDir = join(process.cwd(), ".tau", "skills");
+  const cwd = process.cwd();
+  const home = homedir();
 
-  if (fullPath.startsWith(projectSkillsDir)) {
-    const relPath = relative(process.cwd(), fullPath);
-    return relPath;
+  if (fullPath === cwd || fullPath.startsWith(cwd + sep)) {
+    return relative(cwd, fullPath);
   }
 
-  if (fullPath.startsWith(globalSkillsDir)) {
-    const relPath = relative(configHome, fullPath);
-    if (process.env.XDG_CONFIG_HOME) {
-      return `$XDG_CONFIG_HOME/${relPath}`;
-    }
-    return `~/.config/${relPath}`;
+  if (fullPath === home || fullPath.startsWith(home + sep)) {
+    const relPath = relative(home, fullPath);
+    return relPath ? `~/${relPath}` : "~";
   }
 
   return fullPath;

@@ -1,13 +1,6 @@
 import type { RiskLevel, Skill } from "../types.js";
 import { findAgentsFilesInScope } from "./agents_files.js";
 
-function buildUserPreferencesBlock(userPreferences?: string): string | undefined {
-  if (typeof userPreferences === "string" && userPreferences.trim()) {
-    return ["<user_preferences>", userPreferences, "</user_preferences>"].join("\n");
-  }
-  return undefined;
-}
-
 function escapeXml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -68,7 +61,6 @@ export function buildBaseSystemPrompt(args: {
   projectContextBlock?: string;
   environmentTag: string;
   previousSessionSummary?: string;
-  userPreferences?: string;
   subagentsBlock?: string;
 }): string {
   const parts: string[] = [args.personaSystemPrompt.trim()];
@@ -92,10 +84,6 @@ export function buildBaseSystemPrompt(args: {
   }
   if (args.subagentsBlock?.trim()) {
     parts.push(args.subagentsBlock.trim());
-  }
-  const userPrefsBlock = buildUserPreferencesBlock(args.userPreferences);
-  if (userPrefsBlock) {
-    parts.push(userPrefsBlock);
   }
   parts.push(args.environmentTag.trim());
   return parts.join("\n\n");

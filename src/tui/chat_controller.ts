@@ -14,8 +14,7 @@ import {
   type Config,
   createDefaultConfigDeps,
   getApiKeyForProvider,
-  loadAllContent,
-  loadBashCommands,
+  loadRuntimeConfig,
 } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
@@ -139,7 +138,7 @@ export class ChatController {
     this.repoRoot = getGitRoot(cwd) ?? cwd;
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
-    this.compactToolUi = this.config.toolDisplayMode !== "full";
+    this.compactToolUi = true;
     this.themePreview = options.themePreview ?? false;
     this.showThinking = this.themePreview;
     this.queuedUserMessages = options.queuedUserMessages ?? [];
@@ -152,7 +151,7 @@ export class ChatController {
     }
 
     if (options.withContext) {
-      const res = findAgentsFilesInScopeDetailed(cwd, home, this.repoRoot);
+      const res = findAgentsFilesInScopeDetailed(cwd, home);
       this.agentsFiles = res.files;
       this.agentsConfigErrors = res.errors;
     } else {
@@ -202,7 +201,6 @@ export class ChatController {
       skillsBlock: this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock,
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
-      userPreferences: this.config.userPreferences,
       subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });
 
@@ -1103,7 +1101,6 @@ export class ChatController {
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
       previousSessionSummary,
-      userPreferences: this.config.userPreferences,
       subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
@@ -1341,7 +1338,6 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       projectContextBlock: this.projectContextBlock,
       environmentTag: this.environmentTag,
       previousSessionSummary: this.previousSessionSummary,
-      userPreferences: this.config.userPreferences,
       subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
@@ -1384,14 +1380,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     try {
       const configDeps = createDefaultConfigDeps();
-      const result = await loadAllContent(this.config, {
-        cwd: this.deps.env.cwd(),
-        deps: configDeps,
-      });
-      const { personas, prompts, skills, errors } = result;
+      const runtime = await loadRuntimeConfig(this.deps.env.cwd(), configDeps);
+      const { config, personas, prompts, skills, bashCommands, warnings } = runtime;
 
-      const bashResult = loadBashCommands(this.deps.env.cwd(), configDeps);
-      this.bashCommands = bashResult.commands;
+      this.config = config;
+      this.engine.setConfig(this.config);
+      this.bashCommands = bashCommands;
 
       // Update the personas and prompts lists
       this.personas = personas;
@@ -1430,7 +1424,6 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         projectContextBlock: this.projectContextBlock,
         environmentTag: this.environmentTag,
         previousSessionSummary: this.previousSessionSummary,
-        userPreferences: this.config.userPreferences,
         subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
       });
       this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
@@ -1449,8 +1442,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const personaCount = personas.length;
       const promptCount = prompts.length;
       const skillCount = skills.length;
-      const bashCount = bashResult.commands.length;
-      const errorCount = errors.length + bashResult.errors.length;
+      const bashCount = bashCommands.length;
+      const errorCount = warnings.length;
       const summary =
         errorCount > 0
           ? `reloaded: ${personaCount} personas, ${promptCount} prompts, ${skillCount} skills, ${bashCount} bash commands (${errorCount} errors).`

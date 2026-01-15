@@ -30,7 +30,7 @@ describe("project context agents from .tau/config.json", () => {
 
       writeFileSync(
         join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({ agents: ["packages/pkg1/AGENTS.md"] }),
+        JSON.stringify({ agentContextFiles: ["packages/pkg1/AGENTS.md"] }),
       );
 
       const res = findAgentsFilesInScope(fx.repo, fx.home);
@@ -57,7 +57,7 @@ describe("project context agents from .tau/config.json", () => {
 
       writeFileSync(
         join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({ agents: ["docs/NOTES.md"] }),
+        JSON.stringify({ agentContextFiles: ["docs/NOTES.md"] }),
       );
 
       const res = findAgentsFilesInScope(fx.repo, fx.home);

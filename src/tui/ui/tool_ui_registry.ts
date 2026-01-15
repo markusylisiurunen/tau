@@ -43,7 +43,6 @@ export type ToolUiRenderContext = {
   taskState?: ToolUiTaskState;
   compact?: boolean;
   expanded?: boolean;
-  toolDisplayMode?: "compact" | "full";
 };
 
 type ToolUiRenderer = (event: ToolUiEvent, context: ToolUiRenderContext) => ToolOutputViewModel;

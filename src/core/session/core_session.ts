@@ -36,6 +36,10 @@ export class CoreSession {
     this.engine.setRiskLevel(level);
   }
 
+  setConfig(config: Config): void {
+    this.engine.setConfig(config);
+  }
+
   addUserText(textForModel: string): void {
     this.engine.addUserText(textForModel);
   }

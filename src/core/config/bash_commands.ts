@@ -1,20 +1,10 @@
-import { join, resolve } from "node:path";
 import { z } from "zod";
-import { getGitRoot } from "../utils/git.js";
-import type { ConfigDeps } from "./deps.js";
-import { createDefaultConfigDeps } from "./deps.js";
 
 export interface BashCommand {
   id: string;
   description?: string;
   cmd: string;
 }
-
-const bashCommandsFileSchema = z
-  .object({
-    bash: z.array(z.unknown()).optional(),
-  })
-  .passthrough();
 
 const bashCommandSchema = z
   .object({
@@ -24,41 +14,26 @@ const bashCommandSchema = z
   })
   .passthrough();
 
-function parseBashCommandsFromJson(
-  raw: unknown,
-  sourceLabel: string,
-): {
+export function parseBashCommands(raw: unknown, sourceLabel: string): {
   commands: BashCommand[];
   errors: string[];
 } {
   const errors: string[] = [];
 
-  if (typeof raw !== "object" || raw === null) {
+  if (raw === undefined) {
     return { commands: [], errors };
   }
 
-  const root = bashCommandsFileSchema.safeParse(raw);
-  if (!root.success) {
-    errors.push(`${sourceLabel}: 'bash' must be an array.`);
-    return { commands: [], errors };
-  }
-
-  if (root.data.bash === undefined) {
-    return { commands: [], errors };
-  }
-
-  const bash = root.data.bash;
-
-  if (!Array.isArray(bash)) {
-    errors.push(`${sourceLabel}: 'bash' must be an array.`);
+  if (!Array.isArray(raw)) {
+    errors.push(`${sourceLabel}: 'bashCommands' must be an array.`);
     return { commands: [], errors };
   }
 
   const commands: BashCommand[] = [];
 
-  for (const entryRaw of bash) {
+  for (const entryRaw of raw) {
     if (typeof entryRaw !== "object" || entryRaw === null) {
-      errors.push(`${sourceLabel}: bash entries must be objects.`);
+      errors.push(`${sourceLabel}: bashCommands entries must be objects.`);
       continue;
     }
 
@@ -68,17 +43,17 @@ function parseBashCommandsFromJson(
     const entry = bashCommandSchema.safeParse(entryRaw);
     if (!entry.success) {
       if (!idForMessage) {
-        errors.push(`${sourceLabel}: bash entry missing valid 'id'.`);
+        errors.push(`${sourceLabel}: bashCommands entry missing valid 'id'.`);
         continue;
       }
 
       const hasCmdIssue = entry.error.issues.some((issue) => issue.path[0] === "cmd");
       if (hasCmdIssue) {
-        errors.push(`${sourceLabel}: bash entry '${idForMessage}' missing valid 'cmd'.`);
+        errors.push(`${sourceLabel}: bashCommands entry '${idForMessage}' missing valid 'cmd'.`);
         continue;
       }
 
-      errors.push(`${sourceLabel}: bash entry '${idForMessage}' is invalid.`);
+      errors.push(`${sourceLabel}: bashCommands entry '${idForMessage}' is invalid.`);
       continue;
     }
 
@@ -86,65 +61,4 @@ function parseBashCommandsFromJson(
   }
 
   return { commands, errors };
-}
-
-function loadBashCommandsFile(
-  path: string,
-  sourceLabel: string,
-  deps: ConfigDeps,
-): {
-  commands: BashCommand[];
-  errors: string[];
-} {
-  try {
-    if (!deps.fs.exists(path)) {
-      return { commands: [], errors: [] };
-    }
-
-    const content = deps.fs.readFile(path);
-    const json = JSON.parse(content) as unknown;
-
-    return parseBashCommandsFromJson(json, sourceLabel);
-  } catch (err) {
-    return {
-      commands: [],
-      errors: [
-        `${sourceLabel}: failed to read/parse: ${err instanceof Error ? err.message : String(err)}`,
-      ],
-    };
-  }
-}
-
-export function loadBashCommands(cwd: string, deps?: ConfigDeps): {
-  commands: BashCommand[];
-  errors: string[];
-  repoRoot?: string;
-} {
-  const resolvedDeps = deps ?? createDefaultConfigDeps();
-  const errors: string[] = [];
-
-  const repoRoot = getGitRoot(cwd);
-  const repoConfigPath = repoRoot ? join(repoRoot, ".tau", "config.json") : undefined;
-  const homeConfigPath = join(resolvedDeps.env.home(), ".tau", "config.json");
-
-  const repoRes = repoConfigPath
-    ? loadBashCommandsFile(repoConfigPath, resolve(repoConfigPath), resolvedDeps)
-    : { commands: [], errors: [] };
-  const homeRes = loadBashCommandsFile(homeConfigPath, resolve(homeConfigPath), resolvedDeps);
-
-  errors.push(...repoRes.errors, ...homeRes.errors);
-
-  const byId = new Map<string, BashCommand>();
-
-  for (const cmd of repoRes.commands) {
-    byId.set(cmd.id.toLowerCase(), cmd);
-  }
-
-  for (const cmd of homeRes.commands) {
-    const key = cmd.id.toLowerCase();
-    if (byId.has(key)) continue;
-    byId.set(key, cmd);
-  }
-
-  return { commands: [...byId.values()], errors, repoRoot };
 }

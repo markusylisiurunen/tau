@@ -62,6 +62,10 @@ export class SessionEngine {
     this.riskLevel = level;
   }
 
+  setConfig(config: Config): void {
+    this.config = config;
+  }
+
   addUserText(textForModel: string): void {
     this.messages.push({
       role: "user",

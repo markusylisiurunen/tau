@@ -95,20 +95,20 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `read`, `list`, `grep`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
 - Custom personas only allow `read-only` and `read-write` risk levels. If `restricted` is requested, tau keeps the risk level at `read-only`.
 
-On conflicts, project personas override user and built-in personas.
+On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `toolDisplayMode`, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`)
+- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `bashCommands`, `agentContextFiles`)
   - `apiKeys.parallel` (optional): Parallel API key for the `web` subagent.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`restricted`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `disableBuiltinPersonas` (optional): If true, tau will not load any built-in personas, only personas from disk.
-- **Project config**: `.tau/config.json` at the repo root can also set `disableBuiltinPersonas` to disable built-in personas for that project (overrides the global value when present).
-- **Project Context**: `AGENTS.md` (searched from current directory up to home), plus optional additional `AGENTS.md` files configured via `.tau/config.json` with `{ "agents": ["path/to/AGENTS.md"] }` (paths resolved relative to the directory containing `.tau/`)
-- **Bash commands**: `.tau/config.json` or `~/.tau/config.json` with `{ "bash": [{ "id", "cmd", "description?" }] }`
-- **Prompts**: user-level `~/.config/tau/prompts/*.md` and project-level `.tau/prompts/*.md` (project `.tau/` dirs are discovered by walking up from cwd to the git repo root, project overrides on conflicts)
-- **Skills**: user `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and project `.tau/skills/` (project `.tau/` dirs are discovered by walking up from cwd to the git repo root). Each skill is a directory containing `SKILL.md` with required YAML frontmatter:
+- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). Scalars use most-specific wins; `apiKeys` merge per provider; `bashCommands` merge by `id`; `agentContextFiles` are additive.
+- **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config).
+- **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`).
+- **Prompts**: `~/.config/tau/prompts/*.md` and `.tau/prompts/*.md` (discovered by walking up from cwd to home/root; most specific wins on conflicts).
+- **Skills**: `~/.config/tau/skills/` and `.tau/skills/` (discovered by walking up from cwd to home/root). Each skill is a directory containing `SKILL.md` with required YAML frontmatter:
   - `name` (1-64 chars, `a-z0-9-`, must match directory name)
   - `description` (1-1024 chars)
 

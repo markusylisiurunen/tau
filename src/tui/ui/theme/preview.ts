@@ -58,9 +58,9 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
   const assistantText = "We should increase muted contrast and brighten the accent for headers.";
 
   const bashStdout = [
-    'src/tui/ui/theme.ts:298:export const theme: Theme = createUiTheme("ansi");',
-    "src/tui/ui/theme.ts:299:export const palette = theme.palette;",
-    "src/tui/ui/theme.ts:300:export const markdownTheme = theme.markdownTheme;",
+    'src/tui/ui/theme/theme.ts:182:export const theme: Theme = createUiTheme("ansi");',
+    "src/tui/ui/theme/theme.ts:183:export const palette = theme.palette;",
+    "src/tui/ui/theme/theme.ts:184:export const markdownTheme = theme.markdownTheme;",
   ].join("\n");
   const bashStderr = "warning: theme tokens missing for tool preview";
   const bashTruncation = prepareBashOutput(bashStdout, bashStderr, false, {
@@ -83,14 +83,14 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
 
   const listEntries = [
     "src/tui/app.ts",
-    "src/tui/ui/theme.ts",
+    "src/tui/ui/theme/theme.ts",
     "src/tui/ui/footer.ts",
     "README.md",
   ];
 
-  const grepStdout = ['src/tui/ui/theme.ts:298:export const theme = createUiTheme("ansi")'].join(
-    "\n",
-  );
+  const grepStdout = [
+    'src/tui/ui/theme/theme.ts:182:export const theme = createUiTheme("ansi")',
+  ].join("\n");
 
   const writeContent = [
     "export const previewPalette = {",
@@ -126,9 +126,9 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
       type: "tool",
       view: buildReadSuccessView(
         theme,
-        "src/tui/ui/theme.ts",
-        298,
-        301,
+        "src/tui/ui/theme/theme.ts",
+        182,
+        185,
         readContent,
         readModelTruncation,
       ),
@@ -169,7 +169,7 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
       type: "tool",
       view: buildWriteSuccessView(
         theme,
-        "src/tui/ui/theme.preview.ts",
+        "src/tui/ui/theme/preview.ts",
         writeBytes,
         writeLines,
         writeContent,
@@ -177,13 +177,13 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     },
     {
       type: "tool",
-      view: buildWriteBlockedView(theme, "src/tui/ui/theme.ts", "risk level is read-only"),
+      view: buildWriteBlockedView(theme, "src/tui/ui/theme/theme.ts", "risk level is read-only"),
     },
     {
       type: "tool",
       view: buildEditSuccessView(
         theme,
-        "src/tui/ui/theme.ts",
+        "src/tui/ui/theme/theme.ts",
         oldText.length,
         newText.length,
         oldText,
@@ -192,7 +192,7 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     },
     {
       type: "tool",
-      view: buildEditBlockedView(theme, "src/tui/ui/theme.ts", "risk level is read-only"),
+      view: buildEditBlockedView(theme, "src/tui/ui/theme/theme.ts", "risk level is read-only"),
     },
     {
       type: "tool",

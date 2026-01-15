@@ -13,6 +13,29 @@ type AgentsFilesInScopeResult = {
   errors: string[];
 };
 
+function safeRealpath(path: string): string {
+  const abs = resolve(path);
+  try {
+    return realpathSync(abs);
+  } catch {
+    return abs;
+  }
+}
+
+function isSameOrParentPath(parent: string, child: string): boolean {
+  if (parent === child) return true;
+  const root = parse(parent).root;
+  if (parent === root) return child.startsWith(root);
+  return child.startsWith(parent + sep);
+}
+
+export function isAgentContextPathInScope(filePath: string, cwd: string): boolean {
+  const cwdReal = safeRealpath(cwd);
+  const fileReal = safeRealpath(filePath);
+  const fileDir = dirname(fileReal);
+  return isSameOrParentPath(fileDir, cwdReal) || isSameOrParentPath(cwdReal, fileDir);
+}
+
 function createAgentsConfigDeps(cwd: string, home: string): ConfigDeps {
   return {
     fs: {
@@ -145,6 +168,7 @@ function findAdditionalAgentsFilesFromConfigsDetailed(args: {
   home: string;
 }): AgentsFilesInScopeResult {
   const homeAbs = resolve(args.home);
+  const cwdAbs = resolve(args.cwd);
   const deps = createAgentsConfigDeps(args.cwd, args.home);
   const levels = resolveConfigLevels(deps, { cwd: args.cwd });
   const files: string[] = [];
@@ -161,6 +185,7 @@ function findAdditionalAgentsFilesFromConfigsDetailed(args: {
         homeAbs,
       });
       if (!resolved) continue;
+      if (!isAgentContextPathInScope(resolved, cwdAbs)) continue;
       files.push(resolved);
     }
   }

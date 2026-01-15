@@ -158,7 +158,7 @@ you can also include additional `AGENTS.md` files via config (when that config i
 { "agentContextFiles": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config).
+paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config). entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
 
 run `tau --help` to see all available options, or `tau --debug` to inspect loaded personas, prompts, skills, and the full system prompt for debugging configuration issues.
 
@@ -261,6 +261,7 @@ if you use `--with-context`, you can tell tau to always include extra `AGENTS.md
 ```
 
 paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config). entries must point at `AGENTS.md`.
+entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
 
 ### custom personas
 

@@ -127,13 +127,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("bash_execution", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "bash_execution" }>;
-    return buildBashExecutionView(
-      context.theme,
-      uiEvent.command,
-      uiEvent.exitCode,
-      uiEvent.truncationInfo,
-      uiEvent.durationMs,
-    );
+    return buildBashExecutionView(context.theme, uiEvent.command, uiEvent.exitCode, uiEvent.uiText);
   });
 
   registry.register("bash_blocked", (event, context) => {
@@ -233,13 +227,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("write_success", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "write_success" }>;
-    return buildWriteSuccessView(
-      context.theme,
-      uiEvent.path,
-      uiEvent.bytes,
-      uiEvent.lines,
-      uiEvent.content,
-    );
+    return buildWriteSuccessView(context.theme, uiEvent.path, uiEvent.uiText);
   });
 
   registry.register("write_blocked", (event, context) => {
@@ -249,14 +237,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("edit_success", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "edit_success" }>;
-    return buildEditSuccessView(
-      context.theme,
-      uiEvent.path,
-      uiEvent.oldLength,
-      uiEvent.newLength,
-      uiEvent.oldText,
-      uiEvent.newText,
-    );
+    return buildEditSuccessView(context.theme, uiEvent.path, uiEvent.uiText);
   });
 
   registry.register("edit_blocked", (event, context) => {
@@ -271,8 +252,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       uiEvent.path,
       uiEvent.startLine,
       uiEvent.endLine,
-      uiEvent.content,
-      uiEvent.modelTruncation,
+      uiEvent.uiText,
     );
   });
 
@@ -283,15 +263,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("list_success", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "list_success" }>;
-    return buildListSuccessView(
-      context.theme,
-      uiEvent.path,
-      uiEvent.offset,
-      uiEvent.limit,
-      uiEvent.total,
-      uiEvent.returned,
-      uiEvent.entries,
-    );
+    return buildListSuccessView(context.theme, uiEvent.path, uiEvent.uiText);
   });
 
   registry.register("list_blocked", (event, context) => {
@@ -306,15 +278,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("grep_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "grep_finished" }>;
-    return buildGrepFinishedView(
-      context.theme,
-      uiEvent.pattern,
-      uiEvent.status,
-      uiEvent.exitCode,
-      uiEvent.stdout,
-      uiEvent.stderr,
-      uiEvent.captureTruncated,
-    );
+    return buildGrepFinishedView(context.theme, uiEvent.pattern, uiEvent.status, uiEvent.uiText);
   });
 
   registry.register("grep_blocked", (event, context) => {

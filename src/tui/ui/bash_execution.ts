@@ -1,113 +1,12 @@
-import type { BashTruncationInfo } from "../../core/tools/bash.js";
-import { formatTokenEstimate } from "../../core/utils/token.js";
-import { formatBytes } from "../../core/utils/truncate.js";
+import type { ToolUiText } from "../../core/tools/registry.js";
 import type { Theme } from "./theme/index.js";
 import {
-  BASH_UI_MAX_LINES,
-  BASH_UI_MAX_TOKENS,
   buildHeaderLine,
   buildSection,
   inlineText,
   renderToolOutput,
   type ToolOutputViewModel,
-  truncateForUi,
 } from "./tool_output.js";
-
-const COMPACT_OUTPUT_HEAD_LINES = 3;
-const COMPACT_OUTPUT_TAIL_LINES = 3;
-const BASH_UI_MAX_LINE_LENGTH: number = 256;
-
-function truncateLineToMax(line: string): string {
-  if (BASH_UI_MAX_LINE_LENGTH <= 0) return "";
-  const chars = Array.from(line);
-  if (chars.length <= BASH_UI_MAX_LINE_LENGTH) return line;
-  if (BASH_UI_MAX_LINE_LENGTH === 1) return "…";
-  return `${chars.slice(0, BASH_UI_MAX_LINE_LENGTH - 1).join("")}…`;
-}
-
-function truncateLinesForUi(text: string): string {
-  if (!text) return text;
-  return text
-    .split("\n")
-    .map((line) => truncateLineToMax(line))
-    .join("\n");
-}
-
-function formatDurationMs(durationMs: number | null | undefined): string {
-  if (durationMs === null || durationMs === undefined || !Number.isFinite(durationMs)) {
-    return "?ms";
-  }
-  const ms = Math.max(0, Math.round(durationMs));
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${Math.round(ms / 1000)}s`;
-}
-
-function buildCompactOutputLines(
-  output: string,
-  headCount: number = COMPACT_OUTPUT_HEAD_LINES,
-  tailCount: number = COMPACT_OUTPUT_TAIL_LINES,
-): string[] {
-  const cleaned = output.replace(/\n+$/, "");
-  if (cleaned.trim().length === 0) return [];
-  const lines = cleaned.split("\n");
-  const total = lines.length;
-  if (total <= headCount + tailCount) return lines.map(truncateLineToMax);
-
-  const head = lines.slice(0, headCount).map(truncateLineToMax);
-  const tail = lines.slice(Math.max(total - tailCount, headCount)).map(truncateLineToMax);
-  const remaining = Math.max(0, total - head.length - tail.length);
-  const label = remaining === 1 ? "line" : "lines";
-  return [...head, `…${remaining} more ${label}…`, ...tail];
-}
-
-function buildBashExecutionExpandedSections(
-  theme: Theme,
-  exitCode: number | null,
-  truncationInfo: BashTruncationInfo,
-  display: ReturnType<typeof truncateForUi>,
-): string[] {
-  const { palette } = theme;
-
-  const sections: Array<string | undefined> = [];
-
-  const formatSizeSummary = (lines: number, bytes: number): string =>
-    `${lines} lines (${formatTokenEstimate(bytes)} · ${formatBytes(bytes)})`;
-
-  const out = truncateLinesForUi(display.content).trimEnd();
-  if (out) {
-    sections.push(palette.actionOutput(out));
-  }
-
-  const { model, captureTruncated } = truncationInfo;
-
-  const truncationNotices: string[] = [];
-  if (display.truncated || captureTruncated) {
-    const shown = formatSizeSummary(display.outputLines, display.outputBytes);
-    const total = formatSizeSummary(display.totalLines, display.totalBytes);
-    const icon = palette.statusWarn("◆");
-    const msg = palette.textDim(`truncated: ${shown} of ${total}`);
-    truncationNotices.push(`${icon} ${msg}`);
-  }
-
-  if (model.truncated || captureTruncated) {
-    const shown = formatSizeSummary(model.outputLines, model.outputBytes);
-    const total = formatSizeSummary(model.totalLines, model.totalBytes);
-    const icon = palette.statusWarn("◆");
-    const msg = palette.statusWarn(`truncated for model: ${shown} of ${total}`);
-    truncationNotices.push(`${icon} ${msg}`);
-  }
-  const truncationSection = buildSection(truncationNotices);
-  if (truncationSection) {
-    sections.push(truncationSection);
-  }
-
-  if (exitCode !== null && exitCode !== 0) {
-    sections.push(palette.actionError(`(exit ${exitCode})`));
-  }
-
-  return sections.filter((section): section is string => Boolean(section));
-}
 
 export function buildBashRunningView(theme: Theme, command: string): ToolOutputViewModel {
   const { palette, text } = theme;
@@ -134,11 +33,8 @@ export function buildBashExecutionView(
   theme: Theme,
   command: string,
   exitCode: number | null,
-  truncationInfo: BashTruncationInfo,
-  durationMs?: number,
+  uiText: ToolUiText,
   labelOverride?: string,
-  compactHeadLines?: number,
-  compactTailLines?: number,
 ): ToolOutputViewModel {
   const { palette } = theme;
   const successColor = (s: string) => palette.actionSuccess(s);
@@ -147,19 +43,8 @@ export function buildBashExecutionView(
   const isSuccess = exitCode === 0;
   const resultColor = isSuccess ? successColor : errorColor;
 
-  const display = truncateForUi(truncationInfo.output, {
-    maxLines: BASH_UI_MAX_LINES,
-    maxTokens: BASH_UI_MAX_TOKENS,
-    strategy: "middle",
-  });
-
   const commandInline = inlineText(command);
 
-  const { model, captureTruncated } = truncationInfo;
-  const hasOutput = model.totalBytes > 0;
-  const showTotals = display.truncated || model.truncated || captureTruncated;
-  const outputLines = showTotals ? model.totalLines : model.outputLines;
-  const outputBytes = showTotals ? model.totalBytes : model.outputBytes;
   const header = buildHeaderLine({
     bulletStyle: isSuccess ? successBullet : errorColor,
     bullet: isSuccess ? "✓" : undefined,
@@ -170,36 +55,11 @@ export function buildBashExecutionView(
     wrapIndex: 5,
   });
 
-  const exitSummary = exitCode === null ? "exit ?" : `exit ${exitCode}`;
-  const exitStyle = exitCode !== null && exitCode !== 0 ? palette.actionError : palette.textMuted;
-  const durationLabel = formatDurationMs(durationMs);
-  const lineLabel = hasOutput ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "no output";
-  const bytesLabel = hasOutput ? formatBytes(outputBytes).toLowerCase() : undefined;
-  const tokenLabel = hasOutput ? formatTokenEstimate(outputBytes) : "";
-  const infoParts = bytesLabel
-    ? [durationLabel, lineLabel, tokenLabel, bytesLabel]
-    : [durationLabel, lineLabel];
-  const infoText = infoParts.join(" · ");
-  const details = [
-    palette.textMuted("("),
-    exitStyle(exitSummary),
-    palette.textMuted(` · ${inlineText(infoText)}`),
-    palette.textMuted(")"),
-  ].join("");
-
-  const outputLinesPreview = buildCompactOutputLines(
-    truncationInfo.output,
-    compactHeadLines,
-    compactTailLines,
-  );
-  const outputBlock =
-    outputLinesPreview.length > 0
-      ? outputLinesPreview.map((line) => palette.textDim(`    ${line}`)).join("\n")
-      : undefined;
-  const summaryLine = `    ${details}`;
-  const compactText = [outputBlock, summaryLine].filter(Boolean).join("\n");
-
-  const sections = buildBashExecutionExpandedSections(theme, exitCode, truncationInfo, display);
+  const previewStyle = isSuccess ? palette.textDim : palette.actionError;
+  const compactText = uiText.previewText ? previewStyle(uiText.previewText) : undefined;
+  const fullStyle = isSuccess ? palette.actionOutput : palette.actionError;
+  const fullText = uiText.fullText.trim() ? fullStyle(uiText.fullText) : undefined;
+  const sections = fullText ? [fullText] : [];
   return {
     borderColor: resultColor,
     expanded: {
@@ -299,14 +159,10 @@ export function renderBashExecution(
   theme: Theme,
   command: string,
   exitCode: number | null,
-  truncationInfo: BashTruncationInfo,
-  durationMs: number | undefined,
+  uiText: ToolUiText,
   compact: boolean,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(
-    buildBashExecutionView(theme, command, exitCode, truncationInfo, durationMs),
-    compact,
-  );
+  return renderToolOutput(buildBashExecutionView(theme, command, exitCode, uiText), compact);
 }
 
 export function renderBashBlocked(

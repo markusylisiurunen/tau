@@ -3,8 +3,9 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
+import { buildCompactPreviewLines } from "../utils/tool_preview.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
+import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
 
 export const LIST_MAX_ENTRIES = 256;
 
@@ -69,6 +70,30 @@ function formatListToolResultText(args: {
   return parts.join("\n");
 }
 
+function buildListUiText(args: {
+  offset: number;
+  limit: number;
+  total: number;
+  returned: number;
+  entries: string[];
+}): ToolUiText {
+  const { offset, limit, total, returned, entries } = args;
+  const compactLines = buildCompactPreviewLines(entries, {
+    totalLines: entries.length,
+    maxLines: 16,
+    unitLabel: "entries",
+  });
+  const infoText = `${returned} of ${total} entries · offset ${offset} · limit ${limit}`;
+  const summaryLine = `    (${infoText})`;
+  const previewText = [compactLines, summaryLine].filter(Boolean).join("\n");
+
+  const summary = `${returned} of ${total} entries (offset ${offset}, limit ${limit})`;
+  const listText = entries.length > 0 ? entries.join("\n") : "";
+  const fullText = listText ? `${summary}\n\n${listText}` : summary;
+
+  return { previewText, fullText };
+}
+
 export function createListToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: LIST_TOOL,
@@ -118,6 +143,13 @@ export function createListToolDefinition(backend: ToolExecutionBackend): ToolDef
           returned: windowed.length,
           entries: windowed,
         });
+        const uiText = buildListUiText({
+          offset,
+          limit: effectiveLimit,
+          total,
+          returned: windowed.length,
+          entries: windowed,
+        });
 
         const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
         const uiEvent: ToolUiEvent = {
@@ -128,6 +160,7 @@ export function createListToolDefinition(backend: ToolExecutionBackend): ToolDef
           total,
           returned: windowed.length,
           entries: windowed,
+          uiText,
         };
 
         return { kind: "single", toolResult, uiEvent };

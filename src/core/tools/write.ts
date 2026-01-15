@@ -3,8 +3,14 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
+import { formatTokenEstimate } from "../utils/token.js";
+import {
+  applyPreviewPolicy,
+  buildCompactPreviewLines,
+  WRITE_UI_PREVIEW_LINES,
+} from "../utils/tool_preview.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
+import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
 
 const WRITE_DESCRIPTION = [
   "Write content to a file, creating the file if it doesn't exist or overwriting if it does.",
@@ -34,6 +40,32 @@ const writeArgsSchema = z.object({
 function parseWriteArgs(raw: unknown): { path: string; content: string } {
   const parsed = writeArgsSchema.safeParse(raw);
   return parsed.success ? parsed.data : { path: "", content: "" };
+}
+
+function buildWriteUiText(args: { bytes: number; lines: number; content: string }): ToolUiText {
+  const { bytes, lines, content } = args;
+  const { previewLines } = applyPreviewPolicy(content, {
+    maxLines: WRITE_UI_PREVIEW_LINES,
+    strategy: "head",
+  });
+
+  const compactLines = buildCompactPreviewLines(previewLines, {
+    totalLines: lines,
+    maxLines: 16,
+    unitLabel: "lines",
+  });
+  const infoText = `${lines} lines · ${formatTokenEstimate(bytes)} · ${bytes} bytes`;
+  const summaryLine = `    (${infoText})`;
+  const previewText = [compactLines, summaryLine].filter(Boolean).join("\n");
+
+  const summary = infoText;
+  const trimmed = content.trimEnd();
+  const fullText = trimmed ? `${summary}\n\n${trimmed}` : summary;
+
+  return {
+    previewText,
+    fullText,
+  };
 }
 
 export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
@@ -69,12 +101,14 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
         const resultText = `Successfully wrote ${bytes} bytes (${lines} lines) to ${path}`;
 
         const toolResult = createToolSuccess(toolCall, resultText);
+        const uiText = buildWriteUiText({ bytes, lines, content });
         const uiEvent: ToolUiEvent = {
           type: "write_success",
           path,
           bytes,
           lines,
           content,
+          uiText,
         };
         return { kind: "single", toolResult, uiEvent };
       } catch (e) {

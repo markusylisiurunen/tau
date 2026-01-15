@@ -4,13 +4,15 @@ import stripAnsi from "strip-ansi";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { type TruncationResult, truncateMiddleForModel } from "../utils/truncate.js";
+import { formatTokenEstimate } from "../utils/token.js";
+import { formatBytes, type TruncationResult, truncateMiddleForModel } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
   ToolUiEvent,
+  ToolUiText,
 } from "./registry.js";
 
 export const BASH_TOOL_MAX_STDOUT_LINES = 4096;
@@ -62,6 +64,7 @@ export type BashSafetyLevel = "read" | "write";
 
 export interface BashTruncationInfo {
   output: string;
+  rawOutput: string;
   model: TruncationResult;
   captureTruncated: boolean;
 }
@@ -125,6 +128,7 @@ export function prepareBashOutput(
 
   return {
     output: combined,
+    rawOutput: combinedTotal,
     model: modelTruncation,
     captureTruncated,
   };
@@ -160,6 +164,111 @@ export function formatBashUserMessageText(args: {
       : "";
   const bashContextText = `$ ${command}\n${outputForContext}${truncNote}`;
   return `Bash command output:\n${bashContextText}`;
+}
+
+const COMPACT_OUTPUT_HEAD_LINES = 3;
+const COMPACT_OUTPUT_TAIL_LINES = 3;
+const BASH_UI_MAX_LINE_LENGTH: number = 256;
+
+function truncateLineToMax(line: string): string {
+  if (BASH_UI_MAX_LINE_LENGTH <= 0) return "";
+  const chars = Array.from(line);
+  if (chars.length <= BASH_UI_MAX_LINE_LENGTH) return line;
+  if (BASH_UI_MAX_LINE_LENGTH === 1) return "…";
+  return `${chars.slice(0, BASH_UI_MAX_LINE_LENGTH - 1).join("")}…`;
+}
+
+function buildCompactOutputLines(
+  output: string,
+  headCount: number = COMPACT_OUTPUT_HEAD_LINES,
+  tailCount: number = COMPACT_OUTPUT_TAIL_LINES,
+): string[] {
+  const cleaned = output.replace(/\n+$/, "");
+  if (cleaned.trim().length === 0) return [];
+  const lines = cleaned.split("\n");
+  const total = lines.length;
+  if (total <= headCount + tailCount) return lines.map(truncateLineToMax);
+
+  const head = lines.slice(0, headCount).map(truncateLineToMax);
+  const tail = lines.slice(Math.max(total - tailCount, headCount)).map(truncateLineToMax);
+  const remaining = Math.max(0, total - head.length - tail.length);
+  const label = remaining === 1 ? "line" : "lines";
+  return [...head, `…${remaining} more ${label}…`, ...tail];
+}
+
+function formatDurationMs(durationMs: number | null | undefined): string {
+  if (durationMs === null || durationMs === undefined || !Number.isFinite(durationMs)) {
+    return "?ms";
+  }
+  const ms = Math.max(0, Math.round(durationMs));
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms / 1000)}s`;
+}
+
+function formatSizeSummary(lines: number, bytes: number): string {
+  return `${lines} lines (${formatTokenEstimate(bytes)} · ${formatBytes(bytes)})`;
+}
+
+export function buildBashUiText(args: {
+  truncationInfo: BashTruncationInfo;
+  exitCode: number | null;
+  durationMs?: number;
+  previewLines?: { head?: number; tail?: number };
+}): ToolUiText {
+  const { truncationInfo, exitCode, durationMs } = args;
+  const { model, captureTruncated } = truncationInfo;
+
+  const previewSource = truncationInfo.output;
+  const outputLinesPreview = buildCompactOutputLines(
+    previewSource,
+    args.previewLines?.head ?? COMPACT_OUTPUT_HEAD_LINES,
+    args.previewLines?.tail ?? COMPACT_OUTPUT_TAIL_LINES,
+  );
+  const outputBlock =
+    outputLinesPreview.length > 0
+      ? outputLinesPreview.map((line) => `    ${line}`).join("\n")
+      : undefined;
+
+  const hasOutput = model.totalBytes > 0;
+  const showTotals = model.truncated || captureTruncated;
+  const outputLines = showTotals ? model.totalLines : model.outputLines;
+  const outputBytes = showTotals ? model.totalBytes : model.outputBytes;
+
+  const exitSummary = exitCode === null ? "exit ?" : `exit ${exitCode}`;
+  const durationLabel = formatDurationMs(durationMs);
+  const lineLabel = hasOutput ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "no output";
+  const bytesLabel = hasOutput ? formatBytes(outputBytes).toLowerCase() : undefined;
+  const tokenLabel = hasOutput ? formatTokenEstimate(outputBytes) : "";
+  const infoParts = bytesLabel
+    ? [durationLabel, lineLabel, tokenLabel, bytesLabel]
+    : [durationLabel, lineLabel];
+  const infoText = infoParts.join(" · ");
+  const details = `(${exitSummary} · ${infoText})`;
+
+  const summaryLine = `    ${details}`;
+  const previewText = [outputBlock, summaryLine].filter(Boolean).join("\n");
+
+  const sections: string[] = [];
+  const rawOutput = truncationInfo.rawOutput.trimEnd();
+  if (rawOutput) {
+    sections.push(rawOutput);
+  }
+
+  if (model.truncated || captureTruncated) {
+    const shown = formatSizeSummary(model.outputLines, model.outputBytes);
+    const total = formatSizeSummary(model.totalLines, model.totalBytes);
+    sections.push(`truncated for model: ${shown} of ${total}`);
+  }
+
+  if (exitCode !== null && exitCode !== 0) {
+    sections.push(`(exit ${exitCode})`);
+  }
+
+  return {
+    previewText,
+    fullText: sections.join("\n\n"),
+  };
 }
 
 function getMissingArgsMessage(command: string, safetyLevel: BashSafetyLevel | undefined): string {
@@ -261,6 +370,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
             });
             const toolText = formatBashToolResultText({ truncationInfo, exitCode });
             const isError = exitCode === null || exitCode !== 0;
+            const uiText = buildBashUiText({ truncationInfo, exitCode, durationMs });
 
             const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, isError);
             const uiEvent: ToolUiEvent = {
@@ -269,6 +379,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               command,
               exitCode,
               truncationInfo,
+              uiText,
               durationMs,
             };
             return { kind: "single", toolResult, uiEvent };

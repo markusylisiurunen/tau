@@ -9,7 +9,9 @@ import {
 import { renderTaskFinished, renderTaskRunning } from "../dist/tui/ui/task_execution.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
 
-const noPreviewTruncation = { truncated: false, totalLines: 2, outputLines: 2 };
+function makeUiText(previewText, fullText = "") {
+  return { previewText, fullText };
+}
 
 test("renderBashRunning (compact) shows command and running status", () => {
   const theme = createTagTheme();
@@ -22,27 +24,12 @@ test("renderBashRunning (compact) shows command and running status", () => {
 
 test("renderBashExecution (expanded) includes output and exit code", () => {
   const theme = createTagTheme();
-  const output = "output line";
-  const truncationInfo = {
-    output,
-    model: {
-      content: output,
-      truncated: false,
-      truncatedBy: null,
-      outputLines: 1,
-      outputBytes: 11,
-      totalLines: 1,
-      totalBytes: 11,
-      maxLines: 10,
-      maxTokens: 10,
-    },
-    captureTruncated: false,
-  };
-  const component = renderBashExecution(theme, "echo hi", 1, truncationInfo, undefined, false);
+  const uiText = makeUiText("    output line", "output line\n\n(exit 1)");
+  const component = renderBashExecution(theme, "echo hi", 1, uiText, false);
   const text = renderText(component, 100);
   expect(text).toContain("<actionError><bold>$ echo hi</bold></actionError>");
-  expect(text).toContain("<actionOutput>output line</actionOutput>");
-  expect(text).toContain("<actionError>(exit 1)</actionError>");
+  expect(text).toContain("<actionError>output line");
+  expect(text).toContain("(exit 1)");
 });
 
 test("renderWriteSuccess (compact) shows preview lines", () => {
@@ -50,23 +37,27 @@ test("renderWriteSuccess (compact) shows preview lines", () => {
   const component = renderWriteSuccess(
     theme,
     "notes.txt",
-    10,
-    2,
-    "first\nsecond",
+    makeUiText("    first\n    second", "first\nsecond"),
     true,
   );
   const text = renderText(component, 80);
   expect(text).toContain("<actionSuccess>✓</actionSuccess>");
   expect(text).toContain("<brandAccent>notes.txt</brandAccent>");
-  expect(text).toContain("<textDim>    first</textDim>");
+  expect(text).toContain("<textDim>    first");
 });
 
 test("renderEditSuccess (expanded) highlights diffs", () => {
   const theme = createTagTheme();
-  const component = renderEditSuccess(theme, "notes.txt", 10, 12, "old", "new", false);
+  const component = renderEditSuccess(
+    theme,
+    "notes.txt",
+    makeUiText("    - old\n    + new\n    (+1, -1)", "replaced 3 -> 3 chars (same size)\n\n- old\n+ new"),
+    false,
+  );
   const text = renderText(component, 100);
-  expect(text).toContain("<diffRemove>- old</diffRemove>");
-  expect(text).toContain("<diffAdd>+ new</diffAdd>");
+  expect(text).toContain("<actionOutput>");
+  expect(text).toContain("- old");
+  expect(text).toContain("+ new");
 });
 
 test("renderReadSuccess (compact) shows file preview", () => {
@@ -76,12 +67,11 @@ test("renderReadSuccess (compact) shows file preview", () => {
     "file.txt",
     1,
     2,
-    "alpha\nbeta",
-    noPreviewTruncation,
+    makeUiText("    alpha\n    beta\n    (2 lines · 1-2)", "alpha\nbeta"),
     true,
   );
   const text = renderText(component, 80);
-  expect(text).toContain("<textDim>    alpha</textDim>");
+  expect(text).toContain("<textDim>    alpha");
   expect(text).toContain("<brandAccent>file.txt</brandAccent>");
 });
 
@@ -90,16 +80,12 @@ test("renderListSuccess (compact) shows entries", () => {
   const component = renderListSuccess(
     theme,
     "src",
-    0,
-    10,
-    2,
-    2,
-    ["a.ts", "b.ts"],
+    makeUiText("    a.ts\n    b.ts\n    (2 of 2 entries · offset 0 · limit 10)", "a.ts\nb.ts"),
     true,
   );
   const text = renderText(component, 80);
   expect(text).toContain("<brandAccent>src</brandAccent>");
-  expect(text).toContain("<textDim>    a.ts</textDim>");
+  expect(text).toContain("<textDim>    a.ts");
 });
 
 test("renderGrepFinished (compact) surfaces error status", () => {
@@ -108,10 +94,7 @@ test("renderGrepFinished (compact) surfaces error status", () => {
     theme,
     "TODO",
     "error",
-    2,
-    "",
-    "bad file",
-    false,
+    makeUiText("    bad file", "stderr:\nbad file"),
     true,
   );
   const text = renderText(component, 100);

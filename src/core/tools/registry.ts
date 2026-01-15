@@ -17,6 +17,7 @@ export type ToolUiEvent =
       command: string;
       exitCode: number | null;
       truncationInfo: BashTruncationInfo;
+      uiText: ToolUiText;
       durationMs?: number;
     }
   | { type: "bash_blocked"; command: string; reason: string; toolCallId?: string }
@@ -93,6 +94,7 @@ export type ToolUiEvent =
         totalLines: number;
         outputLines: number;
       };
+      uiText: ToolUiText;
     }
   | { type: "read_blocked"; path: string; reason: string }
   | {
@@ -103,6 +105,7 @@ export type ToolUiEvent =
       total: number;
       returned: number;
       entries: string[];
+      uiText: ToolUiText;
     }
   | { type: "list_blocked"; path: string; reason: string }
   | {
@@ -119,6 +122,7 @@ export type ToolUiEvent =
       stdout: string;
       stderr: string;
       captureTruncated: boolean;
+      uiText: ToolUiText;
     }
   | {
       type: "grep_blocked";
@@ -132,6 +136,7 @@ export type ToolUiEvent =
       bytes: number;
       lines: number;
       content: string;
+      uiText: ToolUiText;
     }
   | { type: "write_blocked"; path: string; reason: string }
   | {
@@ -141,8 +146,14 @@ export type ToolUiEvent =
       newLength: number;
       oldText: string;
       newText: string;
+      uiText: ToolUiText;
     }
   | { type: "edit_blocked"; path: string; reason: string };
+
+export type ToolUiText = {
+  previewText: string;
+  fullText: string;
+};
 
 export type ToolDispatchResult = {
   kind: "single";

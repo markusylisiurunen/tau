@@ -3,9 +3,15 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
+import {
+  applyPreviewPolicy,
+  buildCompactPreviewLines,
+  READ_UI_MAX_LINES,
+  READ_UI_MAX_TOKENS,
+} from "../utils/tool_preview.js";
 import { truncateMiddleForModel, truncateToBytesFromStart } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent } from "./registry.js";
+import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
 
 export const READ_TOOL_MAX_LINES = 4096;
 export const READ_TOOL_MAX_TOKENS = 25000;
@@ -79,6 +85,51 @@ function formatReadToolResultText(args: {
   return parts.join("\n");
 }
 
+function buildReadUiText(args: {
+  content: string;
+  modelTruncation: ReturnType<typeof truncateMiddleForModel>;
+  startLine: number;
+  endLine?: number;
+}): ToolUiText {
+  const { content, modelTruncation, startLine, endLine } = args;
+  const { truncation: previewTruncation, previewLines } = applyPreviewPolicy(
+    modelTruncation.content,
+    {
+      maxLines: READ_UI_MAX_LINES,
+      maxTokens: READ_UI_MAX_TOKENS,
+      strategy: "middle",
+    },
+  );
+
+  const totalLinesForSummary = modelTruncation.truncated
+    ? modelTruncation.totalLines
+    : previewTruncation.totalLines;
+  const compactLines = buildCompactPreviewLines(previewLines, {
+    totalLines: totalLinesForSummary,
+    maxLines: 16,
+    unitLabel: "lines",
+  });
+  const infoText = `${totalLinesForSummary} lines · ${formatRange(startLine, endLine)}`;
+  const summaryLine = `    (${infoText})`;
+  const previewText = [compactLines, summaryLine].filter(Boolean).join("\n");
+
+  const trimmed = content.trimEnd();
+  const sections: string[] = [];
+  if (trimmed) {
+    sections.push(trimmed);
+  }
+  if (modelTruncation.truncated) {
+    sections.push(
+      `truncated for model: ${modelTruncation.outputLines} of ${modelTruncation.totalLines} lines`,
+    );
+  }
+
+  return {
+    previewText,
+    fullText: sections.join("\n\n"),
+  };
+}
+
 export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: READ_TOOL,
@@ -146,6 +197,13 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
           truncation: modelTruncation,
         });
 
+        const uiText = buildReadUiText({
+          content: selected,
+          modelTruncation,
+          startLine: start,
+          endLine,
+        });
+
         const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
         const uiEvent: ToolUiEvent = {
           type: "read_success",
@@ -158,6 +216,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
             totalLines: modelTruncation.totalLines,
             outputLines: modelTruncation.outputLines,
           },
+          uiText,
         };
 
         return { kind: "single", toolResult, uiEvent };

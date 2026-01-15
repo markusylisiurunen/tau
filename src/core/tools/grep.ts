@@ -3,6 +3,12 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
+import {
+  applyPreviewPolicy,
+  buildCompactPreviewLines,
+  GREP_UI_MAX_LINES,
+  GREP_UI_MAX_TOKENS,
+} from "../utils/tool_preview.js";
 import { truncateMiddleForModel } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
@@ -10,6 +16,7 @@ import type {
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
   ToolUiEvent,
+  ToolUiText,
 } from "./registry.js";
 
 export const GREP_TOOL_MAX_LINES = 4096;
@@ -192,6 +199,73 @@ function formatGrepToolResultText(args: {
   return parts.join("\n");
 }
 
+function buildGrepUiText(args: {
+  stdout: string;
+  stderr: string;
+  stdoutModel: ReturnType<typeof truncateMiddleForModel>;
+  stderrModel: ReturnType<typeof truncateMiddleForModel>;
+  exitCode: number | null;
+  captureTruncated: boolean;
+}): ToolUiText {
+  const { stdout, stderr, stdoutModel, stderrModel, exitCode, captureTruncated } = args;
+
+  const { truncation: stdoutPreview, previewLines: stdoutLines } = applyPreviewPolicy(
+    stdoutModel.content,
+    {
+      maxLines: GREP_UI_MAX_LINES,
+      maxTokens: GREP_UI_MAX_TOKENS,
+      strategy: "middle",
+    },
+  );
+  const { truncation: stderrPreview, previewLines: stderrLines } = applyPreviewPolicy(
+    stderrModel.content,
+    {
+      maxLines: GREP_UI_MAX_LINES,
+      maxTokens: GREP_UI_MAX_TOKENS,
+      strategy: "middle",
+    },
+  );
+
+  const err = stderrPreview.content.trimEnd();
+  const out = stdoutPreview.content.trimEnd();
+  const previewText = err
+    ? (buildCompactPreviewLines(stderrLines, {
+        totalLines: stderrPreview.totalLines,
+        maxLines: 16,
+      }) ?? "")
+    : out
+      ? (buildCompactPreviewLines(stdoutLines, {
+          totalLines: stdoutPreview.totalLines,
+          maxLines: 16,
+        }) ?? "")
+      : "";
+
+  const sections: string[] = [];
+  const trimmedOut = stdout.trimEnd();
+  if (trimmedOut) {
+    sections.push(trimmedOut);
+  }
+  const trimmedErr = stderr.trimEnd();
+  if (trimmedErr) {
+    sections.push(["stderr:", trimmedErr].join("\n"));
+  }
+
+  if (stdoutModel.truncated || stderrModel.truncated || captureTruncated) {
+    sections.push(
+      `truncated for model: ${stdoutModel.outputLines} of ${stdoutModel.totalLines} lines`,
+    );
+  }
+
+  if (exitCode !== null && exitCode !== 0 && exitCode !== 1) {
+    sections.push(`(exit ${exitCode})`);
+  }
+
+  return {
+    previewText,
+    fullText: sections.join("\n\n"),
+  };
+}
+
 export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: GREP_TOOL,
@@ -272,6 +346,14 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
             exitCode,
             captureTruncated,
           });
+          const uiText = buildGrepUiText({
+            stdout,
+            stderr,
+            stdoutModel,
+            stderrModel,
+            exitCode,
+            captureTruncated,
+          });
 
           const isError = exitCode === null || (exitCode !== 0 && exitCode !== 1);
           const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, isError);
@@ -285,6 +367,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
             stdout: stdoutModel.content,
             stderr: stderrModel.content,
             captureTruncated,
+            uiText,
           };
 
           return { kind: "single", toolResult, uiEvent };

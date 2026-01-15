@@ -3,8 +3,10 @@ import {
   BASH_USER_MAX_STDERR_TOKENS,
   BASH_USER_MAX_STDOUT_LINES,
   BASH_USER_MAX_STDOUT_TOKENS,
+  buildBashUiText,
   prepareBashOutput,
 } from "../../../core/tools/bash.js";
+import { formatTokenEstimate } from "../../../core/utils/token.js";
 import {
   buildBashBlockedView,
   buildBashExecutionView,
@@ -38,6 +40,12 @@ function countLines(text: string): number {
   return text.split("\n").length;
 }
 
+function indentLines(lines: string[], indent = 4): string {
+  if (lines.length === 0) return "";
+  const pad = " ".repeat(indent);
+  return lines.map((line) => `${pad}${line}`).join("\n");
+}
+
 export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
   const assistantMarkdown = [
     "## Theme preview",
@@ -67,6 +75,11 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     stdout: { maxLines: BASH_USER_MAX_STDOUT_LINES, maxTokens: BASH_USER_MAX_STDOUT_TOKENS },
     stderr: { maxLines: BASH_USER_MAX_STDERR_LINES, maxTokens: BASH_USER_MAX_STDERR_TOKENS },
   });
+  const bashUiText = buildBashUiText({
+    truncationInfo: bashTruncation,
+    exitCode: 0,
+    durationMs: 532,
+  });
 
   const readContent = [
     'export const theme = createUiTheme("ansi");',
@@ -75,10 +88,11 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     "export const editorTheme = theme.editorTheme;",
   ].join("\n");
   const readLines = countLines(readContent);
-  const readModelTruncation = {
-    truncated: false,
-    totalLines: readLines,
-    outputLines: readLines,
+  const readPreviewLines = indentLines(readContent.split("\n"));
+  const readSummaryLine = `    (${readLines} lines · 182-185)`;
+  const readUiText = {
+    previewText: [readPreviewLines, readSummaryLine].filter(Boolean).join("\n"),
+    fullText: readContent,
   };
 
   const listEntries = [
@@ -87,10 +101,27 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     "src/tui/ui/footer.ts",
     "README.md",
   ];
+  const listTotal = 28;
+  const listReturned = listEntries.length;
+  const listPreviewLines = indentLines(listEntries);
+  const listSummaryLine = `    (${listReturned} of ${listTotal} entries · offset 0 · limit 10)`;
+  const listUiText = {
+    previewText: [listPreviewLines, listSummaryLine].filter(Boolean).join("\n"),
+    fullText: `${listReturned} of ${listTotal} entries (offset 0, limit 10)\n\n${listEntries.join("\n")}`,
+  };
 
   const grepStdout = [
     'src/tui/ui/theme/theme.ts:182:export const theme = createUiTheme("ansi")',
   ].join("\n");
+  const grepUiText = {
+    previewText: indentLines(grepStdout.split("\n")),
+    fullText: grepStdout,
+  };
+  const grepError = "grep: permission denied";
+  const grepErrorUiText = {
+    previewText: indentLines([grepError]),
+    fullText: `stderr:\n${grepError}`,
+  };
 
   const writeContent = [
     "export const previewPalette = {",
@@ -100,9 +131,35 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
   ].join("\n");
   const writeLines = countLines(writeContent);
   const writeBytes = Buffer.byteLength(writeContent, "utf8");
+  const writeSummary = `${writeLines} lines · ${formatTokenEstimate(writeBytes)} · ${writeBytes} bytes`;
+  const writePreview = indentLines(writeContent.split("\n"));
+  const writeUiText = {
+    previewText: [writePreview, `    (${writeSummary})`].filter(Boolean).join("\n"),
+    fullText: `${writeSummary}\n\n${writeContent}`,
+  };
 
   const oldText = ["const brandAccent = 0.8;", "const textMuted = 0.4;"].join("\n");
   const newText = ["const brandAccent = 0.9;", "const textMuted = 0.55;"].join("\n");
+  const oldLength = oldText.length;
+  const newLength = newText.length;
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+  const diffLines = [
+    ...oldLines.map((line) => `- ${line}`),
+    ...newLines.map((line) => `+ ${line}`),
+  ];
+  const editPreviewLines = [
+    ...diffLines.map((line) => `    ${line}`),
+    `    (+${newLines.length}, -${oldLines.length})`,
+  ].join("\n");
+  const sizeDiff = newLength - oldLength;
+  const diffStr =
+    sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
+  const editSummary = `replaced ${oldLength} → ${newLength} chars (${diffStr})`;
+  const editUiText = {
+    previewText: editPreviewLines,
+    fullText: `${editSummary}\n\n${diffLines.join("\n")}`,
+  };
 
   return [
     { type: "system", text: "theme preview mode: model calls disabled", kind: "muted" },
@@ -119,23 +176,16 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     { type: "tool", view: buildBashRunningView(theme, 'rg "theme" src') },
     {
       type: "tool",
-      view: buildBashExecutionView(theme, 'rg "theme" src', 0, bashTruncation, 532),
+      view: buildBashExecutionView(theme, 'rg "theme" src', 0, bashUiText),
     },
     { type: "tool", view: buildBashBlockedView(theme, "rm -rf dist", "risk level is read-only") },
     {
       type: "tool",
-      view: buildReadSuccessView(
-        theme,
-        "src/tui/ui/theme/theme.ts",
-        182,
-        185,
-        readContent,
-        readModelTruncation,
-      ),
+      view: buildReadSuccessView(theme, "src/tui/ui/theme/theme.ts", 182, 185, readUiText),
     },
     {
       type: "tool",
-      view: buildListSuccessView(theme, "src/tui/ui", 0, 10, 28, listEntries.length, listEntries),
+      view: buildListSuccessView(theme, "src/tui/ui", listUiText),
     },
     {
       type: "tool",
@@ -147,19 +197,11 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     },
     {
       type: "tool",
-      view: buildGrepFinishedView(theme, "createUiTheme", "success", 0, grepStdout, "", false),
+      view: buildGrepFinishedView(theme, "createUiTheme", "success", grepUiText),
     },
     {
       type: "tool",
-      view: buildGrepFinishedView(
-        theme,
-        "API_KEY",
-        "error",
-        2,
-        "",
-        "grep: permission denied",
-        false,
-      ),
+      view: buildGrepFinishedView(theme, "API_KEY", "error", grepErrorUiText),
     },
     {
       type: "tool",
@@ -167,13 +209,7 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     },
     {
       type: "tool",
-      view: buildWriteSuccessView(
-        theme,
-        "src/tui/ui/theme/preview.ts",
-        writeBytes,
-        writeLines,
-        writeContent,
-      ),
+      view: buildWriteSuccessView(theme, "src/tui/ui/theme/preview.ts", writeUiText),
     },
     {
       type: "tool",
@@ -181,14 +217,7 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     },
     {
       type: "tool",
-      view: buildEditSuccessView(
-        theme,
-        "src/tui/ui/theme/theme.ts",
-        oldText.length,
-        newText.length,
-        oldText,
-        newText,
-      ),
+      view: buildEditSuccessView(theme, "src/tui/ui/theme/theme.ts", editUiText),
     },
     {
       type: "tool",

@@ -1,7 +1,6 @@
 import type { AutocompleteProvider } from "@mariozechner/pi-tui";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
-import type { BashTruncationInfo } from "../core/tools/bash.js";
-import type { ToolUiEvent } from "../core/tools/registry.js";
+import type { ToolUiEvent, ToolUiText } from "../core/tools/registry.js";
 import type { ReasoningEffort, RiskLevel } from "../core/types.js";
 import { createAppTerminal } from "./terminal.js";
 import { ToolUiRouter } from "./tool_ui_router.js";
@@ -75,11 +74,8 @@ export interface ChatView {
   addBashExecutionMessage(args: {
     command: string;
     exitCode: number | null;
-    truncationInfo: BashTruncationInfo;
-    durationMs?: number;
+    uiText: ToolUiText;
     labelOverride?: string;
-    compactHeadLines?: number;
-    compactTailLines?: number;
   }): void;
 }
 
@@ -247,11 +243,8 @@ export class TuiChatView implements ChatView {
   addBashExecutionMessage(args: {
     command: string;
     exitCode: number | null;
-    truncationInfo: BashTruncationInfo;
-    durationMs?: number;
+    uiText: ToolUiText;
     labelOverride?: string;
-    compactHeadLines?: number;
-    compactTailLines?: number;
   }): void {
     this.chatContainer.addMessage({
       type: "tool",
@@ -259,11 +252,8 @@ export class TuiChatView implements ChatView {
         this.uiTheme,
         args.command,
         args.exitCode,
-        args.truncationInfo,
-        args.durationMs,
+        args.uiText,
         args.labelOverride,
-        args.compactHeadLines,
-        args.compactTailLines,
       ),
     });
     this.ui.requestRender();

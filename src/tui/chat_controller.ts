@@ -26,6 +26,7 @@ import {
   BASH_USER_MAX_STDERR_TOKENS,
   BASH_USER_MAX_STDOUT_LINES,
   BASH_USER_MAX_STDOUT_TOKENS,
+  buildBashUiText,
   formatBashUserMessageText,
   prepareBashOutput,
 } from "../core/tools/bash.js";
@@ -1525,14 +1526,18 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         stderr: { maxLines: BASH_USER_MAX_STDERR_LINES, maxTokens: BASH_USER_MAX_STDERR_TOKENS },
       });
 
+      const uiText = buildBashUiText({
+        truncationInfo,
+        exitCode,
+        durationMs,
+        previewLines: { head: 12, tail: 12 },
+      });
+
       this.view.addBashExecutionMessage({
         command,
         exitCode,
-        truncationInfo,
-        durationMs,
+        uiText,
         labelOverride: "you ran",
-        compactHeadLines: 12,
-        compactTailLines: 12,
       });
 
       this.engine.addUserText(formatBashUserMessageText({ command, truncationInfo }));

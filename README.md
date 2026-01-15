@@ -94,7 +94,7 @@ custom personas (loaded from disk) only allow `read-only` and `read-write` risk 
 tau comes with several built-in personas across different models:
 
 - **Claude Opus 4.5** and **Haiku 4.5** (Anthropic)
-- **GPT-5.2** (OpenAI)
+- **GPT-5.2** and **GPT-5.2 Codex** (OpenAI)
 - **Gemini 3 Pro** and **Gemini 3 Flash** (Google)
 
 each model has two variants: a chat variant for general-purpose assistance, and a coder variant optimized for software engineering. both variants include the `web` sub-agent for web research, and coder variants also include the `explore` sub-agent for multi-turn codebase investigation.

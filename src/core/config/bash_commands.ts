@@ -14,7 +14,10 @@ const bashCommandSchema = z
   })
   .passthrough();
 
-export function parseBashCommands(raw: unknown, sourceLabel: string): {
+export function parseBashCommands(
+  raw: unknown,
+  sourceLabel: string,
+): {
   commands: BashCommand[];
   errors: string[];
 } {

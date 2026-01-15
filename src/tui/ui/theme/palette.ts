@@ -1,7 +1,7 @@
 import { Chalk } from "chalk";
 import { hslToHex } from "../../../core/utils/color.js";
-import { PALETTE_COLORS, type PaletteTokenName } from "./tokens.js";
 import type { Palette, ThemeMode } from "./theme.js";
+import { PALETTE_COLORS, type PaletteTokenName } from "./tokens.js";
 
 const chalk = new Chalk({ level: 3 });
 
@@ -146,7 +146,9 @@ function buildPaletteLookup(): Record<PaletteTokenName, string> {
   );
 }
 
-export function getPaletteToken(name: PaletteTokenName): (typeof PALETTE_COLORS)[number] | undefined {
+export function getPaletteToken(
+  name: PaletteTokenName,
+): (typeof PALETTE_COLORS)[number] | undefined {
   return paletteByName.get(name);
 }
 

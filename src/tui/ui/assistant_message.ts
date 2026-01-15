@@ -14,7 +14,10 @@ export type AssistantMessageModel =
       thinking?: string;
     };
 
-export class AssistantMessageComponent extends Container implements UiComponent<AssistantMessageModel> {
+export class AssistantMessageComponent
+  extends Container
+  implements UiComponent<AssistantMessageModel>
+{
   private theme: Theme;
   private contentContainer: Container;
   private thoughtsVisible: boolean;

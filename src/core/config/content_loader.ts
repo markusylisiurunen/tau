@@ -559,10 +559,7 @@ function parsePersona(
   return { persona };
 }
 
-function parsePrompt(
-  file: string,
-  content: string,
-): { prompt?: PromptTemplate; error?: string } {
+function parsePrompt(file: string, content: string): { prompt?: PromptTemplate; error?: string } {
   const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
 
   const parsedFrontMatter = promptFrontMatterSchema.safeParse(frontMatter);

@@ -1,19 +1,12 @@
 import type { Component } from "@mariozechner/pi-tui";
 import { AppIntroComponent, type AppIntroModel } from "./app_intro.js";
-import {
-  AssistantMessageComponent,
-  type AssistantMessageModel,
-} from "./assistant_message.js";
+import { AssistantMessageComponent, type AssistantMessageModel } from "./assistant_message.js";
 import { SessionDividerComponent, type SessionDividerModel } from "./session_divider.js";
 import { SessionSummaryComponent, type SessionSummaryModel } from "./session_summary.js";
 import type { SystemMessageModel } from "./system_message.js";
 import { SystemMessageComponent } from "./system_message.js";
 import type { Theme } from "./theme/index.js";
-import {
-  buildToolOutputProps,
-  renderToolOutput,
-  type ToolOutputViewModel,
-} from "./tool_output.js";
+import { buildToolOutputProps, renderToolOutput, type ToolOutputViewModel } from "./tool_output.js";
 import { UserMessageComponent, type UserMessageModel } from "./user_message.js";
 
 export type ChatMessageModel =

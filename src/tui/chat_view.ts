@@ -1,5 +1,6 @@
 import type { AutocompleteProvider } from "@mariozechner/pi-tui";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
+import type { BashTruncationInfo } from "../core/tools/bash.js";
 import type { ToolUiEvent } from "../core/tools/registry.js";
 import type { ReasoningEffort, RiskLevel } from "../core/types.js";
 import { createAppTerminal } from "./terminal.js";
@@ -11,9 +12,7 @@ import { CustomEditor } from "./ui/custom_editor.js";
 import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
-import { createUiTheme, type Theme } from "./ui/theme/index.js";
-import { buildThemePreviewMessages } from "./ui/theme/index.js";
-import type { BashTruncationInfo } from "../core/tools/bash.js";
+import { buildThemePreviewMessages, createUiTheme, type Theme } from "./ui/theme/index.js";
 
 export type ChatInputMode = "normal" | "bash" | "memory";
 

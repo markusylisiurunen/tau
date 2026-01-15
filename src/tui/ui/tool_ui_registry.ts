@@ -1,6 +1,4 @@
 import type { ToolUiEvent } from "../../core/tools/registry.js";
-import { inlineText } from "./tool_output.js";
-import type { Theme } from "./theme/index.js";
 import {
   buildBashAbortedView,
   buildBashBlockedView,
@@ -27,7 +25,8 @@ import {
   buildTaskFinishedView,
   buildTaskRunningView,
 } from "./task_execution.js";
-import { buildHeaderLine, type ToolOutputViewModel } from "./tool_output.js";
+import type { Theme } from "./theme/index.js";
+import { buildHeaderLine, inlineText, type ToolOutputViewModel } from "./tool_output.js";
 
 export type ToolUiTaskState = {
   events: string[];
@@ -206,12 +205,10 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("task_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "task_blocked" }>;
-    return buildTaskBlockedView(
-      context.theme,
-      uiEvent.title,
-      uiEvent.reason,
-      { kind: uiEvent.kind ?? "task", subagentName: uiEvent.name?.trim() || undefined },
-    );
+    return buildTaskBlockedView(context.theme, uiEvent.title, uiEvent.reason, {
+      kind: uiEvent.kind ?? "task",
+      subagentName: uiEvent.name?.trim() || undefined,
+    });
   });
 
   registry.register("web_search_started", (event, context) => {

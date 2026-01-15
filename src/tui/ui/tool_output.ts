@@ -1,6 +1,6 @@
+import { type Component, Container, Text } from "@mariozechner/pi-tui";
 import type { TruncationResult } from "../../core/utils/truncate.js";
 import { truncateHead, truncateMiddle, truncateTail } from "../../core/utils/truncate.js";
-import { type Component, Container, Text } from "@mariozechner/pi-tui";
 import { DynamicBorder } from "./components/dynamic_border.js";
 import { HeaderLineComponent, type HeaderLineModel } from "./components/header_line.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";
@@ -307,10 +307,7 @@ export function buildBlockedToolView(args: {
   };
 }
 
-export function buildToolOutputProps(
-  view: ToolOutputViewModel,
-  compact: boolean,
-): ToolOutputProps {
+export function buildToolOutputProps(view: ToolOutputViewModel, compact: boolean): ToolOutputProps {
   const header =
     view.compact.header === undefined
       ? undefined

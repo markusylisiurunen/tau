@@ -9,8 +9,8 @@ import {
   buildSection,
   inlineText,
   renderToolOutput,
-  truncateForUi,
   type ToolOutputViewModel,
+  truncateForUi,
 } from "./tool_output.js";
 
 const COMPACT_OUTPUT_HEAD_LINES = 3;

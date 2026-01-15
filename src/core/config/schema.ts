@@ -1,5 +1,5 @@
-import type { KnownProvider } from "@mariozechner/pi-ai";
 import { resolve } from "node:path";
+import type { KnownProvider } from "@mariozechner/pi-ai";
 import { type RiskLevel, RiskLevelSchema } from "../types.js";
 import type { BashCommand } from "./bash_commands.js";
 import { parseBashCommands } from "./bash_commands.js";
@@ -27,7 +27,10 @@ type ConfigDiagnostics = {
   errors: string[];
 };
 
-function parseConfigJson(content: string, sourceLabel: string): {
+function parseConfigJson(
+  content: string,
+  sourceLabel: string,
+): {
   data?: unknown;
   errors: string[];
 } {
@@ -121,12 +124,7 @@ function parseAgentContextFiles(
     return { paths: [], errors: [] };
   }
 
-  const list =
-    typeof raw === "string"
-      ? [raw]
-      : Array.isArray(raw)
-        ? raw
-        : undefined;
+  const list = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : undefined;
 
   if (!list) {
     return {
@@ -265,9 +263,7 @@ export function loadConfigWithDiagnostics(
   const resolvedCwd = cwd ?? resolvedDeps.env.cwd();
   const levels = resolveConfigLevels(resolvedDeps, { cwd: resolvedCwd });
 
-  const results = levels.map((level) =>
-    loadConfigFile(level, resolvedDeps, level.configPath),
-  );
+  const results = levels.map((level) => loadConfigFile(level, resolvedDeps, level.configPath));
 
   return {
     config: mergeConfigLevels(

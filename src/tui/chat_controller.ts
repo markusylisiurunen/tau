@@ -54,10 +54,10 @@ import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
 import { APP_VERSION } from "../core/version.js";
+import type { ChatInputMode, ChatView, ChatViewInputHandlers } from "./chat_view.js";
 import { copyTextToClipboard } from "./clipboard.js";
 import { buildExportEntriesFromHistory } from "./export/engine_history.js";
 import { renderExport } from "./export/index.js";
-import { type ChatInputMode, type ChatView, type ChatViewInputHandlers } from "./chat_view.js";
 import type { AssistantMessageModel } from "./ui/chat_message_model.js";
 import { getFileAutocompleteToken } from "./ui/slash_autocomplete.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
@@ -298,7 +298,10 @@ export class ChatController {
       onEscape: () => this.onInterrupt(),
       onCtrlF: () => {
         this.expandFileMentions().catch((err) => {
-          this.view.addSystemMessage(`mention expansion failed: ${(err as Error).message}`, "error");
+          this.view.addSystemMessage(
+            `mention expansion failed: ${(err as Error).message}`,
+            "error",
+          );
         });
       },
       onAltUp: () => this.popQueuedUserMessageIntoEditor(),
@@ -607,7 +610,7 @@ export class ChatController {
   }
 
   private cyclePersonality(): void {
-    const index = this.personas.findIndex((p) => p === this.currentPersona);
+    const index = this.personas.indexOf(this.currentPersona);
     const next = this.personas[(index + 1) % this.personas.length]!;
     this.switchPersona(next.id);
   }
@@ -1196,7 +1199,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const summary = await this.generateSummary(history);
       this.applySessionContext(summary);
 
-      this.view.addSystemMessage("session forked. previous context has been summarized.", "success");
+      this.view.addSystemMessage(
+        "session forked. previous context has been summarized.",
+        "success",
+      );
     } catch (err) {
       this.view.addSystemMessage(`fork failed: ${(err as Error).message}`, "error");
     } finally {
@@ -1374,7 +1380,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
   private async reloadContent(): Promise<void> {
     if (this.isStreaming) {
-      this.view.addSystemMessage("cannot reload while streaming. try again after the response.", "warn");
+      this.view.addSystemMessage(
+        "cannot reload while streaming. try again after the response.",
+        "warn",
+      );
       return;
     }
 

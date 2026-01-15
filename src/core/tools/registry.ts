@@ -1,7 +1,7 @@
 import type { Message, Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import type { BashTruncationInfo } from "./bash.js";
 import type { Config } from "../config/index.js";
 import type { Persona, RiskLevel } from "../types.js";
+import type { BashTruncationInfo } from "./bash.js";
 
 const restrictedToolNames = new Set(["read", "grep", "list"]);
 

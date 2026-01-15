@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, parse, resolve, sep } from "node:path";
 import type { ConfigDeps } from "../config/deps.js";
 import { loadConfigWithDiagnostics } from "../config/schema.js";
@@ -83,7 +83,10 @@ function findAdditionalAgentsFilesFromConfigsDetailed(args: {
   return { files, errors };
 }
 
-export function findAgentsFilesInScopeDetailed(cwd: string, home: string): AgentsFilesInScopeResult {
+export function findAgentsFilesInScopeDetailed(
+  cwd: string,
+  home: string,
+): AgentsFilesInScopeResult {
   const base = findAgentsFilesFromCwdToHome(cwd, home);
   const extra = findAdditionalAgentsFilesFromConfigsDetailed({ cwd, home });
 

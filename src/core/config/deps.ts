@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync, type Stats } from "node:fs";
+import { existsSync, readdirSync, readFileSync, type Stats, statSync } from "node:fs";
 import { homedir } from "node:os";
 
 export type ConfigFileSystem = {

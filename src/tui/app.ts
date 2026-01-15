@@ -1,7 +1,7 @@
+import type { BashCommand, Config } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { ModeAdapter } from "../core/modes/mode_adapter.js";
 import type { PromptTemplate } from "../core/prompts.js";
-import type { BashCommand, Config } from "../core/config/index.js";
 import type { Persona, RiskLevel, Skill } from "../core/types.js";
 import { ChatController } from "./chat_controller.js";
 import { TuiChatView } from "./chat_view.js";

@@ -12,7 +12,6 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-
 import { resolveConfigPaths } from "../dist/core/config/paths.js";
 import { loadConfig, loadConfigWithDiagnostics } from "../dist/core/config/schema.js";
 

@@ -2,7 +2,6 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-
 import { findAgentsFilesInScope } from "../dist/core/utils/context.js";
 
 function setupFixture() {

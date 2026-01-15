@@ -1,4 +1,5 @@
 import type { Message, Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { BashTruncationInfo } from "./bash.js";
 import type { Config } from "../config/index.js";
 import type { Persona, RiskLevel } from "../types.js";
 
@@ -15,7 +16,7 @@ export type ToolUiEvent =
       toolCallId: string;
       command: string;
       exitCode: number | null;
-      truncationInfo: import("./bash.js").BashTruncationInfo;
+      truncationInfo: BashTruncationInfo;
       durationMs?: number;
     }
   | { type: "bash_blocked"; command: string; reason: string; toolCallId?: string }

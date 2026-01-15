@@ -1,11 +1,11 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, type Stats } from "node:fs";
 import { homedir } from "node:os";
 
 export type ConfigFileSystem = {
   readFile: (path: string) => string;
   exists: (path: string) => boolean;
   listDir: (path: string) => string[];
-  stat: (path: string) => import("node:fs").Stats;
+  stat: (path: string) => Stats;
 };
 
 export type ConfigEnvironment = {

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";

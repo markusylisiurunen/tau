@@ -11,7 +11,6 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-
 import { loadAllContent } from "../dist/core/config/index.js";
 
 function setupFixture() {

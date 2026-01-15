@@ -11,8 +11,8 @@ import { CustomEditor } from "./ui/custom_editor.js";
 import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
-import { createUiTheme, type Theme } from "./ui/theme.js";
-import { buildThemePreviewMessages } from "./ui/theme_preview.js";
+import { createUiTheme, type Theme } from "./ui/theme/index.js";
+import { buildThemePreviewMessages } from "./ui/theme/index.js";
 import type { BashTruncationInfo } from "../core/tools/bash.js";
 
 export type ChatInputMode = "normal" | "bash" | "memory";

@@ -1,5 +1,5 @@
 import { Container, Text } from "@mariozechner/pi-tui";
-import type { Theme } from "./theme.js";
+import type { Theme } from "./theme/index.js";
 
 export type SystemMessageKind = "success" | "warn" | "error" | "muted";
 

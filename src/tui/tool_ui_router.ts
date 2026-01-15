@@ -1,6 +1,6 @@
 import type { ToolUiEvent } from "../core/tools/registry.js";
 import type { ChatContainerComponent } from "./ui/chat_container.js";
-import type { Theme } from "./ui/theme.js";
+import type { Theme } from "./ui/theme/index.js";
 import { createToolUiRegistry, type ToolUiRegistry } from "./ui/tool_ui_registry.js";
 
 type RunningBashComponent = {

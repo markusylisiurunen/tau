@@ -1,8 +1,8 @@
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
 import { Chalk } from "chalk";
-import type { ReasoningEffort } from "../../core/types.js";
-import { hslToHex } from "../../core/utils/color.js";
-import { assertNever } from "../../core/utils/never.js";
+import type { ReasoningEffort } from "../../../core/types.js";
+import { hslToHex } from "../../../core/utils/color.js";
+import { assertNever } from "../../../core/utils/never.js";
 import { PALETTE_COLORS, type PaletteTokenName } from "./palette_tokens.js";
 
 const chalk = new Chalk({ level: 3 });

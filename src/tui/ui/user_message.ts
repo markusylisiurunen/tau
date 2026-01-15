@@ -1,5 +1,5 @@
 import { Container, Markdown } from "@mariozechner/pi-tui";
-import type { Theme } from "./theme.js";
+import type { Theme } from "./theme/index.js";
 
 export class UserMessageComponent extends Container {
   constructor(theme: Theme, text: string, opts?: { isMemoryMode?: boolean }) {

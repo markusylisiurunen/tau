@@ -1,5 +1,5 @@
 import { Container, Text } from "@mariozechner/pi-tui";
-import type { Theme } from "./theme.js";
+import type { Theme } from "./theme/index.js";
 
 export class AppIntroComponent extends Container {
   constructor(theme: Theme, appName: string, version: string, helpText: string) {

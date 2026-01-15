@@ -1,6 +1,6 @@
 import { type Component, Markdown } from "@mariozechner/pi-tui";
 import { HeaderBox } from "./components/header_box.js";
-import type { Theme } from "./theme.js";
+import type { Theme } from "./theme/index.js";
 
 export class SessionSummaryComponent implements Component {
   private box: HeaderBox;

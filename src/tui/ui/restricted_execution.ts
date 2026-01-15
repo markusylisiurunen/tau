@@ -1,19 +1,18 @@
-import { inlineText } from "./inline.js";
-import type { Theme } from "./theme.js";
-import { buildBlockedToolView } from "./tool_output_helpers.js";
-import {
-  buildHeaderLine,
-  buildSection,
-  renderToolOutput,
-  type ToolOutputViewModel,
-} from "./tool_output_layout.js";
-import { applyPreviewPolicy, buildCompactPreviewLines } from "./tool_output_preview.js";
+import type { Theme } from "./theme/index.js";
 import {
   GREP_UI_MAX_LINES,
   GREP_UI_MAX_TOKENS,
   READ_UI_MAX_LINES,
   READ_UI_MAX_TOKENS,
-} from "./tool_truncation.js";
+  applyPreviewPolicy,
+  buildBlockedToolView,
+  buildCompactPreviewLines,
+  buildHeaderLine,
+  buildSection,
+  inlineText,
+  renderToolOutput,
+  type ToolOutputViewModel,
+} from "./tool_output.js";
 
 interface PreviewTruncation {
   truncated: boolean;

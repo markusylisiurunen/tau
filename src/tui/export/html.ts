@@ -1,4 +1,4 @@
-import { type ColorDef, PALETTE_COLORS, type PaletteTokenName } from "../ui/palette_tokens.js";
+import { type ColorDef, PALETTE_COLORS, type PaletteTokenName } from "../ui/theme/index.js";
 import type { ExportEntry, ExportMetadata, ExportToolCall } from "./types.js";
 
 const paletteByName = new Map<PaletteTokenName, ColorDef>(

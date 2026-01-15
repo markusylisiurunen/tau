@@ -2,7 +2,7 @@ import { Editor, Key, matchesKey, visibleWidth } from "@mariozechner/pi-tui";
 import stripAnsi from "strip-ansi";
 import { truncateFromEndByWidth } from "./components/one_line_segments.js";
 import { getSkillAutocompleteToken } from "./slash_autocomplete.js";
-import type { Theme } from "./theme.js";
+import type { Theme } from "./theme/index.js";
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 

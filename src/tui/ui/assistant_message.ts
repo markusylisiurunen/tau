@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
-import type { Theme } from "./theme.js";
+import type { Theme } from "./theme/index.js";
 
 export class AssistantMessageComponent extends Container {
   private theme: Theme;

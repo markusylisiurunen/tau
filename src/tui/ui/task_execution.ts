@@ -2,13 +2,13 @@ import type { Component } from "@mariozechner/pi-tui";
 import { Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { formatAdaptiveNumber } from "../../core/utils/format.js";
 import { PaddedContainer } from "./components/padded_container.js";
-import type { Theme } from "./theme.js";
+import type { Theme } from "./theme/index.js";
 import {
   buildHeaderLine,
   buildSection,
   renderToolOutput,
   type ToolOutputViewModel,
-} from "./tool_output_layout.js";
+} from "./tool_output.js";
 
 type TaskKind = "task" | "fork";
 

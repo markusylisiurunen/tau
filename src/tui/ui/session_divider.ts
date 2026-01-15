@@ -1,5 +1,5 @@
 import type { Component } from "@mariozechner/pi-tui";
-import type { Theme } from "./theme.js";
+import type { Theme } from "./theme/index.js";
 
 export class SessionDividerComponent implements Component {
   constructor(

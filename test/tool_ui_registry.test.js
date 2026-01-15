@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
-import { renderToolOutput } from "../dist/tui/ui/tool_output_layout.js";
+import { renderToolOutput } from "../dist/tui/ui/tool_output.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
 
 function renderEvent(registry, theme, event, context = {}) {

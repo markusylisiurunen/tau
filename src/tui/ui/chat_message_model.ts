@@ -6,8 +6,8 @@ import { SessionDividerComponent } from "./session_divider.js";
 import { SessionSummaryComponent } from "./session_summary.js";
 import type { SystemMessageKind } from "./system_message.js";
 import { SystemMessageComponent } from "./system_message.js";
-import type { Theme } from "./theme.js";
-import { renderToolOutput, type ToolOutputViewModel } from "./tool_output_layout.js";
+import type { Theme } from "./theme/index.js";
+import { renderToolOutput, type ToolOutputViewModel } from "./tool_output.js";
 import { UserMessageComponent } from "./user_message.js";
 
 export type ChatMessageModel =

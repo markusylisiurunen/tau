@@ -4,19 +4,19 @@ import {
   BASH_USER_MAX_STDOUT_LINES,
   BASH_USER_MAX_STDOUT_TOKENS,
   prepareBashOutput,
-} from "../../core/tools/bash.js";
+} from "../../../core/tools/bash.js";
 import {
   buildBashBlockedView,
   buildBashExecutionView,
   buildBashRunningView,
-} from "./bash_execution.js";
-import type { ChatMessageModel } from "./chat_message_model.js";
+} from "../bash_execution.js";
+import type { ChatMessageModel } from "../chat_message_model.js";
 import {
   buildEditBlockedView,
   buildEditSuccessView,
   buildWriteBlockedView,
   buildWriteSuccessView,
-} from "./file_execution.js";
+} from "../file_execution.js";
 import {
   buildGrepBlockedView,
   buildGrepFinishedView,
@@ -24,12 +24,12 @@ import {
   buildListSuccessView,
   buildReadBlockedView,
   buildReadSuccessView,
-} from "./restricted_execution.js";
+} from "../restricted_execution.js";
 import {
   buildTaskBlockedView,
   buildTaskFinishedView,
   buildTaskRunningView,
-} from "./task_execution.js";
+} from "../task_execution.js";
 import { buildPalettePreview, type Theme } from "./theme.js";
 
 function countLines(text: string): number {

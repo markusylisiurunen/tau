@@ -7,7 +7,7 @@ import {
   renderChatMessage,
   updateAssistantComponent,
 } from "./chat_message_model.js";
-import type { Theme } from "./theme.js";
+import type { Theme } from "./theme/index.js";
 
 type ChatMessageRecord = {
   id: string;

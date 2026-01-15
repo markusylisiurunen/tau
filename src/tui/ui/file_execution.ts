@@ -1,19 +1,18 @@
 import { formatTokenEstimate } from "../../core/utils/token.js";
-import { inlineText } from "./inline.js";
-import type { Theme } from "./theme.js";
-import { buildBlockedToolView } from "./tool_output_helpers.js";
-import {
-  buildHeaderLine,
-  renderToolOutput,
-  type ToolOutputViewModel,
-} from "./tool_output_layout.js";
-import { applyPreviewPolicy, buildCompactPreviewLines } from "./tool_output_preview.js";
+import type { Theme } from "./theme/index.js";
 import {
   EDIT_DIFF_MAX_LINES,
   EDIT_DIFF_MAX_TOKENS,
-  truncateForUi,
   WRITE_UI_PREVIEW_LINES,
-} from "./tool_truncation.js";
+  applyPreviewPolicy,
+  buildBlockedToolView,
+  buildCompactPreviewLines,
+  buildHeaderLine,
+  inlineText,
+  renderToolOutput,
+  truncateForUi,
+  type ToolOutputViewModel,
+} from "./tool_output.js";
 
 interface DiffTruncation {
   truncated: boolean;

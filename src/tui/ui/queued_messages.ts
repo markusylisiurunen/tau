@@ -1,5 +1,5 @@
 import { type Component, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import type { Theme } from "./theme.js";
+import type { Theme } from "./theme/index.js";
 
 function firstLine(text: string): string {
   const idx = text.indexOf("\n");

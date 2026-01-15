@@ -1,15 +1,17 @@
 import type { BashTruncationInfo } from "../../core/tools/bash.js";
 import { formatTokenEstimate } from "../../core/utils/token.js";
 import { formatBytes } from "../../core/utils/truncate.js";
-import { inlineText } from "./inline.js";
-import type { Theme } from "./theme.js";
+import type { Theme } from "./theme/index.js";
 import {
+  BASH_UI_MAX_LINES,
+  BASH_UI_MAX_TOKENS,
   buildHeaderLine,
   buildSection,
+  inlineText,
   renderToolOutput,
+  truncateForUi,
   type ToolOutputViewModel,
-} from "./tool_output_layout.js";
-import { BASH_UI_MAX_LINES, BASH_UI_MAX_TOKENS, truncateForUi } from "./tool_truncation.js";
+} from "./tool_output.js";
 
 const COMPACT_OUTPUT_HEAD_LINES = 3;
 const COMPACT_OUTPUT_TAIL_LINES = 3;

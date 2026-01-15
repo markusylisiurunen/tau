@@ -1,6 +1,6 @@
 import type { ToolUiEvent } from "../../core/tools/registry.js";
-import { inlineText } from "./inline.js";
-import type { Theme } from "./theme.js";
+import { inlineText } from "./tool_output.js";
+import type { Theme } from "./theme/index.js";
 import {
   buildBashAbortedView,
   buildBashBlockedView,
@@ -27,7 +27,7 @@ import {
   buildTaskFinishedView,
   buildTaskRunningView,
 } from "./task_execution.js";
-import { buildHeaderLine, type ToolOutputViewModel } from "./tool_output_layout.js";
+import { buildHeaderLine, type ToolOutputViewModel } from "./tool_output.js";
 
 export type ToolUiTaskState = {
   events: string[];

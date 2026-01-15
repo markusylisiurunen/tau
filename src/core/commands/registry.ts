@@ -34,6 +34,7 @@ interface CommandDefinition<Ctx, T extends Command = Command> extends CommandInf
   parse: (raw: string) => T | null;
   run: (ctx: Ctx, command: T) => Promise<void> | void;
   hidden?: boolean;
+  allowDuringStreaming?: boolean;
 }
 
 export interface CommandDispatchContext {
@@ -131,6 +132,11 @@ export class CommandRegistry<Ctx = unknown> {
     return this.commands
       .filter((command) => !command.hidden)
       .map(({ parse, run, hidden, ...info }) => info);
+  }
+
+  allowsDuringStreaming(command: Command): boolean {
+    const handler = this.byId.get(command.type);
+    return Boolean(handler?.allowDuringStreaming);
   }
 
   buildHelpText(options: HelpTextOptions = {}): string {
@@ -349,6 +355,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "insert prompt template",
     argument: "prompt",
     section: "trailing",
+    allowDuringStreaming: true,
     parse: (raw) => {
       const match = raw.match(/^\/prompt:(.+)$/i);
       const id = match?.[1]?.trim() ?? "";

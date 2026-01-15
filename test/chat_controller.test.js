@@ -6,11 +6,13 @@ function createStubView() {
   const added = [];
   const updated = [];
   const systemMessages = [];
+  const editorTextUpdates = [];
 
   return {
     added,
     updated,
     systemMessages,
+    editorTextUpdates,
     view: {
       start: () => {},
       stop: () => {},
@@ -37,7 +39,9 @@ function createStubView() {
       getToolUiCostTotal: () => 0,
       sendTerminalNotification: () => {},
       getEditorText: () => "",
-      setEditorText: () => {},
+      setEditorText: (text) => {
+        editorTextUpdates.push(text);
+      },
       getEditorCursor: () => ({ line: 0, col: 0 }),
       getEditorLines: () => [""],
       bindInputHandlers: () => {},
@@ -47,11 +51,11 @@ function createStubView() {
   };
 }
 
-function createController(view) {
+function createController(view, options = {}) {
   return new ChatController({
     view,
     personas,
-    prompts: [],
+    prompts: options.prompts ?? [],
     skills: [],
     bashCommands: [],
     config: {},
@@ -112,5 +116,19 @@ describe("ChatController queued message draining", () => {
 
     expect(calls).toEqual(["first", "second"]);
     expect(controller.queuedUserMessages.length).toBe(0);
+  });
+});
+
+describe("ChatController streaming command handling", () => {
+  it("allows prompt command while streaming", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view, {
+      prompts: [{ id: "intro", template: "hello there" }],
+    });
+
+    controller.isStreaming = true;
+    await controller.onUserInput("/prompt:intro");
+
+    expect(stub.editorTextUpdates).toEqual(["hello there"]);
   });
 });

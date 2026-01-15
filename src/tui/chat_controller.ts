@@ -811,7 +811,14 @@ export class ChatController {
     if (!trimmed) return;
 
     if (this.isStreaming) {
-      if (trimmed.startsWith("/") || trimmed.startsWith("!")) {
+      if (trimmed.startsWith("/")) {
+        const parsed = this.commandRegistry.parse(trimmed);
+        if (this.commandRegistry.allowsDuringStreaming(parsed)) {
+          await this.commandRegistry.dispatch(parsed, this.commandHandlers);
+        }
+        return;
+      }
+      if (trimmed.startsWith("!")) {
         return;
       }
       this.queueUserMessage(trimmed);

@@ -56,7 +56,7 @@ function buildWriteUiText(args: { bytes: number; lines: number; content: string 
   });
   const infoText = `${lines} lines · ${formatTokenEstimate(bytes)} · ${bytes} bytes`;
   const summaryLine = `    (${infoText})`;
-  const previewText = [compactLines, summaryLine].filter(Boolean).join("\n");
+  const previewText = compactLines ?? "";
 
   const summary = infoText;
   const trimmed = content.trimEnd();
@@ -64,6 +64,7 @@ function buildWriteUiText(args: { bytes: number; lines: number; content: string 
 
   return {
     previewText,
+    statusLine: summaryLine,
     fullText,
   };
 }

@@ -91,7 +91,8 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
   const readPreviewLines = indentLines(readContent.split("\n"));
   const readSummaryLine = `    (${readLines} lines · 182-185)`;
   const readUiText = {
-    previewText: [readPreviewLines, readSummaryLine].filter(Boolean).join("\n"),
+    previewText: readPreviewLines,
+    statusLine: readSummaryLine,
     fullText: readContent,
   };
 
@@ -106,7 +107,8 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
   const listPreviewLines = indentLines(listEntries);
   const listSummaryLine = `    (${listReturned} of ${listTotal} entries · offset 0 · limit 10)`;
   const listUiText = {
-    previewText: [listPreviewLines, listSummaryLine].filter(Boolean).join("\n"),
+    previewText: listPreviewLines,
+    statusLine: listSummaryLine,
     fullText: `${listReturned} of ${listTotal} entries (offset 0, limit 10)\n\n${listEntries.join("\n")}`,
   };
 
@@ -134,7 +136,8 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
   const writeSummary = `${writeLines} lines · ${formatTokenEstimate(writeBytes)} · ${writeBytes} bytes`;
   const writePreview = indentLines(writeContent.split("\n"));
   const writeUiText = {
-    previewText: [writePreview, `    (${writeSummary})`].filter(Boolean).join("\n"),
+    previewText: writePreview,
+    statusLine: `    (${writeSummary})`,
     fullText: `${writeSummary}\n\n${writeContent}`,
   };
 
@@ -148,16 +151,15 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     ...oldLines.map((line) => `- ${line}`),
     ...newLines.map((line) => `+ ${line}`),
   ];
-  const editPreviewLines = [
-    ...diffLines.map((line) => `    ${line}`),
-    `    (+${newLines.length}, -${oldLines.length})`,
-  ].join("\n");
+  const editPreviewLines = [...diffLines.map((line) => `    ${line}`)].join("\n");
   const sizeDiff = newLength - oldLength;
   const diffStr =
     sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
   const editSummary = `replaced ${oldLength} → ${newLength} chars (${diffStr})`;
+  const editStatusLine = `    (+${newLines.length}, -${oldLines.length}) · ${editSummary}`;
   const editUiText = {
     previewText: editPreviewLines,
+    statusLine: editStatusLine,
     fullText: `${editSummary}\n\n${diffLines.join("\n")}`,
   };
 

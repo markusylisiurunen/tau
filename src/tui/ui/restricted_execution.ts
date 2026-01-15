@@ -39,7 +39,14 @@ export function buildReadSuccessView(
     accent: pathInline,
     accentStyle: palette.brandAccent,
   });
-  const compactText = uiText.previewText ? palette.textDim(uiText.previewText) : undefined;
+  const compactParts: string[] = [];
+  if (uiText.previewText.trim()) {
+    compactParts.push(palette.textDim(uiText.previewText));
+  }
+  if (uiText.statusLine?.trim()) {
+    compactParts.push(palette.textMuted(uiText.statusLine));
+  }
+  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
 
   return {
     borderColor: readColor,
@@ -93,7 +100,14 @@ export function buildListSuccessView(
     accentStyle: palette.brandAccent,
   });
 
-  const compactText = uiText.previewText ? palette.textDim(uiText.previewText) : undefined;
+  const compactParts: string[] = [];
+  if (uiText.previewText.trim()) {
+    compactParts.push(palette.textDim(uiText.previewText));
+  }
+  if (uiText.statusLine?.trim()) {
+    compactParts.push(palette.textMuted(uiText.statusLine));
+  }
+  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
 
   return {
     borderColor: listColor,
@@ -175,7 +189,15 @@ export function buildGrepFinishedView(
     accentStyle: palette.brandAccent,
   });
   const previewStyle = isSuccess ? palette.textDim : palette.actionError;
-  const extraText = uiText.previewText ? previewStyle(uiText.previewText) : undefined;
+  const statusStyle = isSuccess ? palette.textMuted : palette.actionError;
+  const compactParts: string[] = [];
+  if (uiText.previewText.trim()) {
+    compactParts.push(previewStyle(uiText.previewText));
+  }
+  if (uiText.statusLine?.trim()) {
+    compactParts.push(statusStyle(uiText.statusLine));
+  }
+  const extraText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
 
   return {
     borderColor,

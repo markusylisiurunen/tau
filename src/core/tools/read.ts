@@ -111,7 +111,7 @@ function buildReadUiText(args: {
   });
   const infoText = `${totalLinesForSummary} lines · ${formatRange(startLine, endLine)}`;
   const summaryLine = `    (${infoText})`;
-  const previewText = [compactLines, summaryLine].filter(Boolean).join("\n");
+  const previewText = compactLines ?? "";
 
   const trimmed = content.trimEnd();
   const sections: string[] = [];
@@ -126,6 +126,7 @@ function buildReadUiText(args: {
 
   return {
     previewText,
+    statusLine: summaryLine,
     fullText: sections.join("\n\n"),
   };
 }

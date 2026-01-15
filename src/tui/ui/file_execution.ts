@@ -27,7 +27,14 @@ export function buildWriteSuccessView(
     accentStyle: palette.brandAccent,
   });
 
-  const compactText = uiText.previewText ? palette.textDim(uiText.previewText) : undefined;
+  const compactParts: string[] = [];
+  if (uiText.previewText.trim()) {
+    compactParts.push(palette.textDim(uiText.previewText));
+  }
+  if (uiText.statusLine?.trim()) {
+    compactParts.push(palette.textMuted(uiText.statusLine));
+  }
+  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
   const fullText = uiText.fullText.trim() ? palette.actionOutput(uiText.fullText) : undefined;
 
   return {
@@ -77,7 +84,14 @@ export function buildEditSuccessView(
     accentStyle: palette.brandAccent,
   });
 
-  const compactText = uiText.previewText ? palette.textDim(uiText.previewText) : undefined;
+  const compactParts: string[] = [];
+  if (uiText.previewText.trim()) {
+    compactParts.push(palette.textDim(uiText.previewText));
+  }
+  if (uiText.statusLine?.trim()) {
+    compactParts.push(palette.textMuted(uiText.statusLine));
+  }
+  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
   const fullText = uiText.fullText.trim() ? palette.actionOutput(uiText.fullText) : undefined;
 
   return {

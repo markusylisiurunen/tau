@@ -225,12 +225,12 @@ function buildEditUiText(args: {
       `    ◆ truncated: ${truncation.outputLines} of ${truncation.totalLines} lines`,
     );
   }
-  compactLines.push(`    (+${added}, -${removed})`);
 
   const sizeDiff = newLength - oldLength;
   const diffStr =
     sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
   const summaryLine = `replaced ${oldLength} → ${newLength} chars (${diffStr})`;
+  const statusLine = `    (+${added}, -${removed}) · ${summaryLine}`;
 
   const fullDiffLines = buildFullDiffLines(oldText, newText);
   const fullText =
@@ -238,6 +238,7 @@ function buildEditUiText(args: {
 
   return {
     previewText: compactLines.join("\n"),
+    statusLine,
     fullText,
   };
 }

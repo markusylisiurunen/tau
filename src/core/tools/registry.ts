@@ -152,6 +152,7 @@ export type ToolUiEvent =
 
 export type ToolUiText = {
   previewText: string;
+  statusLine?: string;
   fullText: string;
 };
 

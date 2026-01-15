@@ -85,13 +85,13 @@ function buildListUiText(args: {
   });
   const infoText = `${returned} of ${total} entries · offset ${offset} · limit ${limit}`;
   const summaryLine = `    (${infoText})`;
-  const previewText = [compactLines, summaryLine].filter(Boolean).join("\n");
+  const previewText = compactLines ?? "";
 
   const summary = `${returned} of ${total} entries (offset ${offset}, limit ${limit})`;
   const listText = entries.length > 0 ? entries.join("\n") : "";
   const fullText = listText ? `${summary}\n\n${listText}` : summary;
 
-  return { previewText, fullText };
+  return { previewText, statusLine: summaryLine, fullText };
 }
 
 export function createListToolDefinition(backend: ToolExecutionBackend): ToolDefinition {

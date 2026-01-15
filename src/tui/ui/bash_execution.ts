@@ -56,7 +56,15 @@ export function buildBashExecutionView(
   });
 
   const previewStyle = isSuccess ? palette.textDim : palette.actionError;
-  const compactText = uiText.previewText ? previewStyle(uiText.previewText) : undefined;
+  const statusStyle = isSuccess ? palette.textMuted : palette.actionError;
+  const compactParts: string[] = [];
+  if (uiText.previewText.trim()) {
+    compactParts.push(previewStyle(uiText.previewText));
+  }
+  if (uiText.statusLine?.trim()) {
+    compactParts.push(statusStyle(uiText.statusLine));
+  }
+  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
   const fullStyle = isSuccess ? palette.actionOutput : palette.actionError;
   const fullText = uiText.fullText.trim() ? fullStyle(uiText.fullText) : undefined;
   const sections = fullText ? [fullText] : [];

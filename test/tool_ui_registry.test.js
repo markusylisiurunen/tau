@@ -3,8 +3,8 @@ import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 import { renderToolOutput } from "../dist/tui/ui/tool_output.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
 
-function makeUiText(previewText, fullText = "") {
-  return { previewText, fullText };
+function makeUiText(previewText, statusLine, fullText = "") {
+  return { previewText, statusLine, fullText };
 }
 
 function renderEvent(registry, theme, event, context = {}) {
@@ -24,7 +24,7 @@ describe("ToolUiRegistry", () => {
       model: { truncated: false, totalLines: 1, outputLines: 1, totalBytes: 2, outputBytes: 2 },
       captureTruncated: false,
     };
-    const uiText = makeUiText("    ok", "ok");
+    const uiText = makeUiText("    ok", "    (exit 0)", "ok");
 
     const started = renderEvent(registry, theme, {
       type: "bash_started",
@@ -144,7 +144,7 @@ describe("ToolUiRegistry", () => {
       bytes: 12,
       lines: 1,
       content: "hello world",
-      uiText: makeUiText("    hello world", "hello world"),
+      uiText: makeUiText("    hello world", "    (1 line)", "hello world"),
     });
     expect(writeSuccess).toContain("notes.txt");
 
@@ -162,7 +162,11 @@ describe("ToolUiRegistry", () => {
       newLength: 11,
       oldText: "hello",
       newText: "hello world",
-      uiText: makeUiText("    - hello\n    + hello world\n    (+1, -1)", "replaced 5 -> 11 chars\n\n- hello\n+ hello world"),
+      uiText: makeUiText(
+        "    - hello\n    + hello world",
+        "    (+1, -1) · replaced 5 -> 11 chars",
+        "replaced 5 -> 11 chars\n\n- hello\n+ hello world",
+      ),
     });
     expect(editSuccess).toContain("notes.txt");
 
@@ -182,7 +186,7 @@ describe("ToolUiRegistry", () => {
       endLine: 2,
       content: "hello\nworld",
       modelTruncation: { truncated: false, totalLines: 2, outputLines: 2 },
-      uiText: makeUiText("    hello\n    world\n    (2 lines · 1-2)", "hello\nworld"),
+      uiText: makeUiText("    hello\n    world", "    (2 lines · 1-2)", "hello\nworld"),
     });
     expect(readSuccess).toContain("README.md");
 
@@ -201,7 +205,11 @@ describe("ToolUiRegistry", () => {
       total: 2,
       returned: 2,
       entries: ["a.txt", "b.txt"],
-      uiText: makeUiText("    a.txt\n    b.txt\n    (2 of 2 entries · offset 0 · limit 10)", "a.txt\nb.txt"),
+      uiText: makeUiText(
+        "    a.txt\n    b.txt",
+        "    (2 of 2 entries · offset 0 · limit 10)",
+        "a.txt\nb.txt",
+      ),
     });
     expect(listSuccess).toContain("a.txt");
 
@@ -228,7 +236,7 @@ describe("ToolUiRegistry", () => {
       stdout: "needle",
       stderr: "",
       captureTruncated: false,
-      uiText: makeUiText("    needle", "needle"),
+      uiText: makeUiText("    needle", undefined, "needle"),
     });
     expect(grepFinished).toContain("needle");
 

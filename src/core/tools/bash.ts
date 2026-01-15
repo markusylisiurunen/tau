@@ -247,7 +247,7 @@ export function buildBashUiText(args: {
   const details = `(${exitSummary} · ${infoText})`;
 
   const summaryLine = `    ${details}`;
-  const previewText = [outputBlock, summaryLine].filter(Boolean).join("\n");
+  const previewText = outputBlock ?? "";
 
   const sections: string[] = [];
   const rawOutput = truncationInfo.rawOutput.trimEnd();
@@ -267,6 +267,7 @@ export function buildBashUiText(args: {
 
   return {
     previewText,
+    statusLine: summaryLine,
     fullText: sections.join("\n\n"),
   };
 }

@@ -30,7 +30,8 @@ import {
   buildTaskFinishedView,
   buildTaskRunningView,
 } from "../task_execution.js";
-import { buildPalettePreview, type Theme } from "./theme.js";
+import { buildPalettePreview } from "./palette.js";
+import type { Theme } from "./theme.js";
 
 function countLines(text: string): number {
   if (!text) return 0;

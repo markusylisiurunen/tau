@@ -110,7 +110,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`).
 - **Prompts**: `~/.config/tau/prompts/*.md` and `.tau/prompts/*.md` (discovered by walking up from cwd to home/root; most specific wins on conflicts).
-- **Themes**: `~/.config/tau/themes/*.json` and `.tau/themes/*.json` (same discovery rules as prompts/config). Missing palette tokens render as plain text when a theme is selected.
+- **Themes**: `~/.config/tau/themes/*.json` and `.tau/themes/*.json` (same discovery rules as prompts/config). Theme values accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, or `hsl(h, s%, l%)`. Missing palette tokens render as plain text when a theme is selected.
 - **Skills**: `~/.config/tau/skills/` and `.tau/skills/` (discovered by walking up from cwd to home/root). Each skill is a directory containing `SKILL.md` with required YAML frontmatter:
   - `name` (1-64 chars, `a-z0-9-`, must match directory name)
   - `description` (1-1024 chars)

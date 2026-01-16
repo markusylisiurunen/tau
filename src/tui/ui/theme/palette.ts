@@ -156,13 +156,48 @@ export function getPaletteToken(
 
 function normalizeHex(value: string): string | undefined {
   const cleaned = value.trim();
-  if (/^#[0-9a-fA-F]{6}$/.test(cleaned) || /^#[0-9a-fA-F]{3}$/.test(cleaned)) {
+  if (/^#[0-9a-fA-F]{6}$/.test(cleaned)) {
     return cleaned;
   }
-  if (/^[0-9a-fA-F]{6}$/.test(cleaned) || /^[0-9a-fA-F]{3}$/.test(cleaned)) {
-    return `#${cleaned}`;
+  if (/^#[0-9a-fA-F]{3}$/.test(cleaned)) {
+    const [r, g, b] = cleaned
+      .slice(1)
+      .split("")
+      .map((channel) => channel + channel);
+    return `#${r}${g}${b}`;
   }
   return undefined;
+}
+
+function rgbToHex(channel: number): string {
+  return channel.toString(16).padStart(2, "0");
+}
+
+function parseRgb(value: string): string | undefined {
+  const match = value.match(/^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i);
+  if (!match) return undefined;
+  const [r, g, b] = match.slice(1, 4).map((part) => Number(part));
+  if ([r, g, b].some((channel) => Number.isNaN(channel) || channel < 0 || channel > 255)) {
+    return undefined;
+  }
+  return `#${rgbToHex(r)}${rgbToHex(g)}${rgbToHex(b)}`;
+}
+
+function parseHsl(value: string): string | undefined {
+  const match = value.match(
+    /^hsl\(\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*([0-9]+(?:\.[0-9]+)?)%?\s*,\s*([0-9]+(?:\.[0-9]+)?)%?\s*\)$/i,
+  );
+  if (!match) return undefined;
+  const h = Number(match[1]);
+  const s = Number(match[2]);
+  const l = Number(match[3]);
+  if ([h, s, l].some((channel) => Number.isNaN(channel))) {
+    return undefined;
+  }
+  if (h < 0 || h > 360 || s < 0 || s > 100 || l < 0 || l > 100) {
+    return undefined;
+  }
+  return hslToHex(h, s, l);
 }
 
 export function coercePaletteOverrides(raw?: Record<string, string>): PaletteOverrides | undefined {
@@ -170,7 +205,7 @@ export function coercePaletteOverrides(raw?: Record<string, string>): PaletteOve
   const overrides: PaletteOverrides = {};
   for (const [key, value] of Object.entries(raw)) {
     if (!ALL_PALETTE_TOKEN_SET.has(key)) continue;
-    const hex = normalizeHex(value);
+    const hex = normalizeHex(value) ?? parseRgb(value) ?? parseHsl(value);
     if (!hex) continue;
     overrides[key as PaletteTokenName] = hex;
   }
@@ -184,7 +219,7 @@ function resolveOverrideHex(
   if (!overrides) return undefined;
   const raw = overrides[token];
   if (!raw) return undefined;
-  return normalizeHex(raw) ?? undefined;
+  return normalizeHex(raw) ?? parseRgb(raw) ?? parseHsl(raw);
 }
 
 export function createPalette(mode: ThemeMode, overrides?: PaletteOverrides): Palette {

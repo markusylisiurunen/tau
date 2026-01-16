@@ -79,6 +79,7 @@ tau can load custom palette overrides from theme files. create a theme at:
 - `~/.config/tau/themes/<id>.json` (global)
 
 then set `"defaultTheme": "<id>"` in config. any palette token not defined in the file renders as plain text.
+theme values accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, or `hsl(h, s%, l%)`. hex without `#` is ignored.
 
 example theme file (`.tau/themes/solarized.json`):
 

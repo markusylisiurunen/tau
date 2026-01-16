@@ -110,16 +110,6 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
     }
   }
 
-  if (data.theme !== undefined) {
-    if (typeof data.theme === "string") {
-      if (config.defaultTheme === undefined) {
-        config.defaultTheme = data.theme;
-      }
-    } else {
-      errors.push(`${sourceLabel}: 'theme' must be a string.`);
-    }
-  }
-
   const bashResult = parseBashCommands(data.bashCommands, sourceLabel);
   if (bashResult.commands.length > 0) {
     config.bashCommands = bashResult.commands;

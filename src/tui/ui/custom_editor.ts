@@ -92,7 +92,14 @@ export class CustomEditor extends Editor {
     return rendered;
   }
 
+  setText(text: string): void {
+    this.scrollTop = 0;
+    super.setText(text);
+  }
+
   handleInput(data: string): void {
+    const previousText = this.getText();
+
     if (matchesKey(data, Key.shift("tab")) && this.onShiftTab) {
       this.onShiftTab();
       return;
@@ -159,7 +166,21 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    if (matchesKey(data, Key.pageUp) && !this.isShowingAutocomplete()) {
+      this.handlePageScroll(-1);
+      return;
+    }
+
+    if (matchesKey(data, Key.pageDown) && !this.isShowingAutocomplete()) {
+      this.handlePageScroll(1);
+      return;
+    }
+
     super.handleInput(data);
+
+    if (previousText && this.getText() === "") {
+      this.scrollTop = 0;
+    }
 
     this.tryTriggerSkillAutocomplete(data);
   }
@@ -193,6 +214,33 @@ export class CustomEditor extends Editor {
 
   private handleCursorDown(): void {
     this.handleCursorVertical(1);
+  }
+
+  private handlePageScroll(direction: -1 | 1): void {
+    const maxContentLines = Math.max(1, this.getMaxVisibleLines() - 2);
+    const width = Math.max(1, this.lastWidth);
+    const visualLines = this.buildVisualLineMapPreserveIndent(width);
+    if (visualLines.length === 0) return;
+
+    const cursor = this.getCursor();
+    const currentVisualLine = this.findCurrentVisualLinePreserveIndent(
+      visualLines,
+      cursor.line,
+      cursor.col,
+    );
+    const targetVisualLine = Math.max(
+      0,
+      Math.min(visualLines.length - 1, currentVisualLine + direction * maxContentLines),
+    );
+    const targetVL = visualLines[targetVisualLine];
+    if (!targetVL) return;
+
+    const currentVL = visualLines[currentVisualLine];
+    const visualCol = currentVL ? cursor.col - currentVL.startCol : 0;
+    const targetCol = targetVL.startCol + Math.min(visualCol, targetVL.length);
+    const logicalLine = this.getLines()[targetVL.logicalLine] ?? "";
+    this.state.cursorLine = targetVL.logicalLine;
+    this.state.cursorCol = Math.min(targetCol, logicalLine.length);
   }
 
   private handleCursorVertical(direction: 1 | -1): void {

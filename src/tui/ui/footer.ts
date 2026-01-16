@@ -29,6 +29,12 @@ export class FooterComponent implements Component {
     this.ui = ui;
   }
 
+  setTheme(theme: Theme): void {
+    if (this.theme === theme) return;
+    this.theme = theme;
+    this.ui.requestRender();
+  }
+
   startWorkingIcon() {
     if (this.iconIntervalId) return;
     this.currentIconFrame = 0;

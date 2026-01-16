@@ -69,6 +69,7 @@ export function createPlaybackHarness(options = {}) {
     bindInputHandlers: () => {},
     setAutocompleteProvider: () => {},
     addBashExecutionMessage: () => {},
+    updateTheme: () => {},
   };
 
   const controller = new ChatController({

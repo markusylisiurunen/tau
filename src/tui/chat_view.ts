@@ -83,6 +83,7 @@ export interface ChatView {
     uiText: ToolUiText;
     labelOverride?: string;
   }): void;
+  updateTheme(options: { themeId?: string; themes?: ThemeDefinition[] }): void;
 }
 
 function resolveThemeTokens(
@@ -105,6 +106,7 @@ export class TuiChatView implements ChatView {
   private uiTheme: Theme;
   private toolUiRouter: ToolUiRouter;
   private themePreview: boolean;
+  private lastStatus?: ChatViewStatus;
 
   constructor(options: {
     queuedUserMessages: string[];
@@ -180,6 +182,7 @@ export class TuiChatView implements ChatView {
   }
 
   updateStatus(status: ChatViewStatus): void {
+    this.lastStatus = status;
     this.footer.setStatus({
       contextUsage: status.footer.contextUsage,
       sessionCost: status.footer.sessionCost,
@@ -277,6 +280,32 @@ export class TuiChatView implements ChatView {
         args.labelOverride,
       ),
     });
+    this.ui.requestRender();
+  }
+
+  updateTheme(options: { themeId?: string; themes?: ThemeDefinition[] }): void {
+    const themeTokens = resolveThemeTokens(options.themeId, options.themes);
+    const paletteOverrides = coercePaletteOverrides(themeTokens);
+    this.uiTheme = createUiTheme("ansi", paletteOverrides);
+
+    this.chatContainer.setTheme(this.uiTheme);
+    this.footer.setTheme(this.uiTheme);
+    this.queuedMessages.setTheme(this.uiTheme);
+    this.editor.setUiTheme(this.uiTheme);
+    this.toolUiRouter.setTheme(this.uiTheme);
+
+    if (this.themePreview) {
+      this.chatContainer.clear();
+      const messages = buildThemePreviewMessages(this.uiTheme);
+      for (const message of messages) {
+        this.chatContainer.addMessage(message);
+      }
+    }
+
+    if (this.lastStatus) {
+      this.updateEditorVisualState(this.lastStatus.editor);
+    }
+
     this.ui.requestRender();
   }
 

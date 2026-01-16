@@ -1398,7 +1398,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     try {
       const configDeps = createDefaultConfigDeps();
       const runtime = await loadRuntimeConfig(this.deps.env.cwd(), configDeps);
-      const { config, personas, prompts, skills, bashCommands, warnings } = runtime;
+      const { config, personas, prompts, skills, themes, bashCommands, warnings } = runtime;
 
       this.config = config;
       this.engine.setConfig(this.config);
@@ -1408,6 +1408,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.personas = personas;
       this.prompts = prompts;
       this.skills = skills;
+      this.view.updateTheme({ themeId: config.theme, themes });
 
       // Try to preserve the current persona; fall back to first if not found
       const currentPersonaId = this.currentPersona.id.toLowerCase();
@@ -1459,12 +1460,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const personaCount = personas.length;
       const promptCount = prompts.length;
       const skillCount = skills.length;
+      const themeCount = themes.length;
       const bashCount = bashCommands.length;
       const errorCount = warnings.length;
       const summary =
         errorCount > 0
-          ? `reloaded: ${personaCount} personas, ${promptCount} prompts, ${skillCount} skills, ${bashCount} bash commands (${errorCount} errors).`
-          : `reloaded: ${personaCount} personas, ${promptCount} prompts, ${skillCount} skills, ${bashCount} bash commands.`;
+          ? `reloaded: ${personaCount} personas, ${promptCount} prompts, ${skillCount} skills, ${themeCount} themes, ${bashCount} bash commands (${errorCount} errors).`
+          : `reloaded: ${personaCount} personas, ${promptCount} prompts, ${skillCount} skills, ${themeCount} themes, ${bashCount} bash commands.`;
 
       this.view.addSystemMessage(summary, "success");
       this.view.requestRender();

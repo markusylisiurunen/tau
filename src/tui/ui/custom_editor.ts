@@ -35,6 +35,11 @@ export class CustomEditor extends Editor {
     this.uiTheme = theme;
   }
 
+  setUiTheme(theme: Theme): void {
+    this.uiTheme = theme;
+    super.setTheme(theme.editorTheme);
+  }
+
   setMaxVisibleLines(lines?: number): void {
     if (!lines || !Number.isFinite(lines)) {
       this.maxVisibleLines = DEFAULT_EDITOR_MAX_LINES;

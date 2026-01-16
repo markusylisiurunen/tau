@@ -284,6 +284,12 @@ export class Editor implements Component {
     this.autocompleteProvider = provider;
   }
 
+  setTheme(theme: EditorTheme): void {
+    this.theme = theme;
+    this.borderColor = theme.borderColor;
+    this.cancelAutocomplete();
+  }
+
   /**
    * Add a prompt to history for up/down arrow navigation.
    * Called after successful submission.

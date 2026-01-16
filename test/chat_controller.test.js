@@ -47,6 +47,7 @@ function createStubView() {
       bindInputHandlers: () => {},
       setAutocompleteProvider: () => {},
       addBashExecutionMessage: () => {},
+      updateTheme: () => {},
     },
   };
 }

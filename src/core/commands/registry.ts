@@ -262,8 +262,8 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
   registry.register({
     id: "reload",
     usage: "/reload",
-    description: "reload personas, prompts, and skills from disk",
-    autocompleteDescription: "reload personas and prompts from disk",
+    description: "reload personas, prompts, skills, and themes from disk",
+    autocompleteDescription: "reload personas, prompts, skills, and themes from disk",
     argument: "none",
     section: "base",
     parse: (raw) => (raw === "/reload" ? { type: "reload" } : null),

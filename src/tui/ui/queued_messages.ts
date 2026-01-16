@@ -13,6 +13,10 @@ export class QueuedMessagesComponent implements Component {
     private messages: string[],
   ) {}
 
+  setTheme(theme: Theme): void {
+    this.theme = theme;
+  }
+
   invalidate() {}
 
   render(width: number): string[] {

@@ -208,7 +208,7 @@ tau supports slash commands for common actions:
 | `/copy`                   | copy the last assistant message                |
 | `/copy:code`              | copy just the code blocks                      |
 | `/export:html`            | export chat history to html                    |
-| `/reload`                 | reload personas, prompts, and skills from disk |
+| `/reload`                 | reload personas, prompts, skills, and themes from disk |
 | `/compact:only-summary`   | compress history and continue with a summary   |
 | `/compact:with-last-turn` | compress history but keep the last exchange    |
 | `/persona:<id>`           | switch to a different persona                  |
@@ -375,7 +375,7 @@ optional fields: `license`, `compatibility` (<=500 chars), `metadata` (string ma
 
 enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), or use `"*"` to enable all discovered skills. all built-in personas have `skills: "*"` by default. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
 
-use `/reload` to pick up changes to personas, prompts, and skills without restarting.
+use `/reload` to pick up changes to personas, prompts, skills, and themes without restarting.
 
 ## how it works
 

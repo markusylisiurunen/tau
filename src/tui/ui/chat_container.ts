@@ -31,6 +31,12 @@ export class ChatContainerComponent extends Container {
     this.addChild(this.chatContainer);
   }
 
+  setTheme(theme: Theme): void {
+    if (this.theme === theme) return;
+    this.theme = theme;
+    this.rebuild();
+  }
+
   addMessage(model: ChatMessageModel, id?: string): string {
     const finalId = id ?? this.generateId();
     const record: ChatMessageRecord = { id: finalId, model, rendered: false };

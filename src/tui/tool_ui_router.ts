@@ -18,7 +18,7 @@ type RunningTaskComponent = {
 };
 
 export class ToolUiRouter {
-  private readonly theme: Theme;
+  private theme: Theme;
   private readonly chatContainer: ChatContainerComponent;
   private readonly requestRender: () => void;
   private readonly onCostUpdated?: () => void;
@@ -40,6 +40,11 @@ export class ToolUiRouter {
     this.requestRender = options.requestRender;
     this.onCostUpdated = options.onCostUpdated;
     this.registry = options.registry ?? createToolUiRegistry();
+  }
+
+  setTheme(theme: Theme): void {
+    this.theme = theme;
+    this.refreshRunning();
   }
 
   getSubagentCostTotal(): number {
@@ -80,6 +85,51 @@ export class ToolUiRouter {
         finalOutput: reason,
       };
       const view = this.registry.render(event, { theme: this.theme });
+      if (view) {
+        this.chatContainer.replaceMessage(id, { type: "tool", view });
+      }
+    }
+
+    this.requestRender();
+  }
+
+  private refreshRunning(): void {
+    for (const [id, running] of this.runningBashComponents.entries()) {
+      const event: ToolUiEvent = {
+        type: "bash_started",
+        toolCallId: id,
+        command: running.command,
+      };
+      const view = this.registry.render(event, { theme: this.theme });
+      if (view) {
+        this.chatContainer.replaceMessage(id, { type: "tool", view });
+      }
+    }
+
+    for (const [id, running] of this.runningTaskComponents.entries()) {
+      const lastEvent = running.events[running.events.length - 1] ?? "running";
+      const event: ToolUiEvent = {
+        type: "task_progress",
+        toolCallId: id,
+        kind: running.kind,
+        name: running.name ?? "",
+        title: running.title,
+        event: lastEvent,
+        costTotal: running.costTotal,
+        turns: running.turns,
+        toolCalls: running.toolCalls,
+      };
+      const view = this.registry.render(event, {
+        theme: this.theme,
+        taskState: {
+          events: running.events,
+          costTotal: running.costTotal,
+          turns: running.turns,
+          toolCalls: running.toolCalls,
+          kind: running.kind,
+          name: running.name,
+        },
+      });
       if (view) {
         this.chatContainer.replaceMessage(id, { type: "tool", view });
       }

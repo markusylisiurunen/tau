@@ -205,6 +205,8 @@ export function printHelp(personas: Persona[]): void {
       "  tau -p gpt-5.2-coder:high -r read-write",
       "",
       "notes:",
+      "  use `tau login openai-codex` to authenticate ChatGPT subscription credentials.",
+      "  use `tau logout openai-codex` to remove stored OAuth credentials.",
       "  you can switch persona during a session with /persona:<id>.",
       "  insert predefined prompt templates with /prompt:<id>.",
       "  you can change model risk level during a session with /risk:restricted|read-only|read-write.",

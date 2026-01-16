@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import { createInterface } from "node:readline";
 import type {
+  AuthPromptFn,
   BashCommand,
   CliOptions,
   Config,
@@ -10,11 +12,13 @@ import type {
   ThemeDefinition,
 } from "./core/index.js";
 import {
+  AuthStorage,
   applyGeminiSubagents,
   personas as builtinPersonas,
   prompts as builtinPrompts,
   CliError,
   createLocalToolExecutionBackend,
+  getAuthPath,
   isGoogleAuthAvailable,
   loadConfig,
   loadRuntimeConfig,
@@ -22,11 +26,31 @@ import {
   parsePersonaString,
   printDebugInfo,
   printHelp,
+  runLoginCommand,
+  runLogoutCommand,
   ToolCatalog,
 } from "./core/index.js";
 import { ChatApp } from "./tui/index.js";
 
 const cwd = process.cwd();
+const argv = process.argv.slice(2);
+
+function printAuthHelp(): void {
+  console.log(
+    [
+      "usage:",
+      "  tau login [provider]",
+      "  tau logout [provider]",
+      "",
+      "providers:",
+      "  openai-codex     OpenAI Codex (ChatGPT Plus/Pro)",
+      "",
+      "examples:",
+      "  tau login openai-codex",
+      "  tau logout openai-codex",
+    ].join("\n"),
+  );
+}
 
 // Load configuration + content from file
 let config: Config;
@@ -48,6 +72,48 @@ let personas: Persona[];
 let prompts: PromptTemplate[];
 let skills: Skill[];
 let themes: ThemeDefinition[] = [];
+
+if (argv[0] === "login" || argv[0] === "logout") {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    printAuthHelp();
+    process.exit(0);
+  }
+
+  const authPath = getAuthPath();
+  const authStorage = new AuthStorage(authPath);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const prompt: AuthPromptFn = (question) =>
+    new Promise((resolve) => {
+      const suffix = question.placeholder ? ` (${question.placeholder})` : "";
+      rl.question(`${question.message}${suffix} `, resolve);
+    });
+
+  try {
+    if (argv[0] === "login") {
+      await runLoginCommand({
+        providerArg: argv[1],
+        authStorage,
+        authPath,
+        prompt,
+      });
+    } else {
+      await runLogoutCommand({
+        providerArg: argv[1],
+        authStorage,
+        authPath,
+        prompt,
+      });
+    }
+    process.exit(0);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`error: ${(err as Error).message}`);
+    process.exit(1);
+  } finally {
+    rl.close();
+  }
+}
+
 try {
   const runtime = await loadRuntimeConfig(cwd);
   config = runtime.config;

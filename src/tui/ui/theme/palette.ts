@@ -176,7 +176,9 @@ function rgbToHex(channel: number): string {
 function parseRgb(value: string): string | undefined {
   const match = value.match(/^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i);
   if (!match) return undefined;
-  const [r, g, b] = match.slice(1, 4).map((part) => Number(part));
+  const parts = match.slice(1, 4);
+  if (parts.length !== 3) return undefined;
+  const [r, g, b] = parts.map((part) => Number(part)) as [number, number, number];
   if ([r, g, b].some((channel) => Number.isNaN(channel) || channel < 0 || channel > 255)) {
     return undefined;
   }
@@ -188,9 +190,9 @@ function parseHsl(value: string): string | undefined {
     /^hsl\(\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*([0-9]+(?:\.[0-9]+)?)%?\s*,\s*([0-9]+(?:\.[0-9]+)?)%?\s*\)$/i,
   );
   if (!match) return undefined;
-  const h = Number(match[1]);
-  const s = Number(match[2]);
-  const l = Number(match[3]);
+  const parts = match.slice(1, 4);
+  if (parts.length !== 3) return undefined;
+  const [h, s, l] = parts.map((part) => Number(part)) as [number, number, number];
   if ([h, s, l].some((channel) => Number.isNaN(channel))) {
     return undefined;
   }

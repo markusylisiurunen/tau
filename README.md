@@ -34,6 +34,27 @@ environment variables take precedence over the config file.
 
 `parallel` is only needed for the web sub-agent tools (`web_search`/`web_fetch`).
 
+### OpenAI Codex subscription (ChatGPT Plus/Pro)
+
+to use the OpenAI Codex subscription provider (`openai-codex`), run:
+
+```sh
+tau login openai-codex
+```
+
+this starts a local OAuth flow and stores tokens in `~/.config/tau/auth.json`. if port `1455`
+is already in use, tau will prompt you to paste the redirect URL manually. if you see token
+refresh errors later, run the login command again to re-authenticate.
+
+to remove stored credentials:
+
+```sh
+tau logout openai-codex
+```
+
+`openai-codex` does **not** use `OPENAI_API_KEY` or `apiKeys.openai`; it relies on the OAuth
+tokens in `~/.config/tau/auth.json`.
+
 ## security notice
 
 **the risk level system is a UX guardrail, not a hard security boundary.** it helps prevent accidental writes and guides model behavior, but it has significant limitations:
@@ -123,6 +144,7 @@ tau comes with several built-in personas across different models:
 
 - **Claude Opus 4.5** and **Haiku 4.5** (Anthropic)
 - **GPT-5.2** (OpenAI)
+- **GPT-5.2 Codex** (OpenAI Codex subscription)
 - **Gemini 3 Pro** and **Gemini 3 Flash** (Google)
 
 each model has two variants: a chat variant for general-purpose assistance, and a coder variant optimized for software engineering. both variants include the `web` sub-agent for web research, and coder variants also include the `explore` sub-agent for multi-turn codebase investigation.

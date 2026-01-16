@@ -6,8 +6,11 @@ import type {
   Message,
   ToolCall,
 } from "@mariozechner/pi-ai";
+import { AuthStorage } from "../auth/auth_storage.js";
+import { formatCodexAuthError } from "../auth/auth_messages.js";
+import { getAuthPath } from "../auth/auth_paths.js";
+import { createCredentialResolver, type CredentialResolver } from "../auth/credential_resolver.js";
 import type { Config } from "../config/index.js";
-import { getApiKeyForProvider } from "../config/index.js";
 import type { CoreEvent } from "../events/types.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
@@ -36,6 +39,8 @@ export class SessionEngine {
   private readonly toolRegistry: ToolRegistry;
   private config: Config;
   private readonly deps: CoreDeps;
+  private readonly credentialResolver: CredentialResolver;
+  private readonly authPath: string;
   private messages: Message[] = [];
   private sessionId = `tau-main-${randomUUID()}`;
 
@@ -46,6 +51,12 @@ export class SessionEngine {
     this.toolRegistry = options.toolRegistry;
     this.config = options.config ?? {};
     this.deps = options.deps ?? createDefaultCoreDeps();
+    this.authPath = getAuthPath(this.deps.env.home());
+    const authStorage = new AuthStorage(this.authPath);
+    this.credentialResolver = createCredentialResolver({
+      authStorage,
+      getConfig: () => this.config,
+    });
   }
 
   reset(): void {
@@ -156,7 +167,21 @@ export class SessionEngine {
       tools,
     };
 
-    const apiKey = getApiKeyForProvider(this.config, this.persona.model.provider as KnownProvider);
+    let apiKey: string | undefined;
+    try {
+      apiKey = await this.credentialResolver.getApiKey(
+        this.persona.model.provider as KnownProvider,
+      );
+    } catch (error) {
+      if (this.persona.model.provider === "openai-codex") {
+        throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));
+      }
+      throw error;
+    }
+
+    if (!apiKey && this.persona.model.provider === "openai-codex") {
+      throw new Error(formatCodexAuthError(this.authPath));
+    }
     const baseOptions: TauStreamOptions = {
       ...this.getStreamingSettings(this.persona),
       signal,

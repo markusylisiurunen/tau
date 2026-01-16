@@ -154,6 +154,11 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 
 The `--debug` flag respects `--persona` and `--with-context`, so you can inspect exactly what system prompt a given configuration produces.
 
+## CLI subcommands
+
+- `tau login openai-codex` - OAuth login for ChatGPT Plus/Pro; stores `~/.config/tau/auth.json`
+- `tau logout openai-codex` - Remove stored OAuth credentials
+
 ## Commands
 
 - `/help`, `/new`, `/copy`, `/copy:code`, `/export:html`, `/reload`

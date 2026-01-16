@@ -1,5 +1,22 @@
 export type { CliOptions } from "./cli.js";
 export { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
+export type {
+  AuthLoginHandler,
+  AuthLog,
+  AuthPromptFn,
+  CredentialResolver,
+  OAuthProviderSpec,
+} from "./auth/index.js";
+export {
+  AuthStorage,
+  createCredentialResolver,
+  ensureCodexSystemPrompt,
+  formatCodexAuthError,
+  getAuthPath,
+  runLoginCommand,
+  runLogoutCommand,
+  SUPPORTED_OAUTH_PROVIDERS,
+} from "./auth/index.js";
 export type { BashCommand, Config, ConfigDeps, ThemeDefinition } from "./config/index.js";
 export {
   createDefaultConfigDeps,

@@ -248,6 +248,23 @@ const PERSONA_SPECS: PersonaSpec[] = [
     },
   },
   {
+    id: "gpt-5.2-codex",
+    description: "GPT-5.2 Codex",
+    model: getModel("openai-codex", "gpt-5.2-codex"),
+    allowedReasoningLevels: ["none", "low", "medium", "high", "xhigh"],
+    settings: { reasoning: "medium" },
+    subagents: {
+      explore: {
+        model: getModel("openai-codex", "gpt-5.2-codex"),
+        reasoning: "none",
+      },
+      web: {
+        model: getModel("openai-codex", "gpt-5.2-codex"),
+        reasoning: "none",
+      },
+    },
+  },
+  {
     id: "gpt-5.2-flex",
     description: "GPT-5.2 (flex)",
     model: getModel("openai", "gpt-5.2"),
@@ -389,6 +406,8 @@ const GEMINI_SUBAGENT_TARGET_IDS = new Set([
   "haiku-4.5-coder",
   "gpt-5.2-chat",
   "gpt-5.2-coder",
+  "gpt-5.2-codex-chat",
+  "gpt-5.2-codex-coder",
   "gpt-5.2-flex-chat",
   "gpt-5.2-flex-coder",
 ]);

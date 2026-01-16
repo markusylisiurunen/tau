@@ -13,10 +13,16 @@ import {
   type BashCommand,
   type Config,
   createDefaultConfigDeps,
-  getApiKeyForProvider,
   loadRuntimeConfig,
   type ThemeDefinition,
 } from "../core/config/index.js";
+import { AuthStorage } from "../core/auth/auth_storage.js";
+import { formatCodexAuthError } from "../core/auth/auth_messages.js";
+import { getAuthPath } from "../core/auth/auth_paths.js";
+import {
+  createCredentialResolver,
+  type CredentialResolver,
+} from "../core/auth/credential_resolver.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
@@ -94,6 +100,8 @@ export class ChatController {
   private readonly repoRoot: string;
   private readonly initialUserMessage?: string;
   private config: Config;
+  private readonly credentialResolver: CredentialResolver;
+  private readonly authPath: string;
 
   private readonly engine: CoreSession;
   private readonly commandRegistry: CommandRegistry<CommandDispatchContext>;
@@ -143,6 +151,12 @@ export class ChatController {
     this.repoRoot = getGitRoot(cwd) ?? cwd;
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
+    this.authPath = getAuthPath(this.deps.env.home());
+    const authStorage = new AuthStorage(this.authPath);
+    this.credentialResolver = createCredentialResolver({
+      authStorage,
+      getConfig: () => this.config,
+    });
     this.compactToolUi = true;
     this.themePreview = options.themePreview ?? false;
     this.showThinking = this.themePreview;
@@ -1150,10 +1164,21 @@ Ruthlessly compress: collapse tangents, skip back-and-forth, omit pleasantries. 
 Write plain prose, no formatting. Be thorough enough that the reader can resume without guessing, but don't narrate every exchange. When relevant, name things concretely: file paths, function names, error messages. The reader has no context beyond what you provide as the summary.
     `.trim();
 
-    const apiKey = getApiKeyForProvider(
-      this.config,
-      this.currentPersona.model.provider as KnownProvider,
-    );
+    let apiKey: string | undefined;
+    try {
+      apiKey = await this.credentialResolver.getApiKey(
+        this.currentPersona.model.provider as KnownProvider,
+      );
+    } catch (error) {
+      if (this.currentPersona.model.provider === "openai-codex") {
+        throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));
+      }
+      throw error;
+    }
+
+    if (!apiKey && this.currentPersona.model.provider === "openai-codex") {
+      throw new Error(formatCodexAuthError(this.authPath));
+    }
     const stream = streamModel(
       this.currentPersona.model,
       {

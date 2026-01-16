@@ -6,8 +6,11 @@ import type {
   Message,
   ToolCall,
 } from "@mariozechner/pi-ai";
+import { AuthStorage } from "../auth/auth_storage.js";
+import { formatCodexAuthError } from "../auth/auth_messages.js";
+import { getAuthPath } from "../auth/auth_paths.js";
+import { createCredentialResolver, type CredentialResolver } from "../auth/credential_resolver.js";
 import type { Config } from "../config/index.js";
-import { getApiKeyForProvider } from "../config/index.js";
 import { type RunnerEvent, runModelSubturn, runToolCalls } from "../session/runner.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../tools/execution_backend.js";
@@ -67,6 +70,12 @@ export async function runSubagentToCompletion(options: {
   onProgress?: (event: SubagentProgressEvent) => void;
 }): Promise<SubagentRunResult> {
   const { definition, personaConfig, prompt, config, signal, onProgress } = options;
+  const authPath = getAuthPath();
+  const authStorage = new AuthStorage(authPath);
+  const credentialResolver: CredentialResolver = createCredentialResolver({
+    authStorage,
+    getConfig: () => config,
+  });
 
   if (signal.aborted) {
     throw new Error("sub-agent aborted");
@@ -112,7 +121,19 @@ export async function runSubagentToCompletion(options: {
       tools: toolRegistry.schemas,
     };
 
-    const apiKey = getApiKeyForProvider(config, personaConfig.model.provider as KnownProvider);
+    let apiKey: string | undefined;
+    try {
+      apiKey = await credentialResolver.getApiKey(personaConfig.model.provider as KnownProvider);
+    } catch (error) {
+      if (personaConfig.model.provider === "openai-codex") {
+        throw new Error(formatCodexAuthError(authPath, (error as Error)?.message));
+      }
+      throw error;
+    }
+
+    if (!apiKey && personaConfig.model.provider === "openai-codex") {
+      throw new Error(formatCodexAuthError(authPath));
+    }
     const baseOptions: TauStreamOptions = {
       ...getStreamingSettings(personaConfig.settings),
       signal,

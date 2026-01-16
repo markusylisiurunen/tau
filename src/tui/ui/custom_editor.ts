@@ -1,5 +1,4 @@
 import { Key, matchesKey, visibleWidth } from "@mariozechner/pi-tui";
-import stripAnsi from "strip-ansi";
 import { Editor } from "./components/editor.js";
 import { truncateFromEndByWidth } from "./components/one_line_segments.js";
 import { getSkillAutocompleteToken } from "./slash_autocomplete.js";
@@ -16,7 +15,6 @@ export class CustomEditor extends Editor {
   private headerLeftStyle?: (text: string) => string;
   private headerRightStyle?: (text: string) => string;
 
-  private lastContentWidth = 80;
   private maxVisibleLines = DEFAULT_EDITOR_MAX_LINES;
   private scrollTop = 0;
 
@@ -57,21 +55,12 @@ export class CustomEditor extends Editor {
     this.headerRightStyle = styles?.rightStyle;
   }
 
-  getCursor(): { line: number; col: number } {
-    return super.getCursor();
-  }
-
-  getLines(): string[] {
-    return super.getLines();
-  }
-
   render(width: number): string[] {
     if (width <= 0) return [""];
     if (width === 1) return [this.borderColor("─")];
     if (width === 2) return [this.renderHeaderLine(width)];
 
     const innerWidth = width - 2;
-    this.lastContentWidth = innerWidth;
     this.lastWidth = innerWidth;
 
     const maxVisibleLines = this.getMaxVisibleLines();
@@ -170,48 +159,9 @@ export class CustomEditor extends Editor {
       return;
     }
 
-    const wasInPaste = this.isInPaste;
-
     super.handleInput(data);
 
-    const isInPaste = this.isInPaste;
-    if (data.includes("\x1b") || (wasInPaste && !isInPaste)) {
-      this.sanitizeEditorState();
-    }
-
     this.tryTriggerSkillAutocomplete(data);
-  }
-
-  private sanitizeEditorState(): void {
-    const state = this.state;
-
-    let didChange = false;
-
-    for (let i = 0; i < state.lines.length; i++) {
-      const line = state.lines[i] ?? "";
-      if (!line.includes("\x1b")) continue;
-      const cleaned = stripAnsi(line).replaceAll("\x1b", "");
-      if (cleaned !== line) {
-        state.lines[i] = cleaned;
-        didChange = true;
-        if (i === state.cursorLine && state.cursorCol > cleaned.length) {
-          state.cursorCol = cleaned.length;
-        }
-      }
-    }
-
-    for (const [id, content] of this.pastes) {
-      if (!content.includes("\x1b")) continue;
-      const cleaned = stripAnsi(content).replaceAll("\x1b", "");
-      if (cleaned !== content) {
-        this.pastes.set(id, cleaned);
-        didChange = true;
-      }
-    }
-
-    if (didChange && this.onChange) {
-      this.onChange(this.getText());
-    }
   }
 
   private tryTriggerSkillAutocomplete(data: string): void {
@@ -268,7 +218,7 @@ export class CustomEditor extends Editor {
       }
     }
 
-    const width = Math.max(1, this.lastContentWidth);
+    const width = Math.max(1, this.lastWidth);
     const visualLines = this.buildVisualLineMapPreserveIndent(width);
     if (visualLines.length === 0) return;
 
@@ -295,7 +245,7 @@ export class CustomEditor extends Editor {
   }
 
   private isOnFirstVisualLinePreserveIndent(): boolean {
-    const width = Math.max(1, this.lastContentWidth);
+    const width = Math.max(1, this.lastWidth);
     const visualLines = this.buildVisualLineMapPreserveIndent(width);
     const cursor = this.getCursor();
     const currentVisualLine = this.findCurrentVisualLinePreserveIndent(
@@ -307,7 +257,7 @@ export class CustomEditor extends Editor {
   }
 
   private isOnLastVisualLinePreserveIndent(): boolean {
-    const width = Math.max(1, this.lastContentWidth);
+    const width = Math.max(1, this.lastWidth);
     const visualLines = this.buildVisualLineMapPreserveIndent(width);
     const cursor = this.getCursor();
     const currentVisualLine = this.findCurrentVisualLinePreserveIndent(

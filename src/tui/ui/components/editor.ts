@@ -11,6 +11,12 @@ import {
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
+const CSI_PATTERN = "\\x1b\\[[0-9;]*[A-Za-z]";
+const OSC_PATTERN = "\\x1b\\][^\\x07]*(?:\\x07|\\x1b\\\\)";
+const APC_PATTERN = "\\x1b_[^\\x07\\x1b]*(?:\\x07|\\x1b\\\\)";
+const CSI_REGEX = new RegExp(CSI_PATTERN, "g");
+const OSC_REGEX = new RegExp(OSC_PATTERN, "g");
+const APC_REGEX = new RegExp(APC_PATTERN, "g");
 
 function isWhitespaceChar(char: string): boolean {
   return /\s/.test(char);
@@ -18,6 +24,19 @@ function isWhitespaceChar(char: string): boolean {
 
 function isPunctuationChar(char: string): boolean {
   return PUNCTUATION_REGEX.test(char);
+}
+
+function stripAnsiSequences(text: string): string {
+  if (!text.includes("\x1b")) return text;
+  return text
+    .replace(CSI_REGEX, "")
+    .replace(OSC_REGEX, "")
+    .replace(APC_REGEX, "")
+    .replaceAll("\x1b", "");
+}
+
+function sanitizeInputText(text: string): string {
+  return text ? stripAnsiSequences(text) : text;
 }
 
 /**
@@ -769,7 +788,10 @@ export class Editor implements Component {
   }
 
   // All the editor methods from before...
-  private insertCharacter(char: string): void {
+  protected insertCharacter(char: string): void {
+    const sanitized = sanitizeInputText(char);
+    if (!sanitized) return;
+
     this.historyIndex = -1; // Exit history browsing mode
 
     const line = this.state.lines[this.state.cursorLine] || "";
@@ -777,8 +799,8 @@ export class Editor implements Component {
     const before = line.slice(0, this.state.cursorCol);
     const after = line.slice(this.state.cursorCol);
 
-    this.state.lines[this.state.cursorLine] = before + char + after;
-    this.state.cursorCol += char.length; // Fix: increment by the length of the inserted string
+    this.state.lines[this.state.cursorLine] = before + sanitized + after;
+    this.state.cursorCol += sanitized.length; // Fix: increment by the length of the inserted string
 
     if (this.onChange) {
       this.onChange(this.getText());
@@ -787,11 +809,11 @@ export class Editor implements Component {
     // Check if we should trigger or update autocomplete
     if (!this.isAutocompleting) {
       // Auto-trigger for "/" at the start of a line (slash commands)
-      if (char === "/" && this.isAtStartOfMessage()) {
+      if (sanitized === "/" && this.isAtStartOfMessage()) {
         this.tryTriggerAutocomplete();
       }
       // Auto-trigger for "@" file reference (fuzzy search)
-      else if (char === "@") {
+      else if (sanitized === "@") {
         const currentLine = this.state.lines[this.state.cursorLine] || "";
         const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
         // Only trigger if @ is after whitespace or at start of line
@@ -801,7 +823,7 @@ export class Editor implements Component {
         }
       }
       // Also auto-trigger when typing letters in a slash command context
-      else if (/[a-zA-Z0-9.\-_]/.test(char)) {
+      else if (/[a-zA-Z0-9.\-_]/.test(sanitized)) {
         const currentLine = this.state.lines[this.state.cursorLine] || "";
         const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
         // Check if we're in a slash command (with or without space for arguments)
@@ -822,7 +844,8 @@ export class Editor implements Component {
     this.historyIndex = -1; // Exit history browsing mode
 
     // Clean the pasted text
-    const cleanText = pastedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const sanitizedText = sanitizeInputText(pastedText);
+    const cleanText = sanitizedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
     // Convert tabs to spaces (4 spaces per tab)
     const tabExpandedText = cleanText.replace(/\t/g, "    ");

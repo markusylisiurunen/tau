@@ -100,12 +100,12 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `theme`, `bashCommands`, `agentContextFiles`). This level is only included when cwd is inside home.
+- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `defaultTheme`, `bashCommands`, `agentContextFiles`). This level is only included when cwd is inside home.
   - `apiKeys.parallel` (optional): Parallel API key for the `web` subagent.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`restricted`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `disableBuiltinPersonas` (optional): If true, tau will not load any built-in personas, only personas from disk.
-  - `theme` (optional): Theme id to load from `.tau/themes/<id>.json` or `~/.config/tau/themes/<id>.json`.
+  - `defaultTheme` (optional): Theme id to load from `.tau/themes/<id>.json` or `~/.config/tau/themes/<id>.json`.
 - **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys` merge per provider; `bashCommands` merge by `id`; `agentContextFiles` are additive.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`).
@@ -158,7 +158,7 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 
 - `/help`, `/new`, `/copy`, `/copy:code`, `/export:html`, `/reload`
 - `/compact:only-summary`, `/compact:with-last-turn` - Compact history to continue
-- `/risk:restricted|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/bash:<id>`
+- `/risk:restricted|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model)
 - `#<request>` - Memory mode for updating AGENTS.md
 

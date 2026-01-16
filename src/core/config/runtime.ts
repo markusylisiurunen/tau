@@ -27,11 +27,13 @@ export async function loadRuntimeConfig(
   const config = configResult.config;
   const content = await loadAllContent(config, { cwd, deps: resolvedDeps });
   const warnings = [...configResult.errors, ...content.errors];
-  if (config.theme) {
-    const themeId = config.theme.toLowerCase();
+  if (config.defaultTheme) {
+    const themeId = config.defaultTheme.toLowerCase();
     const matched = content.themes.some((theme) => theme.id.toLowerCase() === themeId);
     if (!matched) {
-      warnings.push(`theme '${config.theme}' not found in .tau/themes or ~/.config/tau/themes.`);
+      warnings.push(
+        `defaultTheme '${config.defaultTheme}' not found in .tau/themes or ~/.config/tau/themes.`,
+      );
     }
   }
 

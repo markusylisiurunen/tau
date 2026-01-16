@@ -18,7 +18,7 @@ export interface Config {
   defaultPersona?: string;
   defaultRisk?: RiskLevel;
   disableBuiltinPersonas?: boolean;
-  theme?: string;
+  defaultTheme?: string;
   bashCommands?: BashCommand[];
   agentContextFiles?: string[];
 }
@@ -102,9 +102,19 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
     }
   }
 
+  if (data.defaultTheme !== undefined) {
+    if (typeof data.defaultTheme === "string") {
+      config.defaultTheme = data.defaultTheme;
+    } else {
+      errors.push(`${sourceLabel}: 'defaultTheme' must be a string.`);
+    }
+  }
+
   if (data.theme !== undefined) {
     if (typeof data.theme === "string") {
-      config.theme = data.theme;
+      if (config.defaultTheme === undefined) {
+        config.defaultTheme = data.theme;
+      }
     } else {
       errors.push(`${sourceLabel}: 'theme' must be a string.`);
     }
@@ -238,8 +248,8 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
       merged.disableBuiltinPersonas = config.disableBuiltinPersonas;
     }
 
-    if (config.theme !== undefined) {
-      merged.theme = config.theme;
+    if (config.defaultTheme !== undefined) {
+      merged.defaultTheme = config.defaultTheme;
     }
 
     if (config.bashCommands) {

@@ -78,7 +78,7 @@ tau can load custom palette overrides from theme files. create a theme at:
 - `.tau/themes/<id>.json` (project)
 - `~/.config/tau/themes/<id>.json` (global)
 
-then set `"theme": "<id>"` in config. any palette token not defined in the file renders as plain text.
+then set `"defaultTheme": "<id>"` in config. any palette token not defined in the file renders as plain text.
 
 example theme file (`.tau/themes/solarized.json`):
 
@@ -93,7 +93,7 @@ example theme file (`.tau/themes/solarized.json`):
 and in config (`.tau/config.json` or `~/.config/tau/config.json`):
 
 ```json
-{ "theme": "solarized" }
+{ "defaultTheme": "solarized" }
 ```
 
 ## risk levels
@@ -213,6 +213,7 @@ tau supports slash commands for common actions:
 | `/compact:with-last-turn` | compress history but keep the last exchange    |
 | `/persona:<id>`           | switch to a different persona                  |
 | `/prompt:<id>`            | insert a saved prompt template                 |
+| `/theme:<id>`             | switch to a loaded theme                       |
 | `/bash:<id>`              | run a saved shell command                      |
 | `/risk:<level>`           | change the risk level                          |
 | `!<cmd>`                  | run a shell command directly                   |
@@ -254,7 +255,7 @@ settings merge from least-specific to most-specific.
   "defaultPersona": "gpt-5.2-chat",
   "defaultRisk": "read-write",
   "disableBuiltinPersonas": false,
-  "theme": "solarized"
+  "defaultTheme": "solarized"
 }
 ```
 

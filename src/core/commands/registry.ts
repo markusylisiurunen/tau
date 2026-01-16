@@ -15,10 +15,11 @@ export type Command =
   | { type: "bash"; id: string }
   | { type: "persona"; id: string }
   | { type: "prompt"; id: string }
+  | { type: "theme"; id: string }
   | { type: "unknown"; raw: string };
 
 export type CommandId = Command["type"];
-export type CommandArgument = "none" | "risk" | "bash" | "persona" | "prompt";
+export type CommandArgument = "none" | "risk" | "bash" | "persona" | "prompt" | "theme";
 export type CommandSection = "base" | "risk" | "trailing";
 
 export interface CommandInfo {
@@ -49,6 +50,7 @@ export interface CommandDispatchContext {
   risk: (level: RiskLevel) => void;
   persona: (id: string) => void;
   prompt: (id: string) => void;
+  theme: (id: string) => void;
   bash: (id: string) => Promise<void>;
   unknown: (raw: string) => void;
 }
@@ -57,6 +59,7 @@ export interface HelpTextOptions {
   agentsFiles?: string[];
   skills?: Skill[];
   riskLevels?: RiskLevel[];
+  themes?: string[];
 }
 
 const DEFAULT_RISK_LEVELS: RiskLevel[] = ["restricted", "read-only", "read-write"];
@@ -141,7 +144,7 @@ export class CommandRegistry<Ctx = unknown> {
 
   buildHelpText(options: HelpTextOptions = {}): string {
     const lines: string[] = [];
-    const { agentsFiles, skills, riskLevels } = options;
+    const { agentsFiles, skills, riskLevels, themes } = options;
 
     if (agentsFiles && agentsFiles.length > 0) {
       lines.push("context:");
@@ -162,7 +165,8 @@ export class CommandRegistry<Ctx = unknown> {
       lines.push("");
     }
 
-    const commands = this.list();
+    const hasThemes = (themes?.length ?? 0) > 0;
+    const commands = this.list().filter((command) => command.argument !== "theme" || hasThemes);
     const baseCommands = commands.filter((command) => command.section === "base");
     const trailingCommands = commands.filter((command) => command.section === "trailing");
     const riskCommand = commands.find((command) => command.section === "risk");
@@ -363,6 +367,21 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "prompt", id };
     },
     run: (ctx, command) => ctx.prompt(command.id),
+  });
+
+  registry.register({
+    id: "theme",
+    usage: "/theme:<id>",
+    description: "switch theme",
+    argument: "theme",
+    section: "trailing",
+    parse: (raw) => {
+      const match = raw.match(/^\/theme:(.+)$/i);
+      const id = match?.[1]?.trim() ?? "";
+      if (!id) return null;
+      return { type: "theme", id };
+    },
+    run: (ctx, command) => ctx.theme(command.id),
   });
 
   registry.register<{ type: "unknown"; raw: string }>({

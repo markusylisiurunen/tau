@@ -15,6 +15,7 @@ import {
   createDefaultConfigDeps,
   getApiKeyForProvider,
   loadRuntimeConfig,
+  type ThemeDefinition,
 } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
@@ -68,6 +69,7 @@ export interface ChatControllerOptions {
   personas: Persona[];
   prompts?: PromptTemplate[];
   skills?: Skill[];
+  themes?: ThemeDefinition[];
   bashCommands?: BashCommand[];
   initialPersonaId?: string;
   initialUserMessage?: string;
@@ -87,6 +89,7 @@ export class ChatController {
   private currentPersona: Persona;
   private prompts: PromptTemplate[];
   private skills: Skill[];
+  private themes: ThemeDefinition[];
   private bashCommands: BashCommand[];
   private readonly repoRoot: string;
   private readonly initialUserMessage?: string;
@@ -135,6 +138,7 @@ export class ChatController {
     this.personas = options.personas;
     this.prompts = options.prompts ?? [];
     this.skills = options.skills ?? [];
+    this.themes = options.themes ?? [];
     this.bashCommands = options.bashCommands ?? [];
     this.repoRoot = getGitRoot(cwd) ?? cwd;
     this.initialUserMessage = options.initialUserMessage;
@@ -232,6 +236,7 @@ export class ChatController {
       risk: (level) => this.setRiskLevel(level),
       persona: (id) => this.switchPersona(id),
       prompt: (id) => this.insertPrompt(id),
+      theme: (id) => this.switchTheme(id),
       bash: (id) => this.runSavedBashCommand(id),
       unknown: () => this.view.addSystemMessage("unknown command. type /help.", "error"),
     };
@@ -248,6 +253,7 @@ export class ChatController {
           agentsFiles: this.agentsFiles,
           skills: this.skills,
           riskLevels: this.getAllowedRiskLevelsForPersona(this.currentPersona),
+          themes: this.themes.map((theme) => theme.id),
         }),
       });
 
@@ -269,6 +275,7 @@ export class ChatController {
   public getAutocompleteSources(): {
     personas: () => Array<{ id: string; label?: string }>;
     prompts: () => Array<{ id: string; label?: string }>;
+    themes: () => Array<{ id: string; label?: string }>;
     bashCommands: () => Array<{ id: string; description?: string }>;
     projectFiles: () => string[];
     skills: () => string[];
@@ -277,6 +284,7 @@ export class ChatController {
     return {
       personas: () => this.personas.map((p) => ({ id: p.id, label: p.label })),
       prompts: () => this.prompts.map((t) => ({ id: t.id, label: t.label })),
+      themes: () => this.themes.map((theme) => ({ id: theme.id })),
       bashCommands: () =>
         this.bashCommands.map((b) => ({
           id: b.id,
@@ -929,6 +937,7 @@ export class ChatController {
         agentsFiles: this.agentsFiles,
         skills: this.skills,
         riskLevels: this.getAllowedRiskLevelsForPersona(this.currentPersona),
+        themes: this.themes.map((theme) => theme.id),
       }),
       "muted",
     );
@@ -1376,6 +1385,23 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.view.setEditorText(prompt.template);
   }
 
+  private switchTheme(id: string): void {
+    if (this.themes.length === 0) {
+      this.view.addSystemMessage("no themes loaded. add .tau/themes/<id>.json first.", "warn");
+      return;
+    }
+
+    const theme = this.themes.find((candidate) => candidate.id.toLowerCase() === id.toLowerCase());
+    if (!theme) {
+      this.view.addSystemMessage(`unknown theme '${id}'.`, "error");
+      return;
+    }
+
+    this.config.defaultTheme = theme.id;
+    this.view.updateTheme({ themeId: theme.id, themes: this.themes });
+    this.view.addSystemMessage(`switched to theme ${theme.id}.`, "success");
+  }
+
   private async runSavedBashCommand(id: string): Promise<void> {
     const saved = this.bashCommands.find((b) => b.id.toLowerCase() === id.toLowerCase());
     if (!saved) {
@@ -1408,7 +1434,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.personas = personas;
       this.prompts = prompts;
       this.skills = skills;
-      this.view.updateTheme({ themeId: config.theme, themes });
+      this.themes = themes;
+      this.view.updateTheme({ themeId: config.defaultTheme, themes });
 
       // Try to preserve the current persona; fall back to first if not found
       const currentPersonaId = this.currentPersona.id.toLowerCase();

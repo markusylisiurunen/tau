@@ -24,6 +24,11 @@ export interface PromptSuggestion {
   label?: string;
 }
 
+export interface ThemeSuggestion {
+  id: string;
+  label?: string;
+}
+
 export interface BashSuggestion {
   id: string;
   description?: string;
@@ -33,6 +38,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
   private commandRegistry: CommandRegistry<Ctx>;
   private getPersonas: () => PersonaSuggestion[];
   private getPrompts: () => PromptSuggestion[];
+  private getThemes: () => ThemeSuggestion[];
   private getBashCommands: () => BashSuggestion[];
   private getFiles: () => string[];
   private getSkills: () => string[];
@@ -42,6 +48,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     commandRegistry: CommandRegistry<Ctx>,
     personas: () => PersonaSuggestion[],
     prompts: () => PromptSuggestion[] = () => [],
+    themes: () => ThemeSuggestion[] = () => [],
     bashCommands: () => BashSuggestion[] = () => [],
     files: () => string[] = () => [],
     skills: () => string[] = () => [],
@@ -50,6 +57,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     this.commandRegistry = commandRegistry;
     this.getPersonas = personas;
     this.getPrompts = prompts;
+    this.getThemes = themes;
     this.getBashCommands = bashCommands;
     this.getFiles = files;
     this.getSkills = skills;
@@ -153,6 +161,11 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     const promptMatch = afterSlash.match(/^prompt:(.*)$/i);
     if (promptMatch) {
       return this.buildArgSuggestions(promptMatch[1] ?? "", this.getPrompts());
+    }
+
+    const themeMatch = afterSlash.match(/^theme:(.*)$/i);
+    if (themeMatch) {
+      return this.buildArgSuggestions(themeMatch[1] ?? "", this.getThemes());
     }
 
     const riskMatch = afterSlash.match(/^risk:(.*)$/i);
@@ -260,6 +273,24 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
       }
     }
 
+    const hasTheme = commandInfos.some((command) => command.argument === "theme");
+    if (hasTheme) {
+      const themes = this.getThemes();
+      if (themes.length > 0) {
+        for (const t of themes) {
+          const full = `theme:${t.id}`;
+          candidates.push({
+            item: {
+              value: full,
+              label: full,
+              description: t.label ? `switch to ${t.label}` : "switch theme",
+            },
+            searchText: `${t.id} ${t.label ?? ""} ${full}`,
+          });
+        }
+      }
+    }
+
     const hasBash = commandInfos.some((command) => command.argument === "bash");
     if (hasBash) {
       for (const b of this.getBashCommands()) {
@@ -295,6 +326,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     const isArgCompletion =
       lowerBeforePrefix.endsWith("/persona:") ||
       lowerBeforePrefix.endsWith("/prompt:") ||
+      lowerBeforePrefix.endsWith("/theme:") ||
       lowerBeforePrefix.endsWith("/risk:") ||
       lowerBeforePrefix.endsWith("/bash:");
 

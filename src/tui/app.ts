@@ -32,7 +32,7 @@ export class ChatApp implements ModeAdapter {
       compactToolUi: true,
       showThinking: options.themePreview ?? false,
       themePreview: options.themePreview ?? false,
-      themeId: options.config?.theme,
+      themeId: options.config?.defaultTheme,
       themes: options.themes ?? [],
     });
 
@@ -55,6 +55,7 @@ export class ChatApp implements ModeAdapter {
         this.controller.getCommandRegistry(),
         sources.personas,
         sources.prompts,
+        sources.themes,
         sources.bashCommands,
         sources.projectFiles,
         sources.skills,

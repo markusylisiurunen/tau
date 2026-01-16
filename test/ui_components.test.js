@@ -1,4 +1,4 @@
-import { TUI, visibleWidth } from "@mariozechner/pi-tui";
+import { visibleWidth } from "@mariozechner/pi-tui";
 import { expect, test } from "vitest";
 import { AppIntroComponent } from "../dist/tui/ui/app_intro.js";
 import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
@@ -17,31 +17,6 @@ import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
 
 function stripTags(text) {
   return stripAnsi(text.replace(/<[^>]+>/g, ""));
-}
-
-function createStubTui() {
-  const terminal = {
-    start: () => {},
-    stop: () => {},
-    write: () => {},
-    get columns() {
-      return 80;
-    },
-    get rows() {
-      return 24;
-    },
-    get kittyProtocolActive() {
-      return false;
-    },
-    moveBy: () => {},
-    hideCursor: () => {},
-    showCursor: () => {},
-    clearLine: () => {},
-    clearFromCursor: () => {},
-    clearScreen: () => {},
-    setTitle: () => {},
-  };
-  return new TUI(terminal);
 }
 
 test("AppIntroComponent renders header and help text", () => {
@@ -185,7 +160,7 @@ test("truncateFromEndByWidth respects max width", () => {
 
 test("CustomEditor clamps wrapped lines to the inner width", () => {
   const theme = createTagTheme();
-  const editor = new CustomEditor(createStubTui(), theme);
+  const editor = new CustomEditor(theme);
   editor.setText("1234567890ABCDEFGHIJ");
 
   const width = 12;
@@ -197,7 +172,7 @@ test("CustomEditor clamps wrapped lines to the inner width", () => {
 
 test("CustomEditor preserves leading indentation for wrapped lines", () => {
   const theme = createTagTheme();
-  const editor = new CustomEditor(createStubTui(), theme);
+  const editor = new CustomEditor(theme);
   editor.setText(
     "- this is the first line\n  - this is the second line with a larger width than the text input has",
   );
@@ -212,7 +187,7 @@ test("CustomEditor preserves leading indentation for wrapped lines", () => {
 
 test("CustomEditor caps height and scrolls within the viewport", () => {
   const theme = createTagTheme();
-  const editor = new CustomEditor(createStubTui(), theme);
+  const editor = new CustomEditor(theme);
   editor.setMaxVisibleLines(6);
 
   const linesInput = Array.from({ length: 12 }, (_, i) => {
@@ -232,7 +207,7 @@ test("CustomEditor caps height and scrolls within the viewport", () => {
 
 test("CustomEditor strips ANSI sequences from input", () => {
   const theme = createTagTheme();
-  const editor = new CustomEditor(createStubTui(), theme);
+  const editor = new CustomEditor(theme);
   editor.handleInput("hello \u001b[31mred\u001b[0m");
   expect(editor.getLines()[0]).toBe("hello red");
 });

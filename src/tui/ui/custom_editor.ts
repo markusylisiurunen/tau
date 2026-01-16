@@ -1,12 +1,6 @@
-import {
-  CURSOR_MARKER,
-  Editor,
-  Key,
-  matchesKey,
-  type TUI,
-  visibleWidth,
-} from "@mariozechner/pi-tui";
+import { Key, matchesKey, visibleWidth } from "@mariozechner/pi-tui";
 import stripAnsi from "strip-ansi";
+import { Editor } from "./components/editor.js";
 import { truncateFromEndByWidth } from "./components/one_line_segments.js";
 import { getSkillAutocompleteToken } from "./slash_autocomplete.js";
 import type { Theme } from "./theme/index.js";
@@ -38,8 +32,8 @@ export class CustomEditor extends Editor {
   public onAltUp?: () => void;
   public beforeSubmit?: (text: string) => boolean;
 
-  constructor(tui: TUI, theme: Theme) {
-    super(tui, theme.editorTheme);
+  constructor(theme: Theme) {
+    super(theme.editorTheme);
     this.uiTheme = theme;
   }
 
@@ -78,25 +72,12 @@ export class CustomEditor extends Editor {
 
     const innerWidth = width - 2;
     this.lastContentWidth = innerWidth;
-    const baseLines = super.render(innerWidth);
-
-    if (baseLines.length === 0) {
-      return [this.borderColor("─").repeat(width)];
-    }
-
-    let bottomIndex = baseLines.length - 1;
-    for (let i = baseLines.length - 1; i >= 0; i--) {
-      const line = baseLines[i] ?? "";
-      if (this.isHorizontalBorder(line, innerWidth)) {
-        bottomIndex = i;
-        break;
-      }
-    }
+    this.lastWidth = innerWidth;
 
     const maxVisibleLines = this.getMaxVisibleLines();
     const maxContentLines = Math.max(1, maxVisibleLines - 2);
     const contentLines = this.renderEditorContent(innerWidth, maxContentLines);
-    const trailingLines = baseLines.slice(bottomIndex + 1);
+    const autocompleteLines = this.renderAutocompleteLines(innerWidth);
 
     const vertical = this.borderColor("│");
     const rendered: string[] = [];
@@ -112,8 +93,8 @@ export class CustomEditor extends Editor {
 
     rendered.push(this.renderFooterLine(width));
 
-    if (trailingLines.length > 0) {
-      for (const line of trailingLines) {
+    if (autocompleteLines.length > 0) {
+      for (const line of autocompleteLines) {
         const padded = this.padToWidth(line, width - 1);
         rendered.push(` ${padded}`);
       }
@@ -189,12 +170,11 @@ export class CustomEditor extends Editor {
       return;
     }
 
-    const editor = this as unknown as { isInPaste?: boolean };
-    const wasInPaste = !!editor.isInPaste;
+    const wasInPaste = this.isInPaste;
 
     super.handleInput(data);
 
-    const isInPaste = !!editor.isInPaste;
+    const isInPaste = this.isInPaste;
     if (data.includes("\x1b") || (wasInPaste && !isInPaste)) {
       this.sanitizeEditorState();
     }
@@ -203,13 +183,7 @@ export class CustomEditor extends Editor {
   }
 
   private sanitizeEditorState(): void {
-    const editor = this as unknown as {
-      state?: { lines: string[]; cursorLine: number; cursorCol: number };
-      pastes?: Map<number, string>;
-      onChange?: (text: string) => void;
-    };
-    const state = editor.state;
-    if (!state) return;
+    const state = this.state;
 
     let didChange = false;
 
@@ -226,19 +200,17 @@ export class CustomEditor extends Editor {
       }
     }
 
-    if (editor.pastes) {
-      for (const [id, content] of editor.pastes) {
-        if (!content.includes("\x1b")) continue;
-        const cleaned = stripAnsi(content).replaceAll("\x1b", "");
-        if (cleaned !== content) {
-          editor.pastes.set(id, cleaned);
-          didChange = true;
-        }
+    for (const [id, content] of this.pastes) {
+      if (!content.includes("\x1b")) continue;
+      const cleaned = stripAnsi(content).replaceAll("\x1b", "");
+      if (cleaned !== content) {
+        this.pastes.set(id, cleaned);
+        didChange = true;
       }
     }
 
-    if (didChange && editor.onChange) {
-      editor.onChange(this.getText());
+    if (didChange && this.onChange) {
+      this.onChange(this.getText());
     }
   }
 
@@ -252,8 +224,7 @@ export class CustomEditor extends Editor {
 
     if (!getSkillAutocompleteToken(beforeCursor)) return;
 
-    const editor = this as unknown as { tryTriggerAutocomplete?: () => void };
-    editor.tryTriggerAutocomplete?.();
+    this.tryTriggerAutocomplete();
   }
 
   private shouldTriggerAutocompleteForInput(data: string): boolean {
@@ -275,30 +246,24 @@ export class CustomEditor extends Editor {
   }
 
   private handleCursorVertical(direction: 1 | -1): void {
-    const editor = this as unknown as {
-      historyIndex?: number;
-      navigateHistory?: (direction: 1 | -1) => void;
-      state?: { cursorLine: number; cursorCol: number; lines: string[] };
-    };
-
     const lines = this.getLines();
     const cursor = this.getCursor();
-    const historyIndex = editor.historyIndex ?? -1;
+    const historyIndex = this.historyIndex;
     const isEmpty = lines.length === 1 && (lines[0] ?? "") === "";
 
     if (isEmpty) {
-      editor.navigateHistory?.(direction);
+      this.navigateHistory(direction);
       return;
     }
 
     if (historyIndex > -1) {
       if (direction === -1 && this.isOnFirstVisualLinePreserveIndent()) {
-        editor.navigateHistory?.(-1);
+        this.navigateHistory(-1);
         return;
       }
 
       if (direction === 1 && this.isOnLastVisualLinePreserveIndent()) {
-        editor.navigateHistory?.(1);
+        this.navigateHistory(1);
         return;
       }
     }
@@ -325,10 +290,8 @@ export class CustomEditor extends Editor {
     const logicalLine = lines[targetVL.logicalLine] ?? "";
     const targetCol = targetVL.startCol + Math.min(visualCol, targetVL.length);
 
-    if (editor.state) {
-      editor.state.cursorLine = targetVL.logicalLine;
-      editor.state.cursorCol = Math.min(targetCol, logicalLine.length);
-    }
+    this.state.cursorLine = targetVL.logicalLine;
+    this.state.cursorCol = Math.min(targetCol, logicalLine.length);
   }
 
   private isOnFirstVisualLinePreserveIndent(): boolean {
@@ -477,14 +440,6 @@ export class CustomEditor extends Editor {
     return `${this.borderColor("╰")}${this.borderColor("─").repeat(innerWidth)}${this.borderColor("╯")}`;
   }
 
-  private isHorizontalBorder(line: string, innerWidth: number): boolean {
-    const raw = stripAnsi(line);
-    if (raw.length === 0) return false;
-    const isIndicator = raw.startsWith("─── ↑ ") || raw.startsWith("─── ↓ ");
-    if (!isIndicator && raw.replace(/─/g, "").length !== 0) return false;
-    return visibleWidth(raw) === innerWidth;
-  }
-
   private padToWidth(line: string, width: number): string {
     const pad = Math.max(0, width - visibleWidth(line));
     return `${line}${" ".repeat(pad)}`;
@@ -619,8 +574,6 @@ export class CustomEditor extends Editor {
     const layoutLines = this.layoutTextPreserveIndent(width);
     const visibleLines = this.sliceVisibleLayoutLines(layoutLines, maxContentLines);
     const lines: string[] = [];
-    const emitCursorMarker = this.focused && !this.isShowingAutocomplete();
-
     for (const layoutLine of visibleLines) {
       let displayText = layoutLine.text;
       let lineVisibleWidth = visibleWidth(layoutLine.text);
@@ -628,24 +581,22 @@ export class CustomEditor extends Editor {
       if (layoutLine.hasCursor && layoutLine.cursorPos !== undefined) {
         const before = displayText.slice(0, layoutLine.cursorPos);
         const after = displayText.slice(layoutLine.cursorPos);
-        const marker = emitCursorMarker ? CURSOR_MARKER : "";
-
         if (after.length > 0) {
           const firstGrapheme = this.getFirstGrapheme(after);
           const restAfter = after.slice(firstGrapheme.length);
           const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
-          displayText = before + marker + cursor + restAfter;
+          displayText = before + cursor + restAfter;
         } else {
           if (lineVisibleWidth < width) {
             const cursor = "\x1b[7m \x1b[0m";
-            displayText = before + marker + cursor;
+            displayText = before + cursor;
             lineVisibleWidth = lineVisibleWidth + 1;
           } else {
             const lastGrapheme = this.getLastGrapheme(before);
             if (lastGrapheme) {
               const beforeWithoutLast = this.sliceWithoutLastGrapheme(before);
               const cursor = `\x1b[7m${lastGrapheme}\x1b[0m`;
-              displayText = beforeWithoutLast + marker + cursor;
+              displayText = beforeWithoutLast + cursor;
             }
           }
         }
@@ -656,6 +607,11 @@ export class CustomEditor extends Editor {
     }
 
     return lines.length > 0 ? lines : [""];
+  }
+
+  private renderAutocompleteLines(width: number): string[] {
+    if (!this.isShowingAutocomplete() || !this.autocompleteList) return [];
+    return this.autocompleteList.render(width);
   }
 
   private sliceVisibleLayoutLines(
@@ -687,8 +643,7 @@ export class CustomEditor extends Editor {
   private getMaxVisibleLines(): number {
     const configured = this.maxVisibleLines > 0 ? this.maxVisibleLines : DEFAULT_EDITOR_MAX_LINES;
     const terminalRows =
-      this.tui?.terminal?.rows ??
-      (typeof process !== "undefined" && process.stdout?.rows ? process.stdout.rows : undefined);
+      typeof process !== "undefined" && process.stdout?.rows ? process.stdout.rows : undefined;
     const terminalCap = terminalRows && terminalRows > 0 ? terminalRows : configured;
     const minLines = Math.min(MIN_EDITOR_LINES, terminalCap);
     return Math.max(minLines, Math.min(configured, terminalCap));

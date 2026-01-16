@@ -123,7 +123,7 @@ export class TuiChatView implements ChatView {
     this.chatContainer.setCompactToolUi(options.compactToolUi);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
     this.queuedMessages = new QueuedMessagesComponent(this.uiTheme, options.queuedUserMessages);
-    this.editor = new CustomEditor(this.ui, this.uiTheme);
+    this.editor = new CustomEditor(this.uiTheme);
     this.toolUiRouter = new ToolUiRouter({
       theme: this.uiTheme,
       chatContainer: this.chatContainer,

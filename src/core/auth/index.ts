@@ -10,6 +10,7 @@ export { AuthStorage } from "./auth_storage.js";
 export type { CredentialResolver } from "./credential_resolver.js";
 export { createCredentialResolver } from "./credential_resolver.js";
 export { ensureCodexSystemPrompt } from "./codex_prompt.js";
+export { loginOpenAICodexManual } from "./codex_oauth.js";
 export type { AuthLoginHandler, AuthLog, AuthPromptFn, OAuthProviderSpec } from "./cli.js";
 export {
   runLoginCommand,

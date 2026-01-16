@@ -1,5 +1,5 @@
 import type { OAuthCredentials, OAuthProvider, OAuthPrompt } from "@mariozechner/pi-ai";
-import { loginOpenAICodex } from "@mariozechner/pi-ai";
+import { loginOpenAICodexManual } from "./codex_oauth.js";
 import type { AuthStorage } from "./auth_storage.js";
 
 export type AuthLog = (message: string) => void;
@@ -22,7 +22,7 @@ export const SUPPORTED_OAUTH_PROVIDERS: OAuthProviderSpec[] = [
 
 const DEFAULT_LOGIN_HANDLERS: Partial<Record<OAuthProvider, AuthLoginHandler>> = {
   "openai-codex": (callbacks) =>
-    loginOpenAICodex({
+    loginOpenAICodexManual({
       onAuth: callbacks.onAuth,
       onPrompt: callbacks.onPrompt,
       onProgress: callbacks.onProgress,

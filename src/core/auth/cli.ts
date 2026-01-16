@@ -1,5 +1,5 @@
 import type { OAuthCredentials, OAuthProvider, OAuthPrompt } from "@mariozechner/pi-ai";
-import { loginOpenAICodexManual } from "./codex_oauth.js";
+import { loginOpenAICodex } from "@mariozechner/pi-ai";
 import type { AuthStorage } from "./auth_storage.js";
 
 export type AuthLog = (message: string) => void;
@@ -22,9 +22,11 @@ export const SUPPORTED_OAUTH_PROVIDERS: OAuthProviderSpec[] = [
 
 const DEFAULT_LOGIN_HANDLERS: Partial<Record<OAuthProvider, AuthLoginHandler>> = {
   "openai-codex": (callbacks) =>
-    loginOpenAICodexManual({
+    loginOpenAICodex({
       onAuth: callbacks.onAuth,
-      onPrompt: callbacks.onPrompt,
+      onPrompt: async () => {
+        throw new Error("Manual code entry is disabled. Complete login in the browser.");
+      },
       onProgress: callbacks.onProgress,
     }),
 };
@@ -94,9 +96,13 @@ export async function runLoginCommand(options: {
   const credentials = await handler({
     onAuth: (info) => {
       log("");
-      log("Open this URL in your browser:");
+      if (provider === "openai-codex") {
+        log("Copy this URL into your browser to complete login:");
+      } else {
+        log("Open this URL in your browser:");
+      }
       log(info.url);
-      if (info.instructions) {
+      if (provider !== "openai-codex" && info.instructions) {
         log(info.instructions);
       }
       log("");

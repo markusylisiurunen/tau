@@ -42,9 +42,10 @@ to use the OpenAI Codex subscription provider (`openai-codex`), run:
 tau login openai-codex
 ```
 
-this prints a login URL and stores tokens in `~/.config/tau/auth.json` after you paste the
-redirect URL (or authorization code) back into the terminal. if you see token refresh errors
-later, run the login command again to re-authenticate.
+this prints a login URL and starts a local callback server on `127.0.0.1:1455`. complete the
+login in your browser and tau will store tokens in `~/.config/tau/auth.json`. if port `1455`
+is already in use, the login flow fails (no manual paste fallback). if you see token refresh
+errors later, run the login command again to re-authenticate.
 
 to remove stored credentials:
 

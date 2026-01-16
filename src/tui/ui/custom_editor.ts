@@ -1,4 +1,11 @@
-import { Editor, Key, matchesKey, visibleWidth } from "@mariozechner/pi-tui";
+import {
+  CURSOR_MARKER,
+  Editor,
+  Key,
+  matchesKey,
+  type TUI,
+  visibleWidth,
+} from "@mariozechner/pi-tui";
 import stripAnsi from "strip-ansi";
 import { truncateFromEndByWidth } from "./components/one_line_segments.js";
 import { getSkillAutocompleteToken } from "./slash_autocomplete.js";
@@ -31,8 +38,8 @@ export class CustomEditor extends Editor {
   public onAltUp?: () => void;
   public beforeSubmit?: (text: string) => boolean;
 
-  constructor(theme: Theme) {
-    super(theme.editorTheme);
+  constructor(tui: TUI, theme: Theme) {
+    super(tui, theme.editorTheme);
     this.uiTheme = theme;
   }
 
@@ -473,7 +480,8 @@ export class CustomEditor extends Editor {
   private isHorizontalBorder(line: string, innerWidth: number): boolean {
     const raw = stripAnsi(line);
     if (raw.length === 0) return false;
-    if (raw.replace(/─/g, "").length !== 0) return false;
+    const isIndicator = raw.startsWith("─── ↑ ") || raw.startsWith("─── ↓ ");
+    if (!isIndicator && raw.replace(/─/g, "").length !== 0) return false;
     return visibleWidth(raw) === innerWidth;
   }
 
@@ -611,6 +619,7 @@ export class CustomEditor extends Editor {
     const layoutLines = this.layoutTextPreserveIndent(width);
     const visibleLines = this.sliceVisibleLayoutLines(layoutLines, maxContentLines);
     const lines: string[] = [];
+    const emitCursorMarker = this.focused && !this.isShowingAutocomplete();
 
     for (const layoutLine of visibleLines) {
       let displayText = layoutLine.text;
@@ -619,23 +628,24 @@ export class CustomEditor extends Editor {
       if (layoutLine.hasCursor && layoutLine.cursorPos !== undefined) {
         const before = displayText.slice(0, layoutLine.cursorPos);
         const after = displayText.slice(layoutLine.cursorPos);
+        const marker = emitCursorMarker ? CURSOR_MARKER : "";
 
         if (after.length > 0) {
           const firstGrapheme = this.getFirstGrapheme(after);
           const restAfter = after.slice(firstGrapheme.length);
           const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
-          displayText = before + cursor + restAfter;
+          displayText = before + marker + cursor + restAfter;
         } else {
           if (lineVisibleWidth < width) {
             const cursor = "\x1b[7m \x1b[0m";
-            displayText = before + cursor;
+            displayText = before + marker + cursor;
             lineVisibleWidth = lineVisibleWidth + 1;
           } else {
             const lastGrapheme = this.getLastGrapheme(before);
             if (lastGrapheme) {
               const beforeWithoutLast = this.sliceWithoutLastGrapheme(before);
               const cursor = `\x1b[7m${lastGrapheme}\x1b[0m`;
-              displayText = beforeWithoutLast + cursor;
+              displayText = beforeWithoutLast + marker + cursor;
             }
           }
         }
@@ -677,7 +687,8 @@ export class CustomEditor extends Editor {
   private getMaxVisibleLines(): number {
     const configured = this.maxVisibleLines > 0 ? this.maxVisibleLines : DEFAULT_EDITOR_MAX_LINES;
     const terminalRows =
-      typeof process !== "undefined" && process.stdout?.rows ? process.stdout.rows : undefined;
+      this.tui?.terminal?.rows ??
+      (typeof process !== "undefined" && process.stdout?.rows ? process.stdout.rows : undefined);
     const terminalCap = terminalRows && terminalRows > 0 ? terminalRows : configured;
     const minLines = Math.min(MIN_EDITOR_LINES, terminalCap);
     return Math.max(minLines, Math.min(configured, terminalCap));

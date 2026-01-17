@@ -55,4 +55,40 @@ describe("auth cli", () => {
       fx.cleanup();
     }
   });
+
+  it("supports manual prompt fallback during login", async () => {
+    const fx = createTempAuthPath();
+    try {
+      const authStorage = new AuthStorage(fx.authPath);
+      const promptCalls = [];
+
+      await runLoginCommand({
+        providerArg: "openai-codex",
+        authStorage,
+        authPath: fx.authPath,
+        prompt: async (prompt) => {
+          promptCalls.push(prompt.message);
+          return "manual-code";
+        },
+        log: () => {},
+        loginHandlers: {
+          "openai-codex": async (callbacks) => {
+            const input = await callbacks.onPrompt({ message: "Paste code:" });
+            return {
+              access: `access-${input}`,
+              refresh: "refresh-token",
+              expires: 123,
+              accountId: "acct",
+            };
+          },
+        },
+      });
+
+      const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
+      expect(saved["openai-codex"].access).toBe("access-manual-code");
+      expect(promptCalls).toEqual(["Paste code:"]);
+    } finally {
+      fx.cleanup();
+    }
+  });
 });

@@ -708,7 +708,14 @@ export class ChatController {
     }
     if (!this.isStreaming) return true;
     const trimmed = text.trimStart();
-    return !trimmed.startsWith("/") && !trimmed.startsWith("!");
+    if (trimmed.startsWith("!")) {
+      return false;
+    }
+    if (trimmed.startsWith("/")) {
+      const parsed = this.commandRegistry.parse(trimmed);
+      return this.commandRegistry.allowsDuringStreaming(parsed);
+    }
+    return true;
   }
 
   private handleEditorChange(text: string): void {

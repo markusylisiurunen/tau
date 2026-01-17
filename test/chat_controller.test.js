@@ -132,4 +132,22 @@ describe("ChatController streaming command handling", () => {
 
     expect(stub.editorTextUpdates).toEqual(["hello there"]);
   });
+
+  it("permits streaming prompt submission via beforeSubmit", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view, {
+      prompts: [{ id: "intro", template: "hello there" }],
+    });
+
+    controller.isStreaming = true;
+    const handlers = controller.getInputHandlers();
+
+    expect(handlers.beforeSubmit?.("/prompt:intro")).toBe(true);
+    expect(handlers.beforeSubmit?.("/reload")).toBe(false);
+
+    handlers.onSubmit?.("/prompt:intro");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(stub.editorTextUpdates).toEqual(["hello there"]);
+  });
 });

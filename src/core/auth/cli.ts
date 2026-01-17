@@ -24,9 +24,7 @@ const DEFAULT_LOGIN_HANDLERS: Partial<Record<OAuthProvider, AuthLoginHandler>> =
   "openai-codex": (callbacks) =>
     loginOpenAICodex({
       onAuth: callbacks.onAuth,
-      onPrompt: async () => {
-        throw new Error("Manual code entry is disabled. Complete login in the browser.");
-      },
+      onPrompt: callbacks.onPrompt,
       onProgress: callbacks.onProgress,
     }),
 };
@@ -102,8 +100,11 @@ export async function runLoginCommand(options: {
         log("Open this URL in your browser:");
       }
       log(info.url);
-      if (provider !== "openai-codex" && info.instructions) {
+      if (info.instructions) {
         log(info.instructions);
+      }
+      if (provider === "openai-codex") {
+        log("If the browser callback fails, you'll be prompted to paste the redirect URL/code.");
       }
       log("");
     },

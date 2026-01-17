@@ -54,8 +54,6 @@ describe("tool enablement by risk level", () => {
 
     expect(restricted).toEqual(["grep", "list", "read"]);
 
-    const nonRestricted = allTools.filter((name) => !restricted.includes(name)).sort();
-
     const readOnly = registry
       .getEnabledToolSchemas("read-only")
       .map((tool) => tool.name)
@@ -65,8 +63,8 @@ describe("tool enablement by risk level", () => {
       .map((tool) => tool.name)
       .sort();
 
-    expect(readOnly).toEqual(nonRestricted);
-    expect(readWrite).toEqual(nonRestricted);
+    expect(readOnly).toEqual(allTools);
+    expect(readWrite).toEqual(allTools);
   });
 });
 

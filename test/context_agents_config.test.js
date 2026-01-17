@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -105,6 +105,34 @@ describe("project context agents from .tau/config.json", () => {
         join(scripts, "AGENTS.md"),
       ]);
     } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects symlinked agentContextFiles that escape home", () => {
+    const fx = setupFixture();
+    const outside = mkdtempSync(join(tmpdir(), "tau-context-outside-"));
+    const outsideAbs = resolve(outside);
+
+    try {
+      writeFileSync(join(fx.repo, "AGENTS.md"), "# root agents\n");
+      writeFileSync(join(outsideAbs, "AGENTS.md"), "# outside agents\n");
+
+      const linksDir = join(fx.repo, "links");
+      mkdirSync(linksDir, { recursive: true });
+      symlinkSync(join(outsideAbs, "AGENTS.md"), join(linksDir, "AGENTS.md"));
+
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({ agentContextFiles: ["links/AGENTS.md"] }),
+      );
+
+      const res = findAgentsFilesInScope(fx.repo, fx.home);
+
+      expect(res).toEqual([join(fx.repo, "AGENTS.md")]);
+    } finally {
+      rmSync(outsideAbs, { recursive: true, force: true });
       fx.cleanup();
     }
   });

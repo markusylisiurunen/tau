@@ -209,7 +209,6 @@ export class ToolRegistry {
     if (riskLevel === "restricted") {
       return baseTools.filter((tool) => restrictedToolNames.has(tool.name));
     }
-
-    return baseTools.filter((tool) => !restrictedToolNames.has(tool.name));
+    return baseTools;
   }
 }

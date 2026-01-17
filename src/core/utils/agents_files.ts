@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, parse, resolve, sep } from "node:path";
 import type { ConfigDeps } from "../config/deps.js";
 import { loadConfigWithDiagnostics } from "../config/schema.js";
@@ -13,6 +13,47 @@ function isSameOrParentPath(parent: string, child: string): boolean {
   const root = parse(parent).root;
   if (parent === root) return child.startsWith(root);
   return child.startsWith(parent + sep);
+}
+
+function resolveAgentContextPath(args: { path: string; cwd: string; home: string }): string | null {
+  const resolved = resolve(args.path);
+  if (basename(resolved) !== "AGENTS.md") return null;
+
+  let realPath: string;
+  try {
+    realPath = realpathSync(resolved);
+  } catch {
+    return null;
+  }
+
+  if (basename(realPath) !== "AGENTS.md") return null;
+
+  try {
+    const stat = statSync(realPath);
+    if (!stat.isFile()) return null;
+  } catch {
+    return null;
+  }
+
+  const cwdAbs = resolve(args.cwd);
+  const homeAbs = resolve(args.home);
+  let cwdReal = cwdAbs;
+  let homeReal = homeAbs;
+  try {
+    cwdReal = realpathSync(cwdAbs);
+  } catch {
+    // fall back to cwdAbs
+  }
+  try {
+    homeReal = realpathSync(homeAbs);
+  } catch {
+    // fall back to homeAbs
+  }
+  const withinHome = cwdReal === homeReal || cwdReal.startsWith(homeReal + sep);
+  if (withinHome && !isSameOrParentPath(homeReal, realPath)) return null;
+  if (!isAgentContextPathInScope(realPath, cwdReal)) return null;
+
+  return resolved;
 }
 
 export function isAgentContextPathInScope(filePath: string, cwd: string): boolean {
@@ -50,7 +91,10 @@ export function findAgentsFilesFromCwdToHome(cwd: string, home: string): string[
   while (true) {
     const candidate = join(dir, "AGENTS.md");
     if (existsSync(candidate)) {
-      found.push(candidate);
+      const resolved = resolveAgentContextPath({ path: candidate, cwd: cwdAbs, home });
+      if (resolved) {
+        found.push(resolved);
+      }
     }
 
     if (dir === stopAbs) break;
@@ -74,10 +118,10 @@ function findAdditionalAgentsFilesFromConfigsDetailed(args: {
   const errors = [...configResult.errors];
 
   for (const pathRaw of configResult.config.agentContextFiles ?? []) {
-    const resolved = resolve(pathRaw);
-    if (basename(resolved) !== "AGENTS.md") continue;
-    if (!isAgentContextPathInScope(resolved, args.cwd)) continue;
-    files.push(resolved);
+    const resolved = resolveAgentContextPath({ path: pathRaw, cwd: args.cwd, home: args.home });
+    if (resolved) {
+      files.push(resolved);
+    }
   }
 
   return { files, errors };
@@ -94,8 +138,14 @@ export function findAgentsFilesInScopeDetailed(
   const files: string[] = [];
 
   for (const file of [...base, ...extra.files]) {
-    if (seen.has(file)) continue;
-    seen.add(file);
+    let dedupeKey = file;
+    try {
+      dedupeKey = realpathSync(file);
+    } catch {
+      // fallback to the resolved path
+    }
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
     files.push(file);
   }
 

@@ -123,9 +123,9 @@ export function describeRiskLevel(level: RiskLevel): string {
     case "restricted":
       return "Model can only use restricted tools (read/grep/list) scoped to the repo root.";
     case "read-only":
-      return "Model may call bash only for read-only commands (safetyLevel='read').";
+      return "Model may use read/grep/list and bash for read-only commands (safetyLevel='read').";
     case "read-write":
-      return "Model may call bash for read or write commands (safetyLevel='read' or 'write').";
+      return "Model may use all tools and bash for read or write commands (safetyLevel='read' or 'write').";
   }
 }
 

@@ -169,7 +169,9 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         const allLines = rawContent.split("\n");
         const totalLines = allLines.length;
         const start = startLine ?? 1;
-        const end = endLine ?? totalLines;
+        const endRequested = endLine ?? totalLines;
+        const endEffective = Math.min(endRequested, totalLines);
+        const endDisplay = endLine === undefined ? undefined : endEffective;
 
         if (start > totalLines) {
           return blocked(
@@ -178,7 +180,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         }
 
         const startIndex = Math.max(0, start - 1);
-        const endIndex = Math.min(totalLines, Math.max(startIndex, end));
+        const endIndex = Math.max(startIndex, endEffective);
 
         let selected = allLines.slice(startIndex, endIndex).join("\n");
         if (Buffer.byteLength(selected, "utf-8") > READ_MAX_CAPTURE_BYTES) {
@@ -193,7 +195,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         const toolText = formatReadToolResultText({
           path: resolvedPath,
           startLine: start,
-          endLine: endLine,
+          endLine: endDisplay,
           content: modelTruncation.content,
           truncation: modelTruncation,
         });
@@ -202,7 +204,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
           content: selected,
           modelTruncation,
           startLine: start,
-          endLine,
+          endLine: endDisplay,
         });
 
         const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
@@ -210,7 +212,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
           type: "read_success",
           path: resolvedPath,
           startLine: start,
-          endLine: endLine,
+          endLine: endDisplay,
           content: modelTruncation.content,
           modelTruncation: {
             truncated: modelTruncation.truncated,

@@ -81,7 +81,6 @@ export interface ChatControllerOptions {
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
   withContext?: boolean;
-  themePreview?: boolean;
   config?: Config;
   deps?: CoreDeps;
   queuedUserMessages?: string[];
@@ -138,7 +137,6 @@ export class ChatController {
   private currentTurnStartedAt?: number;
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
-  private themePreview: boolean;
 
   constructor(options: ChatControllerOptions) {
     this.view = options.view;
@@ -162,16 +160,7 @@ export class ChatController {
       getConfig: () => this.config,
     });
     this.compactToolUi = true;
-    this.themePreview = options.themePreview ?? false;
-    this.showThinking = this.themePreview;
     this.queuedUserMessages = options.queuedUserMessages ?? [];
-
-    if (this.themePreview) {
-      this.queuedUserMessages.push(
-        "Queue: adjust muted contrast and preview again",
-        "Queue: verify tool error colors",
-      );
-    }
 
     if (options.withContext) {
       const res = findAgentsFilesInScopeDetailed(cwd, home);
@@ -204,10 +193,6 @@ export class ChatController {
 
     if (options.initialRiskLevel) {
       this.riskLevel = options.initialRiskLevel;
-    }
-    const allowedRiskLevels = ALLOWED_RISK_LEVELS;
-    if (!allowedRiskLevels.includes(this.riskLevel)) {
-      this.riskLevel = allowedRiskLevels[0] ?? "read-only";
     }
     this.initialRiskLevel = this.riskLevel;
 
@@ -262,25 +247,23 @@ export class ChatController {
     this.view.setThinkingVisibility(this.showThinking);
     this.view.setCompactToolUi(this.compactToolUi);
 
-    if (!this.themePreview) {
-      this.view.addMessage({
-        type: "app_intro",
-        appName: "tau",
-        version: APP_VERSION,
-        helpText: this.commandRegistry.buildHelpText({
-          agentsFiles: this.agentsFiles,
-          skills: this.skills,
-          riskLevels: ALLOWED_RISK_LEVELS,
-          themes: this.themes.map((theme) => theme.id),
-        }),
-      });
+    this.view.addMessage({
+      type: "app_intro",
+      appName: "tau",
+      version: APP_VERSION,
+      helpText: this.commandRegistry.buildHelpText({
+        agentsFiles: this.agentsFiles,
+        skills: this.skills,
+        riskLevels: ALLOWED_RISK_LEVELS,
+        themes: this.themes.map((theme) => theme.id),
+      }),
+    });
 
-      if (this.agentsConfigErrors.length > 0) {
-        this.view.addSystemMessage(
-          ["config warnings:", ...this.agentsConfigErrors.map((e) => `- ${e}`)].join("\n"),
-          "warn",
-        );
-      }
+    if (this.agentsConfigErrors.length > 0) {
+      this.view.addSystemMessage(
+        ["config warnings:", ...this.agentsConfigErrors.map((e) => `- ${e}`)].join("\n"),
+        "warn",
+      );
     }
 
     this.refreshStatus();
@@ -339,10 +322,6 @@ export class ChatController {
   }
 
   async start(): Promise<void> {
-    if (this.themePreview) {
-      return;
-    }
-
     if (this.initialUserMessage) {
       await this.sendInitialUserMessage(this.initialUserMessage);
     }
@@ -697,9 +676,6 @@ export class ChatController {
   // Input Handling --------------------------------------------------------------------------------
 
   private beforeSubmit(text: string): boolean {
-    if (this.themePreview) {
-      return false;
-    }
     if (!this.isStreaming) return true;
     const trimmed = text.trimStart();
     if (trimmed.startsWith("!")) {
@@ -827,9 +803,6 @@ export class ChatController {
   }
 
   private async handleSubmit(text: string): Promise<void> {
-    if (this.themePreview) {
-      return;
-    }
     const trimmed = text.trim();
     if (!trimmed) return;
 
@@ -1309,39 +1282,18 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     return details ? `risk level ${level} (${details})` : `risk level ${level}`;
   }
 
-  private setRiskLevel(
-    level: RiskLevel,
-    options?: { force?: boolean; silent?: boolean; reason?: string },
-  ): void {
-    const allowed = ALLOWED_RISK_LEVELS;
-    let target = level;
-    let forced = false;
-
-    if (!allowed.includes(level)) {
-      if (!options?.force) {
-        if (!options?.silent) {
-          this.view.addSystemMessage(
-            `risk level '${level}' is not available for the current persona. allowed: ${allowed.join(", ")}.`,
-            "error",
-          );
-        }
-        return;
-      }
-      target = allowed[0] ?? "read-only";
-      forced = true;
-    }
-
+  private setRiskLevel(level: RiskLevel, options?: { silent?: boolean }): void {
     const previous = this.riskLevel;
-    this.riskLevel = target;
-    this.engine.setRiskLevel(target);
+    this.riskLevel = level;
+    this.engine.setRiskLevel(level);
     this.refreshStatus();
 
-    if (previous !== target) {
+    if (previous !== level) {
       const from = this.pendingRiskLevelChange?.from ?? previous;
-      if (from === target) {
+      if (from === level) {
         this.pendingRiskLevelChange = undefined;
       } else {
-        this.pendingRiskLevelChange = { from, to: target };
+        this.pendingRiskLevelChange = { from, to: level };
       }
     }
 
@@ -1349,18 +1301,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       return;
     }
 
-    if (forced) {
-      const reason =
-        options?.reason ?? `risk level '${level}' is not available for the current persona.`;
-      const msg =
-        previous === target
-          ? `${reason} staying at ${target}.`
-          : `${reason} switched to ${target}.`;
-      this.view.addSystemMessage(msg, "warn");
-      return;
-    }
-
-    this.view.addSystemMessage(this.formatRiskLevelNotice(target), "success");
+    this.view.addSystemMessage(this.formatRiskLevelNotice(level), "success");
   }
 
   private switchPersona(id: string): void {
@@ -1373,13 +1314,6 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     this.currentPersona = persona;
     this.clampPersonaReasoning(this.currentPersona);
-    const allowedRiskLevels = ALLOWED_RISK_LEVELS;
-    if (!allowedRiskLevels.includes(this.riskLevel)) {
-      this.setRiskLevel(this.riskLevel, {
-        force: true,
-        reason: "risk level is not available for the current persona.",
-      });
-    }
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
     this.baseSystemPrompt = buildBaseSystemPrompt({
       personaSystemPrompt: this.currentPersona.systemPrompt,
@@ -1498,14 +1432,6 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
           "warn",
         );
       }
-      const allowedRiskLevels = ALLOWED_RISK_LEVELS;
-      if (!allowedRiskLevels.includes(this.riskLevel)) {
-        this.setRiskLevel(this.riskLevel, {
-          force: true,
-          reason: "risk level is not available for the current persona.",
-        });
-      }
-
       // Rebuild system prompt and update the engine
       const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
       this.baseSystemPrompt = buildBaseSystemPrompt({

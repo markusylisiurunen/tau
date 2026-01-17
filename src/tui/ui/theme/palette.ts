@@ -1,72 +1,11 @@
-import { Chalk } from "chalk";
 import { hslToHex } from "../../../core/utils/color.js";
 import type { Palette, ThemeMode } from "./theme.js";
 import { PALETTE_COLORS, type PaletteTokenName } from "./tokens.js";
-
-const chalk = new Chalk({ level: 3 });
 
 const paletteByName = new Map<PaletteTokenName, (typeof PALETTE_COLORS)[number]>(
   PALETTE_COLORS.map((color) => [color.name, color] as const),
 );
 
-const PALETTE_GROUPS: Array<{ label: string; names: PaletteTokenName[] }> = [
-  {
-    label: "core",
-    names: [
-      "brandAccent",
-      "textMuted",
-      "textDim",
-      "linkText",
-      "thinkingText",
-      "codeInlineText",
-      "codeBlockText",
-    ],
-  },
-  {
-    label: "status",
-    names: ["statusWarn", "statusError", "modeMemory", "modeBash"],
-  },
-  {
-    label: "action",
-    names: ["actionRunning", "actionSuccess", "actionError", "actionOutput"],
-  },
-  { label: "diff", names: ["diffAdd", "diffRemove"] },
-  { label: "toasts", names: ["toastSuccess", "toastWarn", "toastError"] },
-  {
-    label: "toast backgrounds",
-    names: ["toastSuccessBg", "toastWarnBg", "toastErrorBg", "toastMutedBg"],
-  },
-  { label: "user", names: ["userSurface", "userMemorySurface", "userMemoryText"] },
-  {
-    label: "risk",
-    names: ["riskReadOnlyText", "riskReadWriteText"],
-  },
-];
-
-export function buildPalettePreview(): string {
-  const columnGap = "  ";
-  const indent = "  ";
-  const nameWidth = Math.max(...PALETTE_COLORS.map((color) => color.name.length));
-  const hslWidth = Math.max(
-    ...PALETTE_COLORS.map((color) => `hsl(${color.h}, ${color.s}%, ${color.l}%)`.length),
-  );
-  const lines: string[] = [];
-  for (const group of PALETTE_GROUPS) {
-    lines.push(`${group.label}:`);
-    for (const name of group.names) {
-      const color = paletteByName.get(name);
-      if (!color) {
-        throw new Error(`unknown palette token in preview group '${group.label}': ${name}`);
-      }
-      const hex = hslToHex(color.h, color.s, color.l);
-      const block = chalk.bgHex(hex)("   ");
-      const hsl = `hsl(${color.h}, ${color.s}%, ${color.l}%)`;
-      const line = [block, name.padEnd(nameWidth), hsl.padEnd(hslWidth), hex].join(columnGap);
-      lines.push(`${indent}${line}`);
-    }
-  }
-  return lines.join("\n");
-}
 
 function tagWrapper(label: string): (text: string) => string {
   return (text) => `<${label}>${text}</${label}>`;

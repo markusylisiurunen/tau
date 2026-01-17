@@ -17,7 +17,6 @@ export interface ChatAppOptions {
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
   withContext?: boolean;
-  themePreview?: boolean;
   config?: Config;
 }
 
@@ -30,8 +29,7 @@ export class ChatApp implements ModeAdapter {
     this.view = new TuiChatView({
       queuedUserMessages,
       compactToolUi: true,
-      showThinking: options.themePreview ?? false,
-      themePreview: options.themePreview ?? false,
+      showThinking: false,
       themeId: options.config?.defaultTheme,
       themes: options.themes ?? [],
     });

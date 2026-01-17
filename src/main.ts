@@ -244,19 +244,18 @@ const initialRiskLevel = cli.riskLevel || config.defaultRisk;
 
 const initialUserMessage = await readPipedStdin();
 
-const app = new ChatApp({
-  personas,
-  prompts,
-  skills,
-  themes,
-  bashCommands,
+  const app = new ChatApp({
+    personas,
+    prompts,
+    skills,
+    themes,
+    bashCommands,
   initialPersonaId,
-  initialUserMessage,
-  initialRiskLevel,
-  withContext: cli.withContext,
-  themePreview: cli.themePreview,
-  config,
-});
+    initialUserMessage,
+    initialRiskLevel,
+    withContext: cli.withContext,
+    config,
+  });
 
 try {
   await app.start();

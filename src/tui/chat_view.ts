@@ -12,12 +12,7 @@ import { CustomEditor } from "./ui/custom_editor.js";
 import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
-import {
-  buildThemePreviewMessages,
-  coercePaletteOverrides,
-  createUiTheme,
-  type Theme,
-} from "./ui/theme/index.js";
+import { coercePaletteOverrides, createUiTheme, type Theme } from "./ui/theme/index.js";
 
 export type ChatInputMode = "normal" | "bash" | "memory";
 
@@ -105,18 +100,15 @@ export class TuiChatView implements ChatView {
   private editor: CustomEditor;
   private uiTheme: Theme;
   private toolUiRouter: ToolUiRouter;
-  private themePreview: boolean;
   private lastStatus?: ChatViewStatus;
 
   constructor(options: {
     queuedUserMessages: string[];
     compactToolUi: boolean;
     showThinking: boolean;
-    themePreview: boolean;
     themeId?: string;
     themes?: ThemeDefinition[];
   }) {
-    this.themePreview = options.themePreview;
     const themeTokens = resolveThemeTokens(options.themeId, options.themes);
     const paletteOverrides = coercePaletteOverrides(themeTokens);
     this.uiTheme = createUiTheme("ansi", paletteOverrides);
@@ -294,14 +286,6 @@ export class TuiChatView implements ChatView {
     this.editor.setUiTheme(this.uiTheme);
     this.toolUiRouter.setTheme(this.uiTheme);
 
-    if (this.themePreview) {
-      this.chatContainer.clear();
-      const messages = buildThemePreviewMessages(this.uiTheme);
-      for (const message of messages) {
-        this.chatContainer.addMessage(message);
-      }
-    }
-
     if (this.lastStatus) {
       this.updateEditorVisualState(this.lastStatus.editor);
     }
@@ -317,13 +301,6 @@ export class TuiChatView implements ChatView {
     this.ui.addChild(this.editor);
     this.ui.addChild(this.footer);
 
-    if (this.themePreview) {
-      const messages = buildThemePreviewMessages(this.uiTheme);
-      for (const message of messages) {
-        this.chatContainer.addMessage(message);
-      }
-    }
-
     this.ui.setFocus(this.editor);
   }
 
@@ -335,15 +312,6 @@ export class TuiChatView implements ChatView {
       this.editor.borderColor = (s: string) => palette.modeMemory(s);
     } else {
       this.editor.borderColor = this.uiTheme.editorBorderForReasoning(state.reasoning);
-    }
-
-    if (this.themePreview) {
-      const labelStyle = this.uiTheme.palette.textMuted;
-      this.editor.setHeader("theme preview", "model disabled", {
-        leftStyle: labelStyle,
-        rightStyle: labelStyle,
-      });
-      return;
     }
 
     if (state.mode === "bash") {

@@ -82,17 +82,6 @@ npm start
 
 `npm start` launches the interactive TUI and expects a real terminal.
 
-## theme preview
-
-run a model-free UI preview for theme iteration:
-
-```sh
-tau --theme-preview
-```
-
-theme preview renders a fixed set of UI fixtures and disables model calls so you can tweak colors and spacing
-without asking the model for visible content.
-
 ## themes
 
 tau can load custom palette overrides from theme files. create a theme at:

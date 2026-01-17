@@ -15,7 +15,6 @@ export const CliOptionsSchema = z.object({
   reasoningOverride: ReasoningEffortSchema.optional(),
   riskLevel: RiskLevelSchema.optional(),
   withContext: z.boolean(),
-  themePreview: z.boolean(),
 });
 
 export type CliOptions = z.infer<typeof CliOptionsSchema>;
@@ -101,7 +100,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let reasoningOverride: ReasoningEffort | undefined;
   let riskLevel: RiskLevel | undefined;
   let withContext = false;
-  let themePreview = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -118,11 +116,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
 
     if (arg === "--with-context") {
       withContext = true;
-      continue;
-    }
-
-    if (arg === "--theme-preview") {
-      themePreview = true;
       continue;
     }
 
@@ -170,7 +163,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     reasoningOverride,
     riskLevel,
     withContext,
-    themePreview,
   };
   return CliOptionsSchema.parse(options);
 }
@@ -196,7 +188,6 @@ export function printHelp(personas: Persona[]): void {
       `  --risk, -r <level>            set initial model risk level. levels: ${riskList}.`,
       `                                if not specified, uses defaultRisk from ~/.config/tau/config.json (default: read-only).`,
       "  --with-context                inject AGENTS.md into the system prompt.",
-      "  --theme-preview               start in theme preview mode (no model calls).",
       "",
       "examples:",
       "  tau --persona gpt-5.2-chat:high",

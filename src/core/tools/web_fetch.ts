@@ -209,7 +209,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
     schema: WEB_FETCH_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      riskLevel: RiskLevel,
+      _riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const args = parseArgs(toolCall.arguments);
@@ -224,12 +224,6 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
         };
         return { kind: "single", toolResult, uiEvent };
       };
-
-      if (riskLevel === "restricted") {
-        return blocked(
-          "web_fetch blocked due to risk level being set to 'restricted'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
-        );
-      }
 
       if (!args.url) {
         return blocked("web_fetch error: missing required parameter 'url'.");

@@ -317,12 +317,6 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
         return { kind: "single", toolResult, uiEvent };
       };
 
-      if (riskLevel === "restricted") {
-        return blocked(
-          "Blocked due to risk level being set to 'restricted'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
-        );
-      }
-
       if (!command || !safetyLevel) {
         const msg = getMissingArgsMessage(command, safetyLevel);
         const toolResult = createToolError(toolCall, msg);

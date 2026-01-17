@@ -1,4 +1,4 @@
-import type { OAuthCredentials, OAuthProvider, OAuthPrompt } from "@mariozechner/pi-ai";
+import type { OAuthCredentials, OAuthPrompt, OAuthProvider } from "@mariozechner/pi-ai";
 import { loginOpenAICodex } from "@mariozechner/pi-ai";
 import type { AuthStorage } from "./auth_storage.js";
 

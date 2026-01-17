@@ -6,10 +6,10 @@ import type {
   Message,
   ToolCall,
 } from "@mariozechner/pi-ai";
-import { AuthStorage } from "../auth/auth_storage.js";
 import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
-import { createCredentialResolver, type CredentialResolver } from "../auth/credential_resolver.js";
+import { AuthStorage } from "../auth/auth_storage.js";
+import { type CredentialResolver, createCredentialResolver } from "../auth/credential_resolver.js";
 import type { Config } from "../config/index.js";
 import { type RunnerEvent, runModelSubturn, runToolCalls } from "../session/runner.js";
 import { ToolCatalog } from "../tools/catalog.js";
@@ -234,7 +234,7 @@ export async function runSubagentToCompletion(options: {
     const toolRunner = runToolCalls({
       toolCalls: messageToolCalls,
       toolRegistry,
-      enabledTools: toolRegistry.getEnabledToolSchemas(riskLevel),
+      enabledTools: toolRegistry.getEnabledToolSchemas(),
       riskLevel,
       signal,
       toolErrorMessages: {

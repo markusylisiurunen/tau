@@ -42,29 +42,17 @@ describe("command registry", () => {
 });
 
 describe("tool enablement by risk level", () => {
-  it("filters restricted tools correctly", () => {
+  it("exposes a stable tool list", () => {
     const backend = createLocalToolExecutionBackend();
     const registry = ToolCatalog.createRegistry(backend);
 
     const allTools = registry.schemas.map((tool) => tool.name).sort();
-    const restricted = registry
-      .getEnabledToolSchemas("restricted")
-      .map((tool) => tool.name)
-      .sort();
+    const enabled = registry.getEnabledToolSchemas().map((tool) => tool.name).sort();
 
-    expect(restricted).toEqual(["grep", "list", "read"]);
-
-    const readOnly = registry
-      .getEnabledToolSchemas("read-only")
-      .map((tool) => tool.name)
-      .sort();
-    const readWrite = registry
-      .getEnabledToolSchemas("read-write")
-      .map((tool) => tool.name)
-      .sort();
-
-    expect(readOnly).toEqual(allTools);
-    expect(readWrite).toEqual(allTools);
+    expect(allTools).not.toContain("read");
+    expect(allTools).not.toContain("grep");
+    expect(allTools).not.toContain("list");
+    expect(enabled).toEqual(allTools);
   });
 });
 

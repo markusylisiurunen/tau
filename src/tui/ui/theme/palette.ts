@@ -39,7 +39,7 @@ const PALETTE_GROUPS: Array<{ label: string; names: PaletteTokenName[] }> = [
   { label: "user", names: ["userSurface", "userMemorySurface", "userMemoryText"] },
   {
     label: "risk",
-    names: ["riskRestrictedText", "riskReadOnlyText", "riskReadWriteText"],
+    names: ["riskReadOnlyText", "riskReadWriteText"],
   },
 ];
 
@@ -109,7 +109,6 @@ const PALETTE_TEXT_TOKENS = [
   "toastWarn",
   "toastError",
   "userMemoryText",
-  "riskRestrictedText",
   "riskReadOnlyText",
   "riskReadWriteText",
 ] as const satisfies readonly PaletteColorToken[];

@@ -211,10 +211,7 @@ export function printDebugInfo(args: {
   }
 
   // Tools
-  const enabledTools = toolRegistry.getEnabledToolSchemas(
-    effectiveRiskLevel,
-    selectedPersona.tools,
-  );
+  const enabledTools = toolRegistry.getEnabledToolSchemas(selectedPersona.tools);
 
   section(`Active tools (${enabledTools.length})`);
   if (enabledTools.length === 0) {

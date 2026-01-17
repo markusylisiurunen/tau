@@ -157,7 +157,7 @@ export async function* runToolCalls(
     if (!enabledToolNames.has(toolCall.name)) {
       const msg =
         toolErrorMessages?.notEnabled?.(toolCall) ??
-        `tool '${toolCall.name}' is not enabled for the current risk level.`;
+        `tool '${toolCall.name}' is not enabled for this session.`;
       const toolError = createToolError(toolCall, msg);
       resultsByIndex.set(i, toolError);
       yield { type: "notice", severity: "error", text: msg };

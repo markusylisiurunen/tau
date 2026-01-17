@@ -1,11 +1,6 @@
 import { expect, test } from "vitest";
 import { renderBashExecution, renderBashRunning } from "../dist/tui/ui/bash_execution.js";
 import { renderEditSuccess, renderWriteSuccess } from "../dist/tui/ui/file_execution.js";
-import {
-  renderGrepFinished,
-  renderListSuccess,
-  renderReadSuccess,
-} from "../dist/tui/ui/restricted_execution.js";
 import { renderTaskFinished, renderTaskRunning } from "../dist/tui/ui/task_execution.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
 
@@ -63,53 +58,6 @@ test("renderEditSuccess (expanded) highlights diffs", () => {
   expect(text).toContain("<actionOutput>");
   expect(text).toContain("- old");
   expect(text).toContain("+ new");
-});
-
-test("renderReadSuccess (compact) shows file preview", () => {
-  const theme = createTagTheme();
-  const component = renderReadSuccess(
-    theme,
-    "file.txt",
-    1,
-    2,
-    makeUiText("    alpha\n    beta", "    (2 lines · 1-2)", "alpha\nbeta"),
-    true,
-  );
-  const text = renderText(component, 80);
-  expect(text).toContain("<textDim>    alpha");
-  expect(text).toContain("<textMuted>    (2 lines · 1-2)</textMuted>");
-  expect(text).toContain("<brandAccent>file.txt</brandAccent>");
-});
-
-test("renderListSuccess (compact) shows entries", () => {
-  const theme = createTagTheme();
-  const component = renderListSuccess(
-    theme,
-    "src",
-    makeUiText(
-      "    a.ts\n    b.ts",
-      "    (2 of 2 entries · offset 0 · limit 10)",
-      "a.ts\nb.ts",
-    ),
-    true,
-  );
-  const text = renderText(component, 80);
-  expect(text).toContain("<brandAccent>src</brandAccent>");
-  expect(text).toContain("<textDim>    a.ts");
-  expect(text).toContain("<textMuted>    (2 of 2 entries · offset 0 · limit 10)</textMuted>");
-});
-
-test("renderGrepFinished (compact) surfaces error status", () => {
-  const theme = createTagTheme();
-  const component = renderGrepFinished(
-    theme,
-    "TODO",
-    "error",
-    makeUiText("    bad file", undefined, "stderr:\nbad file"),
-    true,
-  );
-  const text = renderText(component, 100);
-  expect(text).toContain("<actionError>    bad file</actionError>");
 });
 
 test("renderTaskRunning and renderTaskFinished include cost and status", () => {

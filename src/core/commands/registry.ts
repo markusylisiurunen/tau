@@ -62,19 +62,16 @@ export interface HelpTextOptions {
   themes?: string[];
 }
 
-const DEFAULT_RISK_LEVELS: RiskLevel[] = ["restricted", "read-only", "read-write"];
+const DEFAULT_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
 const RISK_LEVEL_HELP_DESCRIPTIONS: Record<RiskLevel, string> = {
-  restricted: "restricted tools only (read/grep/list)",
-  "read-only": "allow read-only tools",
+  "read-only": "allow read-only tool calls",
   "read-write": "allow all tools",
 };
 
 export function getRiskLevelDescription(level: RiskLevel): string {
   switch (level) {
-    case "restricted":
-      return "read/grep/list tools only";
     case "read-only":
-      return "read-only tools";
+      return "read-only tool calls";
     case "read-write":
       return "all tools";
   }
@@ -314,7 +311,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     argument: "risk",
     section: "risk",
     parse: (raw) => {
-      const match = raw.match(/^\/risk:(restricted|read-only|read-write)$/i);
+      const match = raw.match(/^\/risk:(read-only|read-write)$/i);
       if (!match) return null;
       const parsed = RiskLevelSchema.safeParse(match[1]?.toLowerCase());
       if (!parsed.success) return null;

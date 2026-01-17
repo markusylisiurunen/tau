@@ -3,6 +3,13 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
+import { formatCodexAuthError } from "../core/auth/auth_messages.js";
+import { getAuthPath } from "../core/auth/auth_paths.js";
+import { AuthStorage } from "../core/auth/auth_storage.js";
+import {
+  type CredentialResolver,
+  createCredentialResolver,
+} from "../core/auth/credential_resolver.js";
 import {
   type CommandDispatchContext,
   type CommandRegistry,
@@ -16,13 +23,6 @@ import {
   loadRuntimeConfig,
   type ThemeDefinition,
 } from "../core/config/index.js";
-import { AuthStorage } from "../core/auth/auth_storage.js";
-import { formatCodexAuthError } from "../core/auth/auth_messages.js";
-import { getAuthPath } from "../core/auth/auth_paths.js";
-import {
-  createCredentialResolver,
-  type CredentialResolver,
-} from "../core/auth/credential_resolver.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
@@ -617,14 +617,8 @@ export class ChatController {
 
   // Risk Level Management -------------------------------------------------------------------------
 
-  private isCustomPersona(persona: Persona): boolean {
-    return persona.source === "user" || persona.source === "project";
-  }
-
-  private getAllowedRiskLevelsForPersona(persona: Persona): RiskLevel[] {
-    return this.isCustomPersona(persona)
-      ? (["read-only", "read-write"] as RiskLevel[])
-      : (["restricted", "read-only", "read-write"] as RiskLevel[]);
+  private getAllowedRiskLevelsForPersona(_persona: Persona): RiskLevel[] {
+    return ["read-only", "read-write"];
   }
 
   private cycleRiskLevel(): void {
@@ -1385,7 +1379,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     if (!allowedRiskLevels.includes(this.riskLevel)) {
       this.setRiskLevel(this.riskLevel, {
         force: true,
-        reason: "restricted risk level is not available for custom personas.",
+        reason: "risk level is not available for the current persona.",
       });
     }
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
@@ -1510,7 +1504,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       if (!allowedRiskLevels.includes(this.riskLevel)) {
         this.setRiskLevel(this.riskLevel, {
           force: true,
-          reason: "restricted risk level is not available for custom personas.",
+          reason: "risk level is not available for the current persona.",
         });
       }
 

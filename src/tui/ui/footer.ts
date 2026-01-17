@@ -145,8 +145,6 @@ export class FooterComponent implements Component {
   private formatRiskLabel(riskLevel: RiskLevel): { riskText: string; riskStyled: string } {
     const { palette } = this.theme;
     switch (riskLevel) {
-      case "restricted":
-        return { riskText: "restricted", riskStyled: palette.riskRestrictedText("restricted") };
       case "read-only":
         return { riskText: "read-only", riskStyled: palette.riskReadOnlyText("read-only") };
       case "read-write":

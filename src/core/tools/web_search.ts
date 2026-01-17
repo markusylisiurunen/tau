@@ -191,7 +191,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
     schema: WEB_SEARCH_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      riskLevel: RiskLevel,
+      _riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const args = parseArgs(toolCall.arguments);
@@ -206,12 +206,6 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
         };
         return { kind: "single", toolResult, uiEvent };
       };
-
-      if (riskLevel === "restricted") {
-        return blocked(
-          "web_search blocked due to risk level being set to 'restricted'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
-        );
-      }
 
       if (!args.objective) {
         return blocked("web_search error: missing required parameter 'objective'.");

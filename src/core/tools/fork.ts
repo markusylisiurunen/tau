@@ -119,12 +119,6 @@ export function createForkToolDefinition(): ToolDefinition {
         return { kind: "single", toolResult, uiEvent } satisfies ToolDispatchResult;
       };
 
-      if (riskLevel === "restricted") {
-        return blocked(
-          "Fork tool blocked due to risk level being set to 'restricted'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
-        );
-      }
-
       if (!title || !prompt) {
         const missing = [!title ? "title" : undefined, !prompt ? "prompt" : undefined].filter(
           Boolean,

@@ -48,7 +48,7 @@ describe("ToolUiRegistry", () => {
       type: "bash_blocked",
       toolCallId: "b2",
       command: "rm -rf /",
-      reason: "restricted",
+      reason: "blocked",
     });
     expect(blocked).toContain("bash blocked");
 
@@ -178,74 +178,4 @@ describe("ToolUiRegistry", () => {
     expect(editBlocked).toContain("edit blocked");
   });
 
-  it("renders restricted tool events", () => {
-    const readSuccess = renderEvent(registry, theme, {
-      type: "read_success",
-      path: "README.md",
-      startLine: 1,
-      endLine: 2,
-      content: "hello\nworld",
-      modelTruncation: { truncated: false, totalLines: 2, outputLines: 2 },
-      uiText: makeUiText("    hello\n    world", "    (2 lines · 1-2)", "hello\nworld"),
-    });
-    expect(readSuccess).toContain("README.md");
-
-    const readBlocked = renderEvent(registry, theme, {
-      type: "read_blocked",
-      path: "README.md",
-      reason: "blocked",
-    });
-    expect(readBlocked).toContain("read blocked");
-
-    const listSuccess = renderEvent(registry, theme, {
-      type: "list_success",
-      path: ".",
-      offset: 0,
-      limit: 10,
-      total: 2,
-      returned: 2,
-      entries: ["a.txt", "b.txt"],
-      uiText: makeUiText(
-        "    a.txt\n    b.txt",
-        "    (2 of 2 entries · offset 0 · limit 10)",
-        "a.txt\nb.txt",
-      ),
-    });
-    expect(listSuccess).toContain("a.txt");
-
-    const listBlocked = renderEvent(registry, theme, {
-      type: "list_blocked",
-      path: ".",
-      reason: "blocked",
-    });
-    expect(listBlocked).toContain("list blocked");
-
-    const grepStarted = renderEvent(registry, theme, {
-      type: "grep_started",
-      toolCallId: "g1",
-      pattern: "needle",
-    });
-    expect(grepStarted).toContain("needle");
-
-    const grepFinished = renderEvent(registry, theme, {
-      type: "grep_finished",
-      toolCallId: "g1",
-      pattern: "needle",
-      status: "success",
-      exitCode: 0,
-      stdout: "needle",
-      stderr: "",
-      captureTruncated: false,
-      uiText: makeUiText("    needle", undefined, "needle"),
-    });
-    expect(grepFinished).toContain("needle");
-
-    const grepBlocked = renderEvent(registry, theme, {
-      type: "grep_blocked",
-      toolCallId: "g2",
-      pattern: "needle",
-      reason: "blocked",
-    });
-    expect(grepBlocked).toContain("grep blocked");
-  });
 });

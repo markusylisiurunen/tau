@@ -3,8 +3,6 @@ import type { Config } from "../config/index.js";
 import type { Persona, RiskLevel } from "../types.js";
 import type { BashTruncationInfo } from "./bash.js";
 
-const restrictedToolNames = new Set(["read", "grep", "list"]);
-
 export type ToolUiEvent =
   | {
       type: "bash_started";
@@ -204,11 +202,7 @@ export class ToolRegistry {
     return this.byName.get(toolName);
   }
 
-  getEnabledToolSchemas(riskLevel: RiskLevel, personaTools?: Tool[]): Tool[] {
-    const baseTools = personaTools ?? this.schemas;
-    if (riskLevel === "restricted") {
-      return baseTools.filter((tool) => restrictedToolNames.has(tool.name));
-    }
-    return baseTools;
+  getEnabledToolSchemas(personaTools?: Tool[]): Tool[] {
+    return personaTools ?? this.schemas;
   }
 }

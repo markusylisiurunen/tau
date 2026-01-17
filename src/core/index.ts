@@ -1,8 +1,6 @@
-export type { CliOptions } from "./cli.js";
-export { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
 export type {
-  AuthLoginHandler,
   AuthLog,
+  AuthLoginHandler,
   AuthPromptFn,
   CredentialResolver,
   OAuthProviderSpec,
@@ -17,6 +15,8 @@ export {
   runLogoutCommand,
   SUPPORTED_OAUTH_PROVIDERS,
 } from "./auth/index.js";
+export type { CliOptions } from "./cli.js";
+export { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
 export type { BashCommand, Config, ConfigDeps, ThemeDefinition } from "./config/index.js";
 export {
   createDefaultConfigDeps,

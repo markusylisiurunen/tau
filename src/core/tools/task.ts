@@ -75,7 +75,7 @@ export function createTaskToolDefinition(): ToolDefinition {
     schema: TASK_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      riskLevel: RiskLevel,
+      _riskLevel: RiskLevel,
       signal?: AbortSignal,
       context?: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
@@ -93,12 +93,6 @@ export function createTaskToolDefinition(): ToolDefinition {
         };
         return { kind: "single", toolResult, uiEvent } satisfies ToolDispatchResult;
       };
-
-      if (riskLevel === "restricted") {
-        return blocked(
-          "Task tool blocked due to risk level being set to 'restricted'. Ask the user to enable it with /risk:read-only or /risk:read-write.",
-        );
-      }
 
       if (!name || !title || !prompt) {
         const missing = [

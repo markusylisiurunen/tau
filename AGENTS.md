@@ -13,7 +13,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface and RPC stub for alternate front-ends
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Local execution backend for filesystem/process tools
-- **ToolRegistry** (`src/core/tools/registry.ts`): Registers bash, write, edit, task, fork, web_search/web_fetch, and restricted tools (read, grep, list)
+- **ToolRegistry** (`src/core/tools/registry.ts`): Registers bash, write, edit, task, fork, and web_search/web_fetch
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
@@ -55,13 +55,10 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 | `bash`  | Shell execution             | `read-only` for reads, `read-write` for writes |
 | `write` | Create/overwrite files      | `read-write`                                   |
 | `edit`  | Replace exact text in files | `read-write`                                   |
-| `task`  | Run isolated subagent       | `read-only` or higher                          |
-| `fork`  | Fork session and run agent  | `read-only` or higher                          |
-| `read`  | Read file content safely    | `restricted`                                   |
-| `grep`  | Search the project safely   | `restricted`                                   |
-| `list`  | List directory contents     | `restricted`                                   |
+| `task`  | Run isolated subagent       | `read-only` or `read-write`                    |
+| `fork`  | Fork session and run agent  | `read-only` or `read-write`                    |
 
-Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
+Risk levels (`read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
 
 **Bash limits**: 2MB raw capture, 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/core/tools/bash.ts`), git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
 
@@ -77,7 +74,7 @@ Risk levels (`restricted`, `read-only`, `read-write`) gate model tool calls. The
 - Output-capable tools emit `ToolUiText` with `previewText`, `statusLine`, and `fullText`.
 - Preview truncation/formatting happens in core tools via `src/core/utils/tool_preview.ts`.
 - The TUI only styles output: compact uses `previewText` + `statusLine`, expanded uses raw `fullText`.
-- Current preview shapes: bash uses head/tail output plus a status line; read/list/grep/write show up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
+- Current preview shapes: bash uses head/tail output plus a status line; write shows up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
 
 **Subagent-only tools**: the `web` subagent uses `web_search` and `web_fetch` (see `src/core/tools/web_search.ts`, `src/core/tools/web_fetch.ts`) via the subagent tool registry in `src/core/subagents/subagent_engine.ts`.
 
@@ -93,8 +90,7 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `allowedReasoningLevels`: list of reasoning levels shown in the UI
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
 - `subagents`: enable sub-agents (`explore` for codebase investigation, `web` for web research). specify as a list `[explore]`, `[web]`, or `[explore, web]` to use the main persona's model, or as an object with custom model/reasoning per sub-agent.
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `read`, `list`, `grep`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
-- Custom personas only allow `read-only` and `read-write` risk levels. If `restricted` is requested, tau keeps the risk level at `read-only`.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
 
 On conflicts, the most specific level wins (built-ins are the base layer).
 
@@ -103,7 +99,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 - **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `defaultTheme`, `bashCommands`, `agentContextFiles`). This level is only included when cwd is inside home.
   - `apiKeys.parallel` (optional): Parallel API key for the `web` subagent.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
-  - `defaultRisk` (optional): Default risk level (`restricted`, `read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
+  - `defaultRisk` (optional): Default risk level (`read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `disableBuiltinPersonas` (optional): If true, tau will not load any built-in personas, only personas from disk.
   - `defaultTheme` (optional): Theme id to load from `.tau/themes/<id>.json` or `~/.config/tau/themes/<id>.json`.
 - **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys` merge per provider; `bashCommands` merge by `id`; `agentContextFiles` are additive.
@@ -148,7 +144,7 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 - `--help`, `-h` - Show help and exit
 - `--debug` - Print debug info (loaded personas, prompts, bash commands, skills, full system prompt, tool schemas) and exit
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
-- `--risk <level>`, `-r` - Set initial risk level (`restricted`, `read-only`, `read-write`)
+- `--risk <level>`, `-r` - Set initial risk level (`read-only`, `read-write`)
 - `--theme-preview` - Start in theme preview mode (no model calls)
 - `--with-context` - Inject AGENTS.md into the system prompt
 
@@ -163,7 +159,7 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 
 - `/help`, `/new`, `/copy`, `/copy:code`, `/export:html`, `/reload`
 - `/compact:only-summary`, `/compact:with-last-turn` - Compact history to continue
-- `/risk:restricted|read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
+- `/risk:read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model)
 - `#<request>` - Memory mode for updating AGENTS.md
 

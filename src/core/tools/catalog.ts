@@ -4,9 +4,6 @@ import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { createForkToolDefinition } from "./fork.js";
-import { createGrepToolDefinition } from "./grep.js";
-import { createListToolDefinition } from "./list.js";
-import { createReadToolDefinition } from "./read.js";
 import type { ToolDefinition } from "./registry.js";
 import { ToolRegistry } from "./registry.js";
 import { createTaskToolDefinition } from "./task.js";
@@ -22,9 +19,6 @@ export const ToolCatalog = {
       createEditToolDefinition(backend),
       createTaskToolDefinition(),
       createForkToolDefinition(),
-      createReadToolDefinition(backend),
-      createGrepToolDefinition(backend),
-      createListToolDefinition(backend),
     ]);
   },
 

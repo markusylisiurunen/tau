@@ -20,14 +20,6 @@ import {
   buildWriteSuccessView,
 } from "../file_execution.js";
 import {
-  buildGrepBlockedView,
-  buildGrepFinishedView,
-  buildListBlockedView,
-  buildListSuccessView,
-  buildReadBlockedView,
-  buildReadSuccessView,
-} from "../restricted_execution.js";
-import {
   buildTaskBlockedView,
   buildTaskFinishedView,
   buildTaskRunningView,
@@ -80,50 +72,6 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     exitCode: 0,
     durationMs: 532,
   });
-
-  const readContent = [
-    'export const theme = createUiTheme("ansi");',
-    "export const palette = theme.palette;",
-    "export const markdownTheme = theme.markdownTheme;",
-    "export const editorTheme = theme.editorTheme;",
-  ].join("\n");
-  const readLines = countLines(readContent);
-  const readPreviewLines = indentLines(readContent.split("\n"));
-  const readSummaryLine = `    (${readLines} lines · 182-185)`;
-  const readUiText = {
-    previewText: readPreviewLines,
-    statusLine: readSummaryLine,
-    fullText: readContent,
-  };
-
-  const listEntries = [
-    "src/tui/app.ts",
-    "src/tui/ui/theme/theme.ts",
-    "src/tui/ui/footer.ts",
-    "README.md",
-  ];
-  const listTotal = 28;
-  const listReturned = listEntries.length;
-  const listPreviewLines = indentLines(listEntries);
-  const listSummaryLine = `    (${listReturned} of ${listTotal} entries · offset 0 · limit 10)`;
-  const listUiText = {
-    previewText: listPreviewLines,
-    statusLine: listSummaryLine,
-    fullText: `${listReturned} of ${listTotal} entries (offset 0, limit 10)\n\n${listEntries.join("\n")}`,
-  };
-
-  const grepStdout = [
-    'src/tui/ui/theme/theme.ts:182:export const theme = createUiTheme("ansi")',
-  ].join("\n");
-  const grepUiText = {
-    previewText: indentLines(grepStdout.split("\n")),
-    fullText: grepStdout,
-  };
-  const grepError = "grep: permission denied";
-  const grepErrorUiText = {
-    previewText: indentLines([grepError]),
-    fullText: `stderr:\n${grepError}`,
-  };
 
   const writeContent = [
     "export const previewPalette = {",
@@ -183,34 +131,6 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     { type: "tool", view: buildBashBlockedView(theme, "rm -rf dist", "risk level is read-only") },
     {
       type: "tool",
-      view: buildReadSuccessView(theme, "src/tui/ui/theme/theme.ts", 182, 185, readUiText),
-    },
-    {
-      type: "tool",
-      view: buildListSuccessView(theme, "src/tui/ui", listUiText),
-    },
-    {
-      type: "tool",
-      view: buildReadBlockedView(theme, "/etc/shadow", "restricted tool access"),
-    },
-    {
-      type: "tool",
-      view: buildListBlockedView(theme, "/private", "restricted tool access"),
-    },
-    {
-      type: "tool",
-      view: buildGrepFinishedView(theme, "createUiTheme", "success", grepUiText),
-    },
-    {
-      type: "tool",
-      view: buildGrepFinishedView(theme, "API_KEY", "error", grepErrorUiText),
-    },
-    {
-      type: "tool",
-      view: buildGrepBlockedView(theme, "API_KEY", "restricted tool access"),
-    },
-    {
-      type: "tool",
       view: buildWriteSuccessView(theme, "src/tui/ui/theme/preview.ts", writeUiText),
     },
     {
@@ -239,7 +159,7 @@ export function buildThemePreviewMessages(theme: Theme): ChatMessageModel[] {
     },
     {
       type: "tool",
-      view: buildTaskBlockedView(theme, "Web research", "risk level is read-only", {
+      view: buildTaskBlockedView(theme, "Web research", "sub-agent is not enabled", {
         kind: "task",
         subagentName: "web",
       }),

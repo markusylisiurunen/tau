@@ -146,11 +146,10 @@ const BLOCK_RISK_LEVELS = `
 
 Your available tools depend on the current risk level (shown in the <environment> tag or in the latest system notification):
 
-- **restricted**: Read-only access to the codebase. No shell commands, no file modifications.
 - **read-only**: Shell commands that don't modify state. Background tasks and sub-agents available.
 - **read-write**: Full access including file modifications and write operations.
 
-Bash-specific guidance in this prompt (ripgrep, fd, sed, etc.) applies when bash is available. At restricted level, use the equivalent dedicated tools instead.
+Bash-specific guidance in this prompt (ripgrep, fd, sed, etc.) applies when bash is available.
 `.trim();
 
 const BASIC_SYSTEM_PROMPT = [

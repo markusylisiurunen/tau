@@ -12,15 +12,6 @@ import {
   buildWriteSuccessView,
 } from "./file_execution.js";
 import {
-  buildGrepBlockedView,
-  buildGrepFinishedView,
-  buildGrepRunningView,
-  buildListBlockedView,
-  buildListSuccessView,
-  buildReadBlockedView,
-  buildReadSuccessView,
-} from "./restricted_execution.js";
-import {
   buildTaskBlockedView,
   buildTaskFinishedView,
   buildTaskRunningView,
@@ -243,47 +234,6 @@ export function createToolUiRegistry(): ToolUiRegistry {
   registry.register("edit_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "edit_blocked" }>;
     return buildEditBlockedView(context.theme, uiEvent.path, uiEvent.reason);
-  });
-
-  registry.register("read_success", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "read_success" }>;
-    return buildReadSuccessView(
-      context.theme,
-      uiEvent.path,
-      uiEvent.startLine,
-      uiEvent.endLine,
-      uiEvent.uiText,
-    );
-  });
-
-  registry.register("read_blocked", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "read_blocked" }>;
-    return buildReadBlockedView(context.theme, uiEvent.path, uiEvent.reason);
-  });
-
-  registry.register("list_success", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "list_success" }>;
-    return buildListSuccessView(context.theme, uiEvent.path, uiEvent.uiText);
-  });
-
-  registry.register("list_blocked", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "list_blocked" }>;
-    return buildListBlockedView(context.theme, uiEvent.path, uiEvent.reason);
-  });
-
-  registry.register("grep_started", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "grep_started" }>;
-    return buildGrepRunningView(context.theme, uiEvent.pattern);
-  });
-
-  registry.register("grep_finished", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "grep_finished" }>;
-    return buildGrepFinishedView(context.theme, uiEvent.pattern, uiEvent.status, uiEvent.uiText);
-  });
-
-  registry.register("grep_blocked", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "grep_blocked" }>;
-    return buildGrepBlockedView(context.theme, uiEvent.pattern, uiEvent.reason);
   });
 
   return registry;

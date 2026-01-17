@@ -62,7 +62,11 @@ export function streamModel<TApi extends Api>(
       ...(isBedrockAnthropicModel(model) ? { interleavedThinking: true } : {}),
     };
 
-    return stream(model as Model<"bedrock-converse-stream">, resolvedContext, providerOptions as any);
+    return stream(
+      model as Model<"bedrock-converse-stream">,
+      resolvedContext,
+      providerOptions as any,
+    );
   }
 
   return streamSimple(model, resolvedContext, options);

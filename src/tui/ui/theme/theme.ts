@@ -58,7 +58,6 @@ export interface Palette {
   userMemoryText: (text: string) => string;
 
   // Risk level indicators
-  riskRestrictedText: (text: string) => string;
   riskReadOnlyText: (text: string) => string;
   riskReadWriteText: (text: string) => string;
 }

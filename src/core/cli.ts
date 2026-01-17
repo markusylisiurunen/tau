@@ -209,7 +209,7 @@ export function printHelp(personas: Persona[]): void {
       "  use `tau logout openai-codex` to remove stored OAuth credentials.",
       "  you can switch persona during a session with /persona:<id>.",
       "  insert predefined prompt templates with /prompt:<id>.",
-      "  you can change model risk level during a session with /risk:restricted|read-only|read-write.",
+      "  you can change model risk level during a session with /risk:read-only or /risk:read-write.",
       "  if stdin is piped, its contents are sent as the first message automatically.",
       "  reasoning only affects providers that support it.",
     ].join("\n"),

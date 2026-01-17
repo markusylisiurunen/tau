@@ -9,7 +9,7 @@ import type {
 import { z } from "zod";
 import type { SubagentConfigMap } from "./subagents/types.js";
 
-export const RiskLevelSchema = z.enum(["restricted", "read-only", "read-write"]);
+export const RiskLevelSchema = z.enum(["read-only", "read-write"]);
 export type RiskLevel = z.infer<typeof RiskLevelSchema>;
 
 export type ReasoningEffort = ThinkingLevel | "none";

@@ -41,7 +41,6 @@ export const PALETTE_COLORS = [
   { name: "userMemorySurface", h: 280, s: 16, l: 12 },
   { name: "userMemoryText", h: 280, s: 42, l: 84 },
   // Risk level indicators
-  { name: "riskRestrictedText", h: 26, s: 8, l: 42 },
   { name: "riskReadOnlyText", h: 98, s: 24, l: 48 },
   { name: "riskReadWriteText", h: 6, s: 24, l: 48 },
 ] as const satisfies readonly ColorDef[];

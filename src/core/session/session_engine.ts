@@ -6,10 +6,10 @@ import type {
   Message,
   ToolCall,
 } from "@mariozechner/pi-ai";
-import { AuthStorage } from "../auth/auth_storage.js";
 import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
-import { createCredentialResolver, type CredentialResolver } from "../auth/credential_resolver.js";
+import { AuthStorage } from "../auth/auth_storage.js";
+import { type CredentialResolver, createCredentialResolver } from "../auth/credential_resolver.js";
 import type { Config } from "../config/index.js";
 import type { CoreEvent } from "../events/types.js";
 import type { CoreDeps } from "../runtime/deps.js";
@@ -99,7 +99,7 @@ export class SessionEngine {
   }
 
   private getEnabledToolSchemas() {
-    return this.toolRegistry.getEnabledToolSchemas(this.riskLevel, this.persona.tools);
+    return this.toolRegistry.getEnabledToolSchemas(this.persona.tools);
   }
 
   async *processTurn(signal: AbortSignal): AsyncGenerator<CoreEvent> {

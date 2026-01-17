@@ -52,7 +52,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     bashCommands: () => BashSuggestion[] = () => [],
     files: () => string[] = () => [],
     skills: () => string[] = () => [],
-    riskLevels: () => RiskLevel[] = () => ["restricted", "read-only", "read-write"],
+    riskLevels: () => RiskLevel[] = () => ["read-only", "read-write"],
   ) {
     this.commandRegistry = commandRegistry;
     this.getPersonas = personas;

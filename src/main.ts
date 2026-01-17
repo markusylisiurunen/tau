@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeSync } from "node:fs";
 import { createInterface } from "node:readline";
 import type {
   AuthPromptFn,
@@ -35,6 +36,19 @@ import { ChatApp } from "./tui/index.js";
 
 const cwd = process.cwd();
 const argv = process.argv.slice(2);
+
+function registerTerminalExitCleanup(): void {
+  if (!process.stdout.isTTY) return;
+  process.on("exit", () => {
+    try {
+      writeSync(1, "\x1b[?25h\x1b[?2004l");
+    } catch {
+      // ignore
+    }
+  });
+}
+
+registerTerminalExitCleanup();
 
 function printAuthHelp(): void {
   console.log(
@@ -287,9 +301,21 @@ const app = new ChatApp({
   initialRiskLevel,
   withContext: cli.withContext,
   config,
+  sandboxEnabled: cli.sandbox,
   toolBackend: sandboxBackend?.backend,
   toolBackendDispose: sandboxBackend?.dispose,
 });
+
+let isShuttingDown = false;
+const shutdown = async (code = 0) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  await app.stop();
+  process.exit(code);
+};
+
+process.on("SIGINT", () => void shutdown(0));
+process.on("SIGTERM", () => void shutdown(0));
 
 try {
   await app.start();

@@ -83,6 +83,7 @@ export interface ChatControllerOptions {
   initialRiskLevel?: RiskLevel;
   withContext?: boolean;
   config?: Config;
+  sandboxEnabled?: boolean;
   toolBackend?: ToolExecutionBackend;
   toolBackendDispose?: () => Promise<void> | void;
   deps?: CoreDeps;
@@ -213,7 +214,9 @@ export class ChatController {
       personaSystemPrompt: this.currentPersona.systemPrompt,
       skillsBlock: this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock,
       projectContextBlock: this.projectContextBlock,
-      sandboxInfoBlock: buildSandboxInfoBlock(this.config.sandbox?.environmentInfo),
+      sandboxInfoBlock: options.sandboxEnabled
+        ? buildSandboxInfoBlock(this.config.sandbox?.environmentInfo)
+        : undefined,
       environmentTag: this.environmentTag,
       subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });

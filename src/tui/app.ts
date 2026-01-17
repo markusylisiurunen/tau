@@ -19,6 +19,7 @@ export interface ChatAppOptions {
   initialRiskLevel?: RiskLevel;
   withContext?: boolean;
   config?: Config;
+  sandboxEnabled?: boolean;
   toolBackend?: ToolExecutionBackend;
   toolBackendDispose?: () => Promise<void> | void;
 }

@@ -133,6 +133,8 @@ export class TuiChatView implements ChatView {
 
   stop(): void {
     this.ui.stop();
+    // Ensure cursor is visible after shutdown (some terminals keep it hidden).
+    this.ui.terminal.showCursor();
   }
 
   requestRender(): void {

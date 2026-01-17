@@ -89,6 +89,8 @@ export interface ChatControllerOptions {
 
 type AssistantState = { id?: string; inserted: boolean; model: AssistantMessageModel };
 
+const ALLOWED_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
+
 export class ChatController {
   private readonly view: ChatView;
   private personas: Persona[];
@@ -203,7 +205,7 @@ export class ChatController {
     if (options.initialRiskLevel) {
       this.riskLevel = options.initialRiskLevel;
     }
-    const allowedRiskLevels = this.getAllowedRiskLevelsForPersona(this.currentPersona);
+    const allowedRiskLevels = ALLOWED_RISK_LEVELS;
     if (!allowedRiskLevels.includes(this.riskLevel)) {
       this.riskLevel = allowedRiskLevels[0] ?? "read-only";
     }
@@ -268,7 +270,7 @@ export class ChatController {
         helpText: this.commandRegistry.buildHelpText({
           agentsFiles: this.agentsFiles,
           skills: this.skills,
-          riskLevels: this.getAllowedRiskLevelsForPersona(this.currentPersona),
+          riskLevels: ALLOWED_RISK_LEVELS,
           themes: this.themes.map((theme) => theme.id),
         }),
       });
@@ -308,7 +310,7 @@ export class ChatController {
         })),
       projectFiles: () => this.projectFiles,
       skills: () => this.skills.map((skill) => skill.name),
-      riskLevels: () => this.getAllowedRiskLevelsForPersona(this.currentPersona),
+      riskLevels: () => ALLOWED_RISK_LEVELS,
     };
   }
 
@@ -617,12 +619,8 @@ export class ChatController {
 
   // Risk Level Management -------------------------------------------------------------------------
 
-  private getAllowedRiskLevelsForPersona(_persona: Persona): RiskLevel[] {
-    return ["read-only", "read-write"];
-  }
-
   private cycleRiskLevel(): void {
-    const allowed = this.getAllowedRiskLevelsForPersona(this.currentPersona);
+    const allowed = ALLOWED_RISK_LEVELS;
     const index = allowed.indexOf(this.riskLevel);
     const next = allowed[(index + 1) % allowed.length] ?? "read-only";
     this.setRiskLevel(next);
@@ -953,7 +951,7 @@ export class ChatController {
       this.commandRegistry.buildHelpText({
         agentsFiles: this.agentsFiles,
         skills: this.skills,
-        riskLevels: this.getAllowedRiskLevelsForPersona(this.currentPersona),
+        riskLevels: ALLOWED_RISK_LEVELS,
         themes: this.themes.map((theme) => theme.id),
       }),
       "muted",
@@ -1315,7 +1313,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     level: RiskLevel,
     options?: { force?: boolean; silent?: boolean; reason?: string },
   ): void {
-    const allowed = this.getAllowedRiskLevelsForPersona(this.currentPersona);
+    const allowed = ALLOWED_RISK_LEVELS;
     let target = level;
     let forced = false;
 
@@ -1375,7 +1373,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     this.currentPersona = persona;
     this.clampPersonaReasoning(this.currentPersona);
-    const allowedRiskLevels = this.getAllowedRiskLevelsForPersona(this.currentPersona);
+    const allowedRiskLevels = ALLOWED_RISK_LEVELS;
     if (!allowedRiskLevels.includes(this.riskLevel)) {
       this.setRiskLevel(this.riskLevel, {
         force: true,
@@ -1500,7 +1498,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
           "warn",
         );
       }
-      const allowedRiskLevels = this.getAllowedRiskLevelsForPersona(this.currentPersona);
+      const allowedRiskLevels = ALLOWED_RISK_LEVELS;
       if (!allowedRiskLevels.includes(this.riskLevel)) {
         this.setRiskLevel(this.riskLevel, {
           force: true,

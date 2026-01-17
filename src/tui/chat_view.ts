@@ -306,7 +306,8 @@ export class TuiChatView implements ChatView {
       this.updateEditorVisualState(this.lastStatus.editor);
     }
 
-    this.ui.requestRender();
+    this.ui.invalidate();
+    this.ui.requestRender(true);
   }
 
   private setupUi(): void {

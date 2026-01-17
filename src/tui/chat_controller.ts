@@ -100,6 +100,7 @@ export class ChatController {
   private readonly repoRoot: string;
   private readonly initialUserMessage?: string;
   private config: Config;
+  private activeThemeId?: string;
   private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
 
@@ -151,6 +152,7 @@ export class ChatController {
     this.repoRoot = getGitRoot(cwd) ?? cwd;
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
+    this.activeThemeId = this.config.defaultTheme;
     this.authPath = getAuthPath(this.deps.env.home());
     const authStorage = new AuthStorage(this.authPath);
     this.credentialResolver = createCredentialResolver({
@@ -1429,9 +1431,19 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       return;
     }
 
+    this.activeThemeId = theme.id;
     this.config.defaultTheme = theme.id;
     this.view.updateTheme({ themeId: theme.id, themes: this.themes });
     this.view.addSystemMessage(`switched to theme ${theme.id}.`, "success");
+  }
+
+  private resolveThemeId(
+    themeId: string | undefined,
+    themes: ThemeDefinition[],
+  ): string | undefined {
+    if (!themeId) return undefined;
+    const match = themes.find((theme) => theme.id.toLowerCase() === themeId.toLowerCase());
+    return match?.id;
   }
 
   private async runSavedBashCommand(id: string): Promise<void> {
@@ -1457,6 +1469,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const configDeps = createDefaultConfigDeps();
       const runtime = await loadRuntimeConfig(this.deps.env.cwd(), configDeps);
       const { config, personas, prompts, skills, themes, bashCommands, warnings } = runtime;
+      const previousThemeId = this.activeThemeId ?? this.config.defaultTheme;
+      const resolvedThemeId =
+        this.resolveThemeId(previousThemeId, themes) ??
+        this.resolveThemeId(config.defaultTheme, themes);
+
+      if (resolvedThemeId) {
+        config.defaultTheme = resolvedThemeId;
+      }
 
       this.config = config;
       this.engine.setConfig(this.config);
@@ -1467,7 +1487,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.prompts = prompts;
       this.skills = skills;
       this.themes = themes;
-      this.view.updateTheme({ themeId: config.defaultTheme, themes });
+      this.activeThemeId = resolvedThemeId ?? previousThemeId;
+      this.view.updateTheme({ themeId: resolvedThemeId, themes });
 
       // Try to preserve the current persona; fall back to first if not found
       const currentPersonaId = this.currentPersona.id.toLowerCase();

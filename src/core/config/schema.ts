@@ -15,6 +15,7 @@ export interface Config {
     openai?: string;
     parallel?: string;
   };
+  sandbox?: SandboxConfig;
   defaultPersona?: string;
   defaultRisk?: RiskLevel;
   disableBuiltinPersonas?: boolean;
@@ -22,6 +23,14 @@ export interface Config {
   bashCommands?: BashCommand[];
   agentContextFiles?: string[];
 }
+
+export type SandboxConfig = {
+  image?: string;
+  mountPath?: string;
+  pruneAfterHours?: number;
+  extraDockerArgs?: string[];
+  environmentInfo?: string;
+};
 
 type ConfigDiagnostics = {
   config: Config;
@@ -77,6 +86,12 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
     }
   }
 
+  const sandboxResult = parseSandboxConfig(data.sandbox, sourceLabel);
+  if (sandboxResult.config) {
+    config.sandbox = sandboxResult.config;
+  }
+  errors.push(...sandboxResult.errors);
+
   if (data.defaultPersona !== undefined) {
     if (typeof data.defaultPersona === "string") {
       config.defaultPersona = data.defaultPersona;
@@ -123,6 +138,86 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
   errors.push(...agentResult.errors);
 
   return { config, errors };
+}
+
+function parseSandboxConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: SandboxConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  if (typeof raw !== "object" || raw === null) {
+    return { errors: [`${sourceLabel}: 'sandbox' must be an object.`] };
+  }
+
+  const data = raw as Record<string, unknown>;
+  const errors: string[] = [];
+  const sandbox: SandboxConfig = {};
+
+  if (data.image !== undefined) {
+    if (typeof data.image === "string" && data.image.trim()) {
+      sandbox.image = data.image.trim();
+    } else {
+      errors.push(`${sourceLabel}: sandbox.image must be a non-empty string.`);
+    }
+  }
+
+  if (data.mountPath !== undefined) {
+    if (typeof data.mountPath === "string" && data.mountPath.trim()) {
+      sandbox.mountPath = data.mountPath.trim();
+    } else {
+      errors.push(`${sourceLabel}: sandbox.mountPath must be a non-empty string.`);
+    }
+  }
+
+  if (data.pruneAfterHours !== undefined) {
+    if (
+      typeof data.pruneAfterHours === "number" &&
+      Number.isFinite(data.pruneAfterHours) &&
+      data.pruneAfterHours > 0
+    ) {
+      sandbox.pruneAfterHours = data.pruneAfterHours;
+    } else {
+      errors.push(`${sourceLabel}: sandbox.pruneAfterHours must be a positive number.`);
+    }
+  }
+
+  if (data.extraDockerArgs !== undefined) {
+    if (Array.isArray(data.extraDockerArgs)) {
+      const args: string[] = [];
+      let invalid = false;
+      for (const entry of data.extraDockerArgs) {
+        if (typeof entry !== "string" || !entry.trim()) {
+          invalid = true;
+          continue;
+        }
+        args.push(entry);
+      }
+      if (invalid) {
+        errors.push(`${sourceLabel}: sandbox.extraDockerArgs must be a string array.`);
+      } else {
+        sandbox.extraDockerArgs = args;
+      }
+    } else {
+      errors.push(`${sourceLabel}: sandbox.extraDockerArgs must be a string array.`);
+    }
+  }
+
+  if (data.environmentInfo !== undefined) {
+    if (typeof data.environmentInfo === "string") {
+      sandbox.environmentInfo = data.environmentInfo;
+    } else {
+      errors.push(`${sourceLabel}: sandbox.environmentInfo must be a string.`);
+    }
+  }
+
+  if (Object.keys(sandbox).length === 0) {
+    return { errors };
+  }
+
+  return { config: sandbox, errors };
 }
 
 function parseAgentContextFiles(
@@ -199,6 +294,20 @@ function mergeApiKeys(
   };
 }
 
+function mergeSandboxConfig(
+  target: SandboxConfig | undefined,
+  overlay: SandboxConfig | undefined,
+): SandboxConfig | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  return {
+    ...(target ?? {}),
+    ...(overlay ?? {}),
+  };
+}
+
 function resolveAgentContextPaths(level: ConfigLevel, rawPaths: string[]): string[] {
   return rawPaths.map((entry) => resolve(level.levelRoot, entry));
 }
@@ -217,6 +326,7 @@ function dedupePaths(paths: string[]): string[] {
 function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   const merged: Config = {};
   let apiKeys: Config["apiKeys"] | undefined;
+  let sandbox: SandboxConfig | undefined;
   const bashCommands = new Map<string, BashCommand>();
   const agentContextFiles: string[] = [];
 
@@ -225,6 +335,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     const config = configs[i] ?? {};
 
     apiKeys = mergeApiKeys(apiKeys, config.apiKeys);
+    sandbox = mergeSandboxConfig(sandbox, config.sandbox);
 
     if (config.defaultPersona !== undefined) {
       merged.defaultPersona = config.defaultPersona;
@@ -255,6 +366,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (apiKeys && Object.keys(apiKeys).length > 0) {
     merged.apiKeys = apiKeys;
+  }
+
+  if (sandbox && Object.keys(sandbox).length > 0) {
+    merged.sandbox = sandbox;
   }
 
   if (bashCommands.size > 0) {

@@ -17,7 +17,7 @@ export const ToolCatalog = {
       createBashToolDefinition(backend),
       createWriteToolDefinition(backend),
       createEditToolDefinition(backend),
-      createTaskToolDefinition(),
+      createTaskToolDefinition(backend),
       createForkToolDefinition(),
     ]);
   },

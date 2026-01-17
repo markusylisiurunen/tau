@@ -7,6 +7,7 @@ import type { SubagentPersonaConfig, SubagentRuntimeDefinition } from "../subage
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { AsyncUiEventQueue } from "../utils/subagent_utils.js";
+import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
   ToolDispatchContext,
@@ -70,7 +71,7 @@ function getEnabledSubagentConfig(
   return config?.[definition.name];
 }
 
-export function createTaskToolDefinition(): ToolDefinition {
+export function createTaskToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: TASK_TOOL,
     async dispatch(
@@ -162,6 +163,7 @@ export function createTaskToolDefinition(): ToolDefinition {
             personaConfig,
             prompt,
             config: context.config,
+            backend,
             signal: signal ?? new AbortController().signal,
             onProgress: (e) => pushProgress(e.text, e.costTotal, e.turns, e.toolCalls),
           });

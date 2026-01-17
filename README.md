@@ -62,7 +62,7 @@ tokens in `~/.config/tau/auth.json`.
 
 - **model trust**: the bash tool relies on the model honestly declaring whether a command is a read or write. there's no runtime validation that the command actually matches the declared intent. a model could declare `safetyLevel="read"` while running `rm -rf /`.
 - **no command analysis**: the system doesn't inspect command content. it trusts the declared safety level without verifying what the command actually does.
-- **full system access**: there is no sandboxing or directory restriction. the model can access any file on your system that your user account can read or write, not just the current working directory.
+- **full system access (by default)**: without sandboxing, the model can access any file on your system that your user account can read or write, not just the current working directory. use `--sandbox` to run tool calls inside a docker container with the project mounted.
 - **no tty / non-interactive tools**: tool commands run with stdin ignored and no TTY. anything that prompts for input or opens an editor can hang or fail (for example `sudo`, `ssh` password prompts, `git` credential prompts). tau also forces git into non-interactive mode (no prompt/editor/pager, batch-mode ssh).
 - **user bypasses**: the `!` prefix executes shell commands directly, completely bypassing risk level checks. this is intentional for direct use, but means risk levels only constrain the model, not the user.
 
@@ -124,6 +124,31 @@ tau --risk read-write
 or change it during a session with `/risk:read-only` or `/risk:read-write`.
 
 the default is read-only because it lets the model investigate your code and answer questions without risk of unintended changes. bump it to read-write when you're ready to let the model make edits.
+
+## sandboxing
+
+when started with `--sandbox`, tau runs all tool calls inside a session-scoped docker container. the project root (git root or cwd) is mounted into the container, and the working directory matches your current subdirectory.
+
+requirements:
+- docker must be available on the host
+- config must include `sandbox.image`
+- sandboxing is only enabled at startup with `--sandbox` (no runtime toggle)
+
+example config:
+
+```json
+{
+  "sandbox": {
+    "image": "ghcr.io/your-org/tau-sandbox:latest",
+    "mountPath": "/workspace",
+    "pruneAfterHours": 24,
+    "extraDockerArgs": ["--network=none"],
+    "environmentInfo": "tools run inside a container. project mounted at /workspace."
+  }
+}
+```
+
+note: `!` commands still run directly on the host, not inside the container.
 
 ## personas
 
@@ -275,6 +300,8 @@ the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`
 
 if `disableBuiltinPersonas` is set to `true`, tau will not load any built-in personas. only personas from `~/.config/tau/personas/` and `.tau/personas/` will be available. you can also set `disableBuiltinPersonas` in any `.tau/config.json`; the most specific value wins.
 
+the `sandbox` field configures docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `24`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
+
 ### project bash commands
 
 define shortcuts for common shell commands in any in-scope config file (`~/.config/tau/config.json` when cwd is under home, or `.tau/config.json` in the cwd ancestry). entries merge by `id` with the most specific level winning:
@@ -338,7 +365,7 @@ optional frontmatter fields:
       model: claude-haiku-4-5
       reasoning: medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `read`, `list`, `grep`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
 
 the markdown body becomes the system prompt.
 

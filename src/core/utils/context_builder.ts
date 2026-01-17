@@ -59,6 +59,7 @@ export function buildBaseSystemPrompt(args: {
   personaSystemPrompt: string;
   skillsBlock?: string;
   projectContextBlock?: string;
+  sandboxInfoBlock?: string;
   environmentTag: string;
   previousSessionSummary?: string;
   subagentsBlock?: string;
@@ -85,8 +86,17 @@ export function buildBaseSystemPrompt(args: {
   if (args.subagentsBlock?.trim()) {
     parts.push(args.subagentsBlock.trim());
   }
+  if (args.sandboxInfoBlock?.trim()) {
+    parts.push(args.sandboxInfoBlock.trim());
+  }
   parts.push(args.environmentTag.trim());
   return parts.join("\n\n");
+}
+
+export function buildSandboxInfoBlock(info?: string): string | undefined {
+  const trimmed = info?.trim();
+  if (!trimmed) return undefined;
+  return ["### Sandbox environment", "", "<sandbox_info>", trimmed, "</sandbox_info>"].join("\n");
 }
 
 export function buildProjectContextBlock(args: {

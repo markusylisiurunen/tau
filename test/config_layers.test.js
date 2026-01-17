@@ -110,6 +110,7 @@ describe("loadConfig", () => {
         JSON.stringify({
           defaultRisk: "read-only",
           apiKeys: { openai: "global", anthropic: "anthropic-key" },
+          sandbox: { image: "sandbox-base" },
           bashCommands: [{ id: "check", cmd: "npm run check" }],
           agentContextFiles: ["AGENTS.md"],
         }),
@@ -120,6 +121,7 @@ describe("loadConfig", () => {
         JSON.stringify({
           defaultRisk: "read-write",
           apiKeys: { openai: "repo", google: "google-key" },
+          sandbox: { pruneAfterHours: 12 },
           bashCommands: [
             { id: "check", cmd: "repo check" },
             { id: "test", cmd: "repo test" },
@@ -132,6 +134,7 @@ describe("loadConfig", () => {
         join(nested, ".tau", "config.json"),
         JSON.stringify({
           defaultPersona: "custom-persona",
+          sandbox: { mountPath: "/workspace", extraDockerArgs: ["--network=none"] },
           bashCommands: [{ id: "test", cmd: "nested test" }],
           agentContextFiles: ["AGENTS.md"],
         }),
@@ -150,6 +153,12 @@ describe("loadConfig", () => {
         openai: "repo",
         anthropic: "anthropic-key",
         google: "google-key",
+      });
+      expect(config.sandbox).toEqual({
+        image: "sandbox-base",
+        pruneAfterHours: 12,
+        mountPath: "/workspace",
+        extraDockerArgs: ["--network=none"],
       });
       expect(config.bashCommands).toEqual([
         { id: "check", cmd: "repo check" },
@@ -180,6 +189,35 @@ describe("loadConfig", () => {
 
       const result = loadConfigWithDiagnostics(fx.repo, deps);
       expect(result.config).toEqual({});
+      expect(result.errors.length).toBeGreaterThan(0);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("reports sandbox validation errors", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          sandbox: {
+            pruneAfterHours: -1,
+            extraDockerArgs: [1, "ok"],
+            mountPath: "",
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const result = loadConfigWithDiagnostics(fx.repo, deps);
       expect(result.errors.length).toBeGreaterThan(0);
     } finally {
       fx.cleanup();

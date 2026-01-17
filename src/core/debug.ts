@@ -9,6 +9,7 @@ import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
   buildProjectContextBlock,
+  buildSandboxInfoBlock,
   buildSkillsIndexBlock,
 } from "./utils/context.js";
 
@@ -84,6 +85,7 @@ export function printDebugInfo(args: {
   selectedPersona?: Persona;
   withContext: boolean;
   riskLevel?: RiskLevel;
+  sandboxInfo?: string;
   toolRegistry: ToolRegistry;
 }): void {
   const {
@@ -94,6 +96,7 @@ export function printDebugInfo(args: {
     selectedPersona,
     withContext,
     riskLevel,
+    sandboxInfo,
     toolRegistry,
   } = args;
 
@@ -181,12 +184,14 @@ export function printDebugInfo(args: {
     platform: deps.env.platform(),
     nodeVersion: deps.env.nodeVersion(),
   });
+  const sandboxInfoBlock = buildSandboxInfoBlock(sandboxInfo);
 
   const subagentsBlock = formatSubagentsForPrompt(selectedPersona);
   const fullSystemPrompt = buildBaseSystemPrompt({
     personaSystemPrompt: selectedPersona.systemPrompt,
     skillsBlock,
     projectContextBlock,
+    sandboxInfoBlock,
     environmentTag,
     subagentsBlock,
   });

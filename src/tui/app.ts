@@ -2,6 +2,7 @@ import type { BashCommand, Config, ThemeDefinition } from "../core/config/index.
 import type { CoreEvent } from "../core/events/types.js";
 import type { ModeAdapter } from "../core/modes/mode_adapter.js";
 import type { PromptTemplate } from "../core/prompts.js";
+import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
 import type { Persona, RiskLevel, Skill } from "../core/types.js";
 import { ChatController } from "./chat_controller.js";
 import { TuiChatView } from "./chat_view.js";
@@ -18,6 +19,8 @@ export interface ChatAppOptions {
   initialRiskLevel?: RiskLevel;
   withContext?: boolean;
   config?: Config;
+  toolBackend?: ToolExecutionBackend;
+  toolBackendDispose?: () => Promise<void> | void;
 }
 
 export class ChatApp implements ModeAdapter {
@@ -42,8 +45,7 @@ export class ChatApp implements ModeAdapter {
 
     const handlers = this.controller.getInputHandlers();
     handlers.onCtrlC = () => {
-      this.stop();
-      process.exit(0);
+      void this.stop().finally(() => process.exit(0));
     };
     this.view.bindInputHandlers(handlers);
 
@@ -67,8 +69,13 @@ export class ChatApp implements ModeAdapter {
     await this.controller.start();
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.view.stop();
+    try {
+      await this.controller.dispose();
+    } catch {
+      // best-effort cleanup
+    }
   }
 
   public async onUserInput(text: string): Promise<void> {

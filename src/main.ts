@@ -18,6 +18,7 @@ import {
   prompts as builtinPrompts,
   CliError,
   createLocalToolExecutionBackend,
+  createSandboxToolExecutionBackend,
   getAuthPath,
   isGoogleAuthAvailable,
   loadConfig,
@@ -114,6 +115,26 @@ if (argv[0] === "login" || argv[0] === "logout") {
   }
 }
 
+function requireSandboxConfig(config: Config): NonNullable<Config["sandbox"]> {
+  const sandbox = config.sandbox;
+  if (!sandbox?.image) {
+    // eslint-disable-next-line no-console
+    console.error("error: --sandbox requires sandbox.image in config.json.");
+    process.exit(1);
+  }
+  return sandbox;
+}
+
+async function createSandboxBackend(config: Config) {
+  try {
+    return await createSandboxToolExecutionBackend({ config: requireSandboxConfig(config) });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`error: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 try {
   const runtime = await loadRuntimeConfig(cwd);
   config = runtime.config;
@@ -196,19 +217,28 @@ if (cli.debug) {
   }
 
   const debugRiskLevel = cli.riskLevel ?? config.defaultRisk ?? "read-only";
-  const debugBackend = createLocalToolExecutionBackend();
-  const debugToolRegistry = ToolCatalog.createRegistry(debugBackend);
-  printDebugInfo({
-    personas,
-    prompts,
-    bashCommands,
-    skills,
-    selectedPersona: debugPersona,
-    withContext: cli.withContext,
-    riskLevel: debugRiskLevel,
-    toolRegistry: debugToolRegistry,
-  });
-  process.exit(0);
+  const debugSandboxConfig = cli.sandbox ? requireSandboxConfig(config) : undefined;
+  const debugBackend = cli.sandbox
+    ? await createSandboxBackend(config)
+    : { backend: createLocalToolExecutionBackend(), dispose: undefined };
+
+  try {
+    const debugToolRegistry = ToolCatalog.createRegistry(debugBackend.backend);
+    printDebugInfo({
+      personas,
+      prompts,
+      bashCommands,
+      skills,
+      selectedPersona: debugPersona,
+      withContext: cli.withContext,
+      riskLevel: debugRiskLevel,
+      sandboxInfo: debugSandboxConfig?.environmentInfo,
+      toolRegistry: debugToolRegistry,
+    });
+    process.exit(0);
+  } finally {
+    await debugBackend.dispose?.();
+  }
 }
 
 if (personas.length === 0) {
@@ -244,23 +274,27 @@ const initialRiskLevel = cli.riskLevel || config.defaultRisk;
 
 const initialUserMessage = await readPipedStdin();
 
-  const app = new ChatApp({
-    personas,
-    prompts,
-    skills,
-    themes,
-    bashCommands,
+const sandboxBackend = cli.sandbox ? await createSandboxBackend(config) : undefined;
+
+const app = new ChatApp({
+  personas,
+  prompts,
+  skills,
+  themes,
+  bashCommands,
   initialPersonaId,
-    initialUserMessage,
-    initialRiskLevel,
-    withContext: cli.withContext,
-    config,
-  });
+  initialUserMessage,
+  initialRiskLevel,
+  withContext: cli.withContext,
+  config,
+  toolBackend: sandboxBackend?.backend,
+  toolBackendDispose: sandboxBackend?.dispose,
+});
 
 try {
   await app.start();
 } catch (err) {
-  app.stop();
+  await app.stop();
   // eslint-disable-next-line no-console
   console.error(err);
   process.exit(1);

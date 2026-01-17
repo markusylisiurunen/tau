@@ -6,7 +6,7 @@ export { createDefaultConfigDeps } from "./deps.js";
 export { resolveConfigLevels } from "./paths.js";
 export type { RuntimeConfigResult } from "./runtime.js";
 export { loadRuntimeConfig } from "./runtime.js";
-export type { Config } from "./schema.js";
+export type { Config, SandboxConfig } from "./schema.js";
 export {
   getApiKeyForProvider,
   getParallelApiKey,

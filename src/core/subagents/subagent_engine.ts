@@ -13,6 +13,7 @@ import { type CredentialResolver, createCredentialResolver } from "../auth/crede
 import type { Config } from "../config/index.js";
 import { type RunnerEvent, runModelSubturn, runToolCalls } from "../session/runner.js";
 import { ToolCatalog } from "../tools/catalog.js";
+import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { createLocalToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRegistry, ToolUiEvent } from "../tools/registry.js";
 import type { RiskLevel } from "../types.js";
@@ -52,8 +53,8 @@ function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): TauS
 function buildToolRegistryForAllowedTools(
   allowedTools: AllowedSubagentToolName[],
   config: Config,
+  backend: ToolExecutionBackend,
 ): ToolRegistry {
-  const backend = createLocalToolExecutionBackend();
   return ToolCatalog.createSubagentRegistry(allowedTools, config, backend);
 }
 
@@ -66,6 +67,7 @@ export async function runSubagentToCompletion(options: {
   personaConfig: SubagentPersonaConfig;
   prompt: string;
   config: Config;
+  backend?: ToolExecutionBackend;
   signal: AbortSignal;
   onProgress?: (event: SubagentProgressEvent) => void;
 }): Promise<SubagentRunResult> {
@@ -81,7 +83,8 @@ export async function runSubagentToCompletion(options: {
     throw new Error("sub-agent aborted");
   }
 
-  const toolRegistry = buildToolRegistryForAllowedTools(definition.allowedTools, config);
+  const backend = options.backend ?? createLocalToolExecutionBackend();
+  const toolRegistry = buildToolRegistryForAllowedTools(definition.allowedTools, config, backend);
   const messages: Message[] = [
     {
       role: "user",

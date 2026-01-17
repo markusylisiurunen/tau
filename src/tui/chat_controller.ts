@@ -51,6 +51,7 @@ import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
   buildProjectContextBlock,
+  buildSandboxInfoBlock,
   buildSkillsIndexBlock,
   findAgentsFilesInScopeDetailed,
   formatRiskLevelChangeNotice,
@@ -82,6 +83,8 @@ export interface ChatControllerOptions {
   initialRiskLevel?: RiskLevel;
   withContext?: boolean;
   config?: Config;
+  toolBackend?: ToolExecutionBackend;
+  toolBackendDispose?: () => Promise<void> | void;
   deps?: CoreDeps;
   queuedUserMessages?: string[];
 }
@@ -109,6 +112,7 @@ export class ChatController {
   private readonly commandRegistry: CommandRegistry<CommandDispatchContext>;
   private readonly commandHandlers: CommandDispatchContext;
   private readonly toolBackend: ToolExecutionBackend;
+  private readonly toolBackendDispose?: () => Promise<void> | void;
   private readonly deps: CoreDeps;
   private isStreaming = false;
   private queuedUserMessages: string[];
@@ -161,6 +165,7 @@ export class ChatController {
     });
     this.compactToolUi = true;
     this.queuedUserMessages = options.queuedUserMessages ?? [];
+    this.toolBackendDispose = options.toolBackendDispose;
 
     if (options.withContext) {
       const res = findAgentsFilesInScopeDetailed(cwd, home);
@@ -208,14 +213,17 @@ export class ChatController {
       personaSystemPrompt: this.currentPersona.systemPrompt,
       skillsBlock: this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock,
       projectContextBlock: this.projectContextBlock,
+      sandboxInfoBlock: buildSandboxInfoBlock(this.config.sandbox?.environmentInfo),
       environmentTag: this.environmentTag,
       subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });
 
-    this.toolBackend = createLocalToolExecutionBackend({
-      spawn: this.deps.spawn,
-      env: this.deps.env,
-    });
+    this.toolBackend =
+      options.toolBackend ??
+      createLocalToolExecutionBackend({
+        spawn: this.deps.spawn,
+        env: this.deps.env,
+      });
     const toolRegistry = ToolCatalog.createRegistry(this.toolBackend);
     this.engine = new CoreSession({
       persona: this.currentPersona,
@@ -325,6 +333,11 @@ export class ChatController {
     if (this.initialUserMessage) {
       await this.sendInitialUserMessage(this.initialUserMessage);
     }
+  }
+
+  async dispose(): Promise<void> {
+    if (!this.toolBackendDispose) return;
+    await this.toolBackendDispose();
   }
 
   // Mode Adapter ---------------------------------------------------------------------------------
@@ -1438,6 +1451,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         personaSystemPrompt: this.currentPersona.systemPrompt,
         skillsBlock: skillsContext.skillsBlock,
         projectContextBlock: this.projectContextBlock,
+        sandboxInfoBlock: buildSandboxInfoBlock(this.config.sandbox?.environmentInfo),
         environmentTag: this.environmentTag,
         previousSessionSummary: this.previousSessionSummary,
         subagentsBlock: formatSubagentsForPrompt(this.currentPersona),

@@ -27,6 +27,7 @@ export async function spawnWithCapture(
     killGraceMs?: number;
     killProcessGroup?: boolean;
     stdio?: ["ignore" | "pipe", "ignore" | "pipe", "ignore" | "pipe"];
+    input?: string | Buffer;
   } = {},
 ): Promise<SpawnCaptureResult> {
   const {
@@ -41,8 +42,11 @@ export async function spawnWithCapture(
     maxCaptureMode = "terminate",
     killGraceMs = 2000,
     killProcessGroup = false,
-    stdio = ["ignore", "pipe", "pipe"],
+    stdio: stdioOption,
+    input,
   } = options;
+  const stdio =
+    stdioOption ?? (input === undefined ? ["ignore", "pipe", "pipe"] : ["pipe", "pipe", "pipe"]);
 
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
@@ -53,6 +57,11 @@ export async function spawnWithCapture(
       detached,
       stdio,
     });
+
+    if (input !== undefined && child.stdin) {
+      child.stdin.on("error", () => {});
+      child.stdin.end(input);
+    }
 
     let stdout = "";
     let stderr = "";

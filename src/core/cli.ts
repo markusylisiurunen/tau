@@ -14,6 +14,7 @@ export const CliOptionsSchema = z.object({
   personaId: z.string().optional(),
   reasoningOverride: ReasoningEffortSchema.optional(),
   riskLevel: RiskLevelSchema.optional(),
+  sandbox: z.boolean(),
   withContext: z.boolean(),
 });
 
@@ -99,6 +100,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let personaId: string | undefined;
   let reasoningOverride: ReasoningEffort | undefined;
   let riskLevel: RiskLevel | undefined;
+  let sandbox = false;
   let withContext = false;
 
   for (let i = 0; i < argv.length; i++) {
@@ -116,6 +118,11 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
 
     if (arg === "--with-context") {
       withContext = true;
+      continue;
+    }
+
+    if (arg === "--sandbox") {
+      sandbox = true;
       continue;
     }
 
@@ -162,6 +169,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     personaId,
     reasoningOverride,
     riskLevel,
+    sandbox,
     withContext,
   };
   return CliOptionsSchema.parse(options);
@@ -187,6 +195,7 @@ export function printHelp(personas: Persona[]): void {
       `                                if not specified, uses defaultPersona from ~/.config/tau/config.json.`,
       `  --risk, -r <level>            set initial model risk level. levels: ${riskList}.`,
       `                                if not specified, uses defaultRisk from ~/.config/tau/config.json (default: read-only).`,
+      "  --sandbox                    run all tool execution inside a session docker container.",
       "  --with-context                inject AGENTS.md into the system prompt.",
       "",
       "examples:",

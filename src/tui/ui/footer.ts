@@ -9,6 +9,7 @@ export interface FooterStatus {
   sessionCost: string;
   riskLevel: RiskLevel;
   duration?: string;
+  sandboxed?: boolean;
 }
 
 export class FooterComponent implements Component {
@@ -90,7 +91,7 @@ export class FooterComponent implements Component {
       : "";
     const rightPrefixRaw = "";
     const { riskText, riskStyled } = this.status
-      ? this.formatRiskLabel(this.status.riskLevel)
+      ? this.formatRiskLabel(this.status.riskLevel, this.status.sandboxed ?? false)
       : { riskText: "", riskStyled: "" };
 
     const rightWidth = visibleWidth(`${rightPrefixRaw}${riskText}`);
@@ -142,13 +143,23 @@ export class FooterComponent implements Component {
     return style(` ${padded} `);
   }
 
-  private formatRiskLabel(riskLevel: RiskLevel): { riskText: string; riskStyled: string } {
+  private formatRiskLabel(
+    riskLevel: RiskLevel,
+    sandboxed: boolean,
+  ): { riskText: string; riskStyled: string } {
     const { palette } = this.theme;
+    const wrap = (text: string) => (sandboxed ? `[${text}]` : text);
     switch (riskLevel) {
       case "read-only":
-        return { riskText: "read-only", riskStyled: palette.riskReadOnlyText("read-only") };
+        return {
+          riskText: wrap("read-only"),
+          riskStyled: palette.riskReadOnlyText(wrap("read-only")),
+        };
       case "read-write":
-        return { riskText: "read-write", riskStyled: palette.riskReadWriteText("read-write") };
+        return {
+          riskText: wrap("read-write"),
+          riskStyled: palette.riskReadWriteText(wrap("read-write")),
+        };
     }
   }
 }

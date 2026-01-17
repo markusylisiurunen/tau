@@ -1,10 +1,11 @@
 import type { Tool } from "@mariozechner/pi-ai";
-import type { BashCommand } from "./config/index.js";
+import type { BashCommand, SandboxConfig } from "./config/index.js";
 import type { PromptTemplate } from "./prompts.js";
 import { createDefaultCoreDeps } from "./runtime/deps.js";
 import { formatSubagentsForPrompt } from "./subagents/registry.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import type { Persona, RiskLevel, Skill } from "./types.js";
+import { resolveAgentCwd } from "./utils/agent_environment.js";
 import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
@@ -85,6 +86,7 @@ export function printDebugInfo(args: {
   selectedPersona?: Persona;
   withContext: boolean;
   riskLevel?: RiskLevel;
+  sandboxConfig?: SandboxConfig;
   sandboxInfo?: string;
   toolRegistry: ToolRegistry;
 }): void {
@@ -96,6 +98,7 @@ export function printDebugInfo(args: {
     selectedPersona,
     withContext,
     riskLevel,
+    sandboxConfig,
     sandboxInfo,
     toolRegistry,
   } = args;
@@ -103,6 +106,11 @@ export function printDebugInfo(args: {
   const deps = createDefaultCoreDeps();
   const cwd = deps.env.cwd();
   const home = deps.env.home();
+  const promptCwd = resolveAgentCwd({
+    cwd,
+    sandboxEnabled: Boolean(sandboxConfig),
+    sandboxConfig,
+  });
 
   console.log("tau debug info");
   console.log(`cwd: ${cwd}`);
@@ -179,7 +187,7 @@ export function printDebugInfo(args: {
   const effectiveRiskLevel: RiskLevel = riskLevel ?? "read-only";
   const environmentTag = buildEnvironmentTag({
     riskLevel: effectiveRiskLevel,
-    cwd,
+    cwd: promptCwd,
     datetime: new Date(deps.clock.now()).toISOString(),
     platform: deps.env.platform(),
     nodeVersion: deps.env.nodeVersion(),

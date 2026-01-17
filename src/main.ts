@@ -246,6 +246,7 @@ if (cli.debug) {
       selectedPersona: debugPersona,
       withContext: cli.withContext,
       riskLevel: debugRiskLevel,
+      sandboxConfig: debugSandboxConfig,
       sandboxInfo: debugSandboxConfig?.environmentInfo,
       toolRegistry: debugToolRegistry,
     });

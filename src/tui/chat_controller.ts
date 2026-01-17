@@ -47,6 +47,7 @@ import {
   type RiskLevel,
   type Skill,
 } from "../core/types.js";
+import { resolveAgentCwd } from "../core/utils/agent_environment.js";
 import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
@@ -108,6 +109,8 @@ export class ChatController {
   private activeThemeId?: string;
   private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
+  private readonly sandboxEnabled: boolean;
+  private readonly agentCwd: string;
 
   private readonly engine: CoreSession;
   private readonly commandRegistry: CommandRegistry<CommandDispatchContext>;
@@ -157,6 +160,12 @@ export class ChatController {
     this.repoRoot = getGitRoot(cwd) ?? cwd;
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
+    this.sandboxEnabled = options.sandboxEnabled ?? false;
+    this.agentCwd = resolveAgentCwd({
+      cwd,
+      sandboxEnabled: this.sandboxEnabled,
+      sandboxConfig: this.config.sandbox,
+    });
     this.activeThemeId = this.config.defaultTheme;
     this.authPath = getAuthPath(this.deps.env.home());
     const authStorage = new AuthStorage(this.authPath);
@@ -204,7 +213,7 @@ export class ChatController {
 
     this.environmentTag = buildEnvironmentTag({
       riskLevel: this.initialRiskLevel,
-      cwd,
+      cwd: this.agentCwd,
       datetime: new Date(this.deps.clock.now()).toISOString(),
       platform: this.deps.env.platform(),
       nodeVersion: this.deps.env.nodeVersion(),
@@ -448,6 +457,7 @@ export class ChatController {
         sessionCost,
         duration,
         riskLevel: this.riskLevel,
+        sandboxed: this.sandboxEnabled,
       },
       editor: {
         mode: this.getInputMode(),
@@ -1114,7 +1124,7 @@ export class ChatController {
   private rebuildSystemPrompt(previousSessionSummary?: string): void {
     this.environmentTag = buildEnvironmentTag({
       riskLevel: this.riskLevel,
-      cwd: this.deps.env.cwd(),
+      cwd: this.agentCwd,
       datetime: new Date(this.deps.clock.now()).toISOString(),
       platform: this.deps.env.platform(),
       nodeVersion: this.deps.env.nodeVersion(),

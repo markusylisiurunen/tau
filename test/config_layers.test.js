@@ -174,6 +174,26 @@ describe("loadConfig", () => {
     }
   });
 
+  it("uses virtual defaults when no config files exist", () => {
+    const fx = setupFixture();
+
+    try {
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const config = loadConfig(fx.repo, deps);
+      expect(config).toMatchObject({
+        defaultPersona: "opus-4.5",
+        defaultRisk: "read-only",
+      });
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("reports parse errors without throwing", () => {
     const fx = setupFixture();
 
@@ -188,7 +208,10 @@ describe("loadConfig", () => {
       });
 
       const result = loadConfigWithDiagnostics(fx.repo, deps);
-      expect(result.config).toEqual({});
+      expect(result.config).toMatchObject({
+        defaultPersona: "opus-4.5",
+        defaultRisk: "read-only",
+      });
       expect(result.errors.length).toBeGreaterThan(0);
     } finally {
       fx.cleanup();

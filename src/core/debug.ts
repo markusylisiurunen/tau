@@ -1,5 +1,5 @@
 import type { Tool } from "@mariozechner/pi-ai";
-import type { BashCommand, SandboxConfig } from "./config/index.js";
+import type { BashCommand, SandboxConfig, VirtualBundle } from "./config/index.js";
 import type { PromptTemplate } from "./prompts.js";
 import { createDefaultCoreDeps } from "./runtime/deps.js";
 import { formatSubagentsForPrompt } from "./subagents/registry.js";
@@ -89,6 +89,7 @@ export function printDebugInfo(args: {
   sandboxConfig?: SandboxConfig;
   sandboxInfo?: string;
   toolRegistry: ToolRegistry;
+  virtualBundle?: VirtualBundle;
 }): void {
   const {
     personas,
@@ -101,6 +102,7 @@ export function printDebugInfo(args: {
     sandboxConfig,
     sandboxInfo,
     toolRegistry,
+    virtualBundle,
   } = args;
 
   const deps = createDefaultCoreDeps();
@@ -114,6 +116,20 @@ export function printDebugInfo(args: {
 
   console.log("tau debug info");
   console.log(`cwd: ${cwd}`);
+
+  section("Virtual bundle");
+  if (!virtualBundle) {
+    console.log("\n  (not available)");
+  } else {
+    const defaultPersona = virtualBundle.config.defaultPersona ?? "(none)";
+    const defaultRisk = virtualBundle.config.defaultRisk ?? "(none)";
+    const personaIds = virtualBundle.personas.map((p) => p.id).join(", ") || "(none)";
+    const promptIds = virtualBundle.prompts.map((p) => p.id).join(", ") || "(none)";
+    console.log(`\n  defaultPersona: ${defaultPersona}`);
+    console.log(`  defaultRisk: ${defaultRisk}`);
+    console.log(`  personas: ${personaIds}`);
+    console.log(`  prompts: ${promptIds}`);
+  }
 
   // Personas
   section(`Personas (${personas.length})`);

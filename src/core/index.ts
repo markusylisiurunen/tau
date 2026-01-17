@@ -23,8 +23,10 @@ export type {
   ConfigDeps,
   SandboxConfig,
   ThemeDefinition,
+  VirtualBundle,
 } from "./config/index.js";
 export {
+  buildVirtualBundle,
   createDefaultConfigDeps,
   isGoogleAuthAvailable,
   loadAllContent,

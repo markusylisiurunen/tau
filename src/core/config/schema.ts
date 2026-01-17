@@ -7,6 +7,7 @@ import type { ConfigDeps } from "./deps.js";
 import { createDefaultConfigDeps } from "./deps.js";
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
+import { getVirtualConfigDefaults } from "./virtual_defaults.js";
 
 export interface Config {
   apiKeys?: {
@@ -324,7 +325,7 @@ function dedupePaths(paths: string[]): string[] {
 }
 
 function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
-  const merged: Config = {};
+  const merged: Config = getVirtualConfigDefaults();
   let apiKeys: Config["apiKeys"] | undefined;
   let sandbox: SandboxConfig | undefined;
   const bashCommands = new Map<string, BashCommand>();

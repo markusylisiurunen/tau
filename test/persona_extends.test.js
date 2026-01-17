@@ -121,4 +121,20 @@ describe("custom personas", () => {
       fx.cleanup();
     }
   });
+
+  it("disables built-in prompts when disableBuiltinPersonas is set", async () => {
+    const fx = setupFixture();
+
+    try {
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { prompts, errors } = await loadAllContent(
+        { disableBuiltinPersonas: true },
+        { deps, cwd: fx.cwd },
+      );
+      expect(errors).toEqual([]);
+      expect(prompts).toEqual([]);
+    } finally {
+      fx.cleanup();
+    }
+  });
 });

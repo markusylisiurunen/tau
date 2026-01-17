@@ -101,7 +101,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `sandbox` (optional): Docker sandbox settings (see below).
-  - `disableBuiltinPersonas` (optional): If true, tau will not load any built-in personas, only personas from disk.
+  - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas or prompts, only entries from disk.
   - `defaultTheme` (optional): Theme id to load from `.tau/themes/<id>.json` or `~/.config/tau/themes/<id>.json`.
 - **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys` and `sandbox` merge per field; `bashCommands` merge by `id`; `agentContextFiles` are additive.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.

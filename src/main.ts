@@ -14,14 +14,11 @@ import type {
 } from "./core/index.js";
 import {
   AuthStorage,
-  applyGeminiSubagents,
-  personas as builtinPersonas,
-  prompts as builtinPrompts,
+  buildVirtualBundle,
   CliError,
   createLocalToolExecutionBackend,
   createSandboxToolExecutionBackend,
   getAuthPath,
-  isGoogleAuthAvailable,
   loadConfig,
   loadRuntimeConfig,
   parseCliArgs,
@@ -165,22 +162,24 @@ try {
   config = loadConfig(cwd);
   bashCommands = config.bashCommands ?? [];
 
-  const baseBuiltins = isGoogleAuthAvailable(config)
-    ? applyGeminiSubagents(builtinPersonas)
-    : builtinPersonas;
-  const effectiveBuiltins = config.disableBuiltinPersonas ? [] : baseBuiltins;
+  const virtualBundle = buildVirtualBundle(config);
+  const hasBuiltins =
+    virtualBundle.personas.length > 0 ||
+    virtualBundle.prompts.length > 0 ||
+    virtualBundle.skills.length > 0 ||
+    virtualBundle.themes.length > 0;
 
   // eslint-disable-next-line no-console
   console.error(
-    effectiveBuiltins.length > 0
-      ? "using built-in personas and prompts only."
-      : "no built-in personas available (disableBuiltinPersonas is enabled).",
+    hasBuiltins
+      ? "using built-in resources only."
+      : "no built-in resources available (disableBuiltinPersonas is enabled).",
   );
 
-  personas = effectiveBuiltins;
-  prompts = builtinPrompts;
-  skills = [];
-  themes = [];
+  personas = virtualBundle.personas;
+  prompts = virtualBundle.prompts;
+  skills = virtualBundle.skills;
+  themes = virtualBundle.themes;
 }
 
 let cli: CliOptions;
@@ -230,11 +229,12 @@ if (cli.debug) {
     }
   }
 
-  const debugRiskLevel = cli.riskLevel ?? config.defaultRisk ?? "read-only";
+  const debugRiskLevel = cli.riskLevel ?? config.defaultRisk;
   const debugSandboxConfig = cli.sandbox ? requireSandboxConfig(config) : undefined;
   const debugBackend = cli.sandbox
     ? await createSandboxBackend(config)
     : { backend: createLocalToolExecutionBackend(), dispose: undefined };
+  const virtualBundle = buildVirtualBundle(config);
 
   try {
     const debugToolRegistry = ToolCatalog.createRegistry(debugBackend.backend);
@@ -243,6 +243,7 @@ if (cli.debug) {
       prompts,
       bashCommands,
       skills,
+      virtualBundle,
       selectedPersona: debugPersona,
       withContext: cli.withContext,
       riskLevel: debugRiskLevel,

@@ -3,9 +3,8 @@ import type { Api, KnownProvider, Model, Tool } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { applyGeminiSubagents, personas as builtinPersonas } from "../personas.js";
+import { personas as builtinPersonas } from "../personas.js";
 import type { PromptTemplate } from "../prompts.js";
-import { prompts as builtinPrompts } from "../prompts.js";
 import type { SubagentConfigMap, SubagentPersonaConfig } from "../subagents/types.js";
 import { BASH_TOOL } from "../tools/bash.js";
 import { EDIT_TOOL } from "../tools/edit.js";
@@ -20,7 +19,7 @@ import { createDefaultConfigDeps } from "./deps.js";
 import type { ConfigLevel, ConfigLevelScope } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
-import { isGoogleAuthAvailable } from "./schema.js";
+import { buildVirtualBundle } from "./virtual_bundle.js";
 
 interface FrontMatter {
   [key: string]: unknown;
@@ -1022,18 +1021,12 @@ export async function loadAllContent(
     cwd: options?.cwd,
   });
 
+  const virtualBundle = buildVirtualBundle(config ?? {}, deps);
+
   try {
-    const builtinBasePersonas = builtinPersonas;
-    const builtinDisplayPersonas =
-      config && isGoogleAuthAvailable(config, deps)
-        ? applyGeminiSubagents(builtinBasePersonas)
-        : builtinBasePersonas;
-
     const basePersonasById = new Map(
-      builtinBasePersonas.map((p) => [p.id.toLowerCase(), p] as const),
+      builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const),
     );
-
-    const includeBuiltins = !config?.disableBuiltinPersonas;
 
     const userPersonasResult = await loadUserPersonas({
       basePersonasById,
@@ -1060,6 +1053,9 @@ export async function loadAllContent(
     ];
 
     const skillsByName = new Map<string, Skill>();
+    for (const skill of virtualBundle.skills) {
+      skillsByName.set(skill.name.toLowerCase(), skill);
+    }
     for (const skill of userSkillsResult.skills) {
       skillsByName.set(skill.name.toLowerCase(), skill);
     }
@@ -1071,33 +1067,28 @@ export async function loadAllContent(
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
     );
 
-    const effectiveBuiltins = includeBuiltins ? builtinDisplayPersonas : [];
-
-    // Precedence: built-ins < global < nearest .tau levels.
+    // Precedence: virtual bundle < global < nearest .tau levels.
     return {
       personas: mergeById(
-        effectiveBuiltins,
+        virtualBundle.personas,
         userPersonasResult.personas,
         projectPersonasResult.personas,
       ),
-      prompts: mergeById(builtinPrompts, userPromptsResult.prompts, projectPromptsResult.prompts),
+      prompts: mergeById(
+        virtualBundle.prompts,
+        userPromptsResult.prompts,
+        projectPromptsResult.prompts,
+      ),
       skills,
-      themes: mergeById(userThemesResult.themes, projectThemesResult.themes),
+      themes: mergeById(virtualBundle.themes, userThemesResult.themes, projectThemesResult.themes),
       errors: allErrors,
     };
   } catch (err) {
-    const baseBuiltins =
-      config && isGoogleAuthAvailable(config, deps)
-        ? applyGeminiSubagents(builtinPersonas)
-        : builtinPersonas;
-
-    const effectiveBuiltins = config?.disableBuiltinPersonas ? [] : baseBuiltins;
-
     return {
-      personas: effectiveBuiltins,
-      prompts: builtinPrompts,
-      skills: [],
-      themes: [],
+      personas: virtualBundle.personas,
+      prompts: virtualBundle.prompts,
+      skills: virtualBundle.skills,
+      themes: virtualBundle.themes,
       errors: [`unexpected error loading user content: ${(err as Error).message}`],
     };
   }

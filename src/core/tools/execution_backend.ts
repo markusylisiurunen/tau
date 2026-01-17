@@ -439,7 +439,7 @@ export async function createSandboxToolExecutionBackend(options: {
       const resolvedPaths: string[] = [];
       const commandPaths: string[] = [];
       for (const p of paths) {
-        const resolved = resolveRestrictedPath(p, { mustExist: true });
+        const resolved = sandbox.mapPath(p, { mustExist: true });
         resolvedPaths.push(resolved.relPath);
         commandPaths.push(toPosixRelPath(resolved.relPath));
       }

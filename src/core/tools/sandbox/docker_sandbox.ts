@@ -1,14 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { posix as pathPosix, relative, sep } from "node:path";
+import { realpathSync, statSync } from "node:fs";
+import { isAbsolute, posix as pathPosix, relative, resolve, sep } from "node:path";
 import type { SandboxConfig } from "../../config/index.js";
 import type { CoreDeps } from "../../runtime/deps.js";
-import {
-  getRestrictedRoot,
-  resolveRestrictedDirPath,
-  resolveRestrictedFilePath,
-  resolveRestrictedPath,
-} from "../../utils/restricted_fs.js";
+import { getRestrictedRoot } from "../../utils/restricted_fs.js";
 import { sanitizeEnvironment } from "../../utils/sanitize_env.js";
 import type { SpawnCaptureResult } from "../../utils/spawn_capture.js";
 
@@ -36,6 +31,66 @@ type ResolvedPath = {
   realPath: string;
   relPath: string;
 };
+
+const TRAVERSAL_PATTERN = /(^|[\\/])\.\.([\\/]|$)/;
+
+function isOutsideRoot(rootReal: string, candidate: string): boolean {
+  const rel = relative(rootReal, candidate);
+  if (!rel) {
+    return false;
+  }
+  return rel === ".." || rel.startsWith(`..${sep}`);
+}
+
+function resolveSandboxPath(
+  rawPath: string,
+  rootReal: string,
+  options?: { mustExist?: boolean },
+): ResolvedPath {
+  const cleaned = rawPath.trim() || ".";
+
+  if (cleaned.includes("\0")) {
+    throw new Error("Invalid path: contains null byte.");
+  }
+
+  if (TRAVERSAL_PATTERN.test(cleaned)) {
+    throw new Error("Invalid path: '..' traversal is not allowed.");
+  }
+
+  const absPath = isAbsolute(cleaned) ? resolve(cleaned) : resolve(rootReal, cleaned);
+
+  if (isOutsideRoot(rootReal, absPath)) {
+    throw new Error("Path is outside the allowed root.");
+  }
+
+  if (options?.mustExist) {
+    const realPath = realpathSync(absPath);
+    if (isOutsideRoot(rootReal, realPath)) {
+      throw new Error("Path resolves outside the allowed root.");
+    }
+    return { rootReal, absPath, realPath, relPath: relative(rootReal, realPath) || "." };
+  }
+
+  return { rootReal, absPath, realPath: absPath, relPath: relative(rootReal, absPath) || "." };
+}
+
+function resolveSandboxFilePath(rawPath: string, rootReal: string): ResolvedPath {
+  const resolved = resolveSandboxPath(rawPath, rootReal, { mustExist: true });
+  const stat = statSync(resolved.realPath);
+  if (!stat.isFile()) {
+    throw new Error("Path is not a file.");
+  }
+  return resolved;
+}
+
+function resolveSandboxDirPath(rawPath: string, rootReal: string): ResolvedPath {
+  const resolved = resolveSandboxPath(rawPath, rootReal, { mustExist: true });
+  const stat = statSync(resolved.realPath);
+  if (!stat.isDirectory()) {
+    throw new Error("Path is not a directory.");
+  }
+  return resolved;
+}
 
 export type DockerSandboxRuntime = {
   containerId: string;
@@ -297,15 +352,11 @@ export async function createDockerSandbox(args: {
   ): { containerPath: string; relPath: string; absPath: string; rootReal: string } => {
     let resolved: ResolvedPath;
     if (options?.kind === "file") {
-      resolved = resolveRestrictedFilePath(rawPath);
+      resolved = resolveSandboxFilePath(rawPath, rootReal);
     } else if (options?.kind === "dir") {
-      resolved = resolveRestrictedDirPath(rawPath);
+      resolved = resolveSandboxDirPath(rawPath, rootReal);
     } else {
-      resolved = resolveRestrictedPath(rawPath, { mustExist: options?.mustExist });
-    }
-
-    if (resolved.rootReal !== rootReal) {
-      throw new Error("Path is outside the allowed root.");
+      resolved = resolveSandboxPath(rawPath, rootReal, { mustExist: options?.mustExist });
     }
 
     return {

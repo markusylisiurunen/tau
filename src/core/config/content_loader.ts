@@ -10,9 +10,6 @@ import type { SubagentConfigMap, SubagentPersonaConfig } from "../subagents/type
 import { BASH_TOOL } from "../tools/bash.js";
 import { EDIT_TOOL } from "../tools/edit.js";
 import { FORK_TOOL } from "../tools/fork.js";
-import { GREP_TOOL } from "../tools/grep.js";
-import { LIST_TOOL } from "../tools/list.js";
-import { READ_TOOL } from "../tools/read.js";
 import { TASK_TOOL } from "../tools/task.js";
 import { WRITE_TOOL } from "../tools/write.js";
 import type { Persona, ReasoningEffort, Skill } from "../types.js";
@@ -443,9 +440,6 @@ const PERSONA_TOOL_DEFINITIONS = new Map([
   ["bash", BASH_TOOL],
   ["write", WRITE_TOOL],
   ["edit", EDIT_TOOL],
-  ["read", READ_TOOL],
-  ["list", LIST_TOOL],
-  ["grep", GREP_TOOL],
   ["task", TASK_TOOL],
   ["fork", FORK_TOOL],
 ]);

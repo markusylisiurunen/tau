@@ -3,9 +3,6 @@ import type { SubagentConfigMap } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
 import { FORK_TOOL } from "./tools/fork.js";
-import { GREP_TOOL } from "./tools/grep.js";
-import { LIST_TOOL } from "./tools/list.js";
-import { READ_TOOL } from "./tools/read.js";
 import { TASK_TOOL } from "./tools/task.js";
 import { WRITE_TOOL } from "./tools/write.js";
 import type { Persona, ReasoningEffort } from "./types.js";
@@ -79,7 +76,7 @@ const BLOCK_FILE_EDIT_GUIDELINES = `
 
 Prefer edit for surgical replacements; use write when changes are complex enough that edit becomes awkward. For multiple changes in one file, issue parallel edit calls rather than sequential edits.
 
-Before editing, confirm you have current content for the target section (use the \`read\` tool with line ranges, or \`sed -n '42,96p' <file>\` via bash).
+Before editing, confirm you have current content for the target section (use \`sed -n '42,96p' <file>\` via bash).
 
 **Match the existing code exactly.** Study surrounding code before writing. Your changes should be invisible in a diff review, blending perfectly with:
 - Naming: variables, functions, files follow the same patterns (camelCase vs snake_case, abbreviations, prefixes)
@@ -323,14 +320,7 @@ const VARIANT_CONFIG: Record<Variant, { suffix: string; systemPrompt: string }> 
   coder: { suffix: "-coder", systemPrompt: CODER_SYSTEM_PROMPT },
 };
 
-const BASE_TOOLS: NonNullable<Persona["tools"]> = [
-  BASH_TOOL,
-  WRITE_TOOL,
-  EDIT_TOOL,
-  READ_TOOL,
-  LIST_TOOL,
-  GREP_TOOL,
-];
+const BASE_TOOLS: NonNullable<Persona["tools"]> = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
 
 function pickExploreReasoning(allowed: ReasoningEffort[]): ReasoningEffort {
   const preferred: ReasoningEffort[] = ["minimal", "low", "none", "medium", "high", "xhigh"];

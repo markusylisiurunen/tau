@@ -1,3 +1,4 @@
+import chalk from "chalk";
 import { hslToHex } from "../../../core/utils/color.js";
 import type { Palette, ThemeMode } from "./theme.js";
 import { PALETTE_COLORS, type PaletteTokenName } from "./tokens.js";
@@ -5,7 +6,6 @@ import { PALETTE_COLORS, type PaletteTokenName } from "./tokens.js";
 const paletteByName = new Map<PaletteTokenName, (typeof PALETTE_COLORS)[number]>(
   PALETTE_COLORS.map((color) => [color.name, color] as const),
 );
-
 
 function tagWrapper(label: string): (text: string) => string {
   return (text) => `<${label}>${text}</${label}>`;

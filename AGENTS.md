@@ -183,6 +183,8 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 
 **Style**: Biome (2-space indent, 100 line width). Types `PascalCase`, values/functions `camelCase`, files `lowercase.ts`.
 
+**Commit style**: Short, imperative, lowercase subject lines (no prefixes).
+
 ## Adding a slash command
 
 1. `src/core/commands/registry.ts`: Add to `Command` type and register it in `createCommandRegistry()`

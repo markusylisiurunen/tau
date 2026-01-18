@@ -13,6 +13,7 @@ import type {
   ToolDefinition,
   ToolDispatchContext,
   ToolDispatchResult,
+  ToolDispatchResultWithPhases,
   ToolRegistry,
   ToolUiEvent,
 } from "../tools/registry.js";
@@ -208,7 +209,23 @@ export async function* runToolCalls(
       for (const { index, toolCall, def } of block) {
         if (signal.aborted) break;
 
-        const result = await def.dispatch(toolCall, riskLevel, signal, dispatchContext);
+        let result: ToolDispatchResult | ToolDispatchResultWithPhases;
+        try {
+          result = await def.dispatch(toolCall, riskLevel, signal, dispatchContext);
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          const toolError = createToolError(
+            toolCall,
+            `${toolCall.name} dispatch failed: ${errorMsg}`,
+          );
+          resultsByIndex.set(index, toolError);
+          yield {
+            type: "notice",
+            severity: "error",
+            text: `${toolCall.name} '${toolCall.id}' dispatch failed: ${errorMsg}`,
+          };
+          continue;
+        }
 
         if (result.kind === "phased") {
           taskExecutions.push({
@@ -241,7 +258,21 @@ export async function* runToolCalls(
 
     // Non-task tools execute sequentially.
     const { index, toolCall, def } = entry;
-    const result = await def.dispatch(toolCall, riskLevel, signal, dispatchContext);
+    let result: ToolDispatchResult | ToolDispatchResultWithPhases;
+    try {
+      result = await def.dispatch(toolCall, riskLevel, signal, dispatchContext);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const toolError = createToolError(toolCall, `${toolCall.name} dispatch failed: ${errorMsg}`);
+      resultsByIndex.set(index, toolError);
+      yield {
+        type: "notice",
+        severity: "error",
+        text: `${toolCall.name} '${toolCall.id}' dispatch failed: ${errorMsg}`,
+      };
+      i++;
+      continue;
+    }
 
     if (result.kind === "phased") {
       if (result.startedUiEvent) {
@@ -342,14 +373,14 @@ async function* streamAndFinalizeTaskCalls(
 
   const uiPending = new Map<ToolUiIterator, Promise<PendingRace>>();
   const completionPending = new Map<TaskExec, Promise<PendingRace>>();
+  const uiIterators = new Map<TaskExec, ToolUiIterator>();
 
   for (const taskExec of taskExecutions) {
-    if (!taskExec.uiEventsIterable) {
-      completionPending.set(taskExec, makeCompletion(taskExec));
-      continue;
-    }
+    completionPending.set(taskExec, makeCompletion(taskExec));
+    if (!taskExec.uiEventsIterable) continue;
 
     const iterator = taskExec.uiEventsIterable[Symbol.asyncIterator]();
+    uiIterators.set(taskExec, iterator);
     uiPending.set(iterator, makeUiNext(iterator, taskExec));
   }
 
@@ -363,9 +394,7 @@ async function* streamAndFinalizeTaskCalls(
       uiPending.delete(next.iterator);
 
       if (next.result.done) {
-        if (!completionPending.has(next.taskExec)) {
-          completionPending.set(next.taskExec, makeCompletion(next.taskExec));
-        }
+        uiIterators.delete(next.taskExec);
         continue;
       }
 
@@ -378,6 +407,16 @@ async function* streamAndFinalizeTaskCalls(
     }
 
     completionPending.delete(next.taskExec);
+    const iterator = uiIterators.get(next.taskExec);
+    if (iterator) {
+      uiPending.delete(iterator);
+      uiIterators.delete(next.taskExec);
+      try {
+        await iterator.return?.();
+      } catch {
+        // Ignore UI stream termination errors on completion.
+      }
+    }
 
     if (next.settled.status === "fulfilled") {
       const { toolResult, uiEvent } = next.settled.value;

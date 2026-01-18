@@ -121,7 +121,7 @@ Risk levels (`read-only`, `read-write`) gate model tool calls. The model declare
 
 **Built-in**: 6 base persona families (Claude Opus 4.5, Claude Haiku 4.5, GPT-5.2, GPT-5.2 flex, Gemini 3 Pro, Gemini 3 Flash) × 2 variants (chat, coder), plus GPT-5.2 Codex as a single coder persona, for 13 total personas. Both variants include the **web** subagent (max 64 turns, trigger: explicit) for agentic web research, and coder variants also include the **explore** subagent (max 64 turns, trigger: eager) for multi-turn read-only codebase investigation. Built-in personas have `skills: "*"` to enable all discovered skills by default. See trigger sensitivity below for how subagent and skill activation is controlled.
 
-Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields:
+Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields. The persona file name (without `.md`) must match the `id`.
 
 - `extends`: inherit from a built-in persona id. only optional fields are inherited; `provider` and `model` are still required on the extending persona. if the markdown body is empty, the base persona's system prompt is used.
 - `label`, `description`: metadata
@@ -153,7 +153,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 - `sandbox.pruneAfterHours` (optional): Auto-prune stale sandbox containers after N hours. Defaults to `24`.
 - `sandbox.extraDockerArgs` (optional): Additional `docker run` args (string array).
 - `sandbox.environmentInfo` (optional): Freeform text injected into the system prompt to describe the sandbox environment.
-- **Prompts**: `~/.config/tau/prompts/*.md` and `.tau/prompts/*.md` (discovered by walking up from cwd to home/root; most specific wins on conflicts).
+- **Prompts**: `~/.config/tau/prompts/*.md` and `.tau/prompts/*.md` (discovered by walking up from cwd to home/root; most specific wins on conflicts). Prompt file names (without `.md`) must match their `id`.
 - **Themes**: `~/.config/tau/themes/*.json` and `.tau/themes/*.json` (same discovery rules as prompts/config). Theme values accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, or `hsl(h, s%, l%)`. Missing palette tokens render as plain text when a theme is selected.
 - **Skills**: `~/.config/tau/skills/` and `.tau/skills/` (discovered by walking up from cwd to home/root). Each skill is a directory containing `SKILL.md` with required YAML frontmatter:
   - `name` (1-64 chars, `a-z0-9-`, must match directory name)

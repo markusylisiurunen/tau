@@ -459,6 +459,12 @@ function parsePersona(
   }
 
   const { id, extends: extendsId, label, provider, model, description } = parsedFrontMatter.data;
+  const fileId = basename(file, ".md");
+  if (fileId && id !== fileId) {
+    return {
+      error: `${file}: frontmatter id "${id}" must match file name "${fileId}". skipped.`,
+    };
+  }
   const reasoning = parsedFrontMatter.data.reasoning;
   const allowedReasoningLevels = parsedFrontMatter.data.allowedReasoningLevels;
   const skillsRaw = parsedFrontMatter.data.skills;
@@ -610,6 +616,12 @@ function parsePrompt(file: string, content: string): { prompt?: PromptTemplate; 
   }
 
   const { id, label, description } = parsedFrontMatter.data;
+  const fileId = basename(file, ".md");
+  if (fileId && id !== fileId) {
+    return {
+      error: `${file}: frontmatter id "${id}" must match file name "${fileId}". skipped.`,
+    };
+  }
 
   const prompt: PromptTemplate = {
     id,

@@ -350,6 +350,8 @@ the frontmatter defines the persona. required fields:
 - `provider`: model provider id (for example `openai`, `anthropic`, `google`)
 - `model`: model id for the provider (for example `gpt-5.2`, `claude-opus-4-5`)
 
+the persona file name (without the `.md` extension) must match the `id`.
+
 optional frontmatter fields:
 
 - `label`: display name shown in the ui (defaults to the base persona label if `extends` is used)
@@ -400,6 +402,8 @@ suggest specific improvements with code examples.
 ```
 
 insert them with `/prompt:review`. if a prompt id conflicts across levels (including built-ins), the most specific level wins.
+
+the prompt file name (without the `.md` extension) must match the `id`.
 
 ### skills
 

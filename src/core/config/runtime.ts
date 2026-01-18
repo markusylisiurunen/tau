@@ -36,9 +36,7 @@ export async function loadRuntimeConfig(
           (persona) => persona.id.toLowerCase() === personaValue.toLowerCase(),
         );
         if (!matched) {
-          warnings.push(
-            `defaultPersona '${config.defaultPersona}' not found in loaded personas.`,
-          );
+          warnings.push(`defaultPersona '${config.defaultPersona}' not found in loaded personas.`);
         }
       }
     }

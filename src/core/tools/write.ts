@@ -92,9 +92,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
       }
 
       if (!path) {
-        return blocked(
-          "missing 'path' parameter. provide the file path to write to.",
-        );
+        return blocked("missing 'path' parameter. provide the file path to write to.");
       }
 
       try {

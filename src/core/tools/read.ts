@@ -174,9 +174,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         const endDisplay = endLine === undefined ? undefined : endEffective;
 
         if (start > totalLines) {
-          return blocked(
-            `startLine (${start}) exceeds total lines (${totalLines}).`,
-          );
+          return blocked(`startLine (${start}) exceeds total lines (${totalLines}).`);
         }
 
         const startIndex = Math.max(0, start - 1);

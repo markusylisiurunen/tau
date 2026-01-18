@@ -270,9 +270,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
       }
 
       if (!oldText) {
-        return blocked(
-          "missing 'oldText' parameter. provide the exact text to find and replace.",
-        );
+        return blocked("missing 'oldText' parameter. provide the exact text to find and replace.");
       }
 
       let content: string;
@@ -282,9 +280,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
         if ((e as NodeJS.ErrnoException).code === "ENOENT") {
-          return blocked(
-            `file not found at '${path}'. verify the path is correct.`,
-          );
+          return blocked(`file not found at '${path}'. verify the path is correct.`);
         }
         return blocked(`could not read file: ${errorMessage}`);
       }

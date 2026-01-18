@@ -1309,9 +1309,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
   private formatRiskLevelNotice(level: RiskLevel): string {
     const details = getRiskLevelDescription(level);
-    return details
-      ? `risk level set to ${level} (${details})`
-      : `risk level set to ${level}`;
+    return details ? `risk level set to ${level} (${details})` : `risk level set to ${level}`;
   }
 
   private setRiskLevel(level: RiskLevel, options?: { silent?: boolean }): void {

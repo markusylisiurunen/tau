@@ -1,3 +1,4 @@
+import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import type { UiComponent } from "./components/ui_component.js";
 import type { Theme } from "./theme/index.js";
 
@@ -18,11 +19,18 @@ export class SessionDividerComponent implements UiComponent<SessionDividerModel>
   invalidate() {}
 
   render(width: number) {
-    const labelWithSpace = ` ${this.model.label} `;
     const leftDashes = "──";
-    const remainingWidth = Math.max(1, width - labelWithSpace.length - leftDashes.length);
+    const leftWidth = Math.min(visibleWidth(leftDashes), Math.max(0, width));
+    const left =
+      leftWidth === visibleWidth(leftDashes)
+        ? leftDashes
+        : Array.from(leftDashes).slice(0, leftWidth).join("");
+    const maxLabelWidth = Math.max(0, width - leftWidth - 1);
+    const labelRaw = ` ${this.model.label} `;
+    const label = maxLabelWidth > 0 ? truncateToWidth(labelRaw, maxLabelWidth, "…") : "";
+    const remainingWidth = Math.max(0, width - leftWidth - visibleWidth(label));
     const rightDashes = "─".repeat(remainingWidth);
-    const dividerText = `${leftDashes}${labelWithSpace}${rightDashes}`;
+    const dividerText = `${left}${label}${rightDashes}`;
     return [this.theme.palette.textMuted(dividerText)];
   }
 }

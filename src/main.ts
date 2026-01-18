@@ -173,7 +173,7 @@ try {
   console.error(
     hasBuiltins
       ? "using built-in resources only."
-      : "no built-in resources available (disableBuiltinPersonas is enabled).",
+      : "no built-in resources available (built-ins disabled by config).",
   );
 
   personas = virtualBundle.personas;

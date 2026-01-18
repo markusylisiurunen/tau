@@ -19,15 +19,16 @@ export type VirtualBundle = {
 
 export function buildVirtualBundle(config: Config, deps?: ConfigDeps): VirtualBundle {
   const resolvedDeps = deps ?? createDefaultConfigDeps();
-  const includeBuiltins = !config.disableBuiltinPersonas;
+  const includeBuiltinPersonas = !config.disableBuiltinPersonas;
+  const includeBuiltinPrompts = !config.disableBuiltinPrompts;
   const basePersonas = isGoogleAuthAvailable(config, resolvedDeps)
     ? applyGeminiSubagents(builtinPersonas)
     : builtinPersonas;
 
   return {
     config: getVirtualConfigDefaults(),
-    personas: includeBuiltins ? basePersonas : [],
-    prompts: includeBuiltins ? builtinPrompts : [],
+    personas: includeBuiltinPersonas ? basePersonas : [],
+    prompts: includeBuiltinPrompts ? builtinPrompts : [],
     skills: [],
     themes: [],
   };

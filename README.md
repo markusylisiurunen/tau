@@ -290,6 +290,7 @@ settings merge from least-specific to most-specific.
   "defaultPersona": "gpt-5.2-chat",
   "defaultRisk": "read-write",
   "disableBuiltinPersonas": false,
+  "disableBuiltinPrompts": false,
   "defaultTheme": "solarized"
 }
 ```
@@ -298,7 +299,7 @@ the `defaultPersona` field specifies which persona to use when starting the app.
 
 the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 
-if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas or prompts. only entries from `~/.config/tau/` and `.tau/` will be available. you can also set `disableBuiltinPersonas` in any `.tau/config.json`; the most specific value wins.
+if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinPrompts` is set to `true`, tau will not load built-in prompts. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 
 the `sandbox` field configures docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `24`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
 

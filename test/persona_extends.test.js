@@ -122,13 +122,13 @@ describe("custom personas", () => {
     }
   });
 
-  it("disables built-in prompts when disableBuiltinPersonas is set", async () => {
+  it("disables built-in prompts when disableBuiltinPrompts is set", async () => {
     const fx = setupFixture();
 
     try {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
       const { prompts, errors } = await loadAllContent(
-        { disableBuiltinPersonas: true },
+        { disableBuiltinPrompts: true },
         { deps, cwd: fx.cwd },
       );
       expect(errors).toEqual([]);

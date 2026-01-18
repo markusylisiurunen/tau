@@ -8,7 +8,7 @@ import { sanitizeEnvironment } from "../../utils/sanitize_env.js";
 import type { SpawnCaptureResult } from "../../utils/spawn_capture.js";
 
 const DEFAULT_MOUNT_PATH = "/workspace";
-const DEFAULT_PRUNE_AFTER_HOURS = 24;
+const DEFAULT_PRUNE_AFTER_HOURS = 72;
 const DOCKER_MAX_CAPTURE_BYTES = 512 * 1024;
 
 const SANDBOX_LABEL = "tau.sandbox";
@@ -51,23 +51,23 @@ function resolveSandboxPath(
   const rootResolved = realpathSync(rootReal);
 
   if (cleaned.includes("\0")) {
-    throw new Error("Invalid path: contains null byte.");
+    throw new Error("invalid path: contains null byte.");
   }
 
   if (TRAVERSAL_PATTERN.test(cleaned)) {
-    throw new Error("Invalid path: '..' traversal is not allowed.");
+    throw new Error("invalid path: '..' traversal is not allowed.");
   }
 
   const absPath = isAbsolute(cleaned) ? resolve(cleaned) : resolve(rootResolved, cleaned);
 
   if (isOutsideRoot(rootResolved, absPath)) {
-    throw new Error("Path is outside the allowed root.");
+    throw new Error("path is outside the allowed root.");
   }
 
   if (options?.mustExist) {
     const realPath = realpathSync(absPath);
     if (isOutsideRoot(rootResolved, realPath)) {
-      throw new Error("Path resolves outside the allowed root.");
+      throw new Error("path resolves outside the allowed root.");
     }
     return {
       rootReal: rootResolved,
@@ -89,7 +89,7 @@ function resolveSandboxFilePath(rawPath: string, rootReal: string): ResolvedPath
   const resolved = resolveSandboxPath(rawPath, rootReal, { mustExist: true });
   const stat = statSync(resolved.realPath);
   if (!stat.isFile()) {
-    throw new Error("Path is not a file.");
+    throw new Error("path is not a file.");
   }
   return resolved;
 }
@@ -98,7 +98,7 @@ function resolveSandboxDirPath(rawPath: string, rootReal: string): ResolvedPath 
   const resolved = resolveSandboxPath(rawPath, rootReal, { mustExist: true });
   const stat = statSync(resolved.realPath);
   if (!stat.isDirectory()) {
-    throw new Error("Path is not a directory.");
+    throw new Error("path is not a directory.");
   }
   return resolved;
 }

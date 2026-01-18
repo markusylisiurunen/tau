@@ -141,7 +141,7 @@ example config:
   "sandbox": {
     "image": "ghcr.io/your-org/tau-sandbox:latest",
     "mountPath": "/workspace",
-    "pruneAfterHours": 24,
+    "pruneAfterHours": 72,
     "extraDockerArgs": ["--network=none"],
     "environmentInfo": "tools run inside a container. project mounted at /workspace."
   }
@@ -301,7 +301,7 @@ the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`
 
 if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinPrompts` is set to `true`, tau will not load built-in prompts. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 
-the `sandbox` field configures docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `24`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
+the `sandbox` field configures docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `72`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
 
 ### project bash commands
 

@@ -150,7 +150,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 **Sandbox config fields** (used when starting tau with `--sandbox`):
 - `sandbox.image` (required with `--sandbox`): Docker image to run.
 - `sandbox.mountPath` (optional): Container path for the project root mount. Defaults to `/workspace`.
-- `sandbox.pruneAfterHours` (optional): Auto-prune stale sandbox containers after N hours. Defaults to `24`.
+- `sandbox.pruneAfterHours` (optional): Auto-prune stale sandbox containers after N hours. Defaults to `72`.
 - `sandbox.extraDockerArgs` (optional): Additional `docker run` args (string array).
 - `sandbox.environmentInfo` (optional): Freeform text injected into the system prompt to describe the sandbox environment.
 - **Prompts**: `~/.config/tau/prompts/*.md` and `.tau/prompts/*.md` (discovered by walking up from cwd to home/root; most specific wins on conflicts). Prompt file names (without `.md`) must match their `id`.

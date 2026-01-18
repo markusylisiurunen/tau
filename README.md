@@ -473,6 +473,10 @@ gh release create v$(node -p "require('./package.json').version") --generate-not
 alpha prereleases are published under the npm `alpha` tag (not `latest`):
 
 ```sh
-npm version preminor --preid alpha
+if node -p "require('./package.json').version.includes('-alpha.')"; then
+  npm version prerelease --preid alpha
+else
+  npm version preminor --preid alpha
+fi
 gh release create v$(node -p "require('./package.json').version") --generate-notes --prerelease
 ```

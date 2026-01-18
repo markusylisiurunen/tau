@@ -257,7 +257,8 @@ Notes:
 
 - The workflow uses the `NPM_TOKEN` GitHub secret to authenticate with npm.
 - Alpha prereleases are tagged `alpha` on npm (not `latest`). Use:
-  - `npm version preminor --preid alpha`
+  - If current version already has `-alpha.`, run `npm version prerelease --preid alpha`
+  - Otherwise, run `npm version preminor --preid alpha`
   - `gh release create v$(node -p "require('./package.json').version") --generate-notes --prerelease`
 
 ## Maintaining this file

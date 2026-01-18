@@ -1422,8 +1422,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       return;
     }
 
+    const baseCwd = saved.cwd ?? this.deps.env.cwd();
     const cwd = resolveAgentCwd({
-      cwd: this.repoRoot,
+      cwd: baseCwd,
       sandboxEnabled: this.sandboxEnabled,
       sandboxConfig: this.config.sandbox,
     });

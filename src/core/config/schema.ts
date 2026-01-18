@@ -318,8 +318,18 @@ function mergeSandboxConfig(
   };
 }
 
+function resolveConfigLevelRoot(level: ConfigLevel): string {
+  return level.levelRoot;
+}
+
 function resolveAgentContextPaths(level: ConfigLevel, rawPaths: string[]): string[] {
-  return rawPaths.map((entry) => resolve(level.levelRoot, entry));
+  const root = resolveConfigLevelRoot(level);
+  return rawPaths.map((entry) => resolve(root, entry));
+}
+
+function resolveBashCommands(level: ConfigLevel, commands: BashCommand[]): BashCommand[] {
+  const root = resolveConfigLevelRoot(level);
+  return commands.map((cmd) => ({ ...cmd, cwd: root }));
 }
 
 function dedupePaths(paths: string[]): string[] {
@@ -368,7 +378,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     }
 
     if (config.bashCommands) {
-      for (const cmd of config.bashCommands) {
+      for (const cmd of resolveBashCommands(level, config.bashCommands)) {
         bashCommands.set(cmd.id.toLowerCase(), cmd);
       }
     }

@@ -4,6 +4,7 @@ export interface BashCommand {
   id: string;
   description?: string;
   cmd: string;
+  cwd?: string;
 }
 
 const bashCommandSchema = z

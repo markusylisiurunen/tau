@@ -147,9 +147,9 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.
   - `disableBuiltinPrompts` (optional): If true, tau will not load built-in prompts, only entries from disk.
   - `defaultTheme` (optional): Theme id to load from `.tau/themes/<id>.json` or `~/.config/tau/themes/<id>.json`.
-- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys` and `sandbox` merge per field; `bashCommands` merge by `id`; `agentContextFiles` are additive.
+- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys` and `sandbox` merge per field; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
-- **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`).
+- **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`). Each command runs with cwd set to the config level root (same root used to resolve `agentContextFiles`).
 
 **Sandbox config fields** (used when starting tau with `--sandbox`):
 - `sandbox.image` (required with `--sandbox`): Docker image to run.

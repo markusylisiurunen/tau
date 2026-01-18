@@ -328,6 +328,8 @@ define shortcuts for common shell commands in any in-scope config file (`~/.conf
 
 run them with `/bash:check` or `/bash:test`.
 
+commands run with cwd set to the config level root (directory containing `.tau`, or home for the global config).
+
 ### additional agents context
 
 you can tell tau to always include extra `AGENTS.md` files by adding an `agentContextFiles` list to a config file in scope:

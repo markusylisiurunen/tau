@@ -55,6 +55,7 @@ function formatPrompt(p: PromptTemplate): string {
 function formatBashCommand(cmd: BashCommand): string {
   const lines = [`  id: ${cmd.id}`, `  cmd: ${cmd.cmd}`];
   if (cmd.description) lines.push(`  description: ${cmd.description}`);
+  if (cmd.cwd) lines.push(`  cwd: ${cmd.cwd}`);
   return lines.join("\n");
 }
 

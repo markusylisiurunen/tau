@@ -159,7 +159,7 @@ tau comes with several built-in personas across different models:
 - **GPT-5.2 Codex** (OpenAI Codex subscription)
 - **Gemini 3 Pro** and **Gemini 3 Flash** (Google)
 
-each model has two variants: a chat variant for general-purpose assistance, and a coder variant optimized for software engineering. both variants include the `web` sub-agent for web research, and coder variants also include the `explore` sub-agent for multi-turn codebase investigation.
+each model has two variants: a chat variant for general-purpose assistance, and a coder variant optimized for software engineering. GPT-5.2 Codex is a single coder persona. both variants include the `web` sub-agent for web research, and coder variants also include the `explore` sub-agent for multi-turn codebase investigation.
 
 switch personas at startup with `--persona` or mid-session with `/persona:<id>`:
 

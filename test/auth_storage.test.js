@@ -3,10 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@mariozechner/pi-ai", () => ({
-  getOAuthApiKey: vi.fn(),
-  getEnvApiKey: vi.fn(),
-}));
+vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getOAuthApiKey: vi.fn(),
+    getEnvApiKey: vi.fn(),
+  };
+});
 
 const { getOAuthApiKey, getEnvApiKey } = await import("@mariozechner/pi-ai");
 

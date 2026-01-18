@@ -379,10 +379,21 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   };
 }
 
-export const personas: Persona[] = PERSONA_SPECS.flatMap((spec) => [
-  buildPersona(spec, "chat"),
-  buildPersona(spec, "coder"),
-]);
+export const personas: Persona[] = PERSONA_SPECS.flatMap((spec) => {
+  if (spec.id === "gpt-5.2-codex") {
+    const coderPersona = buildPersona(spec, "coder");
+    return [
+      {
+        ...coderPersona,
+        id: spec.id,
+        label: spec.id,
+        description: spec.description,
+      },
+    ];
+  }
+
+  return [buildPersona(spec, "chat"), buildPersona(spec, "coder")];
+});
 
 export function getPersonaById(id: string): Persona | undefined {
   return personas.find((p) => p.id === id);
@@ -395,8 +406,7 @@ const GEMINI_SUBAGENT_TARGET_IDS = new Set([
   "haiku-4.5-coder",
   "gpt-5.2-chat",
   "gpt-5.2-coder",
-  "gpt-5.2-codex-chat",
-  "gpt-5.2-codex-coder",
+  "gpt-5.2-codex",
   "gpt-5.2-flex-chat",
   "gpt-5.2-flex-coder",
 ]);

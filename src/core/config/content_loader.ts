@@ -1024,9 +1024,7 @@ export async function loadAllContent(
   const virtualBundle = buildVirtualBundle(config ?? {}, deps);
 
   try {
-    const basePersonasById = new Map(
-      builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const),
-    );
+    const basePersonasById = new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
 
     const userPersonasResult = await loadUserPersonas({
       basePersonasById,

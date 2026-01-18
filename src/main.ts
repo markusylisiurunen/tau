@@ -1,29 +1,72 @@
 #!/usr/bin/env node
-import { ChatApp } from "./app.js";
-import { loadBashCommands } from "./bash_commands.js";
-import type { CliOptions } from "./cli.js";
-import { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
-import { isGoogleAuthAvailable, loadConfig } from "./config.js";
-import { loadAllContent } from "./content_loader.js";
-import { printDebugInfo } from "./debug.js";
-import { applyGeminiSubagents, personas as builtinPersonas } from "./personas.js";
-import type { PromptTemplate } from "./prompts.js";
-import { prompts as builtinPrompts } from "./prompts.js";
-import { createBashToolDefinition } from "./tools/bash.js";
-import { createEditToolDefinition } from "./tools/edit.js";
-import { createForkToolDefinition } from "./tools/fork.js";
-import { createGrepToolDefinition } from "./tools/grep.js";
-import { createListToolDefinition } from "./tools/list.js";
-import { createReadToolDefinition } from "./tools/read.js";
-import { ToolRegistry } from "./tools/registry.js";
-import { createTaskToolDefinition } from "./tools/task.js";
-import { createWriteToolDefinition } from "./tools/write.js";
-import type { Persona, ReasoningEffort, Skill } from "./types.js";
+import { writeSync } from "node:fs";
+import { createInterface } from "node:readline";
+import type {
+  AuthPromptFn,
+  BashCommand,
+  CliOptions,
+  Config,
+  Persona,
+  PromptTemplate,
+  ReasoningEffort,
+  Skill,
+  ThemeDefinition,
+} from "./core/index.js";
+import {
+  AuthStorage,
+  buildVirtualBundle,
+  CliError,
+  createLocalToolExecutionBackend,
+  createSandboxToolExecutionBackend,
+  getAuthPath,
+  loadConfig,
+  loadRuntimeConfig,
+  parseCliArgs,
+  parsePersonaString,
+  printDebugInfo,
+  printHelp,
+  runLoginCommand,
+  runLogoutCommand,
+  ToolCatalog,
+} from "./core/index.js";
+import { ChatApp } from "./tui/index.js";
 
-// Load configuration from file
-const config = loadConfig(process.cwd());
+const cwd = process.cwd();
+const argv = process.argv.slice(2);
 
-const bashCommands = loadBashCommands(process.cwd()).commands;
+function registerTerminalExitCleanup(): void {
+  if (!process.stdout.isTTY) return;
+  process.on("exit", () => {
+    try {
+      writeSync(1, "\x1b[?25h\x1b[?2004l");
+    } catch {
+      // ignore
+    }
+  });
+}
+
+registerTerminalExitCleanup();
+
+function printAuthHelp(): void {
+  console.log(
+    [
+      "usage:",
+      "  tau login [provider]",
+      "  tau logout [provider]",
+      "",
+      "providers:",
+      "  openai-codex  OpenAI Codex (ChatGPT Plus/Pro)",
+      "",
+      "examples:",
+      "  tau login openai-codex",
+      "  tau logout openai-codex",
+    ].join("\n"),
+  );
+}
+
+// Load configuration + content from file
+let config: Config;
+let bashCommands: BashCommand[] = [];
 
 async function readPipedStdin(): Promise<string | undefined> {
   if (process.stdin.isTTY) return undefined;
@@ -40,31 +83,103 @@ async function readPipedStdin(): Promise<string | undefined> {
 let personas: Persona[];
 let prompts: PromptTemplate[];
 let skills: Skill[];
-try {
-  const content = await loadAllContent(config);
-  personas = content.personas;
-  prompts = content.prompts;
-  skills = content.skills;
-} catch (err) {
-  // Safeguard: loadAllContent should not throw, but wrap to ensure tau --help works
-  // eslint-disable-next-line no-console
-  console.error(`warning: failed to load user content: ${(err as Error).message}`);
+let themes: ThemeDefinition[] = [];
 
-  const baseBuiltins = isGoogleAuthAvailable(config)
-    ? applyGeminiSubagents(builtinPersonas)
-    : builtinPersonas;
-  const effectiveBuiltins = config.disableBuiltinPersonas ? [] : baseBuiltins;
+if (argv[0] === "login" || argv[0] === "logout") {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    printAuthHelp();
+    process.exit(0);
+  }
+
+  const authPath = getAuthPath();
+  const authStorage = new AuthStorage(authPath);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const prompt: AuthPromptFn = (question) =>
+    new Promise((resolve) => {
+      const suffix = question.placeholder ? ` (${question.placeholder})` : "";
+      rl.question(`${question.message}${suffix} `, resolve);
+    });
+
+  try {
+    if (argv[0] === "login") {
+      await runLoginCommand({
+        providerArg: argv[1],
+        authStorage,
+        authPath,
+        prompt,
+      });
+    } else {
+      await runLogoutCommand({
+        providerArg: argv[1],
+        authStorage,
+        authPath,
+        prompt,
+      });
+    }
+    process.exit(0);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error((err as Error).message);
+    process.exit(1);
+  } finally {
+    rl.close();
+  }
+}
+
+function requireSandboxConfig(config: Config): NonNullable<Config["sandbox"]> {
+  const sandbox = config.sandbox;
+  if (!sandbox?.image) {
+    // eslint-disable-next-line no-console
+    console.error("--sandbox requires sandbox.image in config.json");
+    process.exit(1);
+  }
+  return sandbox;
+}
+
+async function createSandboxBackend(config: Config) {
+  try {
+    return await createSandboxToolExecutionBackend({ config: requireSandboxConfig(config) });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+}
+
+try {
+  const runtime = await loadRuntimeConfig(cwd);
+  config = runtime.config;
+  personas = runtime.personas;
+  prompts = runtime.prompts;
+  skills = runtime.skills;
+  themes = runtime.themes;
+  bashCommands = runtime.bashCommands;
+} catch (err) {
+  // Safeguard: loadRuntimeConfig should not throw, but wrap to ensure tau --help works
+  // eslint-disable-next-line no-console
+  console.error(`failed to load user content: ${(err as Error).message}`);
+
+  config = loadConfig(cwd);
+  bashCommands = config.bashCommands ?? [];
+
+  const virtualBundle = buildVirtualBundle(config);
+  const hasBuiltins =
+    virtualBundle.personas.length > 0 ||
+    virtualBundle.prompts.length > 0 ||
+    virtualBundle.skills.length > 0 ||
+    virtualBundle.themes.length > 0;
 
   // eslint-disable-next-line no-console
   console.error(
-    effectiveBuiltins.length > 0
-      ? "using built-in personas and prompts only."
-      : "no built-in personas available (disableBuiltinPersonas is enabled).",
+    hasBuiltins
+      ? "using built-in resources only."
+      : "no built-in resources available (built-ins disabled by config).",
   );
 
-  personas = effectiveBuiltins;
-  prompts = builtinPrompts;
-  skills = [];
+  personas = virtualBundle.personas;
+  prompts = virtualBundle.prompts;
+  skills = virtualBundle.skills;
+  themes = virtualBundle.themes;
 }
 
 let cli: CliOptions;
@@ -114,34 +229,38 @@ if (cli.debug) {
     }
   }
 
-  const debugRiskLevel = cli.riskLevel ?? config.defaultRisk ?? "read-only";
-  const debugToolRegistry = new ToolRegistry([
-    createBashToolDefinition(),
-    createWriteToolDefinition(),
-    createEditToolDefinition(),
-    createTaskToolDefinition(),
-    createForkToolDefinition(),
-    createReadToolDefinition(),
-    createGrepToolDefinition(),
-    createListToolDefinition(),
-  ]);
-  printDebugInfo({
-    personas,
-    prompts,
-    bashCommands,
-    skills,
-    selectedPersona: debugPersona,
-    withContext: cli.withContext,
-    riskLevel: debugRiskLevel,
-    toolRegistry: debugToolRegistry,
-  });
-  process.exit(0);
+  const debugRiskLevel = cli.riskLevel ?? config.defaultRisk;
+  const debugSandboxConfig = cli.sandbox ? requireSandboxConfig(config) : undefined;
+  const debugBackend = cli.sandbox
+    ? await createSandboxBackend(config)
+    : { backend: createLocalToolExecutionBackend(), dispose: undefined };
+  const virtualBundle = buildVirtualBundle(config);
+
+  try {
+    const debugToolRegistry = ToolCatalog.createRegistry(debugBackend.backend);
+    printDebugInfo({
+      personas,
+      prompts,
+      bashCommands,
+      skills,
+      virtualBundle,
+      selectedPersona: debugPersona,
+      noAgentContextFiles: cli.noAgentContextFiles,
+      riskLevel: debugRiskLevel,
+      sandboxConfig: debugSandboxConfig,
+      sandboxInfo: debugSandboxConfig?.environmentInfo,
+      toolRegistry: debugToolRegistry,
+    });
+    process.exit(0);
+  } finally {
+    await debugBackend.dispose?.();
+  }
 }
 
 if (personas.length === 0) {
   // eslint-disable-next-line no-console
   console.error(
-    "error: no personas available. Add a custom persona in ~/.config/tau/personas or .tau/personas, or unset disableBuiltinPersonas.",
+    "no personas available. add a custom persona in ~/.config/tau/personas or .tau/personas, or unset disableBuiltinPersonas.",
   );
   process.exit(1);
 }
@@ -171,23 +290,39 @@ const initialRiskLevel = cli.riskLevel || config.defaultRisk;
 
 const initialUserMessage = await readPipedStdin();
 
+const sandboxBackend = cli.sandbox ? await createSandboxBackend(config) : undefined;
+
 const app = new ChatApp({
   personas,
   prompts,
   skills,
+  themes,
   bashCommands,
   initialPersonaId,
   initialUserMessage,
   initialRiskLevel,
-  withContext: cli.withContext,
-  themePreview: cli.themePreview,
+  noAgentContextFiles: cli.noAgentContextFiles,
   config,
+  sandboxEnabled: cli.sandbox,
+  toolBackend: sandboxBackend?.backend,
+  toolBackendDispose: sandboxBackend?.dispose,
 });
+
+let isShuttingDown = false;
+const shutdown = async (code = 0) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  await app.stop();
+  process.exit(code);
+};
+
+process.on("SIGINT", () => void shutdown(0));
+process.on("SIGTERM", () => void shutdown(0));
 
 try {
   await app.start();
 } catch (err) {
-  app.stop();
+  await app.stop();
   // eslint-disable-next-line no-console
   console.error(err);
   process.exit(1);

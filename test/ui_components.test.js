@@ -1,14 +1,18 @@
 import { visibleWidth } from "@mariozechner/pi-tui";
 import { expect, test } from "vitest";
-import { AppIntroComponent } from "../dist/ui/app_intro.js";
-import { AssistantMessageComponent } from "../dist/ui/assistant_message.js";
-import { CustomEditor } from "../dist/ui/custom_editor.js";
-import { FooterComponent } from "../dist/ui/footer.js";
-import { OneLineSegmentsComponent, truncateFromEndByWidth } from "../dist/ui/components/one_line_segments.js";
-import { QueuedMessagesComponent } from "../dist/ui/queued_messages.js";
-import { SessionDividerComponent } from "../dist/ui/session_divider.js";
-import { SessionSummaryComponent } from "../dist/ui/session_summary.js";
-import { UserMessageComponent } from "../dist/ui/user_message.js";
+import { AppIntroComponent } from "../dist/tui/ui/app_intro.js";
+import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
+import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
+import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
+import { FooterComponent } from "../dist/tui/ui/footer.js";
+import {
+  OneLineSegmentsComponent,
+  truncateFromEndByWidth,
+} from "../dist/tui/ui/components/one_line_segments.js";
+import { QueuedMessagesComponent } from "../dist/tui/ui/queued_messages.js";
+import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
+import { SessionSummaryComponent } from "../dist/tui/ui/session_summary.js";
+import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
 import stripAnsi from "strip-ansi";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
 
@@ -16,9 +20,21 @@ function stripTags(text) {
   return stripAnsi(text.replace(/<[^>]+>/g, ""));
 }
 
+function createToolView(label) {
+  return {
+    borderColor: (text) => text,
+    expanded: { title: label, sections: [] },
+    compact: { extraText: label },
+  };
+}
+
 test("AppIntroComponent renders header and help text", () => {
   const theme = createTagTheme();
-  const component = new AppIntroComponent(theme, "tau", "1.0.0", "help text");
+  const component = new AppIntroComponent(theme, {
+    appName: "tau",
+    version: "1.0.0",
+    helpText: "help text",
+  });
   const text = renderText(component, 80);
   expect(text).toContain("<brandAccent>tau</brandAccent>");
   expect(text).toContain("<textMuted>– terminal chat (v1.0.0)</textMuted>");
@@ -27,14 +43,14 @@ test("AppIntroComponent renders header and help text", () => {
 
 test("SessionDividerComponent renders a muted divider line", () => {
   const theme = createTagTheme();
-  const component = new SessionDividerComponent(theme, "new session");
+  const component = new SessionDividerComponent(theme, { label: "new session" });
   const lines = renderLines(component, 20);
   expect(lines[0]).toBe("<textMuted>── new session ─────</textMuted>");
 });
 
 test("SessionSummaryComponent renders borders and summary text", () => {
   const theme = createTagTheme();
-  const component = new SessionSummaryComponent(theme, "summary line");
+  const component = new SessionSummaryComponent(theme, { summary: "summary line" });
   const text = renderText(component, 200);
   expect(text).toContain("<brandAccent>context from previous session</brandAccent>");
   expect(text).toContain("<italic><textMuted>summary line</textMuted></italic>");
@@ -42,7 +58,10 @@ test("SessionSummaryComponent renders borders and summary text", () => {
 
 test("UserMessageComponent applies memory mode styling", () => {
   const theme = createTagTheme();
-  const component = new UserMessageComponent(theme, "remember this", { isMemoryMode: true });
+  const component = new UserMessageComponent(theme, {
+    text: "remember this",
+    isMemoryMode: true,
+  });
   const text = renderText(component, 60);
   expect(text).toContain("<userMemorySurface>");
   expect(text).toContain("<userMemoryText>remember this</userMemoryText>");
@@ -72,7 +91,7 @@ test("AssistantMessageComponent toggles thinking visibility", () => {
     ],
   };
 
-  component.updateFromMessage(message);
+  component.update({ type: "assistant", message });
   let text = renderText(component, 80);
   expect(text).not.toContain("hmm");
   expect(text).toContain("hello");
@@ -80,6 +99,23 @@ test("AssistantMessageComponent toggles thinking visibility", () => {
   component.setThinkingVisibility(true);
   text = renderText(component, 80);
   expect(text).toContain("hmm");
+});
+
+test("ChatContainerComponent hides empty assistant messages even when thoughts are visible", () => {
+  const theme = createTagTheme();
+  const container = new ChatContainerComponent(theme, true);
+  container.setCompactToolUi(true);
+
+  container.addMessage({ type: "tool", view: createToolView("tool a") });
+  container.addMessage({ type: "assistant_partial", text: "", thinking: "" });
+  container.addMessage({ type: "tool", view: createToolView("tool b") });
+
+  const lines = renderLines(container, 80);
+  const firstIndex = lines.indexOf("tool a");
+  const secondIndex = lines.indexOf("tool b");
+  const gap = lines.slice(firstIndex + 1, secondIndex);
+  const emptyLines = gap.filter((line) => line.trim() === "");
+  expect(emptyLines.length).toBe(1);
 });
 
 test("QueuedMessagesComponent renders numbered, italicized previews", () => {
@@ -173,6 +209,26 @@ test("CustomEditor preserves leading indentation for wrapped lines", () => {
   const secondLine = contentLines.find((line) => line.includes("second line"));
   expect(secondLine).toBeDefined();
   expect(secondLine).toContain("│  - this is the second line");
+});
+
+test("CustomEditor caps height and scrolls within the viewport", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  editor.setMaxVisibleLines(6);
+
+  const linesInput = Array.from({ length: 12 }, (_, i) => {
+    const label = String(i + 1).padStart(2, "0");
+    return `line-${label}`;
+  }).join("\n");
+
+  editor.setText(linesInput);
+
+  const lines = editor.render(40).map(stripTags);
+  expect(lines).toHaveLength(6);
+
+  const content = lines.slice(1, -1).join("\n");
+  expect(content).toContain("line-12");
+  expect(content).not.toContain("line-01");
 });
 
 test("CustomEditor strips ANSI sequences from input", () => {

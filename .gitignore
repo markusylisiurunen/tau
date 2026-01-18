@@ -1,5 +1,5 @@
 .tau/config.json
 dist/
 node_modules/
-src/version.ts
+src/core/version.ts
 *.tsbuildinfo

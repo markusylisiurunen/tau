@@ -1,4 +1,4 @@
-import { createUiTheme } from "../dist/ui/theme.js";
+import { createUiTheme } from "../dist/tui/ui/theme/index.js";
 
 export function createTagTheme() {
   return createUiTheme("tags");

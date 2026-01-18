@@ -34,15 +34,37 @@ environment variables take precedence over the config file.
 
 `parallel` is only needed for the web sub-agent tools (`web_search`/`web_fetch`).
 
+### OpenAI Codex subscription (ChatGPT Plus/Pro)
+
+to use the OpenAI Codex subscription provider (`openai-codex`), run:
+
+```sh
+tau login openai-codex
+```
+
+this prints a login URL and starts a local callback server on `127.0.0.1:1455`. complete the
+login in your browser and tau will store tokens in `~/.config/tau/auth.json`. if port `1455`
+is already in use, or the browser callback fails, tau will prompt you to paste the redirect
+URL/code. if you see token refresh errors later, run the login command again to re-authenticate.
+
+to remove stored credentials:
+
+```sh
+tau logout openai-codex
+```
+
+`openai-codex` does **not** use `OPENAI_API_KEY` or `apiKeys.openai`; it relies on the OAuth
+tokens in `~/.config/tau/auth.json`.
+
 ## security notice
 
 **the risk level system is a UX guardrail, not a hard security boundary.** it helps prevent accidental writes and guides model behavior, but it has significant limitations:
 
 - **model trust**: the bash tool relies on the model honestly declaring whether a command is a read or write. there's no runtime validation that the command actually matches the declared intent. a model could declare `safetyLevel="read"` while running `rm -rf /`.
 - **no command analysis**: the system doesn't inspect command content. it trusts the declared safety level without verifying what the command actually does.
-- **full system access**: there is no sandboxing or directory restriction. the model can access any file on your system that your user account can read or write, not just the current working directory.
+- **full system access (by default)**: without sandboxing, the model can access any file on your system that your user account can read or write, not just the current working directory. use `--sandbox` to run tool calls inside a docker container with the project mounted.
 - **no tty / non-interactive tools**: tool commands run with stdin ignored and no TTY. anything that prompts for input or opens an editor can hang or fail (for example `sudo`, `ssh` password prompts, `git` credential prompts). tau also forces git into non-interactive mode (no prompt/editor/pager, batch-mode ssh).
-- **user bypasses**: the `!` prefix executes shell commands directly, completely bypassing risk level checks. this is intentional for direct use, but means risk levels only constrain the model, not the user.
+- **user bypasses**: the `!` prefix executes shell commands directly and completely bypasses risk level checks. this is intentional for direct use, but means risk levels only constrain the model, not the user. when `--sandbox` is enabled, these commands still run inside the sandbox.
 
 note that there is no confirmation step before tool execution. the model runs commands immediately, and you can only observe the results after the fact.
 
@@ -58,22 +80,48 @@ npm run build
 npm start
 ```
 
-## theme preview
+`npm start` launches the interactive TUI and expects a real terminal.
 
-run a model-free UI preview for theme iteration:
+## themes
 
-```sh
-tau --theme-preview
+tau can load custom palette overrides from theme files. create a theme at:
+
+- `.tau/themes/<id>.json` (project)
+- `~/.config/tau/themes/<id>.json` (global)
+
+then set `"defaultTheme": "<id>"` in config. any palette token not defined in the file renders as plain text.
+theme values accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, or `hsl(h, s%, l%)`. hex without `#` is ignored.
+
+available palette tokens (theme keys):
+
+- core: `brandAccent`, `textMuted`, `textDim`, `linkText`, `thinkingText`, `codeInlineText`, `codeBlockText`
+- status: `statusWarn`, `statusError`, `modeMemory`, `modeBash`
+- action: `actionRunning`, `actionSuccess`, `actionError`, `actionOutput`
+- diff: `diffAdd`, `diffRemove`
+- toasts: `toastSuccess`, `toastWarn`, `toastError`, `toastSuccessBg`, `toastWarnBg`, `toastErrorBg`, `toastMutedBg`
+- user: `userSurface`, `userMemorySurface`, `userMemoryText`
+- risk: `riskReadOnlyText`, `riskReadWriteText`
+
+example theme file (`.tau/themes/solarized.json`):
+
+```json
+{
+  "brandAccent": "#b58900",
+  "textMuted": "#586e75",
+  "textDim": "#657b83"
+}
 ```
 
-theme preview renders a fixed set of UI fixtures and disables model calls so you can tweak colors and spacing
-without asking the model for visible content.
+and in config (`.tau/config.json` or `~/.config/tau/config.json`):
+
+```json
+{ "defaultTheme": "solarized" }
+```
 
 ## risk levels
 
 tau uses risk levels to control what the model can do. this lets you stay in control while working alongside AI.
 
-- **restricted**: model can only use safe inspection tools (`read`, `grep`, `list`)
 - **read-only** (default): model can run read-only tools (no file modifications)
 - **read-write**: model can create, edit, and delete files
 
@@ -83,18 +131,42 @@ start with a specific risk level:
 tau --risk read-write
 ```
 
-or change it during a session with `/risk:restricted`, `/risk:read-only`, or `/risk:read-write`.
+or change it during a session with `/risk:read-only` or `/risk:read-write`.
 
 the default is read-only because it lets the model investigate your code and answer questions without risk of unintended changes. bump it to read-write when you're ready to let the model make edits.
 
-custom personas (loaded from disk) only allow `read-only` and `read-write` risk levels. if you try to use `restricted` with a custom persona, tau will keep the risk level at `read-only`.
+## sandboxing
+
+when started with `--sandbox`, tau runs all tool calls inside a session-scoped docker container. the project root (git root or cwd) is mounted into the container, and the working directory matches your current subdirectory.
+
+requirements:
+- docker must be available on the host
+- config must include `sandbox.image`
+- sandboxing is only enabled at startup with `--sandbox` (no runtime toggle)
+
+example config:
+
+```json
+{
+  "sandbox": {
+    "image": "ghcr.io/your-org/tau-sandbox:latest",
+    "mountPath": "/workspace",
+    "pruneAfterHours": 72,
+    "extraDockerArgs": ["--network=none"],
+    "environmentInfo": "tools run inside a container. project mounted at /workspace."
+  }
+}
+```
+
+note: when `--sandbox` is enabled, `!` commands also run inside the container.
 
 ## personas
 
 tau comes with several built-in personas across different models:
 
 - **Claude Opus 4.5** and **Haiku 4.5** (Anthropic)
-- **GPT-5.2** and **GPT-5.2 Codex** (OpenAI)
+- **GPT-5.2** and **GPT-5.2 flex** (OpenAI)
+- **GPT-5.2 Codex** (OpenAI Codex subscription)
 - **Gemini 3 Pro** and **Gemini 3 Flash** (Google)
 
 each model has two variants: a chat variant for general-purpose assistance, and a coder variant optimized for software engineering. GPT-5.2 Codex is a single coder persona. both variants include the `web` sub-agent for web research, and coder variants also include the `explore` sub-agent for multi-turn codebase investigation.
@@ -112,9 +184,9 @@ some personas can run isolated sub-agents via the internal `task` tool.
 tau also supports an internal `fork` tool, which runs an autonomous fork of the current session using the full conversation history and returns the fork's final answer.
 
 - `explore`: read-only, multi-turn codebase investigation
-- `web`: high-threshold web research using Parallel Search/Extract (`web_search`/`web_fetch`)
+- `web`: high-threshold web research using Parallel Search/Extract (`web_search`/`web_fetch`) plus read-only bash for curl/filtering
 
-to use the web sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when needed or when you explicitly ask for web research.
+to use the web sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when you explicitly ask for web research.
 
 ## trigger sensitivity
 
@@ -145,18 +217,18 @@ reference skills by typing `$` followed by the skill name (for example, `$skill-
 you can also pipe content directly:
 
 ```sh
-cat src/app.ts | tau --persona opus-4.5-chat
+cat src/tui/app.ts | tau --persona opus-4.5-chat
 ```
 
-for project-aware sessions, use `--with-context` to inject your AGENTS.md into the system prompt. tau searches for this file in the current directory and parent directories up to your home folder.
+by default, tau injects your AGENTS.md into the system prompt. use `--no-agent-context-files` to disable this behavior. tau searches for AGENTS.md in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home).
 
-you can also include additional `AGENTS.md` files via `.tau/config.json` (when that config is in scope for the current working directory):
+you can also include additional `AGENTS.md` files via config (when that config is in scope for the current working directory):
 
 ```json
-{ "agents": ["packages/pkg1/AGENTS.md"] }
+{ "agentContextFiles": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/`.
+paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
 
 run `tau --help` to see all available options, or `tau --debug` to inspect loaded personas, prompts, skills, and the full system prompt for debugging configuration issues.
 
@@ -168,7 +240,7 @@ prefix a message with `#` to update your project's AGENTS.md file. this is usefu
 # prefer explicit error messages with context about what operation failed
 ```
 
-tau will create or update AGENTS.md at your project root, integrating the new information into the existing structure. over time, this builds a knowledge base about your project. combine it with `--with-context` so future sessions understand your conventions without re-explaining them.
+tau will create or update AGENTS.md at your project root, integrating the new information into the existing structure. over time, this builds a knowledge base about your project. this file is loaded automatically in future sessions unless you pass `--no-agent-context-files`.
 
 ## commands
 
@@ -181,14 +253,15 @@ tau supports slash commands for common actions:
 | `/copy`                   | copy the last assistant message                |
 | `/copy:code`              | copy just the code blocks                      |
 | `/export:html`            | export chat history to html                    |
-| `/reload`                 | reload personas, prompts, and skills from disk |
+| `/reload`                 | reload personas, prompts, skills, and themes from disk |
 | `/compact:only-summary`   | compress history and continue with a summary   |
 | `/compact:with-last-turn` | compress history but keep the last exchange    |
 | `/persona:<id>`           | switch to a different persona                  |
 | `/prompt:<id>`            | insert a saved prompt template                 |
+| `/theme:<id>`             | switch to a loaded theme                       |
 | `/bash:<id>`              | run a saved shell command                      |
 | `/risk:<level>`           | change the risk level                          |
-| `!<cmd>`                  | run a shell command directly                   |
+| `!<cmd>`                  | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
 
 the compact commands are useful when conversations get long. they compress everything into a summary so the model retains context without the overhead of a full history.
 
@@ -211,7 +284,10 @@ the compact commands are useful when conversations get long. they compress every
 
 ### global config
 
-store settings in `~/.config/tau/config.json`:
+tau loads config from `~/.config/tau/config.json` only when the current working directory is
+inside your home directory. it also loads any `.tau/config.json` found by walking up from the
+current working directory to home (or to the filesystem root when cwd is outside home).
+settings merge from least-specific to most-specific.
 
 ```json
 {
@@ -223,29 +299,27 @@ store settings in `~/.config/tau/config.json`:
   },
   "defaultPersona": "gpt-5.2-chat",
   "defaultRisk": "read-write",
-  "toolDisplayMode": "compact",
   "disableBuiltinPersonas": false,
-  "userPreferences": "prefer concise responses. use TypeScript for examples."
+  "disableBuiltinPrompts": false,
+  "defaultTheme": "solarized"
 }
 ```
 
 the `defaultPersona` field specifies which persona to use when starting the app. the `--persona` flag overrides this setting.
 
-the `defaultRisk` field sets the initial risk level (`restricted`, `read-only`, or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
+the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 
-the `userPreferences` field lets you set guidance that applies to every conversation: preferred languages, response style, or domain context.
+if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinPrompts` is set to `true`, tau will not load built-in prompts. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 
-`toolDisplayMode` controls how tool calls appear: `"compact"` (default) shows one-line summaries, `"full"` shows detailed blocks.
-
-if `disableBuiltinPersonas` is set to `true`, tau will not load any built-in personas. only personas from `~/.config/tau/personas/` and `.tau/personas/` will be available. you can also set `disableBuiltinPersonas` in `.tau/config.json` at the repo root to disable built-ins for that project (overrides the global value).
+the `sandbox` field configures docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `72`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
 
 ### project bash commands
 
-define shortcuts for common shell commands in `.tau/config.json` at your project root (or `~/.tau/config.json` globally). tau resolves the project root via git, so you can run tau from subdirectories and it will still pick up `.tau/config.json`:
+define shortcuts for common shell commands in any in-scope config file (`~/.config/tau/config.json` when cwd is under home, or `.tau/config.json` in the cwd ancestry). entries merge by `id` with the most specific level winning:
 
 ```json
 {
-  "bash": [
+  "bashCommands": [
     { "id": "check", "description": "lint + typecheck", "cmd": "npm run check" },
     { "id": "test", "cmd": "npm test" }
   ]
@@ -256,17 +330,18 @@ run them with `/bash:check` or `/bash:test`.
 
 ### additional agents context
 
-if you use `--with-context`, you can tell tau to always include extra `AGENTS.md` files by adding an `agents` list to `.tau/config.json`:
+you can tell tau to always include extra `AGENTS.md` files by adding an `agentContextFiles` list to a config file in scope:
 
 ```json
-{ "agents": ["packages/pkg1/AGENTS.md"] }
+{ "agentContextFiles": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/`.
+paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries must point at `AGENTS.md`.
+entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
 
 ### custom personas
 
-create your own personas by adding markdown files to `~/.config/tau/personas/` (user-level) or `.tau/personas/` (project-level). project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root:
+create your own personas by adding markdown files to `~/.config/tau/personas/` (global, only when cwd is under home) or `.tau/personas/` (project). `.tau/` directories are discovered by walking up from the current working directory to home (or filesystem root if cwd is outside home):
 
 ```markdown
 ---
@@ -285,6 +360,8 @@ the frontmatter defines the persona. required fields:
 - `provider`: model provider id (for example `openai`, `anthropic`, `google`)
 - `model`: model id for the provider (for example `gpt-5.2`, `claude-opus-4-5`)
 
+the persona file name (without the `.md` extension) must match the `id`.
+
 optional frontmatter fields:
 
 - `label`: display name shown in the ui (defaults to the base persona label if `extends` is used)
@@ -301,7 +378,7 @@ optional frontmatter fields:
       model: claude-haiku-4-5
       reasoning: medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `read`, `list`, `grep`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
 
 the markdown body becomes the system prompt.
 
@@ -319,11 +396,11 @@ model: claude-haiku-4-5
 
 ```
 
-by default, user-level personas can’t use built-in persona ids. if you set `disableBuiltinPersonas: true`, those ids become available for custom personas.
+when persona ids collide across levels, the most specific level wins (for example, a `.tau/personas/` entry overrides a global or built-in persona).
 
 ### custom prompts
 
-save reusable prompt templates in `~/.config/tau/prompts/` (user-level) or `.tau/prompts/` (project-level). project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root:
+save reusable prompt templates in `~/.config/tau/prompts/` (global, only when cwd is under home) or `.tau/prompts/` (project). `.tau/` directories are discovered by walking up from the current working directory to home (or filesystem root if cwd is outside home):
 
 ```markdown
 ---
@@ -334,11 +411,13 @@ review this code for bugs, edge cases, and style issues.
 suggest specific improvements with code examples.
 ```
 
-insert them with `/prompt:review`. if a project prompt id conflicts with a user or built-in prompt, the project prompt wins.
+insert them with `/prompt:review`. if a prompt id conflicts across levels (including built-ins), the most specific level wins.
+
+the prompt file name (without the `.md` extension) must match the `id`.
 
 ### skills
 
-skills are optional directories discovered at `$XDG_CONFIG_HOME/tau/skills/` (defaults to `~/.config/tau/skills/`) and `.tau/skills/`. project-level `.tau/` directories are discovered by walking up from the current working directory to the git repo root. each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
+skills are optional directories discovered at `~/.config/tau/skills/` (only when cwd is under home) and `.tau/skills/` in the cwd ancestry (up to home, or filesystem root if cwd is outside home). each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
 
 `SKILL.md` must start with yaml frontmatter:
 
@@ -349,7 +428,7 @@ optional fields: `license`, `compatibility` (<=500 chars), `metadata` (string ma
 
 enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), or use `"*"` to enable all discovered skills. all built-in personas have `skills: "*"` by default. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
 
-use `/reload` to pick up changes to personas, prompts, and skills without restarting.
+use `/reload` to pick up changes to personas, prompts, skills, and themes without restarting.
 
 ## how it works
 

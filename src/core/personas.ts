@@ -179,7 +179,7 @@ type PersonaSpec = {
   model: Persona["model"];
   allowedReasoningLevels: NonNullable<Persona["allowedReasoningLevels"]>;
   settings: Persona["settings"];
-  skills?: string[];
+  skills?: string[] | "*";
   subagents?: Partial<
     Record<
       "explore" | "web",
@@ -315,7 +315,7 @@ function pickExploreReasoning(allowed: ReasoningEffort[]): ReasoningEffort {
 
 function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   const config = VARIANT_CONFIG[variant];
-  const skills = "*";
+  const skills = spec.skills ?? "*";
   const settings = structuredClone(spec.settings);
   const { serviceTier: _serviceTier, ...subagentSettings } = settings;
 

@@ -18,7 +18,7 @@ export type AuthStorageData = Record<string, AuthCredential>;
 
 export class AuthStorage {
   private data: AuthStorageData = {};
-  private refreshLocks = new Map<string, Promise<string | undefined>>();
+  private static refreshLocks = new Map<string, Promise<string | undefined>>();
 
   constructor(private readonly authPath: string) {
     this.reload();
@@ -108,15 +108,16 @@ export class AuthStorage {
     provider: string,
     action: () => Promise<string | undefined>,
   ): Promise<string | undefined> {
-    const existing = this.refreshLocks.get(provider);
+    const lockKey = `${this.authPath}:${provider}`;
+    const existing = AuthStorage.refreshLocks.get(lockKey);
     if (existing) {
       return existing;
     }
 
     const inFlight = action().finally(() => {
-      this.refreshLocks.delete(provider);
+      AuthStorage.refreshLocks.delete(lockKey);
     });
-    this.refreshLocks.set(provider, inFlight);
+    AuthStorage.refreshLocks.set(lockKey, inFlight);
     return inFlight;
   }
 }

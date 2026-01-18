@@ -59,7 +59,12 @@ function resolveProvider(
 ): OAuthProvider | undefined {
   if (!providerArg) return undefined;
   const normalized = normalizeProvider(providerArg);
-  return providers.find((provider) => provider.id === normalized)?.id;
+  const resolved = providers.find((provider) => provider.id === normalized)?.id;
+  if (!resolved) {
+    const available = providers.map((entry) => entry.id).join(", ");
+    throw new Error(`unknown provider "${providerArg}". available: ${available}`);
+  }
+  return resolved;
 }
 
 export async function runLoginCommand(options: {

@@ -154,6 +154,16 @@ try {
   skills = runtime.skills;
   themes = runtime.themes;
   bashCommands = runtime.bashCommands;
+  if (runtime.warnings.length > 0) {
+    // eslint-disable-next-line no-console
+    console.error("config warnings:");
+    for (const warning of runtime.warnings) {
+      // eslint-disable-next-line no-console
+      console.error(`- ${warning}`);
+    }
+    // eslint-disable-next-line no-console
+    console.error("");
+  }
 } catch (err) {
   // Safeguard: loadRuntimeConfig should not throw, but wrap to ensure tau --help works
   // eslint-disable-next-line no-console

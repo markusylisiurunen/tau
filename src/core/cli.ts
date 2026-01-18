@@ -49,7 +49,10 @@ export function parsePersonaString(
   }
 
   const personaValue = trimmed.slice(0, colonIndex);
-  const reasoningValue = trimmed.slice(colonIndex + 1).toLowerCase();
+  const reasoningValue = trimmed
+    .slice(colonIndex + 1)
+    .trim()
+    .toLowerCase();
   const personaId = resolvePersonaId(personaValue, personas);
   const reasoning = (REASONING_LEVELS as string[]).includes(reasoningValue)
     ? (reasoningValue as ReasoningEffort)
@@ -142,6 +145,22 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
         const available = personas.map((p) => p.id).join(", ");
         throw new CliError(`unknown persona '${personaValue}'. available personas: ${available}`);
       }
+      const colonIndex = value.indexOf(":");
+      if (colonIndex !== -1) {
+        const reasoningValue = value
+          .slice(colonIndex + 1)
+          .trim()
+          .toLowerCase();
+        if (!reasoningValue) {
+          throw new CliError("missing reasoning level after ':' in --persona");
+        }
+        if (parsed.reasoning === undefined) {
+          const allowed = [...REASONING_LEVELS].join(", ");
+          throw new CliError(
+            `invalid reasoning level '${reasoningValue}'. allowed levels: ${allowed}`,
+          );
+        }
+      }
       personaId = parsed.personaId;
       if (parsed.reasoning !== undefined) {
         reasoningOverride = parsed.reasoning;
@@ -177,7 +196,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
 
 export function printHelp(personas: Persona[]): void {
   const personaList = personas.map((p) => p.id).join(", ");
-  const reasoningList = [...REASONING_LEVELS, "default"].join(", ");
+  const reasoningList = REASONING_LEVELS.join(", ");
   const riskList = RiskLevelSchema.options.join(", ");
 
   console.log(

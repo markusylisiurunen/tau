@@ -50,7 +50,7 @@ describe("custom personas", () => {
     try {
       mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
       writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "clone.md"),
+        join(fx.home, ".config", "tau", "personas", "haiku-clone-of-gpt-coder.md"),
         [
           "---",
           "id: haiku-clone-of-gpt-coder",
@@ -96,7 +96,7 @@ describe("custom personas", () => {
     try {
       mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
       writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "override.md"),
+        join(fx.home, ".config", "tau", "personas", "gpt-5.2-chat.md"),
         [
           "---",
           "id: gpt-5.2-chat",

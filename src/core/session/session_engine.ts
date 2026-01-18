@@ -129,6 +129,7 @@ export class SessionEngine {
         history: [...this.messages],
         systemPrompt: this.systemPrompt,
         toolRegistry: this.toolRegistry,
+        authPath: this.authPath,
       };
 
       for await (const event of runToolCalls({

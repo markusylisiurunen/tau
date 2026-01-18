@@ -1,5 +1,6 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 import { getOAuthApiKey, type OAuthCredentials, type OAuthProvider } from "@mariozechner/pi-ai";
 
 export type ApiKeyCredential = {
@@ -17,6 +18,7 @@ export type AuthStorageData = Record<string, AuthCredential>;
 
 export class AuthStorage {
   private data: AuthStorageData = {};
+  private refreshLocks = new Map<string, Promise<string | undefined>>();
 
   constructor(private readonly authPath: string) {
     this.reload();
@@ -42,7 +44,9 @@ export class AuthStorage {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
 
-    writeFileSync(this.authPath, JSON.stringify(this.data, null, 2), "utf-8");
+    const tmpPath = `${this.authPath}.${randomUUID()}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify(this.data, null, 2), { encoding: "utf-8", mode: 0o600 });
+    renameSync(tmpPath, this.authPath);
     chmodSync(this.authPath, 0o600);
   }
 
@@ -69,33 +73,50 @@ export class AuthStorage {
   }
 
   async getApiKey(provider: string): Promise<string | undefined> {
-    this.reload();
+    return this.withRefreshLock(provider, async () => {
+      this.reload();
 
-    // Note: no file locking; concurrent refreshes may race.
-    const credential = this.data[provider];
-    if (!credential) {
-      return undefined;
-    }
-
-    if (credential.type === "api_key") {
-      return credential.key;
-    }
-
-    const oauthCredentials: Record<string, OAuthCredentials> = {};
-    for (const [key, value] of Object.entries(this.data)) {
-      if (value.type === "oauth") {
-        oauthCredentials[key] = value;
+      const credential = this.data[provider];
+      if (!credential) {
+        return undefined;
       }
+
+      if (credential.type === "api_key") {
+        return credential.key;
+      }
+
+      const oauthCredentials: Record<string, OAuthCredentials> = {};
+      for (const [key, value] of Object.entries(this.data)) {
+        if (value.type === "oauth") {
+          oauthCredentials[key] = value;
+        }
+      }
+
+      const result = await getOAuthApiKey(provider as OAuthProvider, oauthCredentials);
+      if (!result) {
+        return undefined;
+      }
+
+      this.data[provider] = { type: "oauth", ...result.newCredentials };
+      this.save();
+
+      return result.apiKey;
+    });
+  }
+
+  private async withRefreshLock(
+    provider: string,
+    action: () => Promise<string | undefined>,
+  ): Promise<string | undefined> {
+    const existing = this.refreshLocks.get(provider);
+    if (existing) {
+      return existing;
     }
 
-    const result = await getOAuthApiKey(provider as OAuthProvider, oauthCredentials);
-    if (!result) {
-      return undefined;
-    }
-
-    this.data[provider] = { type: "oauth", ...result.newCredentials };
-    this.save();
-
-    return result.apiKey;
+    const inFlight = action().finally(() => {
+      this.refreshLocks.delete(provider);
+    });
+    this.refreshLocks.set(provider, inFlight);
+    return inFlight;
   }
 }

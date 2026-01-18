@@ -67,12 +67,13 @@ export async function runSubagentToCompletion(options: {
   personaConfig: SubagentPersonaConfig;
   prompt: string;
   config: Config;
+  authPath?: string;
   backend?: ToolExecutionBackend;
   signal: AbortSignal;
   onProgress?: (event: SubagentProgressEvent) => void;
 }): Promise<SubagentRunResult> {
   const { definition, personaConfig, prompt, config, signal, onProgress } = options;
-  const authPath = getAuthPath();
+  const authPath = options.authPath ?? getAuthPath();
   const authStorage = new AuthStorage(authPath);
   const credentialResolver: CredentialResolver = createCredentialResolver({
     authStorage,

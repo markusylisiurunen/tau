@@ -173,6 +173,7 @@ export type ToolDispatchContext = {
   history: readonly Message[];
   systemPrompt: string;
   toolRegistry: ToolRegistry;
+  authPath?: string;
 };
 
 export interface ToolDefinition {

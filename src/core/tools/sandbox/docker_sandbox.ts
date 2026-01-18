@@ -48,6 +48,7 @@ function resolveSandboxPath(
   options?: { mustExist?: boolean },
 ): ResolvedPath {
   const cleaned = rawPath.trim() || ".";
+  const rootResolved = realpathSync(rootReal);
 
   if (cleaned.includes("\0")) {
     throw new Error("Invalid path: contains null byte.");
@@ -57,21 +58,26 @@ function resolveSandboxPath(
     throw new Error("Invalid path: '..' traversal is not allowed.");
   }
 
-  const absPath = isAbsolute(cleaned) ? resolve(cleaned) : resolve(rootReal, cleaned);
+  const absPath = isAbsolute(cleaned) ? resolve(cleaned) : resolve(rootResolved, cleaned);
 
-  if (isOutsideRoot(rootReal, absPath)) {
+  if (isOutsideRoot(rootResolved, absPath)) {
     throw new Error("Path is outside the allowed root.");
   }
 
   if (options?.mustExist) {
     const realPath = realpathSync(absPath);
-    if (isOutsideRoot(rootReal, realPath)) {
+    if (isOutsideRoot(rootResolved, realPath)) {
       throw new Error("Path resolves outside the allowed root.");
     }
-    return { rootReal, absPath, realPath, relPath: relative(rootReal, realPath) || "." };
+    return { rootReal: rootResolved, absPath, realPath, relPath: relative(rootResolved, realPath) || "." };
   }
 
-  return { rootReal, absPath, realPath: absPath, relPath: relative(rootReal, absPath) || "." };
+  return {
+    rootReal: rootResolved,
+    absPath,
+    realPath: absPath,
+    relPath: relative(rootResolved, absPath) || ".",
+  };
 }
 
 function resolveSandboxFilePath(rawPath: string, rootReal: string): ResolvedPath {

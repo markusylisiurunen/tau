@@ -163,6 +163,7 @@ export function createTaskToolDefinition(backend: ToolExecutionBackend): ToolDef
             personaConfig,
             prompt,
             config: context.config,
+            authPath: context.authPath,
             backend,
             signal: signal ?? new AbortController().signal,
             onProgress: (e) => pushProgress(e.text, e.costTotal, e.turns, e.toolCalls),

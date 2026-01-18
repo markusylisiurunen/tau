@@ -69,7 +69,12 @@ function resolveSandboxPath(
     if (isOutsideRoot(rootResolved, realPath)) {
       throw new Error("Path resolves outside the allowed root.");
     }
-    return { rootReal: rootResolved, absPath, realPath, relPath: relative(rootResolved, realPath) || "." };
+    return {
+      rootReal: rootResolved,
+      absPath,
+      realPath,
+      relPath: relative(rootResolved, realPath) || ".",
+    };
   }
 
   return {

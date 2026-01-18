@@ -159,8 +159,8 @@ describe("loadConfig", () => {
         extraDockerArgs: ["--network=none"],
       });
       expect(config.bashCommands).toEqual([
-        { id: "check", cmd: "repo check" },
-        { id: "test", cmd: "nested test" },
+        { id: "check", cmd: "repo check", cwd: repo },
+        { id: "test", cmd: "nested test", cwd: nested },
       ]);
       expect(config.agentContextFiles).toEqual([
         join(fx.home, "AGENTS.md"),

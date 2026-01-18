@@ -26,27 +26,64 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 ## Key modules
 
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
-- `src/core/personas.ts` - Built-in persona definitions and system prompt blocks
-- `src/core/config/runtime.ts` - Runtime config loader (config + content)
-- `src/core/config/paths.ts` - Config path resolution and layered search roots
-- `src/core/commands/registry.ts` - Slash command parsing and dispatch
-- `src/core/events/` - Core event protocol types and serialization
-- `src/core/modes/` - Mode adapter interfaces and RPC stub
-- `src/core/session/` - Turn processing and message accumulation
-- `src/core/tools/catalog.ts` - Tool registry construction
-- `src/core/tools/execution_backend.ts` - Tool execution backend abstraction + local implementation
-- `src/core/tools/` - Tool implementations (bash, write, edit, task, fork, web_search, web_fetch)
-- `src/core/subagents/` - Isolated agent execution (`explore`, `web`) and runtime (`src/core/subagents/subagent_engine.ts`)
-- `src/tui/ui/` - Terminal components, themes, autocomplete
-- `src/tui/chat_controller.ts` - UI-agnostic controller for session orchestration
-- `src/tui/chat_view.ts` - TUI view adapter used by ChatApp
-- `src/tui/ui/chat_message_model.ts` - Message view models and renderer for the chat UI
-- `src/tui/ui/tool_output.ts` - Shared tool output layout primitives
-- `src/tui/ui/tool_ui_registry.ts` - Tool UI renderer registry
-- `src/tui/tool_ui_router.ts` - Tool UI event sequencing and routing
-- `src/core/utils/project_files.ts` - Project file discovery for `@file` autocomplete
-- `src/core/utils/tool_preview.ts` - Tool UI preview truncation helpers used by core tools
-- `src/core/utils/` - Helpers for truncation, fuzzy matching, context building
+- `src/core/`
+  - `personas.ts` - Built-in persona definitions and system prompt blocks
+  - `prompts.ts` - Built-in prompt templates
+  - `types.ts` - Core types and reasoning levels
+  - `commands/registry.ts` - Slash command parsing and dispatch
+  - `cli.ts` - CLI argument parsing and help text
+  - `debug.ts` - `--debug` output
+  - `config/deps.ts` - Config loader dependencies
+  - `config/paths.ts` - Config level discovery
+  - `config/bash_commands.ts` - Bash command parsing and merge rules
+  - `config/runtime.ts` - Runtime config loader (config + content)
+  - `config/virtual_bundle.ts` - Built-in content bundling
+  - `config/virtual_defaults.ts` - Built-in default content
+  - `config/content_loader.ts` - Load personas, prompts, skills, themes
+  - `config/schema.ts` - Config schema and merge rules
+  - `auth/cli.ts` - login/logout flows
+  - `auth/auth_storage.ts` - Credential storage and refresh
+  - `auth/credential_resolver.ts` - API key resolution
+  - `auth/auth_paths.ts` - Auth file path resolution
+  - `auth/auth_messages.ts` - Auth error messaging
+  - `auth/codex_prompt.ts` - Codex system prompt handling
+  - `events/` - Core event protocol types and serialization
+  - `session/` - Turn processing, streaming, and tool dispatch
+  - `tools/` - Tool definitions and registry (bash, read, write, edit, list, grep, task, fork, web_search, web_fetch)
+  - `tools/execution_backend.ts` - Local and sandbox tool backends
+  - `tools/sandbox/docker_sandbox.ts` - Docker sandbox runner
+  - `subagents/` - Explore/web subagents and runner
+  - `modes/` - ModeAdapter interface and RPC stub
+  - `runtime/deps.ts` - Core dependency injection
+  - `utils/context_builder.ts` - System prompt assembly
+  - `utils/agents_files.ts` - AGENTS.md discovery
+  - `utils/project_files.ts` - Project file discovery for `@file` autocomplete
+  - `utils/tool_preview.ts` - Tool UI preview truncation
+  - `utils/truncate.ts` - Truncation helpers
+  - `utils/model_stream.ts` - Model streaming wrapper
+  - `utils/restricted_fs.ts` - Restricted filesystem helpers
+  - `utils/spawn_capture.ts` - Process capture helper
+  - `utils/sanitize_env.ts` - Environment sanitization
+  - `utils/token.ts` - Token heuristics
+  - `utils/streaming_settings.ts` - Streaming config parsing
+  - `utils/fuzzy.ts` - Fuzzy matching for autocomplete
+  - `utils/format.ts` - Display formatting
+  - `utils/git.ts` - Git helpers
+  - `utils/messages.ts` - Message helpers
+- `src/tui/`
+  - `app.ts` - ChatApp wiring
+  - `chat_controller.ts` - UI-agnostic controller for session orchestration
+  - `chat_view.ts` - TUI view adapter used by ChatApp
+  - `tool_ui_router.ts` - Tool UI event sequencing and routing
+  - `terminal.ts` - Terminal adapter
+  - `clipboard.ts` - Clipboard helper
+  - `export/` - HTML export pipeline
+  - `ui/` - Terminal UI surface (messages, tool output, editor, autocomplete)
+  - `ui/components/` - Editor and layout primitives
+  - `ui/theme/` - Theme tokens, palette, and renderer
+  - `ui/chat_message_model.ts` - Message view models and renderer for the chat UI
+  - `ui/tool_output.ts` - Shared tool output layout primitives
+  - `ui/tool_ui_registry.ts` - Tool UI renderer registry
 
 ## Tool system
 
@@ -76,7 +113,7 @@ Risk levels (`read-only`, `read-write`) gate model tool calls. The model declare
 - The TUI only styles output: compact uses `previewText` + `statusLine`, expanded uses raw `fullText`.
 - Current preview shapes: bash uses head/tail output plus a status line; write shows up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
 
-**Subagent-only tools**: the `web` subagent uses `web_search` and `web_fetch` (see `src/core/tools/web_search.ts`, `src/core/tools/web_fetch.ts`) via the subagent tool registry in `src/core/subagents/subagent_engine.ts`.
+**Subagent-only tools**: the `web` subagent uses `web_search`, `web_fetch`, and read-only `bash` (see `src/core/tools/web_search.ts`, `src/core/tools/web_fetch.ts`) via the subagent tool registry in `src/core/subagents/subagent_engine.ts`.
 
 ## Personas and subagents
 

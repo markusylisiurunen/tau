@@ -44,8 +44,8 @@ tau login openai-codex
 
 this prints a login URL and starts a local callback server on `127.0.0.1:1455`. complete the
 login in your browser and tau will store tokens in `~/.config/tau/auth.json`. if port `1455`
-is already in use, the login flow fails (no manual paste fallback). if you see token refresh
-errors later, run the login command again to re-authenticate.
+is already in use, or the browser callback fails, tau will prompt you to paste the redirect
+URL/code. if you see token refresh errors later, run the login command again to re-authenticate.
 
 to remove stored credentials:
 
@@ -174,7 +174,7 @@ some personas can run isolated sub-agents via the internal `task` tool.
 tau also supports an internal `fork` tool, which runs an autonomous fork of the current session using the full conversation history and returns the fork's final answer.
 
 - `explore`: read-only, multi-turn codebase investigation
-- `web`: high-threshold web research using Parallel Search/Extract (`web_search`/`web_fetch`)
+- `web`: high-threshold web research using Parallel Search/Extract (`web_search`/`web_fetch`) plus read-only bash for curl/filtering
 
 to use the web sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when you explicitly ask for web research.
 

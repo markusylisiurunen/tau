@@ -25,6 +25,15 @@ jobs:
       - run: npm run check
       - run: npm test
 
-      - run: npm publish
+      - name: set npm tag
+        run: |
+          TAG_NAME="${{ github.event.release.tag_name }}"
+          if [[ "$TAG_NAME" =~ -alpha(\.|$) ]]; then
+            echo "NPM_TAG=alpha" >> "$GITHUB_ENV"
+          else
+            echo "NPM_TAG=latest" >> "$GITHUB_ENV"
+          fi
+
+      - run: npm publish --tag "$NPM_TAG"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

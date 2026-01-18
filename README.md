@@ -469,3 +469,10 @@ git push --follow-tags
 ```sh
 gh release create v$(node -p "require('./package.json').version") --generate-notes
 ```
+
+alpha prereleases are published under the npm `alpha` tag (not `latest`):
+
+```sh
+npm version preminor --preid alpha
+gh release create v$(node -p "require('./package.json').version") --generate-notes --prerelease
+```

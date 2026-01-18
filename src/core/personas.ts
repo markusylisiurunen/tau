@@ -404,9 +404,9 @@ const GEMINI_SUBAGENT_TARGET_IDS = new Set([
   "opus-4.5-coder",
   "haiku-4.5-chat",
   "haiku-4.5-coder",
+  "gpt-5.2-codex",
   "gpt-5.2-chat",
   "gpt-5.2-coder",
-  "gpt-5.2-codex",
   "gpt-5.2-flex-chat",
   "gpt-5.2-flex-coder",
 ]);

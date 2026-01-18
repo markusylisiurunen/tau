@@ -112,11 +112,11 @@ export function createListToolDefinition(backend: ToolExecutionBackend): ToolDef
 
       // All acceptance checks passed; return result
       if (!path) {
-        return blocked("List tool error: missing 'path' parameter.");
+        return blocked("missing 'path' parameter.");
       }
 
       if (offset < 0) {
-        return blocked("List tool error: offset must be >= 0.");
+        return blocked("offset must be >= 0.");
       }
 
       const effectiveLimit = Math.min(Math.max(1, limit), LIST_MAX_ENTRIES);
@@ -166,7 +166,7 @@ export function createListToolDefinition(backend: ToolExecutionBackend): ToolDef
         return { kind: "single", toolResult, uiEvent };
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`List tool failed: ${errorMessage}`);
+        return blocked(`list failed: ${errorMessage}`);
       }
     },
   };

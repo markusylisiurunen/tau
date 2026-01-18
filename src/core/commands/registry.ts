@@ -71,7 +71,7 @@ const RISK_LEVEL_HELP_DESCRIPTIONS: Record<RiskLevel, string> = {
 export function getRiskLevelDescription(level: RiskLevel): string {
   switch (level) {
     case "read-only":
-      return "read-only tool calls";
+      return "read-only tools";
     case "read-write":
       return "all tools";
   }

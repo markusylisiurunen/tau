@@ -161,7 +161,7 @@ function estimateParallelSearchCostUsd(
 function formatSearchResults(response: ParallelSearchResponse): string {
   const results = response.results;
   if (results.length === 0) {
-    return "No results.";
+    return "no results";
   }
 
   const lines: string[] = [];
@@ -208,12 +208,12 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
       };
 
       if (!args.objective) {
-        return blocked("web_search error: missing required parameter 'objective'.");
+        return blocked("missing required parameter 'objective'.");
       }
 
       const apiKey = getParallelApiKey(config);
       if (!apiKey) {
-        return blocked("web_search error: missing Parallel API key.");
+        return blocked("missing Parallel API key.");
       }
 
       return {
@@ -286,8 +286,9 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
             };
             return { kind: "single", toolResult, uiEvent };
           } catch (e) {
-            const msg = `web_search failed: ${e instanceof Error ? e.message : String(e)}`;
-            const toolResult = createToolError(toolCall, msg);
+            const msg = e instanceof Error ? e.message : String(e);
+            const reason = msg.trim() ? msg : "request failed";
+            const toolResult = createToolError(toolCall, reason);
             const uiEvent: ToolUiEvent = {
               type: "web_search_finished",
               toolCallId: toolCall.id,

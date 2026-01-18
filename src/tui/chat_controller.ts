@@ -285,7 +285,7 @@ export class ChatController {
 
     if (this.agentsConfigErrors.length > 0) {
       this.view.addSystemMessage(
-        ["config warnings:", ...this.agentsConfigErrors.map((e) => `- ${e}`)].join("\n"),
+        ["config warnings", ...this.agentsConfigErrors.map((e) => `- ${e}`)].join("\n"),
         "warn",
       );
     }
@@ -693,14 +693,14 @@ export class ChatController {
   private toggleCompactToolUi(): void {
     this.compactToolUi = !this.compactToolUi;
     this.view.setCompactToolUi(this.compactToolUi);
-    const message = this.compactToolUi ? "compact tool UI enabled" : "compact tool UI disabled";
+    const message = this.compactToolUi ? "compact tool ui enabled" : "compact tool ui disabled";
     this.view.addSystemMessage(message, "success");
   }
 
   private interruptAssistantTurn(): void {
     if (!this.isStreaming || this.currentTurnAbort?.signal.aborted) return;
     this.currentTurnAbort?.abort();
-    this.view.addSystemMessage("interrupted.", "error");
+    this.view.addSystemMessage("interrupted", "error");
   }
 
   // Input Handling --------------------------------------------------------------------------------
@@ -1309,7 +1309,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
   private formatRiskLevelNotice(level: RiskLevel): string {
     const details = getRiskLevelDescription(level);
-    return details ? `risk level ${level} (${details})` : `risk level ${level}`;
+    return details
+      ? `risk level set to ${level} (${details})`
+      : `risk level set to ${level}`;
   }
 
   private setRiskLevel(level: RiskLevel, options?: { silent?: boolean }): void {
@@ -1358,7 +1360,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     if (skillsContext.unknown.length > 0) {
       this.view.addSystemMessage(
-        `warning: unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
+        `unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
         "warn",
       );
     }
@@ -1477,7 +1479,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
       if (skillsContext.unknown.length > 0) {
         this.view.addSystemMessage(
-          `warning: unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
+          `unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
           "warn",
         );
       }
@@ -1519,7 +1521,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         this.onEvent(event);
       }
     } catch (err) {
-      const message = (err as Error).message || "request failed.";
+      const message = (err as Error).message || "request failed";
       this.view.addSystemMessage(message, "error");
     } finally {
       const wasAborted = this.currentTurnAbort?.signal.aborted ?? false;
@@ -1582,7 +1584,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
       this.view.requestRender();
     } catch (err) {
-      const message = (err as Error).message || "bash failed.";
+      const message = (err as Error).message || "bash failed";
       this.view.addSystemMessage(`bash failed: ${message}`, "error");
     } finally {
       wasAborted = abortController.signal.aborted;

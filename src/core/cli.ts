@@ -195,7 +195,7 @@ export function printHelp(personas: Persona[]): void {
       `                                if not specified, uses defaultPersona from ~/.config/tau/config.json.`,
       `  --risk, -r <level>            set initial model risk level. levels: ${riskList}.`,
       `                                if not specified, uses defaultRisk from ~/.config/tau/config.json (default: read-only).`,
-      "  --sandbox                    run all tool execution inside a session docker container.",
+      "  --sandbox                     run all tool execution inside a session docker container.",
       "  --no-agent-context-files      disable AGENTS.md injection into the system prompt.",
       "",
       "examples:",

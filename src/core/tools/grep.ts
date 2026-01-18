@@ -288,7 +288,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
       };
 
       if (!parsed.pattern) {
-        return blocked("Grep tool error: missing 'pattern' parameter.");
+        return blocked("missing 'pattern' parameter.");
       }
 
       const { args: baseArgs, paths } = buildGrepArgs(parsed);
@@ -302,7 +302,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
         });
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`Grep tool failed: ${errorMessage}`);
+        return blocked(`grep failed: ${errorMessage}`);
       }
 
       return {
@@ -324,7 +324,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
             });
           } catch (e) {
             const errorMessage = e instanceof Error ? e.message : String(e);
-            return blocked(`Grep tool failed: ${errorMessage}`);
+            return blocked(`grep failed: ${errorMessage}`);
           }
 
           const { stdout, stderr, exitCode, captureTruncated, resolvedPaths } = result;

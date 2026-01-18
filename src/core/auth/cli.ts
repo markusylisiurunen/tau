@@ -42,13 +42,13 @@ async function promptForProvider(
   log: AuthLog,
   providers: OAuthProviderSpec[],
 ): Promise<OAuthProvider> {
-  log("Select a provider:\n");
+  log("select a provider:\n");
   log(formatProviderList(providers));
   log("");
-  const selection = await prompt({ message: `Enter number (1-${providers.length}):` });
+  const selection = await prompt({ message: `enter number (1-${providers.length}):` });
   const index = Number.parseInt(selection, 10) - 1;
   if (!Number.isFinite(index) || index < 0 || index >= providers.length) {
-    throw new Error("Invalid selection.");
+    throw new Error("invalid selection.");
   }
   return providers[index]!.id;
 }
@@ -86,25 +86,25 @@ export async function runLoginCommand(options: {
 
   if (!handler) {
     const available = providers.map((entry) => entry.id).join(", ");
-    throw new Error(`Unknown provider "${provider}". Available: ${available}`);
+    throw new Error(`unknown provider "${provider}". available: ${available}`);
   }
 
-  log(`Logging in to ${provider}...`);
+  log(`logging in to ${provider}...`);
 
   const credentials = await handler({
     onAuth: (info) => {
       log("");
       if (provider === "openai-codex") {
-        log("Copy this URL into your browser to complete login:");
+        log("copy this url into your browser to complete login:");
       } else {
-        log("Open this URL in your browser:");
+        log("open this url in your browser:");
       }
       log(info.url);
       if (info.instructions) {
         log(info.instructions);
       }
       if (provider === "openai-codex") {
-        log("If the browser callback fails, you'll be prompted to paste the redirect URL/code.");
+        log("if the browser callback fails, you'll be prompted to paste the redirect url/code.");
       }
       log("");
     },
@@ -113,7 +113,7 @@ export async function runLoginCommand(options: {
   });
 
   options.authStorage.set(provider, { type: "oauth", ...credentials });
-  log(`Credentials saved to ${options.authPath}`);
+  log(`credentials saved to ${options.authPath}`);
 }
 
 export async function runLogoutCommand(options: {
@@ -133,5 +133,5 @@ export async function runLogoutCommand(options: {
   }
 
   options.authStorage.remove(provider);
-  log(`Removed credentials for ${provider} from ${options.authPath}`);
+  log(`removed credentials for ${provider} from ${options.authPath}`);
 }

@@ -330,7 +330,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
 
       if (riskLevel === "read-only" && safetyLevel === "write") {
         return blocked(
-          "Blocked due to risk level being set to 'read-only'. The declared safetyLevel 'write' exceeds the current risk level. Ask the user to enable it with /risk:read-write or revise to a read-only command.",
+          "blocked due to risk level being set to 'read-only'. the declared safetyLevel 'write' exceeds the current risk level. ask the user to enable it with /risk:read-write or revise to a read-only command.",
         );
       }
 

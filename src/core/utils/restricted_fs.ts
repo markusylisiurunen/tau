@@ -35,24 +35,24 @@ export function resolveRestrictedPath(
   const cleaned = rawPath.trim() || ".";
 
   if (cleaned.includes("\0")) {
-    throw new Error("Invalid path: contains null byte.");
+    throw new Error("invalid path: contains null byte.");
   }
 
   if (TRAVERSAL_PATTERN.test(cleaned)) {
-    throw new Error("Invalid path: '..' traversal is not allowed.");
+    throw new Error("invalid path: '..' traversal is not allowed.");
   }
 
   const { rootReal } = getRestrictedRoot();
   const absPath = isAbsolute(cleaned) ? resolve(cleaned) : resolve(rootReal, cleaned);
 
   if (isOutsideRoot(rootReal, absPath)) {
-    throw new Error("Path is outside the allowed root.");
+    throw new Error("path is outside the allowed root.");
   }
 
   if (options?.mustExist) {
     const realPath = realpathSync(absPath);
     if (isOutsideRoot(rootReal, realPath)) {
-      throw new Error("Path resolves outside the allowed root.");
+      throw new Error("path resolves outside the allowed root.");
     }
     return { rootReal, absPath, realPath, relPath: relative(rootReal, realPath) || "." };
   }
@@ -69,7 +69,7 @@ export function resolveRestrictedFilePath(rawPath: string): {
   const resolved = resolveRestrictedPath(rawPath, { mustExist: true });
   const stat = statSync(resolved.realPath);
   if (!stat.isFile()) {
-    throw new Error("Path is not a file.");
+    throw new Error("path is not a file.");
   }
   return resolved;
 }
@@ -83,7 +83,7 @@ export function resolveRestrictedDirPath(rawPath: string): {
   const resolved = resolveRestrictedPath(rawPath, { mustExist: true });
   const stat = statSync(resolved.realPath);
   if (!stat.isDirectory()) {
-    throw new Error("Path is not a directory.");
+    throw new Error("path is not a directory.");
   }
   return resolved;
 }

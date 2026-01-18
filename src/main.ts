@@ -55,7 +55,7 @@ function printAuthHelp(): void {
       "  tau logout [provider]",
       "",
       "providers:",
-      "  openai-codex     OpenAI Codex (ChatGPT Plus/Pro)",
+      "  openai-codex  OpenAI Codex (ChatGPT Plus/Pro)",
       "",
       "examples:",
       "  tau login openai-codex",
@@ -119,7 +119,7 @@ if (argv[0] === "login" || argv[0] === "logout") {
     process.exit(0);
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error(`error: ${(err as Error).message}`);
+    console.error((err as Error).message);
     process.exit(1);
   } finally {
     rl.close();
@@ -130,7 +130,7 @@ function requireSandboxConfig(config: Config): NonNullable<Config["sandbox"]> {
   const sandbox = config.sandbox;
   if (!sandbox?.image) {
     // eslint-disable-next-line no-console
-    console.error("error: --sandbox requires sandbox.image in config.json.");
+    console.error("--sandbox requires sandbox.image in config.json");
     process.exit(1);
   }
   return sandbox;
@@ -141,7 +141,7 @@ async function createSandboxBackend(config: Config) {
     return await createSandboxToolExecutionBackend({ config: requireSandboxConfig(config) });
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error(`error: ${(err as Error).message}`);
+    console.error((err as Error).message);
     process.exit(1);
   }
 }
@@ -157,7 +157,7 @@ try {
 } catch (err) {
   // Safeguard: loadRuntimeConfig should not throw, but wrap to ensure tau --help works
   // eslint-disable-next-line no-console
-  console.error(`warning: failed to load user content: ${(err as Error).message}`);
+  console.error(`failed to load user content: ${(err as Error).message}`);
 
   config = loadConfig(cwd);
   bashCommands = config.bashCommands ?? [];
@@ -260,7 +260,7 @@ if (cli.debug) {
 if (personas.length === 0) {
   // eslint-disable-next-line no-console
   console.error(
-    "error: no personas available. Add a custom persona in ~/.config/tau/personas or .tau/personas, or unset disableBuiltinPersonas.",
+    "no personas available. add a custom persona in ~/.config/tau/personas or .tau/personas, or unset disableBuiltinPersonas.",
   );
   process.exit(1);
 }

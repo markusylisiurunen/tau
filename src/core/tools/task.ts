@@ -68,23 +68,23 @@ export function createTaskToolDefinition(backend: ToolExecutionBackend): ToolDef
           !title ? "title" : undefined,
           !prompt ? "prompt" : undefined,
         ].filter(Boolean);
-        return blocked(`Task tool error: missing required parameter(s): ${missing.join(", ")}.`, {
+        return blocked(`missing required parameter(s): ${missing.join(", ")}.`, {
           title: title || "(task)",
         });
       }
 
       if (!context?.persona.subagents || Object.keys(context.persona.subagents).length === 0) {
-        return blocked("Task tool is not enabled for the current persona.", { name, title });
+        return blocked("task tool is not enabled for the current persona.", { name, title });
       }
 
       const definition = getSubagentDefinitionFromString(name);
       if (!definition) {
-        return blocked(`Unknown sub-agent '${name}'.`, { name, title });
+        return blocked(`unknown sub-agent '${name}'.`, { name, title });
       }
 
       const personaConfig = getEnabledSubagentConfig(context, definition);
       if (!personaConfig) {
-        return blocked(`Sub-agent '${definition.name}' is not enabled for the current persona.`, {
+        return blocked(`sub-agent '${definition.name}' is not enabled for the current persona.`, {
           name: definition.name,
           title,
         });
@@ -144,10 +144,10 @@ export function createTaskToolDefinition(backend: ToolExecutionBackend): ToolDef
         } catch (err) {
           if (signal?.aborted) {
             status = "aborted";
-            finalText = "Task aborted.";
+            finalText = "task aborted";
           } else {
             status = "error";
-            finalText = `Task failed: ${err instanceof Error ? err.message : String(err)}`;
+            finalText = `task failed: ${err instanceof Error ? err.message : String(err)}`;
           }
         } finally {
           uiQueue.close();

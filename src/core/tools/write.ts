@@ -87,19 +87,19 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
 
       if (riskLevel !== "read-write") {
         return blocked(
-          `Write tool blocked: requires risk level 'read-write', but current level is '${riskLevel}'. Ask the user to run /risk:read-write.`,
+          `requires risk level 'read-write', but current level is '${riskLevel}'. ask the user to run /risk:read-write.`,
         );
       }
 
       if (!path) {
         return blocked(
-          "Write tool error: missing 'path' parameter. Provide the file path to write to.",
+          "missing 'path' parameter. provide the file path to write to.",
         );
       }
 
       try {
         const { bytes, lines } = await backend.writeFile(path, content);
-        const resultText = `Successfully wrote ${bytes} bytes (${lines} lines) to ${path}`;
+        const resultText = `successfully wrote ${bytes} bytes (${lines} lines) to ${path}`;
 
         const toolResult = createToolSuccess(toolCall, resultText);
         const uiText = buildWriteUiText({ bytes, lines, content });
@@ -114,7 +114,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
         return { kind: "single", toolResult, uiEvent };
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`Write tool failed: ${errorMessage}`);
+        return blocked(`write failed: ${errorMessage}`);
       }
     },
   };

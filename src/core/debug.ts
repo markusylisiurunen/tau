@@ -117,7 +117,7 @@ export function printDebugInfo(args: {
   console.log("tau debug info");
   console.log(`cwd: ${cwd}`);
 
-  section("Virtual bundle");
+  section("virtual bundle");
   if (!virtualBundle) {
     console.log("\n  (not available)");
   } else {
@@ -132,7 +132,7 @@ export function printDebugInfo(args: {
   }
 
   // Personas
-  section(`Personas (${personas.length})`);
+  section(`personas (${personas.length})`);
   if (personas.length === 0) {
     console.log("\n  (none)");
   } else {
@@ -144,7 +144,7 @@ export function printDebugInfo(args: {
   }
 
   // Prompts
-  section(`Prompts (${prompts.length})`);
+  section(`prompts (${prompts.length})`);
   if (prompts.length === 0) {
     console.log("\n  (none)");
   } else {
@@ -155,7 +155,7 @@ export function printDebugInfo(args: {
   }
 
   // Bash commands
-  section(`Bash commands (${bashCommands.length})`);
+  section(`bash commands (${bashCommands.length})`);
   if (bashCommands.length === 0) {
     console.log("\n  (none)");
   } else {
@@ -166,7 +166,7 @@ export function printDebugInfo(args: {
   }
 
   // Skills
-  section(`Skills (${skills.length})`);
+  section(`skills (${skills.length})`);
   if (skills.length === 0) {
     console.log("\n  (none)");
   } else {
@@ -174,13 +174,13 @@ export function printDebugInfo(args: {
     const activeNames = new Set(activeSkills.map((s) => s.name));
     for (const s of skills) {
       const isActive = selectedPersona ? activeNames.has(s.name) : false;
-      console.log(`\n- ${s.name}${isActive ? " [ACTIVE]" : ""}`);
+      console.log(`\n- ${s.name}${isActive ? " [active]" : ""}`);
       console.log(formatSkill(s));
     }
   }
 
   // Selected persona details
-  section(`Selected persona: ${selectedPersona?.id ?? "(none)"}`);
+  section(`selected persona: ${selectedPersona?.id ?? "(none)"}`);
   if (selectedPersona) {
     console.log(formatPersona(selectedPersona));
   } else {
@@ -188,7 +188,7 @@ export function printDebugInfo(args: {
   }
 
   // Build and print full system prompt
-  section("Full system prompt");
+  section("full system prompt");
 
   if (!selectedPersona) {
     console.log("\n  (skipped: no persona loaded)");
@@ -226,7 +226,7 @@ export function printDebugInfo(args: {
   const activeSubagents = selectedPersona.subagents
     ? Object.entries(selectedPersona.subagents).filter(([, cfg]) => cfg)
     : [];
-  section(`Active sub-agents (${activeSubagents.length})`);
+  section(`active sub-agents (${activeSubagents.length})`);
   if (activeSubagents.length === 0) {
     console.log("\n  (none)");
   } else {
@@ -242,7 +242,7 @@ export function printDebugInfo(args: {
   // Tools
   const enabledTools = toolRegistry.getEnabledToolSchemas(selectedPersona.tools);
 
-  section(`Active tools (${enabledTools.length})`);
+  section(`active tools (${enabledTools.length})`);
   if (enabledTools.length === 0) {
     console.log("\n  (none)");
   } else {

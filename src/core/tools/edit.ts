@@ -261,17 +261,17 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
 
       if (riskLevel !== "read-write") {
         return blocked(
-          `Edit tool blocked: requires risk level 'read-write', but current level is '${riskLevel}'. Ask the user to run /risk:read-write.`,
+          `requires risk level 'read-write', but current level is '${riskLevel}'. ask the user to run /risk:read-write.`,
         );
       }
 
       if (!path) {
-        return blocked("Edit tool error: missing 'path' parameter. Provide the file path to edit.");
+        return blocked("missing 'path' parameter. provide the file path to edit.");
       }
 
       if (!oldText) {
         return blocked(
-          "Edit tool error: missing 'oldText' parameter. Provide the exact text to find and replace.",
+          "missing 'oldText' parameter. provide the exact text to find and replace.",
         );
       }
 
@@ -283,10 +283,10 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
         const errorMessage = e instanceof Error ? e.message : String(e);
         if ((e as NodeJS.ErrnoException).code === "ENOENT") {
           return blocked(
-            `Edit tool error: file not found at '${path}'. Verify the path is correct.`,
+            `file not found at '${path}'. verify the path is correct.`,
           );
         }
-        return blocked(`Edit tool error: could not read file: ${errorMessage}`);
+        return blocked(`could not read file: ${errorMessage}`);
       }
 
       const matchCount = countOccurrences(content, oldText);
@@ -299,28 +299,28 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
         let hint = "";
         if (trimmedCount > 0) {
           hint =
-            " Hint: Found matches when ignoring leading/trailing whitespace. Check that your oldText exactly matches the file content including whitespace.";
+            " hint: found matches when ignoring leading/trailing whitespace. check that your oldText exactly matches the file content including whitespace.";
         } else if (oldText.includes("\n")) {
           hint =
-            " Hint: Your search contains newlines. Ensure line endings match the file (LF vs CRLF) and indentation is exact.";
+            " hint: your search contains newlines. ensure line endings match the file (LF vs CRLF) and indentation is exact.";
         } else {
           // Check for partial matches
           const words = oldText.split(/\s+/).filter((w) => w.length > 3);
           const partialMatches = words.filter((w) => content.includes(w));
           if (partialMatches.length > 0 && partialMatches.length < words.length) {
-            hint = ` Hint: Some words from oldText were found ('${partialMatches.slice(0, 3).join("', '")}'), but the exact string was not. Check for typos or extra whitespace.`;
+            hint = ` hint: some words from oldText were found ('${partialMatches.slice(0, 3).join("', '")}'), but the exact string was not. check for typos or extra whitespace.`;
           }
         }
 
         return blocked(
-          `Edit tool error: oldText not found in file.${hint} Read the file first to see its current content.`,
+          `oldText not found in file.${hint} read the file first to see its current content.`,
         );
       }
 
       if (matchCount > 1) {
         const firstMatchContext = findMatchContext(content, oldText);
         return blocked(
-          `Edit tool error: found ${matchCount} matches for oldText, but exactly 1 is required. Make oldText more specific to match only one location.\n\nFirst match context:\n${firstMatchContext}`,
+          `found ${matchCount} matches for oldText, but exactly 1 is required. make oldText more specific to match only one location.\n\nfirst match context:\n${firstMatchContext}`,
         );
       }
 
@@ -336,7 +336,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
         const lineDiffStr =
           lineDiff === 0 ? "" : lineDiff > 0 ? ` (+${lineDiff} lines)` : ` (${lineDiff} lines)`;
 
-        const resultText = `Successfully edited ${path}: replaced ${oldText.length} chars with ${newText.length} chars${lineDiffStr}`;
+        const resultText = `successfully edited ${path}: replaced ${oldText.length} chars with ${newText.length} chars${lineDiffStr}`;
 
         const toolResult = createToolSuccess(toolCall, resultText);
         const uiText = buildEditUiText({
@@ -357,7 +357,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
         return { kind: "single", toolResult, uiEvent };
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`Edit tool error: could not write file: ${errorMessage}`);
+        return blocked(`could not write file: ${errorMessage}`);
       }
     },
   };

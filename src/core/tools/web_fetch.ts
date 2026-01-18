@@ -158,7 +158,7 @@ function formatExtractResults(response: ExtractResponse): string {
   const errors = response.errors;
 
   if (results.length === 0 && errors.length === 0) {
-    return "No extract results.";
+    return "no extract results";
   }
 
   const lines: string[] = [];
@@ -184,7 +184,7 @@ function formatExtractResults(response: ExtractResponse): string {
   }
 
   if (errors.length > 0) {
-    lines.push("Errors:\n");
+    lines.push("errors:\n");
     for (const err of errors) {
       const status =
         typeof err.http_status_code === "number" ? ` (HTTP ${err.http_status_code})` : "";
@@ -226,12 +226,12 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
       };
 
       if (!args.url) {
-        return blocked("web_fetch error: missing required parameter 'url'.");
+        return blocked("missing required parameter 'url'.");
       }
 
       const apiKey = getParallelApiKey(config);
       if (!apiKey) {
-        return blocked("web_fetch error: missing Parallel API key.");
+        return blocked("missing Parallel API key.");
       }
 
       return {
@@ -299,8 +299,9 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
             };
             return { kind: "single", toolResult, uiEvent };
           } catch (e) {
-            const msg = `web_fetch failed: ${e instanceof Error ? e.message : String(e)}`;
-            const toolResult = createToolError(toolCall, msg);
+            const msg = e instanceof Error ? e.message : String(e);
+            const reason = msg.trim() ? msg : "request failed";
+            const toolResult = createToolError(toolCall, reason);
             const uiEvent: ToolUiEvent = {
               type: "web_fetch_finished",
               toolCallId: toolCall.id,

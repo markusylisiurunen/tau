@@ -123,13 +123,13 @@ export function createForkToolDefinition(): ToolDefinition {
         const missing = [!title ? "title" : undefined, !prompt ? "prompt" : undefined].filter(
           Boolean,
         );
-        return blocked(`Fork tool error: missing required parameter(s): ${missing.join(", ")}.`, {
+        return blocked(`missing required parameter(s): ${missing.join(", ")}.`, {
           title: title || "(fork)",
         });
       }
 
       if (!context) {
-        return blocked("Fork tool error: missing session context.", { title });
+        return blocked("missing session context.", { title });
       }
 
       const uiQueue = new AsyncUiEventQueue<ToolUiEvent>();
@@ -240,7 +240,7 @@ export function createForkToolDefinition(): ToolDefinition {
 
           if (runSignal.aborted) {
             status = "aborted";
-            finalText = "Fork aborted.";
+            finalText = "fork aborted";
           } else if (!lastAssistantFinal) {
             throw new Error("fork did not produce a final response");
           } else if (lastAssistantFinal.stopReason === "toolUse") {
@@ -257,10 +257,10 @@ export function createForkToolDefinition(): ToolDefinition {
         } catch (err) {
           if (signal?.aborted) {
             status = "aborted";
-            finalText = "Fork aborted.";
+            finalText = "fork aborted";
           } else {
             status = "error";
-            finalText = `Fork failed: ${err instanceof Error ? err.message : String(err)}`;
+            finalText = `fork failed: ${err instanceof Error ? err.message : String(err)}`;
           }
         } finally {
           uiQueue.close();

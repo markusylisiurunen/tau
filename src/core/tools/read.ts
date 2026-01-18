@@ -148,19 +148,19 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
       };
 
       if (!path) {
-        return blocked("Read tool error: missing 'path' parameter.");
+        return blocked("missing 'path' parameter.");
       }
 
       if (startLine !== undefined && startLine < 1) {
-        return blocked("Read tool error: startLine must be >= 1.");
+        return blocked("startLine must be >= 1.");
       }
 
       if (endLine !== undefined && endLine < 1) {
-        return blocked("Read tool error: endLine must be >= 1.");
+        return blocked("endLine must be >= 1.");
       }
 
       if (startLine !== undefined && endLine !== undefined && endLine < startLine) {
-        return blocked("Read tool error: endLine must be >= startLine.");
+        return blocked("endLine must be >= startLine.");
       }
 
       try {
@@ -175,7 +175,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
 
         if (start > totalLines) {
           return blocked(
-            `Read tool error: startLine (${start}) exceeds total lines (${totalLines}).`,
+            `startLine (${start}) exceeds total lines (${totalLines}).`,
           );
         }
 
@@ -225,7 +225,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         return { kind: "single", toolResult, uiEvent };
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`Read tool failed: ${errorMessage}`);
+        return blocked(`read failed: ${errorMessage}`);
       }
     },
   };

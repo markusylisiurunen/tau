@@ -128,7 +128,7 @@ export class AssistantMessageComponent
       appendStopReason("aborted", palette.statusWarn);
     } else if (message.stopReason === "error") {
       const errorMsg = message.errorMessage || "unknown error";
-      appendStopReason(`error: ${errorMsg}`, palette.statusError);
+      appendStopReason(errorMsg, palette.statusError);
     }
   }
 }

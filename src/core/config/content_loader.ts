@@ -25,20 +25,19 @@ interface FrontMatter {
   [key: string]: unknown;
 }
 
-interface MarkdownEntry {
+interface FileEntry {
   path: string;
   content: string;
 }
+
+type MarkdownEntry = FileEntry;
 
 type MarkdownPathsResult = {
   paths: string[];
   errors: string[];
 };
 
-interface JsonEntry {
-  path: string;
-  content: string;
-}
+type JsonEntry = FileEntry;
 
 type JsonPathsResult = {
   paths: string[];
@@ -96,10 +95,6 @@ function isKnownProvider(value: string): value is KnownProvider {
   return getProviders().includes(value as KnownProvider);
 }
 
-function isSubagentName(value: unknown): value is "explore" | "web" {
-  return value === "explore" || value === "web";
-}
-
 interface PartialSubagentConfig {
   [name: string]: {
     model?: Model<Api>;
@@ -108,6 +103,17 @@ interface PartialSubagentConfig {
 }
 
 const SubagentNameSchema = z.enum(["explore", "web"]);
+
+type SubagentName = z.infer<typeof SubagentNameSchema>;
+
+function parseSubagentName(value: unknown): { name: SubagentName } | { error: string } {
+  const parsed = SubagentNameSchema.safeParse(value);
+  if (!parsed.success) {
+    return { error: `invalid subagent: ${formatZodError(parsed.error)}` };
+  }
+
+  return { name: parsed.data };
+}
 
 const SubagentSpecSchema = z
   .object({
@@ -127,12 +133,6 @@ const SubagentSpecSchema = z
     }
   });
 
-// Union schema: either a list of subagent names or an object mapping names to specs
-const SubagentConfigRawSchema = z.union([
-  z.array(z.string()),
-  z.record(SubagentNameSchema, z.union([z.undefined(), z.object({}).passthrough()])),
-]);
-
 function parseSubagentConfig(subagentsRaw: unknown): {
   config?: PartialSubagentConfig;
   error?: string;
@@ -146,12 +146,12 @@ function parseSubagentConfig(subagentsRaw: unknown): {
   // Handle list of subagent names
   if (Array.isArray(subagentsRaw)) {
     for (const nameRaw of subagentsRaw) {
-      const nameParsed = SubagentNameSchema.safeParse(nameRaw);
-      if (!nameParsed.success) {
-        return { error: `invalid subagent: ${formatZodError(nameParsed.error)}` };
+      const nameResult = parseSubagentName(nameRaw);
+      if ("error" in nameResult) {
+        return { error: nameResult.error };
       }
 
-      const name = nameParsed.data;
+      const name = nameResult.name;
       // Enable with default settings (use main persona's model)
       config[name] = {};
     }
@@ -162,12 +162,12 @@ function parseSubagentConfig(subagentsRaw: unknown): {
   const configParsed = z.record(z.string(), z.unknown()).safeParse(subagentsRaw);
   if (configParsed.success) {
     for (const [name, specRaw] of Object.entries(configParsed.data)) {
-      const nameParsed = SubagentNameSchema.safeParse(name);
-      if (!nameParsed.success) {
-        return { error: `invalid subagent: ${formatZodError(nameParsed.error)}` };
+      const nameResult = parseSubagentName(name);
+      if ("error" in nameResult) {
+        return { error: nameResult.error };
       }
 
-      const validatedName = nameParsed.data;
+      const validatedName = nameResult.name;
 
       if (!specRaw || typeof specRaw !== "object") {
         // Empty config, will use defaults
@@ -331,17 +331,17 @@ function listSkillFiles(dir: string, deps: ConfigDeps): MarkdownPathsResult {
   return { paths, errors: [] };
 }
 
-function loadMarkdownEntries(
+function loadEntries(
   dir: string,
   deps: ConfigDeps,
-  listFiles: (dir: string, deps: ConfigDeps) => MarkdownPathsResult,
-): { entries: MarkdownEntry[]; errors: string[] } {
+  listFiles: (dir: string, deps: ConfigDeps) => { paths: string[]; errors: string[] },
+): { entries: FileEntry[]; errors: string[] } {
   if (!deps.fs.exists(dir)) {
     return { entries: [], errors: [] };
   }
 
   const { paths, errors } = listFiles(dir, deps);
-  const entries: MarkdownEntry[] = [];
+  const entries: FileEntry[] = [];
 
   for (const path of paths) {
     try {
@@ -354,27 +354,20 @@ function loadMarkdownEntries(
   return { entries, errors };
 }
 
+function loadMarkdownEntries(
+  dir: string,
+  deps: ConfigDeps,
+  listFiles: (dir: string, deps: ConfigDeps) => MarkdownPathsResult,
+): { entries: MarkdownEntry[]; errors: string[] } {
+  return loadEntries(dir, deps, listFiles);
+}
+
 function loadJsonEntries(
   dir: string,
   deps: ConfigDeps,
   listFiles: (dir: string, deps: ConfigDeps) => JsonPathsResult,
 ): { entries: JsonEntry[]; errors: string[] } {
-  if (!deps.fs.exists(dir)) {
-    return { entries: [], errors: [] };
-  }
-
-  const { paths, errors } = listFiles(dir, deps);
-  const entries: JsonEntry[] = [];
-
-  for (const path of paths) {
-    try {
-      entries.push({ path, content: deps.fs.readFile(path) });
-    } catch {
-      errors.push(`failed to read file: ${path}`);
-    }
-  }
-
-  return { entries, errors };
+  return loadEntries(dir, deps, listFiles);
 }
 
 function resolveContentContext(options?: {
@@ -537,9 +530,12 @@ function parsePersona(
       finalSubagents = {};
 
       for (const [name, cfg] of Object.entries(basePersona.subagents)) {
-        if (!isSubagentName(name) || !cfg) continue;
+        const nameParsed = SubagentNameSchema.safeParse(name);
+        if (!nameParsed.success || !cfg) continue;
 
-        finalSubagents[name] = {
+        const validatedName = nameParsed.data;
+
+        finalSubagents[validatedName] = {
           model: modelObj,
           ...(cfg.settings ? { settings: cfg.settings } : { settings: subagentBaseSettings }),
         };
@@ -553,7 +549,9 @@ function parsePersona(
     finalSubagents = {};
 
     for (const [name, cfg] of Object.entries(subagentsResult.config)) {
-      if (!isSubagentName(name)) continue; // Validate name is a known subagent
+      const nameParsed = SubagentNameSchema.safeParse(name);
+      if (!nameParsed.success) continue;
+      const validatedName = nameParsed.data;
       const subagentModel = cfg.model ?? modelObj;
 
       let subagentSettings: SubagentPersonaConfig["settings"] | undefined;
@@ -563,7 +561,7 @@ function parsePersona(
         subagentSettings = subagentBaseSettings;
       }
 
-      finalSubagents[name] = {
+      finalSubagents[validatedName] = {
         model: subagentModel,
         ...(subagentSettings && { settings: subagentSettings }),
       };

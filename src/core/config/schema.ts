@@ -318,17 +318,13 @@ function mergeSandboxConfig(
   };
 }
 
-function resolveConfigLevelRoot(level: ConfigLevel): string {
-  return level.levelRoot;
-}
-
 function resolveAgentContextPaths(level: ConfigLevel, rawPaths: string[]): string[] {
-  const root = resolveConfigLevelRoot(level);
+  const root = level.levelRoot;
   return rawPaths.map((entry) => resolve(root, entry));
 }
 
 function resolveBashCommands(level: ConfigLevel, commands: BashCommand[]): BashCommand[] {
-  const root = resolveConfigLevelRoot(level);
+  const root = level.levelRoot;
   return commands.map((cmd) => ({ ...cmd, cwd: root }));
 }
 

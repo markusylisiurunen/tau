@@ -186,7 +186,7 @@ describe("loadConfig", () => {
 
       const config = loadConfig(fx.repo, deps);
       expect(config).toMatchObject({
-        defaultPersona: "opus-4.5",
+        defaultPersona: "opus-4.5-chat",
         defaultRisk: "read-only",
       });
     } finally {
@@ -209,7 +209,7 @@ describe("loadConfig", () => {
 
       const result = loadConfigWithDiagnostics(fx.repo, deps);
       expect(result.config).toMatchObject({
-        defaultPersona: "opus-4.5",
+        defaultPersona: "opus-4.5-chat",
         defaultRisk: "read-only",
       });
       expect(result.errors.length).toBeGreaterThan(0);

@@ -196,8 +196,8 @@ const PERSONA_SPECS: PersonaSpec[] = [
     id: "opus-4.5",
     description: "Claude Opus 4.5",
     model: getModel("anthropic", "claude-opus-4-5"),
-    allowedReasoningLevels: ["minimal", "medium", "high"],
-    settings: { reasoning: "medium" },
+    allowedReasoningLevels: ["low", "high"],
+    settings: { reasoning: "high" },
     subagents: {
       explore: {
         model: getModel("anthropic", "claude-haiku-4-5"),
@@ -230,16 +230,16 @@ const PERSONA_SPECS: PersonaSpec[] = [
     id: "gpt-5.2",
     description: "GPT-5.2",
     model: getModel("openai", "gpt-5.2"),
-    allowedReasoningLevels: ["none", "low", "medium", "high", "xhigh"],
+    allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     subagents: {
       explore: {
         model: getModel("openai", "gpt-5.2"),
-        reasoning: "none",
+        reasoning: "low",
       },
       web: {
         model: getModel("openai", "gpt-5.2"),
-        reasoning: "none",
+        reasoning: "low",
       },
     },
   },
@@ -247,33 +247,16 @@ const PERSONA_SPECS: PersonaSpec[] = [
     id: "gpt-5.2-codex",
     description: "GPT-5.2 Codex",
     model: getModel("openai-codex", "gpt-5.2-codex"),
-    allowedReasoningLevels: ["none", "low", "medium", "high", "xhigh"],
+    allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     subagents: {
       explore: {
         model: getModel("openai-codex", "gpt-5.2-codex"),
-        reasoning: "none",
+        reasoning: "low",
       },
       web: {
         model: getModel("openai-codex", "gpt-5.2-codex"),
-        reasoning: "none",
-      },
-    },
-  },
-  {
-    id: "gpt-5.2-flex",
-    description: "GPT-5.2 (flex)",
-    model: getModel("openai", "gpt-5.2"),
-    allowedReasoningLevels: ["none", "low", "medium", "high", "xhigh"],
-    settings: { reasoning: "medium", serviceTier: "flex" },
-    subagents: {
-      explore: {
-        model: getModel("openai", "gpt-5.2"),
-        reasoning: "none",
-      },
-      web: {
-        model: getModel("openai", "gpt-5.2"),
-        reasoning: "none",
+        reasoning: "low",
       },
     },
   },
@@ -298,7 +281,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
     id: "gemini-3-flash",
     description: "Gemini 3 Flash",
     model: getModel("google", "gemini-3-flash-preview"),
-    allowedReasoningLevels: ["minimal", "low", "medium", "high"],
+    allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "high" },
     subagents: {
       explore: {

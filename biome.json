@@ -4,10 +4,10 @@
     "includes": [
       ".tau/*.json",
       ".zed/*.json",
-      "src/**/*.ts",
-      "src/**/*.js",
-      "*.json",
-      "*.md",
+      "src/**/*.{ts,js}",
+      "test/**/*.js",
+      "scripts/**/*.js",
+      "*.{ts,json,md}",
       "!**/node_modules/**/*",
       "!dist/**/*"
     ]

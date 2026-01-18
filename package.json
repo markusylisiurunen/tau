@@ -11,6 +11,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "biome check --write . && tsc -p tsconfig.json --noEmit",
+    "precheck": "node scripts/generate-version.js",
     "prebuild": "node scripts/generate-version.js",
     "start": "node dist/main.js",
     "test": "npm run build && vitest run"

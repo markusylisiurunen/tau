@@ -12,9 +12,9 @@ describe("agent context path scoping", () => {
   });
 
   it("includes descendant directories", () => {
-    expect(
-      isAgentContextPathInScope(join(base, "backend", "scripts", "AGENTS.md"), cwd),
-    ).toBe(true);
+    expect(isAgentContextPathInScope(join(base, "backend", "scripts", "AGENTS.md"), cwd)).toBe(
+      true,
+    );
   });
 
   it("excludes siblings", () => {

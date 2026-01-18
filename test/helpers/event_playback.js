@@ -1,5 +1,5 @@
-import { ChatController } from "../../dist/tui/chat_controller.js";
 import { personas } from "../../dist/core/personas.js";
+import { ChatController } from "../../dist/tui/chat_controller.js";
 
 export function createPlaybackHarness(options = {}) {
   const calls = {

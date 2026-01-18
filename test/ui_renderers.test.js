@@ -62,29 +62,12 @@ test("renderEditSuccess (expanded) highlights diffs", () => {
 
 test("renderTaskRunning and renderTaskFinished include cost and status", () => {
   const theme = createTagTheme();
-  const running = renderTaskRunning(
-    theme,
-    "analysis",
-    ["bash running: echo ok"],
-    0.12,
-    3,
-    1,
-    true,
-  );
+  const running = renderTaskRunning(theme, "analysis", ["bash running: echo ok"], 0.12, 3, 1, true);
   const runningText = renderText(running, 120);
   expect(runningText).toContain("$ echo ok");
   expect(runningText).toContain("$0.12");
 
-  const finished = renderTaskFinished(
-    theme,
-    "analysis",
-    0.12,
-    3,
-    1,
-    "success",
-    "done",
-    false,
-  );
+  const finished = renderTaskFinished(theme, "analysis", 0.12, 3, 1, "success", "done", false);
   const finishedText = renderText(finished, 120);
   expect(finishedText).toContain("<textDim>done</textDim>");
   expect(finishedText).toContain("$0.12");

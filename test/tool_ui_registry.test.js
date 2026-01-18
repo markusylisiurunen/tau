@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 import { renderToolOutput } from "../dist/tui/ui/tool_output.js";
+import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
 
 function makeUiText(previewText, statusLine, fullText = "") {
@@ -177,5 +177,4 @@ describe("ToolUiRegistry", () => {
     });
     expect(editBlocked).toContain("edit blocked");
   });
-
 });

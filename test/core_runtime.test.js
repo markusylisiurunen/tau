@@ -47,7 +47,10 @@ describe("tool enablement by risk level", () => {
     const registry = ToolCatalog.createRegistry(backend);
 
     const allTools = registry.schemas.map((tool) => tool.name).sort();
-    const enabled = registry.getEnabledToolSchemas().map((tool) => tool.name).sort();
+    const enabled = registry
+      .getEnabledToolSchemas()
+      .map((tool) => tool.name)
+      .sort();
 
     expect(allTools).not.toContain("read");
     expect(allTools).not.toContain("grep");
@@ -77,7 +80,7 @@ describe("context builder", () => {
       readFile,
     });
 
-    expect(block).toContain("<file path=\"/repo/AGENTS.md\">");
+    expect(block).toContain('<file path="/repo/AGENTS.md">');
     expect(block).toContain("# Agents");
   });
 });
@@ -118,7 +121,7 @@ describe("summary formatting", () => {
 
     expect(summary).toContain("--- USER ---");
     expect(summary).toContain("hello");
-    expect(summary).toContain("[Tool call: read({\"path\":\"README.md\"})]");
+    expect(summary).toContain('[Tool call: read({"path":"README.md"})]');
     expect(summary).toContain("[Tool output: read (truncated)]");
     expect(summary).not.toContain("hmm");
   });

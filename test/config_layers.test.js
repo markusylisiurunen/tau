@@ -1,7 +1,7 @@
 import {
   existsSync,
-  mkdtempSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -84,9 +84,7 @@ describe("config paths", () => {
       });
 
       const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      expect(levels.map((level) => level.configDir)).toEqual([
-        join(fx.repo, ".tau"),
-      ]);
+      expect(levels.map((level) => level.configDir)).toEqual([join(fx.repo, ".tau")]);
     } finally {
       fx.cleanup();
     }

@@ -1,19 +1,19 @@
 import { visibleWidth } from "@mariozechner/pi-tui";
+import stripAnsi from "strip-ansi";
 import { expect, test } from "vitest";
 import { AppIntroComponent } from "../dist/tui/ui/app_intro.js";
 import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
 import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
-import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
-import { FooterComponent } from "../dist/tui/ui/footer.js";
 import {
   OneLineSegmentsComponent,
   truncateFromEndByWidth,
 } from "../dist/tui/ui/components/one_line_segments.js";
+import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
+import { FooterComponent } from "../dist/tui/ui/footer.js";
 import { QueuedMessagesComponent } from "../dist/tui/ui/queued_messages.js";
 import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
 import { SessionSummaryComponent } from "../dist/tui/ui/session_summary.js";
 import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
-import stripAnsi from "strip-ansi";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
 
 function stripTags(text) {
@@ -123,7 +123,9 @@ test("QueuedMessagesComponent renders numbered, italicized previews", () => {
   const component = new QueuedMessagesComponent(theme, ["first line\nsecond", "third"]);
   const lines = renderLines(component, 80);
   expect(lines[0]).toBe("<textDim> queued (2) — alt+up to edit next</textDim>");
-  expect(lines[1]).toBe("<textDim>  1› </textDim><italic><textMuted>first line</textMuted></italic>");
+  expect(lines[1]).toBe(
+    "<textDim>  1› </textDim><italic><textMuted>first line</textMuted></italic>",
+  );
   expect(lines[2]).toBe("<textDim>  2› </textDim><italic><textMuted>third</textMuted></italic>");
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ChatController } from "../dist/tui/chat_controller.js";
 import { personas } from "../dist/core/personas.js";
+import { ChatController } from "../dist/tui/chat_controller.js";
 
 function createStubView() {
   const added = [];

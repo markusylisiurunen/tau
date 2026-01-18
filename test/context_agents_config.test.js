@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -89,11 +89,7 @@ describe("project context agents from .tau/config.json", () => {
       writeFileSync(
         join(fx.repo, ".tau", "config.json"),
         JSON.stringify({
-          agentContextFiles: [
-            "backend/AGENTS.md",
-            "client/AGENTS.md",
-            "backend/scripts/AGENTS.md",
-          ],
+          agentContextFiles: ["backend/AGENTS.md", "client/AGENTS.md", "backend/scripts/AGENTS.md"],
         }),
       );
 

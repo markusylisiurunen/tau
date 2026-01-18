@@ -2,6 +2,7 @@ import { visibleWidth } from "@mariozechner/pi-tui";
 import { expect, test } from "vitest";
 import { AppIntroComponent } from "../dist/tui/ui/app_intro.js";
 import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
+import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
 import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
 import { FooterComponent } from "../dist/tui/ui/footer.js";
 import {
@@ -17,6 +18,14 @@ import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
 
 function stripTags(text) {
   return stripAnsi(text.replace(/<[^>]+>/g, ""));
+}
+
+function createToolView(label) {
+  return {
+    borderColor: (text) => text,
+    expanded: { title: label, sections: [] },
+    compact: { extraText: label },
+  };
 }
 
 test("AppIntroComponent renders header and help text", () => {
@@ -90,6 +99,23 @@ test("AssistantMessageComponent toggles thinking visibility", () => {
   component.setThinkingVisibility(true);
   text = renderText(component, 80);
   expect(text).toContain("hmm");
+});
+
+test("ChatContainerComponent hides empty assistant messages even when thoughts are visible", () => {
+  const theme = createTagTheme();
+  const container = new ChatContainerComponent(theme, true);
+  container.setCompactToolUi(true);
+
+  container.addMessage({ type: "tool", view: createToolView("tool a") });
+  container.addMessage({ type: "assistant_partial", text: "", thinking: "" });
+  container.addMessage({ type: "tool", view: createToolView("tool b") });
+
+  const lines = renderLines(container, 80);
+  const firstIndex = lines.indexOf("tool a");
+  const secondIndex = lines.indexOf("tool b");
+  const gap = lines.slice(firstIndex + 1, secondIndex);
+  const emptyLines = gap.filter((line) => line.trim() === "");
+  expect(emptyLines.length).toBe(1);
 });
 
 test("QueuedMessagesComponent renders numbered, italicized previews", () => {

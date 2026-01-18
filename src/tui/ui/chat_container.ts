@@ -148,8 +148,6 @@ export class ChatContainerComponent extends Container {
 
   private shouldShowMessage(rendered: RenderedMessage): boolean {
     if (!rendered.isAssistant) return true;
-    if (this.thoughtsVisible) return true;
-
     if (rendered.hasVisibleText) {
       return rendered.hasVisibleText();
     }

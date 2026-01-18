@@ -13,7 +13,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface and RPC stub for alternate front-ends
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools (local host or docker sandbox)
-- **ToolRegistry** (`src/core/tools/registry.ts`): Registers bash, write, edit, task, fork, and web_search/web_fetch
+- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, task, fork) and sub-agent (bash, web_search, web_fetch) registries
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
@@ -49,7 +49,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `auth/codex_prompt.ts` - Codex system prompt handling
   - `events/` - Core event protocol types and serialization
   - `session/` - Turn processing, streaming, and tool dispatch
-  - `tools/` - Tool definitions and registry (bash, read, write, edit, list, grep, task, fork, web_search, web_fetch)
+  - `tools/` - Tool definitions (bash, write, edit, task, fork, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
   - `tools/execution_backend.ts` - Local and sandbox tool backends
   - `tools/sandbox/docker_sandbox.ts` - Docker sandbox runner
   - `subagents/` - Explore/web subagents and runner
@@ -95,9 +95,11 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 | `task`  | Run isolated subagent       | `read-only` or `read-write`                    |
 | `fork`  | Fork session and run agent  | `read-only` or `read-write`                    |
 
+Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set.
+
 Risk levels (`read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
 
-**Bash limits**: 2MB raw capture, 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/core/tools/bash.ts`), git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
+**Bash limits**: 2MB raw capture, 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/core/utils/sanitize_env.ts`), git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 

@@ -155,7 +155,7 @@ note: when `--sandbox` is enabled, `!` commands also run inside the container.
 tau comes with several built-in personas across different models:
 
 - **Claude Opus 4.5** and **Haiku 4.5** (Anthropic)
-- **GPT-5.2** (OpenAI)
+- **GPT-5.2** and **GPT-5.2 flex** (OpenAI)
 - **GPT-5.2 Codex** (OpenAI Codex subscription)
 - **Gemini 3 Pro** and **Gemini 3 Flash** (Google)
 

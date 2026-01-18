@@ -82,7 +82,7 @@ export interface ChatControllerOptions {
   initialPersonaId?: string;
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
-  withContext?: boolean;
+  noAgentContextFiles?: boolean;
   config?: Config;
   sandboxEnabled?: boolean;
   toolBackend?: ToolExecutionBackend;
@@ -177,7 +177,8 @@ export class ChatController {
     this.queuedUserMessages = options.queuedUserMessages ?? [];
     this.toolBackendDispose = options.toolBackendDispose;
 
-    if (options.withContext) {
+    const withContext = !options.noAgentContextFiles;
+    if (withContext) {
       const res = findAgentsFilesInScopeDetailed(cwd, home);
       this.agentsFiles = res.files;
       this.agentsConfigErrors = res.errors;
@@ -186,7 +187,7 @@ export class ChatController {
       this.agentsConfigErrors = [];
     }
 
-    this.projectContextBlock = options.withContext
+    this.projectContextBlock = withContext
       ? buildProjectContextBlock({
           cwd,
           home,

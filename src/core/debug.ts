@@ -84,7 +84,7 @@ export function printDebugInfo(args: {
   bashCommands: BashCommand[];
   skills: Skill[];
   selectedPersona?: Persona;
-  withContext: boolean;
+  noAgentContextFiles: boolean;
   riskLevel?: RiskLevel;
   sandboxConfig?: SandboxConfig;
   sandboxInfo?: string;
@@ -97,7 +97,7 @@ export function printDebugInfo(args: {
     bashCommands,
     skills,
     selectedPersona,
-    withContext,
+    noAgentContextFiles,
     riskLevel,
     sandboxConfig,
     sandboxInfo,
@@ -197,7 +197,7 @@ export function printDebugInfo(args: {
 
   const activeSkills = getActiveSkills(selectedPersona, skills);
   const skillsBlock = buildSkillsIndexBlock(activeSkills);
-  const projectContextBlock = withContext
+  const projectContextBlock = !noAgentContextFiles
     ? buildProjectContextBlock({ cwd, home, readFile: deps.fs.readFile })
     : undefined;
   const effectiveRiskLevel: RiskLevel = riskLevel ?? "read-only";

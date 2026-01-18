@@ -15,7 +15,7 @@ export const CliOptionsSchema = z.object({
   reasoningOverride: ReasoningEffortSchema.optional(),
   riskLevel: RiskLevelSchema.optional(),
   sandbox: z.boolean(),
-  withContext: z.boolean(),
+  noAgentContextFiles: z.boolean(),
 });
 
 export type CliOptions = z.infer<typeof CliOptionsSchema>;
@@ -101,7 +101,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let reasoningOverride: ReasoningEffort | undefined;
   let riskLevel: RiskLevel | undefined;
   let sandbox = false;
-  let withContext = false;
+  let noAgentContextFiles = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -116,8 +116,8 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       continue;
     }
 
-    if (arg === "--with-context") {
-      withContext = true;
+    if (arg === "--no-agent-context-files") {
+      noAgentContextFiles = true;
       continue;
     }
 
@@ -170,7 +170,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     reasoningOverride,
     riskLevel,
     sandbox,
-    withContext,
+    noAgentContextFiles,
   };
   return CliOptionsSchema.parse(options);
 }
@@ -196,7 +196,7 @@ export function printHelp(personas: Persona[]): void {
       `  --risk, -r <level>            set initial model risk level. levels: ${riskList}.`,
       `                                if not specified, uses defaultRisk from ~/.config/tau/config.json (default: read-only).`,
       "  --sandbox                    run all tool execution inside a session docker container.",
-      "  --with-context                inject AGENTS.md into the system prompt.",
+      "  --no-agent-context-files      disable AGENTS.md injection into the system prompt.",
       "",
       "examples:",
       "  tau --persona gpt-5.2-chat:high",

@@ -17,7 +17,7 @@ export interface ChatAppOptions {
   initialPersonaId?: string;
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
-  withContext?: boolean;
+  noAgentContextFiles?: boolean;
   config?: Config;
   sandboxEnabled?: boolean;
   toolBackend?: ToolExecutionBackend;

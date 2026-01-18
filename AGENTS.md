@@ -155,9 +155,9 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
 - `--risk <level>`, `-r` - Set initial risk level (`read-only`, `read-write`)
 - `--sandbox` - Run all tool calls inside a session-specific Docker container
-- `--with-context` - Inject AGENTS.md into the system prompt
+- `--no-agent-context-files` - Disable AGENTS.md injection into the system prompt
 
-The `--debug` flag respects `--persona` and `--with-context`, so you can inspect exactly what system prompt a given configuration produces.
+The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you can inspect exactly what system prompt a given configuration produces.
 
 ## CLI subcommands
 

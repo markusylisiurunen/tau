@@ -210,7 +210,7 @@ you can also pipe content directly:
 cat src/tui/app.ts | tau --persona opus-4.5-chat
 ```
 
-for project-aware sessions, use `--with-context` to inject your AGENTS.md into the system prompt. tau searches for this file in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home).
+by default, tau injects your AGENTS.md into the system prompt. use `--no-agent-context-files` to disable this behavior. tau searches for AGENTS.md in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home).
 
 you can also include additional `AGENTS.md` files via config (when that config is in scope for the current working directory):
 
@@ -230,7 +230,7 @@ prefix a message with `#` to update your project's AGENTS.md file. this is usefu
 # prefer explicit error messages with context about what operation failed
 ```
 
-tau will create or update AGENTS.md at your project root, integrating the new information into the existing structure. over time, this builds a knowledge base about your project. combine it with `--with-context` so future sessions understand your conventions without re-explaining them.
+tau will create or update AGENTS.md at your project root, integrating the new information into the existing structure. over time, this builds a knowledge base about your project. this file is loaded automatically in future sessions unless you pass `--no-agent-context-files`.
 
 ## commands
 
@@ -320,7 +320,7 @@ run them with `/bash:check` or `/bash:test`.
 
 ### additional agents context
 
-if you use `--with-context`, you can tell tau to always include extra `AGENTS.md` files by adding an `agentContextFiles` list to a config file in scope:
+you can tell tau to always include extra `AGENTS.md` files by adding an `agentContextFiles` list to a config file in scope:
 
 ```json
 { "agentContextFiles": ["packages/pkg1/AGENTS.md"] }

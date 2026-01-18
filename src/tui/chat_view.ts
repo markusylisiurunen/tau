@@ -218,9 +218,19 @@ export class TuiChatView implements ChatView {
     return this.toolUiRouter.getSubagentCostTotal();
   }
 
+  private sanitizeOscText(text: string): string {
+    return Array.from(text)
+      .filter((ch) => {
+        const code = ch.codePointAt(0);
+        return code !== undefined && code > 0x1f && code !== 0x7f;
+      })
+      .join("");
+  }
+
   sendTerminalNotification(title: string): void {
     if (!process.stdout.isTTY) return;
-    this.ui.terminal.write(`\x1b]9;${title}\x1b\\`);
+    const safeTitle = this.sanitizeOscText(title);
+    this.ui.terminal.write(`\x1b]9;${safeTitle}\x1b\\`);
   }
 
   getEditorText(): string {

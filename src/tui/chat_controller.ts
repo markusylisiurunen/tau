@@ -153,6 +153,11 @@ export class ChatController {
     const home = this.deps.env.home();
 
     this.personas = options.personas;
+    if (this.personas.length === 0) {
+      throw new Error(
+        "no personas available. add a custom persona in ~/.config/tau/personas or .tau/personas, or unset disableBuiltinPersonas.",
+      );
+    }
     this.prompts = options.prompts ?? [];
     this.skills = options.skills ?? [];
     this.themes = options.themes ?? [];
@@ -220,15 +225,10 @@ export class ChatController {
       nodeVersion: this.deps.env.nodeVersion(),
     });
 
-    this.baseSystemPrompt = buildBaseSystemPrompt({
-      personaSystemPrompt: this.currentPersona.systemPrompt,
-      skillsBlock: this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock,
-      projectContextBlock: this.projectContextBlock,
-      sandboxInfoBlock: options.sandboxEnabled
-        ? buildSandboxInfoBlock(this.config.sandbox?.environmentInfo)
-        : undefined,
-      environmentTag: this.environmentTag,
-      subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
+    const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
+    this.baseSystemPrompt = this.buildSystemPrompt({
+      persona: this.currentPersona,
+      skillsBlock: skillsContext.skillsBlock,
     });
 
     this.toolBackend =
@@ -1133,15 +1133,31 @@ export class ChatController {
       platform: this.deps.env.platform(),
       nodeVersion: this.deps.env.nodeVersion(),
     });
-    this.baseSystemPrompt = buildBaseSystemPrompt({
-      personaSystemPrompt: this.currentPersona.systemPrompt,
-      skillsBlock: this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock,
-      projectContextBlock: this.projectContextBlock,
-      environmentTag: this.environmentTag,
+    const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
+    this.baseSystemPrompt = this.buildSystemPrompt({
+      persona: this.currentPersona,
+      skillsBlock: skillsContext.skillsBlock,
       previousSessionSummary,
-      subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
+  }
+
+  private buildSystemPrompt(args: {
+    persona: Persona;
+    skillsBlock?: string;
+    previousSessionSummary?: string;
+  }): string {
+    return buildBaseSystemPrompt({
+      personaSystemPrompt: args.persona.systemPrompt,
+      skillsBlock: args.skillsBlock,
+      projectContextBlock: this.projectContextBlock,
+      sandboxInfoBlock: this.sandboxEnabled
+        ? buildSandboxInfoBlock(this.config.sandbox?.environmentInfo)
+        : undefined,
+      environmentTag: this.environmentTag,
+      previousSessionSummary: args.previousSessionSummary,
+      subagentsBlock: formatSubagentsForPrompt(args.persona),
+    });
   }
 
   private async generateSummary(history: readonly Message[]): Promise<string> {
@@ -1345,13 +1361,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.currentPersona = persona;
     this.clampPersonaReasoning(this.currentPersona);
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-    this.baseSystemPrompt = buildBaseSystemPrompt({
-      personaSystemPrompt: this.currentPersona.systemPrompt,
+    this.baseSystemPrompt = this.buildSystemPrompt({
+      persona: this.currentPersona,
       skillsBlock: skillsContext.skillsBlock,
-      projectContextBlock: this.projectContextBlock,
-      environmentTag: this.environmentTag,
       previousSessionSummary: this.previousSessionSummary,
-      subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
     });
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
     this.refreshStatus();
@@ -1425,6 +1438,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const configDeps = createDefaultConfigDeps();
       const runtime = await loadRuntimeConfig(this.deps.env.cwd(), configDeps);
       const { config, personas, prompts, skills, themes, bashCommands, warnings } = runtime;
+      if (personas.length === 0) {
+        this.view.addSystemMessage(
+          "reload failed: no personas available. keeping existing personas.",
+          "error",
+        );
+      }
       const previousThemeId = this.activeThemeId ?? this.config.defaultTheme;
       const resolvedThemeId =
         this.resolveThemeId(previousThemeId, themes) ??
@@ -1439,7 +1458,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.bashCommands = bashCommands;
 
       // Update the personas and prompts lists
-      this.personas = personas;
+      if (personas.length > 0) {
+        this.personas = personas;
+      }
       this.prompts = prompts;
       this.skills = skills;
       this.themes = themes;
@@ -1448,14 +1469,15 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
       // Try to preserve the current persona; fall back to first if not found
       const currentPersonaId = this.currentPersona.id.toLowerCase();
-      const updatedPersona = personas.find((p) => p.id.toLowerCase() === currentPersonaId);
+      const personaSource = this.personas;
+      const updatedPersona = personaSource.find((p) => p.id.toLowerCase() === currentPersonaId);
 
       if (updatedPersona) {
         this.currentPersona = updatedPersona;
         this.clampPersonaReasoning(this.currentPersona);
-      } else {
+      } else if (personaSource.length > 0) {
         // Persona no longer exists; switch to the first one
-        this.currentPersona = personas[0]!;
+        this.currentPersona = personaSource[0]!;
         this.clampPersonaReasoning(this.currentPersona);
         this.view.addSystemMessage(
           `previous persona no longer available; switched to ${this.currentPersona.label || this.currentPersona.id}.`,
@@ -1464,14 +1486,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       }
       // Rebuild system prompt and update the engine
       const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-      this.baseSystemPrompt = buildBaseSystemPrompt({
-        personaSystemPrompt: this.currentPersona.systemPrompt,
+      this.baseSystemPrompt = this.buildSystemPrompt({
+        persona: this.currentPersona,
         skillsBlock: skillsContext.skillsBlock,
-        projectContextBlock: this.projectContextBlock,
-        sandboxInfoBlock: buildSandboxInfoBlock(this.config.sandbox?.environmentInfo),
-        environmentTag: this.environmentTag,
         previousSessionSummary: this.previousSessionSummary,
-        subagentsBlock: formatSubagentsForPrompt(this.currentPersona),
       });
       this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
 

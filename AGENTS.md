@@ -168,7 +168,7 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 - `/help`, `/new`, `/copy`, `/copy:code`, `/export:html`, `/reload`
 - `/compact:only-summary`, `/compact:with-last-turn` - Compact history to continue
 - `/risk:read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
-- `!<cmd>` - Direct bash execution (bypasses model)
+- `!<cmd>` - Direct bash execution (bypasses model; runs inside sandbox when enabled)
 - `#<request>` - Memory mode for updating AGENTS.md
 
 **Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @files and $skills), `Ctrl+S` (stash input to clipboard), `Alt+Up` (pop queued message), `Escape` (interrupt), `Ctrl+C` (exit)
@@ -193,7 +193,7 @@ The `--debug` flag respects `--persona` and `--with-context`, so you can inspect
 
 ## Security
 
-- Risk levels gate model tools only; `!` commands bypass checks
+- Risk levels gate model tools only; `!` commands bypass checks (but still use the sandbox when enabled)
 - Bash sanitizes environment, blocks `*_KEY`, `*_SECRET`, `*_TOKEN`, `*_PASSWORD` patterns
 - Process groups terminated on abort to prevent orphaned processes
 

@@ -236,6 +236,9 @@ export class ChatController {
         spawn: this.deps.spawn,
         env: this.deps.env,
       });
+    if (this.sandboxEnabled && this.toolBackend.kind !== "sandbox") {
+      throw new Error("sandbox enabled but tool backend is not sandboxed.");
+    }
     const toolRegistry = ToolCatalog.createRegistry(this.toolBackend);
     this.engine = new CoreSession({
       persona: this.currentPersona,

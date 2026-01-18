@@ -57,6 +57,7 @@ export type GrepExecutionResult = {
 };
 
 export interface ToolExecutionBackend {
+  kind: "local" | "sandbox";
   runBash(
     command: string,
     options?: { timeoutMs?: number; signal?: AbortSignal; cwd?: string },
@@ -90,6 +91,7 @@ export function createLocalToolExecutionBackend(
   const spawnCapture = deps?.spawn ?? spawnWithCapture;
 
   return {
+    kind: "local",
     async runBash(command, options = {}) {
       const timeoutMs = options.timeoutMs;
       const signal = options.signal;
@@ -289,6 +291,7 @@ export async function createSandboxToolExecutionBackend(options: {
   };
 
   const backend: ToolExecutionBackend = {
+    kind: "sandbox",
     async runBash(command, options = {}) {
       const timeoutMs = options.timeoutMs;
       const signal = options.signal;

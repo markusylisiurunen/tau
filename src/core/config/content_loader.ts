@@ -9,7 +9,7 @@ import type { SubagentConfigMap, SubagentPersonaConfig } from "../subagents/type
 import { BASH_TOOL } from "../tools/bash.js";
 import { EDIT_TOOL } from "../tools/edit.js";
 import { FORK_TOOL } from "../tools/fork.js";
-import { TASK_TOOL } from "../tools/task.js";
+import { TASK_TOOL } from "../tools/task_schema.js";
 import { WRITE_TOOL } from "../tools/write.js";
 import type { Persona, ReasoningEffort, Skill } from "../types.js";
 import { ReasoningEffortSchema } from "../types.js";

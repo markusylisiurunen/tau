@@ -64,7 +64,7 @@ tokens in `~/.config/tau/auth.json`.
 - **no command analysis**: the system doesn't inspect command content. it trusts the declared safety level without verifying what the command actually does.
 - **full system access (by default)**: without sandboxing, the model can access any file on your system that your user account can read or write, not just the current working directory. use `--sandbox` to run tool calls inside a docker container with the project mounted.
 - **no tty / non-interactive tools**: tool commands run with stdin ignored and no TTY. anything that prompts for input or opens an editor can hang or fail (for example `sudo`, `ssh` password prompts, `git` credential prompts). tau also forces git into non-interactive mode (no prompt/editor/pager, batch-mode ssh).
-- **user bypasses**: the `!` prefix executes shell commands directly, completely bypassing risk level checks. this is intentional for direct use, but means risk levels only constrain the model, not the user.
+- **user bypasses**: the `!` prefix executes shell commands directly and completely bypasses risk level checks. this is intentional for direct use, but means risk levels only constrain the model, not the user. when `--sandbox` is enabled, these commands still run inside the sandbox.
 
 note that there is no confirmation step before tool execution. the model runs commands immediately, and you can only observe the results after the fact.
 
@@ -148,7 +148,7 @@ example config:
 }
 ```
 
-note: `!` commands still run directly on the host, not inside the container.
+note: when `--sandbox` is enabled, `!` commands also run inside the container.
 
 ## personas
 
@@ -251,7 +251,7 @@ tau supports slash commands for common actions:
 | `/theme:<id>`             | switch to a loaded theme                       |
 | `/bash:<id>`              | run a saved shell command                      |
 | `/risk:<level>`           | change the risk level                          |
-| `!<cmd>`                  | run a shell command directly                   |
+| `!<cmd>`                  | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
 
 the compact commands are useful when conversations get long. they compress everything into a summary so the model retains context without the overhead of a full history.
 

@@ -1422,7 +1422,12 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       return;
     }
 
-    await this.runBashCommand(saved.cmd, { cwd: this.repoRoot });
+    const cwd = resolveAgentCwd({
+      cwd: this.repoRoot,
+      sandboxEnabled: this.sandboxEnabled,
+      sandboxConfig: this.config.sandbox,
+    });
+    await this.runBashCommand(saved.cmd, { cwd });
   }
 
   private async reloadContent(): Promise<void> {

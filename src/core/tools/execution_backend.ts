@@ -3,11 +3,6 @@ import { dirname, posix as pathPosix, sep as pathSep } from "node:path";
 import type { SandboxConfig } from "../config/index.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
-import {
-  resolveRestrictedDirPath,
-  resolveRestrictedFilePath,
-  resolveRestrictedPath,
-} from "../utils/restricted_fs.js";
 import { sanitizeEnvironment } from "../utils/sanitize_env.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
 import { truncateToBytesFromStart } from "../utils/truncate.js";
@@ -164,14 +159,7 @@ export function createLocalToolExecutionBackend(
       return { stdout, stderr, exitCode: result.exitCode, truncated };
     },
 
-    async readFile(path, options) {
-      const restricted = options?.restricted ?? true;
-      if (restricted) {
-        const resolved = resolveRestrictedFilePath(path);
-        const content = readFileSync(resolved.realPath, "utf-8");
-        return { path: resolved.relPath, content };
-      }
-
+    async readFile(path, _options) {
       const content = readFileSync(path, "utf-8");
       return { path, content };
     },
@@ -196,28 +184,19 @@ export function createLocalToolExecutionBackend(
     },
 
     async listDir(path) {
-      const resolved = resolveRestrictedDirPath(path);
-      const dirents = readdirSync(resolved.realPath, { withFileTypes: true });
+      const dirents = readdirSync(path, { withFileTypes: true });
       const entries = dirents.map((d) => ({
         name: d.name,
         isDirectory: d.isDirectory(),
         isSymlink: d.isSymbolicLink(),
       }));
-      return { path: resolved.relPath, entries };
+      return { path, entries };
     },
 
     async grep(options) {
       const { baseArgs, pattern, paths, signal, timeoutMs, dryRun } = options;
 
-      const resolvedPaths: string[] = [];
-      let rootReal = cwdProvider();
-
-      for (const p of paths) {
-        const resolved = resolveRestrictedPath(p, { mustExist: true });
-        rootReal = resolved.rootReal;
-        resolvedPaths.push(resolved.relPath);
-      }
-
+      const resolvedPaths = paths.map((p) => p.trim() || ".");
       const fullArgs = [...baseArgs, "--", pattern, ...resolvedPaths];
 
       if (dryRun) {
@@ -232,7 +211,7 @@ export function createLocalToolExecutionBackend(
 
       try {
         const result = await spawnCapture("rg", fullArgs, {
-          cwd: rootReal,
+          cwd: cwdProvider(),
           windowsHide: true,
           signal,
           timeoutMs,
@@ -282,12 +261,21 @@ export async function createSandboxToolExecutionBackend(options: {
 
   const sandbox = await createDockerSandbox({ config: options.config, deps, cwd: options.cwd });
 
-  const mapToContainerPath = (relPath: string): string => {
-    const relPosix = toPosixRelPath(relPath);
-    if (!relPosix || relPosix === ".") {
-      return sandbox.runtime.mountPath;
+  const resolveContainerPath = (
+    rawPath: string,
+  ): { containerPath: string; displayPath: string } => {
+    const cleaned = rawPath.trim() || ".";
+    if (cleaned.includes("\0")) {
+      throw new Error("invalid path: contains null byte.");
     }
-    return pathPosix.join(sandbox.runtime.mountPath, relPosix);
+    if (pathPosix.isAbsolute(cleaned)) {
+      const normalized = pathPosix.normalize(cleaned);
+      return { containerPath: normalized, displayPath: normalized };
+    }
+
+    const relPosix = toPosixRelPath(cleaned);
+    const containerPath = pathPosix.normalize(pathPosix.join(sandbox.runtime.workdir, relPosix));
+    return { containerPath, displayPath: relPosix || "." };
   };
 
   const backend: ToolExecutionBackend = {
@@ -304,7 +292,7 @@ export async function createSandboxToolExecutionBackend(options: {
 
       const trimmedCwd = cwd?.trim();
       const execCwd = trimmedCwd
-        ? sandbox.mapPath(trimmedCwd, { mustExist: true, kind: "dir" }).containerPath
+        ? resolveContainerPath(trimmedCwd).containerPath
         : sandbox.runtime.workdir;
 
       const result = await sandbox.exec(["sh", "-lc", command], {
@@ -365,7 +353,7 @@ export async function createSandboxToolExecutionBackend(options: {
     },
 
     async readFile(path, _options) {
-      const resolved = sandbox.mapPath(path, { mustExist: true, kind: "file" });
+      const resolved = resolveContainerPath(path);
       const result = await sandbox.exec(["cat", "--", resolved.containerPath]);
 
       if (result.exitCode !== 0) {
@@ -373,11 +361,11 @@ export async function createSandboxToolExecutionBackend(options: {
         throw new Error(message);
       }
 
-      return { path: resolved.relPath, content: result.stdout };
+      return { path: resolved.displayPath, content: result.stdout };
     },
 
     async writeFile(path, content) {
-      const resolved = sandbox.mapPath(path);
+      const resolved = resolveContainerPath(path);
       const dir = pathPosix.dirname(resolved.containerPath);
       if (dir && dir !== ".") {
         const mkdir = await sandbox.exec(["mkdir", "-p", dir]);
@@ -399,7 +387,7 @@ export async function createSandboxToolExecutionBackend(options: {
 
       const bytes = Buffer.byteLength(content, "utf-8");
       const lines = content.split("\n").length;
-      return { path: resolved.relPath, bytes, lines };
+      return { path: resolved.displayPath, bytes, lines };
     },
 
     async editFile(path, patch) {
@@ -409,31 +397,36 @@ export async function createSandboxToolExecutionBackend(options: {
     },
 
     async listDir(path) {
-      const resolved = sandbox.mapPath(path, { mustExist: true, kind: "dir" });
-      const listing = await sandbox.exec(["ls", "-A", "-1", "--", resolved.containerPath]);
+      const resolved = resolveContainerPath(path);
+      const listing = await sandbox.exec([
+        "find",
+        resolved.containerPath,
+        "-mindepth",
+        "1",
+        "-maxdepth",
+        "1",
+        "-printf",
+        "%y\\0%f\\0",
+      ]);
       if (listing.exitCode !== 0) {
         const message = listing.stderr.trim() || "failed to list directory.";
         throw new Error(message);
       }
 
       const entries: ListDirEntry[] = [];
-      const names = listing.stdout.split("\n").filter(Boolean);
-
-      for (const name of names) {
-        const entryPath = pathPosix.join(resolved.containerPath, name);
-        const stat = await sandbox.exec(["ls", "-ld", "--", entryPath]);
-        if (stat.exitCode !== 0) {
-          continue;
-        }
-        const firstChar = stat.stdout.trim().charAt(0);
+      const chunks = listing.stdout.split("\0");
+      for (let i = 0; i + 1 < chunks.length; i += 2) {
+        const type = chunks[i];
+        const name = chunks[i + 1];
+        if (!type || !name) continue;
         entries.push({
           name,
-          isDirectory: firstChar === "d",
-          isSymlink: firstChar === "l",
+          isDirectory: type === "d",
+          isSymlink: type === "l",
         });
       }
 
-      return { path: resolved.relPath, entries };
+      return { path: resolved.displayPath, entries };
     },
 
     async grep(options) {
@@ -442,9 +435,9 @@ export async function createSandboxToolExecutionBackend(options: {
       const resolvedPaths: string[] = [];
       const commandPaths: string[] = [];
       for (const p of paths) {
-        const resolved = sandbox.mapPath(p, { mustExist: true });
-        resolvedPaths.push(resolved.relPath);
-        commandPaths.push(toPosixRelPath(resolved.relPath));
+        const resolved = resolveContainerPath(p);
+        resolvedPaths.push(resolved.displayPath);
+        commandPaths.push(resolved.containerPath);
       }
 
       const fullArgs = [...baseArgs, "--", pattern, ...commandPaths];
@@ -459,7 +452,7 @@ export async function createSandboxToolExecutionBackend(options: {
         };
       }
 
-      const execCwd = mapToContainerPath(".");
+      const execCwd = sandbox.runtime.workdir;
 
       try {
         const result = await sandbox.exec(["rg", ...fullArgs], {

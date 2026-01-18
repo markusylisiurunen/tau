@@ -1,32 +1,16 @@
 import { realpathSync } from "node:fs";
-import { posix as pathPosix, relative, sep } from "node:path";
 import type { SandboxConfig } from "../config/index.js";
-import { getRestrictedRoot } from "./restricted_fs.js";
-
-const DEFAULT_SANDBOX_MOUNT_PATH = "/workspace";
-
-function normalizeSandboxMountPath(mountPath?: string): string {
-  const trimmed = (mountPath ?? DEFAULT_SANDBOX_MOUNT_PATH).trim() || DEFAULT_SANDBOX_MOUNT_PATH;
-  if (trimmed.endsWith("/") && trimmed.length > 1) {
-    return trimmed.slice(0, -1);
-  }
-  return trimmed;
-}
+import { getGitRoot } from "./git.js";
+import { normalizeSandboxMountPath, resolveSandboxWorkdir } from "./sandbox_paths.js";
 
 function resolveSandboxCwd(cwd: string, config?: SandboxConfig): string {
   const mountPath = normalizeSandboxMountPath(config?.mountPath);
 
   try {
-    const { rootReal } = getRestrictedRoot(cwd);
+    const root = getGitRoot(cwd) ?? cwd;
+    const rootReal = realpathSync(root);
     const cwdReal = realpathSync(cwd);
-    const relCwd = relative(rootReal, cwdReal) || ".";
-
-    if (relCwd === ".." || relCwd.startsWith(`..${sep}`)) {
-      return mountPath;
-    }
-
-    const relPosix = relCwd.split(sep).join(pathPosix.sep);
-    return relPosix === "." ? mountPath : pathPosix.join(mountPath, relPosix);
+    return resolveSandboxWorkdir({ cwdReal, rootReal, mountPath });
   } catch {
     return mountPath;
   }

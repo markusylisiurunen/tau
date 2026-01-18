@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { realpathSync, statSync } from "node:fs";
-import { isAbsolute, posix as pathPosix, relative, resolve, sep } from "node:path";
+import { realpathSync } from "node:fs";
 import type { SandboxConfig } from "../../config/index.js";
 import type { CoreDeps } from "../../runtime/deps.js";
-import { getRestrictedRoot } from "../../utils/restricted_fs.js";
+import { getGitRoot } from "../../utils/git.js";
+import { normalizeSandboxMountPath, resolveSandboxWorkdir } from "../../utils/sandbox_paths.js";
 import { sanitizeEnvironment } from "../../utils/sanitize_env.js";
 import type { SpawnCaptureResult } from "../../utils/spawn_capture.js";
 
@@ -24,84 +24,6 @@ type NormalizedSandboxConfig = {
   extraDockerArgs: string[];
   environmentInfo?: string;
 };
-
-type ResolvedPath = {
-  rootReal: string;
-  absPath: string;
-  realPath: string;
-  relPath: string;
-};
-
-const TRAVERSAL_PATTERN = /(^|[\\/])\.\.([\\/]|$)/;
-
-function isOutsideRoot(rootReal: string, candidate: string): boolean {
-  const rel = relative(rootReal, candidate);
-  if (!rel) {
-    return false;
-  }
-  return rel === ".." || rel.startsWith(`..${sep}`);
-}
-
-function resolveSandboxPath(
-  rawPath: string,
-  rootReal: string,
-  options?: { mustExist?: boolean },
-): ResolvedPath {
-  const cleaned = rawPath.trim() || ".";
-  const rootResolved = realpathSync(rootReal);
-
-  if (cleaned.includes("\0")) {
-    throw new Error("invalid path: contains null byte.");
-  }
-
-  if (TRAVERSAL_PATTERN.test(cleaned)) {
-    throw new Error("invalid path: '..' traversal is not allowed.");
-  }
-
-  const absPath = isAbsolute(cleaned) ? resolve(cleaned) : resolve(rootResolved, cleaned);
-
-  if (isOutsideRoot(rootResolved, absPath)) {
-    throw new Error("path is outside the allowed root.");
-  }
-
-  if (options?.mustExist) {
-    const realPath = realpathSync(absPath);
-    if (isOutsideRoot(rootResolved, realPath)) {
-      throw new Error("path resolves outside the allowed root.");
-    }
-    return {
-      rootReal: rootResolved,
-      absPath,
-      realPath,
-      relPath: relative(rootResolved, realPath) || ".",
-    };
-  }
-
-  return {
-    rootReal: rootResolved,
-    absPath,
-    realPath: absPath,
-    relPath: relative(rootResolved, absPath) || ".",
-  };
-}
-
-function resolveSandboxFilePath(rawPath: string, rootReal: string): ResolvedPath {
-  const resolved = resolveSandboxPath(rawPath, rootReal, { mustExist: true });
-  const stat = statSync(resolved.realPath);
-  if (!stat.isFile()) {
-    throw new Error("path is not a file.");
-  }
-  return resolved;
-}
-
-function resolveSandboxDirPath(rawPath: string, rootReal: string): ResolvedPath {
-  const resolved = resolveSandboxPath(rawPath, rootReal, { mustExist: true });
-  const stat = statSync(resolved.realPath);
-  if (!stat.isDirectory()) {
-    throw new Error("path is not a directory.");
-  }
-  return resolved;
-}
 
 export type DockerSandboxRuntime = {
   containerId: string;
@@ -127,10 +49,6 @@ export type DockerSandbox = {
   runtime: DockerSandboxRuntime;
   exec: (args: string[], options?: DockerExecOptions) => Promise<SpawnCaptureResult>;
   dispose: () => Promise<void>;
-  mapPath: (
-    rawPath: string,
-    options?: { mustExist?: boolean; kind?: "file" | "dir" },
-  ) => { containerPath: string; relPath: string; absPath: string; rootReal: string };
 };
 
 function normalizeSandboxConfig(config: SandboxConfig): NormalizedSandboxConfig {
@@ -139,7 +57,7 @@ function normalizeSandboxConfig(config: SandboxConfig): NormalizedSandboxConfig 
     throw new Error("sandbox.image is required when --sandbox is enabled.");
   }
 
-  const mountPath = (config.mountPath ?? DEFAULT_MOUNT_PATH).trim();
+  const mountPath = normalizeSandboxMountPath(config.mountPath ?? DEFAULT_MOUNT_PATH);
   if (!mountPath.startsWith("/")) {
     throw new Error("sandbox.mountPath must be an absolute unix path.");
   }
@@ -158,19 +76,6 @@ function normalizeSandboxConfig(config: SandboxConfig): NormalizedSandboxConfig 
     extraDockerArgs,
     environmentInfo: config.environmentInfo,
   };
-}
-
-function toPosixPath(value: string): string {
-  if (!value || value === ".") return ".";
-  return value.split(sep).join(pathPosix.sep);
-}
-
-function buildContainerPath(mountPath: string, relPath: string): string {
-  const relPosix = toPosixPath(relPath);
-  if (!relPosix || relPosix === ".") {
-    return mountPath;
-  }
-  return pathPosix.join(mountPath, relPosix);
 }
 
 async function runDocker(
@@ -235,27 +140,24 @@ function resolveSandboxPaths(
   cwd: string,
   mountPath: string,
 ): { rootReal: string; workdir: string } {
-  const { rootReal } = getRestrictedRoot(cwd);
+  const root = getGitRoot(cwd) ?? cwd;
+  const rootReal = realpathSync(root);
   const cwdReal = realpathSync(cwd);
-  const relCwd = relative(rootReal, cwdReal) || ".";
+  const workdir = resolveSandboxWorkdir({ cwdReal, rootReal, mountPath });
 
-  if (relCwd.startsWith("..")) {
-    throw new Error("sandbox cwd is outside the project root.");
-  }
-
-  return {
-    rootReal,
-    workdir: buildContainerPath(mountPath, relCwd),
-  };
+  return { rootReal, workdir };
 }
 
 async function preflightImage(deps: CoreDeps, containerId: string): Promise<void> {
-  const required = ["sh", "cat", "ls", "rg", "tee", "mkdir", "tail"];
-  const check = required.map((cmd) => `command -v ${cmd} >/dev/null 2>&1`).join(" && ");
+  const required = ["sh", "cat", "ls", "rg", "tee", "mkdir", "tail", "find"];
+  const check = [
+    ...required.map((cmd) => `command -v ${cmd} >/dev/null 2>&1`),
+    "find . -maxdepth 0 -printf '' >/dev/null 2>&1",
+  ].join(" && ");
   const result = await runDocker(deps, ["exec", containerId, "sh", "-lc", check]);
   if (result.exitCode !== 0) {
     throw new Error(
-      `sandbox image missing required commands: ${required.join(", ")}. ${result.stderr.trim()}`,
+      `sandbox image missing required commands (or find -printf support): ${required.join(", ")}. ${result.stderr.trim()}`,
     );
   }
 }
@@ -357,26 +259,5 @@ export async function createDockerSandbox(args: {
     }).catch(() => {});
   };
 
-  const mapPath = (
-    rawPath: string,
-    options?: { mustExist?: boolean; kind?: "file" | "dir" },
-  ): { containerPath: string; relPath: string; absPath: string; rootReal: string } => {
-    let resolved: ResolvedPath;
-    if (options?.kind === "file") {
-      resolved = resolveSandboxFilePath(rawPath, rootReal);
-    } else if (options?.kind === "dir") {
-      resolved = resolveSandboxDirPath(rawPath, rootReal);
-    } else {
-      resolved = resolveSandboxPath(rawPath, rootReal, { mustExist: options?.mustExist });
-    }
-
-    return {
-      containerPath: buildContainerPath(runtime.mountPath, resolved.relPath),
-      relPath: resolved.relPath,
-      absPath: resolved.absPath,
-      rootReal: resolved.rootReal,
-    };
-  };
-
-  return { runtime, exec, dispose, mapPath };
+  return { runtime, exec, dispose };
 }

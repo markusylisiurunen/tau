@@ -137,7 +137,7 @@ the default is read-only because it lets the model investigate your code and ans
 
 ## sandboxing
 
-when started with `--sandbox`, tau runs all tool calls inside a session-scoped docker container. the project root (git root or cwd) is mounted into the container, and the working directory matches your current subdirectory.
+when started with `--sandbox`, tau runs all tool calls inside a session-scoped docker container. the project root (git root or cwd) is mounted into the container, and the working directory matches your current subdirectory. only `/workspace` is bound to the host; absolute paths outside `/workspace` refer to the container filesystem.
 
 requirements:
 - docker must be available on the host

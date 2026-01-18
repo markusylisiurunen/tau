@@ -66,7 +66,6 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `utils/tool_preview.ts` - Tool UI preview truncation
   - `utils/truncate.ts` - Truncation helpers
   - `utils/model_stream.ts` - Model streaming wrapper
-  - `utils/restricted_fs.ts` - Restricted filesystem helpers
   - `utils/spawn_capture.ts` - Process capture helper
   - `utils/sanitize_env.ts` - Environment sanitization
   - `utils/token.ts` - Token heuristics
@@ -104,7 +103,7 @@ Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog
 
 Risk levels (`read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
 
-**Bash limits**: 2MB raw capture, 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized via allowlist (see `ALLOWED_ENV_VARS` in `src/core/utils/sanitize_env.ts`), git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
+**Bash limits**: 2MB raw capture, 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized by dropping vars that match sensitive key patterns, git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 

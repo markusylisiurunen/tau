@@ -2,6 +2,11 @@
 
 Terminal-based AI chat client with tool execution, streaming responses, and risk-level controls. Supports Anthropic, OpenAI, and Google models.
 
+## Platform support
+
+- **Supported**: macOS only.
+- **Unsupported**: Windows (do not add Windows support).
+
 ## Architecture
 
 - **ChatApp** (`src/tui/app.ts`): Thin wiring between the controller and TUI view adapter

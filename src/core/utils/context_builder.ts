@@ -118,7 +118,7 @@ export function buildProjectContextBlock(args: {
     } catch {
       continue;
     }
-    lines.push(`<file path="${filePath}">`);
+    lines.push(`<file path="${escapeXml(filePath)}">`);
     lines.push(content.trimEnd());
     lines.push("</file>");
     lines.push("");

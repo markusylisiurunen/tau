@@ -1,5 +1,5 @@
 import { readdir, realpath, stat } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { spawnWithCapture } from "./spawn_capture.js";
 
 const DEFAULT_IGNORED_DIRS = new Set([".git", "node_modules"]);
@@ -27,37 +27,20 @@ async function runCommand(
 }
 
 export async function listProjectFilesAsync(cwd: string): Promise<string[]> {
-  const fromGit = await listProjectFilesFromGitAsync(cwd);
-  if (fromGit.length) return fromGit;
+  const fromRipgrep = await listProjectFilesFromRipgrepAsync(cwd);
+  if (fromRipgrep.length) return fromRipgrep;
   return listProjectFilesByWalkingAsync(cwd);
 }
 
-async function listProjectFilesFromGitAsync(cwd: string): Promise<string[]> {
+async function listProjectFilesFromRipgrepAsync(cwd: string): Promise<string[]> {
   try {
-    const inside = await runCommand(cwd, "git", ["rev-parse", "--is-inside-work-tree"]);
-    if (inside.status !== 0) return [];
-    if ((inside.stdout ?? "").trim() !== "true") return [];
-
-    const rootRes = await runCommand(cwd, "git", ["rev-parse", "--show-toplevel"]);
-    if (rootRes.status !== 0) return [];
-
-    const repoRoot = (rootRes.stdout ?? "").trim();
-    if (!repoRoot) return [];
-
-    const res = await runCommand(cwd, "git", [
-      "ls-files",
-      "--full-name",
-      "--cached",
-      "--others",
-      "--exclude-standard",
-    ]);
+    const res = await runCommand(cwd, "rg", ["--files"]);
     if (res.status !== 0) return [];
 
     const files = (res.stdout ?? "")
       .split("\n")
       .map((l) => l.trim())
-      .filter(Boolean)
-      .map((file) => relative(cwd, join(repoRoot, file)));
+      .filter(Boolean);
 
     return [...new Set(files)].sort();
   } catch {

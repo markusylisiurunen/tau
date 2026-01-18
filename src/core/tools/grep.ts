@@ -29,7 +29,8 @@ const GREP_DESCRIPTION = ["Search the project with ripgrep (rg).", "Runs without
 );
 
 const GREP_PATTERN_DESCRIPTION = "Search pattern (ripgrep regex).";
-const GREP_PATHS_DESCRIPTION = "Paths to search (files or directories, relative to repo root).";
+const GREP_PATHS_DESCRIPTION =
+  "Paths to search (files or directories, relative to the current working directory).";
 const GREP_CASE_MODE_DESCRIPTION =
   "Case sensitivity mode. Must be one of: smart, sensitive, insensitive.";
 const GREP_FIXED_STRINGS_DESCRIPTION = "Treat pattern as a literal string.";

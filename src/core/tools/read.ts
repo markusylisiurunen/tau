@@ -19,7 +19,7 @@ export const READ_MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
 
 const READ_DESCRIPTION = ["Read a file from the project safely."].join(" ");
 
-const READ_PATH_DESCRIPTION = "File path to read (relative to the repo root).";
+const READ_PATH_DESCRIPTION = "File path to read (relative to the current working directory).";
 const READ_START_LINE_DESCRIPTION = "1-based inclusive start line.";
 const READ_END_LINE_DESCRIPTION = "1-based inclusive end line.";
 

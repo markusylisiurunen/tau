@@ -14,7 +14,7 @@ const LIST_DEFAULT_LIMIT = 64;
 const LIST_DESCRIPTION = ["List files in a directory (non-recursive)."].join(" ");
 
 const LIST_PATH_DESCRIPTION =
-  "Directory path to list (relative to the repo root). Use '.' for root.";
+  "Directory path to list (relative to the current working directory). Use '.' for root.";
 const LIST_OFFSET_DESCRIPTION = "Number of entries to skip.";
 const LIST_LIMIT_DESCRIPTION = "Max number of entries to return (<= 256).";
 

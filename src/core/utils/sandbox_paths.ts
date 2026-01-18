@@ -23,3 +23,19 @@ export function resolveSandboxWorkdir(args: {
   const relPosix = relCwd.split(sep).join(pathPosix.sep);
   return relPosix === "." ? args.mountPath : pathPosix.join(args.mountPath, relPosix);
 }
+
+export function resolveSandboxPathForHostPath(args: {
+  hostPath: string;
+  rootReal: string;
+  mountPath: string;
+}): string {
+  const relPath = relative(args.rootReal, args.hostPath);
+  if (!relPath || relPath === ".") {
+    return args.mountPath;
+  }
+  if (relPath === ".." || relPath.startsWith(`..${sep}`)) {
+    return args.mountPath;
+  }
+  const relPosix = relPath.split(sep).join(pathPosix.sep);
+  return pathPosix.join(args.mountPath, relPosix);
+}

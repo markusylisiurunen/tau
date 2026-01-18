@@ -47,7 +47,8 @@ import {
   type RiskLevel,
   type Skill,
 } from "../core/types.js";
-import { resolveAgentCwd } from "../core/utils/agent_environment.js";
+import { resolveAgentCwd, resolveSandboxPath } from "../core/utils/agent_environment.js";
+import { findAgentsFilesFromCwdToHome } from "../core/utils/agents_files.js";
 import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
@@ -59,7 +60,6 @@ import {
 } from "../core/utils/context.js";
 import { formatHistoryForCompression } from "../core/utils/fork.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
-import { getGitRoot } from "../core/utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
@@ -103,7 +103,6 @@ export class ChatController {
   private skills: Skill[];
   private themes: ThemeDefinition[];
   private bashCommands: BashCommand[];
-  private readonly repoRoot: string;
   private readonly initialUserMessage?: string;
   private config: Config;
   private activeThemeId?: string;
@@ -162,7 +161,6 @@ export class ChatController {
     this.skills = options.skills ?? [];
     this.themes = options.themes ?? [];
     this.bashCommands = options.bashCommands ?? [];
-    this.repoRoot = getGitRoot(cwd) ?? cwd;
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
     this.sandboxEnabled = options.sandboxEnabled ?? false;
@@ -916,13 +914,18 @@ export class ChatController {
 
   private getMemoryModeFilePath(): string {
     const cwd = this.deps.env.cwd();
-    const gitRoot = getGitRoot(cwd);
-
-    if (gitRoot) {
-      return resolve(join(gitRoot, "AGENTS.md"));
+    const home = this.deps.env.home();
+    const nearestAgentsFiles = findAgentsFilesFromCwdToHome(cwd, home);
+    const hostPath =
+      nearestAgentsFiles.length > 0 ? nearestAgentsFiles[0]! : resolve(join(cwd, "AGENTS.md"));
+    if (this.sandboxEnabled) {
+      return resolveSandboxPath({
+        hostPath,
+        cwd,
+        sandboxConfig: this.config.sandbox,
+      });
     }
-
-    return resolve(join(cwd, "AGENTS.md"));
+    return hostPath;
   }
 
   private formatMemoryModeUserMessage(agentsFilePath: string, request: string): string {

@@ -93,6 +93,10 @@ export class SessionEngine {
     return this.messages;
   }
 
+  get sessionIdValue(): string {
+    return this.sessionId;
+  }
+
   private getStreamingSettings(persona: Persona): TauStreamOptions {
     const merged = { ...persona.settings } as Record<string, unknown>;
     return parseStreamingSettings(merged);
@@ -172,6 +176,7 @@ export class SessionEngine {
     try {
       apiKey = await this.credentialResolver.getApiKey(
         this.persona.model.provider as KnownProvider,
+        { sessionId: this.sessionId },
       );
     } catch (error) {
       if (this.persona.model.provider === "openai-codex") {
@@ -217,6 +222,17 @@ export class SessionEngine {
       yield { type: "assistant_final", message: finalMessage };
       return { finalMessage };
     } catch (err) {
+      if (!signal.aborted) {
+        try {
+          await this.credentialResolver.noteProviderError?.(
+            this.persona.model.provider as KnownProvider,
+            {
+              sessionId: this.sessionId,
+              error: err,
+            },
+          );
+        } catch {}
+      }
       if (signal.aborted) {
         return { finalMessage: undefined };
       }

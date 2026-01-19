@@ -127,7 +127,9 @@ export async function runSubagentToCompletion(options: {
 
     let apiKey: string | undefined;
     try {
-      apiKey = await credentialResolver.getApiKey(personaConfig.model.provider as KnownProvider);
+      apiKey = await credentialResolver.getApiKey(personaConfig.model.provider as KnownProvider, {
+        sessionId,
+      });
     } catch (error) {
       if (personaConfig.model.provider === "openai-codex") {
         throw new Error(formatCodexAuthError(authPath, (error as Error)?.message));
@@ -174,6 +176,17 @@ export async function runSubagentToCompletion(options: {
         }
       });
     } catch (err) {
+      if (!signal.aborted) {
+        try {
+          await credentialResolver.noteProviderError?.(
+            personaConfig.model.provider as KnownProvider,
+            {
+              sessionId,
+              error: err,
+            },
+          );
+        } catch {}
+      }
       if (signal.aborted) {
         throw new Error("sub-agent aborted");
       }

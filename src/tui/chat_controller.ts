@@ -1191,6 +1191,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     try {
       apiKey = await this.credentialResolver.getApiKey(
         this.currentPersona.model.provider as KnownProvider,
+        { sessionId: this.engine.sessionId },
       );
     } catch (error) {
       if (this.currentPersona.model.provider === "openai-codex") {

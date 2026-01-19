@@ -39,7 +39,7 @@ environment variables take precedence over the config file.
 to use the OpenAI Codex subscription provider (`openai-codex`), run:
 
 ```sh
-tau login openai-codex
+tau auth login codex
 ```
 
 this prints a login URL and starts a local callback server on `127.0.0.1:1455`. complete the
@@ -47,11 +47,21 @@ login in your browser and tau will store tokens in `~/.config/tau/auth.json`. if
 is already in use, or the browser callback fails, tau will prompt you to paste the redirect
 URL/code. if you see token refresh errors later, run the login command again to re-authenticate.
 
+to list authenticated accounts and usage:
+
+```sh
+tau auth list
+```
+
 to remove stored credentials:
 
 ```sh
-tau logout openai-codex
+tau auth logout codex --account <email>
 ```
+
+to force a specific Codex account for this run, set `TAU_CODEX_ACCOUNT` to the
+account email or account id (same matching as `auth logout`). when set, tau will
+only use that account and will not fail over.
 
 `openai-codex` does **not** use `OPENAI_API_KEY` or `apiKeys.openai`; it relies on the OAuth
 tokens in `~/.config/tau/auth.json`.

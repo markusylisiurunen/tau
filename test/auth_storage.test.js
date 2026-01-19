@@ -31,39 +31,80 @@ beforeEach(() => {
 });
 
 describe("AuthStorage", () => {
-  it("reads and writes api key credentials", async () => {
+  it("rejects legacy auth.json formats", () => {
     const fx = createTempAuthPath();
     try {
       writeFileSync(
         fx.authPath,
-        JSON.stringify({ openai: { type: "api_key", key: "sk-test" } }, null, 2),
+        JSON.stringify({ "openai-codex": { type: "oauth", access: "x" } }, null, 2),
       );
-
       const storage = new AuthStorage(fx.authPath);
-      expect(storage.get("openai").key).toBe("sk-test");
-      expect(await storage.getApiKey("openai")).toBe("sk-test");
-
-      storage.set("anthropic", { type: "api_key", key: "sk-ant" });
-      const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
-      expect(saved.anthropic.key).toBe("sk-ant");
+      expect(storage.getInvalidReason()).toBeDefined();
+      expect(storage.getData().providers).toEqual({});
     } finally {
       fx.cleanup();
     }
   });
 
-  it("refreshes oauth credentials and persists updates", async () => {
+  it("filters invalid accounts from auth.json", () => {
     const fx = createTempAuthPath();
     try {
       writeFileSync(
         fx.authPath,
         JSON.stringify(
           {
-            "openai-codex": {
-              type: "oauth",
-              access: "old-access",
-              refresh: "old-refresh",
-              expires: 0,
-              accountId: "acct-old",
+            providers: {
+              "openai-codex": {
+                accounts: [
+                  {
+                    type: "oauth",
+                    accountId: "acct-good",
+                    access: "old-access",
+                    refresh: "old-refresh",
+                    expires: 0,
+                    idToken: "header.payload.signature",
+                  },
+                  { type: "oauth", accountId: "bad" },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const storage = new AuthStorage(fx.authPath);
+      const accounts = storage.getData().providers["openai-codex"]?.accounts ?? [];
+      expect(accounts.length).toBe(1);
+      expect(accounts[0].accountId).toBe("acct-good");
+    } finally {
+      fx.cleanup();
+    }
+  });
+});
+
+describe("CredentialResolver", () => {
+  it("uses codex auth accounts and persists refreshed credentials", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify(
+          {
+            providers: {
+              "openai-codex": {
+                accounts: [
+                  {
+                    type: "oauth",
+                    accountId: "acct-old",
+                    access: "old-access",
+                    refresh: "old-refresh",
+                    expires: 0,
+                    idToken: "header.payload.signature",
+                  },
+                ],
+              },
             },
           },
           null,
@@ -82,20 +123,24 @@ describe("AuthStorage", () => {
       });
 
       const storage = new AuthStorage(fx.authPath);
-      const apiKey = await storage.getApiKey("openai-codex");
+      const resolver = createCredentialResolver({
+        authStorage: storage,
+        getConfig: () => ({}),
+      });
+
+      const apiKey = await resolver.getApiKey("openai-codex", { sessionId: "session-1" });
       expect(apiKey).toBe("new-access");
 
       const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
-      expect(saved["openai-codex"].access).toBe("new-access");
-      expect(saved["openai-codex"].refresh).toBe("new-refresh");
+      const account = saved.providers["openai-codex"].accounts[0];
+      expect(account.access).toBe("new-access");
+      expect(account.refresh).toBe("new-refresh");
     } finally {
       fx.cleanup();
     }
   });
-});
 
-describe("CredentialResolver", () => {
-  it("prefers auth storage, then config, then environment", async () => {
+  it("prefers config apiKeys, then environment", async () => {
     const fx = createTempAuthPath();
     try {
       const storage = new AuthStorage(fx.authPath);
@@ -105,11 +150,6 @@ describe("CredentialResolver", () => {
       });
 
       getEnvApiKey.mockReturnValue("env-key");
-
-      storage.set("openai", { type: "api_key", key: "auth-key" });
-      expect(await resolver.getApiKey("openai")).toBe("auth-key");
-
-      storage.remove("openai");
       expect(await resolver.getApiKey("openai")).toBe("config-key");
 
       const resolverNoConfig = createCredentialResolver({

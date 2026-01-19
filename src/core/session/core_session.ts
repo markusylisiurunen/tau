@@ -52,6 +52,10 @@ export class CoreSession {
     return this.engine.history;
   }
 
+  get sessionId(): string {
+    return this.engine.sessionIdValue;
+  }
+
   async *events(signal: AbortSignal): AsyncGenerator<CoreEvent> {
     yield* this.engine.processTurn(signal);
   }

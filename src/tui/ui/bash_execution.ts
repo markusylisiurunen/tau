@@ -55,8 +55,8 @@ export function buildBashExecutionView(
     wrapIndex: 5,
   });
 
-  const previewStyle = isSuccess ? palette.textDim : palette.actionError;
-  const statusStyle = isSuccess ? palette.textMuted : palette.actionError;
+  const previewStyle = palette.textDim;
+  const statusStyle = palette.textMuted;
   const compactParts: string[] = [];
   if (uiText.previewText.trim()) {
     compactParts.push(previewStyle(uiText.previewText));
@@ -65,7 +65,7 @@ export function buildBashExecutionView(
     compactParts.push(statusStyle(uiText.statusLine));
   }
   const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
-  const fullStyle = isSuccess ? palette.actionOutput : palette.actionError;
+  const fullStyle = palette.actionOutput;
   const fullText = uiText.fullText.trim() ? fullStyle(uiText.fullText) : undefined;
   const sections = fullText ? [fullText] : [];
   return {

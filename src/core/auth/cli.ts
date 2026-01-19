@@ -190,7 +190,7 @@ export async function runListCommand(options: {
         for (const window of account.usage.windows) {
           const labelText = formatWindowLabel(window.windowSeconds) ?? window.name;
           const remaining = remainingPercent(window.usedPercent);
-          const percentText = `${formatTwoDigits(remaining)}% left`;
+          const percentText = `${formatPercent(remaining)}% left`;
           const bar = formatBarRemaining(remaining);
           const reset = formatResetAt(window.resetAt);
           const resetRelative = formatRelativeReset(window.resetAt);
@@ -254,7 +254,7 @@ function formatRelativeReset(epochSeconds: number): string | undefined {
 }
 
 function formatBarRemaining(remaining: number): string {
-  const clamped = clampTwoDigit(remaining);
+  const clamped = clampPercent(remaining);
   const filled = Math.round((clamped / 100) * BAR_WIDTH);
   const empty = Math.max(0, BAR_WIDTH - filled);
   const filledText = "█".repeat(filled);
@@ -271,14 +271,14 @@ function formatBarRemaining(remaining: number): string {
 function remainingPercent(usedPercent: number): number {
   const used = Number.isFinite(usedPercent) ? Math.round(usedPercent) : 0;
   const remaining = 100 - used;
-  return clampTwoDigit(remaining);
+  return clampPercent(remaining);
 }
 
-function clampTwoDigit(value: number): number {
+function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
-  return Math.min(99, Math.max(0, Math.round(value)));
+  return Math.min(100, Math.max(0, Math.round(value)));
 }
 
-function formatTwoDigits(value: number): string {
-  return String(value).padStart(2, "0");
+function formatPercent(value: number): string {
+  return String(clampPercent(value)).padStart(3, " ");
 }

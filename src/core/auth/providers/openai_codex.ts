@@ -197,9 +197,10 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         const index = providerData.accounts.findIndex(
           (entry) => entry.type === "oauth" && entry.accountId === account.accountId,
         );
-        if (index >= 0) {
-          providerData.accounts[index] = mergeUpdatedCredentials(account, result.newCredentials);
-        }
+        if (index < 0) return;
+        const current = providerData.accounts[index];
+        if (!current || current.type !== "oauth") return;
+        providerData.accounts[index] = mergeUpdatedCredentials(current, result.newCredentials);
       });
     }
     return result.apiKey;
@@ -302,7 +303,13 @@ function resolveForcedAccountId(authStorage: AuthStorage): string | undefined {
   const identifier = normalizeIdentifier(raw);
   if (!identifier) return undefined;
   const account = getAccounts(authStorage).find((entry) => matchesIdentifier(entry, identifier));
-  return account?.accountId;
+  if (!account) {
+    throw new Error(
+      `${FORCED_ACCOUNT_ENV} did not match any stored Codex account: "${raw}". ` +
+        'Run "tau auth list" to see available accounts.',
+    );
+  }
+  return account.accountId;
 }
 
 function getForcedAccountIdFromList(accounts: AuthAccountInfo[]): string | undefined {

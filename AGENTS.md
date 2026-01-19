@@ -152,6 +152,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`). Each command runs with cwd set to the config level root (same root used to resolve `agentContextFiles`).
 
 **Sandbox config fields** (used when starting tau with `--sandbox`):
+
 - `sandbox.image` (required with `--sandbox`): Docker image to run.
 - `sandbox.mountPath` (optional): Container path for the project root mount. Defaults to `/workspace`.
 - `sandbox.pruneAfterHours` (optional): Auto-prune stale sandbox containers after N hours. Defaults to `72`.
@@ -229,7 +230,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 **Style**: Biome (2-space indent, 100 line width). Types `PascalCase`, values/functions `camelCase`, files `lowercase.ts`.
 
-**Compatibility**: Do not introduce backwards compatibility changes unless explicitly requested.
+**Compatibility**: Tau is pre-v1 and the goal is to have a clean implementation before v1. Do not introduce backwards compatibility layers or legacy support unless the user explicitly asks.
 
 **Commit style**: Short, imperative, lowercase subject lines (no prefixes).
 

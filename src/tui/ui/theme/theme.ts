@@ -109,7 +109,7 @@ function createMarkdownTheme(palette: Palette, text: TextStyles): MarkdownTheme 
     italic: (textValue) => text.italic(textValue),
     link: (textValue) => palette.linkText(textValue),
     linkUrl: (textValue) => palette.textDim(textValue),
-    listBullet: (textValue) => palette.brandAccent(textValue),
+    listBullet: (textValue) => palette.textMuted(textValue),
     quote: (textValue) => text.italic(palette.textMuted(textValue)),
     quoteBorder: (textValue) => palette.textDim(textValue),
     strikethrough: (textValue) => text.strikethrough(textValue),

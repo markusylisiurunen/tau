@@ -43,6 +43,12 @@ const BASH_SAFETY_LEVEL_DESCRIPTION = [
   "Always respect and strictly adhere to user-defined risk tolerance levels; never exceed the configured risk level under any circumstances.",
 ].join(" ");
 
+const BASH_WORKING_DIRECTORY_DESCRIPTION =
+  "Working directory for the command. If omitted, uses the current working directory. Prefer this over `cd` in the command.";
+
+const BASH_TIMEOUT_DESCRIPTION =
+  "Timeout in milliseconds. If omitted, defaults to 60 seconds. Use a longer timeout for known slow operations like builds or large clones.";
+
 export const BASH_TOOL: Tool = {
   name: "bash",
   description: BASH_DESCRIPTION,
@@ -55,6 +61,16 @@ export const BASH_TOOL: Tool = {
         description: BASH_SAFETY_LEVEL_DESCRIPTION,
         enum: ["read", "write"],
       }),
+      workingDirectory: Type.Optional(
+        Type.String({
+          description: BASH_WORKING_DIRECTORY_DESCRIPTION,
+        }),
+      ),
+      timeout: Type.Optional(
+        Type.Number({
+          description: BASH_TIMEOUT_DESCRIPTION,
+        }),
+      ),
     },
     { additionalProperties: false },
   ),
@@ -285,11 +301,15 @@ function getMissingArgsMessage(command: string, safetyLevel: BashSafetyLevel | u
 const bashArgsSchema = z.object({
   command: z.string().trim().catch(""),
   safetyLevel: z.enum(["read", "write"]).optional().catch(undefined),
+  workingDirectory: z.string().trim().optional().catch(undefined),
+  timeout: z.number().positive().optional().catch(undefined),
 });
 
 function parseBashArgs(raw: unknown): {
   command: string;
   safetyLevel: BashSafetyLevel | undefined;
+  workingDirectory: string | undefined;
+  timeout: number | undefined;
   commandForDisplay: string;
 } {
   const parsed = bashArgsSchema.safeParse(raw);
@@ -297,8 +317,10 @@ function parseBashArgs(raw: unknown): {
   const safetyLevel = parsed.success
     ? (parsed.data.safetyLevel as BashSafetyLevel | undefined)
     : undefined;
+  const workingDirectory = parsed.success ? parsed.data.workingDirectory : undefined;
+  const timeout = parsed.success ? parsed.data.timeout : undefined;
   const commandForDisplay = command || "(missing command)";
-  return { command, safetyLevel, commandForDisplay };
+  return { command, safetyLevel, workingDirectory, timeout, commandForDisplay };
 }
 
 export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
@@ -309,7 +331,9 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
       riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { command, safetyLevel, commandForDisplay } = parseBashArgs(toolCall.arguments);
+      const { command, safetyLevel, workingDirectory, timeout, commandForDisplay } = parseBashArgs(
+        toolCall.arguments,
+      );
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -350,7 +374,11 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               stderr,
               exitCode,
               truncated: captureTruncated,
-            } = await backend.runBash(command, { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS });
+            } = await backend.runBash(command, {
+              signal,
+              timeoutMs: timeout ?? BASH_DEFAULT_TIMEOUT_MS,
+              cwd: workingDirectory,
+            });
             const durationMs = Math.max(0, Date.now() - startedAt);
 
             const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {

@@ -13,6 +13,7 @@ import { FooterComponent } from "../dist/tui/ui/footer.js";
 import { QueuedMessagesComponent } from "../dist/tui/ui/queued_messages.js";
 import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
 import { SessionSummaryComponent } from "../dist/tui/ui/session_summary.js";
+import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
 
@@ -20,11 +21,12 @@ function stripTags(text) {
   return stripAnsi(text.replace(/<[^>]+>/g, ""));
 }
 
-function createToolView(label) {
+function createToolEvent(label) {
   return {
-    borderColor: (text) => text,
-    expanded: { title: label, sections: [] },
-    compact: { extraText: label },
+    type: "bash_blocked",
+    toolCallId: `tool-${label}`,
+    command: label,
+    reason: "blocked",
   };
 }
 
@@ -103,12 +105,13 @@ test("AssistantMessageComponent toggles thinking visibility", () => {
 
 test("ChatContainerComponent hides empty assistant messages even when thoughts are visible", () => {
   const theme = createTagTheme();
-  const container = new ChatContainerComponent(theme, true);
+  const toolUiRegistry = createToolUiRegistry();
+  const container = new ChatContainerComponent(theme, toolUiRegistry, true);
   container.setCompactToolUi(true);
 
-  container.addMessage({ type: "tool", view: createToolView("tool a") });
+  container.addMessage({ type: "tool", event: createToolEvent("tool a") });
   container.addMessage({ type: "assistant_partial", text: "", thinking: "" });
-  container.addMessage({ type: "tool", view: createToolView("tool b") });
+  container.addMessage({ type: "tool", event: createToolEvent("tool b") });
 
   const lines = renderLines(container, 80);
   const firstIndex = lines.indexOf("tool a");

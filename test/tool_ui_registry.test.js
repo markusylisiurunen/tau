@@ -3,8 +3,16 @@ import { renderToolOutput } from "../dist/tui/ui/tool_output.js";
 import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
 
+function toLines(text) {
+  return text ? text.split("\n").map((line) => ({ text: line })) : [];
+}
+
 function makeUiText(previewText, statusLine, fullText = "") {
-  return { previewText, statusLine, fullText };
+  return {
+    previewLines: toLines(previewText),
+    statusLine,
+    fullLines: toLines(fullText),
+  };
 }
 
 function renderEvent(registry, theme, event, context = {}) {
@@ -52,8 +60,12 @@ describe("ToolUiRegistry", () => {
     });
     expect(blocked).toContain("bash blocked");
 
-    const abortedView = registry.renderBashAborted("sleep 5", "aborted", { theme });
-    const aborted = renderText(renderToolOutput(abortedView, true), 120);
+    const aborted = renderEvent(registry, theme, {
+      type: "bash_aborted",
+      toolCallId: "b3",
+      command: "sleep 5",
+      reason: "aborted",
+    });
     expect(aborted).toContain("aborted");
   });
 

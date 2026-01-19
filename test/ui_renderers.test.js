@@ -4,8 +4,16 @@ import { renderEditSuccess, renderWriteSuccess } from "../dist/tui/ui/file_execu
 import { renderTaskFinished, renderTaskRunning } from "../dist/tui/ui/task_execution.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
 
+function toLines(text) {
+  return text ? text.split("\n").map((line) => ({ text: line })) : [];
+}
+
 function makeUiText(previewText, statusLine, fullText = "") {
-  return { previewText, statusLine, fullText };
+  return {
+    previewLines: toLines(previewText),
+    statusLine,
+    fullLines: toLines(fullText),
+  };
 }
 
 test("renderBashRunning (compact) shows command and running status", () => {
@@ -23,7 +31,7 @@ test("renderBashExecution (expanded) includes output and exit code", () => {
   const component = renderBashExecution(theme, "echo hi", 1, uiText, false);
   const text = renderText(component, 100);
   expect(text).toContain("<actionError><bold>$ echo hi</bold></actionError>");
-  expect(text).toContain("<actionError>output line");
+  expect(text).toContain("<actionOutput>output line");
   expect(text).toContain("(exit 1)");
 });
 

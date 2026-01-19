@@ -6,8 +6,7 @@
     "tau": "./dist/main.js"
   },
   "files": [
-    "dist/",
-    "patches/"
+    "dist/"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -15,18 +14,16 @@
     "precheck": "node scripts/generate-version.js",
     "prebuild": "node scripts/generate-version.js",
     "start": "node dist/main.js",
-    "test": "npm run build && vitest run",
-    "postinstall": "patch-package"
+    "test": "npm run build && vitest run"
   },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "0.47.0",
-    "@mariozechner/pi-tui": "0.47.0",
+    "@mariozechner/pi-ai": "^0.49.2",
+    "@mariozechner/pi-tui": "^0.49.2",
     "@sinclair/typebox": "^0.34.47",
     "chalk": "^5.6.2",
-    "patch-package": "^8.0.1",
     "strip-ansi": "^7.1.2",
     "yaml": "^2.8.2",
     "zod": "^4.3.5"

@@ -1,6 +1,6 @@
-import { PI_STATIC_INSTRUCTIONS } from "@mariozechner/pi-ai";
-
-const STATIC_PREFIX = PI_STATIC_INSTRUCTIONS.trim();
+// Important: Keep this in sync with the Codex static instructions in pi-ai.
+const STATIC_PREFIX =
+  "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
 
 export function ensureCodexSystemPrompt(systemPrompt: string): string {
   const trimmedStart = systemPrompt.trimStart();

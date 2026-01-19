@@ -66,12 +66,14 @@ function validateAuthStorageData(value: unknown): {
   data: AuthStorageData;
   invalidReason?: string;
 } {
+  const invalidReason =
+    'auth.json format has changed. please run "tau auth login codex" to re-authenticate.';
   if (!value || typeof value !== "object") {
-    return { data: { providers: {} }, invalidReason: "unsupported auth.json format" };
+    return { data: { providers: {} }, invalidReason };
   }
   const providersValue = (value as { providers?: unknown }).providers;
   if (!providersValue || typeof providersValue !== "object" || Array.isArray(providersValue)) {
-    return { data: { providers: {} }, invalidReason: "unsupported auth.json format" };
+    return { data: { providers: {} }, invalidReason };
   }
   const providers: AuthStorageData["providers"] = {};
   for (const [key, providerValue] of Object.entries(providersValue as Record<string, unknown>)) {

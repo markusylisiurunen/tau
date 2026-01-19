@@ -1,24 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { getOAuthApiKey, type OAuthCredentials, type OAuthProvider } from "@mariozechner/pi-ai";
-
-export type ApiKeyCredential = {
-  type: "api_key";
-  key: string;
-};
-
-export type OAuthCredential = {
-  type: "oauth";
-} & OAuthCredentials;
-
-export type AuthCredential = ApiKeyCredential | OAuthCredential;
-
-export type AuthStorageData = Record<string, AuthCredential>;
+import type { AuthStorageData, StoredAccount } from "./types.js";
 
 export class AuthStorage {
-  private data: AuthStorageData = {};
-  private static refreshLocks = new Map<string, Promise<string | undefined>>();
+  private data: AuthStorageData = { providers: {} };
+  private invalidReason: string | undefined;
 
   constructor(private readonly authPath: string) {
     this.reload();
@@ -26,15 +13,19 @@ export class AuthStorage {
 
   reload(): void {
     if (!existsSync(this.authPath)) {
-      this.data = {};
+      this.data = { providers: {} };
+      this.invalidReason = undefined;
       return;
     }
 
     try {
-      const parsed = JSON.parse(readFileSync(this.authPath, "utf-8")) as AuthStorageData;
-      this.data = parsed ?? {};
-    } catch {
-      this.data = {};
+      const parsed = JSON.parse(readFileSync(this.authPath, "utf-8")) as unknown;
+      const validated = validateAuthStorageData(parsed);
+      this.data = validated.data;
+      this.invalidReason = validated.invalidReason;
+    } catch (error) {
+      this.data = { providers: {} };
+      this.invalidReason = `failed to parse auth.json: ${(error as Error)?.message ?? String(error)}`;
     }
   }
 
@@ -50,74 +41,69 @@ export class AuthStorage {
     chmodSync(this.authPath, 0o600);
   }
 
-  get(provider: string): AuthCredential | undefined {
-    return this.data[provider] ?? undefined;
+  getData(): AuthStorageData {
+    return this.data;
   }
 
-  set(provider: string, credential: AuthCredential): void {
-    this.data[provider] = credential;
+  setData(data: AuthStorageData): void {
+    this.data = data;
+    this.invalidReason = undefined;
     this.save();
   }
 
-  remove(provider: string): void {
-    delete this.data[provider];
+  update(mutator: (data: AuthStorageData) => void): void {
+    mutator(this.data);
+    this.invalidReason = undefined;
     this.save();
   }
 
-  list(): string[] {
-    return Object.keys(this.data);
+  getInvalidReason(): string | undefined {
+    return this.invalidReason;
   }
+}
 
-  hasAuth(provider: string): boolean {
-    return provider in this.data;
+function validateAuthStorageData(value: unknown): {
+  data: AuthStorageData;
+  invalidReason?: string;
+} {
+  if (!value || typeof value !== "object") {
+    return { data: { providers: {} }, invalidReason: "unsupported auth.json format" };
   }
-
-  async getApiKey(provider: string): Promise<string | undefined> {
-    return this.withRefreshLock(provider, async () => {
-      this.reload();
-
-      const credential = this.data[provider];
-      if (!credential) {
-        return undefined;
-      }
-
-      if (credential.type === "api_key") {
-        return credential.key;
-      }
-
-      const oauthCredentials: Record<string, OAuthCredentials> = {};
-      for (const [key, value] of Object.entries(this.data)) {
-        if (value.type === "oauth") {
-          oauthCredentials[key] = value;
-        }
-      }
-
-      const result = await getOAuthApiKey(provider as OAuthProvider, oauthCredentials);
-      if (!result) {
-        return undefined;
-      }
-
-      this.data[provider] = { type: "oauth", ...result.newCredentials };
-      this.save();
-
-      return result.apiKey;
-    });
+  const providersValue = (value as { providers?: unknown }).providers;
+  if (!providersValue || typeof providersValue !== "object" || Array.isArray(providersValue)) {
+    return { data: { providers: {} }, invalidReason: "unsupported auth.json format" };
   }
-
-  private async withRefreshLock(
-    provider: string,
-    action: () => Promise<string | undefined>,
-  ): Promise<string | undefined> {
-    const lockKey = `${this.authPath}:${provider}`;
-    const existing = AuthStorage.refreshLocks.get(lockKey);
-    if (existing) {
-      return existing;
+  const providers: AuthStorageData["providers"] = {};
+  for (const [key, providerValue] of Object.entries(providersValue as Record<string, unknown>)) {
+    if (!providerValue || typeof providerValue !== "object") {
+      providers[key] = { accounts: [] };
+      continue;
     }
-
-    const inFlight = action().finally(() => {
-      AuthStorage.refreshLocks.delete(lockKey);
-    });
-    AuthStorage.refreshLocks.set(lockKey, inFlight);
-    return inFlight;
+    const accounts = (providerValue as { accounts?: unknown }).accounts;
+    if (Array.isArray(accounts)) {
+      providers[key] = { accounts: accounts.filter(isStoredAccount) };
+    } else {
+      providers[key] = { accounts: [] };
+    }
   }
+  return { data: { providers } };
+}
+
+function isStoredAccount(value: unknown): value is StoredAccount {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  const type = record.type;
+  if (type === "oauth") {
+    return (
+      typeof record.accountId === "string" &&
+      typeof record.access === "string" &&
+      typeof record.refresh === "string" &&
+      typeof record.expires === "number" &&
+      typeof record.idToken === "string"
+    );
+  }
+  if (type === "api_key") {
+    return typeof record.accountId === "string" && typeof record.key === "string";
+  }
+  return false;
 }

@@ -6,11 +6,13 @@ export type {
   OAuthProviderSpec,
 } from "./auth/index.js";
 export {
+  AuthManager,
   AuthStorage,
   createCredentialResolver,
   ensureCodexSystemPrompt,
   formatCodexAuthError,
   getAuthPath,
+  runListCommand,
   runLoginCommand,
   runLogoutCommand,
   SUPPORTED_OAUTH_PROVIDERS,

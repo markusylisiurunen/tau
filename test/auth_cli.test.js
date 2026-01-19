@@ -25,10 +25,11 @@ describe("auth cli", () => {
         refresh: "refresh-token",
         expires: 123,
         accountId: "acct",
+        idToken: "header.payload.signature",
       };
 
       await runLoginCommand({
-        providerArg: "openai-codex",
+        providerArg: "codex",
         authStorage,
         authPath: fx.authPath,
         prompt: async () => "",
@@ -39,10 +40,11 @@ describe("auth cli", () => {
       });
 
       const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
-      expect(saved["openai-codex"].access).toBe("access-token");
+      expect(saved.providers["openai-codex"].accounts[0].access).toBe("access-token");
 
       await runLogoutCommand({
-        providerArg: "openai-codex",
+        providerArg: "codex",
+        accountId: "acct",
         authStorage,
         authPath: fx.authPath,
         prompt: async () => "",
@@ -50,7 +52,7 @@ describe("auth cli", () => {
       });
 
       const removed = JSON.parse(readFileSync(fx.authPath, "utf-8"));
-      expect(removed["openai-codex"]).toBeUndefined();
+      expect(removed.providers["openai-codex"].accounts.length).toBe(0);
     } finally {
       fx.cleanup();
     }
@@ -63,7 +65,7 @@ describe("auth cli", () => {
       const promptCalls = [];
 
       await runLoginCommand({
-        providerArg: "openai-codex",
+        providerArg: "codex",
         authStorage,
         authPath: fx.authPath,
         prompt: async (prompt) => {
@@ -79,13 +81,14 @@ describe("auth cli", () => {
               refresh: "refresh-token",
               expires: 123,
               accountId: "acct",
+              idToken: "header.payload.signature",
             };
           },
         },
       });
 
       const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
-      expect(saved["openai-codex"].access).toBe("access-manual-code");
+      expect(saved.providers["openai-codex"].accounts[0].access).toBe("access-manual-code");
       expect(promptCalls).toEqual(["Paste code:"]);
     } finally {
       fx.cleanup();

@@ -1,5 +1,7 @@
 import type { OAuthCredentials, OAuthPrompt, OAuthProvider } from "@mariozechner/pi-ai";
 import { loginOpenAICodex } from "@mariozechner/pi-ai";
+import { Chalk } from "chalk";
+import { AuthManager } from "./auth_manager.js";
 import type { AuthStorage } from "./auth_storage.js";
 
 export type AuthLog = (message: string) => void;
@@ -13,11 +15,12 @@ export type AuthLoginHandler = (callbacks: {
 
 export type OAuthProviderSpec = {
   id: OAuthProvider;
+  cliId: string;
   label: string;
 };
 
 export const SUPPORTED_OAUTH_PROVIDERS: OAuthProviderSpec[] = [
-  { id: "openai-codex", label: "OpenAI Codex (ChatGPT Plus/Pro)" },
+  { id: "openai-codex", cliId: "codex", label: "OpenAI Codex (ChatGPT Plus/Pro)" },
 ];
 
 const DEFAULT_LOGIN_HANDLERS: Partial<Record<OAuthProvider, AuthLoginHandler>> = {
@@ -29,12 +32,17 @@ const DEFAULT_LOGIN_HANDLERS: Partial<Record<OAuthProvider, AuthLoginHandler>> =
     }),
 };
 
+const chalk = new Chalk({ level: process.stdout.isTTY ? 2 : 0 });
+const BAR_WIDTH = 10;
+
 function normalizeProvider(value: string): string {
   return value.trim().toLowerCase();
 }
 
 function formatProviderList(providers: OAuthProviderSpec[]): string {
-  return providers.map((provider, index) => `  ${index + 1}. ${provider.label}`).join("\n");
+  return providers
+    .map((provider, index) => `  ${index + 1}. ${provider.label} (${provider.cliId})`)
+    .join("\n");
 }
 
 async function promptForProvider(
@@ -59,9 +67,11 @@ function resolveProvider(
 ): OAuthProvider | undefined {
   if (!providerArg) return undefined;
   const normalized = normalizeProvider(providerArg);
-  const resolved = providers.find((provider) => provider.id === normalized)?.id;
+  const resolved = providers.find(
+    (provider) => provider.id === normalized || provider.cliId === normalized,
+  )?.id;
   if (!resolved) {
-    const available = providers.map((entry) => entry.id).join(", ");
+    const available = providers.map((entry) => entry.cliId).join(", ");
     throw new Error(`unknown provider "${providerArg}". available: ${available}`);
   }
   return resolved;
@@ -96,7 +106,7 @@ export async function runLoginCommand(options: {
 
   log(`logging in to ${provider}...`);
 
-  const credentials = await handler({
+  const credentials = (await handler({
     onAuth: (info) => {
       log("");
       if (provider === "openai-codex") {
@@ -115,14 +125,20 @@ export async function runLoginCommand(options: {
     },
     onPrompt: async (prompt) => options.prompt(prompt),
     onProgress: (message) => log(message),
-  });
+  })) as OAuthCredentials & { idToken?: string };
 
-  options.authStorage.set(provider, { type: "oauth", ...credentials });
+  if (provider === "openai-codex" && !credentials.idToken) {
+    throw new Error("missing idToken from OAuth login; please update the Codex OAuth flow");
+  }
+
+  const authManager = new AuthManager(options.authStorage);
+  authManager.addOAuthAccount(provider, credentials as OAuthCredentials & { idToken: string });
   log(`credentials saved to ${options.authPath}`);
 }
 
 export async function runLogoutCommand(options: {
   providerArg?: string;
+  accountId?: string;
   authStorage: AuthStorage;
   authPath: string;
   prompt: AuthPromptFn;
@@ -137,6 +153,132 @@ export async function runLogoutCommand(options: {
     provider = await promptForProvider(options.prompt, log, providers);
   }
 
-  options.authStorage.remove(provider);
-  log(`removed credentials for ${provider} from ${options.authPath}`);
+  if (!options.accountId) {
+    throw new Error("missing --account <id> for logout");
+  }
+
+  const authManager = new AuthManager(options.authStorage);
+  authManager.removeAccount(provider, options.accountId);
+  log(`removed account ${options.accountId} for ${provider} from ${options.authPath}`);
+}
+
+export async function runListCommand(options: {
+  authStorage: AuthStorage;
+  log?: AuthLog;
+}): Promise<void> {
+  const log = options.log ?? console.log;
+  const authManager = new AuthManager(options.authStorage);
+  const providers = await authManager.listProviderAccounts();
+
+  if (providers.length === 0) {
+    log("no authenticated accounts found.");
+    return;
+  }
+
+  for (const [providerIndex, provider] of providers.entries()) {
+    if (providerIndex > 0) log("");
+    log(`${provider.providerLabel} (${provider.providerId})`);
+    const selectedId = provider.selectedAccountId;
+    for (const [accountIndex, account] of provider.accounts.entries()) {
+      const isSelected = selectedId === account.accountId;
+      const marker = isSelected ? chalk.yellow("★") : " ";
+      const label = account.email ?? account.accountId;
+      const plan = account.plan ? `[${account.plan}]` : undefined;
+      const headerSegments = [`  ${marker}`, label, plan].filter(Boolean);
+      log(headerSegments.join(" "));
+      if (account.usage) {
+        for (const window of account.usage.windows) {
+          const labelText = formatWindowLabel(window.windowSeconds) ?? window.name;
+          const remaining = remainingPercent(window.usedPercent);
+          const percentText = `${formatTwoDigits(remaining)}% left`;
+          const bar = formatBarRemaining(remaining);
+          const reset = formatResetAt(window.resetAt);
+          const resetRelative = formatRelativeReset(window.resetAt);
+          const resetText = reset
+            ? chalk.dim(`resets ${reset}${resetRelative ? ` (${resetRelative})` : ""}`)
+            : undefined;
+          const lineSegments = [`    ${labelText}`, percentText, bar, resetText].filter(Boolean);
+          log(lineSegments.join(" "));
+        }
+      }
+      if (accountIndex < provider.accounts.length - 1) {
+        log("");
+      }
+    }
+  }
+}
+
+function formatWindowLabel(windowSeconds: number): string | undefined {
+  if (!Number.isFinite(windowSeconds) || windowSeconds <= 0) return undefined;
+  if (windowSeconds % 86400 === 0) {
+    return `${Math.round(windowSeconds / 86400)}d`;
+  }
+  if (windowSeconds % 3600 === 0) {
+    return `${Math.round(windowSeconds / 3600)}h`;
+  }
+  if (windowSeconds % 60 === 0) {
+    return `${Math.round(windowSeconds / 60)}m`;
+  }
+  return `${Math.round(windowSeconds)}s`;
+}
+
+function formatResetAt(epochSeconds: number): string | undefined {
+  if (!Number.isFinite(epochSeconds) || epochSeconds <= 0) return undefined;
+  const date = new Date(epochSeconds * 1000);
+  if (Number.isNaN(date.getTime())) return undefined;
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = date.getFullYear();
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${day}.${month}.${year} ${hours}:${minutes}`;
+}
+
+function formatRelativeReset(epochSeconds: number): string | undefined {
+  if (!Number.isFinite(epochSeconds) || epochSeconds <= 0) return undefined;
+  const nowMs = Date.now();
+  const deltaMs = epochSeconds * 1000 - nowMs;
+  if (!Number.isFinite(deltaMs)) return undefined;
+  if (deltaMs <= 0) return "now";
+
+  const totalMinutes = Math.max(1, Math.ceil(deltaMs / 60000));
+  if (totalMinutes < 60) {
+    return `in ${totalMinutes} min${totalMinutes === 1 ? "" : "s"}`;
+  }
+  const totalHours = Math.round(totalMinutes / 60);
+  if (totalHours < 24) {
+    return `in ${totalHours} hr${totalHours === 1 ? "" : "s"}`;
+  }
+  const totalDays = Math.round(totalHours / 24);
+  return `in ${totalDays} day${totalDays === 1 ? "" : "s"}`;
+}
+
+function formatBarRemaining(remaining: number): string {
+  const clamped = clampTwoDigit(remaining);
+  const filled = Math.round((clamped / 100) * BAR_WIDTH);
+  const empty = Math.max(0, BAR_WIDTH - filled);
+  const filledText = "█".repeat(filled);
+  const emptyText = "░".repeat(empty);
+  if (clamped < 10) {
+    const border = chalk.red("▏");
+    const rest = chalk.dim("░".repeat(Math.max(0, BAR_WIDTH - 1)));
+    return `${border}${rest}`;
+  }
+  const color = clamped < 50 ? chalk.yellow : chalk.green;
+  return `${color(filledText)}${chalk.dim(emptyText)}`;
+}
+
+function remainingPercent(usedPercent: number): number {
+  const used = Number.isFinite(usedPercent) ? Math.round(usedPercent) : 0;
+  const remaining = 100 - used;
+  return clampTwoDigit(remaining);
+}
+
+function clampTwoDigit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(99, Math.max(0, Math.round(value)));
+}
+
+function formatTwoDigits(value: number): string {
+  return String(value).padStart(2, "0");
 }

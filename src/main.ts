@@ -25,6 +25,7 @@ import {
   parsePersonaString,
   printDebugInfo,
   printHelp,
+  runListCommand,
   runLoginCommand,
   runLogoutCommand,
   ToolCatalog,
@@ -51,15 +52,17 @@ function printAuthHelp(): void {
   console.log(
     [
       "usage:",
-      "  tau login [provider]",
-      "  tau logout [provider]",
+      "  tau auth login <provider>",
+      "  tau auth list",
+      "  tau auth logout <provider> --account <email>",
       "",
       "providers:",
-      "  openai-codex  OpenAI Codex (ChatGPT Plus/Pro)",
+      "  codex  OpenAI Codex (ChatGPT Plus/Pro)",
       "",
       "examples:",
-      "  tau login openai-codex",
-      "  tau logout openai-codex",
+      "  tau auth login codex",
+      "  tau auth list",
+      "  tau auth logout codex --account user@example.com",
     ].join("\n"),
   );
 }
@@ -85,11 +88,16 @@ let prompts: PromptTemplate[];
 let skills: Skill[];
 let themes: ThemeDefinition[] = [];
 
-if (argv[0] === "login" || argv[0] === "logout") {
+if (argv[0] === "auth") {
   if (argv.includes("--help") || argv.includes("-h")) {
     printAuthHelp();
     process.exit(0);
   }
+
+  const subcommand = argv[1];
+  const providerArg = argv[2];
+  const accountIndex = argv.indexOf("--account");
+  const accountId = accountIndex >= 0 ? argv[accountIndex + 1] : undefined;
 
   const authPath = getAuthPath();
   const authStorage = new AuthStorage(authPath);
@@ -101,20 +109,25 @@ if (argv[0] === "login" || argv[0] === "logout") {
     });
 
   try {
-    if (argv[0] === "login") {
+    if (subcommand === "login") {
       await runLoginCommand({
-        providerArg: argv[1],
+        providerArg,
         authStorage,
         authPath,
         prompt,
       });
-    } else {
+    } else if (subcommand === "logout") {
       await runLogoutCommand({
-        providerArg: argv[1],
+        providerArg,
+        accountId,
         authStorage,
         authPath,
         prompt,
       });
+    } else if (subcommand === "list") {
+      await runListCommand({ authStorage });
+    } else {
+      throw new Error(`unknown auth subcommand "${subcommand ?? ""}"`);
     }
     process.exit(0);
   } catch (err) {

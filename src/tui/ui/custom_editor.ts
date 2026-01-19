@@ -35,6 +35,10 @@ export class CustomEditor extends Editor {
     this.uiTheme = theme;
   }
 
+  protected override cursorStyle(text: string): string {
+    return this.uiTheme.text.cursor(text);
+  }
+
   setUiTheme(theme: Theme): void {
     this.uiTheme = theme;
     super.setTheme(theme.editorTheme);
@@ -587,19 +591,16 @@ export class CustomEditor extends Editor {
         if (after.length > 0) {
           const firstGrapheme = this.getFirstGrapheme(after);
           const restAfter = after.slice(firstGrapheme.length);
-          const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
-          displayText = before + cursor + restAfter;
+          displayText = before + this.cursorStyle(firstGrapheme) + restAfter;
         } else {
           if (lineVisibleWidth < width) {
-            const cursor = "\x1b[7m \x1b[0m";
-            displayText = before + cursor;
+            displayText = before + this.cursorStyle(" ");
             lineVisibleWidth = lineVisibleWidth + 1;
           } else {
             const lastGrapheme = this.getLastGrapheme(before);
             if (lastGrapheme) {
               const beforeWithoutLast = this.sliceWithoutLastGrapheme(before);
-              const cursor = `\x1b[7m${lastGrapheme}\x1b[0m`;
-              displayText = beforeWithoutLast + cursor;
+              displayText = beforeWithoutLast + this.cursorStyle(lastGrapheme);
             }
           }
         }

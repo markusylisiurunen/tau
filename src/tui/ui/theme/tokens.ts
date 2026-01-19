@@ -14,6 +14,13 @@ export const PALETTE_COLORS = [
   { name: "thinkingText", h: 26, s: 10, l: 58 },
   { name: "codeInlineText", h: 172, s: 56, l: 48 },
   { name: "codeBlockText", h: 172, s: 56, l: 48 },
+  // Editor
+  { name: "editorBorderNone", h: 26, s: 8, l: 42 },
+  { name: "editorBorderMinimal", h: 27, s: 18, l: 46 },
+  { name: "editorBorderLow", h: 28, s: 27, l: 51 },
+  { name: "editorBorderMedium", h: 28, s: 37, l: 55 },
+  { name: "editorBorderHigh", h: 29, s: 46, l: 60 },
+  { name: "editorBorderXhigh", h: 30, s: 56, l: 64 },
   // Status
   { name: "statusWarn", h: 44, s: 52, l: 52 },
   { name: "statusError", h: 6, s: 52, l: 52 },

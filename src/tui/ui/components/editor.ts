@@ -279,6 +279,11 @@ export class Editor implements Component {
     this.borderColor = theme.borderColor;
   }
 
+  /** Wraps text in cursor styling (inverse video). Override in subclasses for theme-aware cursor. */
+  protected cursorStyle(text: string): string {
+    return `\x1b[7m${text}\x1b[0m`;
+  }
+
   setAutocompleteProvider(provider: AutocompleteProvider): void {
     this.autocompleteProvider = provider;
   }
@@ -383,15 +388,13 @@ export class Editor implements Component {
           const afterGraphemes = [...segmenter.segment(after)];
           const firstGrapheme = afterGraphemes[0]?.segment || "";
           const restAfter = after.slice(firstGrapheme.length);
-          const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
-          displayText = before + cursor + restAfter;
+          displayText = before + this.cursorStyle(firstGrapheme) + restAfter;
           // lineVisibleWidth stays the same - we're replacing, not adding
         } else {
           // Cursor is at the end - check if we have room for the space
           if (lineVisibleWidth < width) {
             // We have room - add highlighted space
-            const cursor = "\x1b[7m \x1b[0m";
-            displayText = before + cursor;
+            displayText = before + this.cursorStyle(" ");
             // lineVisibleWidth increases by 1 - we're adding a space
             lineVisibleWidth = lineVisibleWidth + 1;
           } else {
@@ -400,13 +403,12 @@ export class Editor implements Component {
             const beforeGraphemes = [...segmenter.segment(before)];
             if (beforeGraphemes.length > 0) {
               const lastGrapheme = beforeGraphemes[beforeGraphemes.length - 1]?.segment || "";
-              const cursor = `\x1b[7m${lastGrapheme}\x1b[0m`;
               // Rebuild 'before' without the last grapheme
               const beforeWithoutLast = beforeGraphemes
                 .slice(0, -1)
                 .map((g) => g.segment)
                 .join("");
-              displayText = beforeWithoutLast + cursor;
+              displayText = beforeWithoutLast + this.cursorStyle(lastGrapheme);
             }
             // lineVisibleWidth stays the same
           }

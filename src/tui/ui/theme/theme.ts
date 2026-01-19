@@ -1,9 +1,8 @@
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
 import { Chalk } from "chalk";
 import type { ReasoningEffort } from "../../../core/types.js";
-import { hslToHex } from "../../../core/utils/color.js";
 import { assertNever } from "../../../core/utils/never.js";
-import { createPalette, getPaletteToken, type PaletteOverrides } from "./palette.js";
+import { createPalette, type PaletteOverrides } from "./palette.js";
 
 const chalk = new Chalk({ level: 3 });
 
@@ -14,6 +13,7 @@ export interface TextStyles {
   italic: (text: string) => string;
   underline: (text: string) => string;
   strikethrough: (text: string) => string;
+  cursor: (text: string) => string;
 }
 
 export interface Palette {
@@ -26,6 +26,14 @@ export interface Palette {
   codeInlineText: (text: string) => string;
   codeBlockText: (text: string) => string;
   textDefault: (text: string) => string;
+
+  // Editor
+  editorBorderNone: (text: string) => string;
+  editorBorderMinimal: (text: string) => string;
+  editorBorderLow: (text: string) => string;
+  editorBorderMedium: (text: string) => string;
+  editorBorderHigh: (text: string) => string;
+  editorBorderXhigh: (text: string) => string;
 
   // Status
   statusWarn: (text: string) => string;
@@ -86,6 +94,7 @@ function createTextStyles(mode: ThemeMode): TextStyles {
       italic: (text) => chalk.italic(text),
       underline: (text) => chalk.underline(text),
       strikethrough: (text) => chalk.strikethrough(text),
+      cursor: (text) => chalk.inverse(text),
     };
   }
 
@@ -95,6 +104,7 @@ function createTextStyles(mode: ThemeMode): TextStyles {
     italic: wrap("italic"),
     underline: wrap("underline"),
     strikethrough: wrap("strikethrough"),
+    cursor: wrap("cursor"),
   };
 }
 
@@ -128,60 +138,23 @@ function createSelectListTheme(palette: Palette, text: TextStyles): SelectListTh
 }
 
 function createEditorBorderForReasoning(
-  mode: ThemeMode,
   palette: Palette,
-  usePaletteOverrides: boolean,
 ): (effort?: ReasoningEffort) => (text: string) => string {
-  if (mode !== "ansi") {
-    const wrap = (label: string) => (mode === "tags" ? tagWrapper(label) : plainWrapper());
-    return (effort?: ReasoningEffort) => wrap(`editorBorder-${effort ?? "none"}`);
-  }
-
-  if (usePaletteOverrides) {
-    return (effort?: ReasoningEffort) => {
-      switch (effort) {
-        case undefined:
-        case "none":
-        case "minimal":
-          return palette.textDim;
-        case "low":
-        case "medium":
-        case "high":
-        case "xhigh":
-          return palette.brandAccent;
-        default:
-          assertNever(effort);
-      }
-    };
-  }
-
-  const accent = getPaletteToken("brandAccent");
-  const dim = getPaletteToken("textDim");
-  if (!accent || !dim) {
-    return () => (text) => text;
-  }
-  const [MIN_H, MAX_H] = [dim.h, accent.h];
-  const [MIN_S, MAX_S] = [dim.s, accent.s];
-  const [MIN_L, MAX_L] = [dim.l, accent.l];
-  const [RANGE_H, RANGE_S, RANGE_L] = [MAX_H - MIN_H, MAX_S - MIN_S, MAX_L - MIN_L];
-  const h = (x: number) => MIN_H + RANGE_H * x;
-  const s = (x: number) => MIN_S + RANGE_S * x;
-  const l = (x: number) => MIN_L + RANGE_L * x;
   return (effort?: ReasoningEffort) => {
     switch (effort) {
       case undefined:
       case "none":
-        return chalk.hex(hslToHex(h(0), s(0), l(0)));
+        return palette.editorBorderNone;
       case "minimal":
-        return chalk.hex(hslToHex(h(0.2), s(0.2), l(0.2)));
+        return palette.editorBorderMinimal;
       case "low":
-        return chalk.hex(hslToHex(h(0.4), s(0.4), l(0.4)));
+        return palette.editorBorderLow;
       case "medium":
-        return chalk.hex(hslToHex(h(0.6), s(0.6), l(0.6)));
+        return palette.editorBorderMedium;
       case "high":
-        return chalk.hex(hslToHex(h(0.8), s(0.8), l(0.8)));
+        return palette.editorBorderHigh;
       case "xhigh":
-        return chalk.hex(hslToHex(h(1), s(1), l(1)));
+        return palette.editorBorderXhigh;
       default:
         assertNever(effort);
     }
@@ -193,11 +166,7 @@ export function createUiTheme(mode: ThemeMode = "ansi", overrides?: PaletteOverr
   const text = createTextStyles(mode);
   const markdownTheme = createMarkdownTheme(palette, text);
   const selectListTheme = createSelectListTheme(palette, text);
-  const editorBorderForReasoning = createEditorBorderForReasoning(
-    mode,
-    palette,
-    overrides !== undefined,
-  );
+  const editorBorderForReasoning = createEditorBorderForReasoning(palette);
 
   const editorTheme: EditorTheme = {
     borderColor: (textValue) => editorBorderForReasoning("none")(textValue),

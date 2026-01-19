@@ -242,3 +242,14 @@ test("CustomEditor strips ANSI sequences from input", () => {
   editor.handleInput("hello \u001b[31mred\u001b[0m");
   expect(editor.getLines()[0]).toBe("hello red");
 });
+
+test("CustomEditor renders cursor with theme tags", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  editor.setText("abc");
+
+  const lines = editor.render(20);
+  const content = lines.slice(1, -1).join("");
+  expect(content).toContain("<cursor>");
+  expect(content).not.toContain("\x1b[7m");
+});

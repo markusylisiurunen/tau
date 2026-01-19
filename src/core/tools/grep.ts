@@ -16,6 +16,7 @@ import type {
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
   ToolUiEvent,
+  ToolUiLine,
   ToolUiText,
 } from "./registry.js";
 
@@ -241,29 +242,43 @@ function buildGrepUiText(args: {
         }) ?? "")
       : "";
 
-  const sections: string[] = [];
+  const previewLines: ToolUiLine[] = previewText
+    ? previewText.split("\n").map((text) => ({ text }))
+    : [];
+
+  const fullLines: ToolUiLine[] = [];
+  const pushSection = (text: string): void => {
+    if (!text) return;
+    if (fullLines.length > 0) {
+      fullLines.push({ text: "" });
+    }
+    for (const line of text.split("\n")) {
+      fullLines.push({ text: line });
+    }
+  };
+
   const trimmedOut = stdout.trimEnd();
   if (trimmedOut) {
-    sections.push(trimmedOut);
+    pushSection(trimmedOut);
   }
   const trimmedErr = stderr.trimEnd();
   if (trimmedErr) {
-    sections.push(["stderr:", trimmedErr].join("\n"));
+    pushSection(["stderr:", trimmedErr].join("\n"));
   }
 
   if (stdoutModel.truncated || stderrModel.truncated || captureTruncated) {
-    sections.push(
+    pushSection(
       `truncated for model: ${stdoutModel.outputLines} of ${stdoutModel.totalLines} lines`,
     );
   }
 
   if (exitCode !== null && exitCode !== 0 && exitCode !== 1) {
-    sections.push(`(exit ${exitCode})`);
+    pushSection(`(exit ${exitCode})`);
   }
 
   return {
-    previewText,
-    fullText: sections.join("\n\n"),
+    previewLines,
+    fullLines,
   };
 }
 

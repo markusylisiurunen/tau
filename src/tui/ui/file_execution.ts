@@ -5,6 +5,7 @@ import {
   buildHeaderLine,
   inlineText,
   renderToolOutput,
+  renderToolUiTextLines,
   type ToolOutputViewModel,
 } from "./tool_output.js";
 
@@ -28,14 +29,25 @@ export function buildWriteSuccessView(
   });
 
   const compactParts: string[] = [];
-  if (uiText.previewText.trim()) {
-    compactParts.push(palette.textDim(uiText.previewText));
+  const previewText = renderToolUiTextLines({
+    uiText,
+    kind: "preview",
+    theme,
+    baseStyle: palette.textDim,
+  });
+  if (previewText) {
+    compactParts.push(previewText);
   }
   if (uiText.statusLine?.trim()) {
     compactParts.push(palette.textMuted(uiText.statusLine));
   }
   const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
-  const fullText = uiText.fullText.trim() ? palette.actionOutput(uiText.fullText) : undefined;
+  const fullText = renderToolUiTextLines({
+    uiText,
+    kind: "full",
+    theme,
+    baseStyle: palette.actionOutput,
+  });
 
   return {
     borderColor: writeColor,
@@ -85,14 +97,25 @@ export function buildEditSuccessView(
   });
 
   const compactParts: string[] = [];
-  if (uiText.previewText.trim()) {
-    compactParts.push(palette.textDim(uiText.previewText));
+  const previewText = renderToolUiTextLines({
+    uiText,
+    kind: "preview",
+    theme,
+    baseStyle: palette.textDim,
+  });
+  if (previewText) {
+    compactParts.push(previewText);
   }
   if (uiText.statusLine?.trim()) {
     compactParts.push(palette.textMuted(uiText.statusLine));
   }
   const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
-  const fullText = uiText.fullText.trim() ? palette.actionOutput(uiText.fullText) : undefined;
+  const fullText = renderToolUiTextLines({
+    uiText,
+    kind: "full",
+    theme,
+    baseStyle: palette.actionOutput,
+  });
 
   return {
     borderColor: editColor,

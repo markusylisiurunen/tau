@@ -11,7 +11,13 @@ import {
 } from "../utils/tool_preview.js";
 import { truncateMiddleForModel, truncateToBytesFromStart } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
+import type {
+  ToolDefinition,
+  ToolDispatchResult,
+  ToolUiEvent,
+  ToolUiLine,
+  ToolUiText,
+} from "./registry.js";
 
 export const READ_TOOL_MAX_LINES = 4096;
 export const READ_TOOL_MAX_TOKENS = 25000;
@@ -92,7 +98,7 @@ function buildReadUiText(args: {
   endLine?: number;
 }): ToolUiText {
   const { content, modelTruncation, startLine, endLine } = args;
-  const { truncation: previewTruncation, previewLines } = applyPreviewPolicy(
+  const { truncation: previewTruncation, previewLines: previewContentLines } = applyPreviewPolicy(
     modelTruncation.content,
     {
       maxLines: READ_UI_MAX_LINES,
@@ -104,30 +110,42 @@ function buildReadUiText(args: {
   const totalLinesForSummary = modelTruncation.truncated
     ? modelTruncation.totalLines
     : previewTruncation.totalLines;
-  const compactLines = buildCompactPreviewLines(previewLines, {
+  const compactLines = buildCompactPreviewLines(previewContentLines, {
     totalLines: totalLinesForSummary,
     maxLines: 16,
     unitLabel: "lines",
   });
   const infoText = `${totalLinesForSummary} lines · ${formatRange(startLine, endLine)}`;
   const summaryLine = `    (${infoText})`;
-  const previewText = compactLines ?? "";
+  const previewLines: ToolUiLine[] = compactLines
+    ? compactLines.split("\n").map((text) => ({ text }))
+    : [];
+
+  const fullLines: ToolUiLine[] = [];
+  const pushSection = (text: string): void => {
+    if (!text) return;
+    if (fullLines.length > 0) {
+      fullLines.push({ text: "" });
+    }
+    for (const line of text.split("\n")) {
+      fullLines.push({ text: line });
+    }
+  };
 
   const trimmed = content.trimEnd();
-  const sections: string[] = [];
   if (trimmed) {
-    sections.push(trimmed);
+    pushSection(trimmed);
   }
   if (modelTruncation.truncated) {
-    sections.push(
+    pushSection(
       `truncated for model: ${modelTruncation.outputLines} of ${modelTruncation.totalLines} lines`,
     );
   }
 
   return {
-    previewText,
+    previewLines,
     statusLine: summaryLine,
-    fullText: sections.join("\n\n"),
+    fullLines,
   };
 }
 

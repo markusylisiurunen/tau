@@ -1,11 +1,11 @@
 import type { AutocompleteProvider } from "@mariozechner/pi-tui";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
 import type { ThemeDefinition } from "../core/config/index.js";
+import type { BashTruncationInfo } from "../core/tools/bash.js";
 import type { ToolUiEvent, ToolUiText } from "../core/tools/registry.js";
 import type { ReasoningEffort, RiskLevel } from "../core/types.js";
 import { createAppTerminal } from "./terminal.js";
 import { ToolUiRouter } from "./tool_ui_router.js";
-import { buildBashExecutionView } from "./ui/bash_execution.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_model.js";
 import { CustomEditor } from "./ui/custom_editor.js";
@@ -13,6 +13,7 @@ import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
 import { coercePaletteOverrides, createUiTheme, type Theme } from "./ui/theme/index.js";
+import { createToolUiRegistry } from "./ui/tool_ui_registry.js";
 
 export type ChatInputMode = "normal" | "bash" | "memory";
 
@@ -76,7 +77,9 @@ export interface ChatView {
   addBashExecutionMessage(args: {
     command: string;
     exitCode: number | null;
+    truncationInfo: BashTruncationInfo;
     uiText: ToolUiText;
+    durationMs?: number;
     labelOverride?: string;
   }): void;
   updateTheme(options: { themeId?: string; themes?: ThemeDefinition[] }): void;
@@ -100,6 +103,7 @@ export class TuiChatView implements ChatView {
   private queuedMessages: QueuedMessagesComponent;
   private editor: CustomEditor;
   private uiTheme: Theme;
+  private toolUiRegistry = createToolUiRegistry();
   private toolUiRouter: ToolUiRouter;
   private lastStatus?: ChatViewStatus;
 
@@ -114,13 +118,16 @@ export class TuiChatView implements ChatView {
     const paletteOverrides = coercePaletteOverrides(themeTokens);
     this.uiTheme = createUiTheme("ansi", paletteOverrides);
     this.ui = new TUI(createAppTerminal());
-    this.chatContainer = new ChatContainerComponent(this.uiTheme, options.showThinking);
+    this.chatContainer = new ChatContainerComponent(
+      this.uiTheme,
+      this.toolUiRegistry,
+      options.showThinking,
+    );
     this.chatContainer.setCompactToolUi(options.compactToolUi);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
     this.queuedMessages = new QueuedMessagesComponent(this.uiTheme, options.queuedUserMessages);
     this.editor = new CustomEditor(this.uiTheme);
     this.toolUiRouter = new ToolUiRouter({
-      theme: this.uiTheme,
       chatContainer: this.chatContainer,
       requestRender: () => this.ui.requestRender(),
     });
@@ -273,19 +280,23 @@ export class TuiChatView implements ChatView {
   addBashExecutionMessage(args: {
     command: string;
     exitCode: number | null;
+    truncationInfo: BashTruncationInfo;
     uiText: ToolUiText;
+    durationMs?: number;
     labelOverride?: string;
   }): void {
-    this.chatContainer.addMessage({
-      type: "tool",
-      view: buildBashExecutionView(
-        this.uiTheme,
-        args.command,
-        args.exitCode,
-        args.uiText,
-        args.labelOverride,
-      ),
-    });
+    const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const event: ToolUiEvent = {
+      type: "bash_execution",
+      toolCallId,
+      command: args.command,
+      exitCode: args.exitCode,
+      truncationInfo: args.truncationInfo,
+      uiText: args.uiText,
+      durationMs: args.durationMs,
+      labelOverride: args.labelOverride,
+    };
+    this.chatContainer.addMessage({ type: "tool", event });
     this.ui.requestRender();
   }
 
@@ -298,7 +309,6 @@ export class TuiChatView implements ChatView {
     this.footer.setTheme(this.uiTheme);
     this.queuedMessages.setTheme(this.uiTheme);
     this.editor.setUiTheme(this.uiTheme);
-    this.toolUiRouter.setTheme(this.uiTheme);
 
     if (this.lastStatus) {
       this.updateEditorVisualState(this.lastStatus.editor);

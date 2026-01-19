@@ -1,4 +1,5 @@
-import type { Component } from "@mariozechner/pi-tui";
+import { type Component, Container } from "@mariozechner/pi-tui";
+import type { ToolUiEvent } from "../../core/tools/registry.js";
 import { AppIntroComponent, type AppIntroModel } from "./app_intro.js";
 import { AssistantMessageComponent, type AssistantMessageModel } from "./assistant_message.js";
 import { SessionDividerComponent, type SessionDividerModel } from "./session_divider.js";
@@ -6,7 +7,8 @@ import { SessionSummaryComponent, type SessionSummaryModel } from "./session_sum
 import type { SystemMessageModel } from "./system_message.js";
 import { SystemMessageComponent } from "./system_message.js";
 import type { Theme } from "./theme/index.js";
-import { buildToolOutputProps, renderToolOutput, type ToolOutputViewModel } from "./tool_output.js";
+import { buildToolOutputProps, renderToolOutput } from "./tool_output.js";
+import type { ToolUiRegistry, ToolUiTaskState } from "./tool_ui_registry.js";
 import { UserMessageComponent, type UserMessageModel } from "./user_message.js";
 
 export type ChatMessageModel =
@@ -16,7 +18,8 @@ export type ChatMessageModel =
   | (UserMessageModel & { type: "user" })
   | {
       type: "tool";
-      view: ToolOutputViewModel;
+      event: ToolUiEvent;
+      taskState?: ToolUiTaskState;
     }
   | (SessionDividerModel & { type: "session_divider" })
   | (SessionSummaryModel & { type: "session_summary" });
@@ -27,6 +30,7 @@ export interface ChatMessageRenderOptions {
   theme: Theme;
   thoughtsVisible: boolean;
   compactToolUi: boolean;
+  toolUiRegistry: ToolUiRegistry;
 }
 
 export interface RenderedMessage {
@@ -44,7 +48,7 @@ export function renderChatMessage(
   model: ChatMessageModel,
   options: ChatMessageRenderOptions,
 ): RenderedMessage {
-  const { theme, thoughtsVisible, compactToolUi } = options;
+  const { theme, thoughtsVisible, compactToolUi, toolUiRegistry } = options;
 
   switch (model.type) {
     case "app_intro": {
@@ -126,13 +130,27 @@ export function renderChatMessage(
       };
     }
     case "tool": {
-      const component = renderToolOutput(model.view, compactToolUi);
+      const view = toolUiRegistry.render(model.event, {
+        theme,
+        taskState: model.taskState,
+        compact: compactToolUi,
+      });
+      if (!view) {
+        return { component: new Container(), isAssistant: false };
+      }
+      const component = renderToolOutput(view, compactToolUi);
       return {
         component,
         isAssistant: false,
         update: (nextModel, nextOptions) => {
           if (nextModel.type !== "tool") return false;
-          component.update(buildToolOutputProps(nextModel.view, nextOptions.compactToolUi));
+          const nextView = nextOptions.toolUiRegistry.render(nextModel.event, {
+            theme: nextOptions.theme,
+            taskState: nextModel.taskState,
+            compact: nextOptions.compactToolUi,
+          });
+          if (!nextView) return false;
+          component.update(buildToolOutputProps(nextView, nextOptions.compactToolUi));
           return true;
         },
       };

@@ -118,7 +118,18 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("bash_execution", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "bash_execution" }>;
-    return buildBashExecutionView(context.theme, uiEvent.command, uiEvent.exitCode, uiEvent.uiText);
+    return buildBashExecutionView(
+      context.theme,
+      uiEvent.command,
+      uiEvent.exitCode,
+      uiEvent.uiText,
+      uiEvent.labelOverride,
+    );
+  });
+
+  registry.register("bash_aborted", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "bash_aborted" }>;
+    return buildBashAbortedView(context.theme, uiEvent.command, uiEvent.reason);
   });
 
   registry.register("bash_blocked", (event, context) => {

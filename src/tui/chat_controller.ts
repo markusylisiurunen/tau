@@ -1602,7 +1602,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.view.addBashExecutionMessage({
         command,
         exitCode,
+        truncationInfo,
         uiText,
+        durationMs,
         labelOverride: "you ran",
       });
 

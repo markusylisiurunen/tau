@@ -3,9 +3,14 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
-import { EDIT_DIFF_MAX_LINES, EDIT_DIFF_MAX_TOKENS, truncateForUi } from "../utils/tool_preview.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
+import type {
+  ToolDefinition,
+  ToolDispatchResult,
+  ToolUiEvent,
+  ToolUiLine,
+  ToolUiText,
+} from "./registry.js";
 
 const EDIT_DESCRIPTION = [
   "Edit a file by replacing exact text matches.",
@@ -20,6 +25,7 @@ const EDIT_OLD_TEXT_DESCRIPTION = [
   "If multiple matches are found, you should re-attempt with a more specific oldText.",
 ].join(" ");
 const EDIT_NEW_TEXT_DESCRIPTION = "The text to replace oldText with.";
+const EDIT_DIFF_LCS_MAX_LINES = 1024;
 
 export const EDIT_TOOL: Tool = {
   name: "edit",
@@ -72,15 +78,8 @@ function findMatchContext(content: string, search: string, contextLines: number 
   return `Lines ${startLine + 1}-${endLine + 1}:\n${contextSnippet}`;
 }
 
-interface DiffTruncation {
-  truncated: boolean;
-  totalLines: number;
-  outputLines: number;
-}
-
-interface DiffResult {
-  diff: string;
-  truncation: DiffTruncation;
+interface LineDiffResult {
+  lines: string[];
   added: number;
   removed: number;
 }
@@ -104,109 +103,98 @@ function* iterateTextLinesForDiff(text: string): Iterable<string> {
   }
 }
 
-function buildSimpleDiff(oldText: string, newText: string): DiffResult {
-  const safeMaxLines = Math.max(1, EDIT_DIFF_MAX_LINES);
-  const headCount = Math.floor(safeMaxLines / 2);
-  const tailCount = safeMaxLines - headCount;
+function buildLineDiff(oldText: string, newText: string): LineDiffResult {
+  const oldLines = [...iterateTextLinesForDiff(oldText)];
+  const newLines = [...iterateTextLinesForDiff(newText)];
+  const oldLen = oldLines.length;
+  const newLen = newLines.length;
 
-  let totalLines = 0;
+  const lines: string[] = [];
   let added = 0;
   let removed = 0;
 
-  let allLines: string[] | undefined = [];
-  const headLines: string[] = [];
+  if (oldLen === 0 && newLen === 0) {
+    return { lines, added, removed };
+  }
 
-  const tailBuffer = tailCount > 0 ? new Array<string>(tailCount) : [];
-  let tailSize = 0;
-  let tailPos = 0;
+  if (oldLen === 0) {
+    for (const line of newLines) {
+      lines.push(`+ ${line}`);
+      added++;
+    }
+    return { lines, added, removed };
+  }
 
-  const handleLine = (line: string): void => {
-    totalLines++;
+  if (newLen === 0) {
+    for (const line of oldLines) {
+      lines.push(`- ${line}`);
+      removed++;
+    }
+    return { lines, added, removed };
+  }
 
-    if (allLines) {
-      allLines.push(line);
-      if (allLines.length > safeMaxLines) {
-        allLines = undefined;
+  if (oldLen + newLen > EDIT_DIFF_LCS_MAX_LINES) {
+    for (const line of oldLines) {
+      lines.push(`- ${line}`);
+      removed++;
+    }
+    for (const line of newLines) {
+      lines.push(`+ ${line}`);
+      added++;
+    }
+    return { lines, added, removed };
+  }
+
+  const dp: number[][] = Array.from({ length: oldLen + 1 }, () =>
+    new Array<number>(newLen + 1).fill(0),
+  );
+
+  for (let i = oldLen - 1; i >= 0; i--) {
+    const row = dp[i]!;
+    const nextRow = dp[i + 1]!;
+    for (let j = newLen - 1; j >= 0; j--) {
+      if (oldLines[i] === newLines[j]) {
+        row[j] = (nextRow[j + 1] ?? 0) + 1;
+      } else {
+        row[j] = Math.max(nextRow[j] ?? 0, row[j + 1] ?? 0);
       }
     }
+  }
 
-    if (headLines.length < headCount) {
-      headLines.push(line);
+  let i = 0;
+  let j = 0;
+  while (i < oldLen && j < newLen) {
+    if (oldLines[i] === newLines[j]) {
+      lines.push(`  ${oldLines[i]}`);
+      i++;
+      j++;
+      continue;
     }
 
-    if (tailCount > 0) {
-      tailBuffer[tailPos] = line;
-      tailPos = (tailPos + 1) % tailCount;
-      tailSize = Math.min(tailSize + 1, tailCount);
+    const down = dp[i + 1]?.[j] ?? 0;
+    const right = dp[i]?.[j + 1] ?? 0;
+    if (down >= right) {
+      lines.push(`- ${oldLines[i]}`);
+      removed++;
+      i++;
+    } else {
+      lines.push(`+ ${newLines[j]}`);
+      added++;
+      j++;
     }
-  };
+  }
 
-  for (const line of iterateTextLinesForDiff(oldText)) {
+  for (; i < oldLen; i++) {
+    lines.push(`- ${oldLines[i]}`);
     removed++;
-    handleLine(`- ${line}`);
   }
 
-  for (const line of iterateTextLinesForDiff(newText)) {
+  for (; j < newLen; j++) {
+    lines.push(`+ ${newLines[j]}`);
     added++;
-    handleLine(`+ ${line}`);
   }
 
-  if (totalLines === 0) {
-    return {
-      diff: "",
-      truncation: {
-        truncated: false,
-        totalLines: 0,
-        outputLines: 0,
-      },
-      added,
-      removed,
-    };
-  }
-
-  const truncatedByLines = totalLines > safeMaxLines;
-
-  let diffCandidate: string;
-  if (!truncatedByLines) {
-    diffCandidate = (allLines ?? []).join("\n");
-  } else {
-    const tailLines: string[] = [];
-    for (let i = 0; i < tailSize; i++) {
-      const idx = (tailPos - tailSize + i + tailCount) % tailCount;
-      tailLines.push(tailBuffer[idx]!);
-    }
-    diffCandidate = [...headLines, ...tailLines].join("\n");
-  }
-
-  const display = truncateForUi(diffCandidate, {
-    maxLines: Math.min(totalLines, safeMaxLines),
-    maxTokens: EDIT_DIFF_MAX_TOKENS,
-    strategy: "middle",
-  });
-
-  const truncated = truncatedByLines || display.truncated;
-
-  return {
-    diff: display.content,
-    truncation: {
-      truncated,
-      totalLines,
-      outputLines: display.outputLines,
-    },
-    added,
-    removed,
-  };
-}
-
-function buildFullDiffLines(oldText: string, newText: string): string[] {
-  const lines: string[] = [];
-  for (const line of iterateTextLinesForDiff(oldText)) {
-    lines.push(`- ${line}`);
-  }
-  for (const line of iterateTextLinesForDiff(newText)) {
-    lines.push(`+ ${line}`);
-  }
-  return lines;
+  return { lines, added, removed };
 }
 
 function buildEditUiText(args: {
@@ -216,15 +204,17 @@ function buildEditUiText(args: {
   newText: string;
 }): ToolUiText {
   const { oldLength, newLength, oldText, newText } = args;
-  const { diff, truncation, added, removed } = buildSimpleDiff(oldText, newText);
-  const diffLines = diff ? diff.split("\n") : [];
+  const { lines: diffLines, added, removed } = buildLineDiff(oldText, newText);
 
-  const compactLines: string[] = diffLines.map((line) => `    ${line}`);
-  if (truncation.truncated) {
-    compactLines.push(
-      `    ◆ truncated: ${truncation.outputLines} of ${truncation.totalLines} lines`,
-    );
-  }
+  const indent = " ".repeat(4);
+  const formatLine = (line: string, withIndent = false): ToolUiLine => {
+    const text = `${withIndent ? indent : ""}${line}`;
+    if (line.startsWith("+ ")) return { text, tone: "diffAdd" };
+    if (line.startsWith("- ")) return { text, tone: "diffRemove" };
+    return { text };
+  };
+
+  const previewLines: ToolUiLine[] = diffLines.map((line) => formatLine(line, true));
 
   const sizeDiff = newLength - oldLength;
   const diffStr =
@@ -232,14 +222,15 @@ function buildEditUiText(args: {
   const summaryLine = `replaced ${oldLength} → ${newLength} chars (${diffStr})`;
   const statusLine = `    (+${added}, -${removed}) · ${summaryLine}`;
 
-  const fullDiffLines = buildFullDiffLines(oldText, newText);
-  const fullText =
-    fullDiffLines.length > 0 ? `${summaryLine}\n\n${fullDiffLines.join("\n")}` : summaryLine;
+  const fullLines: ToolUiLine[] = [{ text: summaryLine }];
+  if (diffLines.length > 0) {
+    fullLines.push({ text: "" }, ...diffLines.map((line) => formatLine(line)));
+  }
 
   return {
-    previewText: compactLines.join("\n"),
+    previewLines,
     statusLine,
-    fullText,
+    fullLines,
   };
 }
 

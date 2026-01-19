@@ -5,6 +5,7 @@ import {
   buildHeaderLine,
   inlineText,
   renderToolOutput,
+  renderToolUiTextLines,
   type ToolOutputViewModel,
 } from "./tool_output.js";
 
@@ -26,8 +27,14 @@ export function buildReadSuccessView(
   const readColor = (s: string) => palette.actionSuccess(s);
   const successBullet = (s: string) => palette.actionSuccess(s);
   const expandedSections: Array<string | undefined> = [];
-  if (uiText.fullText.trim()) {
-    expandedSections.push(palette.actionOutput(uiText.fullText));
+  const fullText = renderToolUiTextLines({
+    uiText,
+    kind: "full",
+    theme,
+    baseStyle: palette.actionOutput,
+  });
+  if (fullText) {
+    expandedSections.push(fullText);
   }
 
   const pathInline = inlineText(path);
@@ -40,8 +47,14 @@ export function buildReadSuccessView(
     accentStyle: palette.brandAccent,
   });
   const compactParts: string[] = [];
-  if (uiText.previewText.trim()) {
-    compactParts.push(palette.textDim(uiText.previewText));
+  const previewText = renderToolUiTextLines({
+    uiText,
+    kind: "preview",
+    theme,
+    baseStyle: palette.textDim,
+  });
+  if (previewText) {
+    compactParts.push(previewText);
   }
   if (uiText.statusLine?.trim()) {
     compactParts.push(palette.textMuted(uiText.statusLine));
@@ -85,8 +98,14 @@ export function buildListSuccessView(
   const successBullet = (s: string) => palette.actionSuccess(s);
 
   const expandedSections: Array<string | undefined> = [];
-  if (uiText.fullText.trim()) {
-    expandedSections.push(palette.actionOutput(uiText.fullText));
+  const fullText = renderToolUiTextLines({
+    uiText,
+    kind: "full",
+    theme,
+    baseStyle: palette.actionOutput,
+  });
+  if (fullText) {
+    expandedSections.push(fullText);
   }
 
   const pathInline = inlineText(path);
@@ -101,8 +120,14 @@ export function buildListSuccessView(
   });
 
   const compactParts: string[] = [];
-  if (uiText.previewText.trim()) {
-    compactParts.push(palette.textDim(uiText.previewText));
+  const previewText = renderToolUiTextLines({
+    uiText,
+    kind: "preview",
+    theme,
+    baseStyle: palette.textDim,
+  });
+  if (previewText) {
+    compactParts.push(previewText);
   }
   if (uiText.statusLine?.trim()) {
     compactParts.push(palette.textMuted(uiText.statusLine));
@@ -173,9 +198,15 @@ export function buildGrepFinishedView(
   const isSuccess = status === "success";
   const borderColor = isSuccess ? grepColor : errorColor;
   const expandedSections: Array<string | undefined> = [];
-  if (uiText.fullText.trim()) {
-    const fullStyle = isSuccess ? palette.actionOutput : palette.actionError;
-    expandedSections.push(fullStyle(uiText.fullText));
+  const fullStyle = isSuccess ? palette.actionOutput : palette.actionError;
+  const fullText = renderToolUiTextLines({
+    uiText,
+    kind: "full",
+    theme,
+    baseStyle: fullStyle,
+  });
+  if (fullText) {
+    expandedSections.push(fullText);
   }
 
   const patternInline = inlineText(pattern);
@@ -191,8 +222,14 @@ export function buildGrepFinishedView(
   const previewStyle = isSuccess ? palette.textDim : palette.actionError;
   const statusStyle = isSuccess ? palette.textMuted : palette.actionError;
   const compactParts: string[] = [];
-  if (uiText.previewText.trim()) {
-    compactParts.push(previewStyle(uiText.previewText));
+  const previewText = renderToolUiTextLines({
+    uiText,
+    kind: "preview",
+    theme,
+    baseStyle: previewStyle,
+  });
+  if (previewText) {
+    compactParts.push(previewText);
   }
   if (uiText.statusLine?.trim()) {
     compactParts.push(statusStyle(uiText.statusLine));

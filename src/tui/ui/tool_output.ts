@@ -1,4 +1,5 @@
 import { type Component, Container, Text } from "@mariozechner/pi-tui";
+import type { ToolUiLine, ToolUiText } from "../../core/tools/registry.js";
 import { DynamicBorder } from "./components/dynamic_border.js";
 import { HeaderLineComponent, type HeaderLineModel } from "./components/header_line.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";
@@ -98,6 +99,34 @@ export function buildExpandedText(expanded: ToolOutputExpandedModel): string {
   const filteredSections = sections.filter((section): section is string => Boolean(section));
   const parts = [expanded.title, ...filteredSections];
   return parts.join("\n\n");
+}
+
+function styleToolUiLine(
+  line: ToolUiLine,
+  theme: Theme,
+  baseStyle: (text: string) => string,
+): string {
+  if (!line.tone) return baseStyle(line.text);
+  switch (line.tone) {
+    case "diffAdd":
+      return theme.palette.diffAdd(line.text);
+    case "diffRemove":
+      return theme.palette.diffRemove(line.text);
+    default:
+      return baseStyle(line.text);
+  }
+}
+
+export function renderToolUiTextLines(args: {
+  uiText: ToolUiText;
+  kind: "preview" | "full";
+  theme: Theme;
+  baseStyle: (text: string) => string;
+}): string | undefined {
+  const { uiText, kind, theme, baseStyle } = args;
+  const lines = kind === "preview" ? uiText.previewLines : uiText.fullLines;
+  if (!lines.some((line) => line.text.trim())) return undefined;
+  return lines.map((line) => styleToolUiLine(line, theme, baseStyle)).join("\n");
 }
 
 export interface ToolOutputExpandedView {

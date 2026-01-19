@@ -25,6 +25,8 @@ export function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | und
         : undefined;
     case "bash_blocked":
       return `bash blocked: $ ${uiEvent.command.replace(/\n/g, " ")} (${normalizeOneLine(uiEvent.reason)})`;
+    case "bash_aborted":
+      return `bash ${uiEvent.reason}: $ ${uiEvent.command.replace(/\n/g, " ")}`;
     case "web_search_started":
       return `web search: ${uiEvent.objective}`;
     case "web_search_finished":

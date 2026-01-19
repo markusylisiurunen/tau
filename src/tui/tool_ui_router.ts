@@ -1,7 +1,6 @@
 import type { ToolUiEvent } from "../core/tools/registry.js";
 import type { ChatContainerComponent } from "./ui/chat_container.js";
-import type { Theme } from "./ui/theme/index.js";
-import { createToolUiRegistry, type ToolUiRegistry } from "./ui/tool_ui_registry.js";
+import type { ToolUiTaskState } from "./ui/tool_ui_registry.js";
 
 type RunningBashComponent = {
   command: string;
@@ -18,33 +17,22 @@ type RunningTaskComponent = {
 };
 
 export class ToolUiRouter {
-  private theme: Theme;
   private readonly chatContainer: ChatContainerComponent;
   private readonly requestRender: () => void;
   private readonly onCostUpdated?: () => void;
-  private readonly registry: ToolUiRegistry;
 
   private runningBashComponents: Map<string, RunningBashComponent> = new Map();
   private runningTaskComponents: Map<string, RunningTaskComponent> = new Map();
   private subagentCostTotal = 0;
 
   constructor(options: {
-    theme: Theme;
     chatContainer: ChatContainerComponent;
     requestRender: () => void;
     onCostUpdated?: () => void;
-    registry?: ToolUiRegistry;
   }) {
-    this.theme = options.theme;
     this.chatContainer = options.chatContainer;
     this.requestRender = options.requestRender;
     this.onCostUpdated = options.onCostUpdated;
-    this.registry = options.registry ?? createToolUiRegistry();
-  }
-
-  setTheme(theme: Theme): void {
-    this.theme = theme;
-    this.refreshRunning();
   }
 
   getSubagentCostTotal(): number {
@@ -64,10 +52,13 @@ export class ToolUiRouter {
 
   finalizePending(reason: "aborted" | "interrupted"): void {
     for (const [id, running] of this.runningBashComponents.entries()) {
-      this.chatContainer.replaceMessage(id, {
-        type: "tool",
-        view: this.registry.renderBashAborted(running.command, reason, { theme: this.theme }),
-      });
+      const event: ToolUiEvent = {
+        type: "bash_aborted",
+        toolCallId: id,
+        command: running.command,
+        reason,
+      };
+      this.chatContainer.replaceMessage(id, { type: "tool", event });
     }
 
     const taskStatus = reason === "aborted" ? "aborted" : "error";
@@ -84,78 +75,15 @@ export class ToolUiRouter {
         status: taskStatus,
         finalOutput: reason,
       };
-      const view = this.registry.render(event, { theme: this.theme });
-      if (view) {
-        this.chatContainer.replaceMessage(id, { type: "tool", view });
-      }
-    }
-
-    this.requestRender();
-  }
-
-  private refreshRunning(): void {
-    for (const [id, running] of this.runningBashComponents.entries()) {
-      const event: ToolUiEvent = {
-        type: "bash_started",
-        toolCallId: id,
-        command: running.command,
-      };
-      const view = this.registry.render(event, { theme: this.theme });
-      if (view) {
-        this.chatContainer.replaceMessage(id, { type: "tool", view });
-      }
-    }
-
-    for (const [id, running] of this.runningTaskComponents.entries()) {
-      const lastEvent = running.events[running.events.length - 1] ?? "running";
-      const event: ToolUiEvent = {
-        type: "task_progress",
-        toolCallId: id,
-        kind: running.kind,
-        name: running.name ?? "",
-        title: running.title,
-        event: lastEvent,
-        costTotal: running.costTotal,
-        turns: running.turns,
-        toolCalls: running.toolCalls,
-      };
-      const view = this.registry.render(event, {
-        theme: this.theme,
-        taskState: {
-          events: running.events,
-          costTotal: running.costTotal,
-          turns: running.turns,
-          toolCalls: running.toolCalls,
-          kind: running.kind,
-          name: running.name,
-        },
-      });
-      if (view) {
-        this.chatContainer.replaceMessage(id, { type: "tool", view });
-      }
+      this.chatContainer.replaceMessage(id, { type: "tool", event });
     }
 
     this.requestRender();
   }
 
   handle(uiEvent: ToolUiEvent): void {
-    const render = (event: ToolUiEvent, context?: { taskState?: RunningTaskComponent }) =>
-      this.registry.render(event, {
-        theme: this.theme,
-        taskState: context?.taskState && {
-          events: context.taskState.events,
-          costTotal: context.taskState.costTotal,
-          turns: context.taskState.turns,
-          toolCalls: context.taskState.toolCalls,
-          kind: context.taskState.kind,
-          name: context.taskState.name,
-        },
-      });
-
     if (uiEvent.type === "bash_started") {
-      const view = render(uiEvent);
-      if (!view) return;
-      this.chatContainer.addMessage({ type: "tool", view }, uiEvent.toolCallId);
+      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
       this.runningBashComponents.set(uiEvent.toolCallId, { command: uiEvent.command });
       this.requestRender();
       return;
@@ -163,10 +91,7 @@ export class ToolUiRouter {
 
     if (uiEvent.type === "bash_execution") {
       const running = this.runningBashComponents.get(uiEvent.toolCallId);
-      const view = render(uiEvent);
-      if (view) {
-        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", view });
-      }
+      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
       if (running) {
         this.runningBashComponents.delete(uiEvent.toolCallId);
       }
@@ -174,17 +99,22 @@ export class ToolUiRouter {
       return;
     }
 
+    if (uiEvent.type === "bash_aborted") {
+      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.runningBashComponents.delete(uiEvent.toolCallId);
+      this.requestRender();
+      return;
+    }
+
     if (uiEvent.type === "bash_blocked") {
-      const view = render(uiEvent);
-      if (!view) return;
       if (uiEvent.toolCallId) {
         const running = this.runningBashComponents.get(uiEvent.toolCallId);
-        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", view });
+        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
         if (running) {
           this.runningBashComponents.delete(uiEvent.toolCallId);
         }
       } else {
-        this.chatContainer.addMessage({ type: "tool", view });
+        this.chatContainer.addMessage({ type: "tool", event: uiEvent });
       }
       this.requestRender();
       return;
@@ -202,10 +132,10 @@ export class ToolUiRouter {
         toolCalls: 0,
         events: [],
       };
-      const view = render(uiEvent, { taskState: state });
-      if (view) {
-        this.chatContainer.addMessage({ type: "tool", view }, uiEvent.toolCallId);
-      }
+      this.chatContainer.addMessage(
+        { type: "tool", event: uiEvent, taskState: this.toTaskState(state) },
+        uiEvent.toolCallId,
+      );
       this.runningTaskComponents.set(uiEvent.toolCallId, state);
       this.requestRender();
       return;
@@ -236,20 +166,17 @@ export class ToolUiRouter {
 
       this.runningTaskComponents.set(uiEvent.toolCallId, state);
 
-      const view = render(uiEvent, { taskState: state });
-      if (view) {
-        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", view });
-      }
+      this.chatContainer.replaceMessage(uiEvent.toolCallId, {
+        type: "tool",
+        event: uiEvent,
+        taskState: this.toTaskState(state),
+      });
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "task_finished") {
-      const view = render(uiEvent);
-      if (view) {
-        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", view });
-      }
-
+      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
       this.runningTaskComponents.delete(uiEvent.toolCallId);
       this.subagentCostTotal += uiEvent.costTotal;
       this.onCostUpdated?.();
@@ -259,13 +186,10 @@ export class ToolUiRouter {
 
     if (uiEvent.type === "task_blocked") {
       const running = this.runningTaskComponents.get(uiEvent.toolCallId);
-      const view = render(uiEvent, { taskState: running });
-      if (view) {
-        if (running) {
-          this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", view });
-        } else {
-          this.chatContainer.addMessage({ type: "tool", view }, uiEvent.toolCallId);
-        }
+      if (running) {
+        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      } else {
+        this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
       }
       this.runningTaskComponents.delete(uiEvent.toolCallId);
       this.requestRender();
@@ -282,56 +206,49 @@ export class ToolUiRouter {
       uiEvent.type === "list_success" ||
       uiEvent.type === "list_blocked"
     ) {
-      const view = render(uiEvent);
-      if (view) {
-        this.chatContainer.addMessage({ type: "tool", view });
-        this.requestRender();
-      }
+      this.chatContainer.addMessage({ type: "tool", event: uiEvent });
+      this.requestRender();
       return;
     }
 
     if (uiEvent.type === "grep_started") {
-      const view = render(uiEvent);
-      if (view) {
-        this.chatContainer.addMessage({ type: "tool", view }, uiEvent.toolCallId);
-        this.requestRender();
-      }
+      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.requestRender();
       return;
     }
 
     if (uiEvent.type === "grep_finished") {
-      const view = render(uiEvent);
-      if (view) {
-        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", view });
-        this.requestRender();
-      }
+      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.requestRender();
       return;
     }
 
     if (uiEvent.type === "grep_blocked") {
-      const view = render(uiEvent);
-      if (view) {
-        this.chatContainer.addMessage({ type: "tool", view }, uiEvent.toolCallId);
-        this.requestRender();
-      }
+      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.requestRender();
       return;
     }
 
     if (uiEvent.type === "web_search_started" || uiEvent.type === "web_fetch_started") {
-      const view = render(uiEvent);
-      if (view) {
-        this.chatContainer.addMessage({ type: "tool", view }, uiEvent.toolCallId);
-        this.requestRender();
-      }
+      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.requestRender();
       return;
     }
 
     if (uiEvent.type === "web_search_finished" || uiEvent.type === "web_fetch_finished") {
-      const view = render(uiEvent);
-      if (view) {
-        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", view });
-        this.requestRender();
-      }
+      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.requestRender();
     }
+  }
+
+  private toTaskState(state: RunningTaskComponent): ToolUiTaskState {
+    return {
+      events: state.events,
+      costTotal: state.costTotal,
+      turns: state.turns,
+      toolCalls: state.toolCalls,
+      kind: state.kind,
+      name: state.name,
+    };
   }
 }

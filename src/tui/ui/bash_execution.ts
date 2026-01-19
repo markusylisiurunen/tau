@@ -5,6 +5,7 @@ import {
   buildSection,
   inlineText,
   renderToolOutput,
+  renderToolUiTextLines,
   type ToolOutputViewModel,
 } from "./tool_output.js";
 
@@ -58,15 +59,26 @@ export function buildBashExecutionView(
   const previewStyle = palette.textDim;
   const statusStyle = palette.textMuted;
   const compactParts: string[] = [];
-  if (uiText.previewText.trim()) {
-    compactParts.push(previewStyle(uiText.previewText));
+  const previewText = renderToolUiTextLines({
+    uiText,
+    kind: "preview",
+    theme,
+    baseStyle: previewStyle,
+  });
+  if (previewText) {
+    compactParts.push(previewText);
   }
   if (uiText.statusLine?.trim()) {
     compactParts.push(statusStyle(uiText.statusLine));
   }
   const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
   const fullStyle = palette.actionOutput;
-  const fullText = uiText.fullText.trim() ? fullStyle(uiText.fullText) : undefined;
+  const fullText = renderToolUiTextLines({
+    uiText,
+    kind: "full",
+    theme,
+    baseStyle: fullStyle,
+  });
   const sections = fullText ? [fullText] : [];
   return {
     borderColor: resultColor,

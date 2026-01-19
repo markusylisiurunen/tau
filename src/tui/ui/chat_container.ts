@@ -5,6 +5,7 @@ import {
   renderChatMessage,
 } from "./chat_message_model.js";
 import type { Theme } from "./theme/index.js";
+import type { ToolUiRegistry } from "./tool_ui_registry.js";
 
 type ChatMessageRecord = {
   id: string;
@@ -16,15 +17,17 @@ type ChatMessageRecord = {
 export class ChatContainerComponent extends Container {
   private chatContainer: Container;
   private theme: Theme;
+  private toolUiRegistry: ToolUiRegistry;
   private thoughtsVisible: boolean = false;
   private compactToolUi: boolean = false;
   private allMessages: ChatMessageRecord[] = [];
   private idToIndex: Map<string, number> = new Map();
 
-  constructor(theme: Theme, thoughtsVisible = false) {
+  constructor(theme: Theme, toolUiRegistry: ToolUiRegistry, thoughtsVisible = false) {
     super();
 
     this.theme = theme;
+    this.toolUiRegistry = toolUiRegistry;
     this.thoughtsVisible = thoughtsVisible;
 
     this.chatContainer = new Container();
@@ -76,6 +79,7 @@ export class ChatContainerComponent extends Container {
         theme: this.theme,
         thoughtsVisible: this.thoughtsVisible,
         compactToolUi: this.compactToolUi,
+        toolUiRegistry: this.toolUiRegistry,
       });
 
       if (updated) {
@@ -141,6 +145,7 @@ export class ChatContainerComponent extends Container {
       theme: this.theme,
       thoughtsVisible: this.thoughtsVisible,
       compactToolUi: this.compactToolUi,
+      toolUiRegistry: this.toolUiRegistry,
     });
     record.renderedMessage = rendered;
     return rendered;

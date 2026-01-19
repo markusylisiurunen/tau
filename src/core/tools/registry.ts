@@ -17,6 +17,13 @@ export type ToolUiEvent =
       truncationInfo: BashTruncationInfo;
       uiText: ToolUiText;
       durationMs?: number;
+      labelOverride?: string;
+    }
+  | {
+      type: "bash_aborted";
+      toolCallId: string;
+      command: string;
+      reason: "aborted" | "interrupted";
     }
   | { type: "bash_blocked"; command: string; reason: string; toolCallId?: string }
   | {
@@ -148,10 +155,17 @@ export type ToolUiEvent =
     }
   | { type: "edit_blocked"; path: string; reason: string };
 
+export type ToolUiLineTone = "diffAdd" | "diffRemove";
+
+export type ToolUiLine = {
+  text: string;
+  tone?: ToolUiLineTone;
+};
+
 export type ToolUiText = {
-  previewText: string;
+  previewLines: ToolUiLine[];
   statusLine?: string;
-  fullText: string;
+  fullLines: ToolUiLine[];
 };
 
 export type ToolDispatchResult = {

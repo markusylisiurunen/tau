@@ -10,7 +10,13 @@ import {
   WRITE_UI_PREVIEW_LINES,
 } from "../utils/tool_preview.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
+import type {
+  ToolDefinition,
+  ToolDispatchResult,
+  ToolUiEvent,
+  ToolUiLine,
+  ToolUiText,
+} from "./registry.js";
 
 const WRITE_DESCRIPTION = [
   "Write content to a file, creating the file if it doesn't exist or overwriting if it does.",
@@ -44,28 +50,44 @@ function parseWriteArgs(raw: unknown): { path: string; content: string } {
 
 function buildWriteUiText(args: { bytes: number; lines: number; content: string }): ToolUiText {
   const { bytes, lines, content } = args;
-  const { previewLines } = applyPreviewPolicy(content, {
+  const { previewLines: previewContentLines } = applyPreviewPolicy(content, {
     maxLines: WRITE_UI_PREVIEW_LINES,
     strategy: "head",
   });
 
-  const compactLines = buildCompactPreviewLines(previewLines, {
+  const compactLines = buildCompactPreviewLines(previewContentLines, {
     totalLines: lines,
     maxLines: 16,
     unitLabel: "lines",
   });
   const infoText = `${lines} lines · ${formatTokenEstimate(bytes)} · ${bytes} bytes`;
   const summaryLine = `    (${infoText})`;
-  const previewText = compactLines ?? "";
+  const previewLines: ToolUiLine[] = compactLines
+    ? compactLines.split("\n").map((text) => ({ text }))
+    : [];
+
+  const fullLines: ToolUiLine[] = [];
+  const pushSection = (text: string): void => {
+    if (!text) return;
+    if (fullLines.length > 0) {
+      fullLines.push({ text: "" });
+    }
+    for (const line of text.split("\n")) {
+      fullLines.push({ text: line });
+    }
+  };
 
   const summary = infoText;
   const trimmed = content.trimEnd();
-  const fullText = trimmed ? `${summary}\n\n${trimmed}` : summary;
+  pushSection(summary);
+  if (trimmed) {
+    pushSection(trimmed);
+  }
 
   return {
-    previewText,
+    previewLines,
     statusLine: summaryLine,
-    fullText,
+    fullLines,
   };
 }
 

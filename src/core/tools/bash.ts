@@ -12,6 +12,7 @@ import type {
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
   ToolUiEvent,
+  ToolUiLine,
   ToolUiText,
 } from "./registry.js";
 
@@ -241,10 +242,9 @@ export function buildBashUiText(args: {
     args.previewLines?.head ?? COMPACT_OUTPUT_HEAD_LINES,
     args.previewLines?.tail ?? COMPACT_OUTPUT_TAIL_LINES,
   );
-  const outputBlock =
-    outputLinesPreview.length > 0
-      ? outputLinesPreview.map((line) => `    ${line}`).join("\n")
-      : undefined;
+  const previewLines: ToolUiLine[] = outputLinesPreview.map((line) => ({
+    text: `    ${line}`,
+  }));
 
   const hasOutput = model.totalBytes > 0;
   const showTotals = model.truncated || captureTruncated;
@@ -263,28 +263,37 @@ export function buildBashUiText(args: {
   const details = `(${exitSummary} · ${infoText})`;
 
   const summaryLine = `    ${details}`;
-  const previewText = outputBlock ?? "";
 
-  const sections: string[] = [];
+  const fullLines: ToolUiLine[] = [];
+  const pushSection = (text: string): void => {
+    if (!text) return;
+    if (fullLines.length > 0) {
+      fullLines.push({ text: "" });
+    }
+    for (const line of text.split("\n")) {
+      fullLines.push({ text: line });
+    }
+  };
+
   const rawOutput = truncationInfo.rawOutput.trimEnd();
   if (rawOutput) {
-    sections.push(rawOutput);
+    pushSection(rawOutput);
   }
 
   if (model.truncated || captureTruncated) {
     const shown = formatSizeSummary(model.outputLines, model.outputBytes);
     const total = formatSizeSummary(model.totalLines, model.totalBytes);
-    sections.push(`truncated for model: ${shown} of ${total}`);
+    pushSection(`truncated for model: ${shown} of ${total}`);
   }
 
   if (exitCode !== null && exitCode !== 0) {
-    sections.push(`(exit ${exitCode})`);
+    pushSection(`(exit ${exitCode})`);
   }
 
   return {
-    previewText,
+    previewLines,
     statusLine: summaryLine,
-    fullText: sections.join("\n\n"),
+    fullLines,
   };
 }
 

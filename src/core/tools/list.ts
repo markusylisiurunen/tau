@@ -5,7 +5,13 @@ import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { buildCompactPreviewLines } from "../utils/tool_preview.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
+import type {
+  ToolDefinition,
+  ToolDispatchResult,
+  ToolUiEvent,
+  ToolUiLine,
+  ToolUiText,
+} from "./registry.js";
 
 export const LIST_MAX_ENTRIES = 256;
 
@@ -85,13 +91,29 @@ function buildListUiText(args: {
   });
   const infoText = `${returned} of ${total} entries · offset ${offset} · limit ${limit}`;
   const summaryLine = `    (${infoText})`;
-  const previewText = compactLines ?? "";
+  const previewLines: ToolUiLine[] = compactLines
+    ? compactLines.split("\n").map((text) => ({ text }))
+    : [];
+
+  const fullLines: ToolUiLine[] = [];
+  const pushSection = (text: string): void => {
+    if (!text) return;
+    if (fullLines.length > 0) {
+      fullLines.push({ text: "" });
+    }
+    for (const line of text.split("\n")) {
+      fullLines.push({ text: line });
+    }
+  };
 
   const summary = `${returned} of ${total} entries (offset ${offset}, limit ${limit})`;
   const listText = entries.length > 0 ? entries.join("\n") : "";
-  const fullText = listText ? `${summary}\n\n${listText}` : summary;
+  pushSection(summary);
+  if (listText) {
+    pushSection(listText);
+  }
 
-  return { previewText, statusLine: summaryLine, fullText };
+  return { previewLines, statusLine: summaryLine, fullLines };
 }
 
 export function createListToolDefinition(backend: ToolExecutionBackend): ToolDefinition {

@@ -229,6 +229,8 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 **Style**: Biome (2-space indent, 100 line width). Types `PascalCase`, values/functions `camelCase`, files `lowercase.ts`.
 
+**Compatibility**: Do not introduce backwards compatibility changes unless explicitly requested.
+
 **Commit style**: Short, imperative, lowercase subject lines (no prefixes).
 
 ## Adding a slash command

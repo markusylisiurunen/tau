@@ -16,7 +16,7 @@ Your job: use the bash tool to inspect files, search for symbols, trace dependen
 
 - **Important:** Always use ripgrep (rg), never grep. Prefer fd over find.
   - Standard grep is painfully slow on large codebases and can hang for tens of seconds or longer.
-- Use absolute paths; avoid \`cd\`.
+- Use absolute paths; avoid \`cd\`. Use \`workingDirectory\` if you need a different cwd.
 - Make parallel calls when there are no dependencies between them.
 - Prefer targeted commands: rg for searching, sed -n for extracting line ranges, git log/blame for history.
 - Stop once you have enough to answer confidently. Don't over-gather, but don't under-gather either.

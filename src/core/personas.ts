@@ -215,23 +215,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
       },
     },
   },
-  {
-    id: "haiku-4.5",
-    description: "Claude Haiku 4.5",
-    model: getModel("anthropic", "claude-haiku-4-5"),
-    allowedReasoningLevels: ["low", "high"],
-    settings: { reasoning: "high" },
-    subagents: {
-      explore: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
-        reasoning: "medium",
-      },
-      web: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
-        reasoning: "medium",
-      },
-    },
-  },
+
   {
     id: "gpt-5.2",
     description: "GPT-5.2",
@@ -250,8 +234,8 @@ const PERSONA_SPECS: PersonaSpec[] = [
     },
   },
   {
-    id: "gpt-5.2-codex",
-    description: "GPT-5.2 Codex",
+    id: "gpt-5.2-codex-chatgpt",
+    description: "GPT-5.2-Codex (ChatGPT)",
     model: getModel("openai-codex", "gpt-5.2-codex"),
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
@@ -262,6 +246,23 @@ const PERSONA_SPECS: PersonaSpec[] = [
       },
       web: {
         model: getModel("openai-codex", "gpt-5.2-codex"),
+        reasoning: "low",
+      },
+    },
+  },
+  {
+    id: "gpt-5.2-codex-api",
+    description: "GPT-5.2-Codex (API)",
+    model: getModel("openai", "gpt-5.2-codex"),
+    allowedReasoningLevels: ["medium", "high", "xhigh"],
+    settings: { reasoning: "medium" },
+    subagents: {
+      explore: {
+        model: getModel("openai", "gpt-5.2-codex"),
+        reasoning: "low",
+      },
+      web: {
+        model: getModel("openai", "gpt-5.2-codex"),
         reasoning: "low",
       },
     },
@@ -369,7 +370,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
 }
 
 export const personas: Persona[] = PERSONA_SPECS.flatMap((spec) => {
-  if (spec.id === "gpt-5.2-codex") {
+  if (spec.id.startsWith("gpt-5.2-codex-")) {
     const coderPersona = buildPersona(spec, "coder");
     return [
       {
@@ -379,6 +380,10 @@ export const personas: Persona[] = PERSONA_SPECS.flatMap((spec) => {
         description: spec.description,
       },
     ];
+  }
+
+  if (spec.id.startsWith("gemini-")) {
+    return [buildPersona(spec, "chat")];
   }
 
   return [buildPersona(spec, "chat"), buildPersona(spec, "coder")];
@@ -391,13 +396,10 @@ export function getPersonaById(id: string): Persona | undefined {
 const GEMINI_SUBAGENT_TARGET_IDS = new Set([
   "opus-4.5-chat",
   "opus-4.5-coder",
-  "haiku-4.5-chat",
-  "haiku-4.5-coder",
-  "gpt-5.2-codex",
+  "gpt-5.2-codex-chatgpt",
+  "gpt-5.2-codex-api",
   "gpt-5.2-chat",
   "gpt-5.2-coder",
-  "gpt-5.2-flex-chat",
-  "gpt-5.2-flex-coder",
 ]);
 
 export function applyGeminiSubagents(personas: Persona[]): Persona[] {

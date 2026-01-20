@@ -176,12 +176,12 @@ note: when `--sandbox` is enabled, `!` commands also run inside the container.
 
 tau comes with several built-in personas across different models:
 
-- **Claude Opus 4.5** and **Haiku 4.5** (Anthropic)
-- **GPT-5.2** and **GPT-5.2 flex** (OpenAI)
-- **GPT-5.2 Codex** (OpenAI Codex subscription)
-- **Gemini 3 Pro** and **Gemini 3 Flash** (Google)
+- **Claude Opus 4.5** (Anthropic): chat and coder variants
+- **GPT-5.2** (OpenAI): chat and coder variants
+- **GPT-5.2-Codex** (OpenAI): two coder-only variants, one for ChatGPT Plus/Pro subscriptions (`gpt-5.2-codex-chatgpt`) and one for direct API access (`gpt-5.2-codex-api`)
+- **Gemini 3 Pro** and **Gemini 3 Flash** (Google): chat variants only
 
-each model has two variants: a chat variant for general-purpose assistance, and a coder variant optimized for software engineering. GPT-5.2 Codex is a single coder persona. both variants include the `web` sub-agent for web research, and coder variants also include the `explore` sub-agent for multi-turn codebase investigation.
+chat variants are for general-purpose assistance; coder variants are optimized for software engineering. both include the `web` sub-agent for web research, and coder variants also include the `explore` sub-agent for multi-turn codebase investigation.
 
 switch personas at startup with `--persona` or mid-session with `/persona:<id>`:
 

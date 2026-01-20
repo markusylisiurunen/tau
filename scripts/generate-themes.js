@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -181,4 +182,5 @@ const output = [
 ].join("\n");
 
 writeFileSync(outputPath, output);
+execFileSync("npx", ["biome", "format", "--write", outputPath], { stdio: "inherit" });
 console.log(`generated themes: ${themes.length}`);

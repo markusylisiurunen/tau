@@ -1574,6 +1574,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.currentTurnAbort = abortController;
     let wasAborted = false;
     this.startTurnTimer();
+    const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    this.view.handleToolUiEvent({
+      type: "bash_started",
+      toolCallId,
+      command,
+    });
+    this.refreshStatus();
 
     try {
       const startedAt = Date.now();
@@ -1599,7 +1607,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         previewLines: { head: 12, tail: 12 },
       });
 
-      this.view.addBashExecutionMessage({
+      this.view.handleToolUiEvent({
+        type: "bash_execution",
+        toolCallId,
         command,
         exitCode,
         truncationInfo,
@@ -1608,12 +1618,20 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         labelOverride: "you ran",
       });
 
+      this.refreshStatus();
+
       this.engine.addUserText(formatBashUserMessageText({ command, truncationInfo }));
 
       this.view.requestRender();
     } catch (err) {
       const message = (err as Error).message || "bash failed";
-      this.view.addSystemMessage(`bash failed: ${message}`, "error");
+      this.view.handleToolUiEvent({
+        type: "bash_blocked",
+        toolCallId,
+        command,
+        reason: message,
+      });
+      this.refreshStatus();
     } finally {
       wasAborted = abortController.signal.aborted;
       this.isStreaming = false;

@@ -255,8 +255,8 @@ export class ChatController {
       copyCode: () => this.copyLastAssistantCodeBlock(),
       export: () => this.exportSessionHtml(),
       newSession: () => this.clearSession(),
-      compactOnlySummary: () => this.forkSessionOnlySummary(),
-      compactSummaryAndLastTurn: () => this.forkSessionSummaryAndLastTurn(),
+      compactOnlySummary: (extra) => this.forkSessionOnlySummary(extra),
+      compactSummaryAndLastTurn: (extra) => this.forkSessionSummaryAndLastTurn(extra),
       reload: () => this.reloadContent(),
       risk: (level) => this.setRiskLevel(level),
       persona: (id) => this.switchPersona(id),
@@ -1163,12 +1163,15 @@ export class ChatController {
     });
   }
 
-  private async generateSummary(history: readonly Message[]): Promise<string> {
+  private async generateSummary(history: readonly Message[], guidance?: string): Promise<string> {
     const formattedHistory = formatHistoryForCompression(history);
+    const guidanceBlock = guidance?.trim();
+    const guidanceSection = guidanceBlock
+      ? `\nAdditional guidance from the user:\n${guidanceBlock}\n`
+      : "\n";
     const summaryPrompt = `
 Summarize this conversation so another assistant can continue without losing context. Be specific and factual. Aim for extreme compression; at least 90% reduction from the original conversation length, preferably more. Every word should earn its place.
-
-<conversation>
+${guidanceSection}<conversation>
 ${formattedHistory.trim()}
 </conversation>
 
@@ -1250,7 +1253,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.refreshStatus();
   }
 
-  private async forkSessionOnlySummary(): Promise<void> {
+  private async forkSessionOnlySummary(guidance?: string): Promise<void> {
     const history = this.engine.history;
     if (history.length === 0) {
       this.view.addSystemMessage("no conversation to fork.", "warn");
@@ -1262,7 +1265,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.view.startWorkingIcon();
 
     try {
-      const summary = await this.generateSummary(history);
+      const summary = await this.generateSummary(history, guidance);
       this.applySessionContext(summary);
 
       this.view.addSystemMessage(
@@ -1279,7 +1282,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
   }
 
-  private async forkSessionSummaryAndLastTurn(): Promise<void> {
+  private async forkSessionSummaryAndLastTurn(guidance?: string): Promise<void> {
     const history = this.engine.history;
     if (history.length === 0) {
       this.view.addSystemMessage("no conversation to fork.", "warn");
@@ -1291,7 +1294,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.view.startWorkingIcon();
 
     try {
-      const summary = await this.generateSummary(history);
+      const summary = await this.generateSummary(history, guidance);
 
       // Extract the last turn from history
       const lastTurn = this.extractLastTurn(history);

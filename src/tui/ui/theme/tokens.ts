@@ -38,11 +38,6 @@ export const PALETTE_COLORS = [
   { name: "toastSuccess", h: 98, s: 44, l: 46 },
   { name: "toastWarn", h: 44, s: 48, l: 52 },
   { name: "toastError", h: 6, s: 48, l: 52 },
-  // Toast backgrounds
-  { name: "toastSuccessBg", h: 98, s: 40, l: 20 },
-  { name: "toastWarnBg", h: 44, s: 40, l: 20 },
-  { name: "toastErrorBg", h: 6, s: 40, l: 20 },
-  { name: "toastMutedBg", h: 26, s: 8, l: 20 },
   // User
   { name: "userSurface", h: 26, s: 6, l: 10 },
   { name: "userMemorySurface", h: 280, s: 16, l: 12 },

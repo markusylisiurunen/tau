@@ -77,9 +77,6 @@ export class FooterComponent implements Component {
 
   render(width: number) {
     if (width <= 0) return [""];
-    if (this.toast) {
-      return [this.renderToastLine(width, this.toast.text, this.toast.kind)];
-    }
 
     const { palette } = this.theme;
     const iconChar = this.iconIntervalId ? this.iconFrames[this.currentIconFrame]! : this.idleIcon;
@@ -89,13 +86,15 @@ export class FooterComponent implements Component {
     const leftFull = this.status
       ? `${this.status.duration ? `${this.status.duration} · ` : ""}${this.status.contextUsage} · ${this.status.sessionCost}`
       : "";
+    const toast = this.toast;
+    const leftRaw = toast ? toast.text : leftFull;
+    const leftStyle = toast ? this.getToastStyle(toast.kind) : palette.textDim;
     const rightPrefixRaw = "";
     const { riskText, riskStyled } = this.status
       ? this.formatRiskLabel(this.status.riskLevel, this.status.sandboxed ?? false)
       : { riskText: "", riskStyled: "" };
 
     const rightWidth = visibleWidth(`${rightPrefixRaw}${riskText}`);
-    const leftRaw = leftFull;
     const leftWidth = visibleWidth(leftRaw);
 
     let line: string;
@@ -105,7 +104,7 @@ export class FooterComponent implements Component {
     if (totalContentWidth > width) {
       const availableLeft = Math.max(0, width - 1 - iconWidth - 1 - rightWidth - 1 - 1);
       const truncatedLeft = truncateFromEndByWidth(leftRaw, availableLeft);
-      const leftStyled = palette.textDim(truncatedLeft);
+      const leftStyled = leftStyle(truncatedLeft);
       const rightStyled = `${palette.textDim(rightPrefixRaw)}${riskStyled}`;
 
       line = ` ${icon} ${leftStyled} ${rightStyled} `;
@@ -114,7 +113,7 @@ export class FooterComponent implements Component {
         Math.max(1, width - 1 - iconWidth - 1 - leftWidth - rightWidth - 1),
       );
 
-      const leftStyled = palette.textDim(leftRaw);
+      const leftStyled = leftStyle(leftRaw);
       const rightStyled = `${palette.textDim(rightPrefixRaw)}${riskStyled}`;
       line = ` ${icon} ${leftStyled + spaces}${rightStyled} `;
     }
@@ -122,25 +121,12 @@ export class FooterComponent implements Component {
     return [line];
   }
 
-  private renderToastLine(width: number, text: string, kind: SystemMessageKind): string {
+  private getToastStyle(kind: SystemMessageKind): (text: string) => string {
     const { palette } = this.theme;
-    const style =
-      kind === "error"
-        ? palette.toastErrorBg
-        : kind === "warn"
-          ? palette.toastWarnBg
-          : kind === "muted"
-            ? palette.toastMutedBg
-            : palette.toastSuccessBg;
-
-    if (width <= 1) {
-      return style(" ".repeat(Math.max(0, width)));
-    }
-
-    const innerWidth = Math.max(0, width - 2);
-    const trimmed = truncateFromEndByWidth(text, innerWidth);
-    const padded = `${trimmed}${" ".repeat(Math.max(0, innerWidth - visibleWidth(trimmed)))}`;
-    return style(` ${padded} `);
+    if (kind === "error") return palette.toastError;
+    if (kind === "warn") return palette.toastWarn;
+    if (kind === "muted") return palette.textMuted;
+    return palette.toastSuccess;
   }
 
   private formatRiskLabel(

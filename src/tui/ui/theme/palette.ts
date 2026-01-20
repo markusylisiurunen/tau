@@ -59,10 +59,6 @@ const PALETTE_TEXT_TOKENS = [
 ] as const satisfies readonly PaletteColorToken[];
 
 const PALETTE_BG_TOKENS = [
-  "toastSuccessBg",
-  "toastWarnBg",
-  "toastErrorBg",
-  "toastMutedBg",
   "userSurface",
   "userMemorySurface",
 ] as const satisfies readonly PaletteColorToken[];
@@ -193,24 +189,6 @@ export function createPalette(mode: ThemeMode, overrides?: PaletteOverrides): Pa
     }
     palette.textDefault = (text) => text;
 
-    const lightText = hslToHex(26, 10, 86);
-    const toastSuccessHex = resolveOverrideHex(overrides, "toastSuccessBg");
-    const toastWarnHex = resolveOverrideHex(overrides, "toastWarnBg");
-    const toastErrorHex = resolveOverrideHex(overrides, "toastErrorBg");
-    const toastMutedHex = resolveOverrideHex(overrides, "toastMutedBg");
-    if (toastSuccessHex) {
-      palette.toastSuccessBg = chalk.bgHex(toastSuccessHex).hex(lightText);
-    }
-    if (toastWarnHex) {
-      palette.toastWarnBg = chalk.bgHex(toastWarnHex).hex(lightText);
-    }
-    if (toastErrorHex) {
-      palette.toastErrorBg = chalk.bgHex(toastErrorHex).hex(lightText);
-    }
-    if (toastMutedHex) {
-      palette.toastMutedBg = chalk.bgHex(toastMutedHex).hex(lightText);
-    }
-
     validate(palette);
     return palette;
   }
@@ -235,12 +213,6 @@ export function createPalette(mode: ThemeMode, overrides?: PaletteOverrides): Pa
       palette[token] = makeBg(token);
     }
     palette.textDefault = (text) => text;
-
-    const lightText = hslToHex(26, 10, 86);
-    palette.toastSuccessBg = chalk.bgHex(getHex("toastSuccessBg")).hex(lightText);
-    palette.toastWarnBg = chalk.bgHex(getHex("toastWarnBg")).hex(lightText);
-    palette.toastErrorBg = chalk.bgHex(getHex("toastErrorBg")).hex(lightText);
-    palette.toastMutedBg = chalk.bgHex(getHex("toastMutedBg")).hex(lightText);
 
     validate(palette);
     return palette;

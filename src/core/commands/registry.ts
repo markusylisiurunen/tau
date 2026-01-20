@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { relative, sep } from "node:path";
 import { type RiskLevel, RiskLevelSchema, type Skill } from "../types.js";
 
-export type Command =
+export type Command = (
   | { type: "help" }
   | { type: "copy" }
   | { type: "copyCode" }
@@ -16,7 +16,8 @@ export type Command =
   | { type: "persona"; id: string }
   | { type: "prompt"; id: string }
   | { type: "theme"; id: string }
-  | { type: "unknown"; raw: string };
+  | { type: "unknown"; raw: string }
+) & { extra?: string };
 
 export type CommandId = Command["type"];
 export type CommandArgument = "none" | "risk" | "bash" | "persona" | "prompt" | "theme";
@@ -44,8 +45,8 @@ export interface CommandDispatchContext {
   copyCode: () => Promise<void>;
   export: () => Promise<void>;
   newSession: () => void;
-  compactOnlySummary: () => Promise<void>;
-  compactSummaryAndLastTurn: () => Promise<void>;
+  compactOnlySummary: (extra?: string) => Promise<void>;
+  compactSummaryAndLastTurn: (extra?: string) => Promise<void>;
   reload: () => Promise<void>;
   risk: (level: RiskLevel) => void;
   persona: (id: string) => void;
@@ -100,6 +101,14 @@ function formatSkillPath(fullPath: string): string {
   }
 
   return fullPath;
+}
+
+function splitCommandInput(raw: string): { command: string; extra?: string } {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^(\S+)(?:\s+(.*))?$/s);
+  const command = match?.[1] ?? trimmed;
+  const extra = match?.[2]?.trim();
+  return extra ? { command, extra } : { command };
 }
 
 export class CommandRegistry<Ctx = unknown> {
@@ -222,7 +231,11 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     autocompleteDescription: "show help",
     argument: "none",
     section: "base",
-    parse: (raw) => (raw === "/help" ? { type: "help" } : null),
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/help") return null;
+      return { type: "help", extra };
+    },
     run: (ctx) => ctx.help(),
   });
 
@@ -233,7 +246,11 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     autocompleteDescription: "new session",
     argument: "none",
     section: "base",
-    parse: (raw) => (raw === "/new" ? { type: "new" } : null),
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/new") return null;
+      return { type: "new", extra };
+    },
     run: (ctx) => ctx.newSession(),
   });
 
@@ -244,8 +261,12 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     autocompleteDescription: "compact history to a summary",
     argument: "none",
     section: "base",
-    parse: (raw) => (raw === "/compact:only-summary" ? { type: "compactOnlySummary" } : null),
-    run: (ctx) => ctx.compactOnlySummary(),
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/compact:only-summary") return null;
+      return { type: "compactOnlySummary", extra };
+    },
+    run: (ctx, command) => ctx.compactOnlySummary(command.extra),
   });
 
   registry.register({
@@ -255,9 +276,12 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     autocompleteDescription: "compact history, keep last turn",
     argument: "none",
     section: "base",
-    parse: (raw) =>
-      raw === "/compact:with-last-turn" ? { type: "compactSummaryAndLastTurn" } : null,
-    run: (ctx) => ctx.compactSummaryAndLastTurn(),
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/compact:with-last-turn") return null;
+      return { type: "compactSummaryAndLastTurn", extra };
+    },
+    run: (ctx, command) => ctx.compactSummaryAndLastTurn(command.extra),
   });
 
   registry.register({
@@ -267,7 +291,11 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     autocompleteDescription: "reload personas, prompts, skills, and themes from disk",
     argument: "none",
     section: "base",
-    parse: (raw) => (raw === "/reload" ? { type: "reload" } : null),
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/reload") return null;
+      return { type: "reload", extra };
+    },
     run: (ctx) => ctx.reload(),
   });
 
@@ -278,7 +306,11 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     autocompleteDescription: "copy last assistant message",
     argument: "none",
     section: "base",
-    parse: (raw) => (raw === "/copy" ? { type: "copy" } : null),
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/copy") return null;
+      return { type: "copy", extra };
+    },
     run: (ctx) => ctx.copy(),
   });
 
@@ -289,7 +321,11 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     autocompleteDescription: "copy code blocks from last assistant message",
     argument: "none",
     section: "base",
-    parse: (raw) => (raw === "/copy:code" ? { type: "copyCode" } : null),
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/copy:code") return null;
+      return { type: "copyCode", extra };
+    },
     run: (ctx) => ctx.copyCode(),
   });
 
@@ -300,7 +336,11 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     autocompleteDescription: "export chat history to HTML",
     argument: "none",
     section: "base",
-    parse: (raw) => (raw === "/export:html" ? { type: "export" } : null),
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/export:html") return null;
+      return { type: "export", extra };
+    },
     run: (ctx) => ctx.export(),
   });
 
@@ -311,11 +351,12 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     argument: "risk",
     section: "risk",
     parse: (raw) => {
-      const match = raw.match(/^\/risk:(read-only|read-write)$/i);
+      const { command, extra } = splitCommandInput(raw);
+      const match = command.match(/^\/risk:(read-only|read-write)$/i);
       if (!match) return null;
       const parsed = RiskLevelSchema.safeParse(match[1]?.toLowerCase());
       if (!parsed.success) return null;
-      return { type: "risk", level: parsed.data };
+      return { type: "risk", level: parsed.data, extra };
     },
     run: (ctx, command) => ctx.risk(command.level),
   });
@@ -327,10 +368,11 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     argument: "bash",
     section: "trailing",
     parse: (raw) => {
-      const match = raw.match(/^\/bash:(.+)$/i);
+      const { command, extra } = splitCommandInput(raw);
+      const match = command.match(/^\/bash:(.+)$/i);
       const id = match?.[1]?.trim() ?? "";
       if (!id) return null;
-      return { type: "bash", id };
+      return { type: "bash", id, extra };
     },
     run: (ctx, command) => ctx.bash(command.id),
   });
@@ -342,10 +384,11 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     argument: "persona",
     section: "trailing",
     parse: (raw) => {
-      const match = raw.match(/^\/persona:(.+)$/i);
+      const { command, extra } = splitCommandInput(raw);
+      const match = command.match(/^\/persona:(.+)$/i);
       const id = match?.[1]?.trim() ?? "";
       if (!id) return null;
-      return { type: "persona", id };
+      return { type: "persona", id, extra };
     },
     run: (ctx, command) => ctx.persona(command.id),
   });
@@ -358,10 +401,11 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     section: "trailing",
     allowDuringStreaming: true,
     parse: (raw) => {
-      const match = raw.match(/^\/prompt:(.+)$/i);
+      const { command, extra } = splitCommandInput(raw);
+      const match = command.match(/^\/prompt:(.+)$/i);
       const id = match?.[1]?.trim() ?? "";
       if (!id) return null;
-      return { type: "prompt", id };
+      return { type: "prompt", id, extra };
     },
     run: (ctx, command) => ctx.prompt(command.id),
   });
@@ -373,10 +417,11 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     argument: "theme",
     section: "trailing",
     parse: (raw) => {
-      const match = raw.match(/^\/theme:(.+)$/i);
+      const { command, extra } = splitCommandInput(raw);
+      const match = command.match(/^\/theme:(.+)$/i);
       const id = match?.[1]?.trim() ?? "";
       if (!id) return null;
-      return { type: "theme", id };
+      return { type: "theme", id, extra };
     },
     run: (ctx, command) => ctx.theme(command.id),
   });

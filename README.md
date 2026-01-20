@@ -110,7 +110,7 @@ available palette tokens (theme keys):
 - status: `statusWarn`, `statusError`, `modeMemory`, `modeBash`
 - action: `actionRunning`, `actionSuccess`, `actionError`, `actionOutput`
 - diff: `diffAdd`, `diffRemove`
-- toasts: `toastSuccess`, `toastWarn`, `toastError`, `toastSuccessBg`, `toastWarnBg`, `toastErrorBg`, `toastMutedBg`
+- toasts: `toastSuccess`, `toastWarn`, `toastError`
 - user: `userSurface`, `userMemorySurface`, `userMemoryText`
 - risk: `riskReadOnlyText`, `riskReadWriteText`
 

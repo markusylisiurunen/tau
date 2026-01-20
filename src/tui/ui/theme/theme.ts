@@ -55,10 +55,6 @@ export interface Palette {
   toastSuccess: (text: string) => string;
   toastWarn: (text: string) => string;
   toastError: (text: string) => string;
-  toastSuccessBg: (text: string) => string;
-  toastWarnBg: (text: string) => string;
-  toastErrorBg: (text: string) => string;
-  toastMutedBg: (text: string) => string;
 
   // User
   userSurface: (text: string) => string;

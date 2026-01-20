@@ -71,11 +71,6 @@ const generatePalette = (brandHue) => {
   const toastWarn = transform(toastSuccess, [setH(HUE_WARN)]);
   const toastError = transform(toastSuccess, [setH(HUE_ERROR)]);
 
-  const toastSuccessBg = transform(toastSuccess, [scaleC(0.32), setL(32)]);
-  const toastWarnBg = transform(toastSuccessBg, [setH(HUE_WARN)]);
-  const toastErrorBg = transform(toastSuccessBg, [setH(HUE_ERROR)]);
-  const toastMutedBg = transform(brandAccent, [scaleC(0.02), setL(20)]);
-
   const userSurface = transform(brandAccent, [scaleC(0.04), setL(22)]);
   const userMemorySurface = transform(brandAccent, [setH(HUE_MEMORY), scaleC(0.24), setL(24)]);
   const userMemoryText = transform(brandAccent, [setH(HUE_MEMORY), scaleC(0.76), setL(84)]);
@@ -116,11 +111,6 @@ const generatePalette = (brandHue) => {
     toastSuccess: toHex(toastSuccess),
     toastWarn: toHex(toastWarn),
     toastError: toHex(toastError),
-
-    toastSuccessBg: toHex(toastSuccessBg),
-    toastWarnBg: toHex(toastWarnBg),
-    toastErrorBg: toHex(toastErrorBg),
-    toastMutedBg: toHex(toastMutedBg),
 
     userSurface: toHex(userSurface),
     userMemorySurface: toHex(userMemorySurface),

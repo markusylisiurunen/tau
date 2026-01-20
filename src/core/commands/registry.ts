@@ -8,6 +8,7 @@ export type Command = (
   | { type: "copyCode" }
   | { type: "export" }
   | { type: "new" }
+  | { type: "cd"; path: string }
   | { type: "compactOnlySummary" }
   | { type: "compactSummaryAndLastTurn" }
   | { type: "reload" }
@@ -45,6 +46,7 @@ export interface CommandDispatchContext {
   copyCode: () => Promise<void>;
   export: () => Promise<void>;
   newSession: () => void;
+  cd: (path: string) => void;
   compactOnlySummary: (extra?: string) => Promise<void>;
   compactSummaryAndLastTurn: (extra?: string) => Promise<void>;
   reload: () => Promise<void>;
@@ -252,6 +254,21 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "new", extra };
     },
     run: (ctx) => ctx.newSession(),
+  });
+
+  registry.register({
+    id: "cd",
+    usage: "/cd <path>",
+    description: "change working directory",
+    autocompleteDescription: "change working directory",
+    argument: "none",
+    section: "base",
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/cd") return null;
+      return { type: "cd", path: extra ?? "", extra };
+    },
+    run: (ctx, command) => ctx.cd(command.path),
   });
 
   registry.register({

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { realpathSync, statSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
 import { formatCodexAuthError } from "../core/auth/auth_messages.js";
 import { getAuthPath } from "../core/auth/auth_paths.js";
@@ -56,10 +57,12 @@ import {
   buildSandboxInfoBlock,
   buildSkillsIndexBlock,
   findAgentsFilesInScopeDetailed,
+  formatCwdChangeNotice,
   formatRiskLevelChangeNotice,
 } from "../core/utils/context.js";
 import { formatHistoryForCompression } from "../core/utils/fork.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
+import { getGitRoot } from "../core/utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
@@ -109,7 +112,9 @@ export class ChatController {
   private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
   private readonly sandboxEnabled: boolean;
-  private readonly agentCwd: string;
+  private readonly sandboxRootReal?: string;
+  private agentCwd: string;
+  private readonly includeAgentContext: boolean;
 
   private readonly engine: CoreSession;
   private readonly commandRegistry: CommandRegistry<CommandDispatchContext>;
@@ -129,14 +134,16 @@ export class ChatController {
   private riskLevel: RiskLevel = "read-only";
   private readonly initialRiskLevel: RiskLevel;
   private environmentTag: string;
-  private readonly projectContextBlock?: string;
+  private projectContextBlock?: string;
   private projectFiles: string[] = [];
+  private projectFilesCwd?: string;
   private isRefreshingProjectFiles = false;
   private isInFileAutocomplete = false;
-  private readonly agentsFiles: string[];
-  private readonly agentsConfigErrors: string[];
+  private agentsFiles: string[];
+  private agentsConfigErrors: string[];
   private baseSystemPrompt: string;
   private pendingRiskLevelChange?: { from: RiskLevel; to: RiskLevel };
+  private pendingCwdChange?: { from: string; to: string };
   private previousSessionSummary?: string;
   private expandedFilesInCurrentPrompt: Set<string> = new Set();
   private expandedSkillsInCurrentPrompt: Set<string> = new Set();
@@ -164,6 +171,7 @@ export class ChatController {
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
     this.sandboxEnabled = options.sandboxEnabled ?? false;
+    this.sandboxRootReal = this.sandboxEnabled ? this.resolveSandboxRoot(cwd) : undefined;
     this.agentCwd = resolveAgentCwd({
       cwd,
       sandboxEnabled: this.sandboxEnabled,
@@ -180,8 +188,8 @@ export class ChatController {
     this.queuedUserMessages = options.queuedUserMessages ?? [];
     this.toolBackendDispose = options.toolBackendDispose;
 
-    const withContext = !options.noAgentContextFiles;
-    if (withContext) {
+    this.includeAgentContext = !options.noAgentContextFiles;
+    if (this.includeAgentContext) {
       const res = findAgentsFilesInScopeDetailed(cwd, home);
       this.agentsFiles = res.files;
       this.agentsConfigErrors = res.errors;
@@ -190,7 +198,7 @@ export class ChatController {
       this.agentsConfigErrors = [];
     }
 
-    this.projectContextBlock = withContext
+    this.projectContextBlock = this.includeAgentContext
       ? buildProjectContextBlock({
           cwd,
           home,
@@ -255,6 +263,7 @@ export class ChatController {
       copyCode: () => this.copyLastAssistantCodeBlock(),
       export: () => this.exportSessionHtml(),
       newSession: () => this.clearSession(),
+      cd: (path) => this.changeDirectory(path),
       compactOnlySummary: (extra) => this.forkSessionOnlySummary(extra),
       compactSummaryAndLastTurn: (extra) => this.forkSessionSummaryAndLastTurn(extra),
       reload: () => this.reloadContent(),
@@ -695,6 +704,131 @@ export class ChatController {
     this.view.addSystemMessage(message, "success");
   }
 
+  private changeDirectory(rawPath: string): void {
+    const normalized = this.normalizeCdInput(rawPath);
+    if (!normalized) {
+      this.view.addSystemMessage("missing path for /cd", "warn");
+      return;
+    }
+
+    const currentCwd = this.deps.env.cwd();
+    const home = this.deps.env.home();
+    const resolved = this.resolveCdPath(normalized, currentCwd, home);
+
+    let stats: ReturnType<typeof statSync>;
+    try {
+      stats = statSync(resolved);
+    } catch {
+      this.view.addSystemMessage(`directory not found: ${normalized}`, "error");
+      return;
+    }
+
+    if (!stats.isDirectory()) {
+      this.view.addSystemMessage(`not a directory: ${normalized}`, "error");
+      return;
+    }
+
+    if (this.sandboxEnabled && !this.isPathWithinSandboxRoot(resolved)) {
+      this.view.addSystemMessage(`directory is outside the sandbox mount: ${normalized}`, "error");
+      return;
+    }
+
+    try {
+      process.chdir(resolved);
+    } catch (err) {
+      this.view.addSystemMessage(`failed to change directory: ${(err as Error).message}`, "error");
+      return;
+    }
+
+    const nextCwd = this.deps.env.cwd();
+    const previousAgentCwd = this.agentCwd;
+    this.agentCwd =
+      this.sandboxEnabled && this.sandboxRootReal
+        ? resolveSandboxPath({
+            hostPath: nextCwd,
+            cwd: this.sandboxRootReal,
+            sandboxConfig: this.config.sandbox,
+          })
+        : resolveAgentCwd({
+            cwd: nextCwd,
+            sandboxEnabled: this.sandboxEnabled,
+            sandboxConfig: this.config.sandbox,
+          });
+    this.refreshProjectContext(nextCwd);
+    this.projectFiles = [];
+    this.refreshProjectFilesInBackground();
+    this.expandedFilesInCurrentPrompt.clear();
+    this.expandedSkillsInCurrentPrompt.clear();
+    this.rebuildSystemPrompt(this.previousSessionSummary);
+    this.refreshStatus();
+
+    const from = this.pendingCwdChange?.from ?? previousAgentCwd;
+    if (from === this.agentCwd) {
+      this.pendingCwdChange = undefined;
+    } else {
+      this.pendingCwdChange = { from, to: this.agentCwd };
+    }
+
+    this.view.addSystemMessage(`working directory set to ${formatCwd(nextCwd)}`, "success");
+  }
+
+  private normalizeCdInput(rawPath: string): string {
+    const trimmed = rawPath.trim();
+    if (!trimmed) return "";
+    const quote = trimmed[0];
+    if ((quote === '"' || quote === "'") && trimmed.endsWith(quote) && trimmed.length > 1) {
+      return trimmed.slice(1, -1);
+    }
+    return trimmed;
+  }
+
+  private resolveCdPath(input: string, cwd: string, home: string): string {
+    if (input === "~") return home;
+    if (input.startsWith("~/")) return join(home, input.slice(2));
+    return resolve(cwd, input);
+  }
+
+  private resolveSandboxRoot(cwd: string): string | undefined {
+    try {
+      const root = getGitRoot(cwd) ?? cwd;
+      return realpathSync(root);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private isPathWithinSandboxRoot(targetPath: string): boolean {
+    if (!this.sandboxRootReal) return true;
+    let resolved = targetPath;
+    try {
+      resolved = realpathSync(targetPath);
+    } catch {
+      // fall back to provided path
+    }
+    const rel = relative(this.sandboxRootReal, resolved);
+    return !(rel === ".." || rel.startsWith(`..${sep}`));
+  }
+
+  private refreshProjectContext(cwd: string): void {
+    if (!this.includeAgentContext) {
+      this.agentsFiles = [];
+      this.agentsConfigErrors = [];
+      this.projectContextBlock = undefined;
+      return;
+    }
+
+    const home = this.deps.env.home();
+    const res = findAgentsFilesInScopeDetailed(cwd, home);
+    this.agentsFiles = res.files;
+    this.agentsConfigErrors = res.errors;
+    this.projectContextBlock = buildProjectContextBlock({
+      cwd,
+      home,
+      agentsFiles: this.agentsFiles,
+      readFile: this.deps.fs.readFile,
+    });
+  }
+
   private interruptAssistantTurn(): void {
     if (!this.isStreaming || this.currentTurnAbort?.signal.aborted) return;
     this.currentTurnAbort?.abort();
@@ -745,12 +879,15 @@ export class ChatController {
   }
 
   private refreshProjectFilesInBackground(): void {
-    if (this.isRefreshingProjectFiles) return;
+    const cwd = this.deps.env.cwd();
+    if (this.isRefreshingProjectFiles && this.projectFilesCwd === cwd) return;
 
     this.isRefreshingProjectFiles = true;
+    this.projectFilesCwd = cwd;
 
-    void listProjectFilesAsync(this.deps.env.cwd())
+    void listProjectFilesAsync(cwd)
       .then((files) => {
+        if (this.projectFilesCwd !== cwd) return;
         this.projectFiles = files;
         this.view.requestRender();
       })
@@ -758,7 +895,9 @@ export class ChatController {
         // Ignore refresh errors; autocomplete will keep using the existing cache.
       })
       .finally(() => {
-        this.isRefreshingProjectFiles = false;
+        if (this.projectFilesCwd === cwd) {
+          this.isRefreshingProjectFiles = false;
+        }
       });
   }
 
@@ -888,11 +1027,17 @@ export class ChatController {
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
 
-    const systemNotice = this.pendingRiskLevelChange
-      ? formatRiskLevelChangeNotice(this.pendingRiskLevelChange)
-      : undefined;
+    const notices: string[] = [];
+    if (this.pendingRiskLevelChange) {
+      notices.push(formatRiskLevelChangeNotice(this.pendingRiskLevelChange));
+    }
+    if (this.pendingCwdChange) {
+      notices.push(formatCwdChangeNotice(this.pendingCwdChange));
+    }
     this.pendingRiskLevelChange = undefined;
+    this.pendingCwdChange = undefined;
 
+    const systemNotice = notices.length > 0 ? notices.join("\n") : undefined;
     const baseTextForModel = opts?.textForModel ?? text;
     const textForModel = systemNotice ? `${systemNotice}\n\n${baseTextForModel}` : baseTextForModel;
     this.engine.addUserText(textForModel);

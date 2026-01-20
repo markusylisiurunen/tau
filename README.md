@@ -266,6 +266,7 @@ tau supports slash commands for common actions:
 | `/copy:code`              | copy just the code blocks                      |
 | `/export:html`            | export chat history to html                    |
 | `/reload`                 | reload personas, prompts, skills, and themes from disk |
+| `/cd <path>`              | change the working directory                   |
 | `/compact:only-summary`   | compress history and continue with a summary   |
 | `/compact:with-last-turn` | compress history but keep the last exchange    |
 | `/persona:<id>`           | switch to a different persona                  |

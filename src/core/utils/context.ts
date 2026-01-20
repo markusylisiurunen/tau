@@ -10,5 +10,6 @@ export {
   buildSandboxInfoBlock,
   buildSkillsIndexBlock,
   describeRiskLevel,
+  formatCwdChangeNotice,
   formatRiskLevelChangeNotice,
 } from "./context_builder.js";

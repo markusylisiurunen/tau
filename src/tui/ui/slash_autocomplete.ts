@@ -81,6 +81,9 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     if (!beforeCursor.startsWith("/")) return null;
 
     const afterSlash = beforeCursor.slice(1);
+    if (afterSlash.includes(" ") || afterSlash.includes("\t")) {
+      return null;
+    }
 
     const argSuggestions = this.getArgumentSuggestions(afterSlash);
     if (argSuggestions) return argSuggestions;
@@ -223,11 +226,12 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
 
     for (const command of commandInfos) {
       if (command.argument !== "none") continue;
-      const value = command.usage.startsWith("/") ? command.usage.slice(1) : command.usage;
+      const usage = command.usage.startsWith("/") ? command.usage.slice(1) : command.usage;
+      const value = usage.split(/\s+/, 1)[0] ?? usage;
       const description = command.autocompleteDescription ?? command.description;
       candidates.push({
         item: { value, label: value, description },
-        searchText: `${value} ${description}`,
+        searchText: `${usage} ${description}`,
       });
     }
 

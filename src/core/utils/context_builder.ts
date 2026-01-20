@@ -154,7 +154,7 @@ export function buildEnvironmentTag(args: {
     `  <risk_level level="${args.riskLevel}">${riskDesc}</risk_level>`,
     `  <node>${nodeVersion}</node>`,
     `  <platform>${platform}</platform>`,
-    "  <notes>This environment tag is static for the session and reflects the initial risk level. If the user changes risk level, you will be informed in a <system> tag at the start of the next user message.</notes>",
+    "  <notes>This environment tag reflects the current session environment. If the user changes risk level or cwd, you will be informed in a <system> tag at the start of the next user message.</notes>",
     "</environment>",
   ].join("\n");
 }
@@ -162,4 +162,8 @@ export function buildEnvironmentTag(args: {
 export function formatRiskLevelChangeNotice(change: { from: RiskLevel; to: RiskLevel }): string {
   const toDesc = describeRiskLevel(change.to);
   return `<system>Risk level changed by user from '${change.from}' to '${change.to}'. ${toDesc} This overrides the initial risk level described in the system prompt.</system>`;
+}
+
+export function formatCwdChangeNotice(change: { from: string; to: string }): string {
+  return `<system>Working directory changed by user from '${change.from}' to '${change.to}'. All relative paths should now resolve from '${change.to}'.</system>`;
 }

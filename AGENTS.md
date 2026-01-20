@@ -213,7 +213,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 ## Commands
 
-- `/help`, `/new`, `/copy`, `/copy:code`, `/export:html`, `/reload`
+- `/help`, `/new`, `/cd <path>`, `/copy`, `/copy:code`, `/export:html`, `/reload`
 - `/compact:only-summary`, `/compact:with-last-turn` - Compact history to continue
 - `/risk:read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model; runs inside sandbox when enabled)

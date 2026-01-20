@@ -57,7 +57,7 @@ const generatePalette = (brandHue) => {
   const textDim = transform(brandAccent, [scaleC(0.08), shiftL(-14)]);
   const codeText = transform(brandAccent, [setH(HUE_CODE)]);
 
-  const editorBorder = transform(brandAccent, [setH(HUE_EDITOR_BORDER), scaleC(0.4), shiftL(4)]);
+  const editorBorder = transform(brandAccent, [setH(HUE_EDITOR_BORDER), scaleC(0.56), shiftL(-10)]);
 
   const actionRunning = transform(brandAccent, [setH(HUE_WARN), scaleC(0.84), shiftL(8)]);
   const actionSuccess = transform(actionRunning, [setH(HUE_SUCCESS)]);

@@ -7,7 +7,6 @@ import type {
   ThinkingLevel,
 } from "@mariozechner/pi-ai";
 import { stream, streamSimple, supportsXhigh } from "@mariozechner/pi-ai";
-import { ensureCodexSystemPrompt } from "../auth/codex_prompt.js";
 import type { TauStreamOptions } from "./streaming_settings.js";
 
 function isOpenAIResponsesModel(model: Model<Api>): model is Model<"openai-responses"> {
@@ -31,14 +30,6 @@ export function streamModel<TApi extends Api>(
   context: Context,
   options: TauStreamOptions,
 ): AssistantMessageEventStream {
-  const resolvedContext =
-    model.provider === "openai-codex"
-      ? {
-          ...context,
-          systemPrompt: ensureCodexSystemPrompt(context.systemPrompt ?? ""),
-        }
-      : context;
-
   if (isOpenAIResponsesModel(model) && options.serviceTier !== undefined) {
     const { reasoning, thinkingBudgets: _thinkingBudgets, serviceTier, ...rest } = options;
 
@@ -51,7 +42,7 @@ export function streamModel<TApi extends Api>(
       serviceTier,
     } satisfies OpenAIResponsesOptions;
 
-    return stream(model, resolvedContext, providerOptions);
+    return stream(model, context, providerOptions);
   }
 
   if (isBedrockModel(model)) {
@@ -62,12 +53,8 @@ export function streamModel<TApi extends Api>(
       ...(isBedrockAnthropicModel(model) ? { interleavedThinking: true } : {}),
     };
 
-    return stream(
-      model as Model<"bedrock-converse-stream">,
-      resolvedContext,
-      providerOptions as any,
-    );
+    return stream(model as Model<"bedrock-converse-stream">, context, providerOptions as any);
   }
 
-  return streamSimple(model, resolvedContext, options);
+  return streamSimple(model, context, options);
 }

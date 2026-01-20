@@ -2,6 +2,7 @@ import { applyGeminiSubagents, personas as builtinPersonas } from "../personas.j
 import type { PromptTemplate } from "../prompts.js";
 import { prompts as builtinPrompts } from "../prompts.js";
 import type { Persona, Skill } from "../types.js";
+import { builtinThemes } from "./builtin_themes.js";
 import type { ThemeDefinition } from "./content_loader.js";
 import type { ConfigDeps } from "./deps.js";
 import { createDefaultConfigDeps } from "./deps.js";
@@ -21,6 +22,7 @@ export function buildVirtualBundle(config: Config, deps?: ConfigDeps): VirtualBu
   const resolvedDeps = deps ?? createDefaultConfigDeps();
   const includeBuiltinPersonas = !config.disableBuiltinPersonas;
   const includeBuiltinPrompts = !config.disableBuiltinPrompts;
+  const includeBuiltinThemes = !config.disableBuiltinThemes;
   const basePersonas = isGoogleAuthAvailable(config, resolvedDeps)
     ? applyGeminiSubagents(builtinPersonas)
     : builtinPersonas;
@@ -30,6 +32,6 @@ export function buildVirtualBundle(config: Config, deps?: ConfigDeps): VirtualBu
     personas: includeBuiltinPersonas ? basePersonas : [],
     prompts: includeBuiltinPrompts ? builtinPrompts : [],
     skills: [],
-    themes: [],
+    themes: includeBuiltinThemes ? builtinThemes : [],
   };
 }

@@ -9,7 +9,6 @@ export {
   AuthManager,
   AuthStorage,
   createCredentialResolver,
-  ensureCodexSystemPrompt,
   formatCodexAuthError,
   getAuthPath,
   runListCommand,

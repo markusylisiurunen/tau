@@ -43,6 +43,7 @@ function buildWebToolRunningView(theme: Theme, label: string, target: string): T
 
   const header = buildHeaderLine({
     bulletStyle: runningColor,
+    bullet: "⏵",
     label,
     labelStyle: palette.textMuted,
     accent: inlineText(target),
@@ -74,7 +75,7 @@ function buildWebToolFinishedView(
 
   const header = buildHeaderLine({
     bulletStyle: borderColor,
-    bullet: isSuccess ? "✓" : undefined,
+    bullet: isSuccess ? "✓" : "✗",
     label: isSuccess ? label : `${label} failed`,
     labelStyle: palette.textMuted,
     accent: inlineText(target),

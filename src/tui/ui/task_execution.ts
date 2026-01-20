@@ -123,6 +123,7 @@ export function buildTaskRunningView(
 
   const header = buildHeaderLine({
     bulletStyle: runningColor,
+    bullet: "⏵",
     label: `${kind} running`,
     labelStyle: palette.textMuted,
     accent: title.trim(),
@@ -206,7 +207,7 @@ export function buildTaskFinishedView(
 
   const header = buildHeaderLine({
     bulletStyle: isSuccess ? successBullet : borderColor,
-    bullet: isSuccess ? "✓" : undefined,
+    bullet: isSuccess ? "✓" : "✗",
     label: statusText,
     labelStyle: palette.textMuted,
     accent: title.trim(),

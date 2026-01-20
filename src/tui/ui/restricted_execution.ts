@@ -168,6 +168,7 @@ export function buildGrepRunningView(theme: Theme, pattern: string): ToolOutputV
   const patternInline = inlineText(pattern);
   const header = buildHeaderLine({
     bulletStyle: runningColor,
+    bullet: "⏵",
     label: "grep",
     labelStyle: palette.textMuted,
     accent: patternInline,
@@ -213,7 +214,7 @@ export function buildGrepFinishedView(
 
   const header = buildHeaderLine({
     bulletStyle: isSuccess ? successBullet : errorColor,
-    bullet: isSuccess ? "✓" : undefined,
+    bullet: isSuccess ? "✓" : "✗",
     label: "grep",
     labelStyle: palette.textMuted,
     accent: patternInline,

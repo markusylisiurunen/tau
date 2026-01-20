@@ -220,6 +220,7 @@ export function buildBlockedToolView(args: {
 
   const header = buildHeaderLine({
     bulletStyle: errorColor,
+    bullet: "✗",
     label,
     labelStyle: palette.textMuted,
     accent: accentInline,

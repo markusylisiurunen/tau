@@ -46,7 +46,7 @@ export async function loadRuntimeConfig(
     const matched = content.themes.some((theme) => theme.id.toLowerCase() === themeId);
     if (!matched) {
       warnings.push(
-        `defaultTheme '${config.defaultTheme}' not found in .tau/themes or ~/.config/tau/themes.`,
+        `defaultTheme '${config.defaultTheme}' not found in built-in themes, .tau/themes, or ~/.config/tau/themes.`,
       );
     }
   }

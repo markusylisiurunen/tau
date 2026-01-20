@@ -1,6 +1,6 @@
 # tau
 
-a terminal-based AI chat client for working with code. tau gives you access to Claude, GPT, and Gemini models, each equipped with tools to explore, write, and edit files in your project, plus optional sub-agents for deeper codebase investigation and web research.
+a terminal-based AI chat client for working with code. tau gives you access to Claude, GPT, and Gemini models, each equipped with tools to explore, read, write, and edit files in your project, plus optional sub-agents for deeper codebase investigation and web research.
 
 ![tau](https://raw.githubusercontent.com/markusylisiurunen/tau/main/assets/tau.png)
 
@@ -101,6 +101,8 @@ tau can load custom palette overrides from theme files. create a theme at:
 
 then set `"defaultTheme": "<id>"` in config. any palette token not defined in the file renders as plain text.
 theme values accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, or `hsl(h, s%, l%)`. hex without `#` is ignored.
+
+built-in themes are available by default with ids: `crimson`, `ember`, `gold`, `lime`, `grass`, `emerald`, `jade`, `teal`, `cyan`, `azure`, `cobalt`, `violet`, `purple`, `magenta`, `rose`. set `defaultTheme` to one of these ids, or disable them with `disableBuiltinThemes`.
 
 available palette tokens (theme keys):
 
@@ -311,6 +313,7 @@ settings merge from least-specific to most-specific.
   "defaultRisk": "read-write",
   "disableBuiltinPersonas": false,
   "disableBuiltinPrompts": false,
+  "disableBuiltinThemes": false,
   "defaultTheme": "solarized"
 }
 ```
@@ -319,7 +322,9 @@ the `defaultPersona` field specifies which persona to use when starting the app.
 
 the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 
-if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinPrompts` is set to `true`, tau will not load built-in prompts. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
+the `defaultTheme` field sets the theme id to load at startup. if not specified, it defaults to `gold`.
+
+if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinPrompts` is set to `true`, tau will not load built-in prompts. if `disableBuiltinThemes` is set to `true`, tau will not load built-in themes. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 
 the `sandbox` field configures docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `72`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
 

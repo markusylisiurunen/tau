@@ -16,6 +16,7 @@ export function buildBashRunningView(theme: Theme, command: string): ToolOutputV
   const commandInline = inlineText(command);
   const header = buildHeaderLine({
     bulletStyle: runningColor,
+    bullet: "⏵",
     label: "running",
     labelStyle: palette.textMuted,
     accent: commandInline,
@@ -48,7 +49,7 @@ export function buildBashExecutionView(
 
   const header = buildHeaderLine({
     bulletStyle: isSuccess ? successBullet : errorColor,
-    bullet: isSuccess ? "✓" : undefined,
+    bullet: isSuccess ? "✓" : "✗",
     label: labelOverride ?? "ran",
     labelStyle: palette.textMuted,
     accent: commandInline,
@@ -109,6 +110,7 @@ export function buildBashBlockedView(
 
   const header = buildHeaderLine({
     bulletStyle: errorColor,
+    bullet: "✗",
     label: "bash blocked",
     labelStyle: palette.textMuted,
     accent: commandInline,
@@ -147,6 +149,7 @@ export function buildBashAbortedView(
 
   const header = buildHeaderLine({
     bulletStyle: warnColor,
+    bullet: "✗",
     label: inlineText(reason) || "aborted",
     labelStyle: palette.textMuted,
     accent: commandInline,

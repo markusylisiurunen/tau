@@ -1,7 +1,7 @@
 import { dirname, join, parse, resolve, sep } from "node:path";
 import type { ConfigDeps } from "./deps.js";
 
-export type ConfigLevelScope = "global" | "project";
+export type ConfigLevelScope = "global" | "project" | "builtin";
 
 export type ConfigLevel = {
   levelRoot: string;

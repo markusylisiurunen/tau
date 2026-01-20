@@ -4,6 +4,7 @@ import type { Config } from "./schema.js";
 export function getVirtualConfigDefaults(): Config {
   const defaults: Config = {
     defaultRisk: "read-only",
+    defaultTheme: "gold",
   };
 
   const defaultPersonaId = builtinPersonas[0]?.id;

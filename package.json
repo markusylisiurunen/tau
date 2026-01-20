@@ -11,8 +11,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "biome check --write . && tsc -p tsconfig.json --noEmit",
-    "precheck": "node scripts/generate-version.js",
-    "prebuild": "node scripts/generate-version.js",
+    "precheck": "node scripts/generate-version.js && node scripts/generate-themes.js",
+    "prebuild": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "start": "node dist/main.js",
     "test": "npm run build && vitest run"
   },
@@ -31,6 +31,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.3.11",
     "@types/node": "^24.10.9",
+    "colorjs.io": "^0.6.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.17"
   },

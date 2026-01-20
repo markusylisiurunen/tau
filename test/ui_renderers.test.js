@@ -20,7 +20,7 @@ test("renderBashRunning (compact) shows command and running status", () => {
   const theme = createTagTheme();
   const component = renderBashRunning(theme, "ls -la", true);
   const text = renderText(component, 80);
-  expect(text).toContain("<actionRunning>▪</actionRunning>");
+  expect(text).toContain("<actionRunning>⏵</actionRunning>");
   expect(text).toContain("<brandAccent>ls -la</brandAccent>");
   expect(text).toContain("<textMuted>running</textMuted>");
 });

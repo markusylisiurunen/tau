@@ -52,8 +52,8 @@ const generatePalette = (brandHue) => {
   const BRAND_C = 0.1;
 
   const brandAccent = makeColor(BRAND_L, BRAND_C, HUE_BRAND);
-  const textMuted = transform(brandAccent, [scaleC(0.28), shiftL(-4)]);
-  const textDim = transform(brandAccent, [scaleC(0.16), shiftL(-16)]);
+  const textMuted = transform(brandAccent, [scaleC(0.12), shiftL(-4)]);
+  const textDim = transform(brandAccent, [scaleC(0.08), shiftL(-14)]);
   const codeText = transform(brandAccent, [setH(HUE_CODE)]);
 
   const editorBorder = transform(brandAccent, [setH(HUE_EDITOR_BORDER), scaleC(0.4), shiftL(4)]);

@@ -181,7 +181,7 @@ export async function runListCommand(options: {
     const selectedId = provider.selectedAccountId;
     for (const [accountIndex, account] of provider.accounts.entries()) {
       const isSelected = selectedId === account.accountId;
-      const marker = isSelected ? chalk.yellow("★") : " ";
+      const marker = isSelected ? chalk.yellow("*") : " ";
       const label = account.email ?? account.accountId;
       const plan = account.plan ? `[${account.plan}]` : undefined;
       const headerSegments = [`  ${marker}`, label, plan].filter(Boolean);
@@ -242,15 +242,16 @@ function formatRelativeReset(epochSeconds: number): string | undefined {
   if (deltaMs <= 0) return "now";
 
   const totalMinutes = Math.max(1, Math.ceil(deltaMs / 60000));
-  if (totalMinutes < 60) {
-    return `in ${totalMinutes} min${totalMinutes === 1 ? "" : "s"}`;
-  }
-  const totalHours = Math.round(totalMinutes / 60);
-  if (totalHours < 24) {
-    return `in ${totalHours} hr${totalHours === 1 ? "" : "s"}`;
-  }
-  const totalDays = Math.round(totalHours / 24);
-  return `in ${totalDays} day${totalDays === 1 ? "" : "s"}`;
+  const totalHours = Math.floor(totalMinutes / 60);
+  const totalDays = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  const minutes = totalMinutes % 60;
+
+  const parts: string[] = [];
+  if (totalDays > 0) parts.push(`${totalDays}d`);
+  if (totalDays > 0 || hours > 0) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+  return `in ${parts.join(" ")}`;
 }
 
 function formatBarRemaining(remaining: number): string {

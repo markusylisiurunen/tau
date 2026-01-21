@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { OAuthCredentials, OAuthProvider } from "@mariozechner/pi-ai";
 import { getOAuthApiKey } from "@mariozechner/pi-ai";
 import type { AuthStorage } from "../auth_storage.js";
@@ -38,12 +37,14 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   readonly id = PROVIDER_ID;
   readonly label = PROVIDER_LABEL;
 
-  addOAuthAccount(
-    authStorage: AuthStorage,
-    credentials: OAuthCredentials & { idToken: string },
-  ): void {
-    const accountId = resolveAccountId(credentials);
-    const providerAccountId = credentials.accountId;
+  validateOAuthCredentials(credentials: OAuthCredentials): void {
+    assertCodexClaims(credentials);
+  }
+
+  addOAuthAccount(authStorage: AuthStorage, credentials: OAuthCredentials): void {
+    const claims = assertCodexClaims(credentials);
+    const accountId = claims.accountId;
+    const providerAccountId = normalizeString(credentials.accountId) ?? claims.accountId;
     const account: CodexAccount = {
       type: "oauth",
       accountId,
@@ -51,7 +52,6 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       access: credentials.access,
       refresh: credentials.refresh,
       expires: credentials.expires,
-      idToken: credentials.idToken,
       enterpriseUrl: credentials.enterpriseUrl,
       projectId: credentials.projectId,
     };
@@ -91,7 +91,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
 
     const details = await Promise.all(
       accounts.map(async (account) => {
-        const identity = decodeIdentity(account.idToken);
+        const identity = decodeIdentity(account.access);
         const usage = await this.getUsageSnapshot(authStorage, account, {
           forceRefresh: true,
         });
@@ -339,16 +339,43 @@ function toOAuthCredentials(account: CodexAccount): OAuthCredentials {
   return credentials;
 }
 
-function resolveAccountId(credentials: OAuthCredentials & { idToken: string }): string {
-  if (credentials.accountId) return credentials.accountId;
-  const payload = decodeJwtPayload(credentials.idToken);
-  const subject = typeof payload?.sub === "string" ? payload.sub.trim() : "";
-  if (subject) return subject;
-  return createHash("sha256").update(credentials.idToken).digest("hex").slice(0, 16);
+function assertCodexClaims(credentials: OAuthCredentials): {
+  accountId: string;
+  email: string;
+  plan: string;
+} {
+  const payload = decodeJwtPayload(credentials.access);
+  const accountId = extractAccountId(payload);
+  const identity = decodeIdentityPayload(payload);
+
+  const missing: string[] = [];
+  if (!accountId) missing.push("account id");
+  if (!identity.email) missing.push("email");
+  if (!identity.plan) missing.push("plan");
+  if (missing.length > 0) {
+    throw new Error(
+      `oauth access token missing required claims: ${missing.join(", ")}. please re-authenticate.`,
+    );
+  }
+
+  const providedAccountId = normalizeString(credentials.accountId);
+  if (providedAccountId && providedAccountId !== accountId) {
+    throw new Error(
+      `oauth access token account id "${accountId}" does not match credentials account id "${providedAccountId}".`,
+    );
+  }
+
+  return { accountId: accountId!, email: identity.email!, plan: identity.plan! };
 }
 
-function decodeIdentity(idToken: string): { email?: string; plan?: string } {
-  const payload = decodeJwtPayload(idToken);
+function decodeIdentity(accessToken: string): { email?: string; plan?: string } {
+  return decodeIdentityPayload(decodeJwtPayload(accessToken));
+}
+
+function decodeIdentityPayload(payload: ReturnType<typeof decodeJwtPayload>): {
+  email?: string;
+  plan?: string;
+} {
   if (!payload) return {};
 
   const emailValue =
@@ -367,6 +394,17 @@ function decodeIdentity(idToken: string): { email?: string; plan?: string } {
   return { email, plan };
 }
 
+function extractAccountId(payload: ReturnType<typeof decodeJwtPayload>): string | undefined {
+  if (!payload) return undefined;
+  const authPayload = payload["https://api.openai.com/auth"];
+  if (authPayload && typeof authPayload === "object") {
+    const chatgptAccountId = (authPayload as { chatgpt_account_id?: unknown }).chatgpt_account_id;
+    const normalized = normalizeString(chatgptAccountId);
+    if (normalized) return normalized;
+  }
+  return normalizeString(payload.chatgpt_account_id);
+}
+
 function normalizeString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -380,7 +418,7 @@ function normalizeIdentifier(value: string): string {
 function matchesIdentifier(account: CodexAccount, identifier: string): boolean {
   if (!identifier) return false;
   if (account.accountId.toLowerCase() === identifier) return true;
-  const identity = decodeIdentity(account.idToken);
+  const identity = decodeIdentity(account.access);
   const email = identity.email ? identity.email.toLowerCase() : undefined;
   return email === identifier;
 }

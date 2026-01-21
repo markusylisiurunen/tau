@@ -54,12 +54,13 @@ export class AuthManager {
     return results;
   }
 
-  addOAuthAccount(providerId: string, credentials: OAuthCredentials & { idToken: string }): void {
+  addOAuthAccount(providerId: string, credentials: OAuthCredentials): void {
     const adapter = this.adapters.get(providerId);
     if (!adapter) {
       throw new Error(`unsupported auth provider "${providerId}"`);
     }
     this.authStorage.reload();
+    adapter.validateOAuthCredentials?.(credentials);
     adapter.addOAuthAccount(this.authStorage, credentials);
   }
 

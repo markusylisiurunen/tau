@@ -10,10 +10,8 @@ export type AuthProviderSelection = {
 export interface AuthProviderAdapter {
   id: string;
   label: string;
-  addOAuthAccount: (
-    authStorage: AuthStorage,
-    credentials: OAuthCredentials & { idToken: string },
-  ) => void;
+  validateOAuthCredentials?: (credentials: OAuthCredentials) => void;
+  addOAuthAccount: (authStorage: AuthStorage, credentials: OAuthCredentials) => void;
   removeAccount: (authStorage: AuthStorage, accountId: string) => boolean;
   listAccountInfo: (authStorage: AuthStorage) => Promise<AuthAccountInfo[]>;
   selectAccount: (authStorage: AuthStorage) => Promise<AuthProviderSelection | undefined>;

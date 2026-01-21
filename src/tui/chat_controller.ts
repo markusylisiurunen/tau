@@ -495,7 +495,7 @@ export class ChatController {
       : this.currentPersona.model.contextWindow;
 
     const { input, read, write, output } = this.getSessionTotals();
-    const stats = `↑${formatTokenWindow(input)} ↓${formatTokenWindow(output)} (cache r${formatTokenWindow(read)} w${formatTokenWindow(write)})`;
+    const stats = `↑${formatTokenWindow(input)} ↓${formatTokenWindow(output)} (r${formatTokenWindow(read)} w${formatTokenWindow(write)})`;
 
     const promptTokensSent = last
       ? (last.usage?.input ?? 0) + (last.usage?.cacheRead ?? 0) + (last.usage?.cacheWrite ?? 0)

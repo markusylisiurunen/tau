@@ -100,8 +100,7 @@ function isStoredAccount(value: unknown): value is StoredAccount {
       typeof record.accountId === "string" &&
       typeof record.access === "string" &&
       typeof record.refresh === "string" &&
-      typeof record.expires === "number" &&
-      typeof record.idToken === "string"
+      typeof record.expires === "number"
     );
   }
   if (type === "api_key") {

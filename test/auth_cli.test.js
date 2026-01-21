@@ -6,6 +6,30 @@ import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
 import { runLoginCommand, runLogoutCommand } from "../dist/core/auth/cli.js";
 
+function toBase64Url(value) {
+  return Buffer.from(value, "utf-8")
+    .toString("base64")
+    .replace(/=+$/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
+
+function createAccessToken({ accountId, email, plan }) {
+  const header = toBase64Url(JSON.stringify({ alg: "none", typ: "JWT" }));
+  const payload = toBase64Url(
+    JSON.stringify({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: accountId,
+        chatgpt_plan_type: plan,
+      },
+      "https://api.openai.com/profile": {
+        email,
+      },
+    }),
+  );
+  return `${header}.${payload}.sig`;
+}
+
 function createTempAuthPath() {
   const dir = mkdtempSync(join(tmpdir(), "tau-auth-cli-"));
   return {
@@ -20,12 +44,16 @@ describe("auth cli", () => {
     const fx = createTempAuthPath();
     try {
       const authStorage = new AuthStorage(fx.authPath);
+      const accountId = "acct-123";
       const credentials = {
-        access: "access-token",
+        access: createAccessToken({
+          accountId,
+          email: "user@example.com",
+          plan: "free",
+        }),
         refresh: "refresh-token",
         expires: 123,
-        accountId: "acct",
-        idToken: "header.payload.signature",
+        accountId,
       };
 
       await runLoginCommand({
@@ -40,11 +68,11 @@ describe("auth cli", () => {
       });
 
       const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
-      expect(saved.providers["openai-codex"].accounts[0].access).toBe("access-token");
+      expect(saved.providers["openai-codex"].accounts[0].access).toBe(credentials.access);
 
       await runLogoutCommand({
         providerArg: "codex",
-        accountId: "acct",
+        accountId,
         authStorage,
         authPath: fx.authPath,
         prompt: async () => "",
@@ -63,6 +91,12 @@ describe("auth cli", () => {
     try {
       const authStorage = new AuthStorage(fx.authPath);
       const promptCalls = [];
+      const inputValue = "manual-code";
+      const expectedAccess = createAccessToken({
+        accountId: `acct-${inputValue}`,
+        email: `user+${inputValue}@example.com`,
+        plan: "free",
+      });
 
       await runLoginCommand({
         providerArg: "codex",
@@ -70,25 +104,29 @@ describe("auth cli", () => {
         authPath: fx.authPath,
         prompt: async (prompt) => {
           promptCalls.push(prompt.message);
-          return "manual-code";
+          return inputValue;
         },
         log: () => {},
         loginHandlers: {
           "openai-codex": async (callbacks) => {
             const input = await callbacks.onPrompt({ message: "Paste code:" });
+            const accountId = `acct-${input}`;
             return {
-              access: `access-${input}`,
+              access: createAccessToken({
+                accountId,
+                email: `user+${input}@example.com`,
+                plan: "free",
+              }),
               refresh: "refresh-token",
               expires: 123,
-              accountId: "acct",
-              idToken: "header.payload.signature",
+              accountId,
             };
           },
         },
       });
 
       const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
-      expect(saved.providers["openai-codex"].accounts[0].access).toBe("access-manual-code");
+      expect(saved.providers["openai-codex"].accounts[0].access).toBe(expectedAccess);
       expect(promptCalls).toEqual(["Paste code:"]);
     } finally {
       fx.cleanup();

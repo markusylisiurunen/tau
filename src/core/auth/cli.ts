@@ -125,14 +125,10 @@ export async function runLoginCommand(options: {
     },
     onPrompt: async (prompt) => options.prompt(prompt),
     onProgress: (message) => log(message),
-  })) as OAuthCredentials & { idToken?: string };
-
-  if (provider === "openai-codex" && !credentials.idToken) {
-    throw new Error("missing idToken from OAuth login; please update the Codex OAuth flow");
-  }
+  })) as OAuthCredentials;
 
   const authManager = new AuthManager(options.authStorage);
-  authManager.addOAuthAccount(provider, credentials as OAuthCredentials & { idToken: string });
+  authManager.addOAuthAccount(provider, credentials);
   log(`credentials saved to ${options.authPath}`);
 }
 

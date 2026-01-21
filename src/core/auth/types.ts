@@ -11,7 +11,6 @@ export type StoredOAuthAccount = {
   access: string;
   refresh: string;
   expires: number;
-  idToken: string;
   enterpriseUrl?: string;
   projectId?: string;
   usage?: AuthAccountUsage;

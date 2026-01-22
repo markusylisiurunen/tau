@@ -6,6 +6,7 @@ import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
 import type { Persona, RiskLevel, Skill } from "../core/types.js";
 import { ChatController } from "./chat_controller.js";
 import { TuiChatView } from "./chat_view.js";
+import { EXIT_DOUBLE_PRESS_WINDOW_MS, EXIT_TOAST_DURATION_MS } from "./constants.js";
 import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
 
 export interface ChatAppOptions {
@@ -27,6 +28,7 @@ export interface ChatAppOptions {
 export class ChatApp implements ModeAdapter {
   private readonly view: TuiChatView;
   private readonly controller: ChatController;
+  private lastCtrlCAt?: number;
 
   constructor(options: ChatAppOptions) {
     const queuedUserMessages: string[] = [];
@@ -46,7 +48,17 @@ export class ChatApp implements ModeAdapter {
 
     const handlers = this.controller.getInputHandlers();
     handlers.onCtrlC = () => {
-      void this.stop().finally(() => process.exit(0));
+      const now = Date.now();
+      if (this.lastCtrlCAt !== undefined && now - this.lastCtrlCAt <= EXIT_DOUBLE_PRESS_WINDOW_MS) {
+        this.lastCtrlCAt = undefined;
+        void this.stop().finally(() => process.exit(0));
+        return;
+      }
+
+      this.lastCtrlCAt = now;
+      this.view.addSystemMessage("press ctrl+c again to quit", "warn", {
+        toastDurationMs: EXIT_TOAST_DURATION_MS,
+      });
     };
     this.view.bindInputHandlers(handlers);
 

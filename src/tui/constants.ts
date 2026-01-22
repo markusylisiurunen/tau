@@ -1,1 +1,3 @@
 export const DOUBLE_PRESS_WINDOW_MS = 500;
+export const EXIT_DOUBLE_PRESS_WINDOW_MS = 1000;
+export const EXIT_TOAST_DURATION_MS = 1000;

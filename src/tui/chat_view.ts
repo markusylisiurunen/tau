@@ -56,7 +56,11 @@ export interface ChatView {
   requestRender(): void;
   addMessage(model: ChatMessageModel, id?: string): string;
   updateAssistantMessage(id: string, model: AssistantMessageModel): void;
-  addSystemMessage(text: string, kind: SystemMessageKind): void;
+  addSystemMessage(
+    text: string,
+    kind: SystemMessageKind,
+    options?: { toastDurationMs?: number },
+  ): void;
   setThinkingVisibility(show: boolean): void;
   setCompactToolUi(compact: boolean): void;
   updateStatus(status: ChatViewStatus): void;
@@ -160,11 +164,15 @@ export class TuiChatView implements ChatView {
     this.ui.requestRender();
   }
 
-  addSystemMessage(text: string, kind: SystemMessageKind): void {
+  addSystemMessage(
+    text: string,
+    kind: SystemMessageKind,
+    options?: { toastDurationMs?: number },
+  ): void {
     const cleanedText = this.normalizeSystemMessageText(text, kind);
     const toastText = this.formatToastText(cleanedText);
     if (kind !== "muted" && toastText.length > 0) {
-      this.footer.showToast(toastText, kind, 3000);
+      this.footer.showToast(toastText, kind, options?.toastDurationMs);
     }
 
     if (this.shouldPersistSystemMessage(cleanedText, kind)) {

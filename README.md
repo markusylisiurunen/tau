@@ -291,7 +291,7 @@ the compact commands are useful when conversations get long. they compress every
 | `ctrl+s`    | stash input to clipboard    |
 | `alt+up`    | pop queued message          |
 | `esc`       | interrupt generation        |
-| `ctrl+c`    | exit                        |
+| `ctrl+c`    | press twice to exit         |
 
 ## configuration
 

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { personas } from "../dist/core/personas.js";
 import { ChatController } from "../dist/tui/chat_controller.js";
+import { DOUBLE_PRESS_WINDOW_MS } from "../dist/tui/constants.js";
 
 function createStubView() {
   const added = [];
@@ -149,5 +150,47 @@ describe("ChatController streaming command handling", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(stub.editorTextUpdates).toEqual(["hello there"]);
+  });
+});
+
+describe("ChatController manual retry", () => {
+  it("retries on double empty submit within window", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+
+    try {
+      const stub = createStubView();
+      const controller = createController(stub.view);
+      const calls = [];
+
+      controller.runAssistantTurn = async () => {
+        calls.push("retry");
+      };
+
+      await controller.onUserInput("");
+      expect(calls).toEqual([]);
+
+      vi.advanceTimersByTime(DOUBLE_PRESS_WINDOW_MS - 1);
+      await controller.onUserInput("");
+
+      expect(calls).toEqual(["retry"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores empty submit while streaming", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+    const calls = [];
+
+    controller.runAssistantTurn = async () => {
+      calls.push("retry");
+    };
+
+    controller.isStreaming = true;
+    await controller.onUserInput("");
+
+    expect(calls).toEqual([]);
   });
 });

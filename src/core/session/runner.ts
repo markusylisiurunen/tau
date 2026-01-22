@@ -25,13 +25,9 @@ import { MessageAccumulator } from "./message_accumulator.js";
 
 export type RunnerEvent = CoreRunnerEvent;
 
-export type FlexRetryOptions = {
+export type RetryOptions = {
   notice?: { text: string; severity?: CoreNoticeEvent["severity"] };
-  shouldRetryAfterError?: (args: { error: unknown }) => boolean;
-  shouldRetryAfterResponse?: (args: {
-    finalMessage: AssistantMessage;
-    didEmitAnyOutput: boolean;
-  }) => boolean;
+  shouldRetryAfterError?: (args: { error: unknown; model: Model<Api> }) => boolean;
 };
 
 export type RunModelSubturnOptions = {
@@ -40,7 +36,7 @@ export type RunModelSubturnOptions = {
   streamOptions: TauStreamOptions;
   signal: AbortSignal;
   emitPartials?: boolean;
-  retry?: FlexRetryOptions;
+  retry?: RetryOptions;
 };
 
 export async function* runModelSubturn(
@@ -50,14 +46,9 @@ export async function* runModelSubturn(
 
   const runAttempt = async function* (
     attemptOptions: TauStreamOptions,
-  ): AsyncGenerator<
-    RunnerEvent,
-    { finalMessage: AssistantMessage; didEmitAnyOutput: boolean },
-    void
-  > {
+  ): AsyncGenerator<RunnerEvent, AssistantMessage, void> {
     const stream = streamModel(model, context, attemptOptions);
     const accumulator = emitPartials ? new MessageAccumulator() : undefined;
-    let didEmitAnyOutput = false;
 
     for await (const event of stream) {
       if (accumulator) {
@@ -65,15 +56,13 @@ export async function* runModelSubturn(
       }
 
       if (event.type === "text_delta" || event.type.startsWith("thinking_")) {
-        didEmitAnyOutput = true;
         if (accumulator) {
           yield { type: "assistant_partial", snapshot: accumulator.snapshot };
         }
       }
     }
 
-    const finalMessage = await stream.result();
-    return { finalMessage, didEmitAnyOutput };
+    return await stream.result();
   };
 
   const retryNotice = retry?.notice
@@ -84,36 +73,19 @@ export async function* runModelSubturn(
       }
     : undefined;
 
-  let didRetry = false;
   let finalMessage: AssistantMessage;
-  let didEmitAnyOutput = false;
 
   try {
-    ({ finalMessage, didEmitAnyOutput } = yield* runAttempt(streamOptions));
+    finalMessage = yield* runAttempt(streamOptions);
   } catch (error) {
-    if (retry?.shouldRetryAfterError?.({ error })) {
-      didRetry = true;
+    if (retry?.shouldRetryAfterError?.({ error, model })) {
       if (retryNotice) {
         yield retryNotice;
       }
-      ({ finalMessage, didEmitAnyOutput } = yield* runAttempt({
-        ...streamOptions,
-        serviceTier: undefined,
-      }));
+      finalMessage = yield* runAttempt(streamOptions);
     } else {
       throw error;
     }
-  }
-
-  if (!didRetry && retry?.shouldRetryAfterResponse?.({ finalMessage, didEmitAnyOutput }) === true) {
-    didRetry = true;
-    if (retryNotice) {
-      yield retryNotice;
-    }
-    ({ finalMessage, didEmitAnyOutput } = yield* runAttempt({
-      ...streamOptions,
-      serviceTier: undefined,
-    }));
   }
 
   return finalMessage;

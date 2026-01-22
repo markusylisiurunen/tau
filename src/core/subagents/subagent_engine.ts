@@ -17,7 +17,7 @@ import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { createLocalToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRegistry, ToolUiEvent } from "../tools/registry.js";
 import type { RiskLevel } from "../types.js";
-import { isFlexRetryEnabled } from "../utils/flex_retry.js";
+import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { extractAssistantText } from "../utils/messages.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
@@ -148,12 +148,6 @@ export async function runSubagentToCompletion(options: {
       ...(apiKey && { apiKey }),
     };
 
-    const shouldRetryFlex = isFlexRetryEnabled({
-      modelApi: personaConfig.model.api,
-      serviceTier: baseOptions.serviceTier,
-      signal,
-    });
-
     const runner = runModelSubturn({
       model: personaConfig.model,
       context,
@@ -161,10 +155,7 @@ export async function runSubagentToCompletion(options: {
       signal,
       emitPartials: false,
       retry: {
-        notice: { text: "assistant: retrying without service tier", severity: "info" },
-        shouldRetryAfterError: () => shouldRetryFlex,
-        shouldRetryAfterResponse: ({ finalMessage }) =>
-          shouldRetryFlex && finalMessage.stopReason === "error",
+        shouldRetryAfterError: ({ error, model }) => shouldAutoRetry({ model, error }),
       },
     });
 

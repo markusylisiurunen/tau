@@ -152,6 +152,7 @@ the default is read-only because it lets the model investigate your code and ans
 when started with `--sandbox`, tau runs all tool calls inside a session-scoped docker container. the project root (git root or cwd) is mounted into the container, and the working directory matches your current subdirectory. only `/workspace` is bound to the host; absolute paths outside `/workspace` refer to the container filesystem.
 
 requirements:
+
 - docker must be available on the host
 - config must include `sandbox.image`
 - sandboxing is only enabled at startup with `--sandbox` (no runtime toggle)
@@ -258,40 +259,42 @@ tau will create or update AGENTS.md at your project root, integrating the new in
 
 tau supports slash commands for common actions:
 
-| command                   | description                                    |
-| ------------------------- | ---------------------------------------------- |
-| `/help`                   | show available commands                        |
-| `/new`                    | clear the session and start fresh              |
-| `/copy`                   | copy the last assistant message                |
-| `/copy:code`              | copy just the code blocks                      |
-| `/export:html`            | export chat history to html                    |
-| `/reload`                 | reload personas, prompts, skills, and themes from disk |
-| `/cd <path>`              | change the working directory                   |
-| `/compact:only-summary`   | compress history and continue with a summary   |
-| `/compact:with-last-turn` | compress history but keep the last exchange    |
-| `/persona:<id>`           | switch to a different persona                  |
-| `/prompt:<id>`            | insert a saved prompt template                 |
-| `/theme:<id>`             | switch to a loaded theme                       |
-| `/bash:<id>`              | run a saved shell command                      |
-| `/risk:<level>`           | change the risk level                          |
+| command                   | description                                                                  |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| `/help`                   | show available commands                                                      |
+| `/new`                    | clear the session and start fresh                                            |
+| `/copy`                   | copy the last assistant message                                              |
+| `/copy:code`              | copy just the code blocks                                                    |
+| `/export:html`            | export chat history to html                                                  |
+| `/reload`                 | reload personas, prompts, skills, and themes from disk                       |
+| `/cd <path>`              | change the working directory                                                 |
+| `/compact:only-summary`   | compress history and continue with a summary                                 |
+| `/compact:with-last-turn` | compress history but keep the last exchange                                  |
+| `/persona:<id>`           | switch to a different persona                                                |
+| `/prompt:<id>`            | insert a saved prompt template                                               |
+| `/theme:<id>`             | switch to a loaded theme                                                     |
+| `/bash:<id>`              | run a saved shell command                                                    |
+| `/risk:<level>`           | change the risk level                                                        |
 | `!<cmd>`                  | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
 
 the compact commands are useful when conversations get long. they compress everything into a summary so the model retains context without the overhead of a full history.
 
 ## keyboard shortcuts
 
-| key         | action                      |
-| ----------- | --------------------------- |
-| `shift+tab` | cycle reasoning effort      |
-| `ctrl+r`    | cycle risk level            |
-| `ctrl+p`    | cycle personality           |
-| `ctrl+t`    | toggle thinking visibility  |
-| `ctrl+o`    | toggle compact tool display |
-| `ctrl+f`    | expand @file and $skill mentions |
-| `ctrl+s`    | stash input to clipboard    |
-| `alt+up`    | pop queued message          |
-| `esc`       | interrupt generation        |
-| `ctrl+c`    | press twice to exit         |
+| key         | action                             |
+| ----------- | ---------------------------------- |
+| `shift+tab` | cycle reasoning effort             |
+| `ctrl+r`    | cycle risk level                   |
+| `ctrl+p`    | cycle personality                  |
+| `ctrl+t`    | toggle thinking visibility         |
+| `ctrl+o`    | toggle compact tool display        |
+| `ctrl+f`    | expand @file and $skill mentions   |
+| `ctrl+s`    | stash input to clipboard           |
+| `enter x2`  | retry last response on empty input |
+| `esc x2`    | clear current prompt               |
+| `alt+up`    | pop queued message                 |
+| `esc`       | interrupt generation               |
+| `ctrl+c`    | press twice to exit                |
 
 ## configuration
 
@@ -411,7 +414,6 @@ extends: gpt-5.2-coder
 provider: anthropic
 model: claude-haiku-4-5
 ---
-
 ```
 
 when persona ids collide across levels, the most specific level wins (for example, a `.tau/personas/` entry overrides a global or built-in persona).

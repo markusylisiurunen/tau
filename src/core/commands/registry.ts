@@ -205,6 +205,7 @@ export class CommandRegistry<Ctx = unknown> {
       ["ctrl+f", "expand @file and $skill mentions"],
       ["ctrl+s", "stash input to clipboard"],
       ["enter x2", "retry last response"],
+      ["esc x2", "clear current prompt"],
       ["esc", "interrupt assistant"],
     ];
 

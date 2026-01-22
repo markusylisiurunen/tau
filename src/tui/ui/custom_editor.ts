@@ -1,4 +1,5 @@
 import { Key, matchesKey, visibleWidth } from "@mariozechner/pi-tui";
+import { DOUBLE_PRESS_WINDOW_MS } from "../constants.js";
 import { Editor } from "./components/editor.js";
 import { truncateFromEndByWidth } from "./components/one_line_segments.js";
 import { getSkillAutocompleteToken } from "./slash_autocomplete.js";
@@ -17,6 +18,7 @@ export class CustomEditor extends Editor {
 
   private maxVisibleLines = DEFAULT_EDITOR_MAX_LINES;
   private scrollTop = 0;
+  private lastEscapeAt?: number;
 
   public onCtrlC?: () => void;
   public onCtrlT?: () => void;
@@ -109,6 +111,13 @@ export class CustomEditor extends Editor {
 
   handleInput(data: string): void {
     const previousText = this.getText();
+    const isEscape = matchesKey(data, Key.escape);
+
+    if (!isEscape) {
+      this.lastEscapeAt = undefined;
+    } else if (this.isShowingAutocomplete()) {
+      this.lastEscapeAt = undefined;
+    }
 
     if (matchesKey(data, Key.shift("tab")) && this.onShiftTab) {
       this.onShiftTab();
@@ -161,8 +170,17 @@ export class CustomEditor extends Editor {
       }
     }
 
-    if (matchesKey(data, Key.escape) && this.onEscape && !this.isShowingAutocomplete()) {
-      this.onEscape();
+    if (isEscape && !this.isShowingAutocomplete()) {
+      const now = Date.now();
+      if (this.lastEscapeAt !== undefined && now - this.lastEscapeAt <= DOUBLE_PRESS_WINDOW_MS) {
+        this.lastEscapeAt = undefined;
+        this.setText("");
+        return;
+      }
+      this.lastEscapeAt = now;
+      if (this.onEscape) {
+        this.onEscape();
+      }
       return;
     }
 

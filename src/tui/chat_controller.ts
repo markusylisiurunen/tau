@@ -69,6 +69,7 @@ import { listProjectFilesAsync } from "../core/utils/project_files.js";
 import { APP_VERSION } from "../core/version.js";
 import type { ChatInputMode, ChatView, ChatViewInputHandlers } from "./chat_view.js";
 import { copyTextToClipboard } from "./clipboard.js";
+import { DOUBLE_PRESS_WINDOW_MS } from "./constants.js";
 import { buildExportEntriesFromHistory } from "./export/engine_history.js";
 import { renderExport } from "./export/index.js";
 import type { AssistantMessageModel } from "./ui/chat_message_model.js";
@@ -151,6 +152,7 @@ export class ChatController {
   private currentTurnStartedAt?: number;
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
+  private lastEmptySubmitAt?: number;
 
   constructor(options: ChatControllerOptions) {
     this.view = options.view;
@@ -855,6 +857,10 @@ export class ChatController {
     const wasMemory = this.isMemoryMode;
     const wasInFileAutocomplete = this.isInFileAutocomplete;
 
+    if (text.trim().length > 0) {
+      this.lastEmptySubmitAt = undefined;
+    }
+
     const trimmed = text.trimStart();
     this.isBashMode = trimmed.startsWith("!");
     this.isMemoryMode = trimmed.startsWith("#");
@@ -971,7 +977,23 @@ export class ChatController {
 
   private async handleSubmit(text: string): Promise<void> {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      if (this.isStreaming) return;
+
+      const now = Date.now();
+      if (
+        this.lastEmptySubmitAt !== undefined &&
+        now - this.lastEmptySubmitAt <= DOUBLE_PRESS_WINDOW_MS
+      ) {
+        this.lastEmptySubmitAt = undefined;
+        await this.runAssistantTurn();
+      } else {
+        this.lastEmptySubmitAt = now;
+      }
+      return;
+    }
+
+    this.lastEmptySubmitAt = undefined;
 
     if (this.isStreaming) {
       if (trimmed.startsWith("/")) {

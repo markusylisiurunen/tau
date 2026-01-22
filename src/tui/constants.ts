@@ -1,0 +1,1 @@
+export const DOUBLE_PRESS_WINDOW_MS = 500;

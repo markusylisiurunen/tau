@@ -16,7 +16,7 @@ import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
-import { shouldRetryFlexAfterResponse } from "../utils/flex_retry.js";
+import { shouldAutoRetry } from "../utils/auto_retry.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import { runModelSubturn, runToolCalls } from "./runner.js";
@@ -203,18 +203,7 @@ export class SessionEngine {
         signal,
         emitPartials: true,
         retry: {
-          notice: {
-            text: "flex tier request failed, retrying without service tier.",
-            severity: "info",
-          },
-          shouldRetryAfterResponse: ({ finalMessage, didEmitAnyOutput }) =>
-            shouldRetryFlexAfterResponse({
-              modelApi: this.persona.model.api,
-              serviceTier: baseOptions.serviceTier,
-              signal,
-              didEmitAnyOutput,
-              stopReason: finalMessage.stopReason,
-            }),
+          shouldRetryAfterError: ({ error, model }) => shouldAutoRetry({ model, error }),
         },
       });
 

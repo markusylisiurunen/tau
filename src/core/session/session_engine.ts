@@ -17,6 +17,7 @@ import { createDefaultCoreDeps } from "../runtime/deps.js";
 import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
+import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import { runModelSubturn, runToolCalls } from "./runner.js";
@@ -194,6 +195,14 @@ export class SessionEngine {
       sessionId: this.sessionId,
       ...(apiKey && { apiKey }),
     };
+
+    if (this.persona.model.provider === "openai-codex") {
+      baseOptions.headers = {
+        ...baseOptions.headers,
+        originator: CODEX_ORIGINATOR,
+        "User-Agent": CODEX_USER_AGENT,
+      };
+    }
 
     try {
       const finalMessage = yield* runModelSubturn({

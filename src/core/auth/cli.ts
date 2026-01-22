@@ -1,6 +1,7 @@
 import type { OAuthCredentials, OAuthPrompt, OAuthProvider } from "@mariozechner/pi-ai";
 import { loginOpenAICodex } from "@mariozechner/pi-ai";
 import { Chalk } from "chalk";
+import { CODEX_ORIGINATOR } from "../utils/codex.js";
 import { AuthManager } from "./auth_manager.js";
 import type { AuthStorage } from "./auth_storage.js";
 
@@ -29,6 +30,7 @@ const DEFAULT_LOGIN_HANDLERS: Partial<Record<OAuthProvider, AuthLoginHandler>> =
       onAuth: callbacks.onAuth,
       onPrompt: callbacks.onPrompt,
       onProgress: callbacks.onProgress,
+      originator: CODEX_ORIGINATOR,
     }),
 };
 

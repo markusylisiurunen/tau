@@ -18,6 +18,7 @@ import { createLocalToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRegistry, ToolUiEvent } from "../tools/registry.js";
 import type { RiskLevel } from "../types.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
+import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import { extractAssistantText } from "../utils/messages.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
@@ -147,6 +148,14 @@ export async function runSubagentToCompletion(options: {
       serviceTier: undefined,
       ...(apiKey && { apiKey }),
     };
+
+    if (personaConfig.model.provider === "openai-codex") {
+      baseOptions.headers = {
+        ...baseOptions.headers,
+        originator: CODEX_ORIGINATOR,
+        "User-Agent": CODEX_USER_AGENT,
+      };
+    }
 
     const runner = runModelSubturn({
       model: personaConfig.model,

@@ -219,7 +219,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `!<cmd>` - Direct bash execution (bypasses model; runs inside sandbox when enabled)
 - `#<request>` - Memory mode for updating AGENTS.md
 
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @files and $skills), `Ctrl+S` (stash input to clipboard), `Alt+Up` (pop queued message), `Escape` (interrupt), `Ctrl+C` (press twice to exit)
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @files and $skills), `Ctrl+S` (stash input to clipboard), `Enter x2` (retry last response on empty input), `Alt+Up` (pop queued message), `Escape` (interrupt), `Ctrl+C` (press twice to exit)
 
 ## Development
 

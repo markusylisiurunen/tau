@@ -274,6 +274,7 @@ tau supports slash commands for common actions:
 | `/bash:<id>`              | run a saved shell command                                                    |
 | `/risk:<level>`           | change the risk level                                                        |
 | `!<cmd>`                  | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
+| `!!<cmd>`                 | run a shell command without adding output to the model context               |
 
 the compact commands are useful when conversations get long. they compress everything into a summary so the model retains context without the overhead of a full history.
 

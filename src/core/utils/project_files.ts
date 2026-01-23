@@ -26,6 +26,29 @@ async function runCommand(
   return { status: result.exitCode ?? 1, stdout: result.stdout };
 }
 
+function listDirectoriesFromFiles(files: string[]): string[] {
+  const out = new Set<string>();
+
+  for (const file of files) {
+    const parts = file.split("/");
+    if (parts.length <= 1) continue;
+
+    for (let i = 1; i < parts.length; i += 1) {
+      const dir = parts.slice(0, i).join("/");
+      if (dir) out.add(`${dir}/`);
+    }
+  }
+
+  return [...out];
+}
+
+function combineEntries(files: Iterable<string>, dirs: Iterable<string>): string[] {
+  const out = new Set<string>();
+  for (const file of files) out.add(file);
+  for (const dir of dirs) out.add(dir);
+  return [...out].sort();
+}
+
 export async function listProjectFilesAsync(cwd: string): Promise<string[]> {
   const fromRipgrep = await listProjectFilesFromRipgrepAsync(cwd);
   if (fromRipgrep.length) return fromRipgrep;
@@ -42,14 +65,16 @@ async function listProjectFilesFromRipgrepAsync(cwd: string): Promise<string[]> 
       .map((l) => l.trim())
       .filter(Boolean);
 
-    return [...new Set(files)].sort();
+    const uniqueFiles = [...new Set(files)];
+    return combineEntries(uniqueFiles, listDirectoriesFromFiles(uniqueFiles));
   } catch {
     return [];
   }
 }
 
 async function listProjectFilesByWalkingAsync(cwd: string): Promise<string[]> {
-  const out: string[] = [];
+  const files = new Set<string>();
+  const dirs = new Set<string>();
   const realpathStack = new Set<string>();
 
   const walk = async (dirAbs: string, dirRel: string): Promise<void> => {
@@ -76,6 +101,7 @@ async function listProjectFilesByWalkingAsync(cwd: string): Promise<string[]> {
           if (DEFAULT_IGNORED_DIRS.has(entry.name)) continue;
           const nextAbs = join(dirAbs, entry.name);
           const nextRel = dirRel ? join(dirRel, entry.name) : entry.name;
+          dirs.add(`${nextRel}/`);
           await walk(nextAbs, nextRel);
           continue;
         }
@@ -87,10 +113,11 @@ async function listProjectFilesByWalkingAsync(cwd: string): Promise<string[]> {
             if (st.isDirectory()) {
               if (DEFAULT_IGNORED_DIRS.has(entry.name)) continue;
               const nextRel = dirRel ? join(dirRel, entry.name) : entry.name;
+              dirs.add(`${nextRel}/`);
               await walk(targetPath, nextRel);
             } else if (st.isFile()) {
               const rel = dirRel ? join(dirRel, entry.name) : entry.name;
-              out.push(rel);
+              files.add(rel);
             }
           } catch {
             // Broken symlink or permission error, skip
@@ -100,7 +127,7 @@ async function listProjectFilesByWalkingAsync(cwd: string): Promise<string[]> {
 
         if (entry.isFile()) {
           const rel = dirRel ? join(dirRel, entry.name) : entry.name;
-          out.push(rel);
+          files.add(rel);
         }
       }
     } catch {
@@ -112,5 +139,5 @@ async function listProjectFilesByWalkingAsync(cwd: string): Promise<string[]> {
 
   await walk(cwd, "");
 
-  return [...new Set(out)].sort();
+  return combineEntries(files, dirs);
 }

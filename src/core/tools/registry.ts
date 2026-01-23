@@ -1,5 +1,7 @@
 import type { Message, Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import type { Config } from "../config/index.js";
+import type { SubagentControlPlane } from "../subagents/control_plane.js";
+import type { SubagentName, SubagentStatus } from "../subagents/types.js";
 import type { Persona, RiskLevel } from "../types.js";
 import type { BashTruncationInfo } from "./bash.js";
 
@@ -27,41 +29,62 @@ export type ToolUiEvent =
     }
   | { type: "bash_blocked"; command: string; reason: string; toolCallId?: string }
   | {
-      type: "task_started";
+      type: "spawn_agent_started";
       toolCallId: string;
-      kind?: "task";
       name: string;
       title: string;
     }
   | {
-      type: "task_progress";
+      type: "spawn_agent_finished";
       toolCallId: string;
-      kind?: "task";
       name: string;
       title: string;
-      event: string;
-      costTotal: number;
-      turns: number;
-      toolCalls: number;
+      status: "success" | "error";
+      agentId?: string;
+      message?: string;
     }
   | {
-      type: "task_finished";
+      type: "spawn_agent_blocked";
       toolCallId: string;
-      kind?: "task";
-      name: string;
-      title: string;
-      costTotal: number;
-      turns: number;
-      toolCalls: number;
-      status: "success" | "error" | "aborted";
-      finalOutput: string;
-    }
-  | {
-      type: "task_blocked";
-      toolCallId: string;
-      kind?: "task";
       name?: string;
       title: string;
+      reason: string;
+    }
+  | {
+      type: "wait_for_agent_started";
+      toolCallId: string;
+      agentIds: string[];
+    }
+  | {
+      type: "wait_for_agent_finished";
+      toolCallId: string;
+      agentIds: string[];
+      status: "success" | "error";
+      message?: string;
+    }
+  | {
+      type: "wait_for_agent_blocked";
+      toolCallId: string;
+      agentIds?: string[];
+      reason: string;
+    }
+  | {
+      type: "terminate_agent_started";
+      toolCallId: string;
+      agentId: string;
+    }
+  | {
+      type: "terminate_agent_finished";
+      toolCallId: string;
+      agentId: string;
+      status: "success" | "error";
+      finalStatus?: SubagentStatus;
+      message?: string;
+    }
+  | {
+      type: "terminate_agent_blocked";
+      toolCallId: string;
+      agentId?: string;
       reason: string;
     }
   | {
@@ -181,13 +204,22 @@ export type ToolDispatchResultWithPhases = {
   run: Promise<ToolDispatchResult>;
 };
 
+export type SubagentDispatchContext = {
+  id: string;
+  name: SubagentName;
+  title: string;
+  controlPlane: SubagentControlPlane;
+};
+
 export type ToolDispatchContext = {
-  persona: Persona;
-  config: Config;
-  history: readonly Message[];
-  systemPrompt: string;
-  toolRegistry: ToolRegistry;
+  persona?: Persona;
+  config?: Config;
+  history?: readonly Message[];
+  systemPrompt?: string;
+  toolRegistry?: ToolRegistry;
   authPath?: string;
+  subagentContext?: SubagentDispatchContext;
+  subagentControlPlane?: SubagentControlPlane;
 };
 
 export interface ToolDefinition {

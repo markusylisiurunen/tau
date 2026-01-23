@@ -1,11 +1,14 @@
 import type { Config } from "../config/index.js";
-import type { AllowedSubagentToolName } from "../subagents/types.js";
+import type { SubagentToolName } from "../subagents/types.js";
 import { createBashToolDefinition } from "./bash.js";
+import { createCommunicateToolDefinition } from "./communicate.js";
 import { createEditToolDefinition } from "./edit.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition } from "./registry.js";
 import { ToolRegistry } from "./registry.js";
-import { createTaskToolDefinition } from "./task.js";
+import { createSpawnAgentToolDefinition } from "./spawn_agent.js";
+import { createTerminateAgentToolDefinition } from "./terminate_agent.js";
+import { createWaitForAgentToolDefinition } from "./wait_for_agent.js";
 import { createWebFetchToolDefinition } from "./web_fetch.js";
 import { createWebSearchToolDefinition } from "./web_search.js";
 import { createWriteToolDefinition } from "./write.js";
@@ -16,21 +19,33 @@ export const ToolCatalog = {
       createBashToolDefinition(backend),
       createWriteToolDefinition(backend),
       createEditToolDefinition(backend),
-      createTaskToolDefinition(backend),
+      createSpawnAgentToolDefinition(backend),
+      createWaitForAgentToolDefinition(),
+      createTerminateAgentToolDefinition(),
     ]);
   },
 
   createSubagentRegistry(
-    allowedTools: AllowedSubagentToolName[],
+    allowedTools: SubagentToolName[],
     config: Config,
     backend: ToolExecutionBackend,
   ): ToolRegistry {
-    const definitions: ToolDefinition[] = [];
+    const definitions: ToolDefinition[] = [createCommunicateToolDefinition()];
+    const seen = new Set<string>();
 
-    for (const tool of allowedTools) {
+    const addTool = (tool: SubagentToolName): void => {
+      if (seen.has(tool)) return;
+      seen.add(tool);
+
       switch (tool) {
         case "bash":
           definitions.push(createBashToolDefinition(backend));
+          break;
+        case "write":
+          definitions.push(createWriteToolDefinition(backend));
+          break;
+        case "edit":
+          definitions.push(createEditToolDefinition(backend));
           break;
         case "web_search":
           definitions.push(createWebSearchToolDefinition(config));
@@ -38,7 +53,13 @@ export const ToolCatalog = {
         case "web_fetch":
           definitions.push(createWebFetchToolDefinition(config));
           break;
+        case "communicate":
+          break;
       }
+    };
+
+    for (const tool of allowedTools) {
+      addTool(tool);
     }
 
     return new ToolRegistry(definitions);

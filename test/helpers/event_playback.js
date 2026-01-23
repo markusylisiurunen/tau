@@ -51,6 +51,7 @@ export function createPlaybackHarness(options = {}) {
     handleToolUiEvent: (event) => {
       calls.toolUiEvents.push(event);
     },
+    handleSubagentEvent: () => {},
     resetToolUiSession: () => {
       calls.toolUiReset += 1;
     },
@@ -61,6 +62,8 @@ export function createPlaybackHarness(options = {}) {
       calls.toolUiCleared += 1;
     },
     getToolUiCostTotal: () => 0,
+    cycleSubagentSelection: () => undefined,
+    getSelectedSubagentId: () => undefined,
     sendTerminalNotification: () => {},
     getEditorText: () => "",
     setEditorText: () => {},

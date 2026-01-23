@@ -192,10 +192,12 @@ tau --persona opus-4.5-coder
 
 ## sub-agents
 
-some personas can run isolated sub-agents via the internal `task` tool.
+some personas can run isolated sub-agents via the `spawn_agent`, `wait_for_agent`, and `terminate_agent` tools. sub-agents return their output through the subagent-only `communicate` tool, which is collected by `wait_for_agent`.
 
 - `explore`: read-only, multi-turn codebase investigation
 - `web`: high-threshold web research using Parallel Search/Extract (`web_search`/`web_fetch`) plus read-only bash for curl/filtering
+
+sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 3.
 
 to use the web sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when you explicitly ask for web research.
 
@@ -390,15 +392,17 @@ optional frontmatter fields:
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
-- `subagents`: enable sub-agents (`explore` for multi-turn codebase investigation, `web` for web research). you can specify as a list (`subagents: [explore]`, `subagents: [web]`, or `subagents: [explore, web]`) to use the main persona's model, or as an object to customize each sub-agent's model and reasoning. when specifying a model for a subagent, `provider` and `model` must be provided together. example:
+- `subagents`: enable sub-agents (`explore` for multi-turn codebase investigation, `web` for web research). you can specify as a list (`subagents: [explore]`, `subagents: [web]`, or `subagents: [explore, web]`) to use the main persona's model, or as an object to customize each sub-agent's model, reasoning, tools, and risk level. when specifying a model for a subagent, `provider` and `model` must be provided together. example:
   ```yaml
   subagents:
     explore:
       provider: anthropic
       model: claude-haiku-4-5
       reasoning: medium
+      tools: [bash]
+      riskLevel: read-only
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `task`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `spawn_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit` (and subagent tools when subagents are enabled). risk levels still apply.
 
 the markdown body becomes the system prompt.
 

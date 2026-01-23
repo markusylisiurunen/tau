@@ -1,4 +1,5 @@
 import type { AssistantMessage, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { SubagentUiEvent } from "../subagents/types.js";
 import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
 import type { ToolUiEvent } from "../tools/registry.js";
 
@@ -29,6 +30,11 @@ export type CoreToolUiEvent = {
   uiEvent: ToolUiEvent;
 };
 
+export type CoreSubagentUiEvent = {
+  type: "subagent_ui";
+  event: SubagentUiEvent;
+};
+
 export type CoreToolResultEvent = {
   type: "tool_result";
   message: ToolResultMessage;
@@ -40,6 +46,7 @@ export type CoreEvent =
   | CoreAssistantPartialEvent
   | CoreNoticeEvent
   | CoreToolUiEvent
+  | CoreSubagentUiEvent
   | CoreToolResultEvent;
 
 export type RunnerEvent =

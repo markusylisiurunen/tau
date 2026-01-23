@@ -2,7 +2,9 @@ import { getModel } from "@mariozechner/pi-ai";
 import type { SubagentConfigMap } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
-import { TASK_TOOL } from "./tools/task_schema.js";
+import { SPAWN_AGENT_TOOL } from "./tools/spawn_agent.js";
+import { TERMINATE_AGENT_TOOL } from "./tools/terminate_agent.js";
+import { WAIT_FOR_AGENT_TOOL } from "./tools/wait_for_agent.js";
 import { WRITE_TOOL } from "./tools/write.js";
 import type { Persona, ReasoningEffort } from "./types.js";
 
@@ -310,6 +312,11 @@ const VARIANT_CONFIG: Record<Variant, { suffix: string; systemPrompt: string }> 
 };
 
 const BASE_TOOLS: NonNullable<Persona["tools"]> = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
+const SUBAGENT_TOOLS: NonNullable<Persona["tools"]> = [
+  SPAWN_AGENT_TOOL,
+  WAIT_FOR_AGENT_TOOL,
+  TERMINATE_AGENT_TOOL,
+];
 
 function pickExploreReasoning(allowed: ReasoningEffort[]): ReasoningEffort {
   const preferred: ReasoningEffort[] = ["minimal", "low", "none", "medium", "high", "xhigh"];
@@ -351,7 +358,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
     settings: webSettings,
   };
 
-  const tools = [...BASE_TOOLS, TASK_TOOL];
+  const tools = [...BASE_TOOLS, ...SUBAGENT_TOOLS];
 
   return {
     id: `${spec.id}${config.suffix}`,

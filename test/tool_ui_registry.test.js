@@ -69,52 +69,49 @@ describe("ToolUiRegistry", () => {
     expect(aborted).toContain("aborted");
   });
 
-  it("renders task tool events", () => {
-    const started = renderEvent(registry, theme, {
-      type: "task_started",
-      toolCallId: "t1",
-      kind: "task",
-      name: "worker",
-      title: "do thing",
+  it("renders subagent tool events", () => {
+    const spawnStarted = renderEvent(registry, theme, {
+      type: "spawn_agent_started",
+      toolCallId: "s1",
+      name: "explore",
+      title: "scan repo",
     });
-    expect(started).toContain("task running");
+    expect(spawnStarted).toContain("spawn agent");
 
-    const progress = renderEvent(registry, theme, {
-      type: "task_progress",
-      toolCallId: "t1",
-      kind: "task",
-      name: "worker",
-      title: "do thing",
-      event: "agent: hello",
-      costTotal: 1.25,
-      turns: 2,
-      toolCalls: 1,
-    });
-    expect(progress).toContain("task running");
-
-    const finished = renderEvent(registry, theme, {
-      type: "task_finished",
-      toolCallId: "t1",
-      kind: "task",
-      name: "",
-      title: "task job",
-      costTotal: 0.5,
-      turns: 1,
-      toolCalls: 0,
+    const spawnFinished = renderEvent(registry, theme, {
+      type: "spawn_agent_finished",
+      toolCallId: "s1",
+      name: "explore",
+      title: "scan repo",
       status: "success",
-      finalOutput: "done",
+      agentId: "agent-1",
     });
-    expect(finished).toContain("task finished");
+    expect(spawnFinished).toContain("spawn agent");
 
-    const blocked = renderEvent(registry, theme, {
-      type: "task_blocked",
-      toolCallId: "t2",
-      kind: "task",
-      name: "worker",
-      title: "do thing",
-      reason: "blocked",
+    const waitStarted = renderEvent(registry, theme, {
+      type: "wait_for_agent_started",
+      toolCallId: "w1",
+      agentIds: ["agent-1", "agent-2"],
     });
-    expect(blocked).toContain("task blocked");
+    expect(waitStarted).toContain("wait for agents");
+
+    const waitFinished = renderEvent(registry, theme, {
+      type: "wait_for_agent_finished",
+      toolCallId: "w1",
+      agentIds: ["agent-1", "agent-2"],
+      status: "error",
+      message: "one failed",
+    });
+    expect(waitFinished).toContain("wait for agents");
+
+    const terminateFinished = renderEvent(registry, theme, {
+      type: "terminate_agent_finished",
+      toolCallId: "t1",
+      agentId: "agent-1",
+      status: "success",
+      finalStatus: "aborted",
+    });
+    expect(terminateFinished).toContain("terminate agent");
   });
 
   it("renders web tool events", () => {

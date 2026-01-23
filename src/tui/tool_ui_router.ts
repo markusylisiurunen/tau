@@ -1,53 +1,45 @@
 import type { ToolUiEvent } from "../core/tools/registry.js";
 import type { ChatContainerComponent } from "./ui/chat_container.js";
-import type { ToolUiTaskState } from "./ui/tool_ui_registry.js";
 
 type RunningBashComponent = {
   command: string;
 };
 
-type RunningTaskComponent = {
-  kind: "task";
-  name?: string;
-  title: string;
-  costTotal: number;
-  turns: number;
-  toolCalls: number;
-  events: string[];
-};
+type RunningSubagentTool =
+  | {
+      kind: "spawn_agent";
+      name: string;
+      title: string;
+    }
+  | {
+      kind: "wait_for_agent";
+      agentIds: string[];
+    }
+  | {
+      kind: "terminate_agent";
+      agentId: string;
+    };
 
 export class ToolUiRouter {
   private readonly chatContainer: ChatContainerComponent;
   private readonly requestRender: () => void;
-  private readonly onCostUpdated?: () => void;
 
   private runningBashComponents: Map<string, RunningBashComponent> = new Map();
-  private runningTaskComponents: Map<string, RunningTaskComponent> = new Map();
-  private subagentCostTotal = 0;
+  private runningSubagentTools: Map<string, RunningSubagentTool> = new Map();
 
-  constructor(options: {
-    chatContainer: ChatContainerComponent;
-    requestRender: () => void;
-    onCostUpdated?: () => void;
-  }) {
+  constructor(options: { chatContainer: ChatContainerComponent; requestRender: () => void }) {
     this.chatContainer = options.chatContainer;
     this.requestRender = options.requestRender;
-    this.onCostUpdated = options.onCostUpdated;
-  }
-
-  getSubagentCostTotal(): number {
-    return this.subagentCostTotal;
   }
 
   resetSession(): void {
     this.runningBashComponents.clear();
-    this.runningTaskComponents.clear();
-    this.subagentCostTotal = 0;
+    this.runningSubagentTools.clear();
   }
 
   clearTransientState(): void {
     this.runningBashComponents.clear();
-    this.runningTaskComponents.clear();
+    this.runningSubagentTools.clear();
   }
 
   finalizePending(reason: "aborted" | "interrupted"): void {
@@ -61,20 +53,8 @@ export class ToolUiRouter {
       this.chatContainer.replaceMessage(id, { type: "tool", event });
     }
 
-    const taskStatus = reason === "aborted" ? "aborted" : "error";
-    for (const [id, running] of this.runningTaskComponents.entries()) {
-      const event: ToolUiEvent = {
-        type: "task_finished",
-        toolCallId: id,
-        kind: running.kind,
-        name: running.name ?? "",
-        title: running.title,
-        costTotal: running.costTotal,
-        turns: running.turns,
-        toolCalls: running.toolCalls,
-        status: taskStatus,
-        finalOutput: reason,
-      };
+    for (const [id, running] of this.runningSubagentTools.entries()) {
+      const event = this.toSubagentAbortEvent(id, running, reason);
       this.chatContainer.replaceMessage(id, { type: "tool", event });
     }
 
@@ -120,78 +100,87 @@ export class ToolUiRouter {
       return;
     }
 
-    if (uiEvent.type === "task_started") {
-      const kind = uiEvent.kind ?? "task";
-      const subagentName = uiEvent.name.trim() || undefined;
-      const state: RunningTaskComponent = {
-        kind,
-        name: subagentName,
+    if (uiEvent.type === "spawn_agent_started") {
+      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.runningSubagentTools.set(uiEvent.toolCallId, {
+        kind: "spawn_agent",
+        name: uiEvent.name,
         title: uiEvent.title,
-        costTotal: 0,
-        turns: 0,
-        toolCalls: 0,
-        events: [],
-      };
-      this.chatContainer.addMessage(
-        { type: "tool", event: uiEvent, taskState: this.toTaskState(state) },
-        uiEvent.toolCallId,
-      );
-      this.runningTaskComponents.set(uiEvent.toolCallId, state);
-      this.requestRender();
-      return;
-    }
-
-    if (uiEvent.type === "task_progress") {
-      const running = this.runningTaskComponents.get(uiEvent.toolCallId);
-      const kind = uiEvent.kind ?? running?.kind ?? "task";
-      const subagentName = uiEvent.name.trim() || undefined;
-
-      const state: RunningTaskComponent = running ?? {
-        kind,
-        name: subagentName,
-        title: uiEvent.title,
-        costTotal: uiEvent.costTotal,
-        turns: uiEvent.turns,
-        toolCalls: uiEvent.toolCalls,
-        events: [],
-      };
-
-      state.events.push(uiEvent.event);
-      state.kind = kind;
-      state.name = subagentName;
-      state.title = uiEvent.title;
-      state.costTotal = uiEvent.costTotal;
-      state.turns = uiEvent.turns;
-      state.toolCalls = uiEvent.toolCalls;
-
-      this.runningTaskComponents.set(uiEvent.toolCallId, state);
-
-      this.chatContainer.replaceMessage(uiEvent.toolCallId, {
-        type: "tool",
-        event: uiEvent,
-        taskState: this.toTaskState(state),
       });
       this.requestRender();
       return;
     }
 
-    if (uiEvent.type === "task_finished") {
+    if (uiEvent.type === "spawn_agent_finished") {
       this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
-      this.runningTaskComponents.delete(uiEvent.toolCallId);
-      this.subagentCostTotal += uiEvent.costTotal;
-      this.onCostUpdated?.();
+      this.runningSubagentTools.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
 
-    if (uiEvent.type === "task_blocked") {
-      const running = this.runningTaskComponents.get(uiEvent.toolCallId);
-      if (running) {
+    if (uiEvent.type === "spawn_agent_blocked") {
+      if (this.runningSubagentTools.has(uiEvent.toolCallId)) {
         this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
       } else {
         this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
       }
-      this.runningTaskComponents.delete(uiEvent.toolCallId);
+      this.runningSubagentTools.delete(uiEvent.toolCallId);
+      this.requestRender();
+      return;
+    }
+
+    if (uiEvent.type === "wait_for_agent_started") {
+      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.runningSubagentTools.set(uiEvent.toolCallId, {
+        kind: "wait_for_agent",
+        agentIds: uiEvent.agentIds,
+      });
+      this.requestRender();
+      return;
+    }
+
+    if (uiEvent.type === "wait_for_agent_finished") {
+      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.runningSubagentTools.delete(uiEvent.toolCallId);
+      this.requestRender();
+      return;
+    }
+
+    if (uiEvent.type === "wait_for_agent_blocked") {
+      if (this.runningSubagentTools.has(uiEvent.toolCallId)) {
+        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      } else {
+        this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      }
+      this.runningSubagentTools.delete(uiEvent.toolCallId);
+      this.requestRender();
+      return;
+    }
+
+    if (uiEvent.type === "terminate_agent_started") {
+      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.runningSubagentTools.set(uiEvent.toolCallId, {
+        kind: "terminate_agent",
+        agentId: uiEvent.agentId,
+      });
+      this.requestRender();
+      return;
+    }
+
+    if (uiEvent.type === "terminate_agent_finished") {
+      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.runningSubagentTools.delete(uiEvent.toolCallId);
+      this.requestRender();
+      return;
+    }
+
+    if (uiEvent.type === "terminate_agent_blocked") {
+      if (this.runningSubagentTools.has(uiEvent.toolCallId)) {
+        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      } else {
+        this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      }
+      this.runningSubagentTools.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
@@ -241,14 +230,38 @@ export class ToolUiRouter {
     }
   }
 
-  private toTaskState(state: RunningTaskComponent): ToolUiTaskState {
+  private toSubagentAbortEvent(
+    toolCallId: string,
+    running: RunningSubagentTool,
+    reason: "aborted" | "interrupted",
+  ): ToolUiEvent {
+    if (running.kind === "spawn_agent") {
+      return {
+        type: "spawn_agent_finished",
+        toolCallId,
+        name: running.name,
+        title: running.title,
+        status: "error",
+        message: reason,
+      };
+    }
+
+    if (running.kind === "wait_for_agent") {
+      return {
+        type: "wait_for_agent_finished",
+        toolCallId,
+        agentIds: running.agentIds,
+        status: "error",
+        message: reason,
+      };
+    }
+
     return {
-      events: state.events,
-      costTotal: state.costTotal,
-      turns: state.turns,
-      toolCalls: state.toolCalls,
-      kind: state.kind,
-      name: state.name,
+      type: "terminate_agent_finished",
+      toolCallId,
+      agentId: running.agentId,
+      status: "error",
+      message: reason,
     };
   }
 }

@@ -3,22 +3,60 @@ import type { PersonaSettings, RiskLevel } from "../types.js";
 
 export type SubagentName = "explore" | "web";
 
+export type SubagentToolName =
+  | "bash"
+  | "write"
+  | "edit"
+  | "web_search"
+  | "web_fetch"
+  | "communicate";
+
+export type SubagentRiskLevel = RiskLevel;
+
 export type SubagentPersonaConfig = {
   model: Model<Api>;
   settings?: PersonaSettings;
+  tools?: SubagentToolName[];
+  riskLevel?: SubagentRiskLevel;
 };
 
 export type SubagentConfigMap = Partial<Record<SubagentName, SubagentPersonaConfig>>;
 
-export type AllowedSubagentToolName = "bash" | "web_search" | "web_fetch";
+export type SubagentStatus = "running" | "success" | "error" | "aborted";
 
-export type SubagentRiskLevel = RiskLevel;
+export type SubagentStateSnapshot = {
+  id: string;
+  name: SubagentName;
+  title: string;
+  status: SubagentStatus;
+  costTotal: number;
+  turns: number;
+  toolCalls: number;
+  startedAt: number;
+  finishedAt?: number;
+  abortRequested?: boolean;
+  error?: string;
+};
+
+export type SubagentUiEvent =
+  | { type: "subagent_spawned"; state: SubagentStateSnapshot }
+  | {
+      type: "subagent_progress";
+      id: string;
+      text: string;
+      costTotal: number;
+      turns: number;
+      toolCalls: number;
+    }
+  | { type: "subagent_communicate"; id: string; text: string }
+  | { type: "subagent_abort_requested"; id: string }
+  | { type: "subagent_finished"; state: SubagentStateSnapshot };
 
 export type SubagentRuntimeDefinition = {
   name: SubagentName;
   description?: string;
   systemPrompt: string;
-  allowedTools: AllowedSubagentToolName[];
+  allowedTools: SubagentToolName[];
   riskLevel: SubagentRiskLevel;
   maxSubturns?: number;
 };

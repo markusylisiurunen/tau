@@ -47,11 +47,7 @@ function formatTerminateResult(result: SubagentResult): string {
     title: result.title,
     status: result.status,
     outputs: result.outputs,
-    finalText: result.finalText,
     error: result.error,
-    costTotal: result.costTotal,
-    turns: result.turns,
-    toolCalls: result.toolCalls,
   };
 
   return JSON.stringify(payload, null, 2);
@@ -65,6 +61,11 @@ function formatTerminateOutput(result: SubagentResult): string {
   if (!body) {
     const finalText = result.finalText?.trimEnd() ?? "";
     body = finalText.trim().length > 0 ? finalText : "";
+  }
+
+  if (result.status !== "success") {
+    const errorLine = result.error ? `error: ${result.error}` : `status: ${result.status}`;
+    return body ? `${errorLine}\n${body}` : errorLine;
   }
 
   return body;

@@ -91,15 +91,15 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 ## Tool system
 
-| Tool             | Purpose                          | Risk requirement                               |
-| ---------------- | -------------------------------- | ---------------------------------------------- |
-| `bash`           | Shell execution                  | `read-only` for reads, `read-write` for writes |
-| `write`          | Create/overwrite files           | `read-write`                                   |
-| `edit`           | Replace exact text in files      | `read-write`                                   |
-| `spawn_agent`    | Start a background subagent      | `read-only` or `read-write`                    |
-| `wait_for_agent` | Await subagent completion        | `read-only` or `read-write`                    |
-| `terminate_agent`| Stop a running subagent          | `read-only` or `read-write`                    |
-| `communicate`    | Subagent-only output to main     | `read-only` or `read-write`                    |
+| Tool              | Purpose                      | Risk requirement                               |
+| ----------------- | ---------------------------- | ---------------------------------------------- |
+| `bash`            | Shell execution              | `read-only` for reads, `read-write` for writes |
+| `write`           | Create/overwrite files       | `read-write`                                   |
+| `edit`            | Replace exact text in files  | `read-write`                                   |
+| `spawn_agent`     | Start a background subagent  | `read-only` or `read-write`                    |
+| `wait_for_agent`  | Await subagent completion    | `read-only` or `read-write`                    |
+| `terminate_agent` | Stop a running subagent      | `read-only` or `read-write`                    |
+| `communicate`     | Subagent-only output to main | `read-only` or `read-write`                    |
 
 Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set.
 
@@ -231,6 +231,20 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `npm run check` - Format (Biome) + typecheck
 - `npm run build` - Compile to dist/
 - `npm test` - Build + run UI tests
+
+**Search examples**
+
+- Find symbol references in src: `rg "ChatController" src`
+- Search only TypeScript files: `rg -t ts "ToolUiText" src`
+- Show line numbers and context: `rg -n -C 2 "spawn_agent" src`
+- List matching files only: `rg -l "export interface" src`
+- List all TypeScript files under src: `fd -e ts --search-path src -t f`
+- Find files by glob in a subtree: `fd --glob -p "**/tools/*.ts" --search-path src`
+- Limit search depth: `fd -e ts --search-path src --max-depth 2`
+- Count TS lines in src: `fd -e ts --search-path src -t f | xargs wc -l`
+- Search for a file by name anywhere: `fd "chat_controller.ts"`
+
+Note: `fd <pattern> <path>` treats the second argument as the path only when a pattern is present. If you pass a path without an explicit pattern, it is treated as the pattern. Example bad: `fd -e ts src`. Example good: `fd -e ts --search-path src` or `fd -e ts '' src`.
 
 **Do not run the app** (`npm start`, `node dist/main.js`) ever. It launches an interactive TUI that requires a real terminal.
 

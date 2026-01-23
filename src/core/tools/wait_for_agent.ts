@@ -59,11 +59,7 @@ function formatWaitResult(results: SubagentResult[]): string {
       title: result.title,
       status: result.status,
       outputs: result.outputs,
-      finalText: result.finalText,
       error: result.error,
-      costTotal: result.costTotal,
-      turns: result.turns,
-      toolCalls: result.toolCalls,
     })),
   };
 
@@ -82,7 +78,17 @@ function formatSubagentOutputLines(result: SubagentResult, maxLines: number): st
 
   const header = `**${result.id}**`;
   const outputLines = body ? body.split("\n") : [];
-  const truncated = truncateOutputLines(outputLines, maxLines);
+  const errorLine =
+    result.status !== "success"
+      ? result.error
+        ? `error: ${result.error}`
+        : `status: ${result.status}`
+      : undefined;
+  const remainingLines = errorLine ? Math.max(1, maxLines - 1) : maxLines;
+  const truncated = truncateOutputLines(outputLines, remainingLines);
+  if (errorLine) {
+    return [header, errorLine, ...truncated];
+  }
   return truncated.length > 0 ? [header, ...truncated] : [header];
 }
 

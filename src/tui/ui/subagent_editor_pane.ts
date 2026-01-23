@@ -72,7 +72,7 @@ export class SubagentEditorPaneComponent implements Component {
     const rightCorner = border("╮");
     const labelWidth = Math.max(0, innerWidth - 4);
     const label = labelWidth > 0 ? truncateFromEndByWidth(SUBAGENT_HEADER_LABEL, labelWidth) : "";
-    const labelSegment = label ? ` ${this.theme.palette.textMuted(label)} ` : "";
+    const labelSegment = label ? ` ${this.theme.palette.textDim(label)} ` : "";
     const fillWidth = Math.max(0, innerWidth - 2 - visibleWidth(labelSegment));
     const fill = dash.repeat(fillWidth);
 

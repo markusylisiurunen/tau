@@ -203,7 +203,6 @@ export type ToolDispatchResult = {
 export type ToolDispatchResultWithPhases = {
   kind: "phased";
   startedUiEvent?: ToolUiEvent;
-  uiEvents?: AsyncIterable<ToolUiEvent>;
   run: Promise<ToolDispatchResult>;
 };
 

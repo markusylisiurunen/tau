@@ -219,13 +219,6 @@ export async function* runToolCalls(
         yield { type: "tool_ui", uiEvent: result.startedUiEvent };
       }
 
-      if (result.uiEvents) {
-        for await (const uiEvent of result.uiEvents) {
-          if (signal.aborted) break;
-          yield { type: "tool_ui", uiEvent };
-        }
-      }
-
       const { toolResult, uiEvent } = await result.run;
       resultsByIndex.set(index, toolResult);
       if (uiEvent) {

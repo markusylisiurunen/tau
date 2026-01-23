@@ -165,17 +165,18 @@ export class SubagentPanelComponent implements Component {
 
   private buildHeaderLine(entry: SubagentPanelEntry): string {
     const { palette } = this.theme;
-    const bullet = palette.actionRunning("⏵");
     const name = entry.name.trim();
     const title = entry.title.trim();
+    const arrowStyle = name ? palette.textDim : palette.brandAccent;
+    const arrow = arrowStyle("⏵");
 
     if (name && title) {
-      return `${bullet} ${palette.textDim(name)} ${palette.brandAccent(title)}`;
+      return `${arrow} ${palette.textDim(name)} ${palette.brandAccent(title)}`;
     }
     if (name) {
-      return `${bullet} ${palette.textDim(name)}`;
+      return `${arrow} ${palette.textDim(name)}`;
     }
-    return `${bullet} ${palette.brandAccent(title || "(subagent)")}`;
+    return `${arrow} ${palette.brandAccent(title || "(subagent)")}`;
   }
 
   private buildOutputLines(entry: SubagentPanelEntry): string[] {

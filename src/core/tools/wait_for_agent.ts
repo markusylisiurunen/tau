@@ -11,6 +11,11 @@ import type {
   ToolDispatchResultWithPhases,
   ToolUiEvent,
 } from "./registry.js";
+import {
+  buildSubagentUiText,
+  formatSubagentStatusLine,
+  truncateOutputLines,
+} from "./subagent_ui.js";
 
 const WAIT_FOR_AGENT_DESCRIPTION = [
   "Wait for one or more subagents to finish and return their outputs.",
@@ -65,6 +70,55 @@ function formatWaitResult(results: SubagentResult[]): string {
   return JSON.stringify(payload, null, 2);
 }
 
+function formatSubagentOutputLines(result: SubagentResult, maxLines: number): string[] {
+  const cleanedOutputs = result.outputs
+    .map((text) => text.trimEnd())
+    .filter((text) => text.trim().length > 0);
+  let body = cleanedOutputs.join("\n\n");
+  if (!body) {
+    const finalText = result.finalText?.trimEnd() ?? "";
+    body = finalText.trim().length > 0 ? finalText : "";
+  }
+
+  const header = `**${result.id}**`;
+  const outputLines = body ? body.split("\n") : [];
+  const truncated = truncateOutputLines(outputLines, maxLines);
+  return truncated.length > 0 ? [header, ...truncated] : [header];
+}
+
+function formatWaitOutput(results: SubagentResult[]): string {
+  const limit = getWaitOutputLimit(results.length);
+  const output: string[] = [];
+  results.forEach((result, index) => {
+    if (index > 0) output.push("");
+    output.push(...formatSubagentOutputLines(result, limit));
+  });
+  return output.join("\n");
+}
+
+function getWaitOutputLimit(count: number): number {
+  if (count <= 1) return 16;
+  if (count === 2) return 12;
+  return 8;
+}
+
+function getWaitDurationMs(results: SubagentResult[]): number | undefined {
+  if (results.length === 0) return undefined;
+  let earliest = Number.POSITIVE_INFINITY;
+  let latest = 0;
+  for (const result of results) {
+    earliest = Math.min(earliest, result.startedAt);
+    const finishedAt = result.finishedAt ?? Date.now();
+    latest = Math.max(latest, finishedAt);
+  }
+  if (!Number.isFinite(earliest)) return undefined;
+  return Math.max(0, latest - earliest);
+}
+
+function getWaitCostTotal(results: SubagentResult[]): number {
+  return results.reduce((sum, result) => sum + result.costTotal, 0);
+}
+
 export function createWaitForAgentToolDefinition(): ToolDefinition {
   return {
     schema: WAIT_FOR_AGENT_TOOL,
@@ -117,12 +171,21 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
             const results = await controlPlane.waitFor(deduped, signal);
             const resultText = formatWaitResult(results);
             const hasFailures = results.some((result) => result.status !== "success");
+            const statusText = formatSubagentStatusLine({
+              costTotal: getWaitCostTotal(results),
+              durationMs: getWaitDurationMs(results),
+            });
+            const uiText = buildSubagentUiText({
+              output: formatWaitOutput(results),
+              statusText,
+            });
             const uiEvent: ToolUiEvent = {
               type: "wait_for_agent_finished",
               toolCallId: toolCall.id,
               agentIds: deduped,
               status: hasFailures ? "error" : "success",
               message: hasFailures ? "one or more subagents reported errors" : undefined,
+              uiText,
             };
             const toolResult = createToolResult(toolCall, resultText, hasFailures);
             return { kind: "single", toolResult, uiEvent };

@@ -1,4 +1,4 @@
-import type { ToolUiEvent } from "../../core/tools/registry.js";
+import type { ToolUiEvent, ToolUiText } from "../../core/tools/registry.js";
 import {
   buildBashAbortedView,
   buildBashBlockedView,
@@ -16,6 +16,7 @@ import {
   buildHeaderLine,
   buildSection,
   inlineText,
+  renderToolUiTextLines,
   type ToolOutputViewModel,
 } from "./tool_output.js";
 
@@ -98,23 +99,103 @@ function buildSimpleToolFinishedView(args: {
   };
 }
 
-function formatSubagentTarget(args: {
-  name?: string;
-  title?: string;
-  agentId?: string;
-}): string {
-  const name = args.name?.trim();
-  const title = args.title?.trim();
-  const base = name ? `${name}: ${title ?? ""}`.trim() : (title ?? "").trim();
-  const finalLabel = base || "(subagent)";
-  return args.agentId ? `${finalLabel} (${args.agentId})` : finalLabel;
+function formatSubagentTitle(title: string | undefined): string {
+  const trimmed = title?.trim() ?? "";
+  return trimmed || "(subagent)";
 }
 
-function formatAgentIds(ids: string[]): string {
+function formatAgentIdList(ids: string[]): string {
   const cleaned = ids.map((id) => id.trim()).filter(Boolean);
   if (cleaned.length === 0) return "(no ids)";
-  if (cleaned.length <= 2) return cleaned.join(", ");
-  return `${cleaned.slice(0, 2).join(", ")}, +${cleaned.length - 2} more`;
+  return cleaned.join(", ");
+}
+
+function buildSubagentRunningView(args: {
+  theme: Theme;
+  label: string;
+  title: string;
+}): ToolOutputViewModel {
+  const { theme, label, title } = args;
+  const { palette, text } = theme;
+  const runningColor = (s: string) => palette.actionRunning(s);
+  const target = formatSubagentTitle(title);
+
+  const header = buildHeaderLine({
+    bulletStyle: runningColor,
+    bullet: "⏵",
+    label,
+    labelStyle: palette.textMuted,
+    accent: inlineText(target),
+    accentStyle: palette.brandAccent,
+    wrapIndex: 5,
+  });
+
+  return {
+    borderColor: runningColor,
+    expanded: { title: runningColor(text.bold(target)) },
+    compact: { header },
+  };
+}
+
+function buildSubagentFinishedView(args: {
+  theme: Theme;
+  label: string;
+  failureLabel: string;
+  title: string;
+  status: "success" | "error";
+  uiText: ToolUiText;
+}): ToolOutputViewModel {
+  const { theme, label, failureLabel, title, status, uiText } = args;
+  const { palette, text } = theme;
+  const successColor = (s: string) => palette.actionSuccess(s);
+  const errorColor = (s: string) => palette.actionError(s);
+  const isSuccess = status === "success";
+  const borderColor = isSuccess ? successColor : errorColor;
+  const headerLabel = isSuccess ? label : failureLabel;
+  const target = formatSubagentTitle(title);
+
+  const header = buildHeaderLine({
+    bulletStyle: borderColor,
+    bullet: isSuccess ? "✓" : "✗",
+    label: headerLabel,
+    labelStyle: palette.textMuted,
+    accent: inlineText(target),
+    accentStyle: palette.brandAccent,
+    wrapIndex: 5,
+  });
+
+  const compactParts: string[] = [];
+  const previewText = renderToolUiTextLines({
+    uiText,
+    kind: "preview",
+    theme,
+    baseStyle: palette.textDim,
+  });
+  if (previewText) {
+    compactParts.push(previewText);
+  }
+  if (uiText.statusLine?.trim()) {
+    compactParts.push(palette.textMuted(uiText.statusLine));
+  }
+  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
+  const fullText = renderToolUiTextLines({
+    uiText,
+    kind: "full",
+    theme,
+    baseStyle: palette.actionOutput,
+  });
+
+  return {
+    borderColor,
+    expanded: {
+      title: borderColor(text.bold(target)),
+      sections: fullText ? [fullText] : [],
+    },
+    compact: {
+      header,
+      extraText: compactText,
+    },
+  };
 }
 
 export class ToolUiRegistry {
@@ -168,33 +249,42 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("spawn_agent_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "spawn_agent_started" }>;
-    const target = formatSubagentTarget({ name: uiEvent.name, title: uiEvent.title });
-    return buildSimpleToolRunningView(context.theme, "spawn agent", target);
+    return buildSubagentRunningView({
+      theme: context.theme,
+      label: "spawning",
+      title: uiEvent.name,
+    });
   });
 
   registry.register("spawn_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "spawn_agent_finished" }>;
-    const target = formatSubagentTarget({
-      name: uiEvent.name,
-      title: uiEvent.title,
-      agentId: uiEvent.agentId,
-    });
-    return buildSimpleToolFinishedView({
+    const title = formatSubagentTitle(uiEvent.name);
+    if (!uiEvent.uiText) {
+      return buildSimpleToolFinishedView({
+        theme: context.theme,
+        label: "spawn",
+        target: title,
+        status: uiEvent.status,
+        message: uiEvent.message,
+      });
+    }
+    return buildSubagentFinishedView({
       theme: context.theme,
-      label: "spawn agent",
-      target,
+      label: "spawned",
+      failureLabel: "spawn failed",
+      title,
       status: uiEvent.status,
-      message: uiEvent.message,
+      uiText: uiEvent.uiText,
     });
   });
 
   registry.register("spawn_agent_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "spawn_agent_blocked" }>;
-    const target = formatSubagentTarget({ name: uiEvent.name, title: uiEvent.title });
+    const title = formatSubagentTitle(uiEvent.name ?? uiEvent.title);
     return buildSimpleToolFinishedView({
       theme: context.theme,
-      label: "spawn agent",
-      target,
+      label: "spawn",
+      target: title,
       status: "error",
       message: uiEvent.reason,
     });
@@ -202,29 +292,43 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("wait_for_agent_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_started" }>;
-    const target = formatAgentIds(uiEvent.agentIds);
-    return buildSimpleToolRunningView(context.theme, "wait for agents", target);
+    const title = formatAgentIdList(uiEvent.agentIds);
+    return buildSubagentRunningView({
+      theme: context.theme,
+      label: "waiting",
+      title,
+    });
   });
 
   registry.register("wait_for_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_finished" }>;
-    const target = formatAgentIds(uiEvent.agentIds);
-    return buildSimpleToolFinishedView({
+    const title = formatAgentIdList(uiEvent.agentIds);
+    if (!uiEvent.uiText) {
+      return buildSimpleToolFinishedView({
+        theme: context.theme,
+        label: "wait",
+        target: title,
+        status: uiEvent.status,
+        message: uiEvent.message,
+      });
+    }
+    return buildSubagentFinishedView({
       theme: context.theme,
-      label: "wait for agents",
-      target,
+      label: "waited",
+      failureLabel: "waited",
+      title,
       status: uiEvent.status,
-      message: uiEvent.message,
+      uiText: uiEvent.uiText,
     });
   });
 
   registry.register("wait_for_agent_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_blocked" }>;
-    const target = formatAgentIds(uiEvent.agentIds ?? []);
+    const title = formatAgentIdList(uiEvent.agentIds ?? []);
     return buildSimpleToolFinishedView({
       theme: context.theme,
-      label: "wait for agents",
-      target,
+      label: "wait",
+      target: title,
       status: "error",
       message: uiEvent.reason,
     });
@@ -232,30 +336,46 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("terminate_agent_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "terminate_agent_started" }>;
-    return buildSimpleToolRunningView(context.theme, "terminate agent", uiEvent.agentId);
+    return buildSubagentRunningView({
+      theme: context.theme,
+      label: "terminating",
+      title: uiEvent.agentId,
+    });
   });
 
   registry.register("terminate_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "terminate_agent_finished" }>;
-    const message =
-      uiEvent.finalStatus && uiEvent.finalStatus !== "success"
-        ? `final status: ${uiEvent.finalStatus}`
-        : uiEvent.message;
-    return buildSimpleToolFinishedView({
+    const title = formatSubagentTitle(uiEvent.agentId);
+    if (!uiEvent.uiText) {
+      const message =
+        uiEvent.finalStatus && uiEvent.finalStatus !== "success"
+          ? `final status: ${uiEvent.finalStatus}`
+          : uiEvent.message;
+      return buildSimpleToolFinishedView({
+        theme: context.theme,
+        label: "terminate",
+        target: title,
+        status: uiEvent.status,
+        message,
+      });
+    }
+    return buildSubagentFinishedView({
       theme: context.theme,
-      label: "terminate agent",
-      target: uiEvent.agentId,
+      label: "terminated",
+      failureLabel: "terminated",
+      title,
       status: uiEvent.status,
-      message,
+      uiText: uiEvent.uiText,
     });
   });
 
   registry.register("terminate_agent_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "terminate_agent_blocked" }>;
+    const title = formatSubagentTitle(uiEvent.agentId);
     return buildSimpleToolFinishedView({
       theme: context.theme,
-      label: "terminate agent",
-      target: uiEvent.agentId ?? "(unknown)",
+      label: "terminate",
+      target: title,
       status: "error",
       message: uiEvent.reason,
     });

@@ -76,7 +76,7 @@ describe("ToolUiRegistry", () => {
       name: "explore",
       title: "scan repo",
     });
-    expect(spawnStarted).toContain("spawn agent");
+    expect(spawnStarted).toContain("spawning");
 
     const spawnFinished = renderEvent(registry, theme, {
       type: "spawn_agent_finished",
@@ -85,15 +85,17 @@ describe("ToolUiRegistry", () => {
       title: "scan repo",
       status: "success",
       agentId: "agent-1",
+      uiText: makeUiText("    investigate repo", "    (agent-1)", "investigate repo"),
     });
-    expect(spawnFinished).toContain("spawn agent");
+    expect(spawnFinished).toContain("spawned");
+    expect(spawnFinished).toContain("agent-1");
 
     const waitStarted = renderEvent(registry, theme, {
       type: "wait_for_agent_started",
       toolCallId: "w1",
       agentIds: ["agent-1", "agent-2"],
     });
-    expect(waitStarted).toContain("wait for agents");
+    expect(waitStarted).toContain("waiting");
 
     const waitFinished = renderEvent(registry, theme, {
       type: "wait_for_agent_finished",
@@ -101,8 +103,14 @@ describe("ToolUiRegistry", () => {
       agentIds: ["agent-1", "agent-2"],
       status: "error",
       message: "one failed",
+      uiText: makeUiText(
+        "    **agent-1**\n    ok",
+        "    (cost $0.17 · duration 2m 33s)",
+        "**agent-1**\nok",
+      ),
     });
-    expect(waitFinished).toContain("wait for agents");
+    expect(waitFinished).toContain("waited");
+    expect(waitFinished).toContain("cost $0.17");
 
     const terminateFinished = renderEvent(registry, theme, {
       type: "terminate_agent_finished",
@@ -110,8 +118,10 @@ describe("ToolUiRegistry", () => {
       agentId: "agent-1",
       status: "success",
       finalStatus: "aborted",
+      uiText: makeUiText("    ok", "    (cost $0.05 · duration 1m 2s)", "ok"),
     });
-    expect(terminateFinished).toContain("terminate agent");
+    expect(terminateFinished).toContain("terminated");
+    expect(terminateFinished).toContain("cost $0.05");
   });
 
   it("renders web tool events", () => {

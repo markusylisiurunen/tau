@@ -114,6 +114,8 @@ export class CustomEditor extends Editor {
   handleInput(data: string): void {
     const previousText = this.getText();
     const isEscape = matchesKey(data, Key.escape);
+    const isAltUp = matchesKey(data, Key.alt("up")) || data === "\x1b[1;3A";
+    const isAltDown = matchesKey(data, Key.alt("down")) || data === "\x1b[1;3B";
 
     if (!isEscape) {
       this.lastEscapeAt = undefined;
@@ -166,12 +168,12 @@ export class CustomEditor extends Editor {
       return;
     }
 
-    if (matchesKey(data, Key.alt("up")) && this.onAltUp && !this.isShowingAutocomplete()) {
+    if (isAltUp && this.onAltUp && !this.isShowingAutocomplete()) {
       this.onAltUp();
       return;
     }
 
-    if (matchesKey(data, Key.alt("down")) && this.onAltDown && !this.isShowingAutocomplete()) {
+    if (isAltDown && this.onAltDown && !this.isShowingAutocomplete()) {
       this.onAltDown();
       return;
     }
@@ -418,16 +420,28 @@ export class CustomEditor extends Editor {
     return visualLines.length - 1;
   }
 
+  renderDividerLine(width: number): string {
+    return this.renderHeaderLineWithCorners(width, "├", "┤");
+  }
+
   private renderHeaderLine(width: number): string {
+    return this.renderHeaderLineWithCorners(width, "╭", "╮");
+  }
+
+  private renderHeaderLineWithCorners(
+    width: number,
+    leftCornerChar: string,
+    rightCornerChar: string,
+  ): string {
     if (width <= 1) return this.borderColor("─").repeat(Math.max(0, width));
     if (width === 2) {
-      return `${this.borderColor("╭")}${this.borderColor("╮")}`;
+      return `${this.borderColor(leftCornerChar)}${this.borderColor(rightCornerChar)}`;
     }
 
     const innerWidth = width - 2;
     const dash = this.borderColor("─");
-    const leftCorner = this.borderColor("╭");
-    const rightCorner = this.borderColor("╮");
+    const leftCorner = this.borderColor(leftCornerChar);
+    const rightCorner = this.borderColor(rightCornerChar);
 
     let left = this.headerLeft.trim();
     let right = this.headerRight.trim();

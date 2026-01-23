@@ -102,10 +102,7 @@ export async function* runModelSubturn(
   while (true) {
     try {
       const result = yield* runAttempt(streamOptions);
-      if (
-        attempt < maxRetries &&
-        retry?.shouldRetryAfterError?.({ error: result, model })
-      ) {
+      if (attempt < maxRetries && retry?.shouldRetryAfterError?.({ error: result, model })) {
         attempt += 1;
         if (retryNotice) {
           yield retryNotice;

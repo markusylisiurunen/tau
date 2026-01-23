@@ -52,6 +52,7 @@ export type { CoreDeps } from "./runtime/deps.js";
 export { createDefaultCoreDeps } from "./runtime/deps.js";
 export { createBashToolDefinition } from "./tools/bash.js";
 export { ToolCatalog } from "./tools/catalog.js";
+export { createCommunicateToolDefinition } from "./tools/communicate.js";
 export { createEditToolDefinition } from "./tools/edit.js";
 export {
   createLocalToolExecutionBackend,
@@ -61,7 +62,6 @@ export { createGrepToolDefinition } from "./tools/grep.js";
 export { createListToolDefinition } from "./tools/list.js";
 export { createReadToolDefinition } from "./tools/read.js";
 export { ToolRegistry } from "./tools/registry.js";
-export { createCommunicateToolDefinition } from "./tools/communicate.js";
 export { createSpawnAgentToolDefinition } from "./tools/spawn_agent.js";
 export { createTerminateAgentToolDefinition } from "./tools/terminate_agent.js";
 export { createWaitForAgentToolDefinition } from "./tools/wait_for_agent.js";

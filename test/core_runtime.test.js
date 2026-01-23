@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { formatHistoryForCompaction } from "../dist/core/utils/compact.js";
 import {
   buildEnvironmentTag,
   buildProjectContextBlock,
 } from "../dist/core/utils/context_builder.js";
-import { formatHistoryForCompaction } from "../dist/core/utils/compact.js";
 
 describe("command registry", () => {
   it("parses and dispatches commands", async () => {

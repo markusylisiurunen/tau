@@ -9,7 +9,8 @@
       "scripts/**/*.js",
       "*.{ts,json,md}",
       "!**/node_modules/**/*",
-      "!dist/**/*"
+      "!dist/**/*",
+      "!references/repos/**/*"
     ]
   },
   "formatter": {

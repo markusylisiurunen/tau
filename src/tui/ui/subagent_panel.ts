@@ -148,9 +148,10 @@ export class SubagentPanelComponent implements Component {
     return lines.map((line) => this.fitLine(line, width));
   }
 
-  private resolveSelectedEntry(
-    runningEntries: SubagentPanelEntry[],
-  ): { entry: SubagentPanelEntry; index: number } {
+  private resolveSelectedEntry(runningEntries: SubagentPanelEntry[]): {
+    entry: SubagentPanelEntry;
+    index: number;
+  } {
     let index = this.selectedId
       ? runningEntries.findIndex((entry) => entry.id === this.selectedId)
       : -1;

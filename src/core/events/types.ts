@@ -1,6 +1,6 @@
 import type { AssistantMessage, ToolResultMessage } from "@mariozechner/pi-ai";
-import type { SubagentUiEvent } from "../subagents/types.js";
 import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
+import type { SubagentUiEvent } from "../subagents/types.js";
 import type { ToolUiEvent } from "../tools/registry.js";
 
 export type CoreEventVersion = 1;

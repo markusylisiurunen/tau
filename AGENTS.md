@@ -241,6 +241,8 @@ If you need dependency details (rare), check `references/repos/` first and treat
 
 **Commit style**: Short, imperative, lowercase subject lines (no prefixes).
 
+**Branch names**: Lowercase, a few descriptive words. Do not include prefixes or issue references.
+
 **PR style**: Titles and descriptions are concise, lowercase except for proper nouns. When explicitly working a GitHub issue and opening a PR, include a closing keyword (for example, "fixes #123") in the description so GitHub auto-links and closes the issue.
 
 **GitHub operations**: Use `gh` when needed.

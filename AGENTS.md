@@ -216,6 +216,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `/compact:only-summary`, `/compact:with-last-turn` - Compact history to continue
 - `/risk:read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model; runs inside sandbox when enabled)
+- `!!<cmd>` - Direct bash execution without adding output to the model context
 - `#<request>` - Memory mode for updating AGENTS.md
 
 **Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @files and $skills), `Ctrl+S` (stash input to clipboard), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Escape` (interrupt), `Ctrl+C` (press twice to exit)

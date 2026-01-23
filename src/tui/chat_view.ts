@@ -15,7 +15,7 @@ import type { SystemMessageKind } from "./ui/system_message.js";
 import { coercePaletteOverrides, createUiTheme, type Theme } from "./ui/theme/index.js";
 import { createToolUiRegistry } from "./ui/tool_ui_registry.js";
 
-export type ChatInputMode = "normal" | "bash" | "memory";
+export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "memory";
 
 export type ChatViewStatus = {
   footer: {
@@ -338,7 +338,7 @@ export class TuiChatView implements ChatView {
 
   private updateEditorVisualState(state: ChatViewStatus["editor"]): void {
     const { palette } = this.uiTheme;
-    if (state.mode === "bash") {
+    if (state.mode === "bash" || state.mode === "bash_incognito") {
       this.editor.borderColor = (s: string) => palette.modeBash(s);
     } else if (state.mode === "memory") {
       this.editor.borderColor = (s: string) => palette.modeMemory(s);
@@ -346,8 +346,9 @@ export class TuiChatView implements ChatView {
       this.editor.borderColor = this.uiTheme.editorBorderForReasoning(state.reasoning);
     }
 
-    if (state.mode === "bash") {
-      this.editor.setHeader("bash", "", { leftStyle: this.editor.borderColor });
+    if (state.mode === "bash" || state.mode === "bash_incognito") {
+      const label = state.mode === "bash_incognito" ? "bash incognito" : "bash";
+      this.editor.setHeader(label, "", { leftStyle: this.editor.borderColor });
       return;
     }
 

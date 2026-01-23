@@ -194,8 +194,6 @@ tau --persona opus-4.5-coder
 
 some personas can run isolated sub-agents via the internal `task` tool.
 
-tau also supports an internal `fork` tool, which runs an autonomous fork of the current session using the full conversation history and returns the fork's final answer.
-
 - `explore`: read-only, multi-turn codebase investigation
 - `web`: high-threshold web research using Parallel Search/Extract (`web_search`/`web_fetch`) plus read-only bash for curl/filtering
 
@@ -399,7 +397,7 @@ optional frontmatter fields:
       model: claude-haiku-4-5
       reasoning: medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `task`, `fork`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `task`. if omitted, defaults to `bash`, `write`, `edit` (and `task` when subagents are enabled). risk levels still apply.
 
 the markdown body becomes the system prompt.
 

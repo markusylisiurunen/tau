@@ -7,7 +7,7 @@ type RunningBashComponent = {
 };
 
 type RunningTaskComponent = {
-  kind: "task" | "fork";
+  kind: "task";
   name?: string;
   title: string;
   costTotal: number;

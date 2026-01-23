@@ -1,6 +1,6 @@
 import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 
-export function formatHistoryForCompression(history: readonly Message[]): string {
+export function formatHistoryForCompaction(history: readonly Message[]): string {
   const lines: string[] = [];
 
   for (const message of history) {

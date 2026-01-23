@@ -60,7 +60,7 @@ import {
   formatCwdChangeNotice,
   formatRiskLevelChangeNotice,
 } from "../core/utils/context.js";
-import { formatHistoryForCompression } from "../core/utils/fork.js";
+import { formatHistoryForCompaction } from "../core/utils/compact.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { getGitRoot } from "../core/utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
@@ -266,8 +266,8 @@ export class ChatController {
       export: () => this.exportSessionHtml(),
       newSession: () => this.clearSession(),
       cd: (path) => this.changeDirectory(path),
-      compactOnlySummary: (extra) => this.forkSessionOnlySummary(extra),
-      compactSummaryAndLastTurn: (extra) => this.forkSessionSummaryAndLastTurn(extra),
+      compactOnlySummary: (extra) => this.compactSessionOnlySummary(extra),
+      compactSummaryAndLastTurn: (extra) => this.compactSessionSummaryAndLastTurn(extra),
       reload: () => this.reloadContent(),
       risk: (level) => this.setRiskLevel(level),
       persona: (id) => this.switchPersona(id),
@@ -1331,7 +1331,7 @@ export class ChatController {
   }
 
   private async generateSummary(history: readonly Message[], guidance?: string): Promise<string> {
-    const formattedHistory = formatHistoryForCompression(history);
+    const formattedHistory = formatHistoryForCompaction(history);
     const guidanceBlock = guidance?.trim();
     const guidanceSection = guidanceBlock
       ? `\nAdditional guidance from the user:\n${guidanceBlock}\n`
@@ -1420,10 +1420,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.refreshStatus();
   }
 
-  private async forkSessionOnlySummary(guidance?: string): Promise<void> {
+  private async compactSessionOnlySummary(guidance?: string): Promise<void> {
     const history = this.engine.history;
     if (history.length === 0) {
-      this.view.addSystemMessage("no conversation to fork.", "warn");
+      this.view.addSystemMessage("no conversation to compact.", "warn");
       return;
     }
 
@@ -1436,11 +1436,11 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.applySessionContext(summary);
 
       this.view.addSystemMessage(
-        "session forked. previous context has been summarized.",
+        "session compacted. previous context has been summarized.",
         "success",
       );
     } catch (err) {
-      this.view.addSystemMessage(`fork failed: ${(err as Error).message}`, "error");
+      this.view.addSystemMessage(`compact failed: ${(err as Error).message}`, "error");
     } finally {
       this.view.stopWorkingIcon();
       this.isStreaming = false;
@@ -1449,10 +1449,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
   }
 
-  private async forkSessionSummaryAndLastTurn(guidance?: string): Promise<void> {
+  private async compactSessionSummaryAndLastTurn(guidance?: string): Promise<void> {
     const history = this.engine.history;
     if (history.length === 0) {
-      this.view.addSystemMessage("no conversation to fork.", "warn");
+      this.view.addSystemMessage("no conversation to compact.", "warn");
       return;
     }
 
@@ -1484,11 +1484,11 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.applySessionContext(sessionContext);
 
       this.view.addSystemMessage(
-        "session forked. previous context and last turn have been included.",
+        "session compacted. previous context and last turn have been included.",
         "success",
       );
     } catch (err) {
-      this.view.addSystemMessage(`fork failed: ${(err as Error).message}`, "error");
+      this.view.addSystemMessage(`compact failed: ${(err as Error).message}`, "error");
     } finally {
       this.view.stopWorkingIcon();
       this.isStreaming = false;

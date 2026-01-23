@@ -29,14 +29,14 @@ export type ToolUiEvent =
   | {
       type: "task_started";
       toolCallId: string;
-      kind?: "task" | "fork";
+      kind?: "task";
       name: string;
       title: string;
     }
   | {
       type: "task_progress";
       toolCallId: string;
-      kind?: "task" | "fork";
+      kind?: "task";
       name: string;
       title: string;
       event: string;
@@ -47,7 +47,7 @@ export type ToolUiEvent =
   | {
       type: "task_finished";
       toolCallId: string;
-      kind?: "task" | "fork";
+      kind?: "task";
       name: string;
       title: string;
       costTotal: number;
@@ -59,7 +59,7 @@ export type ToolUiEvent =
   | {
       type: "task_blocked";
       toolCallId: string;
-      kind?: "task" | "fork";
+      kind?: "task";
       name?: string;
       title: string;
       reason: string;

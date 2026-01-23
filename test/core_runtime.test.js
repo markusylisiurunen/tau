@@ -6,7 +6,7 @@ import {
   buildEnvironmentTag,
   buildProjectContextBlock,
 } from "../dist/core/utils/context_builder.js";
-import { formatHistoryForCompression } from "../dist/core/utils/fork.js";
+import { formatHistoryForCompaction } from "../dist/core/utils/compact.js";
 
 describe("command registry", () => {
   it("parses and dispatches commands", async () => {
@@ -117,7 +117,7 @@ describe("summary formatting", () => {
       },
     ];
 
-    const summary = formatHistoryForCompression(history);
+    const summary = formatHistoryForCompaction(history);
 
     expect(summary).toContain("--- USER ---");
     expect(summary).toContain("hello");

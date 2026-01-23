@@ -8,7 +8,6 @@ import type { PromptTemplate } from "../prompts.js";
 import type { SubagentConfigMap, SubagentPersonaConfig } from "../subagents/types.js";
 import { BASH_TOOL } from "../tools/bash.js";
 import { EDIT_TOOL } from "../tools/edit.js";
-import { FORK_TOOL } from "../tools/fork.js";
 import { TASK_TOOL } from "../tools/task_schema.js";
 import { WRITE_TOOL } from "../tools/write.js";
 import type { Persona, ReasoningEffort, Skill } from "../types.js";
@@ -433,7 +432,6 @@ const PERSONA_TOOL_DEFINITIONS = new Map([
   ["write", WRITE_TOOL],
   ["edit", EDIT_TOOL],
   ["task", TASK_TOOL],
-  ["fork", FORK_TOOL],
 ]);
 
 const DEFAULT_PERSONA_TOOLS = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];

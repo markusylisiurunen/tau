@@ -10,7 +10,7 @@ import {
   type ToolOutputViewModel,
 } from "./tool_output.js";
 
-type TaskKind = "task" | "fork";
+type TaskKind = "task";
 
 type TaskRenderOptions = {
   kind?: TaskKind;

@@ -95,16 +95,16 @@ describe("ToolUiRegistry", () => {
     const finished = renderEvent(registry, theme, {
       type: "task_finished",
       toolCallId: "t1",
-      kind: "fork",
+      kind: "task",
       name: "",
-      title: "fork job",
+      title: "task job",
       costTotal: 0.5,
       turns: 1,
       toolCalls: 0,
       status: "success",
       finalOutput: "done",
     });
-    expect(finished).toContain("fork finished");
+    expect(finished).toContain("task finished");
 
     const blocked = renderEvent(registry, theme, {
       type: "task_blocked",

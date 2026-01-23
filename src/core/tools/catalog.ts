@@ -3,7 +3,6 @@ import type { AllowedSubagentToolName } from "../subagents/types.js";
 import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import { createForkToolDefinition } from "./fork.js";
 import type { ToolDefinition } from "./registry.js";
 import { ToolRegistry } from "./registry.js";
 import { createTaskToolDefinition } from "./task.js";
@@ -18,7 +17,6 @@ export const ToolCatalog = {
       createWriteToolDefinition(backend),
       createEditToolDefinition(backend),
       createTaskToolDefinition(backend),
-      createForkToolDefinition(),
     ]);
   },
 

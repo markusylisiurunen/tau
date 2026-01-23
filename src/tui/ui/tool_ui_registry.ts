@@ -24,7 +24,7 @@ export type ToolUiTaskState = {
   costTotal: number;
   turns: number;
   toolCalls: number;
-  kind?: "task" | "fork";
+  kind?: "task";
   name?: string;
 };
 

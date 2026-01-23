@@ -195,8 +195,8 @@ export async function* runToolCalls(
     validToolCalls.push({ index: i, toolCall, def });
   }
 
-  // Step 2: Execute tools in original order, only parallelizing adjacent task/fork calls.
-  const taskLikeToolNames = new Set(["task", "fork"]);
+  // Step 2: Execute tools in original order, only parallelizing adjacent task calls.
+  const taskLikeToolNames = new Set(["task"]);
 
   let i = 0;
   while (i < validToolCalls.length && !signal.aborted) {

@@ -110,6 +110,7 @@ function createMarkdownTheme(palette: Palette, text: TextStyles): MarkdownTheme 
     code: (textValue) => palette.codeInlineText(textValue),
     codeBlock: (textValue) => palette.codeBlockText(textValue),
     codeBlockBorder: (textValue) => palette.textDim(textValue),
+    codeBlockIndent: "",
     heading: (textValue) => text.bold(palette.brandAccent(textValue)),
     hr: (textValue) => palette.textDim(textValue),
     italic: (textValue) => text.italic(textValue),

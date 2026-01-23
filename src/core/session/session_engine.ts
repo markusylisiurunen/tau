@@ -11,8 +11,10 @@ import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
 import { type CredentialResolver, createCredentialResolver } from "../auth/credential_resolver.js";
 import type { Config } from "../config/index.js";
-import type { CoreEvent } from "../events/types.js";
+import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
 import type { CoreDeps } from "../runtime/deps.js";
+import { SubagentControlPlane } from "../subagents/control_plane.js";
+import type { SubagentUiEvent } from "../subagents/types.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
@@ -42,6 +44,8 @@ export class SessionEngine {
   private readonly deps: CoreDeps;
   private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
+  private readonly subagentControlPlane: SubagentControlPlane;
+  private readonly subagentListeners = new Set<(event: CoreSubagentUiEvent) => void>();
   private messages: Message[] = [];
   private sessionId = `tau-main-${randomUUID()}`;
 
@@ -58,11 +62,15 @@ export class SessionEngine {
       authStorage,
       getConfig: () => this.config,
     });
+    this.subagentControlPlane = new SubagentControlPlane({
+      onEvent: (event) => this.emitSubagentEvent(event),
+    });
   }
 
   reset(): void {
     this.messages = [];
     this.sessionId = `tau-main-${randomUUID()}`;
+    this.subagentControlPlane.reset();
   }
 
   setPersona(persona: Persona, systemPrompt: string): void {
@@ -76,6 +84,16 @@ export class SessionEngine {
 
   setConfig(config: Config): void {
     this.config = config;
+  }
+
+  onSubagentEvent(handler: (event: CoreSubagentUiEvent) => void): () => void {
+    this.subagentListeners.add(handler);
+    return () => this.subagentListeners.delete(handler);
+  }
+
+  async terminateSubagent(id: string): Promise<boolean> {
+    const result = await this.subagentControlPlane.terminate(id);
+    return Boolean(result);
   }
 
   addUserText(textForModel: string): void {
@@ -96,6 +114,13 @@ export class SessionEngine {
 
   get sessionIdValue(): string {
     return this.sessionId;
+  }
+
+  private emitSubagentEvent(event: SubagentUiEvent): void {
+    const coreEvent: CoreSubagentUiEvent = { type: "subagent_ui", event };
+    for (const listener of this.subagentListeners) {
+      listener(coreEvent);
+    }
   }
 
   private getStreamingSettings(persona: Persona): TauStreamOptions {
@@ -135,6 +160,7 @@ export class SessionEngine {
         systemPrompt: this.systemPrompt,
         toolRegistry: this.toolRegistry,
         authPath: this.authPath,
+        subagentControlPlane: this.subagentControlPlane,
       };
 
       for await (const event of runToolCalls({

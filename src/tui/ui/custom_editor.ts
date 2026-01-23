@@ -29,7 +29,9 @@ export class CustomEditor extends Editor {
   public onCtrlR?: () => void;
   public onCtrlP?: () => void;
   public onCtrlS?: () => void;
+  public onCtrlG?: () => void;
   public onAltUp?: () => void;
+  public onAltDown?: () => void;
   public beforeSubmit?: (text: string) => boolean;
 
   constructor(theme: Theme) {
@@ -144,6 +146,11 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    if (matchesKey(data, Key.ctrl("g")) && this.onCtrlG && !this.isShowingAutocomplete()) {
+      this.onCtrlG();
+      return;
+    }
+
     if (matchesKey(data, Key.ctrl("r")) && this.onCtrlR && !this.isShowingAutocomplete()) {
       this.onCtrlR();
       return;
@@ -161,6 +168,11 @@ export class CustomEditor extends Editor {
 
     if (matchesKey(data, Key.alt("up")) && this.onAltUp && !this.isShowingAutocomplete()) {
       this.onAltUp();
+      return;
+    }
+
+    if (matchesKey(data, Key.alt("down")) && this.onAltDown && !this.isShowingAutocomplete()) {
+      this.onAltDown();
       return;
     }
 

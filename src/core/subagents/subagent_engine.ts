@@ -15,7 +15,7 @@ import { type RunnerEvent, runModelSubturn, runToolCalls } from "../session/runn
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { createLocalToolExecutionBackend } from "../tools/execution_backend.js";
-import type { ToolRegistry, ToolUiEvent } from "../tools/registry.js";
+import type { ToolDispatchContext, ToolRegistry, ToolUiEvent } from "../tools/registry.js";
 import type { RiskLevel } from "../types.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
@@ -29,9 +29,9 @@ import {
   normalizeOneLine,
 } from "../utils/subagent_utils.js";
 import type {
-  AllowedSubagentToolName,
   SubagentPersonaConfig,
   SubagentRuntimeDefinition,
+  SubagentToolName,
 } from "./types.js";
 
 export type SubagentProgressEvent = {
@@ -41,9 +41,18 @@ export type SubagentProgressEvent = {
   toolCalls: number;
 };
 
+export type SubagentToolUiEvent = {
+  uiEvent: ToolUiEvent;
+  costTotal: number;
+  turns: number;
+  toolCalls: number;
+};
+
 export type SubagentRunResult = {
   finalText: string;
   costTotal: number;
+  turns: number;
+  toolCalls: number;
 };
 
 function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): TauStreamOptions {
@@ -52,7 +61,7 @@ function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): TauS
 }
 
 function buildToolRegistryForAllowedTools(
-  allowedTools: AllowedSubagentToolName[],
+  allowedTools: SubagentToolName[],
   config: Config,
   backend: ToolExecutionBackend,
 ): ToolRegistry {
@@ -63,7 +72,7 @@ function isToolCall(block: AssistantMessage["content"][number]): block is ToolCa
   return block.type === "toolCall";
 }
 
-export async function runSubagentToCompletion(options: {
+export async function runSubagent(options: {
   definition: SubagentRuntimeDefinition;
   personaConfig: SubagentPersonaConfig;
   prompt: string;
@@ -72,8 +81,20 @@ export async function runSubagentToCompletion(options: {
   backend?: ToolExecutionBackend;
   signal: AbortSignal;
   onProgress?: (event: SubagentProgressEvent) => void;
+  onToolUiEvent?: (event: SubagentToolUiEvent) => void;
+  sessionId?: string;
+  subagentContext?: ToolDispatchContext["subagentContext"];
 }): Promise<SubagentRunResult> {
-  const { definition, personaConfig, prompt, config, signal, onProgress } = options;
+  const {
+    definition,
+    personaConfig,
+    prompt,
+    config,
+    signal,
+    onProgress,
+    onToolUiEvent,
+    subagentContext,
+  } = options;
   const authPath = options.authPath ?? getAuthPath();
   const authStorage = new AuthStorage(authPath);
   const credentialResolver: CredentialResolver = createCredentialResolver({
@@ -86,7 +107,8 @@ export async function runSubagentToCompletion(options: {
   }
 
   const backend = options.backend ?? createLocalToolExecutionBackend();
-  const toolRegistry = buildToolRegistryForAllowedTools(definition.allowedTools, config, backend);
+  const allowedTools = personaConfig.tools ?? definition.allowedTools;
+  const toolRegistry = buildToolRegistryForAllowedTools(allowedTools, config, backend);
   const messages: Message[] = [
     {
       role: "user",
@@ -100,8 +122,12 @@ export async function runSubagentToCompletion(options: {
   let toolCalls = 0;
   const maxSubturns = definition.maxSubturns ?? 64;
 
-  const emit = (text: string) => {
+  const emitProgress = (text: string) => {
     onProgress?.({ text, costTotal, turns, toolCalls });
+  };
+
+  const emitToolUi = (uiEvent: ToolUiEvent) => {
+    onToolUiEvent?.({ uiEvent, costTotal, turns, toolCalls });
   };
 
   const issues: string[] = [];
@@ -115,10 +141,10 @@ export async function runSubagentToCompletion(options: {
   const formatIssueSummary = (): string =>
     issues.length > 0 ? ` (recent issues: ${issues.slice(-3).join("; ")})` : "";
 
-  const sessionId = `tau-subagent-${definition.name}-${randomUUID()}`;
+  const sessionId = options.sessionId ?? `tau-subagent-${definition.name}-${randomUUID()}`;
 
   for (let subturn = 1; subturn <= maxSubturns && !signal.aborted; subturn++) {
-    emit("assistant: thinking");
+    emitProgress("assistant: thinking");
 
     const context: Context = {
       systemPrompt: definition.systemPrompt,
@@ -175,7 +201,7 @@ export async function runSubagentToCompletion(options: {
     try {
       finalMessage = await consumeRunner(runner, (event) => {
         if (event.type === "notice") {
-          emit(event.text);
+          emitProgress(event.text);
         }
       });
     } catch (err) {
@@ -206,7 +232,7 @@ export async function runSubagentToCompletion(options: {
     // Emit any assistant text output
     const agentText = extractAssistantTextForProgress(finalMessage);
     if (agentText) {
-      emit(agentText);
+      emitProgress(agentText);
     }
 
     const finish = () => {
@@ -216,8 +242,8 @@ export async function runSubagentToCompletion(options: {
           `sub-agent produced an empty response (stopReason: ${finalMessage.stopReason ?? "unknown"})${formatIssueSummary()}`,
         );
       }
-      emit("done");
-      return { finalText, costTotal };
+      emitProgress("done");
+      return { finalText, costTotal, turns, toolCalls };
     };
 
     if (finalMessage.stopReason !== "toolUse") {
@@ -228,7 +254,7 @@ export async function runSubagentToCompletion(options: {
       return finish();
     }
 
-    const riskLevel = definition.riskLevel as RiskLevel;
+    const riskLevel = (personaConfig.riskLevel ?? definition.riskLevel) as RiskLevel;
 
     const handleUi = (uiEvent: ToolUiEvent | undefined) => {
       if (!uiEvent) return;
@@ -243,12 +269,18 @@ export async function runSubagentToCompletion(options: {
       }
 
       const text = formatToolUiEventForProgress(uiEvent);
-      if (text) {
-        if (/\b(blocked|failed):/.test(text)) {
-          recordIssue(text);
-        }
-        emit(text);
+      if (text && /\b(blocked|failed):/.test(text)) {
+        recordIssue(text);
       }
+
+      emitToolUi(uiEvent);
+    };
+
+    const dispatchContext: ToolDispatchContext = {
+      config,
+      toolRegistry,
+      authPath,
+      subagentContext,
     };
 
     const toolRunner = runToolCalls({
@@ -257,6 +289,7 @@ export async function runSubagentToCompletion(options: {
       enabledTools: toolRegistry.getEnabledToolSchemas(),
       riskLevel,
       signal,
+      dispatchContext,
       toolErrorMessages: {
         notEnabled: (toolCall) => `tool '${toolCall.name}' is not available to this sub-agent.`,
         unsupported: (toolCall) => `tool '${toolCall.name}' is not available to this sub-agent.`,
@@ -286,9 +319,9 @@ export async function runSubagentToCompletion(options: {
       if (event.type === "notice") {
         if (event.severity === "error") {
           recordIssue(event.text);
-          emit(`tool blocked: ${event.text}`);
+          emitProgress(`tool blocked: ${event.text}`);
         } else {
-          emit(event.text);
+          emitProgress(event.text);
         }
       }
     }
@@ -298,7 +331,7 @@ export async function runSubagentToCompletion(options: {
     throw new Error("sub-agent aborted");
   }
 
-  emit(`done (stopped after ${maxSubturns} subturns)`);
+  emitProgress(`done (stopped after ${maxSubturns} subturns)`);
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant") as
     | AssistantMessage
     | undefined;

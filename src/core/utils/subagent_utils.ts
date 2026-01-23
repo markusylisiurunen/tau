@@ -35,8 +35,12 @@ export function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | und
       return `web fetch: ${uiEvent.url}`;
     case "web_fetch_finished":
       return uiEvent.status === "error" ? `web fetch failed: ? ${uiEvent.url}` : undefined;
+    case "write_success":
+      return `write: ${uiEvent.path}`;
     case "write_blocked":
       return `tool blocked: write ${uiEvent.path} (${normalizeOneLine(uiEvent.reason)})`;
+    case "edit_success":
+      return `edit: ${uiEvent.path}`;
     case "edit_blocked":
       return `tool blocked: edit ${uiEvent.path} (${normalizeOneLine(uiEvent.reason)})`;
     default:

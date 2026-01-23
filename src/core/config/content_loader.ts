@@ -5,13 +5,15 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { personas as builtinPersonas } from "../personas.js";
 import type { PromptTemplate } from "../prompts.js";
-import type { SubagentConfigMap, SubagentPersonaConfig } from "../subagents/types.js";
+import type { SubagentConfigMap, SubagentPersonaConfig, SubagentToolName } from "../subagents/types.js";
 import { BASH_TOOL } from "../tools/bash.js";
 import { EDIT_TOOL } from "../tools/edit.js";
-import { TASK_TOOL } from "../tools/task_schema.js";
+import { SPAWN_AGENT_TOOL } from "../tools/spawn_agent.js";
+import { TERMINATE_AGENT_TOOL } from "../tools/terminate_agent.js";
+import { WAIT_FOR_AGENT_TOOL } from "../tools/wait_for_agent.js";
 import { WRITE_TOOL } from "../tools/write.js";
-import type { Persona, ReasoningEffort, Skill } from "../types.js";
-import { ReasoningEffortSchema } from "../types.js";
+import type { Persona, ReasoningEffort, RiskLevel, Skill } from "../types.js";
+import { ReasoningEffortSchema, RiskLevelSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
 import { createDefaultConfigDeps } from "./deps.js";
@@ -98,6 +100,8 @@ interface PartialSubagentConfig {
   [name: string]: {
     model?: Model<Api>;
     reasoning?: ReasoningEffort;
+    tools?: SubagentToolName[];
+    riskLevel?: RiskLevel;
   };
 }
 
@@ -119,6 +123,8 @@ const SubagentSpecSchema = z
     provider: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),
     reasoning: ReasoningEffortSchema.optional(),
+    tools: z.unknown().optional(),
+    riskLevel: RiskLevelSchema.optional(),
   })
   .passthrough()
   .superRefine((spec, ctx) => {
@@ -131,6 +137,59 @@ const SubagentSpecSchema = z
       });
     }
   });
+
+const subagentToolsSchema = z.union([z.string(), z.array(z.string())]).optional();
+
+const SUBAGENT_TOOL_NAMES = new Set<SubagentToolName>([
+  "bash",
+  "write",
+  "edit",
+  "web_search",
+  "web_fetch",
+  "communicate",
+]);
+
+function parseSubagentTools(toolsRaw: unknown): { tools?: SubagentToolName[]; error?: string } {
+  if (toolsRaw === undefined) {
+    return {};
+  }
+
+  const parsed = subagentToolsSchema.safeParse(toolsRaw);
+  if (!parsed.success) {
+    return { error: "tools must be a string or list of strings" };
+  }
+
+  if (parsed.data === undefined) {
+    return {};
+  }
+
+  const rawList = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
+  const cleaned = rawList.map((tool) => tool.trim().toLowerCase()).filter(Boolean);
+  if (cleaned.length === 0) {
+    return { tools: [] };
+  }
+
+  const selected: SubagentToolName[] = [];
+  const unknown: string[] = [];
+  const seen = new Set<string>();
+
+  for (const name of cleaned) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    if (SUBAGENT_TOOL_NAMES.has(name as SubagentToolName)) {
+      selected.push(name as SubagentToolName);
+    } else {
+      unknown.push(name);
+    }
+  }
+
+  if (unknown.length > 0) {
+    const allowed = Array.from(SUBAGENT_TOOL_NAMES).join(", ");
+    return { error: `unknown subagent tool(s): ${unknown.join(", ")}. allowed: ${allowed}` };
+  }
+
+  return { tools: selected };
+}
 
 function parseSubagentConfig(subagentsRaw: unknown): {
   config?: PartialSubagentConfig;
@@ -181,6 +240,20 @@ function parseSubagentConfig(subagentsRaw: unknown): {
 
       const provider = spec.data.provider;
       const model = spec.data.model;
+      const toolsResult = parseSubagentTools(spec.data.tools);
+      if (toolsResult.error) {
+        return { error: `subagent ${validatedName}: ${toolsResult.error}` };
+      }
+      const tools = toolsResult.tools;
+      const riskLevel = spec.data.riskLevel;
+
+      const overrides = {
+        ...(spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
+          ? { reasoning: spec.data.reasoning }
+          : {}),
+        ...(tools !== undefined ? { tools } : {}),
+        ...(riskLevel ? { riskLevel } : {}),
+      };
 
       // Resolve model if provided
       if (provider && model) {
@@ -193,16 +266,12 @@ function parseSubagentConfig(subagentsRaw: unknown): {
 
         config[validatedName] = {
           model: modelObj,
-          ...(spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
-            ? { reasoning: spec.data.reasoning }
-            : {}),
+          ...overrides,
         };
       } else {
         // No model specified, will use main persona's model
         config[validatedName] = {
-          ...(spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
-            ? { reasoning: spec.data.reasoning }
-            : {}),
+          ...overrides,
         };
       }
     }
@@ -431,10 +500,13 @@ const PERSONA_TOOL_DEFINITIONS = new Map([
   ["bash", BASH_TOOL],
   ["write", WRITE_TOOL],
   ["edit", EDIT_TOOL],
-  ["task", TASK_TOOL],
+  ["spawn_agent", SPAWN_AGENT_TOOL],
+  ["wait_for_agent", WAIT_FOR_AGENT_TOOL],
+  ["terminate_agent", TERMINATE_AGENT_TOOL],
 ]);
 
 const DEFAULT_PERSONA_TOOLS = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
+const DEFAULT_SUBAGENT_TOOLS = [SPAWN_AGENT_TOOL, WAIT_FOR_AGENT_TOOL, TERMINATE_AGENT_TOOL];
 
 function parsePersona(
   file: string,
@@ -536,6 +608,8 @@ function parsePersona(
         finalSubagents[validatedName] = {
           model: modelObj,
           ...(cfg.settings ? { settings: cfg.settings } : { settings: subagentBaseSettings }),
+          ...(cfg.tools !== undefined ? { tools: cfg.tools } : {}),
+          ...(cfg.riskLevel ? { riskLevel: cfg.riskLevel } : {}),
         };
       }
 
@@ -562,6 +636,8 @@ function parsePersona(
       finalSubagents[validatedName] = {
         model: subagentModel,
         ...(subagentSettings && { settings: subagentSettings }),
+        ...(cfg.tools !== undefined ? { tools: cfg.tools } : {}),
+        ...(cfg.riskLevel ? { riskLevel: cfg.riskLevel } : {}),
       };
     }
 
@@ -571,7 +647,7 @@ function parsePersona(
   }
 
   const defaultTools = finalSubagents
-    ? [...DEFAULT_PERSONA_TOOLS, TASK_TOOL]
+    ? [...DEFAULT_PERSONA_TOOLS, ...DEFAULT_SUBAGENT_TOOLS]
     : DEFAULT_PERSONA_TOOLS;
 
   const inheritedTools = toolsRaw === undefined ? basePersona?.tools : undefined;

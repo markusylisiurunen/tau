@@ -123,6 +123,7 @@ export class ChatController {
   private readonly toolBackend: ToolExecutionBackend;
   private readonly toolBackendDispose?: () => Promise<void> | void;
   private readonly deps: CoreDeps;
+  private subagentUnsubscribe?: () => void;
   private isStreaming = false;
   private queuedUserMessages: string[];
   private isDrainingQueuedUserMessages = false;
@@ -258,6 +259,7 @@ export class ChatController {
       config: this.config,
       deps: this.deps,
     });
+    this.subagentUnsubscribe = this.engine.onSubagentEvent((event) => this.onEvent(event));
 
     this.commandRegistry = createCommandRegistry();
     this.commandHandlers = {
@@ -349,6 +351,8 @@ export class ChatController {
         });
       },
       onAltUp: () => this.popQueuedUserMessageIntoEditor(),
+      onAltDown: () => this.cycleSubagentSelection(),
+      onCtrlG: () => this.terminateSelectedSubagent(),
       beforeSubmit: (text: string) => this.beforeSubmit(text),
       onChange: (text: string) => this.handleEditorChange(text),
       onSubmit: (text: string) => void this.onUserInput(text),
@@ -362,6 +366,7 @@ export class ChatController {
   }
 
   async dispose(): Promise<void> {
+    this.subagentUnsubscribe?.();
     if (!this.toolBackendDispose) return;
     await this.toolBackendDispose();
   }
@@ -424,6 +429,11 @@ export class ChatController {
 
       case "tool_ui":
         this.view.handleToolUiEvent(event.uiEvent);
+        this.refreshStatus();
+        return;
+
+      case "subagent_ui":
+        this.view.handleSubagentEvent(event.event);
         this.refreshStatus();
         return;
 
@@ -928,6 +938,33 @@ export class ChatController {
     if (!last) return;
 
     this.view.setEditorText(last);
+  }
+
+  private cycleSubagentSelection(): void {
+    this.view.cycleSubagentSelection(1);
+    this.view.requestRender();
+  }
+
+  private terminateSelectedSubagent(): void {
+    const selectedId = this.view.getSelectedSubagentId();
+    if (!selectedId) {
+      this.view.addSystemMessage("no active subagent selected", "warn");
+      return;
+    }
+
+    void this.engine
+      .terminateSubagent(selectedId)
+      .then((found) => {
+        if (!found) {
+          this.view.addSystemMessage(`unknown subagent id: ${selectedId}`, "warn");
+        }
+      })
+      .catch((err) => {
+        this.view.addSystemMessage(
+          `failed to terminate subagent: ${(err as Error).message}`,
+          "error",
+        );
+      });
   }
 
   private buildIdleNotificationTitle(): string {

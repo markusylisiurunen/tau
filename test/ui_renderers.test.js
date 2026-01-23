@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { renderBashExecution, renderBashRunning } from "../dist/tui/ui/bash_execution.js";
 import { renderEditSuccess, renderWriteSuccess } from "../dist/tui/ui/file_execution.js";
-import { renderTaskFinished, renderTaskRunning } from "../dist/tui/ui/task_execution.js";
+import { SubagentPanelComponent } from "../dist/tui/ui/subagent_panel.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
 
 function toLines(text) {
@@ -68,15 +68,38 @@ test("renderEditSuccess (expanded) highlights diffs", () => {
   expect(text).toContain("+ new");
 });
 
-test("renderTaskRunning and renderTaskFinished include cost and status", () => {
+test("subagent panel renders progress and communicate output", () => {
   const theme = createTagTheme();
-  const running = renderTaskRunning(theme, "analysis", ["bash running: echo ok"], 0.12, 3, 1, true);
-  const runningText = renderText(running, 120);
-  expect(runningText).toContain("$ echo ok");
-  expect(runningText).toContain("$0.12");
+  const panel = new SubagentPanelComponent(theme);
+  panel.handleEvent({
+    type: "subagent_spawned",
+    state: {
+      id: "agent-1",
+      name: "explore",
+      title: "analysis",
+      status: "running",
+      costTotal: 0,
+      turns: 0,
+      toolCalls: 0,
+      startedAt: Date.now(),
+    },
+  });
+  panel.handleEvent({
+    type: "subagent_progress",
+    id: "agent-1",
+    text: "bash running: echo ok",
+    costTotal: 0.12,
+    turns: 1,
+    toolCalls: 1,
+  });
+  panel.handleEvent({
+    type: "subagent_communicate",
+    id: "agent-1",
+    text: "done",
+  });
 
-  const finished = renderTaskFinished(theme, "analysis", 0.12, 3, 1, "success", "done", false);
-  const finishedText = renderText(finished, 120);
-  expect(finishedText).toContain("<textDim>done</textDim>");
-  expect(finishedText).toContain("$0.12");
+  const rendered = renderText(panel, 120);
+  expect(rendered).toContain("bash running: echo ok");
+  expect(rendered).toContain("> done");
+  expect(rendered).toContain("$0.12");
 });

@@ -1,6 +1,7 @@
 import type { AutocompleteProvider } from "@mariozechner/pi-tui";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
 import type { ThemeDefinition } from "../core/config/index.js";
+import type { SubagentUiEvent } from "../core/subagents/types.js";
 import type { BashTruncationInfo } from "../core/tools/bash.js";
 import type { ToolUiEvent, ToolUiText } from "../core/tools/registry.js";
 import type { ReasoningEffort, RiskLevel } from "../core/types.js";
@@ -11,6 +12,7 @@ import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_
 import { CustomEditor } from "./ui/custom_editor.js";
 import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
+import { SubagentPanelComponent } from "./ui/subagent_panel.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
 import { coercePaletteOverrides, createUiTheme, type Theme } from "./ui/theme/index.js";
 import { createToolUiRegistry } from "./ui/tool_ui_registry.js";
@@ -45,6 +47,8 @@ export type ChatViewInputHandlers = {
   onEscape?: () => void;
   onCtrlF?: () => void;
   onAltUp?: () => void;
+  onAltDown?: () => void;
+  onCtrlG?: () => void;
   beforeSubmit?: (text: string) => boolean;
   onChange?: (text: string) => void;
   onSubmit?: (text: string) => void;
@@ -67,10 +71,13 @@ export interface ChatView {
   startWorkingIcon(): void;
   stopWorkingIcon(): void;
   handleToolUiEvent(event: ToolUiEvent): void;
+  handleSubagentEvent(event: SubagentUiEvent): void;
   resetToolUiSession(): void;
   finalizeToolUiPending(reason: "aborted" | "interrupted"): void;
   clearToolUiTransientState(): void;
   getToolUiCostTotal(): number;
+  cycleSubagentSelection(direction: 1 | -1): string | undefined;
+  getSelectedSubagentId(): string | undefined;
   sendTerminalNotification(title: string): void;
   getEditorText(): string;
   setEditorText(text: string): void;
@@ -105,6 +112,7 @@ export class TuiChatView implements ChatView {
   private chatContainer: ChatContainerComponent;
   private footer: FooterComponent;
   private queuedMessages: QueuedMessagesComponent;
+  private subagentPanel: SubagentPanelComponent;
   private editor: CustomEditor;
   private uiTheme: Theme;
   private toolUiRegistry = createToolUiRegistry();
@@ -130,6 +138,7 @@ export class TuiChatView implements ChatView {
     this.chatContainer.setCompactToolUi(options.compactToolUi);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
     this.queuedMessages = new QueuedMessagesComponent(this.uiTheme, options.queuedUserMessages);
+    this.subagentPanel = new SubagentPanelComponent(this.uiTheme);
     this.editor = new CustomEditor(this.uiTheme);
     this.toolUiRouter = new ToolUiRouter({
       chatContainer: this.chatContainer,
@@ -217,8 +226,14 @@ export class TuiChatView implements ChatView {
     this.toolUiRouter.handle(event);
   }
 
+  handleSubagentEvent(event: SubagentUiEvent): void {
+    this.subagentPanel.handleEvent(event);
+    this.ui.requestRender();
+  }
+
   resetToolUiSession(): void {
     this.toolUiRouter.resetSession();
+    this.subagentPanel.reset();
   }
 
   finalizeToolUiPending(reason: "aborted" | "interrupted"): void {
@@ -230,7 +245,17 @@ export class TuiChatView implements ChatView {
   }
 
   getToolUiCostTotal(): number {
-    return this.toolUiRouter.getSubagentCostTotal();
+    return this.subagentPanel.getCostTotal();
+  }
+
+  cycleSubagentSelection(direction: 1 | -1): string | undefined {
+    const selected = this.subagentPanel.cycleSelection(direction);
+    this.ui.requestRender();
+    return selected;
+  }
+
+  getSelectedSubagentId(): string | undefined {
+    return this.subagentPanel.getSelectedId();
   }
 
   private sanitizeOscText(text: string): string {
@@ -276,6 +301,8 @@ export class TuiChatView implements ChatView {
     this.editor.onEscape = handlers.onEscape;
     this.editor.onCtrlF = handlers.onCtrlF;
     this.editor.onAltUp = handlers.onAltUp;
+    this.editor.onAltDown = handlers.onAltDown;
+    this.editor.onCtrlG = handlers.onCtrlG;
     this.editor.beforeSubmit = handlers.beforeSubmit;
     this.editor.onChange = handlers.onChange;
     this.editor.onSubmit = handlers.onSubmit;
@@ -316,6 +343,7 @@ export class TuiChatView implements ChatView {
     this.chatContainer.setTheme(this.uiTheme);
     this.footer.setTheme(this.uiTheme);
     this.queuedMessages.setTheme(this.uiTheme);
+    this.subagentPanel.setTheme(this.uiTheme);
     this.editor.setUiTheme(this.uiTheme);
 
     if (this.lastStatus) {
@@ -330,6 +358,7 @@ export class TuiChatView implements ChatView {
     this.ui.addChild(this.chatContainer);
     this.ui.addChild(new Spacer(1));
     this.ui.addChild(this.queuedMessages);
+    this.ui.addChild(this.subagentPanel);
     this.ui.addChild(this.editor);
     this.ui.addChild(this.footer);
 

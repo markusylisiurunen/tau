@@ -11,33 +11,27 @@ import {
   buildWriteBlockedView,
   buildWriteSuccessView,
 } from "./file_execution.js";
-import {
-  buildTaskBlockedView,
-  buildTaskFinishedView,
-  buildTaskRunningView,
-} from "./task_execution.js";
 import type { Theme } from "./theme/index.js";
-import { buildHeaderLine, inlineText, type ToolOutputViewModel } from "./tool_output.js";
-
-export type ToolUiTaskState = {
-  events: string[];
-  costTotal: number;
-  turns: number;
-  toolCalls: number;
-  kind?: "task";
-  name?: string;
-};
+import {
+  buildHeaderLine,
+  buildSection,
+  inlineText,
+  type ToolOutputViewModel,
+} from "./tool_output.js";
 
 export type ToolUiRenderContext = {
   theme: Theme;
-  taskState?: ToolUiTaskState;
   compact?: boolean;
   expanded?: boolean;
 };
 
 type ToolUiRenderer = (event: ToolUiEvent, context: ToolUiRenderContext) => ToolOutputViewModel;
 
-function buildWebToolRunningView(theme: Theme, label: string, target: string): ToolOutputViewModel {
+function buildSimpleToolRunningView(
+  theme: Theme,
+  label: string,
+  target: string,
+): ToolOutputViewModel {
   const { palette, text } = theme;
   const runningColor = (s: string) => palette.actionRunning(s);
 
@@ -61,12 +55,14 @@ function buildWebToolRunningView(theme: Theme, label: string, target: string): T
   };
 }
 
-function buildWebToolFinishedView(
-  theme: Theme,
-  label: string,
-  target: string,
-  status: "success" | "error",
-): ToolOutputViewModel {
+function buildSimpleToolFinishedView(args: {
+  theme: Theme;
+  label: string;
+  target: string;
+  status: "success" | "error";
+  message?: string;
+}): ToolOutputViewModel {
+  const { theme, label, target, status, message } = args;
   const { palette, text } = theme;
   const successColor = (s: string) => palette.actionSuccess(s);
   const errorColor = (s: string) => palette.actionError(s);
@@ -82,11 +78,43 @@ function buildWebToolFinishedView(
     accentStyle: palette.brandAccent,
   });
 
+  const messageLine = message
+    ? isSuccess
+      ? palette.textMuted(message)
+      : errorColor(message)
+    : undefined;
+  const section = buildSection(messageLine ? [messageLine] : []);
+
   return {
     borderColor,
-    expanded: { title: borderColor(text.bold(`${label} ${target}`)) },
-    compact: { header },
+    expanded: {
+      title: borderColor(text.bold(`${label} ${target}`)),
+      sections: section ? [section] : [],
+    },
+    compact: {
+      header,
+      extraText: messageLine ? `    ${messageLine}` : undefined,
+    },
   };
+}
+
+function formatSubagentTarget(args: {
+  name?: string;
+  title?: string;
+  agentId?: string;
+}): string {
+  const name = args.name?.trim();
+  const title = args.title?.trim();
+  const base = name ? `${name}: ${title ?? ""}`.trim() : (title ?? "").trim();
+  const finalLabel = base || "(subagent)";
+  return args.agentId ? `${finalLabel} (${args.agentId})` : finalLabel;
+}
+
+function formatAgentIds(ids: string[]): string {
+  const cleaned = ids.map((id) => id.trim()).filter(Boolean);
+  if (cleaned.length === 0) return "(no ids)";
+  if (cleaned.length <= 2) return cleaned.join(", ");
+  return `${cleaned.slice(0, 2).join(", ")}, +${cleaned.length - 2} more`;
 }
 
 export class ToolUiRegistry {
@@ -138,94 +166,129 @@ export function createToolUiRegistry(): ToolUiRegistry {
     return buildBashBlockedView(context.theme, uiEvent.command, uiEvent.reason);
   });
 
-  registry.register("task_started", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "task_started" }>;
-    const taskState = context.taskState ?? {
-      events: [],
-      costTotal: 0,
-      turns: 0,
-      toolCalls: 0,
-      kind: uiEvent.kind,
+  registry.register("spawn_agent_started", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "spawn_agent_started" }>;
+    const target = formatSubagentTarget({ name: uiEvent.name, title: uiEvent.title });
+    return buildSimpleToolRunningView(context.theme, "spawn agent", target);
+  });
+
+  registry.register("spawn_agent_finished", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "spawn_agent_finished" }>;
+    const target = formatSubagentTarget({
       name: uiEvent.name,
-    };
-    return buildTaskRunningView(
-      context.theme,
-      uiEvent.title,
-      taskState.events,
-      taskState.costTotal,
-      taskState.turns,
-      taskState.toolCalls,
-      {
-        kind: taskState.kind ?? uiEvent.kind ?? "task",
-        subagentName: uiEvent.name.trim() || undefined,
-      },
-    );
+      title: uiEvent.title,
+      agentId: uiEvent.agentId,
+    });
+    return buildSimpleToolFinishedView({
+      theme: context.theme,
+      label: "spawn agent",
+      target,
+      status: uiEvent.status,
+      message: uiEvent.message,
+    });
   });
 
-  registry.register("task_progress", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "task_progress" }>;
-    const taskState = context.taskState ?? {
-      events: [uiEvent.event],
-      costTotal: uiEvent.costTotal,
-      turns: uiEvent.turns,
-      toolCalls: uiEvent.toolCalls,
-      kind: uiEvent.kind,
-      name: uiEvent.name,
-    };
-    return buildTaskRunningView(
-      context.theme,
-      uiEvent.title,
-      taskState.events,
-      taskState.costTotal,
-      taskState.turns,
-      taskState.toolCalls,
-      {
-        kind: taskState.kind ?? uiEvent.kind ?? "task",
-        subagentName: uiEvent.name.trim() || undefined,
-      },
-    );
+  registry.register("spawn_agent_blocked", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "spawn_agent_blocked" }>;
+    const target = formatSubagentTarget({ name: uiEvent.name, title: uiEvent.title });
+    return buildSimpleToolFinishedView({
+      theme: context.theme,
+      label: "spawn agent",
+      target,
+      status: "error",
+      message: uiEvent.reason,
+    });
   });
 
-  registry.register("task_finished", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "task_finished" }>;
-    return buildTaskFinishedView(
-      context.theme,
-      uiEvent.title,
-      uiEvent.costTotal,
-      uiEvent.turns,
-      uiEvent.toolCalls,
-      uiEvent.status,
-      uiEvent.finalOutput,
-      { kind: uiEvent.kind ?? "task", subagentName: uiEvent.name.trim() || undefined },
-    );
+  registry.register("wait_for_agent_started", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_started" }>;
+    const target = formatAgentIds(uiEvent.agentIds);
+    return buildSimpleToolRunningView(context.theme, "wait for agents", target);
   });
 
-  registry.register("task_blocked", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "task_blocked" }>;
-    return buildTaskBlockedView(context.theme, uiEvent.title, uiEvent.reason, {
-      kind: uiEvent.kind ?? "task",
-      subagentName: uiEvent.name?.trim() || undefined,
+  registry.register("wait_for_agent_finished", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_finished" }>;
+    const target = formatAgentIds(uiEvent.agentIds);
+    return buildSimpleToolFinishedView({
+      theme: context.theme,
+      label: "wait for agents",
+      target,
+      status: uiEvent.status,
+      message: uiEvent.message,
+    });
+  });
+
+  registry.register("wait_for_agent_blocked", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_blocked" }>;
+    const target = formatAgentIds(uiEvent.agentIds ?? []);
+    return buildSimpleToolFinishedView({
+      theme: context.theme,
+      label: "wait for agents",
+      target,
+      status: "error",
+      message: uiEvent.reason,
+    });
+  });
+
+  registry.register("terminate_agent_started", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "terminate_agent_started" }>;
+    return buildSimpleToolRunningView(context.theme, "terminate agent", uiEvent.agentId);
+  });
+
+  registry.register("terminate_agent_finished", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "terminate_agent_finished" }>;
+    const message =
+      uiEvent.finalStatus && uiEvent.finalStatus !== "success"
+        ? `final status: ${uiEvent.finalStatus}`
+        : uiEvent.message;
+    return buildSimpleToolFinishedView({
+      theme: context.theme,
+      label: "terminate agent",
+      target: uiEvent.agentId,
+      status: uiEvent.status,
+      message,
+    });
+  });
+
+  registry.register("terminate_agent_blocked", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "terminate_agent_blocked" }>;
+    return buildSimpleToolFinishedView({
+      theme: context.theme,
+      label: "terminate agent",
+      target: uiEvent.agentId ?? "(unknown)",
+      status: "error",
+      message: uiEvent.reason,
     });
   });
 
   registry.register("web_search_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "web_search_started" }>;
-    return buildWebToolRunningView(context.theme, "web search", uiEvent.objective);
+    return buildSimpleToolRunningView(context.theme, "web search", uiEvent.objective);
   });
 
   registry.register("web_search_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "web_search_finished" }>;
-    return buildWebToolFinishedView(context.theme, "web search", uiEvent.objective, uiEvent.status);
+    return buildSimpleToolFinishedView({
+      theme: context.theme,
+      label: "web search",
+      target: uiEvent.objective,
+      status: uiEvent.status,
+    });
   });
 
   registry.register("web_fetch_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "web_fetch_started" }>;
-    return buildWebToolRunningView(context.theme, "web fetch", uiEvent.url);
+    return buildSimpleToolRunningView(context.theme, "web fetch", uiEvent.url);
   });
 
   registry.register("web_fetch_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "web_fetch_finished" }>;
-    return buildWebToolFinishedView(context.theme, "web fetch", uiEvent.url, uiEvent.status);
+    return buildSimpleToolFinishedView({
+      theme: context.theme,
+      label: "web fetch",
+      target: uiEvent.url,
+      status: uiEvent.status,
+    });
   });
 
   registry.register("write_success", (event, context) => {

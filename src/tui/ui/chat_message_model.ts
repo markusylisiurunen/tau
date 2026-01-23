@@ -8,7 +8,7 @@ import type { SystemMessageModel } from "./system_message.js";
 import { SystemMessageComponent } from "./system_message.js";
 import type { Theme } from "./theme/index.js";
 import { buildToolOutputProps, renderToolOutput } from "./tool_output.js";
-import type { ToolUiRegistry, ToolUiTaskState } from "./tool_ui_registry.js";
+import type { ToolUiRegistry } from "./tool_ui_registry.js";
 import { UserMessageComponent, type UserMessageModel } from "./user_message.js";
 
 export type ChatMessageModel =
@@ -19,7 +19,6 @@ export type ChatMessageModel =
   | {
       type: "tool";
       event: ToolUiEvent;
-      taskState?: ToolUiTaskState;
     }
   | (SessionDividerModel & { type: "session_divider" })
   | (SessionSummaryModel & { type: "session_summary" });
@@ -132,7 +131,6 @@ export function renderChatMessage(
     case "tool": {
       const view = toolUiRegistry.render(model.event, {
         theme,
-        taskState: model.taskState,
         compact: compactToolUi,
       });
       if (!view) {
@@ -146,7 +144,6 @@ export function renderChatMessage(
           if (nextModel.type !== "tool") return false;
           const nextView = nextOptions.toolUiRegistry.render(nextModel.event, {
             theme: nextOptions.theme,
-            taskState: nextModel.taskState,
             compact: nextOptions.compactToolUi,
           });
           if (!nextView) return false;

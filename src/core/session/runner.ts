@@ -15,7 +15,6 @@ import type {
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
   ToolRegistry,
-  ToolUiEvent,
 } from "../tools/registry.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
@@ -195,84 +194,10 @@ export async function* runToolCalls(
     validToolCalls.push({ index: i, toolCall, def });
   }
 
-  // Step 2: Execute tools in original order, only parallelizing adjacent task calls.
-  const taskLikeToolNames = new Set(["task"]);
+  // Step 2: Execute tools in original order.
+  for (const entry of validToolCalls) {
+    if (signal.aborted) break;
 
-  let i = 0;
-  while (i < validToolCalls.length && !signal.aborted) {
-    const entry = validToolCalls[i]!;
-
-    if (taskLikeToolNames.has(entry.toolCall.name)) {
-      // Collect a contiguous block of task-like calls.
-      const block: typeof validToolCalls = [];
-      while (i < validToolCalls.length) {
-        const nextEntry = validToolCalls[i]!;
-        if (!taskLikeToolNames.has(nextEntry.toolCall.name)) break;
-        block.push(nextEntry);
-        i++;
-      }
-
-      interface TaskExecution {
-        index: number;
-        toolCall: ToolCall;
-        startedUiEvent?: ToolUiEvent;
-        uiEventsIterable?: AsyncIterable<ToolUiEvent>;
-        runPromise: Promise<ToolDispatchResult>;
-      }
-
-      const taskExecutions: TaskExecution[] = [];
-
-      for (const { index, toolCall, def } of block) {
-        if (signal.aborted) break;
-
-        let result: ToolDispatchResult | ToolDispatchResultWithPhases;
-        try {
-          result = await def.dispatch(toolCall, riskLevel, signal, dispatchContext);
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          const toolError = createToolError(
-            toolCall,
-            `${toolCall.name} dispatch failed: ${errorMsg}`,
-          );
-          resultsByIndex.set(index, toolError);
-          yield {
-            type: "notice",
-            severity: "error",
-            text: `${toolCall.name} '${toolCall.id}' dispatch failed: ${errorMsg}`,
-          };
-          continue;
-        }
-
-        if (result.kind === "phased") {
-          taskExecutions.push({
-            index,
-            toolCall,
-            startedUiEvent: result.startedUiEvent,
-            uiEventsIterable: result.uiEvents,
-            runPromise: result.run,
-          });
-
-          if (result.startedUiEvent) {
-            yield { type: "tool_ui", uiEvent: result.startedUiEvent };
-          }
-        } else {
-          // Single-phase task (unlikely but handle it).
-          const { toolResult, uiEvent } = result;
-          resultsByIndex.set(index, toolResult);
-          if (uiEvent) {
-            yield { type: "tool_ui", uiEvent };
-          }
-        }
-      }
-
-      if (taskExecutions.length > 0 && !signal.aborted) {
-        yield* streamAndFinalizeTaskCalls(taskExecutions, resultsByIndex, signal);
-      }
-
-      continue;
-    }
-
-    // Non-task tools execute sequentially.
     const { index, toolCall, def } = entry;
     let result: ToolDispatchResult | ToolDispatchResultWithPhases;
     try {
@@ -286,7 +211,6 @@ export async function* runToolCalls(
         severity: "error",
         text: `${toolCall.name} '${toolCall.id}' dispatch failed: ${errorMsg}`,
       };
-      i++;
       continue;
     }
 
@@ -314,8 +238,6 @@ export async function* runToolCalls(
         yield { type: "tool_ui", uiEvent };
       }
     }
-
-    i++;
   }
 
   // Step 6: Append all results to conversation history in original order.
@@ -323,171 +245,6 @@ export async function* runToolCalls(
     const toolResult = resultsByIndex.get(i);
     if (toolResult) {
       yield { type: "tool_result", message: toolResult };
-    }
-  }
-}
-
-async function* streamAndFinalizeTaskCalls(
-  taskExecutions: Array<{
-    index: number;
-    toolCall: ToolCall;
-    uiEventsIterable?: AsyncIterable<ToolUiEvent>;
-    runPromise: Promise<ToolDispatchResult>;
-  }>,
-  resultsByIndex: Map<number, ToolResultMessage>,
-  signal: AbortSignal,
-): AsyncGenerator<RunnerEvent, void, void> {
-  type ToolUiIterator = AsyncIterator<ToolUiEvent>;
-
-  type TaskExec = (typeof taskExecutions)[number];
-
-  type PendingRace =
-    | {
-        kind: "ui";
-        iterator: ToolUiIterator;
-        taskExec: TaskExec;
-        result: IteratorResult<ToolUiEvent>;
-      }
-    | {
-        kind: "completion";
-        taskExec: TaskExec;
-        settled: PromiseSettledResult<ToolDispatchResult>;
-      };
-
-  const makeUiNext = (iterator: ToolUiIterator, taskExec: TaskExec): Promise<PendingRace> =>
-    iterator
-      .next()
-      .then((result) => ({ kind: "ui", iterator, taskExec, result }) satisfies PendingRace)
-      .catch(
-        () =>
-          ({
-            kind: "ui",
-            iterator,
-            taskExec,
-            result: { done: true, value: undefined } as IteratorResult<ToolUiEvent>,
-          }) satisfies PendingRace,
-      );
-
-  const makeCompletion = (taskExec: TaskExec): Promise<PendingRace> =>
-    taskExec.runPromise
-      .then(
-        (value) =>
-          ({
-            kind: "completion",
-            taskExec,
-            settled: { status: "fulfilled", value },
-          }) satisfies PendingRace,
-      )
-      .catch(
-        (reason) =>
-          ({
-            kind: "completion",
-            taskExec,
-            settled: { status: "rejected", reason },
-          }) satisfies PendingRace,
-      );
-
-  const uiPending = new Map<ToolUiIterator, Promise<PendingRace>>();
-  const completionPending = new Map<TaskExec, Promise<PendingRace>>();
-  const uiIterators = new Map<TaskExec, ToolUiIterator>();
-
-  for (const taskExec of taskExecutions) {
-    completionPending.set(taskExec, makeCompletion(taskExec));
-    if (!taskExec.uiEventsIterable) continue;
-
-    const iterator = taskExec.uiEventsIterable[Symbol.asyncIterator]();
-    uiIterators.set(taskExec, iterator);
-    uiPending.set(iterator, makeUiNext(iterator, taskExec));
-  }
-
-  while ((uiPending.size > 0 || completionPending.size > 0) && !signal.aborted) {
-    const next = await Promise.race<PendingRace>([
-      ...uiPending.values(),
-      ...completionPending.values(),
-    ]);
-
-    if (next.kind === "ui") {
-      uiPending.delete(next.iterator);
-
-      if (next.result.done) {
-        uiIterators.delete(next.taskExec);
-        continue;
-      }
-
-      yield { type: "tool_ui", uiEvent: next.result.value };
-
-      if (!signal.aborted) {
-        uiPending.set(next.iterator, makeUiNext(next.iterator, next.taskExec));
-      }
-      continue;
-    }
-
-    completionPending.delete(next.taskExec);
-    const iterator = uiIterators.get(next.taskExec);
-    if (iterator) {
-      uiPending.delete(iterator);
-      uiIterators.delete(next.taskExec);
-      try {
-        await iterator.return?.();
-      } catch {
-        // Ignore UI stream termination errors on completion.
-      }
-    }
-
-    if (next.settled.status === "fulfilled") {
-      const { toolResult, uiEvent } = next.settled.value;
-      resultsByIndex.set(next.taskExec.index, toolResult);
-      if (uiEvent) {
-        yield { type: "tool_ui", uiEvent };
-      }
-      continue;
-    }
-
-    const errorMsg =
-      next.settled.reason instanceof Error
-        ? next.settled.reason.message
-        : String(next.settled.reason);
-    const toolName = next.taskExec.toolCall.name;
-    const toolError = createToolError(
-      next.taskExec.toolCall,
-      `${toolName} execution failed: ${errorMsg}`,
-    );
-    resultsByIndex.set(next.taskExec.index, toolError);
-    yield {
-      type: "notice",
-      severity: "error",
-      text: `${toolName} '${next.taskExec.toolCall.id}' execution failed: ${errorMsg}`,
-    };
-  }
-
-  // Drain any remaining pending completions if signal was aborted.
-  for (const [taskExec, promise] of completionPending.entries()) {
-    const next = await promise;
-
-    if (next.kind !== "completion") continue;
-
-    if (next.settled.status === "fulfilled") {
-      const { toolResult, uiEvent } = next.settled.value;
-      resultsByIndex.set(taskExec.index, toolResult);
-      if (uiEvent) {
-        yield { type: "tool_ui", uiEvent };
-      }
-    } else {
-      const errorMsg =
-        next.settled.reason instanceof Error
-          ? next.settled.reason.message
-          : String(next.settled.reason);
-      const toolName = taskExec.toolCall.name;
-      const toolError = createToolError(
-        taskExec.toolCall,
-        `${toolName} execution failed: ${errorMsg}`,
-      );
-      resultsByIndex.set(taskExec.index, toolError);
-      yield {
-        type: "notice",
-        severity: "error",
-        text: `${toolName} '${taskExec.toolCall.id}' execution failed: ${errorMsg}`,
-      };
     }
   }
 }

@@ -34,10 +34,13 @@ function createStubView() {
       startWorkingIcon: () => {},
       stopWorkingIcon: () => {},
       handleToolUiEvent: () => {},
+      handleSubagentEvent: () => {},
       resetToolUiSession: () => {},
       finalizeToolUiPending: () => {},
       clearToolUiTransientState: () => {},
       getToolUiCostTotal: () => 0,
+      cycleSubagentSelection: () => undefined,
+      getSelectedSubagentId: () => undefined,
       sendTerminalNotification: () => {},
       getEditorText: () => "",
       setEditorText: (text) => {

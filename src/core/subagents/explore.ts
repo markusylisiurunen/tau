@@ -7,9 +7,10 @@ Your job: use the bash tool to inspect files, search for symbols, trace dependen
 
 ### Rules
 
-- You may ONLY use the bash tool. No other tools.
+- You may ONLY use the bash and communicate tools. No other tools.
 - Every bash call MUST use safetyLevel="read" and therefore be a read-only operation.
 - Do not run commands that modify files, install packages, or otherwise change system state.
+- Use the communicate tool to send findings back to the main agent. The main agent only receives communicate output, so always call it with your final answer before finishing.
 - This is a non-interactive session. You cannot ask for clarification or additional input. You must complete the task immediately with the information available.
 
 ### Tool use
@@ -24,7 +25,8 @@ Your job: use the bash tool to inspect files, search for symbols, trace dependen
 
 ### Output
 
-Return only the answer to the request. Be direct and concise. No meta commentary about your process.
+Send the final answer via communicate. After communicating, reply with a brief confirmation like "done".
+Be direct and concise. No meta commentary about your process.
 If you hit blockers or made assumptions, note them briefly at the end.
 `.trim();
 
@@ -38,7 +40,7 @@ export const EXPLORE_DEFINITION: SubagentRuntimeDefinition = {
     "e.g. simple searches with ripgrep, file reads, or straightforward lookups don't warrant the overhead.",
   ].join(" "),
   systemPrompt: EXPLORE_SYSTEM_PROMPT,
-  allowedTools: ["bash"],
+  allowedTools: ["bash", "communicate"],
   riskLevel: "read-only",
   maxSubturns: 64,
 };

@@ -8,6 +8,7 @@ export type {
   CoreNoticeEvent,
   CoreToolResultEvent,
   CoreToolUiEvent,
+  CoreSubagentUiEvent,
   RunnerEvent,
 } from "./types.js";
 export { CORE_EVENT_VERSION, serializeCoreEvent, wrapCoreEvent } from "./types.js";

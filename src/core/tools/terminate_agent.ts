@@ -11,6 +11,7 @@ import type {
   ToolDispatchResultWithPhases,
   ToolUiEvent,
 } from "./registry.js";
+import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
 
 const TERMINATE_AGENT_DESCRIPTION = [
   "Terminate a running subagent and return its final status.",
@@ -54,6 +55,24 @@ function formatTerminateResult(result: SubagentResult): string {
   };
 
   return JSON.stringify(payload, null, 2);
+}
+
+function formatTerminateOutput(result: SubagentResult): string {
+  const cleanedOutputs = result.outputs
+    .map((text) => text.trimEnd())
+    .filter((text) => text.trim().length > 0);
+  let body = cleanedOutputs.join("\n\n");
+  if (!body) {
+    const finalText = result.finalText?.trimEnd() ?? "";
+    body = finalText.trim().length > 0 ? finalText : "";
+  }
+
+  return body;
+}
+
+function getTerminateDurationMs(result: SubagentResult): number | undefined {
+  const finishedAt = result.finishedAt ?? Date.now();
+  return Math.max(0, finishedAt - result.startedAt);
 }
 
 export function createTerminateAgentToolDefinition(): ToolDefinition {
@@ -111,6 +130,15 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
             }
 
             const resultText = formatTerminateResult(result);
+            const statusText = formatSubagentStatusLine({
+              costTotal: result.costTotal,
+              durationMs: getTerminateDurationMs(result),
+            });
+            const uiText = buildSubagentUiText({
+              output: formatTerminateOutput(result),
+              statusText,
+              maxOutputLines: 16,
+            });
             const uiEvent: ToolUiEvent = {
               type: "terminate_agent_finished",
               toolCallId: toolCall.id,
@@ -119,6 +147,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               finalStatus: result.status,
               message:
                 result.status === "success" ? undefined : "subagent did not complete successfully",
+              uiText,
             };
             const toolResult = createToolResult(toolCall, resultText, false);
             return { kind: "single", toolResult, uiEvent };

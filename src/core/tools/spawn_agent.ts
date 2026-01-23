@@ -13,6 +13,7 @@ import type {
   ToolDispatchResultWithPhases,
   ToolUiEvent,
 } from "./registry.js";
+import { buildSubagentUiText } from "./subagent_ui.js";
 
 const SPAWN_AGENT_DESCRIPTION = [
   "Spawn a subagent to run in the background and return its id.",
@@ -197,6 +198,11 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           });
 
           const toolResult: ToolResultMessage = createToolResult(toolCall, resultText, false);
+          const uiText = buildSubagentUiText({
+            output: prompt,
+            statusText: spawnResult.id,
+            maxOutputLines: 16,
+          });
           const uiEvent: ToolUiEvent = {
             type: "spawn_agent_finished",
             toolCallId: toolCall.id,
@@ -204,6 +210,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             title,
             status: "success",
             agentId: spawnResult.id,
+            uiText,
           };
           return { kind: "single", toolResult, uiEvent };
         })(),

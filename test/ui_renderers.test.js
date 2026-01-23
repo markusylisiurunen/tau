@@ -99,7 +99,10 @@ test("subagent panel renders progress and communicate output", () => {
   });
 
   const rendered = renderText(panel, 120);
-  expect(rendered).toContain("bash running: echo ok");
-  expect(rendered).toContain("> done");
-  expect(rendered).toContain("$0.12");
+  expect(rendered).toContain("<actionRunning>⏵</actionRunning>");
+  expect(rendered).toContain("<textDim>explore</textDim>");
+  expect(rendered).toContain("<brandAccent>analysis</brandAccent>");
+  expect(rendered).toContain("<actionOutput>  · $ echo ok</actionOutput>");
+  expect(rendered).not.toContain("done");
+  expect(rendered).toContain("<textMuted>(1/1) · ctrl+g to terminate</textMuted>");
 });

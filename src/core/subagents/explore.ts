@@ -42,5 +42,5 @@ export const EXPLORE_DEFINITION: SubagentRuntimeDefinition = {
   systemPrompt: EXPLORE_SYSTEM_PROMPT,
   allowedTools: ["bash", "communicate"],
   riskLevel: "read-only",
-  maxSubturns: 64,
+  maxSubturns: 128,
 };

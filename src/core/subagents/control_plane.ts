@@ -137,7 +137,7 @@ export class SubagentControlPlane {
     }
 
     const { definition, personaConfig, prompt, title, config, authPath, backend } = options;
-    const id = `tau-subagent-${definition.name}-${randomUUID()}`;
+    const id = randomUUID();
     const controller = new AbortController();
     const startedAt = Date.now();
 

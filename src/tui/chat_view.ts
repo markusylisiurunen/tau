@@ -12,6 +12,7 @@ import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_
 import { CustomEditor } from "./ui/custom_editor.js";
 import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
+import { SubagentEditorPaneComponent } from "./ui/subagent_editor_pane.js";
 import { SubagentPanelComponent } from "./ui/subagent_panel.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
 import { coercePaletteOverrides, createUiTheme, type Theme } from "./ui/theme/index.js";
@@ -114,6 +115,7 @@ export class TuiChatView implements ChatView {
   private queuedMessages: QueuedMessagesComponent;
   private subagentPanel: SubagentPanelComponent;
   private editor: CustomEditor;
+  private editorPane: SubagentEditorPaneComponent;
   private uiTheme: Theme;
   private toolUiRegistry = createToolUiRegistry();
   private toolUiRouter: ToolUiRouter;
@@ -140,6 +142,11 @@ export class TuiChatView implements ChatView {
     this.queuedMessages = new QueuedMessagesComponent(this.uiTheme, options.queuedUserMessages);
     this.subagentPanel = new SubagentPanelComponent(this.uiTheme);
     this.editor = new CustomEditor(this.uiTheme);
+    this.editorPane = new SubagentEditorPaneComponent(
+      this.uiTheme,
+      this.subagentPanel,
+      this.editor,
+    );
     this.toolUiRouter = new ToolUiRouter({
       chatContainer: this.chatContainer,
       requestRender: () => this.ui.requestRender(),
@@ -345,6 +352,7 @@ export class TuiChatView implements ChatView {
     this.queuedMessages.setTheme(this.uiTheme);
     this.subagentPanel.setTheme(this.uiTheme);
     this.editor.setUiTheme(this.uiTheme);
+    this.editorPane.setTheme(this.uiTheme);
 
     if (this.lastStatus) {
       this.updateEditorVisualState(this.lastStatus.editor);
@@ -358,8 +366,7 @@ export class TuiChatView implements ChatView {
     this.ui.addChild(this.chatContainer);
     this.ui.addChild(new Spacer(1));
     this.ui.addChild(this.queuedMessages);
-    this.ui.addChild(this.subagentPanel);
-    this.ui.addChild(this.editor);
+    this.ui.addChild(this.editorPane);
     this.ui.addChild(this.footer);
 
     this.ui.setFocus(this.editor);

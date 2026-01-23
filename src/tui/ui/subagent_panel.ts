@@ -1,7 +1,5 @@
 import { type Component, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import type { SubagentStateSnapshot, SubagentUiEvent } from "../../core/subagents/types.js";
-import { formatAdaptiveNumber } from "../../core/utils/format.js";
-import { HeaderBox } from "./components/header_box.js";
 import type { Theme } from "./theme/index.js";
 
 type SubagentPanelLine = {
@@ -24,23 +22,6 @@ type SubagentPanelEntry = {
 const MAX_PANEL_LINES = 6;
 const MAX_PANEL_HISTORY = 200;
 
-class SubagentPanelContent implements Component {
-  constructor(
-    private lines: string[],
-    private theme: Theme,
-  ) {}
-
-  invalidate() {}
-
-  render(width: number): string[] {
-    if (width <= 0) return [""];
-    const ellipsis = this.theme.palette.textDim("…");
-    return this.lines.map((line) =>
-      visibleWidth(line) > width ? truncateToWidth(line, width, ellipsis) : line,
-    );
-  }
-}
-
 export class SubagentPanelComponent implements Component {
   private theme: Theme;
   private entries = new Map<string, SubagentPanelEntry>();
@@ -59,10 +40,17 @@ export class SubagentPanelComponent implements Component {
     this.selectedId = undefined;
   }
 
+  hasActiveSubagents(): boolean {
+    return this.getRunningEntries().length > 0;
+  }
+
   handleEvent(event: SubagentUiEvent): void {
     if (event.type === "subagent_spawned") {
       const state = event.state;
       this.entries.set(state.id, this.buildEntry(state));
+      if (!this.selectedId || this.entries.get(this.selectedId)?.status !== "running") {
+        this.selectedId = state.id;
+      }
       return;
     }
 
@@ -70,6 +58,9 @@ export class SubagentPanelComponent implements Component {
       const entry = this.entries.get(event.state.id);
       if (!entry) return;
       this.applySnapshot(entry, event.state);
+      if (this.selectedId === entry.id && entry.status !== "running") {
+        this.selectedId = this.getFirstRunningId();
+      }
       return;
     }
 
@@ -118,13 +109,14 @@ export class SubagentPanelComponent implements Component {
   }
 
   getSelectedId(): string | undefined {
+    if (!this.selectedId) return undefined;
+    const entry = this.entries.get(this.selectedId);
+    if (!entry || entry.status !== "running") return undefined;
     return this.selectedId;
   }
 
   cycleSelection(direction: 1 | -1): string | undefined {
-    const activeIds = [...this.entries.values()]
-      .filter((entry) => entry.status === "running")
-      .map((entry) => entry.id);
+    const activeIds = this.getRunningEntries().map((entry) => entry.id);
 
     if (activeIds.length === 0) {
       this.selectedId = undefined;
@@ -141,82 +133,140 @@ export class SubagentPanelComponent implements Component {
   invalidate() {}
 
   render(width: number): string[] {
-    if (this.entries.size === 0) return [];
+    if (width <= 0) return [""];
+    const runningEntries = this.getRunningEntries();
+    if (runningEntries.length === 0) return [];
 
-    const { palette } = this.theme;
-    const entries = [...this.entries.values()];
-    const activeCount = entries.filter((entry) => entry.status === "running").length;
-    const headerLeft = `subagents (${activeCount}/${entries.length})`;
-    const headerRight = activeCount > 0 ? "alt+down select · ctrl+g stop" : undefined;
-    const borderColor = activeCount > 0 ? palette.actionRunning : palette.textMuted;
+    const { entry, index } = this.resolveSelectedEntry(runningEntries);
+    const lines: string[] = [];
 
-    const contentLines: string[] = [];
+    lines.push(this.buildHeaderLine(entry));
+    const outputLines = this.buildOutputLines(entry);
+    lines.push(...outputLines);
+    lines.push(this.buildFooterLine(index + 1, runningEntries.length));
 
-    for (const entry of entries) {
-      const entryLines = this.buildEntryLines(entry);
-      contentLines.push(...entryLines);
-
-      const recentLines = entry.lines.slice(-MAX_PANEL_LINES);
-      for (const line of recentLines) {
-        const prefix = line.kind === "communicate" ? ">" : "·";
-        const styledText =
-          line.kind === "communicate" ? palette.textDefault(line.text) : palette.textDim(line.text);
-        contentLines.push(`  ${prefix} ${styledText}`);
-      }
-    }
-
-    const content = new SubagentPanelContent(contentLines, this.theme);
-    const box = new HeaderBox(content, {
-      borderColor,
-      headerLeft,
-      headerRight,
-      headerLeftStyle: palette.textMuted,
-      headerRightStyle: palette.textDim,
-      paddingX: 1,
-    });
-
-    return box.render(width);
+    return lines.map((line) => this.fitLine(line, width));
   }
 
-  private buildEntryLines(entry: SubagentPanelEntry): string[] {
+  private resolveSelectedEntry(
+    runningEntries: SubagentPanelEntry[],
+  ): { entry: SubagentPanelEntry; index: number } {
+    let index = this.selectedId
+      ? runningEntries.findIndex((entry) => entry.id === this.selectedId)
+      : -1;
+
+    if (index === -1) {
+      this.selectedId = runningEntries[0]?.id;
+      index = 0;
+    }
+
+    return { entry: runningEntries[index]!, index };
+  }
+
+  private buildHeaderLine(entry: SubagentPanelEntry): string {
     const { palette } = this.theme;
-    const isSelected = entry.id === this.selectedId;
-    const selector = isSelected ? palette.brandAccent("▸") : " ";
-
-    const statusLabel =
-      entry.status === "running"
-        ? entry.abortRequested
-          ? "stopping"
-          : "running"
-        : entry.status === "success"
-          ? "done"
-          : entry.status === "aborted"
-            ? "aborted"
-            : "failed";
-
-    const bullet =
-      entry.status === "running"
-        ? entry.abortRequested
-          ? palette.statusWarn("■")
-          : palette.actionRunning("⏵")
-        : entry.status === "success"
-          ? palette.actionSuccess("✓")
-          : entry.status === "aborted"
-            ? palette.statusWarn("■")
-            : palette.actionError("✗");
-
+    const bullet = palette.actionRunning("⏵");
     const name = entry.name.trim();
     const title = entry.title.trim();
-    const label = name
-      ? `${palette.textMuted(name)}: ${palette.brandAccent(title)}`
-      : palette.brandAccent(title);
 
-    const cost = `$${formatAdaptiveNumber(entry.costTotal, 2, 5)}`;
-    const stats = palette.textDim(
-      `${statusLabel} · ${cost} · ${entry.turns}t · ${entry.toolCalls} tools`,
-    );
+    if (name && title) {
+      return `${bullet} ${palette.textDim(name)} ${palette.brandAccent(title)}`;
+    }
+    if (name) {
+      return `${bullet} ${palette.textDim(name)}`;
+    }
+    return `${bullet} ${palette.brandAccent(title || "(subagent)")}`;
+  }
 
-    return [`${selector} ${bullet} ${label}`, `  ${stats}`];
+  private buildOutputLines(entry: SubagentPanelEntry): string[] {
+    const { palette } = this.theme;
+    const formattedLines = entry.lines
+      .filter((line) => line.kind === "progress")
+      .map((line) => this.formatOutputText(line.text))
+      .filter((line) => line.length > 0);
+    const recentLines = formattedLines.slice(-MAX_PANEL_LINES);
+    const output: string[] = [];
+
+    for (const line of recentLines) {
+      output.push(palette.actionOutput(`  · ${line}`));
+    }
+
+    for (let i = recentLines.length; i < MAX_PANEL_LINES; i++) {
+      output.push("");
+    }
+
+    return output;
+  }
+
+  private formatOutputText(text: string): string {
+    const trimmed = text.trim();
+    if (!trimmed) return "";
+
+    if (trimmed.startsWith("bash running: ")) {
+      return `$ ${trimmed.slice("bash running: ".length)}`;
+    }
+    if (trimmed.startsWith("bash failed: ")) {
+      return trimmed.replace(/^bash failed:\s*/, "bash failed: ");
+    }
+    if (trimmed.startsWith("bash blocked: ")) {
+      return trimmed.replace(/^bash blocked:\s*/, "bash blocked: ");
+    }
+    if (trimmed.startsWith("bash aborted: ")) {
+      return trimmed.replace(/^bash aborted:\s*/, "bash aborted: ");
+    }
+    if (trimmed.startsWith("edit: ")) {
+      return `edit ${trimmed.slice("edit: ".length)}`;
+    }
+    if (trimmed.startsWith("write: ")) {
+      return `write ${trimmed.slice("write: ".length)}`;
+    }
+    if (trimmed.startsWith("tool blocked: write ")) {
+      return `write blocked ${trimmed.slice("tool blocked: write ".length)}`;
+    }
+    if (trimmed.startsWith("tool blocked: edit ")) {
+      return `edit blocked ${trimmed.slice("tool blocked: edit ".length)}`;
+    }
+    if (trimmed.startsWith("web search failed: ")) {
+      return trimmed.replace(/^web search failed:\s*\?\s*/, "web search failed: ");
+    }
+    if (trimmed.startsWith("web search: ")) {
+      return `web search ${trimmed.slice("web search: ".length)}`;
+    }
+    if (trimmed.startsWith("web fetch failed: ")) {
+      return trimmed.replace(/^web fetch failed:\s*\?\s*/, "web fetch failed: ");
+    }
+    if (trimmed.startsWith("web fetch: ")) {
+      return `web fetch ${trimmed.slice("web fetch: ".length)}`;
+    }
+
+    return "";
+  }
+
+  private buildFooterLine(index: number, total: number): string {
+    const { palette } = this.theme;
+    const parts = [`(${index}/${total})`];
+    if (total > 1) {
+      parts.push("alt+down to cycle");
+    }
+    parts.push("ctrl+g to terminate");
+    return palette.textMuted(parts.join(" · "));
+  }
+
+  private fitLine(line: string, width: number): string {
+    const truncated = truncateToWidth(line, width, "…");
+    const pad = Math.max(0, width - visibleWidth(truncated));
+    return `${truncated}${" ".repeat(pad)}`;
+  }
+
+  private getRunningEntries(): SubagentPanelEntry[] {
+    return [...this.entries.values()].filter((entry) => entry.status === "running");
+  }
+
+  private getFirstRunningId(): string | undefined {
+    for (const entry of this.entries.values()) {
+      if (entry.status === "running") return entry.id;
+    }
+    return undefined;
   }
 
   private buildEntry(state: SubagentStateSnapshot): SubagentPanelEntry {

@@ -42,6 +42,7 @@ export type ToolUiEvent =
       status: "success" | "error";
       agentId?: string;
       message?: string;
+      uiText?: ToolUiText;
     }
   | {
       type: "spawn_agent_blocked";
@@ -61,6 +62,7 @@ export type ToolUiEvent =
       agentIds: string[];
       status: "success" | "error";
       message?: string;
+      uiText?: ToolUiText;
     }
   | {
       type: "wait_for_agent_blocked";
@@ -80,6 +82,7 @@ export type ToolUiEvent =
       status: "success" | "error";
       finalStatus?: SubagentStatus;
       message?: string;
+      uiText?: ToolUiText;
     }
   | {
       type: "terminate_agent_blocked";

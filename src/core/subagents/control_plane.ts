@@ -210,8 +210,9 @@ export class SubagentControlPlane {
     if (!record) return;
     const trimmed = text.trim();
     if (!trimmed) return;
-    record.outputs.push(trimmed);
-    this.emit({ type: "subagent_communicate", id, text: trimmed });
+    const payload = text.trimEnd();
+    record.outputs.push(payload);
+    this.emit({ type: "subagent_communicate", id, text: payload });
   }
 
   async waitFor(ids: string[], signal?: AbortSignal): Promise<SubagentResult[]> {

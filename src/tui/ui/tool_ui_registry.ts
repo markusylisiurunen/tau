@@ -252,13 +252,13 @@ export function createToolUiRegistry(): ToolUiRegistry {
     return buildSubagentRunningView({
       theme: context.theme,
       label: "spawning",
-      title: uiEvent.name,
+      title: uiEvent.title,
     });
   });
 
   registry.register("spawn_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "spawn_agent_finished" }>;
-    const title = formatSubagentTitle(uiEvent.name);
+    const title = formatSubagentTitle(uiEvent.title);
     if (!uiEvent.uiText) {
       return buildSimpleToolFinishedView({
         theme: context.theme,
@@ -280,7 +280,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("spawn_agent_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "spawn_agent_blocked" }>;
-    const title = formatSubagentTitle(uiEvent.name ?? uiEvent.title);
+    const title = formatSubagentTitle(uiEvent.title ?? uiEvent.name);
     return buildSimpleToolFinishedView({
       theme: context.theme,
       label: "spawn",

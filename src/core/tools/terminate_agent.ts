@@ -130,10 +130,14 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
             }
 
             const resultText = formatTerminateResult(result);
-            const statusText = formatSubagentStatusLine({
+            const succeeded = result.status === "success";
+            const baseStatusText = formatSubagentStatusLine({
               costTotal: result.costTotal,
               durationMs: getTerminateDurationMs(result),
             });
+            const statusText = succeeded
+              ? baseStatusText
+              : `${baseStatusText} · status ${result.status}`;
             const uiText = buildSubagentUiText({
               output: formatTerminateOutput(result),
               statusText,
@@ -143,13 +147,12 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               type: "terminate_agent_finished",
               toolCallId: toolCall.id,
               agentId: id,
-              status: "success",
+              status: succeeded ? "success" : "error",
               finalStatus: result.status,
-              message:
-                result.status === "success" ? undefined : "subagent did not complete successfully",
+              message: succeeded ? undefined : `subagent finished with status ${result.status}`,
               uiText,
             };
-            const toolResult = createToolResult(toolCall, resultText, false);
+            const toolResult = createToolResult(toolCall, resultText, !succeeded);
             return { kind: "single", toolResult, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

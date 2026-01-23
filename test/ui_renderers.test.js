@@ -103,6 +103,6 @@ test("subagent panel renders progress and communicate output", () => {
   expect(rendered).toContain("<textDim>explore</textDim>");
   expect(rendered).toContain("<brandAccent>analysis</brandAccent>");
   expect(rendered).toContain("<actionOutput>  · $ echo ok</actionOutput>");
-  expect(rendered).not.toContain("done");
+  expect(rendered).toContain("<actionOutput>  · > done</actionOutput>");
   expect(rendered).toContain("<textMuted>(1/1) · ctrl+g to terminate</textMuted>");
 });

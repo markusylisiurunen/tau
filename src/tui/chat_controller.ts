@@ -128,6 +128,7 @@ export class ChatController {
   private isDrainingQueuedUserMessages = false;
   private pendingIdleNotification = false;
   private isBashMode = false;
+  private isBashIncognito = false;
   private isMemoryMode = false;
   private showThinking = false;
   private compactToolUi = true;
@@ -483,6 +484,7 @@ export class ChatController {
   }
 
   private getInputMode(): ChatInputMode {
+    if (this.isBashIncognito) return "bash_incognito";
     if (this.isBashMode) return "bash";
     if (this.isMemoryMode) return "memory";
     return "normal";
@@ -854,6 +856,7 @@ export class ChatController {
 
   private handleEditorChange(text: string): void {
     const wasBash = this.isBashMode;
+    const wasBashIncognito = this.isBashIncognito;
     const wasMemory = this.isMemoryMode;
     const wasInFileAutocomplete = this.isInFileAutocomplete;
 
@@ -862,7 +865,9 @@ export class ChatController {
     }
 
     const trimmed = text.trimStart();
-    this.isBashMode = trimmed.startsWith("!");
+    const isIncognito = trimmed.startsWith("!!");
+    this.isBashIncognito = isIncognito;
+    this.isBashMode = trimmed.startsWith("!") && !isIncognito;
     this.isMemoryMode = trimmed.startsWith("#");
 
     const beforeCursor = this.getEditorTextBeforeCursor();
@@ -872,7 +877,11 @@ export class ChatController {
       this.refreshProjectFilesInBackground();
     }
 
-    if (wasBash !== this.isBashMode || wasMemory !== this.isMemoryMode) {
+    if (
+      wasBash !== this.isBashMode ||
+      wasBashIncognito !== this.isBashIncognito ||
+      wasMemory !== this.isMemoryMode
+    ) {
       this.refreshStatus();
     }
   }
@@ -1012,6 +1021,14 @@ export class ChatController {
 
     if (trimmed.startsWith("/")) {
       await this.handleCommand(trimmed);
+      return;
+    }
+
+    if (trimmed.startsWith("!!")) {
+      const command = trimmed.slice(2).trim();
+      if (command) {
+        await this.runBashCommand(command, { addToContext: false, labelOverride: "incognito" });
+      }
       return;
     }
 
@@ -1224,6 +1241,7 @@ export class ChatController {
     this.expandedSkillsInCurrentPrompt.clear();
     this.view.addMessage({ type: "session_divider", label: "new session" });
     this.isBashMode = false;
+    this.isBashIncognito = false;
     this.isMemoryMode = false;
     this.previousSessionSummary = undefined;
     this.rebuildSystemPrompt();
@@ -1412,6 +1430,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       summary: this.previousSessionSummary,
     });
     this.isBashMode = false;
+    this.isBashIncognito = false;
     this.isMemoryMode = false;
 
     // Rebuild environment tag and system prompt with the new summary and current risk level
@@ -1738,7 +1757,10 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
   // Direct Bash Execution (user ! commands) -------------------------------------------------------
 
-  private async runBashCommand(command: string, opts?: { cwd?: string }): Promise<boolean> {
+  private async runBashCommand(
+    command: string,
+    opts?: { cwd?: string; addToContext?: boolean; labelOverride?: string },
+  ): Promise<boolean> {
     this.isStreaming = true;
     const abortController = new AbortController();
     this.currentTurnAbort = abortController;
@@ -1785,12 +1807,14 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         truncationInfo,
         uiText,
         durationMs,
-        labelOverride: "you ran",
+        labelOverride: opts?.labelOverride ?? "you ran",
       });
 
       this.refreshStatus();
 
-      this.engine.addUserText(formatBashUserMessageText({ command, truncationInfo }));
+      if (opts?.addToContext !== false) {
+        this.engine.addUserText(formatBashUserMessageText({ command, truncationInfo }));
+      }
 
       this.view.requestRender();
     } catch (err) {

@@ -183,8 +183,7 @@ export class SubagentPanelComponent implements Component {
   private buildOutputLines(entry: SubagentPanelEntry): string[] {
     const { palette } = this.theme;
     const formattedLines = entry.lines
-      .filter((line) => line.kind === "progress")
-      .map((line) => this.formatOutputText(line.text))
+      .map((line) => this.formatOutputText(line))
       .filter((line) => line.length > 0);
     const recentLines = formattedLines.slice(-MAX_PANEL_LINES);
     const output: string[] = [];
@@ -200,21 +199,26 @@ export class SubagentPanelComponent implements Component {
     return output;
   }
 
-  private formatOutputText(text: string): string {
-    const trimmed = text.trim();
+  private formatOutputText(line: SubagentPanelLine): string {
+    const trimmed = line.text.trim();
     if (!trimmed) return "";
+
+    if (line.kind === "communicate") {
+      const firstLine = trimmed.split(/\r?\n/, 1)[0]?.trim() ?? "";
+      return firstLine ? `> ${firstLine}` : "";
+    }
 
     if (trimmed.startsWith("bash running: ")) {
       return `$ ${trimmed.slice("bash running: ".length)}`;
     }
     if (trimmed.startsWith("bash failed: ")) {
-      return trimmed.replace(/^bash failed:\s*/, "bash failed: ");
+      return trimmed.replace(/^bash failed:\s*/, "$ (failed): ");
     }
     if (trimmed.startsWith("bash blocked: ")) {
-      return trimmed.replace(/^bash blocked:\s*/, "bash blocked: ");
+      return trimmed.replace(/^bash blocked:\s*/, "$ (blocked): ");
     }
     if (trimmed.startsWith("bash aborted: ")) {
-      return trimmed.replace(/^bash aborted:\s*/, "bash aborted: ");
+      return trimmed.replace(/^bash aborted:\s*/, "$ (aborted): ");
     }
     if (trimmed.startsWith("edit: ")) {
       return `edit ${trimmed.slice("edit: ".length)}`;

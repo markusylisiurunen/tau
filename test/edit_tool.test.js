@@ -20,8 +20,8 @@ describe("edit tool", () => {
     try {
       const filePath = join(fx.dir, "example.ts");
       const originalLines = [
-        "const cost = `${formatAdaptiveNumber(entry.costTotal, 2, 5)}`;",
-        "const label = \"price\";",
+        `const cost = \`\${formatAdaptiveNumber(entry.costTotal, 2, 5)}\`;`,
+        'const label = "price";',
       ];
       writeFileSync(filePath, `${originalLines.join("\n")}\n`);
 
@@ -48,7 +48,7 @@ describe("edit tool", () => {
           arguments: {
             path: filePath,
             oldText: originalLines[1],
-            newText: "const label = \"$1\";",
+            newText: 'const label = "$1";',
           },
         },
         "read-write",
@@ -58,7 +58,7 @@ describe("edit tool", () => {
       expect(updated).toBe(
         [
           "const cost = `$${formatAdaptiveNumber(entry.costTotal, 2, 5)}`;",
-          "const label = \"$1\";",
+          'const label = "$1";',
           "",
         ].join("\n"),
       );

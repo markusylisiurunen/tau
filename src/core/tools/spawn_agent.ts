@@ -72,12 +72,9 @@ function getEnabledSubagentConfig(
 }
 
 function formatSpawnToolResult(args: { id: string; name: string; title: string }): string {
-  return [
-    `id: ${args.id}`,
-    `name: ${args.name}`,
-    `title: ${args.title}`,
-    "status: running",
-  ].join("\n");
+  return [`id: ${args.id}`, `name: ${args.name}`, `title: ${args.title}`, "status: running"].join(
+    "\n",
+  );
 }
 
 export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): ToolDefinition {

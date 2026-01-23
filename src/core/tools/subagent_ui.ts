@@ -1,5 +1,5 @@
-import { buildCompactPreviewLines } from "../utils/tool_preview.js";
 import { formatAdaptiveNumber, formatDurationMs } from "../utils/format.js";
+import { buildCompactPreviewLines } from "../utils/tool_preview.js";
 import type { ToolUiLine, ToolUiText } from "./registry.js";
 
 type SubagentUiTextOptions = {
@@ -32,16 +32,16 @@ export function buildSubagentUiText({
   const trimmed = output.trimEnd();
   const outputLines = trimmed ? trimmed.split("\n") : [];
   const truncatedLines =
-    typeof maxOutputLines === "number" ? truncateOutputLines(outputLines, maxOutputLines) : outputLines;
+    typeof maxOutputLines === "number"
+      ? truncateOutputLines(outputLines, maxOutputLines)
+      : outputLines;
   const previewLimit = maxPreviewLines ?? maxOutputLines ?? truncatedLines.length;
   const preview = buildCompactPreviewLines(truncatedLines, {
     maxLines: previewLimit,
     totalLines: truncatedLines.length,
     unitLabel: "lines",
   });
-  const previewLines: ToolUiLine[] = preview
-    ? preview.split("\n").map((text) => ({ text }))
-    : [];
+  const previewLines: ToolUiLine[] = preview ? preview.split("\n").map((text) => ({ text })) : [];
   const fullLines: ToolUiLine[] = truncatedLines.map((text) => ({ text }));
   const statusLine = statusText ? `    (${statusText})` : undefined;
 

@@ -50,6 +50,7 @@ import {
 } from "../core/types.js";
 import { resolveAgentCwd, resolveSandboxPath } from "../core/utils/agent_environment.js";
 import { findAgentsFilesFromCwdToHome } from "../core/utils/agents_files.js";
+import { formatHistoryForCompaction } from "../core/utils/compact.js";
 import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
@@ -60,7 +61,6 @@ import {
   formatCwdChangeNotice,
   formatRiskLevelChangeNotice,
 } from "../core/utils/context.js";
-import { formatHistoryForCompaction } from "../core/utils/compact.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { getGitRoot } from "../core/utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";

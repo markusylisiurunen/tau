@@ -5,7 +5,11 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { personas as builtinPersonas } from "../personas.js";
 import type { PromptTemplate } from "../prompts.js";
-import type { SubagentConfigMap, SubagentPersonaConfig, SubagentToolName } from "../subagents/types.js";
+import type {
+  SubagentConfigMap,
+  SubagentPersonaConfig,
+  SubagentToolName,
+} from "../subagents/types.js";
 import { BASH_TOOL } from "../tools/bash.js";
 import { EDIT_TOOL } from "../tools/edit.js";
 import { SPAWN_AGENT_TOOL } from "../tools/spawn_agent.js";

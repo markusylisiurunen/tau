@@ -1,7 +1,7 @@
 import { type Component, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { truncateFromEndByWidth } from "./components/one_line_segments.js";
-import { CustomEditor } from "./custom_editor.js";
-import { SubagentPanelComponent } from "./subagent_panel.js";
+import type { CustomEditor } from "./custom_editor.js";
+import type { SubagentPanelComponent } from "./subagent_panel.js";
 import type { Theme } from "./theme/index.js";
 
 const SUBAGENT_HEADER_LABEL = "subagents";

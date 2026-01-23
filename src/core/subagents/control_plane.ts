@@ -3,6 +3,7 @@ import type { Config } from "../config/index.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolDispatchContext } from "../tools/registry.js";
 import { formatToolUiEventForProgress } from "../utils/subagent_utils.js";
+import type { SubagentProgressEvent, SubagentToolUiEvent } from "./subagent_engine.js";
 import { runSubagent } from "./subagent_engine.js";
 import type {
   SubagentName,
@@ -12,7 +13,6 @@ import type {
   SubagentStatus,
   SubagentUiEvent,
 } from "./types.js";
-import type { SubagentProgressEvent, SubagentToolUiEvent } from "./subagent_engine.js";
 
 const MAX_ACTIVE_SUBAGENTS = 3;
 const MAX_PROGRESS_EVENTS = 200;
@@ -32,9 +32,7 @@ export type SubagentResult = {
   finishedAt?: number;
 };
 
-export type SubagentSpawnResult =
-  | { ok: true; id: string }
-  | { ok: false; reason: string };
+export type SubagentSpawnResult = { ok: true; id: string } | { ok: false; reason: string };
 
 type SubagentLogEntry = {
   kind: "progress" | "communicate";

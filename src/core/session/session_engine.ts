@@ -13,9 +13,9 @@ import { type CredentialResolver, createCredentialResolver } from "../auth/crede
 import type { Config } from "../config/index.js";
 import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
 import type { CoreDeps } from "../runtime/deps.js";
+import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
-import { createDefaultCoreDeps } from "../runtime/deps.js";
 import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";

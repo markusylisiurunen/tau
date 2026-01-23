@@ -1,11 +1,26 @@
 import chalk from "chalk";
+import { builtinThemes } from "../../../core/config/builtin_themes.js";
 import { hslToHex } from "../../../core/utils/color.js";
 import type { Palette, ThemeMode } from "./theme.js";
-import { PALETTE_COLORS, type PaletteTokenName } from "./tokens.js";
+import { PALETTE_TOKEN_NAMES, type PaletteTokenName } from "./tokens.js";
 
-const paletteByName = new Map<PaletteTokenName, (typeof PALETTE_COLORS)[number]>(
-  PALETTE_COLORS.map((color) => [color.name, color] as const),
-);
+const defaultPaletteTokens = (() => {
+  const gold = builtinThemes.find((theme) => theme.id === "gold");
+  if (!gold) {
+    throw new Error("missing builtin theme: gold");
+  }
+
+  const resolved = {} as Record<PaletteTokenName, string>;
+  for (const name of PALETTE_TOKEN_NAMES) {
+    const value = gold.tokens[name];
+    if (!value) {
+      throw new Error(`missing palette token: ${name}`);
+    }
+    resolved[name] = value;
+  }
+
+  return resolved;
+})();
 
 function tagWrapper(label: string): (text: string) => string {
   return (text) => `<${label}>${text}</${label}>`;
@@ -40,6 +55,7 @@ const PALETTE_TEXT_TOKENS = [
   "editorBorderMedium",
   "editorBorderHigh",
   "editorBorderXhigh",
+  "editorSubagentBorder",
   "statusWarn",
   "statusError",
   "modeMemory",
@@ -78,20 +94,8 @@ type _assertAllPaletteTokensCovered =
     : never;
 const _assertAllPaletteTokensCovered: _assertAllPaletteTokensCovered = true;
 
-function buildPaletteLookup(): Record<PaletteTokenName, string> {
-  return PALETTE_COLORS.reduce<Record<PaletteTokenName, string>>(
-    (acc, color) => {
-      acc[color.name] = hslToHex(color.h, color.s, color.l);
-      return acc;
-    },
-    {} as Record<PaletteTokenName, string>,
-  );
-}
-
-export function getPaletteToken(
-  name: PaletteTokenName,
-): (typeof PALETTE_COLORS)[number] | undefined {
-  return paletteByName.get(name);
+export function getPaletteToken(name: PaletteTokenName): string | undefined {
+  return defaultPaletteTokens[name];
 }
 
 function normalizeHex(value: string): string | undefined {
@@ -194,16 +198,8 @@ export function createPalette(mode: ThemeMode, overrides?: PaletteOverrides): Pa
   }
 
   if (mode === "ansi") {
-    const lookup = buildPaletteLookup();
-    const getHex = (name: PaletteTokenName): string => {
-      const hex = lookup[name];
-      if (!hex) {
-        throw new Error(`missing palette token: ${name}`);
-      }
-      return hex;
-    };
-    const makeText = (name: PaletteTokenName) => chalk.hex(getHex(name));
-    const makeBg = (name: PaletteTokenName) => chalk.bgHex(getHex(name));
+    const makeText = (name: PaletteTokenName) => chalk.hex(defaultPaletteTokens[name]);
+    const makeBg = (name: PaletteTokenName) => chalk.bgHex(defaultPaletteTokens[name]);
     const palette = {} as Palette;
 
     for (const token of PALETTE_TEXT_TOKENS) {

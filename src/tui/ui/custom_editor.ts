@@ -424,6 +424,10 @@ export class CustomEditor extends Editor {
     return this.renderHeaderLineWithCorners(width, "├", "┤");
   }
 
+  renderDividerLineWithCornerStyle(width: number, cornerStyle: (text: string) => string): string {
+    return this.renderHeaderLineWithCorners(width, "├", "┤", cornerStyle);
+  }
+
   private renderHeaderLine(width: number): string {
     return this.renderHeaderLineWithCorners(width, "╭", "╮");
   }
@@ -432,16 +436,18 @@ export class CustomEditor extends Editor {
     width: number,
     leftCornerChar: string,
     rightCornerChar: string,
+    cornerStyle?: (text: string) => string,
   ): string {
     if (width <= 1) return this.borderColor("─").repeat(Math.max(0, width));
+    const corner = cornerStyle ?? this.borderColor;
     if (width === 2) {
-      return `${this.borderColor(leftCornerChar)}${this.borderColor(rightCornerChar)}`;
+      return `${corner(leftCornerChar)}${corner(rightCornerChar)}`;
     }
 
     const innerWidth = width - 2;
     const dash = this.borderColor("─");
-    const leftCorner = this.borderColor(leftCornerChar);
-    const rightCorner = this.borderColor(rightCornerChar);
+    const leftCorner = corner(leftCornerChar);
+    const rightCorner = corner(rightCornerChar);
 
     let left = this.headerLeft.trim();
     let right = this.headerRight.trim();

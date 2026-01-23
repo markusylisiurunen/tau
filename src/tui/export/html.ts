@@ -1,16 +1,28 @@
-import { type ColorDef, PALETTE_COLORS, type PaletteTokenName } from "../ui/theme/index.js";
+import { builtinThemes } from "../../core/config/builtin_themes.js";
+import { PALETTE_TOKEN_NAMES, type PaletteTokenName } from "../ui/theme/index.js";
 import type { ExportEntry, ExportMetadata, ExportToolCall } from "./types.js";
 
-const paletteByName = new Map<PaletteTokenName, ColorDef>(
-  PALETTE_COLORS.map((color) => [color.name, color] as const),
+const defaultTheme = builtinThemes.find((theme) => theme.id === "gold");
+if (!defaultTheme) {
+  throw new Error("missing builtin theme: gold");
+}
+
+const paletteByName = new Map<PaletteTokenName, string>(
+  PALETTE_TOKEN_NAMES.map((name) => {
+    const value = defaultTheme.tokens[name];
+    if (!value) {
+      throw new Error(`missing palette token: ${name}`);
+    }
+    return [name, value] as const;
+  }),
 );
 
-function hsl(name: PaletteTokenName): string {
-  const color = paletteByName.get(name);
-  if (!color) {
+function color(name: PaletteTokenName): string {
+  const value = paletteByName.get(name);
+  if (!value) {
     throw new Error(`missing palette token: ${name}`);
   }
-  return `hsl(${color.h} ${color.s}% ${color.l}%)`;
+  return value;
 }
 
 const HTML_EXPORT_COLORS = {
@@ -184,10 +196,10 @@ export function renderHtmlExport(entries: ExportEntry[], metadata: ExportMetadat
     `      --tool: ${HTML_EXPORT_COLORS.tool};`,
     `      --border: ${HTML_EXPORT_COLORS.border};`,
     `      --text: ${HTML_EXPORT_COLORS.text};`,
-    `      --muted: ${hsl("textMuted")};`,
-    `      --accent: ${hsl("brandAccent")};`,
-    `      --link: ${hsl("linkText")};`,
-    `      --error: ${hsl("statusError")};`,
+    `      --muted: ${color("textMuted")};`,
+    `      --accent: ${color("brandAccent")};`,
+    `      --link: ${color("linkText")};`,
+    `      --error: ${color("statusError")};`,
     "    }",
     "    * { box-sizing: border-box; }",
     "    body {",

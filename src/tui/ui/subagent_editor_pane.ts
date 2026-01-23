@@ -40,13 +40,16 @@ export class SubagentEditorPaneComponent implements Component {
     );
 
     const headerLine = this.renderSubagentHeaderLine(width);
-    const dividerLine = this.editor.renderDividerLine(width);
+    const dividerLine = this.editor.renderDividerLineWithCornerStyle(
+      width,
+      this.theme.palette.editorSubagentBorder,
+    );
 
     return [headerLine, ...borderedPanelLines, dividerLine, ...editorLines.slice(1)];
   }
 
   private wrapPanelLine(line: string, contentWidth: number, paddingX: number): string {
-    const border = this.editor.borderColor;
+    const border = this.theme.palette.editorSubagentBorder;
     const vertical = border("│");
     const pad = " ".repeat(Math.max(0, paddingX));
     const truncated = truncateToWidth(line, contentWidth, "…");
@@ -60,7 +63,7 @@ export class SubagentEditorPaneComponent implements Component {
   }
 
   private renderSubagentHeaderLine(width: number): string {
-    const border = this.editor.borderColor;
+    const border = this.theme.palette.editorSubagentBorder;
     if (width <= 1) return border("─").repeat(Math.max(0, width));
     if (width === 2) {
       return `${border("╭")}${border("╮")}`;

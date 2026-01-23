@@ -46,6 +46,7 @@ const generatePalette = (brandHue) => {
   const HUE_ERROR = wrapHue(12);
   const HUE_CODE = wrapHue(HUE_BRAND + 24);
   const HUE_EDITOR_BORDER = HUE_BRAND;
+  const HUE_EDITOR_SUBAGENT_BORDER = wrapHue(HUE_BRAND - 32);
   const HUE_MEMORY = wrapHue(280);
   const HUE_BASH = wrapHue(92);
 
@@ -58,6 +59,11 @@ const generatePalette = (brandHue) => {
   const codeText = transform(brandAccent, [setH(HUE_CODE)]);
 
   const editorBorder = transform(brandAccent, [setH(HUE_EDITOR_BORDER), scaleC(0.56), shiftL(-10)]);
+  const editorSubagentBorder = transform(brandAccent, [
+    setH(HUE_EDITOR_SUBAGENT_BORDER),
+    scaleC(0.96),
+    shiftL(16),
+  ]);
 
   const actionRunning = transform(brandAccent, [setH(HUE_WARN), scaleC(0.84), shiftL(8)]);
   const actionSuccess = transform(actionRunning, [setH(HUE_SUCCESS)]);
@@ -93,6 +99,7 @@ const generatePalette = (brandHue) => {
     editorBorderMedium: toHex(editorBorder),
     editorBorderHigh: toHex(editorBorder),
     editorBorderXhigh: toHex(editorBorder),
+    editorSubagentBorder: toHex(editorSubagentBorder),
 
     statusWarn: toHex(statusWarn),
     statusError: toHex(statusError),
@@ -116,7 +123,6 @@ const generatePalette = (brandHue) => {
     userMemorySurface: toHex(userMemorySurface),
     userMemoryText: toHex(userMemoryText),
 
-    riskRestrictedText: toHex(textDim),
     riskReadOnlyText: toHex(textMuted),
     riskReadWriteText: toHex(textMuted),
   };
@@ -147,6 +153,13 @@ const themes = brands.map((brand) => ({
   scope: "builtin",
 }));
 
+const goldTheme = themes.find((theme) => theme.id === "gold");
+if (!goldTheme) {
+  throw new Error("missing gold theme");
+}
+
+const paletteTokenNames = Object.keys(goldTheme.tokens);
+
 const formatTokens = (tokens) => {
   return JSON.stringify(tokens, null, 2).replace(/\n/g, "\n    ");
 };
@@ -164,6 +177,8 @@ const themeEntries = themes.map((theme) => {
 
 const output = [
   'import type { ThemeDefinition } from "./content_loader.js";',
+  "",
+  `export const PALETTE_TOKEN_NAMES = ${JSON.stringify(paletteTokenNames, null, 2)} as const;`,
   "",
   "export const builtinThemes: ThemeDefinition[] = [",
   ...themeEntries,

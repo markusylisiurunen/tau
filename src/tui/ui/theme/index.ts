@@ -11,4 +11,4 @@ export {
   type Theme,
   type ThemeMode,
 } from "./theme.js";
-export { type ColorDef, PALETTE_COLORS, type PaletteTokenName } from "./tokens.js";
+export { PALETTE_TOKEN_NAMES, type PaletteTokenName } from "./tokens.js";

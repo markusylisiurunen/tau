@@ -107,6 +107,7 @@ built-in themes are available by default with ids: `crimson`, `ember`, `gold`, `
 available palette tokens (theme keys):
 
 - core: `brandAccent`, `textMuted`, `textDim`, `linkText`, `thinkingText`, `codeInlineText`, `codeBlockText`
+- editor: `editorBorderNone`, `editorBorderMinimal`, `editorBorderLow`, `editorBorderMedium`, `editorBorderHigh`, `editorBorderXhigh`, `editorSubagentBorder`
 - status: `statusWarn`, `statusError`, `modeMemory`, `modeBash`
 - action: `actionRunning`, `actionSuccess`, `actionError`, `actionOutput`
 - diff: `diffAdd`, `diffRemove`

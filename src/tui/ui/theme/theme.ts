@@ -1,8 +1,9 @@
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
 import { Chalk } from "chalk";
+import { builtinThemes } from "../../../core/config/builtin_themes.js";
 import type { ReasoningEffort } from "../../../core/types.js";
 import { assertNever } from "../../../core/utils/never.js";
-import { createPalette, type PaletteOverrides } from "./palette.js";
+import { coercePaletteOverrides, createPalette, type PaletteOverrides } from "./palette.js";
 
 const chalk = new Chalk({ level: 3 });
 
@@ -34,6 +35,7 @@ export interface Palette {
   editorBorderMedium: (text: string) => string;
   editorBorderHigh: (text: string) => string;
   editorBorderXhigh: (text: string) => string;
+  editorSubagentBorder: (text: string) => string;
 
   // Status
   statusWarn: (text: string) => string;
@@ -158,8 +160,12 @@ function createEditorBorderForReasoning(
   };
 }
 
+const defaultPaletteOverrides = coercePaletteOverrides(
+  builtinThemes.find((theme) => theme.id === "gold")?.tokens,
+);
+
 export function createUiTheme(mode: ThemeMode = "ansi", overrides?: PaletteOverrides): Theme {
-  const palette = createPalette(mode, overrides);
+  const palette = createPalette(mode, overrides ?? defaultPaletteOverrides);
   const text = createTextStyles(mode);
   const markdownTheme = createMarkdownTheme(palette, text);
   const selectListTheme = createSelectListTheme(palette, text);

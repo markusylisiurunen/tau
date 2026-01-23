@@ -5,7 +5,7 @@ description: release a new minor version
 
 make a new minor release of tau:
 
-- ensure you are on `main` with a clean working tree
+- ensure you are on `main` with a clean working tree. unpushed commits are fine because the release command pushes them.
   - if not, ask the user what to do
 - run the following commands:
   - `npm run check && npm run build && npm test`

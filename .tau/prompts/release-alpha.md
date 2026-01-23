@@ -5,7 +5,7 @@ description: release a new alpha pre-release (tagged as alpha on npm)
 
 make a new alpha release of tau (published under the npm `alpha` tag, not `latest`):
 
-- ensure you are on `main` with a clean working tree
+- ensure you are on `main` with a clean working tree. unpushed commits are fine because the release command pushes them.
   - if not, ask the user what to do
 - check the current version in `package.json`:
   - if it already contains `-alpha.`, bump the prerelease number

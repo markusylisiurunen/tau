@@ -167,6 +167,7 @@ export async function runSubagentToCompletion(options: {
         shouldRetryAfterError: ({ error, model }) => shouldAutoRetry({ model, error }),
         maxRetries: 1,
         delayMs: 3000,
+        notice: { text: "auto-retrying after transient error", severity: "warn" },
       },
     });
 

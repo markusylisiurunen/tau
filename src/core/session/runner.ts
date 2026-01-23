@@ -113,7 +113,7 @@ export async function* runModelSubturn(
         }
         await waitForRetry();
         if (signal.aborted) {
-          return result;
+          throw new Error("Request was aborted");
         }
         continue;
       }
@@ -126,7 +126,7 @@ export async function* runModelSubturn(
         }
         await waitForRetry();
         if (signal.aborted) {
-          throw error;
+          throw new Error("Request was aborted");
         }
         continue;
       }

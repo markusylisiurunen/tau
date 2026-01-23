@@ -213,6 +213,8 @@ export class SessionEngine {
         emitPartials: true,
         retry: {
           shouldRetryAfterError: ({ error, model }) => shouldAutoRetry({ model, error }),
+          maxRetries: 1,
+          delayMs: 3000,
         },
       });
 

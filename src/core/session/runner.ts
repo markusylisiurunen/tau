@@ -28,6 +28,8 @@ export type RunnerEvent = CoreRunnerEvent;
 export type RetryOptions = {
   notice?: { text: string; severity?: CoreNoticeEvent["severity"] };
   shouldRetryAfterError?: (args: { error: unknown; model: Model<Api> }) => boolean;
+  maxRetries?: number;
+  delayMs?: number;
 };
 
 export type RunModelSubturnOptions = {
@@ -72,23 +74,65 @@ export async function* runModelSubturn(
         text: retry.notice.text,
       }
     : undefined;
+  const maxRetries = retry?.maxRetries ?? 1;
+  const delayMs = retry?.delayMs ?? 0;
 
-  let finalMessage: AssistantMessage;
+  const waitForRetry = async () => {
+    if (delayMs <= 0 || signal.aborted) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const onAbort = () => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, delayMs);
+      signal.addEventListener("abort", onAbort);
+    });
+  };
 
-  try {
-    finalMessage = yield* runAttempt(streamOptions);
-  } catch (error) {
-    if (retry?.shouldRetryAfterError?.({ error, model })) {
-      if (retryNotice) {
-        yield retryNotice;
+  let attempt = 0;
+
+  while (true) {
+    try {
+      const result = yield* runAttempt(streamOptions);
+      if (
+        attempt < maxRetries &&
+        retry?.shouldRetryAfterError?.({ error: result, model })
+      ) {
+        attempt += 1;
+        if (retryNotice) {
+          yield retryNotice;
+        }
+        await waitForRetry();
+        if (signal.aborted) {
+          return result;
+        }
+        continue;
       }
-      finalMessage = yield* runAttempt(streamOptions);
-    } else {
+      return result;
+    } catch (error) {
+      if (attempt < maxRetries && retry?.shouldRetryAfterError?.({ error, model })) {
+        attempt += 1;
+        if (retryNotice) {
+          yield retryNotice;
+        }
+        await waitForRetry();
+        if (signal.aborted) {
+          throw error;
+        }
+        continue;
+      }
       throw error;
     }
   }
-
-  return finalMessage;
 }
 
 export type RunToolCallsOptions = {

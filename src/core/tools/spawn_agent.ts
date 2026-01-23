@@ -197,7 +197,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           const toolResult: ToolResultMessage = createToolResult(toolCall, resultText, false);
           const uiText = buildSubagentUiText({
             output: prompt,
-            statusText: spawnResult.id,
+            statusText: `${definition.name} · ${spawnResult.id}`,
             maxOutputLines: 16,
           });
           const uiEvent: ToolUiEvent = {

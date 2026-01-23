@@ -179,7 +179,7 @@ export function createLocalToolExecutionBackend(
 
     async editFile(path, patch) {
       const content = readFileSync(path, "utf-8");
-      const nextContent = content.replace(patch.oldText, patch.newText);
+      const nextContent = content.replace(patch.oldText, () => patch.newText);
       writeFileSync(path, nextContent, "utf-8");
     },
 
@@ -392,7 +392,7 @@ export async function createSandboxToolExecutionBackend(options: {
 
     async editFile(path, patch) {
       const content = await backend.readFile(path, { restricted: false });
-      const nextContent = content.content.replace(patch.oldText, patch.newText);
+      const nextContent = content.content.replace(patch.oldText, () => patch.newText);
       await backend.writeFile(path, nextContent);
     },
 

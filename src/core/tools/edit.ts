@@ -312,7 +312,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
       }
 
       // Exactly one match -> perform the replacement
-      const newContent = content.replace(oldText, newText);
+      const newContent = content.replace(oldText, () => newText);
 
       try {
         await backend.writeFile(path, newContent);

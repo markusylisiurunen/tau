@@ -165,6 +165,8 @@ export async function runSubagentToCompletion(options: {
       emitPartials: false,
       retry: {
         shouldRetryAfterError: ({ error, model }) => shouldAutoRetry({ model, error }),
+        maxRetries: 1,
+        delayMs: 3000,
       },
     });
 

@@ -241,6 +241,10 @@ If you need dependency details (rare), check `references/repos/` first and treat
 
 **Commit style**: Short, imperative, lowercase subject lines (no prefixes).
 
+**PR style**: Titles and descriptions are concise, lowercase except for proper nouns.
+
+**GitHub operations**: Use `gh` when needed.
+
 ## Adding a slash command
 
 1. `src/core/commands/registry.ts`: Add to `Command` type and register it in `createCommandRegistry()`

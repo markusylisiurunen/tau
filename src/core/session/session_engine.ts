@@ -22,7 +22,7 @@ import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import { runModelSubturn, runToolCalls } from "./runner.js";
 
-const MAX_ASSISTANT_SUBTURNS = 128;
+const MAX_ASSISTANT_SUBTURNS = 200;
 
 export type SessionEngineOptions = {
   persona: Persona;

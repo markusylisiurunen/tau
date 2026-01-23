@@ -185,7 +185,9 @@ export class SubagentControlPlane {
         record.toolCalls = result.toolCalls;
         record.finalText = result.finalText;
         record.finishedAt = Date.now();
-        this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
+        if (this.records.get(id) === record) {
+          this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
+        }
         return record;
       })
       .catch((error) => {
@@ -194,7 +196,9 @@ export class SubagentControlPlane {
         record.status = wasAborted ? "aborted" : "error";
         record.error = wasAborted ? undefined : message;
         record.finishedAt = Date.now();
-        this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
+        if (this.records.get(id) === record) {
+          this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
+        }
         return record;
       });
 

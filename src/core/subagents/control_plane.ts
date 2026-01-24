@@ -13,7 +13,7 @@ import type {
   SubagentUiEvent,
 } from "./types.js";
 
-const MAX_ACTIVE_SUBAGENTS = 3;
+const MAX_ACTIVE_SUBAGENTS = 8;
 const MAX_PROGRESS_EVENTS = 200;
 
 export type SubagentResult = {

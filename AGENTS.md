@@ -121,7 +121,7 @@ Risk levels (`read-only`, `read-write`) gate model tool calls. The model declare
 - The TUI only styles output: compact uses `previewText` + `statusLine`, expanded uses raw `fullText`.
 - Current preview shapes: bash uses head/tail output plus a status line; write shows up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
 
-**Subagent-only tools**: subagents run with a dedicated tool registry that always includes `communicate` plus the tools enabled for that subagent (inherited from the main persona or explicitly overridden). See `src/core/subagents/subagent_engine.ts`.
+**Subagent-only tools**: subagents run with a dedicated tool registry that always includes `communicate` plus the tools enabled for that subagent (inherited from the main persona or explicitly overridden). Risk level is inherited by default but can be overridden per subagent, including `read-write` even when the main session is `read-only`. See `src/core/subagents/subagent_engine.ts`.
 
 **Subagent limit**: at most 3 subagents may run concurrently.
 

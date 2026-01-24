@@ -828,7 +828,7 @@ export class ChatController {
     this.refreshProjectFilesInBackground();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
-    this.rebuildSystemPrompt(this.previousSessionSummary);
+    this.rebuildSubagentPrompts(this.previousSessionSummary);
     this.refreshStatus();
 
     const from = this.pendingCwdChange?.from ?? previousAgentCwd;
@@ -1455,8 +1455,25 @@ export class ChatController {
     });
   }
 
+  private updateSubagentPrompts(previousSessionSummary?: string, skillsBlock?: string): void {
+    const timestamp = new Date(this.deps.clock.now()).toISOString();
+    const resolvedSkillsBlock =
+      skillsBlock ?? this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock;
+    this.subagentPrompts = this.buildSubagentPromptMap({
+      persona: this.currentPersona,
+      skillsBlock: resolvedSkillsBlock,
+      previousSessionSummary,
+      timestamp,
+    });
+  }
+
   private rebuildSystemPrompt(previousSessionSummary?: string, skillsBlock?: string): void {
     this.updateSystemPrompts(previousSessionSummary, skillsBlock);
+    this.engine.setPersona(this.currentPersona, this.baseSystemPrompt, this.subagentPrompts);
+  }
+
+  private rebuildSubagentPrompts(previousSessionSummary?: string, skillsBlock?: string): void {
+    this.updateSubagentPrompts(previousSessionSummary, skillsBlock);
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt, this.subagentPrompts);
   }
 
@@ -1698,7 +1715,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.refreshStatus();
 
     if (previous !== level) {
-      this.rebuildSystemPrompt(this.previousSessionSummary);
+      this.rebuildSubagentPrompts(this.previousSessionSummary);
       const from = this.pendingRiskLevelChange?.from ?? previous;
       if (from === level) {
         this.pendingRiskLevelChange = undefined;

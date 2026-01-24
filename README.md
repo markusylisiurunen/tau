@@ -138,6 +138,8 @@ tau uses risk levels to control what the model can do. this lets you stay in con
 - **read-only** (default): model can run read-only tools (no file modifications)
 - **read-write**: model can create, edit, and delete files
 
+sub-agents inherit the session risk level unless overridden in persona config. a sub-agent configured with `riskLevel: read-write` can write even when the main session is `read-only`.
+
 start with a specific risk level:
 
 ```sh

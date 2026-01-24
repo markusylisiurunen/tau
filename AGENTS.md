@@ -18,7 +18,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface and RPC stub for alternate front-ends
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools (local host or docker sandbox)
-- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, spawn_agent, wait_for_agent, terminate_agent) and sub-agent (communicate plus allowed tools) registries
+- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, spawn_agent, wait_for_agent, terminate_agent) and sub-agent (emit_output plus allowed tools) registries
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
@@ -26,7 +26,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 **Data flow**: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering.
 
-**Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Subagent UI updates (spawned, progress, communicate output, finished) are delivered via `CoreSession.onSubagentEvent()` as `subagent_ui` events for background updates. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
+**Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Subagent UI updates (spawned, progress, emit_output messages, finished) are delivered via `CoreSession.onSubagentEvent()` as `subagent_ui` events for background updates. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
 
 ## Key modules
 
@@ -54,7 +54,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `auth/codex_prompt.ts` - Codex system prompt handling
   - `events/` - Core event protocol types and serialization
   - `session/` - Turn processing, streaming, and tool dispatch
-  - `tools/` - Tool definitions (bash, write, edit, spawn_agent, wait_for_agent, terminate_agent, communicate, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
+  - `tools/` - Tool definitions (bash, write, edit, spawn_agent, wait_for_agent, terminate_agent, emit_output, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
   - `tools/execution_backend.ts` - Local and sandbox tool backends
   - `tools/sandbox/docker_sandbox.ts` - Docker sandbox runner
   - `subagents/` - Default subagent prompt and runner
@@ -99,7 +99,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 | `spawn_agent`     | Start a background subagent  | `read-only` or `read-write`                    |
 | `wait_for_agent`  | Await subagent completion    | `read-only` or `read-write`                    |
 | `terminate_agent` | Stop a running subagent      | `read-only` or `read-write`                    |
-| `communicate`     | Subagent-only output to main | `read-only` or `read-write`                    |
+| `emit_output`     | Subagent-only output to main | `read-only` or `read-write`                    |
 
 Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set.
 
@@ -123,7 +123,7 @@ Main session system prompts are immutable after session start to preserve model 
 - The TUI only styles output: compact uses `previewText` + `statusLine`, expanded uses raw `fullText`.
 - Current preview shapes: bash uses head/tail output plus a status line; write shows up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
 
-**Subagent-only tools**: subagents run with a dedicated tool registry that always includes `communicate` plus the tools enabled for that subagent (inherited from the main persona or explicitly overridden). Risk level is inherited by default but can be overridden per subagent, including `read-write` even when the main session is `read-only`. See `src/core/subagents/subagent_engine.ts`.
+**Subagent-only tools**: subagents run with a dedicated tool registry that always includes `emit_output` plus the tools enabled for that subagent (inherited from the main persona or explicitly overridden). Risk level is inherited by default but can be overridden per subagent, including `read-write` even when the main session is `read-only`. See `src/core/subagents/subagent_engine.ts`.
 
 **Subagent limit**: at most 3 subagents may run concurrently.
 

@@ -54,7 +54,7 @@ export type { Checkpoint } from "./session/checkpoint.js";
 export { createCheckpoint, parseCheckpoint } from "./session/checkpoint.js";
 export { createBashToolDefinition } from "./tools/bash.js";
 export { ToolCatalog } from "./tools/catalog.js";
-export { createCommunicateToolDefinition } from "./tools/communicate.js";
+export { createEmitOutputToolDefinition } from "./tools/emit_output.js";
 export { createEditToolDefinition } from "./tools/edit.js";
 export {
   createLocalToolExecutionBackend,

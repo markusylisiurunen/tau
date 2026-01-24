@@ -68,7 +68,7 @@ test("renderEditSuccess (expanded) highlights diffs", () => {
   expect(text).toContain("+ new");
 });
 
-test("subagent panel renders progress and communicate output", () => {
+test("subagent panel renders progress and emit_output", () => {
   const theme = createTagTheme();
   const panel = new SubagentPanelComponent(theme);
   panel.handleEvent({
@@ -93,7 +93,7 @@ test("subagent panel renders progress and communicate output", () => {
     toolCalls: 1,
   });
   panel.handleEvent({
-    type: "subagent_communicate",
+    type: "subagent_emit_output",
     id: "agent-1",
     text: "done",
   });

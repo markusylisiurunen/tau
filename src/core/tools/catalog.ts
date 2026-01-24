@@ -1,7 +1,7 @@
 import type { Config } from "../config/index.js";
 import type { SubagentToolName } from "../subagents/types.js";
 import { createBashToolDefinition } from "./bash.js";
-import { createCommunicateToolDefinition } from "./communicate.js";
+import { createEmitOutputToolDefinition } from "./emit_output.js";
 import { createEditToolDefinition } from "./edit.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition } from "./registry.js";
@@ -30,7 +30,7 @@ export const ToolCatalog = {
     config: Config,
     backend: ToolExecutionBackend,
   ): ToolRegistry {
-    const definitions: ToolDefinition[] = [createCommunicateToolDefinition()];
+    const definitions: ToolDefinition[] = [createEmitOutputToolDefinition()];
     const seen = new Set<string>();
 
     const addTool = (tool: SubagentToolName): void => {
@@ -53,7 +53,7 @@ export const ToolCatalog = {
         case "web_fetch":
           definitions.push(createWebFetchToolDefinition(config));
           break;
-        case "communicate":
+        case "emit_output":
           break;
       }
     };

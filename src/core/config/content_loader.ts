@@ -153,7 +153,7 @@ const SUBAGENT_TOOL_NAMES = new Set<SubagentToolName>([
   "edit",
   "web_search",
   "web_fetch",
-  "communicate",
+  "emit_output",
 ]);
 
 function parseSubagentTools(toolsRaw: unknown): { tools?: SubagentToolName[]; error?: string } {

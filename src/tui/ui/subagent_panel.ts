@@ -3,7 +3,7 @@ import type { SubagentStateSnapshot, SubagentUiEvent } from "../../core/subagent
 import type { Theme } from "./theme/index.js";
 
 type SubagentPanelLine = {
-  kind: "progress" | "communicate";
+  kind: "progress" | "output";
   text: string;
 };
 
@@ -87,12 +87,12 @@ export class SubagentPanelComponent implements Component {
       return;
     }
 
-    if (event.type === "subagent_communicate") {
+    if (event.type === "subagent_emit_output") {
       const entry = this.entries.get(event.id);
       if (!entry) return;
       const text = event.text.trim();
       if (text) {
-        entry.lines.push({ kind: "communicate", text });
+        entry.lines.push({ kind: "output", text });
         if (entry.lines.length > MAX_PANEL_HISTORY) {
           entry.lines.shift();
         }
@@ -203,7 +203,7 @@ export class SubagentPanelComponent implements Component {
     const trimmed = line.text.trim();
     if (!trimmed) return "";
 
-    if (line.kind === "communicate") {
+    if (line.kind === "output") {
       const firstLine = trimmed.split(/\r?\n/, 1)[0]?.trim() ?? "";
       return firstLine ? `> ${firstLine}` : "";
     }

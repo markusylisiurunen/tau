@@ -11,7 +11,7 @@ export type SubagentToolName =
   | "edit"
   | "web_search"
   | "web_fetch"
-  | "communicate";
+  | "emit_output";
 
 export type SubagentRiskLevel = RiskLevel;
 
@@ -52,7 +52,7 @@ export type SubagentUiEvent =
       turns: number;
       toolCalls: number;
     }
-  | { type: "subagent_communicate"; id: string; text: string }
+  | { type: "subagent_emit_output"; id: string; text: string }
   | { type: "subagent_abort_requested"; id: string }
   | { type: "subagent_finished"; state: SubagentStateSnapshot };
 

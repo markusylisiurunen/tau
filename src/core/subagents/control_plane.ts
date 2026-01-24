@@ -34,7 +34,7 @@ export type SubagentResult = {
 export type SubagentSpawnResult = { ok: true; id: string } | { ok: false; reason: string };
 
 type SubagentLogEntry = {
-  kind: "progress" | "communicate";
+  kind: "progress" | "output";
   text: string;
 };
 
@@ -202,14 +202,14 @@ export class SubagentControlPlane {
     return { ok: true, id };
   }
 
-  recordCommunicate(id: string, text: string): void {
+  recordEmitOutput(id: string, text: string): void {
     const record = this.records.get(id);
     if (!record) return;
     const trimmed = text.trim();
     if (!trimmed) return;
     const payload = text.trimEnd();
     record.outputs.push(payload);
-    this.emit({ type: "subagent_communicate", id, text: payload });
+    this.emit({ type: "subagent_emit_output", id, text: payload });
   }
 
   async waitFor(ids: string[], signal?: AbortSignal): Promise<SubagentResult[]> {

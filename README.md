@@ -195,7 +195,7 @@ tau --persona opus-4.5-coder
 
 some personas can run isolated sub-agents via the `spawn_agent`, `wait_for_agent`, and `terminate_agent` tools. sub-agents return their output through the subagent-only `communicate` tool, which is collected by `wait_for_agent`.
 
-the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, risk level, and tool access (minus sub-agent management tools). custom sub-agents can be defined in persona frontmatter with their own `systemPrompt` plus optional overrides for model, reasoning, tools, and risk level.
+the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, tool access (minus sub-agent management tools), and the session risk level. custom sub-agents can override model, reasoning, tools, and risk level. a sub-agent configured with `riskLevel: read-write` can perform writes even when the main session is `read-only`.
 
 sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 3.
 

@@ -64,7 +64,7 @@ export interface ChatView {
   addSystemMessage(
     text: string,
     kind: SystemMessageKind,
-    options?: { toastDurationMs?: number },
+    options?: { toastDurationMs?: number; persist?: boolean },
   ): void;
   setThinkingVisibility(show: boolean): void;
   setCompactToolUi(compact: boolean): void;
@@ -183,7 +183,7 @@ export class TuiChatView implements ChatView {
   addSystemMessage(
     text: string,
     kind: SystemMessageKind,
-    options?: { toastDurationMs?: number },
+    options?: { toastDurationMs?: number; persist?: boolean },
   ): void {
     const cleanedText = this.normalizeSystemMessageText(text, kind);
     const toastText = this.formatToastText(cleanedText);
@@ -191,7 +191,8 @@ export class TuiChatView implements ChatView {
       this.footer.showToast(toastText, kind, options?.toastDurationMs);
     }
 
-    if (this.shouldPersistSystemMessage(cleanedText, kind)) {
+    const shouldPersist = options?.persist ?? this.shouldPersistSystemMessage(cleanedText, kind);
+    if (shouldPersist) {
       this.chatContainer.addMessage({ type: "system", text: cleanedText, kind });
       this.ui.requestRender();
     }

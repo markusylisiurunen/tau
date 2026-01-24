@@ -94,7 +94,6 @@ export interface ChatControllerOptions {
   initialRiskLevel?: RiskLevel;
   initialHistory?: Message[];
   initialPreviousSessionSummary?: string;
-  initialSystemPrompt?: string;
   noAgentContextFiles?: boolean;
   config?: Config;
   sandboxEnabled?: boolean;
@@ -246,12 +245,11 @@ export class ChatController {
     });
 
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-    const builtSystemPrompt = this.buildSystemPrompt({
+    this.baseSystemPrompt = this.buildSystemPrompt({
       persona: this.currentPersona,
       skillsBlock: skillsContext.skillsBlock,
       previousSessionSummary: this.previousSessionSummary,
     });
-    this.baseSystemPrompt = options.initialSystemPrompt ?? builtSystemPrompt;
 
     this.toolBackend =
       options.toolBackend ??
@@ -514,6 +512,9 @@ export class ChatController {
   }
 
   private extractUserText(message: Message): string {
+    if (typeof message.content === "string") {
+      return message.content.trim();
+    }
     const parts: string[] = [];
     for (const block of message.content) {
       if (typeof block === "string") {
@@ -1323,8 +1324,8 @@ export class ChatController {
 
   private async checkpointSession(): Promise<void> {
     const history = this.engine.history;
-    if (history.length === 0) {
-      this.view.addSystemMessage("no conversation to checkpoint.", "warn");
+    if (history.length === 0 && !this.previousSessionSummary) {
+      this.view.addSystemMessage("no conversation to checkpoint.", "warn", { persist: false });
       return;
     }
 
@@ -1334,7 +1335,6 @@ export class ChatController {
         reasoning: this.currentPersona.settings.reasoning ?? "none",
         riskLevel: this.riskLevel,
         previousSessionSummary: this.previousSessionSummary,
-        systemPrompt: this.baseSystemPrompt,
         history: [...history],
       });
       const dir = await mkdtemp(join(tmpdir(), "tau-checkpoint-"));
@@ -1342,7 +1342,9 @@ export class ChatController {
       await writeFile(filePath, JSON.stringify(checkpoint, null, 2), "utf8");
       this.view.addSystemMessage(`tau -l ${filePath}`, "muted");
     } catch (err) {
-      this.view.addSystemMessage(`checkpoint failed: ${(err as Error).message}`, "error");
+      this.view.addSystemMessage(`checkpoint failed: ${(err as Error).message}`, "error", {
+        persist: false,
+      });
     }
   }
 

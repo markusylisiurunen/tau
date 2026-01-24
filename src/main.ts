@@ -232,7 +232,6 @@ if (cli.help) {
 let checkpointPersonaId: string | undefined;
 let checkpointReasoning: ReasoningEffort | undefined;
 let checkpointRiskLevel: Checkpoint["riskLevel"] | undefined;
-let checkpointSystemPrompt: string | undefined;
 let checkpointHistory: Checkpoint["history"] | undefined;
 let checkpointPreviousSessionSummary: string | undefined;
 
@@ -258,20 +257,17 @@ if (cli.loadPath) {
   }
   checkpointReasoning = checkpoint.reasoning;
   checkpointRiskLevel = checkpoint.riskLevel;
-  checkpointSystemPrompt = checkpoint.systemPrompt;
   checkpointHistory = checkpoint.history;
   checkpointPreviousSessionSummary = checkpoint.previousSessionSummary;
 }
 
 let initialPersonaId: string | undefined;
 let reasoningOverride: ReasoningEffort | undefined = cli.reasoningOverride;
-let usedCheckpointPersona = false;
 
 if (cli.personaId) {
   initialPersonaId = cli.personaId;
 } else if (checkpointPersonaId) {
   initialPersonaId = checkpointPersonaId;
-  usedCheckpointPersona = true;
   if (reasoningOverride === undefined && checkpointReasoning !== undefined) {
     reasoningOverride = checkpointReasoning;
   }
@@ -284,12 +280,6 @@ if (cli.personaId) {
 }
 
 const initialRiskLevel = cli.riskLevel ?? checkpointRiskLevel ?? config.defaultRisk;
-const useCheckpointSystemPrompt =
-  Boolean(checkpointSystemPrompt) &&
-  usedCheckpointPersona &&
-  cli.riskLevel === undefined &&
-  !cli.noAgentContextFiles &&
-  !cli.sandbox;
 
 if (cli.debug) {
   let debugPersona: Persona | undefined;
@@ -362,7 +352,6 @@ const app = new ChatApp({
   initialRiskLevel,
   initialHistory: checkpointHistory,
   initialPreviousSessionSummary: checkpointPreviousSessionSummary,
-  initialSystemPrompt: useCheckpointSystemPrompt ? checkpointSystemPrompt : undefined,
   noAgentContextFiles: cli.noAgentContextFiles,
   config,
   sandboxEnabled: cli.sandbox,

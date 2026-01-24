@@ -57,7 +57,7 @@ export async function listProjectFilesAsync(cwd: string): Promise<string[]> {
 
 async function listProjectFilesFromRipgrepAsync(cwd: string): Promise<string[]> {
   try {
-    const res = await runCommand(cwd, "rg", ["--files"]);
+    const res = await runCommand(cwd, "rg", ["--files", "--hidden", "--glob", "!.git/"]);
     if (res.status !== 0) return [];
 
     const files = (res.stdout ?? "")
@@ -92,11 +92,6 @@ async function listProjectFilesByWalkingAsync(cwd: string): Promise<string[]> {
       const entries = await readdir(dirAbs, { withFileTypes: true, encoding: "utf8" });
 
       for (const entry of entries) {
-        if (entry.name.startsWith(".")) {
-          if (entry.isDirectory()) continue;
-          continue;
-        }
-
         if (entry.isDirectory()) {
           if (DEFAULT_IGNORED_DIRS.has(entry.name)) continue;
           const nextAbs = join(dirAbs, entry.name);

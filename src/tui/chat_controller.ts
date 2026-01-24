@@ -3,7 +3,12 @@ import { realpathSync, statSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
-import type { AssistantMessage, KnownProvider, Message } from "@mariozechner/pi-ai";
+import type {
+  AssistantMessage,
+  KnownProvider,
+  Message,
+  ToolResultMessage,
+} from "@mariozechner/pi-ai";
 import { formatCodexAuthError } from "../core/auth/auth_messages.js";
 import { getAuthPath } from "../core/auth/auth_paths.js";
 import { AuthStorage } from "../core/auth/auth_storage.js";
@@ -27,6 +32,7 @@ import {
 import type { CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
+import { createCheckpoint } from "../core/session/checkpoint.js";
 import { CoreSession } from "../core/session/core_session.js";
 import { formatSubagentsForPrompt } from "../core/subagents/registry.js";
 import {
@@ -86,6 +92,9 @@ export interface ChatControllerOptions {
   initialPersonaId?: string;
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
+  initialHistory?: Message[];
+  initialPreviousSessionSummary?: string;
+  initialSystemPrompt?: string;
   noAgentContextFiles?: boolean;
   config?: Config;
   sandboxEnabled?: boolean;
@@ -226,6 +235,7 @@ export class ChatController {
       this.riskLevel = options.initialRiskLevel;
     }
     this.initialRiskLevel = this.riskLevel;
+    this.previousSessionSummary = options.initialPreviousSessionSummary;
 
     this.environmentTag = buildEnvironmentTag({
       riskLevel: this.initialRiskLevel,
@@ -236,10 +246,12 @@ export class ChatController {
     });
 
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-    this.baseSystemPrompt = this.buildSystemPrompt({
+    const builtSystemPrompt = this.buildSystemPrompt({
       persona: this.currentPersona,
       skillsBlock: skillsContext.skillsBlock,
+      previousSessionSummary: this.previousSessionSummary,
     });
+    this.baseSystemPrompt = options.initialSystemPrompt ?? builtSystemPrompt;
 
     this.toolBackend =
       options.toolBackend ??
@@ -267,6 +279,7 @@ export class ChatController {
       copy: () => this.copyLastAssistantMessage(),
       copyCode: () => this.copyLastAssistantCodeBlock(),
       export: () => this.exportSessionHtml(),
+      checkpoint: () => this.checkpointSession(),
       newSession: () => this.clearSession(),
       cd: (path) => this.changeDirectory(path),
       compactOnlySummary: (extra) => this.compactSessionOnlySummary(extra),
@@ -302,6 +315,7 @@ export class ChatController {
       );
     }
 
+    this.hydrateCheckpoint(options.initialHistory);
     this.refreshStatus();
   }
 
@@ -463,6 +477,58 @@ export class ChatController {
     if (state.inserted) return;
     state.inserted = true;
     state.id = this.view.addMessage(state.model);
+  }
+
+  private hydrateCheckpoint(history?: readonly Message[]): void {
+    if (!history || history.length === 0) {
+      if (this.previousSessionSummary) {
+        this.view.addMessage({ type: "session_divider", label: "loaded session" });
+        this.view.addMessage({ type: "session_summary", summary: this.previousSessionSummary });
+      }
+      return;
+    }
+
+    if (this.previousSessionSummary) {
+      this.view.addMessage({ type: "session_divider", label: "loaded session" });
+      this.view.addMessage({ type: "session_summary", summary: this.previousSessionSummary });
+    }
+
+    for (const message of history) {
+      this.engine.addMessage(message);
+      if (message.role === "user") {
+        const text = this.extractUserText(message);
+        if (text) {
+          this.view.addMessage({ type: "user", text });
+        }
+        continue;
+      }
+      if (message.role === "assistant") {
+        this.view.addMessage({ type: "assistant", message: message as AssistantMessage });
+        continue;
+      }
+      if (message.role === "toolResult") {
+        const toolResult = message as ToolResultMessage;
+        this.view.addSystemMessage(this.formatToolResultNotice(toolResult), "muted");
+      }
+    }
+  }
+
+  private extractUserText(message: Message): string {
+    const parts: string[] = [];
+    for (const block of message.content) {
+      if (typeof block === "string") {
+        parts.push(block);
+      } else if (block.type === "text") {
+        parts.push(block.text ?? "");
+      }
+    }
+    return parts.join("\n").trim();
+  }
+
+  private formatToolResultNotice(toolResult: ToolResultMessage): string {
+    const status = toolResult.isError ? "error" : "ok";
+    const icon = toolResult.isError ? "✗" : "✓";
+    return `${icon} ${toolResult.toolName} (${status})`;
   }
 
   // UI Updates ------------------------------------------------------------------------------------
@@ -1252,6 +1318,31 @@ export class ChatController {
       this.view.addSystemMessage(filePath, "muted");
     } catch (err) {
       this.view.addSystemMessage(`export failed: ${(err as Error).message}`, "error");
+    }
+  }
+
+  private async checkpointSession(): Promise<void> {
+    const history = this.engine.history;
+    if (history.length === 0) {
+      this.view.addSystemMessage("no conversation to checkpoint.", "warn");
+      return;
+    }
+
+    try {
+      const checkpoint = createCheckpoint({
+        personaId: this.currentPersona.id,
+        reasoning: this.currentPersona.settings.reasoning ?? "none",
+        riskLevel: this.riskLevel,
+        previousSessionSummary: this.previousSessionSummary,
+        systemPrompt: this.baseSystemPrompt,
+        history: [...history],
+      });
+      const dir = await mkdtemp(join(tmpdir(), "tau-checkpoint-"));
+      const filePath = join(dir, "checkpoint.json");
+      await writeFile(filePath, JSON.stringify(checkpoint, null, 2), "utf8");
+      this.view.addSystemMessage(`tau -l ${filePath}`, "muted");
+    } catch (err) {
+      this.view.addSystemMessage(`checkpoint failed: ${(err as Error).message}`, "error");
     }
   }
 

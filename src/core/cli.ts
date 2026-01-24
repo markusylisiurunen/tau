@@ -11,6 +11,7 @@ import {
 export const CliOptionsSchema = z.object({
   help: z.boolean(),
   debug: z.boolean(),
+  loadPath: z.string().optional(),
   personaId: z.string().optional(),
   reasoningOverride: ReasoningEffortSchema.optional(),
   riskLevel: RiskLevelSchema.optional(),
@@ -100,6 +101,7 @@ function parseValue(
 export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let help = false;
   let debug = false;
+  let loadPath: string | undefined;
   let personaId: string | undefined;
   let reasoningOverride: ReasoningEffort | undefined;
   let riskLevel: RiskLevel | undefined;
@@ -116,6 +118,13 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
 
     if (arg === "--debug") {
       debug = true;
+      continue;
+    }
+
+    if (arg === "--load" || arg === "-l" || arg.startsWith("--load=") || arg.startsWith("-l=")) {
+      const { value, nextIndex } = parseValue(arg, argv, i);
+      i = nextIndex;
+      loadPath = value;
       continue;
     }
 
@@ -185,6 +194,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   const options = {
     help,
     debug,
+    loadPath,
     personaId,
     reasoningOverride,
     riskLevel,
@@ -209,6 +219,7 @@ export function printHelp(personas: Persona[]): void {
       "options:",
       "  --help                        show this help and exit.",
       "  --debug                       print debug info (personas, prompts, skills, system prompt) and exit.",
+      "  --load, -l <file>             load a checkpoint file.",
       `  --persona, -p <id>[:<level>]  start with a persona. available: ${personaList}.`,
       `                                optionally specify reasoning level. levels: ${reasoningList}.`,
       `                                if not specified, uses defaultPersona from ~/.config/tau/config.json.`,
@@ -222,6 +233,7 @@ export function printHelp(personas: Persona[]): void {
       "  tau -p opus-4.5-coder",
       "  tau --persona gpt-5.2-chat:medium --risk read-write",
       "  tau -p gpt-5.2-coder:high -r read-write",
+      "  tau -l /tmp/tau-checkpoint-abc123/checkpoint.json",
       "",
       "notes:",
       "  use `tau auth login codex` to authenticate ChatGPT subscription credentials.",

@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import { writeSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type {
   AuthPromptFn,
   BashCommand,
+  Checkpoint,
   CliOptions,
   Config,
   Persona,
@@ -21,6 +24,7 @@ import {
   getAuthPath,
   loadConfig,
   loadRuntimeConfig,
+  parseCheckpoint,
   parseCliArgs,
   parsePersonaString,
   printDebugInfo,
@@ -225,34 +229,81 @@ if (cli.help) {
   process.exit(0);
 }
 
+let checkpointPersonaId: string | undefined;
+let checkpointReasoning: ReasoningEffort | undefined;
+let checkpointRiskLevel: Checkpoint["riskLevel"] | undefined;
+let checkpointSystemPrompt: string | undefined;
+let checkpointHistory: Checkpoint["history"] | undefined;
+let checkpointPreviousSessionSummary: string | undefined;
+
+if (cli.loadPath) {
+  const checkpointPath = resolve(cwd, cli.loadPath);
+  let checkpoint: Checkpoint;
+  try {
+    const raw = await readFile(checkpointPath, "utf8");
+    checkpoint = parseCheckpoint(raw);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`failed to load checkpoint: ${(err as Error).message}`);
+    process.exit(1);
+  }
+
+  const parsedPersona = parsePersonaString(checkpoint.personaId, personas);
+  checkpointPersonaId = parsedPersona.personaId;
+  if (!checkpointPersonaId) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `checkpoint persona '${checkpoint.personaId}' not found. falling back to default persona.`,
+    );
+  }
+  checkpointReasoning = checkpoint.reasoning;
+  checkpointRiskLevel = checkpoint.riskLevel;
+  checkpointSystemPrompt = checkpoint.systemPrompt;
+  checkpointHistory = checkpoint.history;
+  checkpointPreviousSessionSummary = checkpoint.previousSessionSummary;
+}
+
+let initialPersonaId: string | undefined;
+let reasoningOverride: ReasoningEffort | undefined = cli.reasoningOverride;
+let usedCheckpointPersona = false;
+
+if (cli.personaId) {
+  initialPersonaId = cli.personaId;
+} else if (checkpointPersonaId) {
+  initialPersonaId = checkpointPersonaId;
+  usedCheckpointPersona = true;
+  if (reasoningOverride === undefined && checkpointReasoning !== undefined) {
+    reasoningOverride = checkpointReasoning;
+  }
+} else if (config.defaultPersona) {
+  const parsed = parsePersonaString(config.defaultPersona, personas);
+  initialPersonaId = parsed.personaId;
+  if (reasoningOverride === undefined) {
+    reasoningOverride = parsed.reasoning;
+  }
+}
+
+const initialRiskLevel = cli.riskLevel ?? checkpointRiskLevel ?? config.defaultRisk;
+const useCheckpointSystemPrompt =
+  Boolean(checkpointSystemPrompt) &&
+  usedCheckpointPersona &&
+  cli.riskLevel === undefined &&
+  !cli.noAgentContextFiles &&
+  !cli.sandbox;
+
 if (cli.debug) {
-  let debugPersonaId: string | undefined;
-  let debugReasoningOverride: ReasoningEffort | undefined;
-
-  if (cli.personaId) {
-    debugPersonaId = cli.personaId;
-  } else if (config.defaultPersona) {
-    const parsed = parsePersonaString(config.defaultPersona, personas);
-    debugPersonaId = parsed.personaId;
-    debugReasoningOverride = parsed.reasoning;
-  }
-
-  if (cli.reasoningOverride !== undefined) {
-    debugReasoningOverride = cli.reasoningOverride;
-  }
-
   let debugPersona: Persona | undefined;
   if (personas.length > 0) {
-    debugPersona = debugPersonaId
-      ? (personas.find((p) => p.id === debugPersonaId) ?? personas[0]!)
+    debugPersona = initialPersonaId
+      ? (personas.find((p) => p.id === initialPersonaId) ?? personas[0]!)
       : personas[0]!;
 
-    if (debugReasoningOverride !== undefined) {
-      debugPersona.settings.reasoning = debugReasoningOverride;
+    if (reasoningOverride !== undefined) {
+      debugPersona.settings.reasoning = reasoningOverride;
     }
   }
 
-  const debugRiskLevel = cli.riskLevel ?? config.defaultRisk;
+  const debugRiskLevel = initialRiskLevel;
   const debugSandboxConfig = cli.sandbox ? requireSandboxConfig(config) : undefined;
   const debugBackend = cli.sandbox
     ? await createSandboxBackend(config)
@@ -288,19 +339,6 @@ if (personas.length === 0) {
   process.exit(1);
 }
 
-let initialPersonaId: string | undefined;
-let reasoningOverride: ReasoningEffort | undefined = cli.reasoningOverride;
-
-if (cli.personaId) {
-  initialPersonaId = cli.personaId;
-} else if (config.defaultPersona) {
-  const parsed = parsePersonaString(config.defaultPersona, personas);
-  initialPersonaId = parsed.personaId;
-  if (reasoningOverride === undefined) {
-    reasoningOverride = parsed.reasoning;
-  }
-}
-
 const initialPersona = initialPersonaId
   ? (personas.find((p) => p.id === initialPersonaId) ?? personas[0]!)
   : personas[0]!;
@@ -308,8 +346,6 @@ const initialPersona = initialPersonaId
 if (reasoningOverride !== undefined) {
   initialPersona.settings.reasoning = reasoningOverride;
 }
-
-const initialRiskLevel = cli.riskLevel || config.defaultRisk;
 
 const initialUserMessage = await readPipedStdin();
 
@@ -324,6 +360,9 @@ const app = new ChatApp({
   initialPersonaId,
   initialUserMessage,
   initialRiskLevel,
+  initialHistory: checkpointHistory,
+  initialPreviousSessionSummary: checkpointPreviousSessionSummary,
+  initialSystemPrompt: useCheckpointSystemPrompt ? checkpointSystemPrompt : undefined,
   noAgentContextFiles: cli.noAgentContextFiles,
   config,
   sandboxEnabled: cli.sandbox,

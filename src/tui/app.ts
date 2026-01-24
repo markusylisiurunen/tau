@@ -1,3 +1,4 @@
+import type { Message } from "@mariozechner/pi-ai";
 import type { BashCommand, Config, ThemeDefinition } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { ModeAdapter } from "../core/modes/mode_adapter.js";
@@ -18,6 +19,9 @@ export interface ChatAppOptions {
   initialPersonaId?: string;
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
+  initialHistory?: Message[];
+  initialPreviousSessionSummary?: string;
+  initialSystemPrompt?: string;
   noAgentContextFiles?: boolean;
   config?: Config;
   sandboxEnabled?: boolean;

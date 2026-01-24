@@ -7,6 +7,7 @@ export type Command = (
   | { type: "copy" }
   | { type: "copyCode" }
   | { type: "export" }
+  | { type: "checkpoint" }
   | { type: "new" }
   | { type: "cd"; path: string }
   | { type: "compactOnlySummary" }
@@ -45,6 +46,7 @@ export interface CommandDispatchContext {
   copy: () => Promise<void>;
   copyCode: () => Promise<void>;
   export: () => Promise<void>;
+  checkpoint: () => Promise<void>;
   newSession: () => void;
   cd: (path: string) => void;
   compactOnlySummary: (extra?: string) => Promise<void>;
@@ -361,6 +363,21 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "export", extra };
     },
     run: (ctx) => ctx.export(),
+  });
+
+  registry.register({
+    id: "checkpoint",
+    usage: "/checkpoint",
+    description: "save a checkpoint file",
+    autocompleteDescription: "save a checkpoint file",
+    argument: "none",
+    section: "base",
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/checkpoint") return null;
+      return { type: "checkpoint", extra };
+    },
+    run: (ctx) => ctx.checkpoint(),
   });
 
   registry.register({

@@ -201,6 +201,7 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 
 - `--help`, `-h` - Show help and exit
 - `--debug` - Print debug info (loaded personas, prompts, bash commands, skills, full system prompt, tool schemas) and exit
+- `--load`, `-l <file>` - Load a checkpoint file
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
 - `--risk <level>`, `-r` - Set initial risk level (`read-only`, `read-write`)
 - `--sandbox` - Run all tool calls inside a session-specific Docker container
@@ -217,7 +218,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 ## Commands
 
-- `/help`, `/new`, `/cd <path>`, `/copy`, `/copy:code`, `/export:html`, `/reload`
+- `/help`, `/new`, `/cd <path>`, `/copy`, `/copy:code`, `/export:html`, `/checkpoint`, `/reload`
 - `/compact:only-summary`, `/compact:with-last-turn` - Compact history to continue
 - `/risk:read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model; runs inside sandbox when enabled)

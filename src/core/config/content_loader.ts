@@ -577,10 +577,6 @@ function parsePersona(
     settings.reasoning = reasoning;
   }
 
-  if (modelObj.provider !== "openai" && settings.serviceTier !== undefined) {
-    delete settings.serviceTier;
-  }
-
   let skills: string[] | "*" | undefined;
   if (skillsRaw === undefined && basePersona?.skills !== undefined) {
     skills = Array.isArray(basePersona.skills) ? [...basePersona.skills] : basePersona.skills;

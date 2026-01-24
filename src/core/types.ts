@@ -1,11 +1,4 @@
-import type {
-  Api,
-  Model,
-  OpenAIResponsesOptions,
-  SimpleStreamOptions,
-  ThinkingLevel,
-  Tool,
-} from "@mariozechner/pi-ai";
+import type { Api, Model, SimpleStreamOptions, ThinkingLevel, Tool } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import type { SubagentConfigMap } from "./subagents/types.js";
 
@@ -18,7 +11,6 @@ export type PersonaSource = "builtin" | "user" | "project";
 
 export type PersonaSettings = Omit<SimpleStreamOptions, "reasoning"> & {
   reasoning?: ReasoningEffort;
-  serviceTier?: OpenAIResponsesOptions["serviceTier"];
   interleavedThinking?: boolean;
 };
 

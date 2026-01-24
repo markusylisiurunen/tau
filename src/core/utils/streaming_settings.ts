@@ -1,8 +1,7 @@
-import type { OpenAIResponsesOptions, SimpleStreamOptions } from "@mariozechner/pi-ai";
+import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { z } from "zod";
 
 export type TauStreamOptions = SimpleStreamOptions & {
-  serviceTier?: OpenAIResponsesOptions["serviceTier"];
   interleavedThinking?: boolean;
 };
 

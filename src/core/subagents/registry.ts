@@ -52,7 +52,7 @@ export function resolveSubagentEffectiveSettings(args: {
   riskLevel: RiskLevel;
 }): SubagentEffectiveSettings {
   const model = args.config.model ?? args.persona.model;
-  const { serviceTier: _serviceTier, ...baseSettings } = args.persona.settings ?? {};
+  const baseSettings = args.persona.settings ?? {};
   const mergedSettings = args.config.settings
     ? { ...baseSettings, ...args.config.settings }
     : baseSettings;

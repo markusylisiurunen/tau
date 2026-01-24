@@ -160,7 +160,6 @@ export async function runSubagent(options: {
       ...getStreamingSettings(runtimeConfig.settings),
       signal,
       sessionId,
-      serviceTier: undefined,
       ...(apiKey && { apiKey }),
     };
 

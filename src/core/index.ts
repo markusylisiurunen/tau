@@ -50,6 +50,8 @@ export type { PromptTemplate } from "./prompts.js";
 export { prompts } from "./prompts.js";
 export type { CoreDeps } from "./runtime/deps.js";
 export { createDefaultCoreDeps } from "./runtime/deps.js";
+export type { Checkpoint } from "./session/checkpoint.js";
+export { createCheckpoint, parseCheckpoint } from "./session/checkpoint.js";
 export { createBashToolDefinition } from "./tools/bash.js";
 export { ToolCatalog } from "./tools/catalog.js";
 export { createCommunicateToolDefinition } from "./tools/communicate.js";

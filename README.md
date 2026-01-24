@@ -267,6 +267,7 @@ tau supports slash commands for common actions:
 | `/copy`                   | copy the last assistant message                                              |
 | `/copy:code`              | copy just the code blocks                                                    |
 | `/export:html`            | export chat history to html                                                  |
+| `/checkpoint`             | save a checkpoint file for loading later                                     |
 | `/reload`                 | reload personas, prompts, skills, and themes from disk                       |
 | `/cd <path>`              | change the working directory                                                 |
 | `/compact:only-summary`   | compress history and continue with a summary                                 |
@@ -278,6 +279,8 @@ tau supports slash commands for common actions:
 | `/risk:<level>`           | change the risk level                                                        |
 | `!<cmd>`                  | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
 | `!!<cmd>`                 | run a shell command without adding output to the model context               |
+
+use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
 
 the compact commands are useful when conversations get long. they compress everything into a summary so the model retains context without the overhead of a full history.
 

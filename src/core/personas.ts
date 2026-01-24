@@ -142,7 +142,7 @@ Skills and sub-agents specify when they should be activated:
 const BLOCK_PROJECT_CONTEXT = `
 ### Project context
 
-If an AGENTS.md file is present, read it early. It contains project-specific conventions, build commands, and architecture notes that will help you work effectively.
+If an AGENTS.md file is present, read it early. Treat it as the baseline for project-specific conventions, build commands, and architecture notes. User instructions always take precedence, including when they conflict with AGENTS.md. If the contents are already provided in the conversation context, do not re-read it unless the user asks.
 `.trim();
 
 const BLOCK_RISK_LEVELS = `

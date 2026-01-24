@@ -28,11 +28,7 @@ import {
   getToolResultFirstLine,
   normalizeOneLine,
 } from "../utils/subagent_utils.js";
-import type {
-  SubagentPersonaConfig,
-  SubagentRuntimeDefinition,
-  SubagentToolName,
-} from "./types.js";
+import type { SubagentRuntimeConfig, SubagentToolName } from "./types.js";
 
 export type SubagentProgressEvent = {
   text: string;
@@ -55,7 +51,9 @@ export type SubagentRunResult = {
   toolCalls: number;
 };
 
-function getStreamingSettings(settings: SubagentPersonaConfig["settings"]): TauStreamOptions {
+const MAX_SUBAGENT_SUBTURNS = 128;
+
+function getStreamingSettings(settings: SubagentRuntimeConfig["settings"]): TauStreamOptions {
   const merged = { ...(settings ?? {}) } as Record<string, unknown>;
   return parseStreamingSettings(merged);
 }
@@ -73,8 +71,7 @@ function isToolCall(block: AssistantMessage["content"][number]): block is ToolCa
 }
 
 export async function runSubagent(options: {
-  definition: SubagentRuntimeDefinition;
-  personaConfig: SubagentPersonaConfig;
+  runtimeConfig: SubagentRuntimeConfig;
   prompt: string;
   config: Config;
   authPath?: string;
@@ -85,16 +82,8 @@ export async function runSubagent(options: {
   sessionId?: string;
   subagentContext?: ToolDispatchContext["subagentContext"];
 }): Promise<SubagentRunResult> {
-  const {
-    definition,
-    personaConfig,
-    prompt,
-    config,
-    signal,
-    onProgress,
-    onToolUiEvent,
-    subagentContext,
-  } = options;
+  const { runtimeConfig, prompt, config, signal, onProgress, onToolUiEvent, subagentContext } =
+    options;
   const authPath = options.authPath ?? getAuthPath();
   const authStorage = new AuthStorage(authPath);
   const credentialResolver: CredentialResolver = createCredentialResolver({
@@ -107,7 +96,7 @@ export async function runSubagent(options: {
   }
 
   const backend = options.backend ?? createLocalToolExecutionBackend();
-  const allowedTools = personaConfig.tools ?? definition.allowedTools;
+  const allowedTools = runtimeConfig.tools;
   const toolRegistry = buildToolRegistryForAllowedTools(allowedTools, config, backend);
   const messages: Message[] = [
     {
@@ -120,7 +109,7 @@ export async function runSubagent(options: {
   let costTotal = 0;
   let turns = 0;
   let toolCalls = 0;
-  const maxSubturns = definition.maxSubturns ?? 64;
+  const maxSubturns = MAX_SUBAGENT_SUBTURNS;
 
   const emitProgress = (text: string) => {
     onProgress?.({ text, costTotal, turns, toolCalls });
@@ -141,41 +130,41 @@ export async function runSubagent(options: {
   const formatIssueSummary = (): string =>
     issues.length > 0 ? ` (recent issues: ${issues.slice(-3).join("; ")})` : "";
 
-  const sessionId = options.sessionId ?? `tau-subagent-${definition.name}-${randomUUID()}`;
+  const sessionId = options.sessionId ?? `tau-subagent-${runtimeConfig.name}-${randomUUID()}`;
 
   for (let subturn = 1; subturn <= maxSubturns && !signal.aborted; subturn++) {
     emitProgress("assistant: thinking");
 
     const context: Context = {
-      systemPrompt: definition.systemPrompt,
+      systemPrompt: runtimeConfig.systemPrompt,
       messages,
       tools: toolRegistry.schemas,
     };
 
     let apiKey: string | undefined;
     try {
-      apiKey = await credentialResolver.getApiKey(personaConfig.model.provider as KnownProvider, {
+      apiKey = await credentialResolver.getApiKey(runtimeConfig.model.provider as KnownProvider, {
         sessionId,
       });
     } catch (error) {
-      if (personaConfig.model.provider === "openai-codex") {
+      if (runtimeConfig.model.provider === "openai-codex") {
         throw new Error(formatCodexAuthError(authPath, (error as Error)?.message));
       }
       throw error;
     }
 
-    if (!apiKey && personaConfig.model.provider === "openai-codex") {
+    if (!apiKey && runtimeConfig.model.provider === "openai-codex") {
       throw new Error(formatCodexAuthError(authPath));
     }
     const baseOptions: TauStreamOptions = {
-      ...getStreamingSettings(personaConfig.settings),
+      ...getStreamingSettings(runtimeConfig.settings),
       signal,
       sessionId,
       serviceTier: undefined,
       ...(apiKey && { apiKey }),
     };
 
-    if (personaConfig.model.provider === "openai-codex") {
+    if (runtimeConfig.model.provider === "openai-codex") {
       baseOptions.headers = {
         ...baseOptions.headers,
         originator: CODEX_ORIGINATOR,
@@ -184,7 +173,7 @@ export async function runSubagent(options: {
     }
 
     const runner = runModelSubturn({
-      model: personaConfig.model,
+      model: runtimeConfig.model,
       context,
       streamOptions: baseOptions,
       signal,
@@ -208,7 +197,7 @@ export async function runSubagent(options: {
       if (!signal.aborted) {
         try {
           await credentialResolver.noteProviderError?.(
-            personaConfig.model.provider as KnownProvider,
+            runtimeConfig.model.provider as KnownProvider,
             {
               sessionId,
               error: err,
@@ -254,7 +243,7 @@ export async function runSubagent(options: {
       return finish();
     }
 
-    const riskLevel = (personaConfig.riskLevel ?? definition.riskLevel) as RiskLevel;
+    const riskLevel = runtimeConfig.riskLevel as RiskLevel;
 
     const handleUi = (uiEvent: ToolUiEvent | undefined) => {
       if (!uiEvent) return;

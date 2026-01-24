@@ -29,6 +29,7 @@ const MAX_ASSISTANT_SUBTURNS = 200;
 export type SessionEngineOptions = {
   persona: Persona;
   systemPrompt: string;
+  subagentPrompts: Record<string, string>;
   riskLevel: RiskLevel;
   toolRegistry: ToolRegistry;
   config?: Config;
@@ -38,6 +39,7 @@ export type SessionEngineOptions = {
 export class SessionEngine {
   private persona: Persona;
   private systemPrompt: string;
+  private subagentPrompts: Record<string, string>;
   private riskLevel: RiskLevel;
   private readonly toolRegistry: ToolRegistry;
   private config: Config;
@@ -52,6 +54,7 @@ export class SessionEngine {
   constructor(options: SessionEngineOptions) {
     this.persona = options.persona;
     this.systemPrompt = options.systemPrompt;
+    this.subagentPrompts = options.subagentPrompts;
     this.riskLevel = options.riskLevel;
     this.toolRegistry = options.toolRegistry;
     this.config = options.config ?? {};
@@ -73,9 +76,14 @@ export class SessionEngine {
     this.subagentControlPlane.reset();
   }
 
-  setPersona(persona: Persona, systemPrompt: string): void {
+  setPersona(
+    persona: Persona,
+    systemPrompt: string,
+    subagentPrompts: Record<string, string>,
+  ): void {
     this.persona = persona;
     this.systemPrompt = systemPrompt;
+    this.subagentPrompts = subagentPrompts;
   }
 
   setRiskLevel(level: RiskLevel): void {
@@ -158,6 +166,8 @@ export class SessionEngine {
         config: this.config,
         history: [...this.messages],
         systemPrompt: this.systemPrompt,
+        riskLevel: this.riskLevel,
+        subagentPrompts: this.subagentPrompts,
         toolRegistry: this.toolRegistry,
         authPath: this.authPath,
         subagentControlPlane: this.subagentControlPlane,

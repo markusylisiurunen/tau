@@ -18,7 +18,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface and RPC stub for alternate front-ends
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools (local host or docker sandbox)
-- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, spawn_agent, wait_for_agent, terminate_agent) and sub-agent (communicate, bash, web_search, web_fetch, write/edit when enabled) registries
+- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, spawn_agent, wait_for_agent, terminate_agent) and sub-agent (communicate plus allowed tools) registries
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
@@ -57,7 +57,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `tools/` - Tool definitions (bash, write, edit, spawn_agent, wait_for_agent, terminate_agent, communicate, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
   - `tools/execution_backend.ts` - Local and sandbox tool backends
   - `tools/sandbox/docker_sandbox.ts` - Docker sandbox runner
-  - `subagents/` - Explore/web subagents and runner
+  - `subagents/` - Default subagent prompt and runner
   - `modes/` - ModeAdapter interface and RPC stub
   - `runtime/deps.ts` - Core dependency injection
   - `utils/context_builder.ts` - System prompt assembly
@@ -121,13 +121,13 @@ Risk levels (`read-only`, `read-write`) gate model tool calls. The model declare
 - The TUI only styles output: compact uses `previewText` + `statusLine`, expanded uses raw `fullText`.
 - Current preview shapes: bash uses head/tail output plus a status line; write shows up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
 
-**Subagent-only tools**: subagents run with a dedicated tool registry that always includes `communicate` plus their allowed tools (for example, the `web` subagent uses `web_search`, `web_fetch`, and read-only `bash`). See `src/core/subagents/subagent_engine.ts`.
+**Subagent-only tools**: subagents run with a dedicated tool registry that always includes `communicate` plus the tools enabled for that subagent (inherited from the main persona or explicitly overridden). See `src/core/subagents/subagent_engine.ts`.
 
 **Subagent limit**: at most 3 subagents may run concurrently.
 
 ## Personas and subagents
 
-**Built-in**: 8 personas total: Claude Opus 4.5 (chat, coder), GPT-5.2 (chat, coder), GPT-5.2-Codex ChatGPT (coder), GPT-5.2-Codex API (coder), Gemini 3 Pro (chat), Gemini 3 Flash (chat). Both variants include the **web** subagent (max 64 turns, trigger: explicit) for agentic web research, and coder variants also include the **explore** subagent (max 64 turns, trigger: eager) for multi-turn read-only codebase investigation. Built-in personas have `skills: "*"` to enable all discovered skills by default. See trigger sensitivity below for how subagent and skill activation is controlled.
+**Built-in**: 8 personas total: Claude Opus 4.5 (chat, coder), GPT-5.2 (chat, coder), GPT-5.2-Codex ChatGPT (coder), GPT-5.2-Codex API (coder), Gemini 3 Pro (chat), Gemini 3 Flash (chat). Built-in personas include the **default** subagent (general-purpose, trigger: balanced) unless it is explicitly disabled. Built-in personas have `skills: "*"` to enable all discovered skills by default. See trigger sensitivity below for how subagent and skill activation is controlled.
 
 Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields. The persona file name (without `.md`) must match the `id`.
 
@@ -136,7 +136,7 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `reasoning`: default reasoning effort level
 - `allowedReasoningLevels`: list of reasoning levels shown in the UI
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
-- `subagents`: enable sub-agents (`explore` for codebase investigation, `web` for web research). specify as a list `[explore]`, `[web]`, or `[explore, web]` to use the main persona's model, or as an object with custom model/reasoning/tools/riskLevel per sub-agent.
+- `subagents`: optional map of subagent definitions. The built-in `default` subagent is implicitly enabled unless `default: false` is provided. Custom subagents must be defined as `{ systemPrompt, description?, provider+model?, reasoning?, tools?, riskLevel? }` with lowercase-dash names (max 64 chars). The `default` subagent cannot be overridden.
 - `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `spawn_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit` (and subagent tools when subagents are enabled). risk levels still apply.
 
 On conflicts, the most specific level wins (built-ins are the base layer).
@@ -144,7 +144,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 ## Configuration
 
 - **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinPrompts`, `disableBuiltinThemes`, `defaultTheme`, `bashCommands`, `agentContextFiles`, `sandbox`). This level is only included when cwd is inside home.
-  - `apiKeys.parallel` (optional): Parallel API key for the `web` subagent.
+  - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `sandbox` (optional): Docker sandbox settings (see below).
@@ -192,8 +192,7 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 
 **Built-in subagents:**
 
-- `explore`: eager (multi-turn codebase investigation is often valuable for code understanding questions)
-- `web`: explicit (web research should only happen when explicitly requested, to avoid unnecessary external calls)
+- `default`: balanced (general-purpose background work)
 
 **For custom skills:** Include "Trigger: eager", "Trigger: balanced", or "Trigger: explicit" in your skill's description. If omitted, balanced is the default. This ensures the model knows when to use your skill.
 

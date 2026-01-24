@@ -1,6 +1,6 @@
 # tau
 
-a terminal-based AI chat client for working with code. tau gives you access to Claude, GPT, and Gemini models, each equipped with tools to explore, read, write, and edit files in your project, plus optional sub-agents for deeper codebase investigation and web research.
+a terminal-based AI chat client for working with code. tau gives you access to Claude, GPT, and Gemini models, each equipped with tools to explore, read, write, and edit files in your project, plus optional sub-agents for background tasks.
 
 ![tau](https://raw.githubusercontent.com/markusylisiurunen/tau/main/assets/tau.png)
 
@@ -32,7 +32,7 @@ or store keys in `~/.config/tau/config.json`:
 
 environment variables take precedence over the config file.
 
-`parallel` is only needed for the web sub-agent tools (`web_search`/`web_fetch`).
+`parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents.
 
 ### OpenAI Codex subscription (ChatGPT Plus/Pro)
 
@@ -183,7 +183,7 @@ tau comes with several built-in personas across different models:
 - **GPT-5.2-Codex** (OpenAI): two coder-only variants, one for ChatGPT Plus/Pro subscriptions (`gpt-5.2-codex-chatgpt`) and one for direct API access (`gpt-5.2-codex-api`)
 - **Gemini 3 Pro** and **Gemini 3 Flash** (Google): chat variants only
 
-chat variants are for general-purpose assistance; coder variants are optimized for software engineering. both include the `web` sub-agent for web research, and coder variants also include the `explore` sub-agent for multi-turn codebase investigation.
+chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.
 
 switch personas at startup with `--persona` or mid-session with `/persona:<id>`:
 
@@ -195,20 +195,19 @@ tau --persona opus-4.5-coder
 
 some personas can run isolated sub-agents via the `spawn_agent`, `wait_for_agent`, and `terminate_agent` tools. sub-agents return their output through the subagent-only `communicate` tool, which is collected by `wait_for_agent`.
 
-- `explore`: read-only, multi-turn codebase investigation
-- `web`: high-threshold web research using Parallel Search/Extract (`web_search`/`web_fetch`) plus read-only bash for curl/filtering
+the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, risk level, and tool access (minus sub-agent management tools). custom sub-agents can be defined in persona frontmatter with their own `systemPrompt` plus optional overrides for model, reasoning, tools, and risk level.
 
 sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 3.
 
-to use the web sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when you explicitly ask for web research.
+to use `web_search`/`web_fetch` in a sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when you explicitly ask for web research.
 
 ## trigger sensitivity
 
 sub-agents and skills define when they should be activated via trigger sensitivity levels:
 
-- **eager**: use proactively whenever the capability would help, even if not explicitly requested. example: `explore` is eager because multi-step codebase investigation is often valuable.
+- **eager**: use proactively whenever the capability would help, even if not explicitly requested. example: a dedicated codebase investigation sub-agent.
 - **balanced**: use when the request clearly matches the capability. this is the default if not specified. good for skills that solve specific problems but shouldn't be assumed.
-- **explicit**: use only when the user specifically names or requests it. example: `web` is explicit because web research should happen only when the user asks for current information.
+- **explicit**: use only when the user specifically names or requests it. example: a web research sub-agent that should only run when asked.
 
 when you write custom skills, you can specify trigger sensitivity in the skill description. if not specified, the default is balanced. the model respects these levels and won't trigger a skill or sub-agent inappropriately.
 
@@ -396,14 +395,18 @@ optional frontmatter fields:
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
-- `subagents`: enable sub-agents (`explore` for multi-turn codebase investigation, `web` for web research). you can specify as a list (`subagents: [explore]`, `subagents: [web]`, or `subagents: [explore, web]`) to use the main persona's model, or as an object to customize each sub-agent's model, reasoning, tools, and risk level. when specifying a model for a subagent, `provider` and `model` must be provided together. example:
+- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `tools`, and `riskLevel` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). example:
   ```yaml
   subagents:
-    explore:
+    default: false
+    web-research:
+      systemPrompt: |
+        you are a focused web research sub-agent.
+      description: web research using web_search/web_fetch.
       provider: anthropic
       model: claude-haiku-4-5
       reasoning: medium
-      tools: [bash]
+      tools: [web_search, web_fetch, bash]
       riskLevel: read-only
   ```
 - `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `spawn_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit` (and subagent tools when subagents are enabled). risk levels still apply.

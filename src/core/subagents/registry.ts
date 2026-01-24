@@ -1,25 +1,92 @@
-import type { Persona } from "../types.js";
-import { EXPLORE_DEFINITION } from "./explore.js";
-import type { SubagentName, SubagentRuntimeDefinition } from "./types.js";
-import { WEB_DEFINITION } from "./web.js";
+import type { Persona, RiskLevel } from "../types.js";
+import { DEFAULT_SUBAGENT_DEFINITION } from "./default.js";
+import {
+  DEFAULT_SUBAGENT_NAME,
+  type SubagentPersonaConfig,
+  type SubagentRuntimeConfig,
+  type SubagentToolName,
+} from "./types.js";
 
-export function isSubagentName(value: string): value is SubagentName {
-  return value === "explore" || value === "web";
-}
+const INHERITABLE_TOOL_NAMES = new Set<SubagentToolName>([
+  "bash",
+  "write",
+  "edit",
+  "web_search",
+  "web_fetch",
+]);
 
-export function getSubagentDefinition(name: SubagentName): SubagentRuntimeDefinition {
-  switch (name) {
-    case "explore":
-      return EXPLORE_DEFINITION;
-    case "web":
-      return WEB_DEFINITION;
+function normalizeTools(tools: SubagentToolName[]): SubagentToolName[] {
+  const seen = new Set<SubagentToolName>();
+  const normalized: SubagentToolName[] = [];
+
+  for (const tool of tools) {
+    if (seen.has(tool)) continue;
+    seen.add(tool);
+    normalized.push(tool);
   }
+
+  return normalized;
 }
 
-export function getSubagentDefinitionFromString(
+function getInheritedSubagentTools(persona: Persona): SubagentToolName[] {
+  const toolNames = persona.tools?.map((tool) => tool.name) ?? ["bash", "write", "edit"];
+  const selected: SubagentToolName[] = [];
+
+  for (const name of toolNames) {
+    if (INHERITABLE_TOOL_NAMES.has(name as SubagentToolName)) {
+      selected.push(name as SubagentToolName);
+    }
+  }
+
+  return normalizeTools(selected);
+}
+
+export type SubagentEffectiveSettings = Pick<
+  SubagentRuntimeConfig,
+  "model" | "settings" | "tools" | "riskLevel"
+>;
+
+export function resolveSubagentEffectiveSettings(args: {
+  persona: Persona;
+  config: SubagentPersonaConfig;
+  riskLevel: RiskLevel;
+}): SubagentEffectiveSettings {
+  const model = args.config.model ?? args.persona.model;
+  const { serviceTier: _serviceTier, ...baseSettings } = args.persona.settings ?? {};
+  const mergedSettings = args.config.settings
+    ? { ...baseSettings, ...args.config.settings }
+    : baseSettings;
+  const tools = args.config.tools
+    ? normalizeTools(args.config.tools)
+    : getInheritedSubagentTools(args.persona);
+  const riskLevel = args.config.riskLevel ?? args.riskLevel;
+  return {
+    model,
+    settings: Object.keys(mergedSettings).length > 0 ? mergedSettings : undefined,
+    tools,
+    riskLevel,
+  };
+}
+
+export function getSubagentBasePrompt(
   name: string,
-): SubagentRuntimeDefinition | undefined {
-  return isSubagentName(name) ? getSubagentDefinition(name) : undefined;
+  config?: SubagentPersonaConfig,
+): string | undefined {
+  if (name === DEFAULT_SUBAGENT_NAME) {
+    return DEFAULT_SUBAGENT_DEFINITION.systemPrompt;
+  }
+  return config?.systemPrompt;
+}
+
+export function getSubagentDescription(
+  name: string,
+  config?: SubagentPersonaConfig,
+): string | undefined {
+  if (config?.description) return config.description;
+  if (name === DEFAULT_SUBAGENT_NAME) {
+    return DEFAULT_SUBAGENT_DEFINITION.description;
+  }
+  return undefined;
 }
 
 export function formatSubagentsForPrompt(persona: Persona): string | undefined {
@@ -29,9 +96,8 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
   const entries = Object.entries(persona.subagents).filter(([, cfg]) => cfg);
   if (entries.length === 0) return undefined;
   const subagentLines = entries
-    .map(([name]) => {
-      const def = getSubagentDefinitionFromString(name);
-      const description = def?.description || "(no description)";
+    .map(([name, cfg]) => {
+      const description = getSubagentDescription(name, cfg) ?? "(no description)";
       return `- \`${name}\`: ${description}`;
     })
     .join("\n");

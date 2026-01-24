@@ -218,6 +218,8 @@ export type ToolDispatchContext = {
   config?: Config;
   history?: readonly Message[];
   systemPrompt?: string;
+  riskLevel?: RiskLevel;
+  subagentPrompts?: Record<string, string>;
   toolRegistry?: ToolRegistry;
   authPath?: string;
   subagentContext?: SubagentDispatchContext;

@@ -7,8 +7,7 @@ import type { SubagentProgressEvent, SubagentToolUiEvent } from "./subagent_engi
 import { runSubagent } from "./subagent_engine.js";
 import type {
   SubagentName,
-  SubagentPersonaConfig,
-  SubagentRuntimeDefinition,
+  SubagentRuntimeConfig,
   SubagentStateSnapshot,
   SubagentStatus,
   SubagentUiEvent,
@@ -117,8 +116,7 @@ export class SubagentControlPlane {
   }
 
   spawn(options: {
-    definition: SubagentRuntimeDefinition;
-    personaConfig: SubagentPersonaConfig;
+    runtimeConfig: SubagentRuntimeConfig;
     prompt: string;
     title: string;
     config: Config;
@@ -134,14 +132,14 @@ export class SubagentControlPlane {
       };
     }
 
-    const { definition, personaConfig, prompt, title, config, authPath, backend } = options;
+    const { runtimeConfig, prompt, title, config, authPath, backend } = options;
     const id = randomUUID();
     const controller = new AbortController();
     const startedAt = Date.now();
 
     const record: SubagentRecord = {
       id,
-      name: definition.name,
+      name: runtimeConfig.name,
       title,
       status: "running",
       costTotal: 0,
@@ -160,14 +158,13 @@ export class SubagentControlPlane {
 
     const subagentContext: ToolDispatchContext["subagentContext"] = {
       id,
-      name: definition.name,
+      name: runtimeConfig.name,
       title,
       controlPlane: this,
     };
 
     record.completion = runSubagent({
-      definition,
-      personaConfig,
+      runtimeConfig,
       prompt,
       config,
       authPath,

@@ -2,7 +2,11 @@ import type { Tool } from "@mariozechner/pi-ai";
 import type { BashCommand, SandboxConfig, VirtualBundle } from "./config/index.js";
 import type { PromptTemplate } from "./prompts.js";
 import { createDefaultCoreDeps } from "./runtime/deps.js";
-import { formatSubagentsForPrompt } from "./subagents/registry.js";
+import {
+  formatSubagentsForPrompt,
+  resolveSubagentEffectiveSettings,
+} from "./subagents/registry.js";
+import type { SubagentPersonaConfig } from "./subagents/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import type { Persona, RiskLevel, Skill } from "./types.js";
 import { resolveAgentCwd } from "./utils/agent_environment.js";
@@ -225,17 +229,29 @@ export function printDebugInfo(args: {
 
   // Sub-agents
   const activeSubagents = selectedPersona.subagents
-    ? Object.entries(selectedPersona.subagents).filter(([, cfg]) => cfg)
+    ? Object.entries(selectedPersona.subagents)
     : [];
-  section(`active sub-agents (${activeSubagents.length})`);
-  if (activeSubagents.length === 0) {
+  const enabledSubagents = activeSubagents.filter(
+    (entry): entry is [string, SubagentPersonaConfig] => Boolean(entry[1]),
+  );
+  section(`active sub-agents (${enabledSubagents.length})`);
+  if (enabledSubagents.length === 0) {
     console.log("\n  (none)");
   } else {
-    for (const [name, cfg] of activeSubagents) {
+    for (const [name, cfg] of enabledSubagents) {
       console.log(`\n- ${name}`);
-      console.log(`  model: ${cfg.model.provider}:${cfg.model.id}`);
-      if (cfg.settings) {
-        console.log(`  settings: ${JSON.stringify(cfg.settings)}`);
+      const effective = resolveSubagentEffectiveSettings({
+        persona: selectedPersona,
+        config: cfg,
+        riskLevel: effectiveRiskLevel,
+      });
+      console.log(`  model: ${effective.model.provider}:${effective.model.id}`);
+      if (effective.settings) {
+        console.log(`  settings: ${JSON.stringify(effective.settings)}`);
+      }
+      console.log(`  riskLevel: ${effective.riskLevel}`);
+      if (effective.tools.length > 0) {
+        console.log(`  tools: ${effective.tools.join(", ")}`);
       }
     }
   }

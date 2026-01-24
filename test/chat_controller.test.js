@@ -156,6 +156,35 @@ describe("ChatController streaming command handling", () => {
   });
 });
 
+describe("ChatController risk level changes", () => {
+  it("does not update the main system prompt and injects a system notice", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    const initialPrompt = controller.baseSystemPrompt;
+    const initialEnvironment = controller.environmentTag;
+    const initialSubagentPrompt = controller.subagentPrompts.default;
+    expect(initialSubagentPrompt).toBeTruthy();
+
+    const userMessages = [];
+    controller.engine.addUserText = (text) => {
+      userMessages.push(text);
+    };
+    controller.runAssistantTurn = async () => {};
+
+    controller.setRiskLevel("read-write", { silent: true });
+
+    expect(controller.baseSystemPrompt).toBe(initialPrompt);
+    expect(controller.environmentTag).toBe(initialEnvironment);
+    expect(controller.subagentPrompts.default).not.toBe(initialSubagentPrompt);
+    expect(controller.subagentPrompts.default).toContain('level="read-write"');
+
+    await controller.onUserInput("hello");
+
+    expect(userMessages[0]).toContain("<system>Risk level changed by user");
+  });
+});
+
 describe("ChatController manual retry", () => {
   it("retries on double empty submit within window", async () => {
     vi.useFakeTimers();

@@ -103,7 +103,9 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set.
 
-Risk levels (`read-only`, `read-write`) gate model tool calls. The model declares intent via `safetyLevel` on bash calls.
+Risk levels (`read-only`, `read-write`) gate model tool calls. Subagents inherit the session risk level unless overridden in persona config. The model declares intent via `safetyLevel` on bash calls.
+
+Main session system prompts are immutable after session start to preserve model caching. The environment tag is not updated mid-session. `/risk` and `/cd` changes are injected as system messages on the next user turn instead. Subagent prompts are rebuilt on risk changes so inherited risk applies to subagents.
 
 **Bash limits**: 2MB raw capture, 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized by dropping vars that match sensitive key patterns, git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
 

@@ -1,12 +1,12 @@
 import { getModel } from "@mariozechner/pi-ai";
-import type { SubagentConfigMap } from "./subagents/types.js";
+import { DEFAULT_SUBAGENT_NAME, type SubagentConfigMap } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
 import { SPAWN_AGENT_TOOL } from "./tools/spawn_agent.js";
 import { TERMINATE_AGENT_TOOL } from "./tools/terminate_agent.js";
 import { WAIT_FOR_AGENT_TOOL } from "./tools/wait_for_agent.js";
 import { WRITE_TOOL } from "./tools/write.js";
-import type { Persona, ReasoningEffort } from "./types.js";
+import type { Persona } from "./types.js";
 
 const BLOCK_GENERAL_PURPOSE_PREAMBLE = `
 You are a helpful assistant. Your primary mode is conversation: answer questions, explain concepts, talk through problems, or help with any topic the user brings up. You have access to tools for working with code and files, but reach for them only when they genuinely help.
@@ -187,15 +187,6 @@ type PersonaSpec = {
   allowedReasoningLevels: NonNullable<Persona["allowedReasoningLevels"]>;
   settings: Persona["settings"];
   skills?: string[] | "*";
-  subagents?: Partial<
-    Record<
-      "explore" | "web",
-      {
-        model?: Persona["model"];
-        reasoning?: ReasoningEffort;
-      }
-    >
-  >;
 };
 
 const PERSONA_SPECS: PersonaSpec[] = [
@@ -205,16 +196,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("anthropic", "claude-opus-4-5"),
     allowedReasoningLevels: ["low", "high"],
     settings: { reasoning: "high" },
-    subagents: {
-      explore: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
-        reasoning: "medium",
-      },
-      web: {
-        model: getModel("anthropic", "claude-haiku-4-5"),
-        reasoning: "medium",
-      },
-    },
   },
 
   {
@@ -223,16 +204,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("openai", "gpt-5.2"),
     allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
-    subagents: {
-      explore: {
-        model: getModel("openai", "gpt-5.2"),
-        reasoning: "low",
-      },
-      web: {
-        model: getModel("openai", "gpt-5.2"),
-        reasoning: "low",
-      },
-    },
   },
   {
     id: "gpt-5.2-codex-chatgpt",
@@ -240,16 +211,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("openai-codex", "gpt-5.2-codex"),
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
-    subagents: {
-      explore: {
-        model: getModel("openai-codex", "gpt-5.2-codex"),
-        reasoning: "low",
-      },
-      web: {
-        model: getModel("openai-codex", "gpt-5.2-codex"),
-        reasoning: "low",
-      },
-    },
   },
   {
     id: "gpt-5.2-codex-api",
@@ -257,16 +218,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("openai", "gpt-5.2-codex"),
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
-    subagents: {
-      explore: {
-        model: getModel("openai", "gpt-5.2-codex"),
-        reasoning: "low",
-      },
-      web: {
-        model: getModel("openai", "gpt-5.2-codex"),
-        reasoning: "low",
-      },
-    },
   },
   {
     id: "gemini-3-pro",
@@ -274,16 +225,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("google", "gemini-3-pro-preview"),
     allowedReasoningLevels: ["low", "high"],
     settings: { reasoning: "low" },
-    subagents: {
-      explore: {
-        model: getModel("google", "gemini-3-flash-preview"),
-        reasoning: "low",
-      },
-      web: {
-        model: getModel("google", "gemini-3-flash-preview"),
-        reasoning: "low",
-      },
-    },
   },
   {
     id: "gemini-3-flash",
@@ -291,16 +232,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("google", "gemini-3-flash-preview"),
     allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "high" },
-    subagents: {
-      explore: {
-        model: getModel("google", "gemini-3-flash-preview"),
-        reasoning: "low",
-      },
-      web: {
-        model: getModel("google", "gemini-3-flash-preview"),
-        reasoning: "low",
-      },
-    },
   },
 ];
 
@@ -318,44 +249,12 @@ const SUBAGENT_TOOLS: NonNullable<Persona["tools"]> = [
   TERMINATE_AGENT_TOOL,
 ];
 
-function pickExploreReasoning(allowed: ReasoningEffort[]): ReasoningEffort {
-  const preferred: ReasoningEffort[] = ["minimal", "low", "none", "medium", "high", "xhigh"];
-  for (const level of preferred) {
-    if (allowed.includes(level)) return level;
-  }
-  return allowed[0] ?? "low";
-}
-
 function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   const config = VARIANT_CONFIG[variant];
   const skills = spec.skills ?? "*";
   const settings = structuredClone(spec.settings);
-  const { serviceTier: _serviceTier, ...subagentSettings } = settings;
-
-  const subagents: SubagentConfigMap = {};
-
-  if (variant === "coder" && spec.subagents?.explore) {
-    const exploreSpec = spec.subagents.explore;
-    const exploreModel = exploreSpec.model ?? spec.model;
-    const exploreEffort =
-      exploreSpec.reasoning ?? pickExploreReasoning(spec.allowedReasoningLevels);
-    subagents.explore = {
-      model: exploreModel,
-      settings: { ...subagentSettings, reasoning: exploreEffort },
-    };
-  }
-
-  const webSpec = spec.subagents?.web ?? {};
-  const webModel = webSpec.model ?? spec.model;
-
-  const webSettings = {
-    ...subagentSettings,
-    ...(webSpec.reasoning !== undefined && { reasoning: webSpec.reasoning }),
-  };
-
-  subagents.web = {
-    model: webModel,
-    settings: webSettings,
+  const subagents: SubagentConfigMap = {
+    [DEFAULT_SUBAGENT_NAME]: {},
   };
 
   const tools = [...BASE_TOOLS, ...SUBAGENT_TOOLS];
@@ -397,45 +296,4 @@ export const personas: Persona[] = PERSONA_SPECS.flatMap((spec) => {
 
 export function getPersonaById(id: string): Persona | undefined {
   return personas.find((p) => p.id === id);
-}
-
-const GEMINI_SUBAGENT_TARGET_IDS = new Set([
-  "opus-4.5-chat",
-  "opus-4.5-coder",
-  "gpt-5.2-codex-chatgpt",
-  "gpt-5.2-codex-api",
-  "gpt-5.2-chat",
-  "gpt-5.2-coder",
-]);
-
-export function applyGeminiSubagents(personas: Persona[]): Persona[] {
-  const geminiModel = getModel("google", "gemini-3-flash-preview");
-  const geminiSettings = { reasoning: "low" as const };
-
-  return personas.map((persona) => {
-    if (!GEMINI_SUBAGENT_TARGET_IDS.has(persona.id) || !persona.subagents) {
-      return persona;
-    }
-
-    const newSubagents: SubagentConfigMap = {};
-
-    if (persona.subagents.explore) {
-      newSubagents.explore = {
-        model: geminiModel,
-        settings: geminiSettings,
-      };
-    }
-
-    if (persona.subagents.web) {
-      newSubagents.web = {
-        model: geminiModel,
-        settings: geminiSettings,
-      };
-    }
-
-    return {
-      ...persona,
-      subagents: newSubagents,
-    };
-  });
 }

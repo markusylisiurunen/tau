@@ -11,6 +11,7 @@ export type { CoreEvent, CoreSubagentUiEvent };
 export type CoreSessionOptions = {
   persona: Persona;
   systemPrompt: string;
+  subagentPrompts: Record<string, string>;
   riskLevel: RiskLevel;
   toolRegistry: ToolRegistry;
   config?: Config;
@@ -28,8 +29,12 @@ export class CoreSession {
     this.engine.reset();
   }
 
-  setPersona(persona: Persona, systemPrompt: string): void {
-    this.engine.setPersona(persona, systemPrompt);
+  setPersona(
+    persona: Persona,
+    systemPrompt: string,
+    subagentPrompts: Record<string, string>,
+  ): void {
+    this.engine.setPersona(persona, systemPrompt, subagentPrompts);
   }
 
   setRiskLevel(level: RiskLevel): void {

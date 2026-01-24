@@ -1,8 +1,8 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
-import { getSubagentDefinitionFromString } from "../subagents/registry.js";
-import type { SubagentPersonaConfig, SubagentRuntimeDefinition } from "../subagents/types.js";
+import { getSubagentDescription, resolveSubagentEffectiveSettings } from "../subagents/registry.js";
+import type { SubagentRuntimeConfig } from "../subagents/types.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
@@ -62,15 +62,6 @@ function parseSpawnArgs(raw: unknown): { name: string; title: string; prompt: st
   return parsed.success ? parsed.data : { name: "", title: "", prompt: "" };
 }
 
-function getEnabledSubagentConfig(
-  context: ToolDispatchContext | undefined,
-  definition: SubagentRuntimeDefinition,
-): SubagentPersonaConfig | undefined {
-  const persona = context?.persona;
-  const config = persona?.subagents;
-  return config?.[definition.name];
-}
-
 function formatSpawnToolResult(args: { id: string; name: string; title: string }): string {
   return [`id: ${args.id}`, `name: ${args.name}`, `title: ${args.title}`, "status: running"].join(
     "\n",
@@ -120,26 +111,46 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         });
       }
 
-      const definition = getSubagentDefinitionFromString(name);
-      if (!definition) {
-        return blocked(`unknown subagent '${name}'.`, {
+      const persona = context?.persona;
+      if (!persona) {
+        return blocked("spawn_agent tool is not enabled for the current persona.", {
           name,
           title,
         });
       }
 
-      const personaConfig = getEnabledSubagentConfig(context, definition);
+      const personaConfig = persona.subagents?.[name];
       if (!personaConfig) {
-        return blocked(`subagent '${definition.name}' is not enabled for the current persona.`, {
-          name: definition.name,
+        return blocked(`subagent '${name}' is not enabled for the current persona.`, {
+          name,
           title,
         });
       }
 
+      const systemPrompt = context.subagentPrompts?.[name];
+      if (!systemPrompt) {
+        return blocked(`subagent '${name}' is missing its system prompt.`, {
+          name,
+          title,
+        });
+      }
+
+      const effectiveSettings = resolveSubagentEffectiveSettings({
+        persona,
+        config: personaConfig,
+        riskLevel: context.riskLevel ?? "read-only",
+      });
+      const runtimeConfig: SubagentRuntimeConfig = {
+        name,
+        systemPrompt,
+        description: getSubagentDescription(name, personaConfig),
+        ...effectiveSettings,
+      };
+
       const controlPlane = context.subagentControlPlane;
       if (!controlPlane) {
         return blocked("subagent control plane is not available.", {
-          name: definition.name,
+          name,
           title,
         });
       }
@@ -149,7 +160,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         startedUiEvent: {
           type: "spawn_agent_started",
           toolCallId: toolCall.id,
-          name: definition.name,
+          name,
           title,
         },
         run: (async (): Promise<ToolDispatchResult> => {
@@ -158,7 +169,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             const uiEvent: ToolUiEvent = {
               type: "spawn_agent_finished",
               toolCallId: toolCall.id,
-              name: definition.name,
+              name,
               title,
               status: "error",
               message: "aborted",
@@ -167,8 +178,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           }
 
           const spawnResult = controlPlane.spawn({
-            definition,
-            personaConfig,
+            runtimeConfig,
             prompt,
             title,
             config: context.config ?? {},
@@ -181,7 +191,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             const uiEvent: ToolUiEvent = {
               type: "spawn_agent_blocked",
               toolCallId: toolCall.id,
-              name: definition.name,
+              name,
               title,
               reason: spawnResult.reason,
             };
@@ -190,20 +200,20 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
 
           const resultText = formatSpawnToolResult({
             id: spawnResult.id,
-            name: definition.name,
+            name,
             title,
           });
 
           const toolResult: ToolResultMessage = createToolResult(toolCall, resultText, false);
           const uiText = buildSubagentUiText({
             output: prompt,
-            statusText: `${definition.name} · ${spawnResult.id}`,
+            statusText: `${name} · ${spawnResult.id}`,
             maxOutputLines: 16,
           });
           const uiEvent: ToolUiEvent = {
             type: "spawn_agent_finished",
             toolCallId: toolCall.id,
-            name: definition.name,
+            name,
             title,
             status: "success",
             agentId: spawnResult.id,

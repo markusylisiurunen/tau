@@ -1,7 +1,9 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { PersonaSettings, RiskLevel } from "../types.js";
 
-export type SubagentName = "explore" | "web";
+export const DEFAULT_SUBAGENT_NAME = "default";
+
+export type SubagentName = string;
 
 export type SubagentToolName =
   | "bash"
@@ -14,7 +16,9 @@ export type SubagentToolName =
 export type SubagentRiskLevel = RiskLevel;
 
 export type SubagentPersonaConfig = {
-  model: Model<Api>;
+  systemPrompt?: string;
+  description?: string;
+  model?: Model<Api>;
   settings?: PersonaSettings;
   tools?: SubagentToolName[];
   riskLevel?: SubagentRiskLevel;
@@ -52,11 +56,18 @@ export type SubagentUiEvent =
   | { type: "subagent_abort_requested"; id: string }
   | { type: "subagent_finished"; state: SubagentStateSnapshot };
 
-export type SubagentRuntimeDefinition = {
+export type SubagentDefinition = {
   name: SubagentName;
   description?: string;
   systemPrompt: string;
-  allowedTools: SubagentToolName[];
+};
+
+export type SubagentRuntimeConfig = {
+  name: SubagentName;
+  systemPrompt: string;
+  description?: string;
+  model: Model<Api>;
+  settings?: PersonaSettings;
+  tools: SubagentToolName[];
   riskLevel: SubagentRiskLevel;
-  maxSubturns?: number;
 };

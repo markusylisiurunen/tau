@@ -34,7 +34,7 @@ import type { PromptTemplate } from "../core/prompts.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { createCheckpoint } from "../core/session/checkpoint.js";
 import { CoreSession } from "../core/session/core_session.js";
-import { formatSubagentsForPrompt } from "../core/subagents/registry.js";
+import { formatSubagentsForPrompt, getSubagentBasePrompt } from "../core/subagents/registry.js";
 import {
   BASH_USER_MAX_STDERR_LINES,
   BASH_USER_MAX_STDERR_TOKENS,
@@ -143,8 +143,7 @@ export class ChatController {
   private compactToolUi = true;
   private currentTurnAbort?: AbortController;
   private riskLevel: RiskLevel = "read-only";
-  private readonly initialRiskLevel: RiskLevel;
-  private environmentTag: string;
+  private environmentTag = "";
   private projectContextBlock?: string;
   private projectFiles: string[] = [];
   private projectFilesCwd?: string;
@@ -152,7 +151,8 @@ export class ChatController {
   private isInFileAutocomplete = false;
   private agentsFiles: string[];
   private agentsConfigErrors: string[];
-  private baseSystemPrompt: string;
+  private baseSystemPrompt = "";
+  private subagentPrompts: Record<string, string> = {};
   private pendingRiskLevelChange?: { from: RiskLevel; to: RiskLevel };
   private pendingCwdChange?: { from: string; to: string };
   private previousSessionSummary?: string;
@@ -233,23 +233,10 @@ export class ChatController {
     if (options.initialRiskLevel) {
       this.riskLevel = options.initialRiskLevel;
     }
-    this.initialRiskLevel = this.riskLevel;
     this.previousSessionSummary = options.initialPreviousSessionSummary;
 
-    this.environmentTag = buildEnvironmentTag({
-      riskLevel: this.initialRiskLevel,
-      cwd: this.agentCwd,
-      datetime: new Date(this.deps.clock.now()).toISOString(),
-      platform: this.deps.env.platform(),
-      nodeVersion: this.deps.env.nodeVersion(),
-    });
-
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-    this.baseSystemPrompt = this.buildSystemPrompt({
-      persona: this.currentPersona,
-      skillsBlock: skillsContext.skillsBlock,
-      previousSessionSummary: this.previousSessionSummary,
-    });
+    this.updateSystemPrompts(this.previousSessionSummary, skillsContext.skillsBlock);
 
     this.toolBackend =
       options.toolBackend ??
@@ -264,6 +251,7 @@ export class ChatController {
     this.engine = new CoreSession({
       persona: this.currentPersona,
       systemPrompt: this.baseSystemPrompt,
+      subagentPrompts: this.subagentPrompts,
       riskLevel: this.riskLevel,
       toolRegistry,
       config: this.config,
@@ -1443,21 +1431,33 @@ export class ChatController {
     return { lastUserText, lastAssistantText };
   }
 
-  private rebuildSystemPrompt(previousSessionSummary?: string): void {
+  private updateSystemPrompts(previousSessionSummary?: string, skillsBlock?: string): void {
+    const timestamp = new Date(this.deps.clock.now()).toISOString();
     this.environmentTag = buildEnvironmentTag({
       riskLevel: this.riskLevel,
       cwd: this.agentCwd,
-      datetime: new Date(this.deps.clock.now()).toISOString(),
+      datetime: timestamp,
       platform: this.deps.env.platform(),
       nodeVersion: this.deps.env.nodeVersion(),
     });
-    const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
+    const resolvedSkillsBlock =
+      skillsBlock ?? this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock;
     this.baseSystemPrompt = this.buildSystemPrompt({
       persona: this.currentPersona,
-      skillsBlock: skillsContext.skillsBlock,
+      skillsBlock: resolvedSkillsBlock,
       previousSessionSummary,
     });
-    this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
+    this.subagentPrompts = this.buildSubagentPromptMap({
+      persona: this.currentPersona,
+      skillsBlock: resolvedSkillsBlock,
+      previousSessionSummary,
+      timestamp,
+    });
+  }
+
+  private rebuildSystemPrompt(previousSessionSummary?: string, skillsBlock?: string): void {
+    this.updateSystemPrompts(previousSessionSummary, skillsBlock);
+    this.engine.setPersona(this.currentPersona, this.baseSystemPrompt, this.subagentPrompts);
   }
 
   private buildSystemPrompt(args: {
@@ -1476,6 +1476,46 @@ export class ChatController {
       previousSessionSummary: args.previousSessionSummary,
       subagentsBlock: formatSubagentsForPrompt(args.persona),
     });
+  }
+
+  private buildSubagentPromptMap(args: {
+    persona: Persona;
+    skillsBlock?: string;
+    previousSessionSummary?: string;
+    timestamp: string;
+  }): Record<string, string> {
+    const subagents = args.persona.subagents;
+    if (!subagents || Object.keys(subagents).length === 0) {
+      return {};
+    }
+
+    const sandboxInfoBlock = this.sandboxEnabled
+      ? buildSandboxInfoBlock(this.config.sandbox?.environmentInfo)
+      : undefined;
+    const prompts: Record<string, string> = {};
+
+    for (const [name, cfg] of Object.entries(subagents)) {
+      if (!cfg) continue;
+      const basePrompt = getSubagentBasePrompt(name, cfg);
+      if (!basePrompt) continue;
+      const environmentTag = buildEnvironmentTag({
+        riskLevel: cfg.riskLevel ?? this.riskLevel,
+        cwd: this.agentCwd,
+        datetime: args.timestamp,
+        platform: this.deps.env.platform(),
+        nodeVersion: this.deps.env.nodeVersion(),
+      });
+      prompts[name] = buildBaseSystemPrompt({
+        personaSystemPrompt: basePrompt,
+        skillsBlock: args.skillsBlock,
+        projectContextBlock: this.projectContextBlock,
+        sandboxInfoBlock,
+        environmentTag,
+        previousSessionSummary: args.previousSessionSummary,
+      });
+    }
+
+    return prompts;
   }
 
   private async generateSummary(history: readonly Message[], guidance?: string): Promise<string> {
@@ -1658,6 +1698,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.refreshStatus();
 
     if (previous !== level) {
+      this.rebuildSystemPrompt(this.previousSessionSummary);
       const from = this.pendingRiskLevelChange?.from ?? previous;
       if (from === level) {
         this.pendingRiskLevelChange = undefined;
@@ -1684,12 +1725,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.currentPersona = persona;
     this.clampPersonaReasoning(this.currentPersona);
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-    this.baseSystemPrompt = this.buildSystemPrompt({
-      persona: this.currentPersona,
-      skillsBlock: skillsContext.skillsBlock,
-      previousSessionSummary: this.previousSessionSummary,
-    });
-    this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
+    this.rebuildSystemPrompt(this.previousSessionSummary, skillsContext.skillsBlock);
     this.refreshStatus();
 
     if (skillsContext.unknown.length > 0) {
@@ -1815,12 +1851,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       }
       // Rebuild system prompt and update the engine
       const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-      this.baseSystemPrompt = this.buildSystemPrompt({
-        persona: this.currentPersona,
-        skillsBlock: skillsContext.skillsBlock,
-        previousSessionSummary: this.previousSessionSummary,
-      });
-      this.engine.setPersona(this.currentPersona, this.baseSystemPrompt);
+      this.rebuildSystemPrompt(this.previousSessionSummary, skillsContext.skillsBlock);
 
       if (skillsContext.unknown.length > 0) {
         this.view.addSystemMessage(

@@ -10,13 +10,14 @@ import type {
   SubagentPersonaConfig,
   SubagentToolName,
 } from "../subagents/types.js";
+import { DEFAULT_SUBAGENT_NAME } from "../subagents/types.js";
 import { BASH_TOOL } from "../tools/bash.js";
 import { EDIT_TOOL } from "../tools/edit.js";
 import { SPAWN_AGENT_TOOL } from "../tools/spawn_agent.js";
 import { TERMINATE_AGENT_TOOL } from "../tools/terminate_agent.js";
 import { WAIT_FOR_AGENT_TOOL } from "../tools/wait_for_agent.js";
 import { WRITE_TOOL } from "../tools/write.js";
-import type { Persona, ReasoningEffort, RiskLevel, Skill } from "../types.js";
+import type { Persona, Skill } from "../types.js";
 import { ReasoningEffortSchema, RiskLevelSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
@@ -101,15 +102,15 @@ function isKnownProvider(value: string): value is KnownProvider {
 }
 
 interface PartialSubagentConfig {
-  [name: string]: {
-    model?: Model<Api>;
-    reasoning?: ReasoningEffort;
-    tools?: SubagentToolName[];
-    riskLevel?: RiskLevel;
-  };
+  [name: string]: SubagentPersonaConfig;
 }
 
-const SubagentNameSchema = z.enum(["explore", "web"]);
+const SubagentNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 
 type SubagentName = z.infer<typeof SubagentNameSchema>;
 
@@ -129,6 +130,8 @@ const SubagentSpecSchema = z
     reasoning: ReasoningEffortSchema.optional(),
     tools: z.unknown().optional(),
     riskLevel: RiskLevelSchema.optional(),
+    systemPrompt: z.string().trim().min(1).optional(),
+    description: z.string().trim().min(1).optional(),
   })
   .passthrough()
   .superRefine((spec, ctx) => {
@@ -197,13 +200,15 @@ function parseSubagentTools(toolsRaw: unknown): { tools?: SubagentToolName[]; er
 
 function parseSubagentConfig(subagentsRaw: unknown): {
   config?: PartialSubagentConfig;
+  defaultDisabled?: boolean;
   error?: string;
 } {
-  if (!subagentsRaw) {
+  if (subagentsRaw === undefined) {
     return {};
   }
 
   const config: PartialSubagentConfig = {};
+  let defaultDisabled = false;
 
   // Handle list of subagent names
   if (Array.isArray(subagentsRaw)) {
@@ -214,10 +219,15 @@ function parseSubagentConfig(subagentsRaw: unknown): {
       }
 
       const name = nameResult.name;
-      // Enable with default settings (use main persona's model)
+      if (name !== DEFAULT_SUBAGENT_NAME) {
+        return {
+          error: `subagent ${name}: custom subagents require an object with systemPrompt`,
+        };
+      }
+
       config[name] = {};
     }
-    return { config };
+    return { config, defaultDisabled };
   }
 
   // Handle object with per-subagent config
@@ -231,15 +241,31 @@ function parseSubagentConfig(subagentsRaw: unknown): {
 
       const validatedName = nameResult.name;
 
+      if (validatedName === DEFAULT_SUBAGENT_NAME) {
+        if (specRaw === false) {
+          defaultDisabled = true;
+          continue;
+        }
+        return {
+          error: `subagent ${validatedName}: default subagent does not accept overrides (use default: false to disable)`,
+        };
+      }
+
       if (!specRaw || typeof specRaw !== "object") {
-        // Empty config, will use defaults
-        config[validatedName] = {};
-        continue;
+        return {
+          error: `subagent ${validatedName}: systemPrompt is required for custom subagents`,
+        };
       }
 
       const spec = SubagentSpecSchema.safeParse(specRaw);
       if (!spec.success) {
         return { error: `subagent ${validatedName}: ${formatZodError(spec.error)}` };
+      }
+
+      if (!spec.data.systemPrompt) {
+        return {
+          error: `subagent ${validatedName}: systemPrompt is required for custom subagents`,
+        };
       }
 
       const provider = spec.data.provider;
@@ -250,37 +276,34 @@ function parseSubagentConfig(subagentsRaw: unknown): {
       }
       const tools = toolsResult.tools;
       const riskLevel = spec.data.riskLevel;
-
-      const overrides = {
-        ...(spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
+      const settings =
+        spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
           ? { reasoning: spec.data.reasoning }
-          : {}),
-        ...(tools !== undefined ? { tools } : {}),
-        ...(riskLevel ? { riskLevel } : {}),
-      };
+          : undefined;
 
-      // Resolve model if provided
+      let modelObj: Model<Api> | undefined;
       if (provider && model) {
-        const modelObj = resolveModel(provider, model);
+        modelObj = resolveModel(provider, model);
         if (!modelObj) {
           return {
             error: `subagent ${validatedName}: failed to resolve model "${provider}:${model}"`,
           };
         }
-
-        config[validatedName] = {
-          model: modelObj,
-          ...overrides,
-        };
-      } else {
-        // No model specified, will use main persona's model
-        config[validatedName] = {
-          ...overrides,
-        };
       }
+
+      const entry: SubagentPersonaConfig = {
+        systemPrompt: spec.data.systemPrompt,
+        ...(spec.data.description ? { description: spec.data.description } : {}),
+        ...(modelObj ? { model: modelObj } : {}),
+        ...(settings ? { settings } : {}),
+        ...(tools !== undefined ? { tools } : {}),
+        ...(riskLevel ? { riskLevel } : {}),
+      };
+
+      config[validatedName] = entry;
     }
 
-    return { config };
+    return { config, defaultDisabled };
   }
 
   return { error: "subagents must be a list or object" };
@@ -558,8 +581,6 @@ function parsePersona(
     delete settings.serviceTier;
   }
 
-  const { serviceTier: _serviceTier, ...subagentBaseSettings } = settings;
-
   let skills: string[] | "*" | undefined;
   if (skillsRaw === undefined && basePersona?.skills !== undefined) {
     skills = Array.isArray(basePersona.skills) ? [...basePersona.skills] : basePersona.skills;
@@ -597,24 +618,14 @@ function parsePersona(
     return { error: `${file}: ${toolsResult.error}. skipped.` };
   }
 
-  // Fill in main persona's model for subagents that don't specify one
   let finalSubagents: SubagentConfigMap | undefined;
   if (subagentsRaw === undefined) {
     if (basePersona?.subagents) {
       finalSubagents = {};
 
       for (const [name, cfg] of Object.entries(basePersona.subagents)) {
-        const nameParsed = SubagentNameSchema.safeParse(name);
-        if (!nameParsed.success || !cfg) continue;
-
-        const validatedName = nameParsed.data;
-
-        finalSubagents[validatedName] = {
-          model: modelObj,
-          ...(cfg.settings ? { settings: cfg.settings } : { settings: subagentBaseSettings }),
-          ...(cfg.tools !== undefined ? { tools: cfg.tools } : {}),
-          ...(cfg.riskLevel ? { riskLevel: cfg.riskLevel } : {}),
-        };
+        if (!cfg) continue;
+        finalSubagents[name] = { ...cfg };
       }
 
       if (Object.keys(finalSubagents).length === 0) {
@@ -622,32 +633,26 @@ function parsePersona(
       }
     }
   } else if (subagentsResult.config && Object.keys(subagentsResult.config).length > 0) {
-    finalSubagents = {};
+    finalSubagents = { ...subagentsResult.config };
+  }
 
-    for (const [name, cfg] of Object.entries(subagentsResult.config)) {
-      const nameParsed = SubagentNameSchema.safeParse(name);
-      if (!nameParsed.success) continue;
-      const validatedName = nameParsed.data;
-      const subagentModel = cfg.model ?? modelObj;
-
-      let subagentSettings: SubagentPersonaConfig["settings"] | undefined;
-      if (cfg.reasoning !== undefined) {
-        subagentSettings = { reasoning: cfg.reasoning };
-      } else {
-        subagentSettings = subagentBaseSettings;
+  if (subagentsRaw !== undefined) {
+    if (!subagentsResult.defaultDisabled) {
+      if (!finalSubagents) {
+        finalSubagents = {};
       }
-
-      finalSubagents[validatedName] = {
-        model: subagentModel,
-        ...(subagentSettings && { settings: subagentSettings }),
-        ...(cfg.tools !== undefined ? { tools: cfg.tools } : {}),
-        ...(cfg.riskLevel ? { riskLevel: cfg.riskLevel } : {}),
-      };
+      if (!finalSubagents[DEFAULT_SUBAGENT_NAME]) {
+        finalSubagents[DEFAULT_SUBAGENT_NAME] = {};
+      }
+    } else if (finalSubagents?.[DEFAULT_SUBAGENT_NAME]) {
+      delete finalSubagents[DEFAULT_SUBAGENT_NAME];
     }
+  } else if (!finalSubagents) {
+    finalSubagents = { [DEFAULT_SUBAGENT_NAME]: {} };
+  }
 
-    if (Object.keys(finalSubagents).length === 0) {
-      finalSubagents = undefined;
-    }
+  if (finalSubagents && Object.keys(finalSubagents).length === 0) {
+    finalSubagents = undefined;
   }
 
   const defaultTools = finalSubagents

@@ -1004,6 +1004,21 @@ export class ChatController {
     this.view.setEditorText(last);
   }
 
+  private dequeueQueuedUserMessagesIntoEditor(): void {
+    if (this.queuedUserMessages.length === 0) return;
+
+    const editorText = this.view.getEditorText();
+    const parts: string[] = [];
+
+    if (editorText !== "") {
+      parts.push(editorText);
+    }
+
+    parts.push(...this.queuedUserMessages);
+    this.queuedUserMessages.length = 0;
+    this.view.setEditorText(parts.join("\n\n---\n\n"));
+  }
+
   private cycleSubagentSelection(): void {
     this.view.cycleSubagentSelection(1);
     this.view.requestRender();
@@ -1938,7 +1953,11 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.view.clearToolUiTransientState();
       this.pendingIdleNotification = true;
       this.view.requestRender();
-      void this.drainQueuedUserMessages();
+      if (wasAborted) {
+        this.dequeueQueuedUserMessagesIntoEditor();
+      } else {
+        void this.drainQueuedUserMessages();
+      }
     }
   }
 
@@ -2021,7 +2040,11 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       }
       this.stopTurnTimer();
       this.view.requestRender();
-      void this.drainQueuedUserMessages();
+      if (wasAborted) {
+        this.dequeueQueuedUserMessagesIntoEditor();
+      } else {
+        void this.drainQueuedUserMessages();
+      }
     }
     return wasAborted;
   }

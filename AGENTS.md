@@ -113,7 +113,8 @@ Main session system prompts are immutable after session start to preserve model 
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 
-- **Bash (assistant)**: 4,096 lines / 25,000 tokens for stdout and stderr separately.
+- **Bash (assistant, default mode)**: 1,024 total lines / 8,000 total tokens, per-line cap of 256 tokens. If raw output exceeds totals or the line cap, the tool output is gated with a grant code and a short preview.
+- **Bash (assistant, extended mode)**: enabled when any `grantCode` is provided. Uses per-stream caps of 4,096 lines / 25,000 tokens each (combined totals 8,192 lines / 50,000 tokens) with no per-line cap.
 - **Bash (user/!/@/$)**: 16,384 lines / 100,000 tokens for stdout; 4,096 lines / 25,000 tokens for stderr.
 - **web_fetch**: 8,192 lines / 50,000 tokens.
 - **web_search**: 4,096 lines / 25,000 tokens.

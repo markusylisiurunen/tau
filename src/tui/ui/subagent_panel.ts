@@ -58,6 +58,13 @@ export class SubagentPanelComponent implements Component {
       const entry = this.entries.get(event.state.id);
       if (!entry) return;
       this.applySnapshot(entry, event.state);
+      const finalText = event.state.finalText?.trim();
+      if (finalText && !this.hasOutputLine(entry, finalText)) {
+        entry.lines.push({ kind: "output", text: event.state.finalText ?? finalText });
+        if (entry.lines.length > MAX_PANEL_HISTORY) {
+          entry.lines.shift();
+        }
+      }
       if (this.selectedId === entry.id && entry.status !== "running") {
         this.selectedId = this.getFirstRunningId();
       }
@@ -208,6 +215,10 @@ export class SubagentPanelComponent implements Component {
       return firstLine ? `> ${firstLine}` : "";
     }
 
+    if (trimmed.startsWith("agent: ")) {
+      const line = trimmed.slice("agent: ".length).trim();
+      return line ? `> ${line}` : "";
+    }
     if (trimmed.startsWith("bash running: ")) {
       return `$ ${trimmed.slice("bash running: ".length)}`;
     }
@@ -273,6 +284,12 @@ export class SubagentPanelComponent implements Component {
       if (entry.status === "running") return entry.id;
     }
     return undefined;
+  }
+
+  private hasOutputLine(entry: SubagentPanelEntry, text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed) return true;
+    return entry.lines.some((line) => line.kind === "output" && line.text.trim() === trimmed);
   }
 
   private buildEntry(state: SubagentStateSnapshot): SubagentPanelEntry {

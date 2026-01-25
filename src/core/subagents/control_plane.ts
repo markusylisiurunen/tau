@@ -324,6 +324,7 @@ export class SubagentControlPlane {
       finishedAt: record.finishedAt,
       abortRequested: record.abortRequested || undefined,
       error: record.error,
+      finalText: record.finalText,
     };
   }
 

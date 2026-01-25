@@ -40,6 +40,7 @@ export type SubagentStateSnapshot = {
   finishedAt?: number;
   abortRequested?: boolean;
   error?: string;
+  finalText?: string;
 };
 
 export type SubagentUiEvent =

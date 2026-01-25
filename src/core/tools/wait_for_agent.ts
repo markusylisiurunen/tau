@@ -67,14 +67,15 @@ function formatWaitResult(results: SubagentResult[]): string {
 }
 
 function formatSubagentOutputLines(result: SubagentResult, maxLines: number): string[] {
-  const cleanedOutputs = result.outputs
+  const outputs = result.outputs
     .map((text) => text.trimEnd())
     .filter((text) => text.trim().length > 0);
-  let body = cleanedOutputs.join("\n\n");
-  if (!body) {
-    const finalText = result.finalText?.trimEnd() ?? "";
-    body = finalText.trim().length > 0 ? finalText : "";
+  const finalText = result.finalText?.trimEnd() ?? "";
+  const trimmedFinal = finalText.trim();
+  if (trimmedFinal && !outputs.some((text) => text.trim() === trimmedFinal)) {
+    outputs.push(finalText);
   }
+  const body = outputs.join("\n\n");
 
   const header = `**${result.id}**`;
   const outputLines = body ? body.split("\n") : [];

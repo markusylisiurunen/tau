@@ -269,7 +269,7 @@ If you need dependency details (rare), check `references/repos/` first and treat
 
 **PR style**: Titles and descriptions are concise, lowercase except for proper nouns. When explicitly working a GitHub issue and opening a PR, include a closing keyword (for example, "fixes #123") in the description so GitHub auto-links and closes the issue.
 
-**GitHub operations**: Use `gh` for all GitHub-related operations in this project and omit `--repo` since it resolves automatically from this repository. When creating PRs with `gh pr create`, use a heredoc for multi-line bodies. Example:
+**GitHub operations**: Use `gh` for all GitHub-related operations in this project and omit `--repo` since it resolves automatically from this repository. To view an issue with comments, run `gh issue view <id> --json closed,author,labels,title,body,comments`. When creating PRs with `gh pr create`, use a heredoc for multi-line bodies. Example:
 
 ```
 gh pr create --title "short title" --body-file - <<'EOF'

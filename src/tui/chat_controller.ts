@@ -37,12 +37,9 @@ import { createCheckpoint } from "../core/session/checkpoint.js";
 import { CoreSession } from "../core/session/core_session.js";
 import { formatSubagentsForPrompt, getSubagentBasePrompt } from "../core/subagents/registry.js";
 import {
-  BASH_USER_MAX_STDERR_LINES,
-  BASH_USER_MAX_STDERR_TOKENS,
-  BASH_USER_MAX_STDOUT_LINES,
-  BASH_USER_MAX_STDOUT_TOKENS,
   buildBashUiText,
   formatBashUserMessageText,
+  getBashOutputPolicy,
   prepareBashOutput,
 } from "../core/tools/bash.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
@@ -2298,8 +2295,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       });
       const durationMs = Math.max(0, Date.now() - startedAt);
       const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {
-        stdout: { maxLines: BASH_USER_MAX_STDOUT_LINES, maxTokens: BASH_USER_MAX_STDOUT_TOKENS },
-        stderr: { maxLines: BASH_USER_MAX_STDERR_LINES, maxTokens: BASH_USER_MAX_STDERR_TOKENS },
+        mode: "user",
+        policy: getBashOutputPolicy("user"),
       });
 
       const uiText = buildBashUiText({

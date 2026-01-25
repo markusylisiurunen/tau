@@ -1,11 +1,22 @@
+import { randomUUID } from "node:crypto";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import stripAnsi from "strip-ansi";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { formatTokenEstimate } from "../utils/token.js";
-import { formatBytes, type TruncationResult, truncateMiddleForModel } from "../utils/truncate.js";
+import {
+  BYTES_PER_TOKEN,
+  bytesToTokens,
+  formatTokenEstimate,
+  tokensToBytes,
+} from "../utils/token.js";
+import {
+  formatBytes,
+  type TruncationResult,
+  truncateMiddleForModel,
+  truncateToBytesFromStart,
+} from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -25,6 +36,75 @@ export const BASH_USER_MAX_STDOUT_LINES = 16384;
 export const BASH_USER_MAX_STDOUT_TOKENS = 100000;
 export const BASH_USER_MAX_STDERR_LINES = 4096;
 export const BASH_USER_MAX_STDERR_TOKENS = 25000;
+
+const BASH_MODEL_DEFAULT_MAX_TOTAL_LINES = 1024;
+const BASH_MODEL_DEFAULT_MAX_TOTAL_TOKENS = 8000;
+const BASH_MODEL_DEFAULT_MAX_LINE_TOKENS = 256;
+const BASH_MODEL_DEFAULT_PREVIEW_HEAD_LINES = 4;
+const BASH_MODEL_DEFAULT_PREVIEW_TAIL_LINES = 4;
+const BASH_MODEL_DEFAULT_PREVIEW_MAX_LINE_CHARS = 512;
+
+const BASH_STREAM_MIN_LINES = 16;
+const BASH_STREAM_MIN_TOKENS = 256;
+
+export type BashOutputMode = "model_default" | "model_extended" | "user";
+
+export interface BashOutputPolicy {
+  maxTotalTokens: number;
+  maxTotalLines: number;
+  maxLineTokens: number;
+  maxStdoutTokens: number;
+  maxStdoutLines: number;
+  maxStderrTokens: number;
+  maxStderrLines: number;
+  previewHeadLines?: number;
+  previewTailLines?: number;
+  previewMaxLineChars?: number;
+}
+
+const BASH_MODEL_DEFAULT_POLICY: BashOutputPolicy = {
+  maxTotalTokens: BASH_MODEL_DEFAULT_MAX_TOTAL_TOKENS,
+  maxTotalLines: BASH_MODEL_DEFAULT_MAX_TOTAL_LINES,
+  maxLineTokens: BASH_MODEL_DEFAULT_MAX_LINE_TOKENS,
+  maxStdoutTokens: BASH_MODEL_DEFAULT_MAX_TOTAL_TOKENS,
+  maxStdoutLines: BASH_MODEL_DEFAULT_MAX_TOTAL_LINES,
+  maxStderrTokens: BASH_MODEL_DEFAULT_MAX_TOTAL_TOKENS,
+  maxStderrLines: BASH_MODEL_DEFAULT_MAX_TOTAL_LINES,
+  previewHeadLines: BASH_MODEL_DEFAULT_PREVIEW_HEAD_LINES,
+  previewTailLines: BASH_MODEL_DEFAULT_PREVIEW_TAIL_LINES,
+  previewMaxLineChars: BASH_MODEL_DEFAULT_PREVIEW_MAX_LINE_CHARS,
+};
+
+const BASH_MODEL_EXTENDED_POLICY: BashOutputPolicy = {
+  maxTotalTokens: BASH_TOOL_MAX_STDOUT_TOKENS + BASH_TOOL_MAX_STDERR_TOKENS,
+  maxTotalLines: BASH_TOOL_MAX_STDOUT_LINES + BASH_TOOL_MAX_STDERR_LINES,
+  maxLineTokens: Number.POSITIVE_INFINITY,
+  maxStdoutTokens: BASH_TOOL_MAX_STDOUT_TOKENS,
+  maxStdoutLines: BASH_TOOL_MAX_STDOUT_LINES,
+  maxStderrTokens: BASH_TOOL_MAX_STDERR_TOKENS,
+  maxStderrLines: BASH_TOOL_MAX_STDERR_LINES,
+};
+
+const BASH_USER_POLICY: BashOutputPolicy = {
+  maxTotalTokens: BASH_USER_MAX_STDOUT_TOKENS + BASH_USER_MAX_STDERR_TOKENS,
+  maxTotalLines: BASH_USER_MAX_STDOUT_LINES + BASH_USER_MAX_STDERR_LINES,
+  maxLineTokens: Number.POSITIVE_INFINITY,
+  maxStdoutTokens: BASH_USER_MAX_STDOUT_TOKENS,
+  maxStdoutLines: BASH_USER_MAX_STDOUT_LINES,
+  maxStderrTokens: BASH_USER_MAX_STDERR_TOKENS,
+  maxStderrLines: BASH_USER_MAX_STDERR_LINES,
+};
+
+export function getBashOutputPolicy(mode: BashOutputMode): BashOutputPolicy {
+  switch (mode) {
+    case "model_default":
+      return BASH_MODEL_DEFAULT_POLICY;
+    case "model_extended":
+      return BASH_MODEL_EXTENDED_POLICY;
+    case "user":
+      return BASH_USER_POLICY;
+  }
+}
 
 export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -50,6 +130,9 @@ const BASH_WORKING_DIRECTORY_DESCRIPTION =
 const BASH_TIMEOUT_DESCRIPTION =
   "Timeout in milliseconds. If omitted, defaults to 60 seconds. Use a longer timeout for known slow operations like builds or large clones.";
 
+const BASH_GRANT_CODE_DESCRIPTION =
+  "Optional grant code for extended output when default mode gating is triggered.";
+
 export const BASH_TOOL: Tool = {
   name: "bash",
   description: BASH_DESCRIPTION,
@@ -72,6 +155,11 @@ export const BASH_TOOL: Tool = {
           description: BASH_TIMEOUT_DESCRIPTION,
         }),
       ),
+      grantCode: Type.Optional(
+        Type.String({
+          description: BASH_GRANT_CODE_DESCRIPTION,
+        }),
+      ),
     },
     { additionalProperties: false },
   ),
@@ -84,70 +172,289 @@ export interface BashTruncationInfo {
   rawOutput: string;
   model: TruncationResult;
   captureTruncated: boolean;
+  gate?: {
+    grantCode: string;
+    preview: string;
+  };
+}
+
+type OutputStats = {
+  lines: number;
+  bytes: number;
+  tokens: number;
+};
+
+type LineCapResult = {
+  output: string;
+  truncated: boolean;
+};
+
+function getOutputStats(content: string): OutputStats {
+  if (content.trim().length === 0) {
+    return { lines: 0, bytes: 0, tokens: 0 };
+  }
+  const bytes = Buffer.byteLength(content, "utf-8");
+  return {
+    lines: content.split("\n").length,
+    bytes,
+    tokens: Math.max(1, bytesToTokens(bytes)),
+  };
+}
+
+function applyLineTokenCap(content: string, maxLineTokens: number): LineCapResult {
+  if (!Number.isFinite(maxLineTokens)) {
+    return { output: content, truncated: false };
+  }
+  if (maxLineTokens <= 0) {
+    return { output: "", truncated: content.length > 0 };
+  }
+
+  const maxLineBytes = tokensToBytes(maxLineTokens);
+  const lines = content.split("\n");
+  let truncated = false;
+  const outLines = lines.map((line) => {
+    if (Buffer.byteLength(line, "utf-8") <= maxLineBytes) return line;
+    truncated = true;
+    return truncateToBytesFromStart(line, maxLineBytes);
+  });
+  return { output: outLines.join("\n"), truncated };
+}
+
+function truncateStreamForModel(
+  content: string,
+  limits: { maxLines: number; maxTokens: number },
+): TruncationResult {
+  if (content.trim().length === 0) {
+    return {
+      content: "",
+      truncated: false,
+      truncatedBy: null,
+      totalLines: 0,
+      totalBytes: 0,
+      outputLines: 0,
+      outputBytes: 0,
+      maxLines: limits.maxLines,
+      maxTokens: limits.maxTokens,
+    };
+  }
+
+  return truncateMiddleForModel(content, limits);
+}
+
+function buildCombinedOutput(
+  stdout: string,
+  stderr: string,
+): {
+  output: string;
+  stdoutHasOutput: boolean;
+  stderrHasOutput: boolean;
+} {
+  const stdoutHasOutput = stdout.trim().length > 0;
+  const stderrHasOutput = stderr.trim().length > 0;
+
+  const parts: string[] = [];
+  if (stdoutHasOutput) {
+    parts.push(stdout);
+  }
+  if (stderrHasOutput) {
+    parts.push(`[stderr]\n${stderr}`);
+  }
+  return { output: parts.join("\n"), stdoutHasOutput, stderrHasOutput };
+}
+
+function allocateStreamBudget(args: {
+  total: number;
+  stdoutSize: number;
+  stderrSize: number;
+  maxStdout: number;
+  maxStderr: number;
+  minReserve: number;
+}): { stdout: number; stderr: number } {
+  const total = Math.max(0, args.total);
+  const stdoutHasOutput = args.stdoutSize > 0;
+  const stderrHasOutput = args.stderrSize > 0;
+
+  if (!stdoutHasOutput && !stderrHasOutput) {
+    return { stdout: 0, stderr: 0 };
+  }
+  if (stdoutHasOutput && !stderrHasOutput) {
+    return { stdout: Math.min(total, args.maxStdout), stderr: 0 };
+  }
+  if (!stdoutHasOutput && stderrHasOutput) {
+    return { stdout: 0, stderr: Math.min(total, args.maxStderr) };
+  }
+
+  const minStdout = Math.min(args.minReserve, args.maxStdout);
+  const minStderr = Math.min(args.minReserve, args.maxStderr);
+
+  if (total <= minStdout + minStderr) {
+    const totalSize = args.stdoutSize + args.stderrSize;
+    if (totalSize <= 0) {
+      const half = Math.floor(total / 2);
+      return {
+        stdout: Math.min(half, args.maxStdout),
+        stderr: Math.min(total - half, args.maxStderr),
+      };
+    }
+    const stdoutShare = Math.min(args.maxStdout, Math.floor(total * (args.stdoutSize / totalSize)));
+    const stderrShare = Math.min(args.maxStderr, Math.max(0, total - stdoutShare));
+    return { stdout: stdoutShare, stderr: stderrShare };
+  }
+
+  const remaining = total - minStdout - minStderr;
+  const totalSize = args.stdoutSize + args.stderrSize;
+  let stdoutExtra = 0;
+  let stderrExtra = 0;
+  if (totalSize > 0 && remaining > 0) {
+    stdoutExtra = Math.floor(remaining * (args.stdoutSize / totalSize));
+    stderrExtra = remaining - stdoutExtra;
+  }
+
+  stdoutExtra = Math.min(stdoutExtra, Math.max(0, args.maxStdout - minStdout));
+  stderrExtra = Math.min(stderrExtra, Math.max(0, args.maxStderr - minStderr));
+
+  let stdoutBudget = minStdout + stdoutExtra;
+  let stderrBudget = minStderr + stderrExtra;
+  let leftover = total - (stdoutBudget + stderrBudget);
+  if (leftover > 0) {
+    const stdoutCapacity = Math.max(0, args.maxStdout - stdoutBudget);
+    const stderrCapacity = Math.max(0, args.maxStderr - stderrBudget);
+    if (args.stdoutSize >= args.stderrSize) {
+      const addStdout = Math.min(leftover, stdoutCapacity);
+      stdoutBudget += addStdout;
+      leftover -= addStdout;
+      if (leftover > 0) {
+        const addStderr = Math.min(leftover, stderrCapacity);
+        stderrBudget += addStderr;
+      }
+    } else {
+      const addStderr = Math.min(leftover, stderrCapacity);
+      stderrBudget += addStderr;
+      leftover -= addStderr;
+      if (leftover > 0) {
+        const addStdout = Math.min(leftover, stdoutCapacity);
+        stdoutBudget += addStdout;
+      }
+    }
+  }
+
+  return { stdout: stdoutBudget, stderr: stderrBudget };
+}
+
+function buildGrantPreview(output: string, policy: BashOutputPolicy): string {
+  const previewLines = buildCompactOutputLines(
+    output,
+    policy.previewHeadLines ?? BASH_MODEL_DEFAULT_PREVIEW_HEAD_LINES,
+    policy.previewTailLines ?? BASH_MODEL_DEFAULT_PREVIEW_TAIL_LINES,
+    policy.previewMaxLineChars ?? BASH_MODEL_DEFAULT_PREVIEW_MAX_LINE_CHARS,
+  );
+  return previewLines.join("\n");
 }
 
 export function prepareBashOutput(
   stdout: string,
   stderr: string,
   captureTruncated: boolean,
-  limits: {
-    stdout: { maxLines: number; maxTokens: number };
-    stderr: { maxLines: number; maxTokens: number };
+  options: {
+    mode: BashOutputMode;
+    policy: BashOutputPolicy;
   },
 ): BashTruncationInfo {
+  const { mode, policy } = options;
   const cleanStdout = stripAnsi(stdout);
   const cleanStderr = stripAnsi(stderr);
 
-  const stdoutTrunc = truncateMiddleForModel(cleanStdout, {
-    maxLines: limits.stdout.maxLines,
-    maxTokens: limits.stdout.maxTokens,
+  const rawCombined = buildCombinedOutput(cleanStdout, cleanStderr);
+  const stdoutStats = getOutputStats(cleanStdout);
+  const stderrStats = getOutputStats(cleanStderr);
+
+  const markerLines = rawCombined.stdoutHasOutput && rawCombined.stderrHasOutput ? 1 : 0;
+  const markerBytes =
+    rawCombined.stdoutHasOutput && rawCombined.stderrHasOutput
+      ? Buffer.byteLength("[stderr]\n", "utf-8")
+      : 0;
+  const markerTokens = markerBytes === 0 ? 0 : Math.ceil(markerBytes / BYTES_PER_TOKEN);
+
+  const totalLineBudget = Math.max(0, policy.maxTotalLines - markerLines);
+  const totalTokenBudget = Math.max(0, policy.maxTotalTokens - markerTokens);
+
+  const lineBudgets = allocateStreamBudget({
+    total: totalLineBudget,
+    stdoutSize: stdoutStats.lines,
+    stderrSize: stderrStats.lines,
+    maxStdout: policy.maxStdoutLines,
+    maxStderr: policy.maxStderrLines,
+    minReserve: BASH_STREAM_MIN_LINES,
   });
 
-  const stderrTrunc = truncateMiddleForModel(cleanStderr, {
-    maxLines: limits.stderr.maxLines,
-    maxTokens: limits.stderr.maxTokens,
+  const tokenBudgets = allocateStreamBudget({
+    total: totalTokenBudget,
+    stdoutSize: stdoutStats.tokens,
+    stderrSize: stderrStats.tokens,
+    maxStdout: policy.maxStdoutTokens,
+    maxStderr: policy.maxStderrTokens,
+    minReserve: BASH_STREAM_MIN_TOKENS,
   });
 
-  const stdoutHasOutput = stdoutTrunc.content.trim().length > 0;
-  const stderrHasOutput = stderrTrunc.content.trim().length > 0;
+  const stdoutLineCap =
+    mode === "model_default"
+      ? applyLineTokenCap(cleanStdout, policy.maxLineTokens)
+      : { output: cleanStdout, truncated: false };
+  const stderrLineCap =
+    mode === "model_default"
+      ? applyLineTokenCap(cleanStderr, policy.maxLineTokens)
+      : { output: cleanStderr, truncated: false };
+  const lineTruncated = stdoutLineCap.truncated || stderrLineCap.truncated;
 
-  const combinedParts: string[] = [];
-  if (stdoutHasOutput) {
-    combinedParts.push(stdoutTrunc.content);
-  }
-  if (stderrHasOutput) {
-    combinedParts.push(`[stderr]\n${stderrTrunc.content}`);
-  }
-  const combined = combinedParts.join("\n");
+  const stdoutTrunc = truncateStreamForModel(stdoutLineCap.output, {
+    maxLines: lineBudgets.stdout,
+    maxTokens: tokenBudgets.stdout,
+  });
 
-  const combinedTotalParts: string[] = [];
-  const stdoutRawHasOutput = cleanStdout.trim().length > 0;
-  const stderrRawHasOutput = cleanStderr.trim().length > 0;
-  if (stdoutRawHasOutput) {
-    combinedTotalParts.push(cleanStdout);
-  }
-  if (stderrRawHasOutput) {
-    combinedTotalParts.push(`[stderr]\n${cleanStderr}`);
-  }
-  const combinedTotal = combinedTotalParts.join("\n");
+  const stderrTrunc = truncateStreamForModel(stderrLineCap.output, {
+    maxLines: lineBudgets.stderr,
+    maxTokens: tokenBudgets.stderr,
+  });
+
+  const combined = buildCombinedOutput(stdoutTrunc.content, stderrTrunc.content);
+  const rawOutput = rawCombined.output;
+  const combinedOutput = combined.output;
+
+  const truncated = stdoutTrunc.truncated || stderrTrunc.truncated || lineTruncated;
+  const truncatedBy =
+    stdoutTrunc.truncatedBy || stderrTrunc.truncatedBy || (lineTruncated ? "bytes" : null);
 
   const modelTruncation: TruncationResult = {
-    content: combined,
-    truncated: stdoutTrunc.truncated || stderrTrunc.truncated,
-    truncatedBy: (stdoutTrunc.truncatedBy || stderrTrunc.truncatedBy) as "lines" | "bytes" | null,
-    totalLines: combinedTotal === "" ? 0 : combinedTotal.split("\n").length,
-    totalBytes: Buffer.byteLength(combinedTotal, "utf-8"),
-    outputLines: combined === "" ? 0 : combined.split("\n").length,
-    outputBytes: Buffer.byteLength(combined, "utf-8"),
-    maxLines: limits.stdout.maxLines + limits.stderr.maxLines,
-    maxTokens: limits.stdout.maxTokens + limits.stderr.maxTokens,
+    content: combinedOutput,
+    truncated,
+    truncatedBy,
+    totalLines: rawOutput === "" ? 0 : rawOutput.split("\n").length,
+    totalBytes: Buffer.byteLength(rawOutput, "utf-8"),
+    outputLines: combinedOutput === "" ? 0 : combinedOutput.split("\n").length,
+    outputBytes: Buffer.byteLength(combinedOutput, "utf-8"),
+    maxLines: policy.maxTotalLines,
+    maxTokens: policy.maxTotalTokens,
   };
 
+  let gate: BashTruncationInfo["gate"];
+  if (mode === "model_default") {
+    const totalTokens = bytesToTokens(modelTruncation.totalBytes);
+    const exceedsTotals =
+      modelTruncation.totalLines > policy.maxTotalLines || totalTokens > policy.maxTotalTokens;
+    if (exceedsTotals || lineTruncated) {
+      gate = {
+        grantCode: randomUUID(),
+        preview: buildGrantPreview(rawOutput, policy),
+      };
+    }
+  }
+
   return {
-    output: combined,
-    rawOutput: combinedTotal,
+    output: combinedOutput,
+    rawOutput,
     model: modelTruncation,
     captureTruncated,
+    ...(gate ? { gate } : {}),
   };
 }
 
@@ -156,7 +463,14 @@ export function formatBashToolResultText(args: {
   exitCode: number | null;
 }): string {
   const { truncationInfo, exitCode } = args;
-  const { model, captureTruncated } = truncationInfo;
+  const { model, captureTruncated, gate } = truncationInfo;
+
+  if (gate) {
+    const preview = gate.preview.trimEnd() || "(no output)";
+    const grantNote = `\n\n[output gated: re-run this bash tool call with grantCode "${gate.grantCode}" to retrieve full output]`;
+    const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
+    return `${preview}${grantNote}${exitNote}`;
+  }
 
   const outputForContext = model.content.trimEnd() || "(no output)";
   const truncNote =
@@ -187,27 +501,32 @@ const COMPACT_OUTPUT_HEAD_LINES = 3;
 const COMPACT_OUTPUT_TAIL_LINES = 3;
 const BASH_UI_MAX_LINE_LENGTH: number = 256;
 
-function truncateLineToMax(line: string): string {
-  if (BASH_UI_MAX_LINE_LENGTH <= 0) return "";
+function truncateLineToMax(line: string, maxLineLength: number): string {
+  if (maxLineLength <= 0) return "";
   const chars = Array.from(line);
-  if (chars.length <= BASH_UI_MAX_LINE_LENGTH) return line;
-  if (BASH_UI_MAX_LINE_LENGTH === 1) return "…";
-  return `${chars.slice(0, BASH_UI_MAX_LINE_LENGTH - 1).join("")}…`;
+  if (chars.length <= maxLineLength) return line;
+  if (maxLineLength === 1) return "…";
+  return `${chars.slice(0, maxLineLength - 1).join("")}…`;
 }
 
 function buildCompactOutputLines(
   output: string,
   headCount: number = COMPACT_OUTPUT_HEAD_LINES,
   tailCount: number = COMPACT_OUTPUT_TAIL_LINES,
+  maxLineChars: number = BASH_UI_MAX_LINE_LENGTH,
 ): string[] {
   const cleaned = output.replace(/\n+$/, "");
   if (cleaned.trim().length === 0) return [];
   const lines = cleaned.split("\n");
   const total = lines.length;
-  if (total <= headCount + tailCount) return lines.map(truncateLineToMax);
+  if (total <= headCount + tailCount) {
+    return lines.map((line) => truncateLineToMax(line, maxLineChars));
+  }
 
-  const head = lines.slice(0, headCount).map(truncateLineToMax);
-  const tail = lines.slice(Math.max(total - tailCount, headCount)).map(truncateLineToMax);
+  const head = lines.slice(0, headCount).map((line) => truncateLineToMax(line, maxLineChars));
+  const tail = lines
+    .slice(Math.max(total - tailCount, headCount))
+    .map((line) => truncateLineToMax(line, maxLineChars));
   const remaining = Math.max(0, total - head.length - tail.length);
   const label = remaining === 1 ? "line" : "lines";
   return [...head, `…${remaining} more ${label}…`, ...tail];
@@ -310,6 +629,7 @@ const bashArgsSchema = z.object({
   safetyLevel: z.enum(["read", "write"]).optional().catch(undefined),
   workingDirectory: z.string().trim().optional().catch(undefined),
   timeout: z.number().positive().optional().catch(undefined),
+  grantCode: z.string().trim().optional().catch(undefined),
 });
 
 function parseBashArgs(raw: unknown): {
@@ -317,6 +637,7 @@ function parseBashArgs(raw: unknown): {
   safetyLevel: BashSafetyLevel | undefined;
   workingDirectory: string | undefined;
   timeout: number | undefined;
+  grantCode: string | undefined;
   commandForDisplay: string;
 } {
   const parsed = bashArgsSchema.safeParse(raw);
@@ -326,8 +647,16 @@ function parseBashArgs(raw: unknown): {
     : undefined;
   const workingDirectory = parsed.success ? parsed.data.workingDirectory : undefined;
   const timeout = parsed.success ? parsed.data.timeout : undefined;
+  const grantCode = parsed.success ? parsed.data.grantCode : undefined;
   const commandForDisplay = command || "(missing command)";
-  return { command, safetyLevel, workingDirectory, timeout, commandForDisplay };
+  return {
+    command,
+    safetyLevel,
+    workingDirectory,
+    timeout,
+    grantCode: grantCode?.trim() ? grantCode : undefined,
+    commandForDisplay,
+  };
 }
 
 export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
@@ -338,9 +667,8 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
       riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { command, safetyLevel, workingDirectory, timeout, commandForDisplay } = parseBashArgs(
-        toolCall.arguments,
-      );
+      const { command, safetyLevel, workingDirectory, timeout, grantCode, commandForDisplay } =
+        parseBashArgs(toolCall.arguments);
       const headerTarget = commandForDisplay.split(/\r?\n/)[0] ?? commandForDisplay;
 
       const blocked = (reason: string): ToolDispatchResult => {
@@ -396,15 +724,10 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
             });
             const durationMs = Math.max(0, Date.now() - startedAt);
 
+            const outputMode: BashOutputMode = grantCode ? "model_extended" : "model_default";
             const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {
-              stdout: {
-                maxLines: BASH_TOOL_MAX_STDOUT_LINES,
-                maxTokens: BASH_TOOL_MAX_STDOUT_TOKENS,
-              },
-              stderr: {
-                maxLines: BASH_TOOL_MAX_STDERR_LINES,
-                maxTokens: BASH_TOOL_MAX_STDERR_TOKENS,
-              },
+              mode: outputMode,
+              policy: getBashOutputPolicy(outputMode),
             });
             const toolText = formatBashToolResultText({ truncationInfo, exitCode });
             const isError = exitCode === null || exitCode !== 0;

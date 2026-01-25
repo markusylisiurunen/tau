@@ -6,6 +6,7 @@ import { createEmitOutputToolDefinition } from "./emit_output.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition } from "./registry.js";
 import { ToolRegistry } from "./registry.js";
+import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
 import { createSpawnAgentToolDefinition } from "./spawn_agent.js";
 import { createTerminateAgentToolDefinition } from "./terminate_agent.js";
 import { createWaitForAgentToolDefinition } from "./wait_for_agent.js";
@@ -20,6 +21,7 @@ export const ToolCatalog = {
       createWriteToolDefinition(backend),
       createEditToolDefinition(backend),
       createSpawnAgentToolDefinition(backend),
+      createSendInputToAgentToolDefinition(backend),
       createWaitForAgentToolDefinition(),
       createTerminateAgentToolDefinition(),
     ]);

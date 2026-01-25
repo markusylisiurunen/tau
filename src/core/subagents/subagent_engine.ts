@@ -77,6 +77,7 @@ export async function runSubagent(options: {
   config: Config;
   authPath?: string;
   backend?: ToolExecutionBackend;
+  messages?: Message[];
   signal: AbortSignal;
   onProgress?: (event: SubagentProgressEvent) => void;
   onToolUiEvent?: (event: SubagentToolUiEvent) => void;
@@ -108,13 +109,12 @@ export async function runSubagent(options: {
   const backend = options.backend ?? createLocalToolExecutionBackend();
   const allowedTools = runtimeConfig.tools;
   const toolRegistry = buildToolRegistryForAllowedTools(allowedTools, config, backend);
-  const messages: Message[] = [
-    {
-      role: "user",
-      content: [{ type: "text", text: prompt }],
-      timestamp: Date.now(),
-    },
-  ];
+  const messages = options.messages ?? [];
+  messages.push({
+    role: "user",
+    content: [{ type: "text", text: prompt }],
+    timestamp: Date.now(),
+  });
 
   let costTotal = 0;
   let turns = 0;

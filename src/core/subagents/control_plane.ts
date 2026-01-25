@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Message } from "@mariozechner/pi-ai";
 import type { Config } from "../config/index.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolDispatchContext } from "../tools/registry.js";
@@ -33,6 +34,10 @@ export type SubagentResult = {
 
 export type SubagentSpawnResult = { ok: true; id: string } | { ok: false; reason: string };
 
+export type SubagentSendInputResult =
+  | { ok: true; id: string; name: SubagentName; title: string }
+  | { ok: false; reason: string };
+
 type SubagentLogEntry = {
   kind: "progress" | "output";
   text: string;
@@ -42,10 +47,15 @@ type SubagentRecord = {
   id: string;
   name: SubagentName;
   title: string;
+  runtimeConfig: SubagentRuntimeConfig;
+  messages: Message[];
   status: SubagentStatus;
   costTotal: number;
   turns: number;
   toolCalls: number;
+  costOffset: number;
+  turnsOffset: number;
+  toolCallsOffset: number;
   startedAt: number;
   finishedAt?: number;
   abortRequested: boolean;
@@ -135,73 +145,67 @@ export class SubagentControlPlane {
 
     const { runtimeConfig, prompt, title, config, authPath, backend, personaId } = options;
     const id = randomUUID();
-    const controller = new AbortController();
-    const startedAt = Date.now();
 
     const record: SubagentRecord = {
       id,
       name: runtimeConfig.name,
       title,
+      runtimeConfig,
+      messages: [],
       status: "running",
       costTotal: 0,
       turns: 0,
       toolCalls: 0,
-      startedAt,
+      costOffset: 0,
+      turnsOffset: 0,
+      toolCallsOffset: 0,
+      startedAt: Date.now(),
       abortRequested: false,
       progress: [],
       outputs: [],
-      controller,
+      controller: new AbortController(),
       completion: Promise.resolve(undefined as never),
     };
 
     this.records.set(id, record);
-    this.emit({ type: "subagent_spawned", state: this.toSnapshot(record) });
-
-    const subagentContext: ToolDispatchContext["subagentContext"] = {
-      id,
-      name: runtimeConfig.name,
-      title,
-      controlPlane: this,
-    };
-
-    record.completion = runSubagent({
-      runtimeConfig,
-      prompt,
-      config,
-      authPath,
-      backend,
-      signal: controller.signal,
-      sessionId: id,
-      personaId,
-      subagentContext,
-      onProgress: (event) => this.recordProgress(id, event),
-      onToolUiEvent: (event) => this.recordToolUiEvent(id, event),
-    })
-      .then((result) => {
-        record.status = "success";
-        record.costTotal = result.costTotal;
-        record.turns = result.turns;
-        record.toolCalls = result.toolCalls;
-        record.finalText = result.finalText;
-        record.finishedAt = Date.now();
-        if (this.records.get(id) === record) {
-          this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
-        }
-        return record;
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        const wasAborted = record.controller.signal.aborted || record.abortRequested;
-        record.status = wasAborted ? "aborted" : "error";
-        record.error = wasAborted ? undefined : message;
-        record.finishedAt = Date.now();
-        if (this.records.get(id) === record) {
-          this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
-        }
-        return record;
-      });
+    this.startRun({ record, prompt, config, authPath, backend, personaId });
 
     return { ok: true, id };
+  }
+
+  sendInput(options: {
+    id: string;
+    prompt: string;
+    config: Config;
+    authPath?: string;
+    backend: ToolExecutionBackend;
+    personaId?: string;
+  }): SubagentSendInputResult {
+    const { id, prompt, config, authPath, backend, personaId } = options;
+    const record = this.records.get(id);
+    if (!record) {
+      return { ok: false, reason: `unknown subagent id: ${id}` };
+    }
+
+    if (record.status === "running") {
+      return {
+        ok: false,
+        reason: `subagent ${id} is already running. wait for it to finish before sending input.`,
+      };
+    }
+
+    if (this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS) {
+      return {
+        ok: false,
+        reason:
+          `subagent limit reached (max ${MAX_ACTIVE_SUBAGENTS} active). ` +
+          "wait for existing agents to finish.",
+      };
+    }
+
+    this.startRun({ record, prompt, config, authPath, backend, personaId });
+
+    return { ok: true, id: record.id, name: record.name, title: record.title };
   }
 
   recordEmitOutput(id: string, text: string): void {
@@ -248,6 +252,77 @@ export class SubagentControlPlane {
     return record ? this.toSnapshot(record) : undefined;
   }
 
+  private startRun(options: {
+    record: SubagentRecord;
+    prompt: string;
+    config: Config;
+    authPath?: string;
+    backend: ToolExecutionBackend;
+    personaId?: string;
+  }): void {
+    const { record, prompt, config, authPath, backend, personaId } = options;
+
+    record.status = "running";
+    record.startedAt = Date.now();
+    record.finishedAt = undefined;
+    record.abortRequested = false;
+    record.progress = [];
+    record.outputs = [];
+    record.error = undefined;
+    record.finalText = undefined;
+    record.controller = new AbortController();
+    record.costOffset = record.costTotal;
+    record.turnsOffset = record.turns;
+    record.toolCallsOffset = record.toolCalls;
+
+    const subagentContext: ToolDispatchContext["subagentContext"] = {
+      id: record.id,
+      name: record.name,
+      title: record.title,
+      controlPlane: this,
+    };
+
+    this.emit({ type: "subagent_spawned", state: this.toSnapshot(record) });
+
+    record.completion = runSubagent({
+      runtimeConfig: record.runtimeConfig,
+      prompt,
+      config,
+      authPath,
+      backend,
+      signal: record.controller.signal,
+      sessionId: record.id,
+      personaId,
+      subagentContext,
+      messages: record.messages,
+      onProgress: (event) => this.recordProgress(record.id, event),
+      onToolUiEvent: (event) => this.recordToolUiEvent(record.id, event),
+    })
+      .then((result) => {
+        record.status = "success";
+        record.costTotal = record.costOffset + result.costTotal;
+        record.turns = record.turnsOffset + result.turns;
+        record.toolCalls = record.toolCallsOffset + result.toolCalls;
+        record.finalText = result.finalText;
+        record.finishedAt = Date.now();
+        if (this.records.get(record.id) === record) {
+          this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
+        }
+        return record;
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        const wasAborted = record.controller.signal.aborted || record.abortRequested;
+        record.status = wasAborted ? "aborted" : "error";
+        record.error = wasAborted ? undefined : message;
+        record.finishedAt = Date.now();
+        if (this.records.get(record.id) === record) {
+          this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
+        }
+        return record;
+      });
+  }
+
   private async waitForRecord(id: string): Promise<SubagentRecord> {
     const record = this.records.get(id);
     if (!record) {
@@ -263,9 +338,9 @@ export class SubagentControlPlane {
     const record = this.records.get(id);
     if (!record) return;
 
-    record.costTotal = event.costTotal;
-    record.turns = event.turns;
-    record.toolCalls = event.toolCalls;
+    record.costTotal = record.costOffset + event.costTotal;
+    record.turns = record.turnsOffset + event.turns;
+    record.toolCalls = record.toolCallsOffset + event.toolCalls;
 
     const text = event.text.trim();
     if (text) {
@@ -289,9 +364,9 @@ export class SubagentControlPlane {
     const record = this.records.get(id);
     if (!record) return;
 
-    record.costTotal = event.costTotal;
-    record.turns = event.turns;
-    record.toolCalls = event.toolCalls;
+    record.costTotal = record.costOffset + event.costTotal;
+    record.turns = record.turnsOffset + event.turns;
+    record.toolCalls = record.toolCallsOffset + event.toolCalls;
 
     const text = formatToolUiEventForProgress(event.uiEvent) ?? "";
     if (text) {

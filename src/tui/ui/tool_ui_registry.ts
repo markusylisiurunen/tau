@@ -290,6 +290,50 @@ export function createToolUiRegistry(): ToolUiRegistry {
     });
   });
 
+  registry.register("send_input_to_agent_started", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "send_input_to_agent_started" }>;
+    const title = formatSubagentTitle(uiEvent.title ?? uiEvent.agentId);
+    return buildSubagentRunningView({
+      theme: context.theme,
+      label: "sending",
+      title,
+    });
+  });
+
+  registry.register("send_input_to_agent_finished", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "send_input_to_agent_finished" }>;
+    const title = formatSubagentTitle(uiEvent.title ?? uiEvent.agentId);
+    if (!uiEvent.uiText) {
+      return buildSimpleToolFinishedView({
+        theme: context.theme,
+        label: "send input",
+        target: title,
+        status: uiEvent.status,
+        message: uiEvent.message,
+      });
+    }
+    return buildSubagentFinishedView({
+      theme: context.theme,
+      label: "sent input",
+      failureLabel: "send failed",
+      title,
+      status: uiEvent.status,
+      uiText: uiEvent.uiText,
+    });
+  });
+
+  registry.register("send_input_to_agent_blocked", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "send_input_to_agent_blocked" }>;
+    const title = formatSubagentTitle(uiEvent.title ?? uiEvent.agentId ?? uiEvent.name);
+    return buildSimpleToolFinishedView({
+      theme: context.theme,
+      label: "send input",
+      target: title,
+      status: "error",
+      message: uiEvent.reason,
+    });
+  });
+
   registry.register("wait_for_agent_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_started" }>;
     const title = formatAgentIdList(uiEvent.agentIds);

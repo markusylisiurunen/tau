@@ -12,6 +12,12 @@ type RunningSubagentTool =
       title: string;
     }
   | {
+      kind: "send_input_to_agent";
+      agentId: string;
+      name: string;
+      title: string;
+    }
+  | {
       kind: "wait_for_agent";
       agentIds: string[];
     }
@@ -119,6 +125,36 @@ export class ToolUiRouter {
     }
 
     if (uiEvent.type === "spawn_agent_blocked") {
+      if (this.runningSubagentTools.has(uiEvent.toolCallId)) {
+        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      } else {
+        this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      }
+      this.runningSubagentTools.delete(uiEvent.toolCallId);
+      this.requestRender();
+      return;
+    }
+
+    if (uiEvent.type === "send_input_to_agent_started") {
+      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.runningSubagentTools.set(uiEvent.toolCallId, {
+        kind: "send_input_to_agent",
+        agentId: uiEvent.agentId,
+        name: uiEvent.name,
+        title: uiEvent.title,
+      });
+      this.requestRender();
+      return;
+    }
+
+    if (uiEvent.type === "send_input_to_agent_finished") {
+      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.runningSubagentTools.delete(uiEvent.toolCallId);
+      this.requestRender();
+      return;
+    }
+
+    if (uiEvent.type === "send_input_to_agent_blocked") {
       if (this.runningSubagentTools.has(uiEvent.toolCallId)) {
         this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
       } else {
@@ -239,6 +275,18 @@ export class ToolUiRouter {
       return {
         type: "spawn_agent_finished",
         toolCallId,
+        name: running.name,
+        title: running.title,
+        status: "error",
+        message: reason,
+      };
+    }
+
+    if (running.kind === "send_input_to_agent") {
+      return {
+        type: "send_input_to_agent_finished",
+        toolCallId,
+        agentId: running.agentId,
         name: running.name,
         title: running.title,
         status: "error",

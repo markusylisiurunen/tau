@@ -52,6 +52,31 @@ export type ToolUiEvent =
       reason: string;
     }
   | {
+      type: "send_input_to_agent_started";
+      toolCallId: string;
+      agentId: string;
+      name: string;
+      title: string;
+    }
+  | {
+      type: "send_input_to_agent_finished";
+      toolCallId: string;
+      agentId: string;
+      name: string;
+      title: string;
+      status: "success" | "error";
+      message?: string;
+      uiText?: ToolUiText;
+    }
+  | {
+      type: "send_input_to_agent_blocked";
+      toolCallId: string;
+      agentId?: string;
+      name?: string;
+      title: string;
+      reason: string;
+    }
+  | {
       type: "wait_for_agent_started";
       toolCallId: string;
       agentIds: string[];

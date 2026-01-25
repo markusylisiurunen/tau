@@ -65,11 +65,13 @@ const BLOCK_TOOL_USE_GUIDELINES_CODER = `
 `.trim();
 
 const BLOCK_FILE_MENTIONS = `
-### File and skill mentions
+### File, skill, and agent mentions
 
-The user may refer to files by typing \`@\` followed by a path relative to the current working directory (e.g., \`@src/utils/helpers.ts\`). The \`@\` symbol indicates a file reference and is not part of the actual path. When you see this notation, read the file if you need its contents to respond well. Use the path exactly as given; don't search for similar files.
+The user may refer to files by typing \`@file:\` followed by a path relative to the current working directory (e.g., \`@file:src/utils/helpers.ts\`). The \`@file:\` prefix indicates a file reference and is not part of the actual path. When you see this notation, read the file if you need its contents to respond well. Use the path exactly as given; don't search for similar files.
 
-The user may refer to skills by typing \`$\` followed by a skill name (e.g., \`$skill-name\`). The \`$\` symbol indicates a skill reference. When you see this notation, follow the skill guidelines and open its \`SKILL.md\` if needed.
+The user may refer to skills by typing \`@skill:\` followed by a skill name (e.g., \`@skill:skill-name\`). The \`@skill:\` prefix indicates a skill reference. When you see this notation, follow the skill guidelines and open its \`SKILL.md\` if needed.
+
+The user may tag subagents by typing \`@agent:\` followed by a subagent name (e.g., \`@agent:default\`). Tags identify the intended subagent for a task but do not automatically spawn a subagent. Use \`spawn_agent\` explicitly when needed.
 `.trim();
 
 const BLOCK_FILE_EDIT_GUIDELINES = `
@@ -136,7 +138,7 @@ Skills and sub-agents specify when they should be activated:
 
 - **eager**: Use proactively whenever the capability would help, even if not explicitly requested.
 - **balanced**: Use when the request clearly matches. This is the default when not specified.
-- **explicit**: Use only when the user specifically names or requests it.
+- **explicit**: Use only when the user specifically names or requests it with \`@skill:<name>\` or \`@agent:<name>\`.
 `.trim();
 
 const BLOCK_PROJECT_CONTEXT = `

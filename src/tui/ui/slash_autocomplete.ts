@@ -4,14 +4,19 @@ import { getRiskLevelAutocompleteOptions } from "../../core/commands/index.js";
 import type { RiskLevel } from "../../core/types.js";
 import { fuzzyFilter } from "../../core/utils/fuzzy.js";
 
-export function getFileAutocompleteToken(beforeCursor: string): string | null {
-  const fileMatch = beforeCursor.match(/(?:^|[\t ])(@[^\t ]*)$/);
-  return fileMatch?.[1] ?? null;
+const MENTION_TOKEN_REGEX = /(?:^|[\t ])(@[^\t ]*)$/;
+
+type MentionKind = "file" | "skill" | "agent";
+
+export function getMentionAutocompleteToken(beforeCursor: string): string | null {
+  const match = beforeCursor.match(MENTION_TOKEN_REGEX);
+  return match?.[1] ?? null;
 }
 
-export function getSkillAutocompleteToken(beforeCursor: string): string | null {
-  const skillMatch = beforeCursor.match(/(?:^|[\t ])(\$[^\t ]*)$/);
-  return skillMatch?.[1] ?? null;
+export function getFileAutocompleteToken(beforeCursor: string): string | null {
+  const token = getMentionAutocompleteToken(beforeCursor);
+  if (!token?.startsWith("@file:")) return null;
+  return token;
 }
 
 export interface PersonaSuggestion {
@@ -34,6 +39,11 @@ export interface BashSuggestion {
   description?: string;
 }
 
+type MentionKindSuggestion = {
+  kind: MentionKind;
+  description: string;
+};
+
 export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompleteProvider {
   private commandRegistry: CommandRegistry<Ctx>;
   private getPersonas: () => PersonaSuggestion[];
@@ -42,6 +52,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
   private getBashCommands: () => BashSuggestion[];
   private getFiles: () => string[];
   private getSkills: () => string[];
+  private getAgents: () => string[];
   private getRiskLevels: () => RiskLevel[];
 
   constructor(
@@ -52,6 +63,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     bashCommands: () => BashSuggestion[] = () => [],
     files: () => string[] = () => [],
     skills: () => string[] = () => [],
+    agents: () => string[] = () => [],
     riskLevels: () => RiskLevel[] = () => ["read-only", "read-write"],
   ) {
     this.commandRegistry = commandRegistry;
@@ -61,6 +73,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     this.getBashCommands = bashCommands;
     this.getFiles = files;
     this.getSkills = skills;
+    this.getAgents = agents;
     this.getRiskLevels = riskLevels;
   }
 
@@ -72,11 +85,8 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     const line = lines[cursorLine] ?? "";
     const beforeCursor = line.slice(0, cursorCol);
 
-    const skillSuggestions = this.getSkillSuggestions(beforeCursor);
-    if (skillSuggestions) return skillSuggestions;
-
-    const fileSuggestions = this.getFileSuggestions(beforeCursor);
-    if (fileSuggestions) return fileSuggestions;
+    const mentionSuggestions = this.getMentionSuggestions(beforeCursor);
+    if (mentionSuggestions) return mentionSuggestions;
 
     if (!beforeCursor.startsWith("/")) return null;
 
@@ -104,14 +114,12 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
 
     let insert = this.buildInsertText(item, prefix, beforePrefix);
 
-    if (
-      (prefix.startsWith("@") || prefix.startsWith("$")) &&
-      afterCursor.length > 0 &&
-      !/^\s/.test(afterCursor)
-    ) {
-      insert += " ";
-    } else if ((prefix.startsWith("@") || prefix.startsWith("$")) && afterCursor.length === 0) {
-      insert += " ";
+    if (prefix.startsWith("@") && !insert.endsWith(":")) {
+      if (afterCursor.length > 0 && !/^\s/.test(afterCursor)) {
+        insert += " ";
+      } else if (afterCursor.length === 0) {
+        insert += " ";
+      }
     }
 
     const newLine = beforePrefix + insert + afterCursor;
@@ -125,32 +133,78 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     };
   }
 
-  private getFileSuggestions(
+  private getMentionSuggestions(
     beforeCursor: string,
   ): { items: AutocompleteItem[]; prefix: string } | null {
-    const token = getFileAutocompleteToken(beforeCursor);
+    const token = getMentionAutocompleteToken(beforeCursor);
     if (!token) return null;
 
-    const query = token.slice(1);
-    const filtered = fuzzyFilter(this.getFiles(), query, (p) => p);
+    const colonIndex = token.indexOf(":");
+    if (colonIndex === -1) {
+      return this.getMentionKindSuggestions(token);
+    }
+
+    const kind = token.slice(1, colonIndex) as MentionKind;
+    const valuePrefix = token.slice(colonIndex + 1);
+    return this.getMentionEntrySuggestions(kind, valuePrefix, token);
+  }
+
+  private getMentionKindSuggestions(
+    token: string,
+  ): { items: AutocompleteItem[]; prefix: string } | null {
+    const kindPrefix = token.slice(1);
+    const kinds = this.getAvailableMentionKinds();
+    if (kinds.length === 0) return null;
+
+    const filtered = fuzzyFilter(kinds, kindPrefix, (k) => `${k.kind} ${k.description}`);
+    const items = filtered.map((k) => ({
+      value: `${k.kind}:`,
+      label: k.kind,
+      description: k.description,
+    }));
+
+    if (items.length === 0) return null;
+    return { items, prefix: token };
+  }
+
+  private getMentionEntrySuggestions(
+    kind: MentionKind,
+    valuePrefix: string,
+    token: string,
+  ): { items: AutocompleteItem[]; prefix: string } | null {
+    const source = this.getMentionSource(kind);
+    if (!source) return null;
+
+    const filtered = fuzzyFilter(source, valuePrefix, (p) => p);
     const items = filtered.slice(0, 25).map((p) => ({ value: p, label: p }));
 
     if (items.length === 0) return null;
     return { items, prefix: token };
   }
 
-  private getSkillSuggestions(
-    beforeCursor: string,
-  ): { items: AutocompleteItem[]; prefix: string } | null {
-    const token = getSkillAutocompleteToken(beforeCursor);
-    if (!token) return null;
+  private getAvailableMentionKinds(): MentionKindSuggestion[] {
+    const kinds: MentionKindSuggestion[] = [];
+    if (this.getFiles().length > 0) {
+      kinds.push({ kind: "file", description: "project files" });
+    }
+    if (this.getSkills().length > 0) {
+      kinds.push({ kind: "skill", description: "available skills" });
+    }
+    if (this.getAgents().length > 0) {
+      kinds.push({ kind: "agent", description: "available sub-agents" });
+    }
+    return kinds;
+  }
 
-    const query = token.slice(1);
-    const filtered = fuzzyFilter(this.getSkills(), query, (p) => p);
-    const items = filtered.slice(0, 25).map((p) => ({ value: p, label: p }));
-
-    if (items.length === 0) return null;
-    return { items, prefix: token };
+  private getMentionSource(kind: MentionKind): string[] | null {
+    switch (kind) {
+      case "file":
+        return this.getFiles();
+      case "skill":
+        return this.getSkills();
+      case "agent":
+        return this.getAgents();
+    }
   }
 
   private getArgumentSuggestions(
@@ -319,11 +373,11 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
 
   private buildInsertText(item: AutocompleteItem, prefix: string, beforePrefix: string): string {
     if (prefix.startsWith("@")) {
+      const mentionMatch = prefix.match(/^@([^:\s]+):/);
+      if (mentionMatch) {
+        return `@${mentionMatch[1]}:${item.value}`;
+      }
       return `@${item.value}`;
-    }
-
-    if (prefix.startsWith("$")) {
-      return `$${item.value}`;
     }
 
     const lowerBeforePrefix = beforePrefix.toLowerCase();

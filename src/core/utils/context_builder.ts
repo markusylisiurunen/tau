@@ -43,7 +43,7 @@ export function buildSkillsIndexBlock(skills: Skill[]): string | undefined {
   lines.push(
     "",
     "Guidelines:",
-    "- Trigger: Follow the skill's trigger sensitivity if specified; default is balanced. Always activate if user names it (e.g. `$skill-name`). Use the minimal set of skills that covers the request.",
+    "- Trigger: Follow the skill's trigger sensitivity if specified; default is balanced. Always activate if user names it with `@skill:<name>`. Use the minimal set of skills that covers the request.",
     "- Activation: After deciding to use a skill, open `SKILL.md` from the <location> (e.g. `cat <path>`). Read only what you need to follow the workflow.",
     "- Resources: If `SKILL.md` references files in `references/` or `assets/`, load only the specific files you need. Don't bulk-load directories.",
     "- Scripts: If `scripts/` exist, prefer running or patching them instead of retyping large code blocks.",

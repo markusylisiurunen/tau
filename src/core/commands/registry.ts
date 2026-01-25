@@ -47,7 +47,7 @@ export interface CommandDispatchContext {
   copyCode: () => Promise<void>;
   export: () => Promise<void>;
   checkpoint: () => Promise<void>;
-  newSession: () => void;
+  newSession: () => Promise<void>;
   cd: (path: string) => void;
   compactOnlySummary: (extra?: string) => Promise<void>;
   compactSummaryAndLastTurn: (extra?: string) => Promise<void>;
@@ -308,8 +308,9 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
   registry.register({
     id: "reload",
     usage: "/reload",
-    description: "reload personas, prompts, skills, and themes from disk",
-    autocompleteDescription: "reload personas, prompts, skills, and themes from disk",
+    description: "reload prompts, skills, themes, bash commands, and AGENTS.md from disk",
+    autocompleteDescription:
+      "reload prompts, skills, themes, bash commands, and AGENTS.md from disk",
     argument: "none",
     section: "base",
     parse: (raw) => {

@@ -27,6 +27,7 @@ import {
   type Config,
   createDefaultConfigDeps,
   loadRuntimeConfig,
+  type RuntimeConfigResult,
   type ThemeDefinition,
 } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
@@ -104,6 +105,51 @@ export interface ChatControllerOptions {
 }
 
 type AssistantState = { id?: string; inserted: boolean; model: AssistantMessageModel };
+
+type ReloadScope = "new-session" | "reload-command";
+
+type ReloadPlan = {
+  personas: boolean;
+  prompts: boolean;
+  skills: boolean;
+  themes: boolean;
+  bashCommands: boolean;
+  projectContext: boolean;
+};
+
+type ReloadMessage = { text: string; kind: SystemMessageKind };
+
+type ReloadReport = {
+  plan: ReloadPlan;
+  warnings: string[];
+  counts: {
+    personas: number;
+    prompts: number;
+    skills: number;
+    themes: number;
+    bashCommands: number;
+  };
+  messages: ReloadMessage[];
+};
+
+const RELOAD_PLANS: Record<ReloadScope, ReloadPlan> = {
+  "new-session": {
+    personas: true,
+    prompts: true,
+    skills: true,
+    themes: true,
+    bashCommands: true,
+    projectContext: true,
+  },
+  "reload-command": {
+    personas: false,
+    prompts: true,
+    skills: true,
+    themes: true,
+    bashCommands: true,
+    projectContext: true,
+  },
+};
 
 const ALLOWED_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
 
@@ -1376,7 +1422,7 @@ export class ChatController {
     }
   }
 
-  private clearSession(): void {
+  private async clearSession(): Promise<void> {
     this.engine.reset();
     this.view.resetToolUiSession();
     this.expandedFilesInCurrentPrompt.clear();
@@ -1386,7 +1432,15 @@ export class ChatController {
     this.isBashIncognito = false;
     this.isMemoryMode = false;
     this.previousSessionSummary = undefined;
-    this.rebuildSystemPrompt();
+
+    try {
+      const report = await this.refreshReloadableContent("new-session");
+      this.applyReloadMessages(report.messages);
+    } catch (err) {
+      this.view.addSystemMessage(`reload failed: ${(err as Error).message}`, "error");
+    }
+
+    this.rebuildSystemPromptForCurrentPersona(this.previousSessionSummary);
     this.refreshStatus();
   }
 
@@ -1831,6 +1885,151 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     await this.runBashCommand(saved.cmd, { cwd });
   }
 
+  private async refreshReloadableContent(scope: ReloadScope): Promise<ReloadReport> {
+    const plan = RELOAD_PLANS[scope];
+    const configDeps = createDefaultConfigDeps();
+    const runtime = await loadRuntimeConfig(this.deps.env.cwd(), configDeps);
+    const report = this.applyReloadPlan(plan, runtime);
+
+    if (plan.projectContext) {
+      this.refreshProjectContext(this.deps.env.cwd());
+    }
+
+    return report;
+  }
+
+  private applyReloadPlan(plan: ReloadPlan, runtime: RuntimeConfigResult): ReloadReport {
+    const previousThemeId = this.activeThemeId ?? this.config.defaultTheme;
+    const messages: ReloadMessage[] = [];
+
+    this.config = runtime.config;
+    this.engine.setConfig(this.config);
+
+    if (plan.bashCommands) {
+      this.bashCommands = runtime.bashCommands;
+    }
+
+    if (plan.personas) {
+      const personaMessage = this.applyReloadedPersonas(runtime.personas);
+      if (personaMessage) {
+        messages.push(personaMessage);
+      }
+    }
+
+    if (plan.prompts) {
+      this.prompts = runtime.prompts;
+    }
+
+    if (plan.skills) {
+      this.skills = runtime.skills;
+    }
+
+    if (plan.themes) {
+      const resolvedThemeId =
+        this.resolveThemeId(previousThemeId, runtime.themes) ??
+        this.resolveThemeId(this.config.defaultTheme, runtime.themes);
+
+      if (resolvedThemeId) {
+        this.config.defaultTheme = resolvedThemeId;
+      }
+
+      this.themes = runtime.themes;
+      this.activeThemeId = resolvedThemeId ?? previousThemeId;
+      this.view.updateTheme({ themeId: resolvedThemeId, themes: runtime.themes });
+    }
+
+    return {
+      plan,
+      warnings: runtime.warnings,
+      counts: {
+        personas: runtime.personas.length,
+        prompts: runtime.prompts.length,
+        skills: runtime.skills.length,
+        themes: runtime.themes.length,
+        bashCommands: runtime.bashCommands.length,
+      },
+      messages,
+    };
+  }
+
+  private applyReloadedPersonas(personas: Persona[]): ReloadMessage | null {
+    if (personas.length === 0) {
+      return {
+        text: "reload failed: no personas available. keeping existing personas.",
+        kind: "error",
+      };
+    }
+
+    this.personas = personas;
+    const currentPersonaId = this.currentPersona.id.toLowerCase();
+    const updatedPersona = personas.find(
+      (persona) => persona.id.toLowerCase() === currentPersonaId,
+    );
+
+    if (updatedPersona) {
+      this.currentPersona = updatedPersona;
+      this.clampPersonaReasoning(this.currentPersona);
+      return null;
+    }
+
+    this.currentPersona = personas[0]!;
+    this.clampPersonaReasoning(this.currentPersona);
+    const personaLabel = this.currentPersona.label || this.currentPersona.id;
+    return {
+      text: `previous persona no longer available; switched to ${personaLabel}.`,
+      kind: "warn",
+    };
+  }
+
+  private applyReloadMessages(messages: ReloadMessage[]): void {
+    for (const message of messages) {
+      this.view.addSystemMessage(message.text, message.kind);
+    }
+  }
+
+  private rebuildSystemPromptForCurrentPersona(
+    previousSessionSummary: string | undefined,
+    options?: { showUnknownSkills?: boolean },
+  ): void {
+    const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
+    this.rebuildSystemPrompt(previousSessionSummary, skillsContext.skillsBlock);
+
+    if (options?.showUnknownSkills && skillsContext.unknown.length > 0) {
+      this.view.addSystemMessage(
+        `unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
+        "warn",
+      );
+    }
+  }
+
+  private buildReloadSummary(report: ReloadReport): string {
+    const parts: string[] = [];
+
+    if (report.plan.personas) {
+      parts.push(`${report.counts.personas} personas`);
+    }
+    if (report.plan.prompts) {
+      parts.push(`${report.counts.prompts} prompts`);
+    }
+    if (report.plan.skills) {
+      parts.push(`${report.counts.skills} skills`);
+    }
+    if (report.plan.themes) {
+      parts.push(`${report.counts.themes} themes`);
+    }
+    if (report.plan.bashCommands) {
+      parts.push(`${report.counts.bashCommands} bash commands`);
+    }
+    if (report.plan.projectContext && this.includeAgentContext) {
+      parts.push(`${this.agentsFiles.length} AGENTS.md`);
+    }
+
+    const errorCount = report.warnings.length;
+    return errorCount > 0
+      ? `reloaded: ${parts.join(", ")} (${errorCount} errors).`
+      : `reloaded: ${parts.join(", ")}.`;
+  }
+
   private async reloadContent(): Promise<void> {
     if (this.isStreaming) {
       this.view.addSystemMessage(
@@ -1841,81 +2040,16 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
 
     try {
-      const configDeps = createDefaultConfigDeps();
-      const runtime = await loadRuntimeConfig(this.deps.env.cwd(), configDeps);
-      const { config, personas, prompts, skills, themes, bashCommands, warnings } = runtime;
-      if (personas.length === 0) {
-        this.view.addSystemMessage(
-          "reload failed: no personas available. keeping existing personas.",
-          "error",
-        );
-      }
-      const previousThemeId = this.activeThemeId ?? this.config.defaultTheme;
-      const resolvedThemeId =
-        this.resolveThemeId(previousThemeId, themes) ??
-        this.resolveThemeId(config.defaultTheme, themes);
+      const report = await this.refreshReloadableContent("reload-command");
+      this.applyReloadMessages(report.messages);
 
-      if (resolvedThemeId) {
-        config.defaultTheme = resolvedThemeId;
-      }
+      this.rebuildSystemPromptForCurrentPersona(this.previousSessionSummary, {
+        showUnknownSkills: true,
+      });
 
-      this.config = config;
-      this.engine.setConfig(this.config);
-      this.bashCommands = bashCommands;
-
-      // Update the personas and prompts lists
-      if (personas.length > 0) {
-        this.personas = personas;
-      }
-      this.prompts = prompts;
-      this.skills = skills;
-      this.themes = themes;
-      this.activeThemeId = resolvedThemeId ?? previousThemeId;
-      this.view.updateTheme({ themeId: resolvedThemeId, themes });
-
-      // Try to preserve the current persona; fall back to first if not found
-      const currentPersonaId = this.currentPersona.id.toLowerCase();
-      const personaSource = this.personas;
-      const updatedPersona = personaSource.find((p) => p.id.toLowerCase() === currentPersonaId);
-
-      if (updatedPersona) {
-        this.currentPersona = updatedPersona;
-        this.clampPersonaReasoning(this.currentPersona);
-      } else if (personaSource.length > 0) {
-        // Persona no longer exists; switch to the first one
-        this.currentPersona = personaSource[0]!;
-        this.clampPersonaReasoning(this.currentPersona);
-        this.view.addSystemMessage(
-          `previous persona no longer available; switched to ${this.currentPersona.label || this.currentPersona.id}.`,
-          "warn",
-        );
-      }
-      // Rebuild system prompt and update the engine
-      const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-      this.rebuildSystemPrompt(this.previousSessionSummary, skillsContext.skillsBlock);
-
-      if (skillsContext.unknown.length > 0) {
-        this.view.addSystemMessage(
-          `unknown skills enabled: ${skillsContext.unknown.join(", ")}`,
-          "warn",
-        );
-      }
-
-      // Update UI
       this.refreshStatus();
 
-      // Display summary
-      const personaCount = personas.length;
-      const promptCount = prompts.length;
-      const skillCount = skills.length;
-      const themeCount = themes.length;
-      const bashCount = bashCommands.length;
-      const errorCount = warnings.length;
-      const summary =
-        errorCount > 0
-          ? `reloaded: ${personaCount} personas, ${promptCount} prompts, ${skillCount} skills, ${themeCount} themes, ${bashCount} bash commands (${errorCount} errors).`
-          : `reloaded: ${personaCount} personas, ${promptCount} prompts, ${skillCount} skills, ${themeCount} themes, ${bashCount} bash commands.`;
-
+      const summary = this.buildReloadSummary(report);
       this.view.addSystemMessage(summary, "success");
       this.view.requestRender();
     } catch (err) {

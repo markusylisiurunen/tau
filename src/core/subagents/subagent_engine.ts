@@ -17,6 +17,7 @@ import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { createLocalToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolDispatchContext, ToolRegistry, ToolUiEvent } from "../tools/registry.js";
 import type { RiskLevel } from "../types.js";
+import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import { extractAssistantText } from "../utils/messages.js";
@@ -80,10 +81,19 @@ export async function runSubagent(options: {
   onProgress?: (event: SubagentProgressEvent) => void;
   onToolUiEvent?: (event: SubagentToolUiEvent) => void;
   sessionId?: string;
+  personaId?: string;
   subagentContext?: ToolDispatchContext["subagentContext"];
 }): Promise<SubagentRunResult> {
-  const { runtimeConfig, prompt, config, signal, onProgress, onToolUiEvent, subagentContext } =
-    options;
+  const {
+    runtimeConfig,
+    prompt,
+    config,
+    signal,
+    onProgress,
+    onToolUiEvent,
+    subagentContext,
+    personaId,
+  } = options;
   const authPath = options.authPath ?? getAuthPath();
   const authStorage = new AuthStorage(authPath);
   const credentialResolver: CredentialResolver = createCredentialResolver({
@@ -211,8 +221,20 @@ export async function runSubagent(options: {
     }
 
     messages.push(finalMessage);
+    appendUsageLogEntry({
+      timestamp: finalMessage.timestamp,
+      sessionId,
+      personaId,
+      provider: finalMessage.provider,
+      model: finalMessage.model,
+      api: finalMessage.api,
+      reasoningEffort: runtimeConfig.settings?.reasoning ?? "none",
+      usage: getUsageTotals(finalMessage.usage),
+      cost: { total: getUsageCostTotal(finalMessage.usage) },
+      agent: { type: "subagent", name: runtimeConfig.name },
+    });
     turns++;
-    costTotal += finalMessage.usage?.cost?.total ?? 0;
+    costTotal += getUsageCostTotal(finalMessage.usage);
 
     const messageToolCalls = finalMessage.content.filter(isToolCall);
     toolCalls += messageToolCalls.length;

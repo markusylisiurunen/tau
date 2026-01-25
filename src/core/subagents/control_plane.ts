@@ -122,6 +122,7 @@ export class SubagentControlPlane {
     config: Config;
     authPath?: string;
     backend: ToolExecutionBackend;
+    personaId?: string;
   }): SubagentSpawnResult {
     if (this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS) {
       return {
@@ -132,7 +133,7 @@ export class SubagentControlPlane {
       };
     }
 
-    const { runtimeConfig, prompt, title, config, authPath, backend } = options;
+    const { runtimeConfig, prompt, title, config, authPath, backend, personaId } = options;
     const id = randomUUID();
     const controller = new AbortController();
     const startedAt = Date.now();
@@ -171,6 +172,7 @@ export class SubagentControlPlane {
       backend,
       signal: controller.signal,
       sessionId: id,
+      personaId,
       subagentContext,
       onProgress: (event) => this.recordProgress(id, event),
       onToolUiEvent: (event) => this.recordToolUiEvent(id, event),

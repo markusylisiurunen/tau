@@ -54,8 +54,8 @@ export type { Checkpoint } from "./session/checkpoint.js";
 export { createCheckpoint, parseCheckpoint } from "./session/checkpoint.js";
 export { createBashToolDefinition } from "./tools/bash.js";
 export { ToolCatalog } from "./tools/catalog.js";
-export { createEmitOutputToolDefinition } from "./tools/emit_output.js";
 export { createEditToolDefinition } from "./tools/edit.js";
+export { createEmitOutputToolDefinition } from "./tools/emit_output.js";
 export {
   createLocalToolExecutionBackend,
   createSandboxToolExecutionBackend,
@@ -70,3 +70,4 @@ export { createWaitForAgentToolDefinition } from "./tools/wait_for_agent.js";
 export { createWriteToolDefinition } from "./tools/write.js";
 export type { Persona, ReasoningEffort, RiskLevel, Skill } from "./types.js";
 export { REASONING_LEVELS } from "./types.js";
+export { printUsageHelp, runUsageCommand, UsageCliError } from "./usage/cli.js";

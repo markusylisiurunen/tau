@@ -184,6 +184,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             config: context.config ?? {},
             authPath: context.authPath,
             backend,
+            personaId: context.persona?.id,
           });
 
           if (!spawnResult.ok) {

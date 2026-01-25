@@ -1,8 +1,8 @@
 import type { Config } from "../config/index.js";
 import type { SubagentToolName } from "../subagents/types.js";
 import { createBashToolDefinition } from "./bash.js";
-import { createEmitOutputToolDefinition } from "./emit_output.js";
 import { createEditToolDefinition } from "./edit.js";
+import { createEmitOutputToolDefinition } from "./emit_output.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition } from "./registry.js";
 import { ToolRegistry } from "./registry.js";

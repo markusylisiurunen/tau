@@ -29,10 +29,13 @@ import {
   parsePersonaString,
   printDebugInfo,
   printHelp,
+  printUsageHelp,
   runListCommand,
   runLoginCommand,
   runLogoutCommand,
+  runUsageCommand,
   ToolCatalog,
+  UsageCliError,
 } from "./core/index.js";
 import { ChatApp } from "./tui/index.js";
 
@@ -140,6 +143,23 @@ if (argv[0] === "auth") {
     process.exit(1);
   } finally {
     rl.close();
+  }
+}
+
+if (argv[0] === "usage") {
+  try {
+    await runUsageCommand(argv.slice(1));
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof UsageCliError) {
+      // eslint-disable-next-line no-console
+      console.error(err.message);
+      // eslint-disable-next-line no-console
+      console.error("");
+      printUsageHelp();
+      process.exit(1);
+    }
+    throw err;
   }
 }
 

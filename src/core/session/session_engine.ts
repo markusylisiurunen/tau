@@ -18,6 +18,7 @@ import { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
 import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
+import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
@@ -256,6 +257,18 @@ export class SessionEngine {
       });
 
       this.messages.push(finalMessage);
+      appendUsageLogEntry({
+        timestamp: finalMessage.timestamp,
+        sessionId: this.sessionId,
+        personaId: this.persona.id,
+        provider: finalMessage.provider,
+        model: finalMessage.model,
+        api: finalMessage.api,
+        reasoningEffort: this.persona.settings.reasoning ?? "none",
+        usage: getUsageTotals(finalMessage.usage),
+        cost: { total: getUsageCostTotal(finalMessage.usage) },
+        agent: { type: "main" },
+      });
       yield { type: "assistant_final", message: finalMessage };
       return { finalMessage };
     } catch (err) {

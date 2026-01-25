@@ -66,6 +66,17 @@ only use that account and will not fail over.
 `openai-codex` does **not** use `OPENAI_API_KEY` or `apiKeys.openai`; it relies on the OAuth
 tokens in `~/.config/tau/auth.json`.
 
+## usage logging
+
+tau writes JSONL usage logs to `~/.config/tau/logs/usage-YYYY-MM-DD.jsonl` for every assistant
+response (main and sub-agent). summarize usage with:
+
+```sh
+tau usage --since 2025-01-01 --persona gpt-5.2-coder
+```
+
+filters: `--since`, `--persona`, `--provider`, `--model`.
+
 ## security notice
 
 **the risk level system is a UX guardrail, not a hard security boundary.** it helps prevent accidental writes and guides model behavior, but it has significant limitations:

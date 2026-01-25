@@ -238,6 +238,7 @@ export function printHelp(personas: Persona[]): void {
       "notes:",
       "  use `tau auth login codex` to authenticate ChatGPT subscription credentials.",
       "  use `tau auth logout codex --account <email>` to remove stored OAuth credentials.",
+      "  use `tau usage` to view daily usage totals from ~/.config/tau/logs.",
       "  you can switch persona during a session with /persona:<id>.",
       "  insert predefined prompt templates with /prompt:<id>.",
       "  you can change model risk level during a session with /risk:read-only or /risk:read-write.",

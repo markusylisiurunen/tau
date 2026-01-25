@@ -215,6 +215,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau auth login codex` - OAuth login for ChatGPT Plus/Pro; stores `~/.config/tau/auth.json`
 - `tau auth list` - List authenticated accounts and usage windows
 - `tau auth logout codex --account <email>` - Remove stored OAuth credentials
+- `tau usage` - Summarize usage logs from `~/.config/tau/logs/`
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 
 ## Commands

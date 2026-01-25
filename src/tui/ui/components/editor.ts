@@ -498,8 +498,18 @@ export class Editor implements Component {
           this.state.lines = result.lines;
           this.state.cursorLine = result.cursorLine;
           this.state.cursorCol = result.cursorCol;
+          const shouldRetrigger =
+            this.autocompletePrefix.startsWith("@") &&
+            this.shouldRetriggerMentionAutocomplete(
+              result.lines,
+              result.cursorLine,
+              result.cursorCol,
+            );
           this.cancelAutocomplete();
           if (this.onChange) this.onChange(this.getText());
+          if (shouldRetrigger) {
+            this.tryTriggerAutocomplete();
+          }
         }
         return;
       }
@@ -522,8 +532,18 @@ export class Editor implements Component {
             this.cancelAutocomplete();
             // Fall through to submit
           } else {
+            const shouldRetrigger =
+              this.autocompletePrefix.startsWith("@") &&
+              this.shouldRetriggerMentionAutocomplete(
+                result.lines,
+                result.cursorLine,
+                result.cursorCol,
+              );
             this.cancelAutocomplete();
             if (this.onChange) this.onChange(this.getText());
+            if (shouldRetrigger) {
+              this.tryTriggerAutocomplete();
+            }
             return;
           }
         }
@@ -809,7 +829,7 @@ export class Editor implements Component {
       if (sanitized === "/" && this.isAtStartOfMessage()) {
         this.tryTriggerAutocomplete();
       }
-      // Auto-trigger for "@" file reference (fuzzy search)
+      // Auto-trigger for "@" mention tags
       else if (sanitized === "@") {
         const currentLine = this.state.lines[this.state.cursorLine] || "";
         const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
@@ -827,8 +847,8 @@ export class Editor implements Component {
         if (textBeforeCursor.trimStart().startsWith("/")) {
           this.tryTriggerAutocomplete();
         }
-        // Check if we're in an @ file reference context
-        else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
+        // Check if we're in an @ mention context
+        else if (this.isMentionAutocompleteContext(textBeforeCursor)) {
           this.tryTriggerAutocomplete();
         }
       }
@@ -1005,8 +1025,8 @@ export class Editor implements Component {
       if (textBeforeCursor.trimStart().startsWith("/")) {
         this.tryTriggerAutocomplete();
       }
-      // @ file reference context
-      else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
+      // @ mention context
+      else if (this.isMentionAutocompleteContext(textBeforeCursor)) {
         this.tryTriggerAutocomplete();
       }
     }
@@ -1132,8 +1152,8 @@ export class Editor implements Component {
       if (textBeforeCursor.trimStart().startsWith("/")) {
         this.tryTriggerAutocomplete();
       }
-      // @ file reference context
-      else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
+      // @ mention context
+      else if (this.isMentionAutocompleteContext(textBeforeCursor)) {
         this.tryTriggerAutocomplete();
       }
     }
@@ -1363,6 +1383,20 @@ export class Editor implements Component {
 
     // At start if line is empty, only contains whitespace, or is just "/"
     return beforeCursor.trim() === "" || beforeCursor.trim() === "/";
+  }
+
+  private isMentionAutocompleteContext(textBeforeCursor: string): boolean {
+    return /(?:^|[\s])@[^\s]*$/.test(textBeforeCursor);
+  }
+
+  private shouldRetriggerMentionAutocomplete(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+  ): boolean {
+    const line = lines[cursorLine] ?? "";
+    const beforeCursor = line.slice(0, cursorCol);
+    return /(?:^|[\s])@[a-z-]+:$/.test(beforeCursor);
   }
 
   // Autocomplete methods

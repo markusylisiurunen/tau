@@ -305,7 +305,7 @@ the compact commands are useful when conversations get long. they compress every
 | `ctrl+p`    | cycle personality                  |
 | `ctrl+t`    | toggle thinking visibility         |
 | `ctrl+o`    | toggle compact tool display        |
-| `ctrl+f`    | expand @file and $skill mentions   |
+| `ctrl+f`    | expand @file: and @skill: mentions |
 | `ctrl+s`    | stash input to clipboard           |
 | `enter x2`  | retry last response on empty input |
 | `esc x2`    | clear current prompt               |

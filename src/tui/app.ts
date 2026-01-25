@@ -75,6 +75,7 @@ export class ChatApp implements ModeAdapter {
         sources.bashCommands,
         sources.projectFiles,
         sources.skills,
+        sources.subagents,
         sources.riskLevels,
       ),
     );

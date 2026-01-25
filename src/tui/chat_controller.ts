@@ -316,6 +316,7 @@ export class ChatController {
     bashCommands: () => Array<{ id: string; description?: string }>;
     projectFiles: () => string[];
     skills: () => string[];
+    subagents: () => string[];
     riskLevels: () => RiskLevel[];
   } {
     return {
@@ -329,6 +330,7 @@ export class ChatController {
         })),
       projectFiles: () => this.projectFiles,
       skills: () => this.skills.map((skill) => skill.name),
+      subagents: () => this.getVisibleSubagentsForPersona(this.currentPersona),
       riskLevels: () => ALLOWED_RISK_LEVELS,
     };
   }
@@ -747,6 +749,13 @@ export class ChatController {
     }
 
     return { skills: enabled, unknown };
+  }
+
+  private getVisibleSubagentsForPersona(persona: Persona): string[] {
+    if (!persona.subagents) return [];
+    return Object.entries(persona.subagents)
+      .filter(([, config]) => config !== undefined)
+      .map(([name]) => name);
   }
 
   private getSkillsIndexBlockForPersona(persona: Persona): {
@@ -2035,15 +2044,17 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     const editorText = this.view.getEditorText();
 
-    // Extract @path and $skill tokens
-    const tokenRegex = /([@$])([^\s]+)/g;
-    const tokens: Array<{ type: "file" | "skill"; token: string }> = [];
+    // Extract @file: and @skill: tokens
+    const tokenRegex = /@([a-z-]+):([^\s]+)/g;
+    const tokens: Array<{ type: "file" | "skill"; value: string }> = [];
     let match: RegExpExecArray | null = null;
     // biome-ignore lint/suspicious/noAssignInExpressions: regex iteration pattern
     while ((match = tokenRegex.exec(editorText)) !== null) {
+      const kind = match[1];
+      if (kind !== "file" && kind !== "skill") continue;
       tokens.push({
-        type: match[1] === "@" ? "file" : "skill",
-        token: match[2]!,
+        type: kind,
+        value: match[2]!,
       });
     }
 
@@ -2063,8 +2074,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     const seenSkills = new Set(this.expandedSkillsInCurrentPrompt);
 
     for (const entry of tokens) {
-      // Strip trailing punctuation to handle cases like "@src/tui/app.ts," or "(see @README.md)"
-      const cleanToken = entry.token.replace(/[.,;:)}\]]+$/, "");
+      // Strip trailing punctuation to handle cases like "@file:src/tui/app.ts," or "(see @file:README.md)"
+      const cleanToken = entry.value.replace(/[.,;:)}\]]+$/, "");
       if (entry.type === "file") {
         if (projectFilesSet.has(cleanToken) && !seenFiles.has(cleanToken)) {
           expansions.push({ type: "file", path: cleanToken });
@@ -2073,7 +2084,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       } else {
         const key = cleanToken.toLowerCase();
         const skill = skillsByName.get(key);
-        if (!skill) continue; // Only expand $mentions that match a loaded skill.
+        if (!skill) continue; // Only expand @skill mentions that match a loaded skill.
         if (seenSkills.has(key)) continue;
         expansions.push({ type: "skill", skill });
         seenSkills.add(key);

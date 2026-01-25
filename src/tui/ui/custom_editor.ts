@@ -2,7 +2,7 @@ import { Key, matchesKey, visibleWidth } from "@mariozechner/pi-tui";
 import { DOUBLE_PRESS_WINDOW_MS } from "../constants.js";
 import { Editor } from "./components/editor.js";
 import { truncateFromEndByWidth } from "./components/one_line_segments.js";
-import { getSkillAutocompleteToken } from "./slash_autocomplete.js";
+import { getMentionAutocompleteToken } from "./slash_autocomplete.js";
 import type { Theme } from "./theme/index.js";
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -224,10 +224,10 @@ export class CustomEditor extends Editor {
       this.scrollTop = 0;
     }
 
-    this.tryTriggerSkillAutocomplete(data);
+    this.tryTriggerMentionAutocomplete(data);
   }
 
-  private tryTriggerSkillAutocomplete(data: string): void {
+  private tryTriggerMentionAutocomplete(data: string): void {
     if (this.isShowingAutocomplete()) return;
     if (!this.shouldTriggerAutocompleteForInput(data)) return;
 
@@ -235,7 +235,7 @@ export class CustomEditor extends Editor {
     const current = this.getLines()[line] ?? "";
     const beforeCursor = current.slice(0, col);
 
-    if (!getSkillAutocompleteToken(beforeCursor)) return;
+    if (!getMentionAutocompleteToken(beforeCursor)) return;
 
     this.tryTriggerAutocomplete();
   }

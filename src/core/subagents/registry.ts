@@ -101,5 +101,5 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
       return `- \`${name}\`: ${description}`;
     })
     .join("\n");
-  return `\n\n### Available sub-agents\n\nYou have access to the following sub-agents:\n\n${subagentLines}`;
+  return `\n\n### Available sub-agents\n\nYou have access to the following sub-agents:\n\n${subagentLines}\n\nTag tasks with \`@agent:<name>\` to indicate the intended sub-agent. Tags do not automatically spawn sub-agents.`;
 }

@@ -16,11 +16,11 @@ import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js"
 import { TOOL_NAME_WAIT_FOR_AGENT } from "./tool_names.js";
 
 const WAIT_FOR_AGENT_DESCRIPTION = [
-  "Wait for one or more subagents to finish and return their outputs.",
-  "Provide the list of subagent ids returned by spawn_agent.",
+  "Wait for one or more subagents to finish.",
+  "Returns status and outputs for each id from spawn_agent.",
 ].join(" ");
 
-const WAIT_FOR_AGENT_IDS_DESCRIPTION = "List of subagent ids to wait for.";
+const WAIT_FOR_AGENT_IDS_DESCRIPTION = "Subagent ids to wait for.";
 const WAIT_FOR_AGENT_OUTPUT_MAX_TOKENS = 256;
 
 export const WAIT_FOR_AGENT_TOOL: Tool = {

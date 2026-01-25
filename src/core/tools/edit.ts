@@ -15,18 +15,20 @@ import type {
 import { TOOL_NAME_EDIT } from "./tool_names.js";
 
 const EDIT_DESCRIPTION = [
-  "Edit a file by replacing exact text matches.",
-  "Finds and replaces exactly one occurrence of oldText with newText.",
-  "Fails if the file doesn't exist, if oldText is not found, or if multiple matches exist.",
+  "Replace one exact text block in a file.",
+  "oldText must match exactly once, including whitespace and newlines.",
+  "Fails if the file is missing, the text is not found, or multiple matches exist.",
+  "Use write for large rewrites. Requires read-write risk level.",
 ].join(" ");
 
 const EDIT_PATH_DESCRIPTION = "Absolute or relative path to the file to edit.";
 const EDIT_OLD_TEXT_DESCRIPTION = [
-  "The exact text to find and replace, including whitespace and newlines.",
+  "Exact text to replace, including whitespace and newlines.",
   "Must match exactly one occurrence.",
-  "If multiple matches are found, you should re-attempt with a more specific oldText.",
+  "If multiple matches are found, narrow oldText to a more specific snippet.",
 ].join(" ");
-const EDIT_NEW_TEXT_DESCRIPTION = "The text to replace oldText with.";
+const EDIT_NEW_TEXT_DESCRIPTION = "Replacement text. Use an empty string to delete the match.";
+const EDIT_DIFF_LCS_MAX_LINES = 1024;
 
 export const EDIT_TOOL: Tool = {
   name: TOOL_NAME_EDIT,

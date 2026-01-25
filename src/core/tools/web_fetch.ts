@@ -21,24 +21,20 @@ import type {
 import { TOOL_NAME_WEB_FETCH } from "./tool_names.js";
 
 const WEB_FETCH_DESCRIPTION = [
-  "Fetch and extract relevant content from a URL.",
-  "When you are interested in only a specific part, use excerpts=true and fullContent=false.",
-  "When you don't have a specific question or otherwise need the entire content of the page, use fullContent=true.",
-  "You can provide an objective and/or searchQueries to focus the extraction on specific topics or keywords.",
-  "Be mindful of the potential size of the content being fetched, especially when using fullContent=true.",
-  "You may use maxCharsPerResult to limit the size of the extracted content if needed.",
+  "Fetch a URL and extract relevant content.",
+  "Use excerpts=true for targeted snippets, fullContent=true for a full page.",
+  "Provide objective or searchQueries to focus extraction.",
+  "Use maxCharsPerResult to cap size, especially with fullContent.",
+  "Requires a Parallel API key in config.",
 ].join(" ");
 
 const WEB_FETCH_URL_DESCRIPTION = "URL to fetch.";
-const WEB_FETCH_OBJECTIVE_DESCRIPTION =
-  "If provided, focuses extracted content on the specified search objective.";
-const WEB_FETCH_SEARCH_QUERIES_DESCRIPTION =
-  "If provided, focuses extracted content on the specified keyword search queries.";
-const WEB_FETCH_EXCERPTS_DESCRIPTION =
-  "Include excerpts from URL relevant to the search objective and queries.";
-const WEB_FETCH_FULL_CONTENT_DESCRIPTION = "Include full content from URL. Can be large.";
+const WEB_FETCH_OBJECTIVE_DESCRIPTION = "Focus extraction on a question or topic.";
+const WEB_FETCH_SEARCH_QUERIES_DESCRIPTION = "Keyword hints to focus extraction.";
+const WEB_FETCH_EXCERPTS_DESCRIPTION = "Return relevant excerpts from the page.";
+const WEB_FETCH_FULL_CONTENT_DESCRIPTION = "Return full page content. Can be large.";
 const WEB_FETCH_MAX_CHARS_PER_RESULT_DESCRIPTION =
-  "Max number of characters per extracted excerpt.";
+  "Max characters per excerpt or full page content.";
 
 export const WEB_FETCH_TOOL: Tool = {
   name: TOOL_NAME_WEB_FETCH,

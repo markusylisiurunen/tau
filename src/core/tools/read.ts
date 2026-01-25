@@ -23,11 +23,16 @@ import { TOOL_NAME_READ } from "./tool_names.js";
 export const READ_TOOL_MAX_TOKENS = 8192;
 export const READ_MAX_CAPTURE_BYTES = 1024 * 1024;
 
-const READ_DESCRIPTION = ["Read a file from the project safely."].join(" ");
+const READ_DESCRIPTION = [
+  "Read file contents, optionally by line range.",
+  "Use startLine/endLine (1-based, inclusive) to limit output.",
+  "Output may be truncated for the model.",
+].join(" ");
 
-const READ_PATH_DESCRIPTION = "File path to read (relative to the current working directory).";
-const READ_START_LINE_DESCRIPTION = "1-based inclusive start line.";
-const READ_END_LINE_DESCRIPTION = "1-based inclusive end line.";
+const READ_PATH_DESCRIPTION =
+  "File path to read (absolute or relative to the current working directory).";
+const READ_START_LINE_DESCRIPTION = "1-based inclusive start line. Defaults to 1.";
+const READ_END_LINE_DESCRIPTION = "1-based inclusive end line. Defaults to EOF.";
 
 export const READ_TOOL: Tool = {
   name: TOOL_NAME_READ,

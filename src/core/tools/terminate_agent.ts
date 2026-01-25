@@ -15,7 +15,7 @@ import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js"
 import { TOOL_NAME_TERMINATE_AGENT } from "./tool_names.js";
 
 const TERMINATE_AGENT_DESCRIPTION = [
-  "Terminate a running subagent and return its final status.",
+  "Stop a running subagent and return its latest status and outputs.",
   "If the subagent already finished, this returns its latest status snapshot.",
 ].join(" ");
 

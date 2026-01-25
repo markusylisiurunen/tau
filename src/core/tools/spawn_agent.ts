@@ -18,26 +18,24 @@ import { buildSubagentUiText } from "./subagent_ui.js";
 import { TOOL_NAME_SPAWN_AGENT } from "./tool_names.js";
 
 const SPAWN_AGENT_DESCRIPTION = [
-  "Spawn a subagent to run in the background and return its id.",
-  "Use wait_for_agent to collect outputs once it finishes.",
-  "See your system instructions for available subagents and their capabilities.",
+  "Launch a background subagent and return its id.",
+  "Use wait_for_agent to retrieve outputs when it finishes.",
+  "The prompt must be self-contained because subagents cannot ask follow-up questions.",
 ].join(" ");
 
 const SPAWN_AGENT_NAME_DESCRIPTION = [
   "Subagent name to run.",
-  "Available subagents depend on the current persona configuration.",
+  "Must match a subagent enabled for the current persona.",
 ].join(" ");
 
 const SPAWN_AGENT_TITLE_DESCRIPTION = [
-  "A short human-friendly UI title shown while the subagent runs.",
-  "Do not use title case; all lower-case is preferred except for proper nouns.",
+  "Short UI title shown while the subagent runs.",
+  "Avoid title case; use lower-case except for proper nouns.",
 ].join(" ");
 
 const SPAWN_AGENT_PROMPT_DESCRIPTION = [
-  "The prompt to send to the subagent.",
-  "This is the only input the subagent will receive; it must be self-contained and specific.",
-  "Include all necessary context and instructions in the prompt for the subagent to complete " +
-    "the request successfully.",
+  "Prompt to send to the subagent.",
+  "This is the only input the subagent receives, so include all context, file paths, and expectations.",
 ].join(" ");
 
 const SPAWN_AGENT_MODEL_DESCRIPTION = [

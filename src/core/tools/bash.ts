@@ -70,26 +70,25 @@ export function getBashOutputPolicy(args: {
 export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 
 const BASH_DESCRIPTION = [
-  "Execute a shell command in the current working directory and return its output.",
-  "Interactive commands are not supported (no TTY/stdin); commands that prompt or open editors will hang or fail.",
-  "CRITICAL: Always evaluate and provide an accurate safetyLevel assessment.",
+  "Run a shell command and return stdout/stderr.",
+  "No TTY or stdin is available, so avoid interactive prompts or editors.",
+  "Set safetyLevel to reflect whether the command can change state.",
 ].join(" ");
 
-const BASH_COMMAND_DESCRIPTION = "The shell command to execute.";
+const BASH_COMMAND_DESCRIPTION = "Command to execute. Avoid `cd`; use workingDirectory instead.";
 
 const BASH_SAFETY_LEVEL_DESCRIPTION = [
-  "Safety classification: 'read' (query-only, no side effects) or 'write' (modifies or has the potential to modify system state).",
-  "Use 'read' for: queries (ls, rg, cat, fd, find, ps, df, etc), information gathering (curl for APIs, git log, etc), analysis (wc, sort, sha256sum, etc).",
-  "Use 'write' for: filesystem changes (cp, mv, rm, mkdir, touch, echo >, etc), file modifications (sed -i, tee, chmod, chown, etc), process management (kill, pkill, etc), package management (apt, npm, etc), network changes (firewall, DNS, interfaces, etc), or any command that creates/deletes/modifies resources.",
-  "When in doubt, default to 'write' to be conservative. The system will enforce appropriate access controls based on your declared safetyLevel.",
-  "Always respect and strictly adhere to user-defined risk tolerance levels; never exceed the configured risk level under any circumstances.",
+  "Classify the command as 'read' (observation only) or 'write' (can change files, processes, packages, or network state).",
+  "Examples of read: ls, rg, cat, git log, ps, df, curl to fetch data.",
+  "Examples of write: rm, mv, sed -i, npm install, kill, chmod, git commit.",
+  "When unsure, choose 'write'. Never exceed the current risk level.",
 ].join(" ");
 
 const BASH_WORKING_DIRECTORY_DESCRIPTION =
-  "Working directory for the command. If omitted, uses the current working directory. Prefer this over `cd` in the command.";
+  "Working directory for the command. If omitted, uses the current working directory. Prefer this over `cd`.";
 
 const BASH_TIMEOUT_DESCRIPTION =
-  "Timeout in milliseconds. If omitted, defaults to 60 seconds. Use a longer timeout for known slow operations like builds or large clones.";
+  "Timeout in milliseconds. Defaults to 60 seconds. Increase for slow operations like builds or large clones.";
 
 const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
   "Optional maximum number of output tokens to return to the model.",

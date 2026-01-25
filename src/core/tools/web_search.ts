@@ -21,20 +21,21 @@ import type {
 import { TOOL_NAME_WEB_SEARCH } from "./tool_names.js";
 
 const WEB_SEARCH_DESCRIPTION = [
-  "Search the web for relevant sources.",
-  "Use this to discover good candidate URLs before fetching content with web_fetch.",
-  "Provide a clear objective describing what you are trying to find (preferred sources, recency, and constraints help).",
-  "Optionally provide searchQueries for keyword-style guidance.",
-  "Use includeDomains/excludeDomains to enforce source policies when needed.",
-  "You may adjust maxResults and maxCharsPerResult to balance coverage vs token usage.",
+  "Search the web for sources and candidate URLs.",
+  "Use this before web_fetch to decide what to fetch.",
+  "Provide a clear objective and optional keyword queries.",
+  "Use includeDomains or excludeDomains to enforce source policies.",
+  "Tune maxResults and maxCharsPerResult to balance coverage with token cost.",
+  "Requires a Parallel API key in config.",
 ].join(" ");
 
-const WEB_SEARCH_OBJECTIVE_DESCRIPTION = "What you are trying to find out.";
-const WEB_SEARCH_SEARCH_QUERIES_DESCRIPTION = "Optional keyword-style queries to guide the search.";
-const WEB_SEARCH_MAX_RESULTS_DESCRIPTION = "Max number of results to return.";
-const WEB_SEARCH_MAX_CHARS_PER_RESULT_DESCRIPTION = "Max characters per result excerpt.";
-const WEB_SEARCH_INCLUDE_DOMAINS_DESCRIPTION = "List of domains to include in search.";
-const WEB_SEARCH_EXCLUDE_DOMAINS_DESCRIPTION = "List of domains to exclude from search.";
+const WEB_SEARCH_OBJECTIVE_DESCRIPTION =
+  "What you are trying to find, including preferred sources or time range if relevant.";
+const WEB_SEARCH_SEARCH_QUERIES_DESCRIPTION = "Optional keyword queries to bias the search.";
+const WEB_SEARCH_MAX_RESULTS_DESCRIPTION = "Number of results to return (1-50).";
+const WEB_SEARCH_MAX_CHARS_PER_RESULT_DESCRIPTION = "Max characters per result excerpt (200-50k).";
+const WEB_SEARCH_INCLUDE_DOMAINS_DESCRIPTION = "Domains to include (no scheme).";
+const WEB_SEARCH_EXCLUDE_DOMAINS_DESCRIPTION = "Domains to exclude (no scheme).";
 
 export const WEB_SEARCH_TOOL: Tool = {
   name: TOOL_NAME_WEB_SEARCH,

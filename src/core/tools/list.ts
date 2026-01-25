@@ -19,12 +19,15 @@ export const LIST_MAX_ENTRIES = 4096;
 
 const LIST_DEFAULT_LIMIT = 256;
 
-const LIST_DESCRIPTION = ["List files in a directory (non-recursive)."].join(" ");
+const LIST_DESCRIPTION = [
+  "List directory entries, non-recursive and sorted.",
+  "Appends '/' to directories and '@' to symlinks.",
+].join(" ");
 
 const LIST_PATH_DESCRIPTION =
-  "Directory path to list (relative to the current working directory). Use '.' for root.";
-const LIST_OFFSET_DESCRIPTION = "Number of entries to skip.";
-const LIST_LIMIT_DESCRIPTION = "Max number of entries to return (<= 4096).";
+  "Directory to list (absolute or relative to the current working directory). Use '.' for the current directory.";
+const LIST_OFFSET_DESCRIPTION = "Number of entries to skip for paging.";
+const LIST_LIMIT_DESCRIPTION = "Maximum entries to return (default 256, capped at 4096).";
 
 export const LIST_TOOL: Tool = {
   name: TOOL_NAME_LIST,

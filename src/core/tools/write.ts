@@ -21,12 +21,13 @@ import type {
 import { TOOL_NAME_WRITE } from "./tool_names.js";
 
 const WRITE_DESCRIPTION = [
-  "Write content to a file, creating the file if it doesn't exist or overwriting if it does.",
-  "Creates parent directories as needed.",
+  "Create or overwrite a file with the provided content.",
+  "Parent directories are created as needed.",
+  "Requires read-write risk level.",
 ].join(" ");
 
-const WRITE_PATH_DESCRIPTION = "Absolute or relative path to the file to write.";
-const WRITE_CONTENT_DESCRIPTION = "The content to write to the file.";
+const WRITE_PATH_DESCRIPTION = "Absolute or relative path for the file to write.";
+const WRITE_CONTENT_DESCRIPTION = "Full file contents to write.";
 
 export const WRITE_TOOL: Tool = {
   name: TOOL_NAME_WRITE,

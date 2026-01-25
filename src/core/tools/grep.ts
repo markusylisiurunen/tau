@@ -20,23 +20,25 @@ export const GREP_TOOL_MAX_TOKENS = 8192;
 
 export const GREP_DEFAULT_TIMEOUT_MS = 60_000;
 
-const GREP_DESCRIPTION = ["Search the project with ripgrep (rg).", "Runs without a shell."].join(
-  " ",
-);
+const GREP_DESCRIPTION = [
+  "Search files with ripgrep (rg) without a shell.",
+  "Supports regex, globs, and context lines.",
+  "Prefer this over bash rg when available for consistent output.",
+].join(" ");
 
-const GREP_PATTERN_DESCRIPTION = "Search pattern (ripgrep regex).";
+const GREP_PATTERN_DESCRIPTION =
+  "Search pattern. Regex by default, use fixedStrings for literal text.";
 const GREP_PATHS_DESCRIPTION =
-  "Paths to search (files or directories, relative to the current working directory).";
-const GREP_CASE_MODE_DESCRIPTION =
-  "Case sensitivity mode. Must be one of: smart, sensitive, insensitive.";
-const GREP_FIXED_STRINGS_DESCRIPTION = "Treat pattern as a literal string.";
-const GREP_WORD_REGEXP_DESCRIPTION = "Match only whole words.";
-const GREP_MAX_COUNT_DESCRIPTION = "Max matches per file.";
-const GREP_BEFORE_CONTEXT_DESCRIPTION = "Lines of context before.";
-const GREP_AFTER_CONTEXT_DESCRIPTION = "Lines of context after.";
-const GREP_CONTEXT_DESCRIPTION = "Lines of context before and after.";
-const GREP_GLOB_DESCRIPTION = "Include/exclude glob(s) passed via --glob.";
-const GREP_HIDDEN_DESCRIPTION = "Search hidden files and directories.";
+  "Files or directories to search (absolute or relative). Defaults to the current directory.";
+const GREP_CASE_MODE_DESCRIPTION = "Case sensitivity: smart (default), sensitive, or insensitive.";
+const GREP_FIXED_STRINGS_DESCRIPTION = "Treat the pattern as a literal string (no regex).";
+const GREP_WORD_REGEXP_DESCRIPTION = "Match whole words only.";
+const GREP_MAX_COUNT_DESCRIPTION = "Maximum matches per file.";
+const GREP_BEFORE_CONTEXT_DESCRIPTION = "Lines of context before each match.";
+const GREP_AFTER_CONTEXT_DESCRIPTION = "Lines of context after each match.";
+const GREP_CONTEXT_DESCRIPTION = "Lines of context before and after each match.";
+const GREP_GLOB_DESCRIPTION = "rg --glob pattern(s), use ! to exclude.";
+const GREP_HIDDEN_DESCRIPTION = "Include hidden files and directories.";
 
 export const GREP_TOOL: Tool = {
   name: TOOL_NAME_GREP,

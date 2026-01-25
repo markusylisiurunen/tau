@@ -64,6 +64,7 @@ export { createGrepToolDefinition } from "./tools/grep.js";
 export { createListToolDefinition } from "./tools/list.js";
 export { createReadToolDefinition } from "./tools/read.js";
 export { ToolRegistry } from "./tools/registry.js";
+export { createSendInputToAgentToolDefinition } from "./tools/send_input_to_agent.js";
 export { createSpawnAgentToolDefinition } from "./tools/spawn_agent.js";
 export { createTerminateAgentToolDefinition } from "./tools/terminate_agent.js";
 export { createWaitForAgentToolDefinition } from "./tools/wait_for_agent.js";

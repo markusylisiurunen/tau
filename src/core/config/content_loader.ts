@@ -13,6 +13,7 @@ import type {
 import { DEFAULT_SUBAGENT_NAME } from "../subagents/types.js";
 import { BASH_TOOL } from "../tools/bash.js";
 import { EDIT_TOOL } from "../tools/edit.js";
+import { SEND_INPUT_TO_AGENT_TOOL } from "../tools/send_input_to_agent.js";
 import { SPAWN_AGENT_TOOL } from "../tools/spawn_agent.js";
 import { TERMINATE_AGENT_TOOL } from "../tools/terminate_agent.js";
 import { WAIT_FOR_AGENT_TOOL } from "../tools/wait_for_agent.js";
@@ -528,12 +529,18 @@ const PERSONA_TOOL_DEFINITIONS = new Map([
   ["write", WRITE_TOOL],
   ["edit", EDIT_TOOL],
   ["spawn_agent", SPAWN_AGENT_TOOL],
+  ["send_input_to_agent", SEND_INPUT_TO_AGENT_TOOL],
   ["wait_for_agent", WAIT_FOR_AGENT_TOOL],
   ["terminate_agent", TERMINATE_AGENT_TOOL],
 ]);
 
 const DEFAULT_PERSONA_TOOLS = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
-const DEFAULT_SUBAGENT_TOOLS = [SPAWN_AGENT_TOOL, WAIT_FOR_AGENT_TOOL, TERMINATE_AGENT_TOOL];
+const DEFAULT_SUBAGENT_TOOLS = [
+  SPAWN_AGENT_TOOL,
+  SEND_INPUT_TO_AGENT_TOOL,
+  WAIT_FOR_AGENT_TOOL,
+  TERMINATE_AGENT_TOOL,
+];
 
 function parsePersona(
   file: string,

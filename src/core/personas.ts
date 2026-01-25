@@ -2,6 +2,7 @@ import { getModel } from "@mariozechner/pi-ai";
 import { DEFAULT_SUBAGENT_NAME, type SubagentConfigMap } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
+import { SEND_INPUT_TO_AGENT_TOOL } from "./tools/send_input_to_agent.js";
 import { SPAWN_AGENT_TOOL } from "./tools/spawn_agent.js";
 import { TERMINATE_AGENT_TOOL } from "./tools/terminate_agent.js";
 import { WAIT_FOR_AGENT_TOOL } from "./tools/wait_for_agent.js";
@@ -71,7 +72,7 @@ The user may refer to files by typing \`@file:\` followed by a path relative to 
 
 The user may refer to skills by typing \`@skill:\` followed by a skill name (e.g., \`@skill:skill-name\`). The \`@skill:\` prefix indicates a skill reference. When you see this notation, follow the skill guidelines and open its \`SKILL.md\` if needed.
 
-The user may tag subagents by typing \`@agent:\` followed by a subagent name (e.g., \`@agent:default\`). Tags identify the intended subagent for a task but do not automatically spawn a subagent. Use \`spawn_agent\` explicitly when needed.
+The user may tag subagents by typing \`@agent:\` followed by a subagent name (e.g., \`@agent:default\`). Tags identify the intended subagent for a task but do not automatically spawn a subagent. Use \`spawn_agent\` to start a subagent, and \`send_input_to_agent\` for follow-up inputs once it is idle.
 `.trim();
 
 const BLOCK_FILE_EDIT_GUIDELINES = `
@@ -247,6 +248,7 @@ const VARIANT_CONFIG: Record<Variant, { suffix: string; systemPrompt: string }> 
 const BASE_TOOLS: NonNullable<Persona["tools"]> = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
 const SUBAGENT_TOOLS: NonNullable<Persona["tools"]> = [
   SPAWN_AGENT_TOOL,
+  SEND_INPUT_TO_AGENT_TOOL,
   WAIT_FOR_AGENT_TOOL,
   TERMINATE_AGENT_TOOL,
 ];

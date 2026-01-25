@@ -90,6 +90,27 @@ describe("ToolUiRegistry", () => {
     expect(spawnFinished).toContain("spawned");
     expect(spawnFinished).toContain("agent-1");
 
+    const sendStarted = renderEvent(registry, theme, {
+      type: "send_input_to_agent_started",
+      toolCallId: "si1",
+      agentId: "agent-1",
+      name: "explore",
+      title: "scan repo",
+    });
+    expect(sendStarted).toContain("sending");
+
+    const sendFinished = renderEvent(registry, theme, {
+      type: "send_input_to_agent_finished",
+      toolCallId: "si1",
+      agentId: "agent-1",
+      name: "explore",
+      title: "scan repo",
+      status: "success",
+      uiText: makeUiText("    follow-up", "    (explore · agent-1)", "follow-up"),
+    });
+    expect(sendFinished).toContain("sent input");
+    expect(sendFinished).toContain("agent-1");
+
     const waitStarted = renderEvent(registry, theme, {
       type: "wait_for_agent_started",
       toolCallId: "w1",

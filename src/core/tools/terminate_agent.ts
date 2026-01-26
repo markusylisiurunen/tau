@@ -86,6 +86,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
       context?: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const { id } = parseTerminateArgs(toolCall.arguments);
+      const headerTarget = id || "(subagent)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -93,6 +94,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
           type: "terminate_agent_blocked",
           toolCallId: toolCall.id,
           agentId: id || undefined,
+          headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
@@ -113,6 +115,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
           type: "terminate_agent_started",
           toolCallId: toolCall.id,
           agentId: id,
+          headerTarget,
         },
         run: (async (): Promise<ToolDispatchResult> => {
           try {
@@ -123,6 +126,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
                 type: "terminate_agent_finished",
                 toolCallId: toolCall.id,
                 agentId: id,
+                headerTarget,
                 status: "error",
                 message,
               };
@@ -148,6 +152,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               type: "terminate_agent_finished",
               toolCallId: toolCall.id,
               agentId: id,
+              headerTarget,
               status: succeeded ? "success" : "error",
               finalStatus: result.status,
               message: succeeded ? undefined : `subagent finished with status ${result.status}`,
@@ -161,6 +166,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               type: "terminate_agent_finished",
               toolCallId: toolCall.id,
               agentId: id,
+              headerTarget,
               status: "error",
               message,
             };

@@ -1,27 +1,31 @@
 import type { ToolUiText } from "../../core/tools/registry.js";
 import type { Theme } from "./theme/index.js";
 import {
-  buildHeaderLine,
   buildSection,
+  buildToolHeaderLine,
   inlineText,
   renderToolOutput,
+  renderToolUiCompactText,
   renderToolUiTextLines,
   type ToolOutputViewModel,
 } from "./tool_output.js";
 
-export function buildBashRunningView(theme: Theme, command: string): ToolOutputViewModel {
+export function buildBashRunningView(
+  theme: Theme,
+  command: string,
+  headerTarget: string = command,
+): ToolOutputViewModel {
   const { palette, text } = theme;
   const runningColor = (s: string) => palette.actionRunning(s);
 
-  const commandInline = inlineText(command);
-  const header = buildHeaderLine({
+  const commandInline = inlineText(headerTarget);
+  const header = buildToolHeaderLine({
     bulletStyle: runningColor,
     bullet: "⏵",
     label: "running",
     labelStyle: palette.textMuted,
     accent: commandInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
 
   return {
@@ -37,6 +41,7 @@ export function buildBashExecutionView(
   exitCode: number | null,
   uiText: ToolUiText,
   labelOverride?: string,
+  headerTarget: string = command,
 ): ToolOutputViewModel {
   const { palette } = theme;
   const successColor = (s: string) => palette.actionSuccess(s);
@@ -45,34 +50,23 @@ export function buildBashExecutionView(
   const isSuccess = exitCode === 0;
   const resultColor = isSuccess ? successColor : errorColor;
 
-  const commandInline = inlineText(command);
+  const commandInline = inlineText(headerTarget);
 
-  const header = buildHeaderLine({
+  const header = buildToolHeaderLine({
     bulletStyle: isSuccess ? successBullet : errorColor,
     bullet: isSuccess ? "✓" : "✗",
     label: labelOverride ?? "ran",
     labelStyle: palette.textMuted,
     accent: commandInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
 
-  const previewStyle = palette.textDim;
-  const statusStyle = palette.textMuted;
-  const compactParts: string[] = [];
-  const previewText = renderToolUiTextLines({
+  const compactText = renderToolUiCompactText({
     uiText,
-    kind: "preview",
     theme,
-    baseStyle: previewStyle,
+    previewStyle: palette.textDim,
+    statusStyle: palette.textMuted,
   });
-  if (previewText) {
-    compactParts.push(previewText);
-  }
-  if (uiText.statusLine?.trim()) {
-    compactParts.push(statusStyle(uiText.statusLine));
-  }
-  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
   const fullStyle = palette.actionOutput;
   const fullText = renderToolUiTextLines({
     uiText,
@@ -98,6 +92,7 @@ export function buildBashBlockedView(
   theme: Theme,
   command: string,
   reason: string,
+  headerTarget: string = command,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const errorColor = (s: string) => palette.actionError(s);
@@ -105,17 +100,16 @@ export function buildBashBlockedView(
   const msg = reason.trim();
   const sections = buildSection(msg ? [errorColor(msg)] : []);
 
-  const commandInline = inlineText(command);
+  const commandInline = inlineText(headerTarget);
   const why = inlineText(reason);
 
-  const header = buildHeaderLine({
+  const header = buildToolHeaderLine({
     bulletStyle: errorColor,
     bullet: "✗",
     label: "bash blocked",
     labelStyle: palette.textMuted,
     accent: commandInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
 
   return {
@@ -135,6 +129,7 @@ export function buildBashAbortedView(
   theme: Theme,
   command: string,
   reason: string,
+  headerTarget: string = command,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const warnColor = (s: string) => palette.statusWarn(s);
@@ -142,19 +137,18 @@ export function buildBashAbortedView(
   const msg = reason.trim();
   const sections = buildSection(msg ? [warnColor(msg)] : []);
 
-  const commandInline = inlineText(command);
+  const commandInline = inlineText(headerTarget);
   const why = inlineText(reason);
 
   const details = why ? palette.textMuted(`(${why})`) : undefined;
 
-  const header = buildHeaderLine({
+  const header = buildToolHeaderLine({
     bulletStyle: warnColor,
     bullet: "✗",
     label: inlineText(reason) || "aborted",
     labelStyle: palette.textMuted,
     accent: commandInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
 
   return {
@@ -174,8 +168,9 @@ export function renderBashRunning(
   theme: Theme,
   command: string,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildBashRunningView(theme, command), compact);
+  return renderToolOutput(buildBashRunningView(theme, command, headerTarget), compact);
 }
 
 export function renderBashExecution(
@@ -184,8 +179,12 @@ export function renderBashExecution(
   exitCode: number | null,
   uiText: ToolUiText,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildBashExecutionView(theme, command, exitCode, uiText), compact);
+  return renderToolOutput(
+    buildBashExecutionView(theme, command, exitCode, uiText, undefined, headerTarget),
+    compact,
+  );
 }
 
 export function renderBashBlocked(
@@ -193,8 +192,9 @@ export function renderBashBlocked(
   command: string,
   reason: string,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildBashBlockedView(theme, command, reason), compact);
+  return renderToolOutput(buildBashBlockedView(theme, command, reason, headerTarget), compact);
 }
 
 export function renderBashAborted(
@@ -202,6 +202,7 @@ export function renderBashAborted(
   command: string,
   reason: string,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildBashAbortedView(theme, command, reason), compact);
+  return renderToolOutput(buildBashAbortedView(theme, command, reason, headerTarget), compact);
 }

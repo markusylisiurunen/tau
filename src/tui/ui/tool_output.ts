@@ -129,6 +129,58 @@ export function renderToolUiTextLines(args: {
   return lines.map((line) => styleToolUiLine(line, theme, baseStyle)).join("\n");
 }
 
+export const TOOL_UI_INDENT = 4;
+const DEFAULT_STATUS_WRAPPER = (text: string) => `(${text})`;
+
+export function buildToolHeaderLine(spec: HeaderSegmentsSpec): HeaderLineModel {
+  return buildHeaderLine({ ...spec, wrapIndex: 5 });
+}
+
+export function renderToolUiCompactText(args: {
+  uiText: ToolUiText;
+  theme: Theme;
+  previewStyle: (text: string) => string;
+  statusStyle: (text: string) => string;
+  indent?: number;
+  statusWrapper?: (text: string) => string;
+}): string | undefined {
+  const {
+    uiText,
+    theme,
+    previewStyle,
+    statusStyle,
+    indent = TOOL_UI_INDENT,
+    statusWrapper = DEFAULT_STATUS_WRAPPER,
+  } = args;
+  const pad = " ".repeat(Math.max(0, indent));
+  const statusText = uiText.statusLine?.trim();
+  const formattedStatus = statusText ? `${pad}${statusWrapper(statusText)}` : undefined;
+  const indentedUiText: ToolUiText = {
+    ...uiText,
+    previewLines: uiText.previewLines.map((line) => ({
+      ...line,
+      text: `${pad}${line.text}`,
+    })),
+    statusLine: formattedStatus,
+  };
+
+  const compactParts: string[] = [];
+  const previewText = renderToolUiTextLines({
+    uiText: indentedUiText,
+    kind: "preview",
+    theme,
+    baseStyle: previewStyle,
+  });
+  if (previewText) {
+    compactParts.push(previewText);
+  }
+  if (formattedStatus) {
+    compactParts.push(statusStyle(formattedStatus));
+  }
+
+  return compactParts.length > 0 ? compactParts.join("\n") : undefined;
+}
+
 export interface ToolOutputExpandedView {
   borderColor: (text: string) => string;
   text: string;
@@ -218,14 +270,13 @@ export function buildBlockedToolView(args: {
   const accentInline = inlineText(accent);
   const whyInline = inlineText(reason);
 
-  const header = buildHeaderLine({
+  const header = buildToolHeaderLine({
     bulletStyle: errorColor,
     bullet: "✗",
     label,
     labelStyle: palette.textMuted,
     accent: accentInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
 
   return {

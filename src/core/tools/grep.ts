@@ -234,11 +234,13 @@ function buildGrepUiText(args: {
     ? (buildCompactPreviewLines(stderrLines, {
         totalLines: stderrPreview.totalLines,
         maxLines: 16,
+        indent: 0,
       }) ?? "")
     : out
       ? (buildCompactPreviewLines(stdoutLines, {
           totalLines: stdoutPreview.totalLines,
           maxLines: 16,
+          indent: 0,
         }) ?? "")
       : "";
 
@@ -291,6 +293,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const parsed = parseGrepArgs(toolCall.arguments);
+      const headerTarget = parsed.pattern || "(missing pattern)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -298,6 +301,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
           type: "grep_blocked",
           toolCallId: toolCall.id,
           pattern: parsed.pattern || "(missing pattern)",
+          headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
@@ -327,6 +331,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
           type: "grep_started",
           toolCallId: toolCall.id,
           pattern: parsed.pattern,
+          headerTarget,
         },
         run: (async () => {
           let result: Awaited<ReturnType<ToolExecutionBackend["grep"]>>;
@@ -378,6 +383,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
             type: "grep_finished",
             toolCallId: toolCall.id,
             pattern: parsed.pattern,
+            headerTarget,
             status: isError ? "error" : "success",
             exitCode,
             stdout: stdoutModel.content,

@@ -50,10 +50,12 @@ export class ToolUiRouter {
 
   finalizePending(reason: "aborted" | "interrupted"): void {
     for (const [id, running] of this.runningBashComponents.entries()) {
+      const headerTarget = running.command.split(/\r?\n/)[0] ?? running.command;
       const event: ToolUiEvent = {
         type: "bash_aborted",
         toolCallId: id,
         command: running.command,
+        headerTarget,
         reason,
       };
       this.chatContainer.replaceMessage(id, { type: "tool", event });
@@ -111,7 +113,7 @@ export class ToolUiRouter {
       this.runningSubagentTools.set(uiEvent.toolCallId, {
         kind: "spawn_agent",
         name: uiEvent.name,
-        title: uiEvent.title,
+        title: uiEvent.headerTarget ?? uiEvent.title,
       });
       this.requestRender();
       return;
@@ -141,7 +143,7 @@ export class ToolUiRouter {
         kind: "send_input_to_agent",
         agentId: uiEvent.agentId,
         name: uiEvent.name,
-        title: uiEvent.title,
+        title: uiEvent.headerTarget ?? uiEvent.title,
       });
       this.requestRender();
       return;
@@ -279,6 +281,7 @@ export class ToolUiRouter {
         toolCallId,
         name: running.name,
         title: running.title,
+        headerTarget: running.title,
         status: "error",
         message: reason,
       };
@@ -291,16 +294,19 @@ export class ToolUiRouter {
         agentId: running.agentId,
         name: running.name,
         title: running.title,
+        headerTarget: running.title,
         status: "error",
         message: reason,
       };
     }
 
     if (running.kind === "wait_for_agent") {
+      const headerTarget = running.agentIds.length > 0 ? running.agentIds.join(", ") : "(no ids)";
       return {
         type: "wait_for_agent_finished",
         toolCallId,
         agentIds: running.agentIds,
+        headerTarget,
         status: "error",
         message: reason,
       };
@@ -310,6 +316,7 @@ export class ToolUiRouter {
       type: "terminate_agent_finished",
       toolCallId,
       agentId: running.agentId,
+      headerTarget: running.agentId,
       status: "error",
       message: reason,
     };

@@ -82,7 +82,7 @@ function buildViewImageUiText(args: { mimeType: string; bytes: number }): ToolUi
 
   return {
     previewLines: [],
-    statusLine: `(${mimeType} · ${sizeLabel})`,
+    statusLine: `${mimeType} · ${sizeLabel}`,
     fullLines: [{ text: summary }],
   };
 }
@@ -92,12 +92,14 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
     schema: VIEW_IMAGE_TOOL,
     async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
       const { path } = parseViewImageArgs(toolCall.arguments);
+      const headerTarget = path || "(missing path)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "view_image_blocked",
           path: path || "(missing path)",
+          headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
@@ -141,6 +143,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
         const uiEvent: ToolUiEvent = {
           type: "view_image_success",
           path: resolvedPath,
+          headerTarget: resolvedPath,
           mimeType,
           bytes,
           uiText,

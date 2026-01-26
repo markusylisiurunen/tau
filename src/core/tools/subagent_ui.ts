@@ -40,10 +40,11 @@ export function buildSubagentUiText({
     maxLines: previewLimit,
     totalLines: truncatedLines.length,
     unitLabel: "lines",
+    indent: 0,
   });
   const previewLines: ToolUiLine[] = preview ? preview.split("\n").map((text) => ({ text })) : [];
   const fullLines: ToolUiLine[] = truncatedLines.map((text) => ({ text }));
-  const statusLine = statusText ? `    (${statusText})` : undefined;
+  const statusLine = statusText || undefined;
 
   return {
     previewLines,

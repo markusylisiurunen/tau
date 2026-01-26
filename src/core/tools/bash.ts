@@ -243,7 +243,7 @@ export function buildBashUiText(args: {
     args.previewLines?.tail ?? COMPACT_OUTPUT_TAIL_LINES,
   );
   const previewLines: ToolUiLine[] = outputLinesPreview.map((line) => ({
-    text: `    ${line}`,
+    text: line,
   }));
 
   const hasOutput = model.totalBytes > 0;
@@ -260,9 +260,7 @@ export function buildBashUiText(args: {
     ? [durationLabel, lineLabel, tokenLabel, bytesLabel]
     : [durationLabel, lineLabel];
   const infoText = infoParts.join(" · ");
-  const details = `(${exitSummary} · ${infoText})`;
-
-  const summaryLine = `    ${details}`;
+  const summaryLine = `${exitSummary} · ${infoText}`;
 
   const fullLines: ToolUiLine[] = [];
   const pushSection = (text: string): void => {
@@ -343,10 +341,16 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
       const { command, safetyLevel, workingDirectory, timeout, commandForDisplay } = parseBashArgs(
         toolCall.arguments,
       );
+      const headerTarget = commandForDisplay.split(/\r?\n/)[0] ?? commandForDisplay;
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
-        const uiEvent: ToolUiEvent = { type: "bash_blocked", command: commandForDisplay, reason };
+        const uiEvent: ToolUiEvent = {
+          type: "bash_blocked",
+          command: commandForDisplay,
+          headerTarget,
+          reason,
+        };
         return { kind: "single", toolResult, uiEvent };
       };
 
@@ -356,6 +360,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
         const uiEvent: ToolUiEvent = {
           type: "bash_blocked",
           command: commandForDisplay,
+          headerTarget,
           reason: msg,
         };
         return { kind: "single", toolResult, uiEvent };
@@ -374,6 +379,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
           type: "bash_started",
           toolCallId: toolCall.id,
           command,
+          headerTarget,
         },
         run: (async () => {
           try {
@@ -409,6 +415,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               type: "bash_execution",
               toolCallId: toolCall.id,
               command,
+              headerTarget,
               exitCode,
               truncationInfo,
               uiText,
@@ -421,6 +428,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
             const uiEvent: ToolUiEvent = {
               type: "bash_blocked",
               command: commandForDisplay,
+              headerTarget,
               reason: msg,
               toolCallId: toolCall.id,
             };

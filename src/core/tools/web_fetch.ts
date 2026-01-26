@@ -213,6 +213,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const args = parseArgs(toolCall.arguments);
+      const headerTarget = args.url || "(missing url)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -220,6 +221,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
           type: "web_fetch_finished",
           toolCallId: toolCall.id,
           url: args.url || "(missing url)",
+          headerTarget,
           status: "error",
         };
         return { kind: "single", toolResult, uiEvent };
@@ -240,6 +242,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
           type: "web_fetch_started",
           toolCallId: toolCall.id,
           url: args.url,
+          headerTarget,
         },
         run: (async () => {
           try {
@@ -294,6 +297,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
               type: "web_fetch_finished",
               toolCallId: toolCall.id,
               url: args.url,
+              headerTarget,
               status: "success",
               costUsd: estimateParallelExtractCostUsd(1),
             };
@@ -306,6 +310,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
               type: "web_fetch_finished",
               toolCallId: toolCall.id,
               url: args.url,
+              headerTarget,
               status: "error",
             };
             return { kind: "single", toolResult, uiEvent };

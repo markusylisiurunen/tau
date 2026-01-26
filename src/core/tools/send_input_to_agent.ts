@@ -72,6 +72,7 @@ export function createSendInputToAgentToolDefinition(
       context?: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const { id, prompt } = parseSendInputArgs(toolCall.arguments);
+      const headerTarget = id || "(subagent)";
 
       const blocked = (
         reason: string,
@@ -83,7 +84,8 @@ export function createSendInputToAgentToolDefinition(
           toolCallId: toolCall.id,
           agentId: details?.id ?? (id || undefined),
           name: details?.name ?? undefined,
-          title: details?.title ?? (id || "(subagent)"),
+          title: details?.title ?? headerTarget,
+          headerTarget: details?.title ?? headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent } satisfies ToolDispatchResult;
@@ -119,6 +121,7 @@ export function createSendInputToAgentToolDefinition(
           agentId: id,
           name: target.name,
           title: target.title,
+          headerTarget: target.title,
         },
         run: (async (): Promise<ToolDispatchResult> => {
           if (signal?.aborted) {
@@ -129,6 +132,7 @@ export function createSendInputToAgentToolDefinition(
               agentId: id,
               name: target.name,
               title: target.title,
+              headerTarget: target.title,
               status: "error",
               message: "aborted",
             };
@@ -152,6 +156,7 @@ export function createSendInputToAgentToolDefinition(
               agentId: id,
               name: target.name,
               title: target.title,
+              headerTarget: target.title,
               reason: sendResult.reason,
             };
             return { kind: "single", toolResult, uiEvent };
@@ -170,6 +175,7 @@ export function createSendInputToAgentToolDefinition(
             agentId: sendResult.id,
             name: sendResult.name,
             title: sendResult.title,
+            headerTarget: sendResult.title,
             status: "success",
             uiText,
           };

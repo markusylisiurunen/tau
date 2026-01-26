@@ -136,6 +136,11 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
       context?: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const { ids } = parseWaitArgs(toolCall.arguments);
+      const formatHeaderTarget = (entries: string[]): string => {
+        const cleaned = entries.map((id) => id.trim()).filter(Boolean);
+        return cleaned.length > 0 ? cleaned.join(", ") : "(no ids)";
+      };
+      const headerTarget = formatHeaderTarget(ids);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -143,6 +148,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
           type: "wait_for_agent_blocked",
           toolCallId: toolCall.id,
           agentIds: ids.length > 0 ? ids : undefined,
+          headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
@@ -156,6 +162,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
           deduped.push(id);
         }
       }
+      const dedupedTarget = formatHeaderTarget(deduped);
 
       if (deduped.length === 0) {
         return blocked("missing 'ids' parameter. provide at least one subagent id.");
@@ -172,6 +179,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
           type: "wait_for_agent_started",
           toolCallId: toolCall.id,
           agentIds: deduped,
+          headerTarget: dedupedTarget,
         },
         run: (async (): Promise<ToolDispatchResult> => {
           try {
@@ -190,6 +198,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
               type: "wait_for_agent_finished",
               toolCallId: toolCall.id,
               agentIds: deduped,
+              headerTarget: dedupedTarget,
               status: hasFailures ? "error" : "success",
               message: hasFailures ? "one or more subagents reported errors" : undefined,
               uiText,
@@ -202,6 +211,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
               type: "wait_for_agent_finished",
               toolCallId: toolCall.id,
               agentIds: deduped,
+              headerTarget: dedupedTarget,
               status: "error",
               message,
             };

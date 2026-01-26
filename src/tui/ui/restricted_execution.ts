@@ -2,9 +2,10 @@ import type { ToolUiText } from "../../core/tools/registry.js";
 import type { Theme } from "./theme/index.js";
 import {
   buildBlockedToolView,
-  buildHeaderLine,
+  buildToolHeaderLine,
   inlineText,
   renderToolOutput,
+  renderToolUiCompactText,
   renderToolUiTextLines,
   type ToolOutputViewModel,
 } from "./tool_output.js";
@@ -22,6 +23,7 @@ export function buildReadSuccessView(
   startLine: number,
   endLine: number | undefined,
   uiText: ToolUiText,
+  headerTarget: string = path,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const readColor = (s: string) => palette.actionSuccess(s);
@@ -37,30 +39,21 @@ export function buildReadSuccessView(
     expandedSections.push(fullText);
   }
 
-  const pathInline = inlineText(path);
-  const header = buildHeaderLine({
+  const pathInline = inlineText(headerTarget);
+  const header = buildToolHeaderLine({
     bulletStyle: successBullet,
     bullet: "✓",
     label: "read",
     labelStyle: palette.textMuted,
     accent: pathInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
-  const compactParts: string[] = [];
-  const previewText = renderToolUiTextLines({
+  const compactText = renderToolUiCompactText({
     uiText,
-    kind: "preview",
     theme,
-    baseStyle: palette.textDim,
+    previewStyle: palette.textDim,
+    statusStyle: palette.textMuted,
   });
-  if (previewText) {
-    compactParts.push(previewText);
-  }
-  if (uiText.statusLine?.trim()) {
-    compactParts.push(palette.textMuted(uiText.statusLine));
-  }
-  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
 
   return {
     borderColor: readColor,
@@ -79,12 +72,13 @@ export function buildReadBlockedView(
   theme: Theme,
   path: string,
   reason: string,
+  headerTarget: string = path,
 ): ToolOutputViewModel {
   return buildBlockedToolView({
     theme,
     label: "read blocked",
     title: `read ${path}`,
-    accent: path,
+    accent: headerTarget,
     reason,
   });
 }
@@ -93,6 +87,7 @@ export function buildListSuccessView(
   theme: Theme,
   path: string,
   uiText: ToolUiText,
+  headerTarget: string = path,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const listColor = (s: string) => palette.actionSuccess(s);
@@ -109,32 +104,23 @@ export function buildListSuccessView(
     expandedSections.push(fullText);
   }
 
-  const pathInline = inlineText(path);
+  const pathInline = inlineText(headerTarget);
 
-  const header = buildHeaderLine({
+  const header = buildToolHeaderLine({
     bulletStyle: successBullet,
     bullet: "✓",
     label: "listed",
     labelStyle: palette.textMuted,
     accent: pathInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
 
-  const compactParts: string[] = [];
-  const previewText = renderToolUiTextLines({
+  const compactText = renderToolUiCompactText({
     uiText,
-    kind: "preview",
     theme,
-    baseStyle: palette.textDim,
+    previewStyle: palette.textDim,
+    statusStyle: palette.textMuted,
   });
-  if (previewText) {
-    compactParts.push(previewText);
-  }
-  if (uiText.statusLine?.trim()) {
-    compactParts.push(palette.textMuted(uiText.statusLine));
-  }
-  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
 
   return {
     borderColor: listColor,
@@ -153,29 +139,33 @@ export function buildListBlockedView(
   theme: Theme,
   path: string,
   reason: string,
+  headerTarget: string = path,
 ): ToolOutputViewModel {
   return buildBlockedToolView({
     theme,
     label: "list blocked",
     title: `list ${path}`,
-    accent: path,
+    accent: headerTarget,
     reason,
   });
 }
 
-export function buildGrepRunningView(theme: Theme, pattern: string): ToolOutputViewModel {
+export function buildGrepRunningView(
+  theme: Theme,
+  pattern: string,
+  headerTarget: string = pattern,
+): ToolOutputViewModel {
   const { palette, text } = theme;
   const runningColor = (s: string) => palette.actionRunning(s);
 
-  const patternInline = inlineText(pattern);
-  const header = buildHeaderLine({
+  const patternInline = inlineText(headerTarget);
+  const header = buildToolHeaderLine({
     bulletStyle: runningColor,
     bullet: "⏵",
     label: "grep (running)",
     labelStyle: palette.textMuted,
     accent: patternInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
 
   return {
@@ -190,6 +180,7 @@ export function buildGrepFinishedView(
   pattern: string,
   status: "success" | "error",
   uiText: ToolUiText,
+  headerTarget: string = pattern,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const grepColor = (s: string) => palette.actionSuccess(s);
@@ -209,33 +200,24 @@ export function buildGrepFinishedView(
     expandedSections.push(fullText);
   }
 
-  const patternInline = inlineText(pattern);
+  const patternInline = inlineText(headerTarget);
 
-  const header = buildHeaderLine({
+  const header = buildToolHeaderLine({
     bulletStyle: isSuccess ? successBullet : errorColor,
     bullet: isSuccess ? "✓" : "✗",
     label: "grep",
     labelStyle: palette.textMuted,
     accent: patternInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
   const previewStyle = isSuccess ? palette.textDim : palette.actionError;
   const statusStyle = isSuccess ? palette.textMuted : palette.actionError;
-  const compactParts: string[] = [];
-  const previewText = renderToolUiTextLines({
+  const extraText = renderToolUiCompactText({
     uiText,
-    kind: "preview",
     theme,
-    baseStyle: previewStyle,
+    previewStyle,
+    statusStyle,
   });
-  if (previewText) {
-    compactParts.push(previewText);
-  }
-  if (uiText.statusLine?.trim()) {
-    compactParts.push(statusStyle(uiText.statusLine));
-  }
-  const extraText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
 
   return {
     borderColor,
@@ -254,12 +236,13 @@ export function buildGrepBlockedView(
   theme: Theme,
   pattern: string,
   reason: string,
+  headerTarget: string = pattern,
 ): ToolOutputViewModel {
   return buildBlockedToolView({
     theme,
     label: "grep blocked",
     title: `grep ${pattern}`,
-    accent: pattern,
+    accent: headerTarget,
     reason,
   });
 }
@@ -271,8 +254,12 @@ export function renderReadSuccess(
   endLine: number | undefined,
   uiText: ToolUiText,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildReadSuccessView(theme, path, startLine, endLine, uiText), compact);
+  return renderToolOutput(
+    buildReadSuccessView(theme, path, startLine, endLine, uiText, headerTarget),
+    compact,
+  );
 }
 
 export function renderReadBlocked(
@@ -280,8 +267,9 @@ export function renderReadBlocked(
   path: string,
   reason: string,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildReadBlockedView(theme, path, reason), compact);
+  return renderToolOutput(buildReadBlockedView(theme, path, reason, headerTarget), compact);
 }
 
 export function renderListSuccess(
@@ -289,8 +277,9 @@ export function renderListSuccess(
   path: string,
   uiText: ToolUiText,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildListSuccessView(theme, path, uiText), compact);
+  return renderToolOutput(buildListSuccessView(theme, path, uiText, headerTarget), compact);
 }
 
 export function renderListBlocked(
@@ -298,16 +287,18 @@ export function renderListBlocked(
   path: string,
   reason: string,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildListBlockedView(theme, path, reason), compact);
+  return renderToolOutput(buildListBlockedView(theme, path, reason, headerTarget), compact);
 }
 
 export function renderGrepRunning(
   theme: Theme,
   pattern: string,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildGrepRunningView(theme, pattern), compact);
+  return renderToolOutput(buildGrepRunningView(theme, pattern, headerTarget), compact);
 }
 
 export function renderGrepFinished(
@@ -316,8 +307,12 @@ export function renderGrepFinished(
   status: "success" | "error",
   uiText: ToolUiText,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildGrepFinishedView(theme, pattern, status, uiText), compact);
+  return renderToolOutput(
+    buildGrepFinishedView(theme, pattern, status, uiText, headerTarget),
+    compact,
+  );
 }
 
 export function renderGrepBlocked(
@@ -325,6 +320,7 @@ export function renderGrepBlocked(
   pattern: string,
   reason: string,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildGrepBlockedView(theme, pattern, reason), compact);
+  return renderToolOutput(buildGrepBlockedView(theme, pattern, reason, headerTarget), compact);
 }

@@ -59,9 +59,10 @@ function buildWriteUiText(args: { bytes: number; lines: number; content: string 
     totalLines: lines,
     maxLines: 16,
     unitLabel: "lines",
+    indent: 0,
   });
   const infoText = `${lines} lines · ${formatTokenEstimate(bytes)} · ${bytes} bytes`;
-  const summaryLine = `    (${infoText})`;
+  const summaryLine = infoText;
   const previewLines: ToolUiLine[] = compactLines
     ? compactLines.split("\n").map((text) => ({ text }))
     : [];
@@ -96,12 +97,14 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
     schema: WRITE_TOOL,
     async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
       const { path, content } = parseWriteArgs(toolCall.arguments);
+      const headerTarget = path || "(missing path)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "write_blocked",
           path: path || "(missing path)",
+          headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
@@ -126,6 +129,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
         const uiEvent: ToolUiEvent = {
           type: "write_success",
           path,
+          headerTarget,
           bytes,
           lines,
           content,

@@ -88,9 +88,10 @@ function buildListUiText(args: {
     totalLines: entries.length,
     maxLines: 16,
     unitLabel: "entries",
+    indent: 0,
   });
   const infoText = `${returned} of ${total} entries · offset ${offset} · limit ${limit}`;
-  const summaryLine = `    (${infoText})`;
+  const summaryLine = infoText;
   const previewLines: ToolUiLine[] = compactLines
     ? compactLines.split("\n").map((text) => ({ text }))
     : [];
@@ -121,12 +122,14 @@ export function createListToolDefinition(backend: ToolExecutionBackend): ToolDef
     schema: LIST_TOOL,
     async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
       const { path, offset, limit } = parseListArgs(toolCall.arguments);
+      const headerTarget = path || "(missing path)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "list_blocked",
           path: path || "(missing path)",
+          headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
@@ -177,6 +180,7 @@ export function createListToolDefinition(backend: ToolExecutionBackend): ToolDef
         const uiEvent: ToolUiEvent = {
           type: "list_success",
           path: resolvedPath,
+          headerTarget: resolvedPath,
           offset,
           limit: effectiveLimit,
           total,

@@ -206,21 +206,20 @@ function buildEditUiText(args: {
   const { oldLength, newLength, oldText, newText } = args;
   const { lines: diffLines, added, removed } = buildLineDiff(oldText, newText);
 
-  const indent = " ".repeat(4);
-  const formatLine = (line: string, withIndent = false): ToolUiLine => {
-    const text = `${withIndent ? indent : ""}${line}`;
+  const formatLine = (line: string): ToolUiLine => {
+    const text = line;
     if (line.startsWith("+ ")) return { text, tone: "diffAdd" };
     if (line.startsWith("- ")) return { text, tone: "diffRemove" };
     return { text };
   };
 
-  const previewLines: ToolUiLine[] = diffLines.map((line) => formatLine(line, true));
+  const previewLines: ToolUiLine[] = diffLines.map((line) => formatLine(line));
 
   const sizeDiff = newLength - oldLength;
   const diffStr =
     sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
   const summaryLine = `replaced ${oldLength} → ${newLength} chars (${diffStr})`;
-  const statusLine = `    (+${added}, -${removed}) · ${summaryLine}`;
+  const statusLine = `+${added}, -${removed} · ${summaryLine}`;
 
   const fullLines: ToolUiLine[] = [{ text: summaryLine }];
   if (diffLines.length > 0) {
@@ -239,12 +238,14 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
     schema: EDIT_TOOL,
     async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
       const { path, oldText, newText } = parseEditArgs(toolCall.arguments);
+      const headerTarget = path || "(missing path)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "edit_blocked",
           path: path || "(missing path)",
+          headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
@@ -335,6 +336,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
         const uiEvent: ToolUiEvent = {
           type: "edit_success",
           path,
+          headerTarget,
           oldLength: oldText.length,
           newLength: newText.length,
           oldText,

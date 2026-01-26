@@ -78,6 +78,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       context?: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const { name, title, prompt } = parseSpawnArgs(toolCall.arguments);
+      const headerTarget = title || "(subagent)";
 
       const blocked = (reason: string, details?: { name?: string; title?: string }) => {
         const toolResult = createToolError(toolCall, reason);
@@ -85,7 +86,8 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           type: "spawn_agent_blocked",
           toolCallId: toolCall.id,
           name: details?.name ?? (name || undefined),
-          title: details?.title ?? (title || "(subagent)"),
+          title: details?.title ?? headerTarget,
+          headerTarget: details?.title ?? headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent } satisfies ToolDispatchResult;
@@ -162,6 +164,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           toolCallId: toolCall.id,
           name,
           title,
+          headerTarget,
         },
         run: (async (): Promise<ToolDispatchResult> => {
           if (signal?.aborted) {
@@ -171,6 +174,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
               toolCallId: toolCall.id,
               name,
               title,
+              headerTarget,
               status: "error",
               message: "aborted",
             };
@@ -194,6 +198,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
               toolCallId: toolCall.id,
               name,
               title,
+              headerTarget,
               reason: spawnResult.reason,
             };
             return { kind: "single", toolResult, uiEvent };
@@ -216,6 +221,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             toolCallId: toolCall.id,
             name,
             title,
+            headerTarget,
             status: "success",
             agentId: spawnResult.id,
             uiText,

@@ -51,7 +51,7 @@ export function buildCompactPreviewLines(
   {
     totalLines,
     maxLines = DEFAULT_COMPACT_PREVIEW_LINES,
-    indent = 4,
+    indent = 0,
     unitLabel = "lines",
   }: CompactPreviewOptions = {},
 ): string | undefined {

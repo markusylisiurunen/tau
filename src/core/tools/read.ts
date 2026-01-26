@@ -114,9 +114,10 @@ function buildReadUiText(args: {
     totalLines: totalLinesForSummary,
     maxLines: 16,
     unitLabel: "lines",
+    indent: 0,
   });
   const infoText = `${totalLinesForSummary} lines · ${formatRange(startLine, endLine)}`;
-  const summaryLine = `    (${infoText})`;
+  const summaryLine = infoText;
   const previewLines: ToolUiLine[] = compactLines
     ? compactLines.split("\n").map((text) => ({ text }))
     : [];
@@ -154,12 +155,14 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
     schema: READ_TOOL,
     async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
       const { path, startLine, endLine } = parseReadArgs(toolCall.arguments);
+      const headerTarget = path || "(missing path)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "read_blocked",
           path: path || "(missing path)",
+          headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
@@ -227,6 +230,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         const uiEvent: ToolUiEvent = {
           type: "read_success",
           path: resolvedPath,
+          headerTarget: resolvedPath,
           startLine: start,
           endLine: endDisplay,
           content: modelTruncation.content,

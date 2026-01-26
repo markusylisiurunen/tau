@@ -195,6 +195,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const args = parseArgs(toolCall.arguments);
+      const headerTarget = args.objective || "(missing objective)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -202,6 +203,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
           type: "web_search_finished",
           toolCallId: toolCall.id,
           objective: args.objective || "(missing objective)",
+          headerTarget,
           status: "error",
         };
         return { kind: "single", toolResult, uiEvent };
@@ -222,6 +224,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
           type: "web_search_started",
           toolCallId: toolCall.id,
           objective: args.objective,
+          headerTarget,
         },
         run: (async () => {
           try {
@@ -281,6 +284,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
               type: "web_search_finished",
               toolCallId: toolCall.id,
               objective: args.objective,
+              headerTarget,
               status: "success",
               costUsd: estimateParallelSearchCostUsd(args.maxResults, response.results.length),
             };
@@ -293,6 +297,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
               type: "web_search_finished",
               toolCallId: toolCall.id,
               objective: args.objective,
+              headerTarget,
               status: "error",
             };
             return { kind: "single", toolResult, uiEvent };

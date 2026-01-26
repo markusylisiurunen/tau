@@ -2,10 +2,11 @@ import type { ToolUiText } from "../../core/tools/registry.js";
 import type { Theme } from "./theme/index.js";
 import {
   buildBlockedToolView,
-  buildHeaderLine,
   buildSection,
+  buildToolHeaderLine,
   inlineText,
   renderToolOutput,
+  renderToolUiCompactText,
   renderToolUiTextLines,
   type ToolOutputViewModel,
 } from "./tool_output.js";
@@ -14,36 +15,28 @@ export function buildWriteSuccessView(
   theme: Theme,
   path: string,
   uiText: ToolUiText,
+  headerTarget: string = path,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const writeColor = (s: string) => palette.actionSuccess(s);
   const successBullet = (s: string) => palette.actionSuccess(s);
 
-  const pathInline = inlineText(path);
-  const header = buildHeaderLine({
+  const pathInline = inlineText(headerTarget);
+  const header = buildToolHeaderLine({
     bulletStyle: successBullet,
     bullet: "✓",
     label: "wrote",
     labelStyle: palette.textMuted,
     accent: pathInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
 
-  const compactParts: string[] = [];
-  const previewText = renderToolUiTextLines({
+  const compactText = renderToolUiCompactText({
     uiText,
-    kind: "preview",
     theme,
-    baseStyle: palette.textDim,
+    previewStyle: palette.textDim,
+    statusStyle: palette.textMuted,
   });
-  if (previewText) {
-    compactParts.push(previewText);
-  }
-  if (uiText.statusLine?.trim()) {
-    compactParts.push(palette.textMuted(uiText.statusLine));
-  }
-  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
   const fullText = renderToolUiTextLines({
     uiText,
     kind: "full",
@@ -68,12 +61,13 @@ export function buildWriteBlockedView(
   theme: Theme,
   path: string,
   reason: string,
+  headerTarget: string = path,
 ): ToolOutputViewModel {
   return buildBlockedToolView({
     theme,
     label: "write blocked",
     title: `write ${path}`,
-    accent: path,
+    accent: headerTarget,
     reason,
   });
 }
@@ -82,37 +76,29 @@ export function buildEditSuccessView(
   theme: Theme,
   path: string,
   uiText: ToolUiText,
+  headerTarget: string = path,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const editColor = (s: string) => palette.actionSuccess(s);
   const successBullet = (s: string) => palette.actionSuccess(s);
 
-  const pathInline = inlineText(path);
+  const pathInline = inlineText(headerTarget);
 
-  const header = buildHeaderLine({
+  const header = buildToolHeaderLine({
     bulletStyle: successBullet,
     bullet: "✓",
     label: "edited",
     labelStyle: palette.textMuted,
     accent: pathInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
 
-  const compactParts: string[] = [];
-  const previewText = renderToolUiTextLines({
+  const compactText = renderToolUiCompactText({
     uiText,
-    kind: "preview",
     theme,
-    baseStyle: palette.textDim,
+    previewStyle: palette.textDim,
+    statusStyle: palette.textMuted,
   });
-  if (previewText) {
-    compactParts.push(previewText);
-  }
-  if (uiText.statusLine?.trim()) {
-    compactParts.push(palette.textMuted(uiText.statusLine));
-  }
-  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
   const fullText = renderToolUiTextLines({
     uiText,
     kind: "full",
@@ -137,12 +123,13 @@ export function buildEditBlockedView(
   theme: Theme,
   path: string,
   reason: string,
+  headerTarget: string = path,
 ): ToolOutputViewModel {
   return buildBlockedToolView({
     theme,
     label: "edit blocked",
     title: `edit ${path}`,
-    accent: path,
+    accent: headerTarget,
     reason,
   });
 }
@@ -151,46 +138,28 @@ export function buildViewImageSuccessView(
   theme: Theme,
   path: string,
   uiText: ToolUiText,
+  headerTarget: string = path,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const viewColor = (s: string) => palette.actionSuccess(s);
   const successBullet = (s: string) => palette.actionSuccess(s);
 
-  const pathInline = inlineText(path);
-  const header = buildHeaderLine({
+  const pathInline = inlineText(headerTarget);
+  const header = buildToolHeaderLine({
     bulletStyle: successBullet,
     bullet: "✓",
     label: "viewed",
     labelStyle: palette.textMuted,
     accent: pathInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
 
-  const indentLine = (text: string) => `    ${text}`;
-  const indentedUiText: ToolUiText = {
-    ...uiText,
-    previewLines: uiText.previewLines.map((line) => ({
-      ...line,
-      text: indentLine(line.text),
-    })),
-    statusLine: uiText.statusLine ? indentLine(uiText.statusLine) : undefined,
-  };
-
-  const compactParts: string[] = [];
-  const previewText = renderToolUiTextLines({
-    uiText: indentedUiText,
-    kind: "preview",
+  const compactText = renderToolUiCompactText({
+    uiText,
     theme,
-    baseStyle: palette.textDim,
+    previewStyle: palette.textDim,
+    statusStyle: palette.textMuted,
   });
-  if (previewText) {
-    compactParts.push(previewText);
-  }
-  if (indentedUiText.statusLine?.trim()) {
-    compactParts.push(palette.textMuted(indentedUiText.statusLine));
-  }
-  const compactText = compactParts.length > 0 ? compactParts.join("\n") : undefined;
   const fullText = renderToolUiTextLines({
     uiText,
     kind: "full",
@@ -215,6 +184,7 @@ export function buildViewImageBlockedView(
   theme: Theme,
   path: string,
   reason: string,
+  headerTarget: string = path,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const errorColor = (s: string) => palette.actionError(s);
@@ -222,17 +192,16 @@ export function buildViewImageBlockedView(
   const msg = reason.trim();
   const sections = buildSection(msg ? [errorColor(msg)] : []);
 
-  const accentInline = inlineText(path);
+  const accentInline = inlineText(headerTarget);
   const whyInline = inlineText(reason);
 
-  const header = buildHeaderLine({
+  const header = buildToolHeaderLine({
     bulletStyle: errorColor,
     bullet: "✗",
     label: "view image blocked",
     labelStyle: palette.textMuted,
     accent: accentInline,
     accentStyle: palette.brandAccent,
-    wrapIndex: 5,
   });
 
   return {
@@ -253,8 +222,9 @@ export function renderWriteSuccess(
   path: string,
   uiText: ToolUiText,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildWriteSuccessView(theme, path, uiText), compact);
+  return renderToolOutput(buildWriteSuccessView(theme, path, uiText, headerTarget), compact);
 }
 
 export function renderWriteBlocked(
@@ -262,8 +232,9 @@ export function renderWriteBlocked(
   path: string,
   reason: string,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildWriteBlockedView(theme, path, reason), compact);
+  return renderToolOutput(buildWriteBlockedView(theme, path, reason, headerTarget), compact);
 }
 
 export function renderEditSuccess(
@@ -271,8 +242,9 @@ export function renderEditSuccess(
   path: string,
   uiText: ToolUiText,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildEditSuccessView(theme, path, uiText), compact);
+  return renderToolOutput(buildEditSuccessView(theme, path, uiText, headerTarget), compact);
 }
 
 export function renderEditBlocked(
@@ -280,8 +252,9 @@ export function renderEditBlocked(
   path: string,
   reason: string,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildEditBlockedView(theme, path, reason), compact);
+  return renderToolOutput(buildEditBlockedView(theme, path, reason, headerTarget), compact);
 }
 
 export function renderViewImageSuccess(
@@ -289,8 +262,9 @@ export function renderViewImageSuccess(
   path: string,
   uiText: ToolUiText,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildViewImageSuccessView(theme, path, uiText), compact);
+  return renderToolOutput(buildViewImageSuccessView(theme, path, uiText, headerTarget), compact);
 }
 
 export function renderViewImageBlocked(
@@ -298,6 +272,7 @@ export function renderViewImageBlocked(
   path: string,
   reason: string,
   compact: boolean,
+  headerTarget?: string,
 ): ReturnType<typeof renderToolOutput> {
-  return renderToolOutput(buildViewImageBlockedView(theme, path, reason), compact);
+  return renderToolOutput(buildViewImageBlockedView(theme, path, reason, headerTarget), compact);
 }

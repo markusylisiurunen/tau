@@ -5,214 +5,220 @@ import type { SubagentName, SubagentStatus } from "../subagents/types.js";
 import type { Persona, RiskLevel } from "../types.js";
 import type { BashTruncationInfo } from "./bash.js";
 
-export type ToolUiEvent =
-  | {
-      type: "bash_started";
-      toolCallId: string;
-      command: string;
-    }
-  | {
-      type: "bash_execution";
-      toolCallId: string;
-      command: string;
-      exitCode: number | null;
-      truncationInfo: BashTruncationInfo;
-      uiText: ToolUiText;
-      durationMs?: number;
-      labelOverride?: string;
-    }
-  | {
-      type: "bash_aborted";
-      toolCallId: string;
-      command: string;
-      reason: "aborted" | "interrupted";
-    }
-  | { type: "bash_blocked"; command: string; reason: string; toolCallId?: string }
-  | {
-      type: "spawn_agent_started";
-      toolCallId: string;
-      name: string;
-      title: string;
-    }
-  | {
-      type: "spawn_agent_finished";
-      toolCallId: string;
-      name: string;
-      title: string;
-      status: "success" | "error";
-      agentId?: string;
-      message?: string;
-      uiText?: ToolUiText;
-    }
-  | {
-      type: "spawn_agent_blocked";
-      toolCallId: string;
-      name?: string;
-      title: string;
-      reason: string;
-    }
-  | {
-      type: "send_input_to_agent_started";
-      toolCallId: string;
-      agentId: string;
-      name: string;
-      title: string;
-    }
-  | {
-      type: "send_input_to_agent_finished";
-      toolCallId: string;
-      agentId: string;
-      name: string;
-      title: string;
-      status: "success" | "error";
-      message?: string;
-      uiText?: ToolUiText;
-    }
-  | {
-      type: "send_input_to_agent_blocked";
-      toolCallId: string;
-      agentId?: string;
-      name?: string;
-      title: string;
-      reason: string;
-    }
-  | {
-      type: "wait_for_agent_started";
-      toolCallId: string;
-      agentIds: string[];
-    }
-  | {
-      type: "wait_for_agent_finished";
-      toolCallId: string;
-      agentIds: string[];
-      status: "success" | "error";
-      message?: string;
-      uiText?: ToolUiText;
-    }
-  | {
-      type: "wait_for_agent_blocked";
-      toolCallId: string;
-      agentIds?: string[];
-      reason: string;
-    }
-  | {
-      type: "terminate_agent_started";
-      toolCallId: string;
-      agentId: string;
-    }
-  | {
-      type: "terminate_agent_finished";
-      toolCallId: string;
-      agentId: string;
-      status: "success" | "error";
-      finalStatus?: SubagentStatus;
-      message?: string;
-      uiText?: ToolUiText;
-    }
-  | {
-      type: "terminate_agent_blocked";
-      toolCallId: string;
-      agentId?: string;
-      reason: string;
-    }
-  | {
-      type: "web_search_started";
-      toolCallId: string;
-      objective: string;
-    }
-  | {
-      type: "web_search_finished";
-      toolCallId: string;
-      objective: string;
-      status: "success" | "error";
-      costUsd?: number;
-    }
-  | {
-      type: "web_fetch_started";
-      toolCallId: string;
-      url: string;
-    }
-  | {
-      type: "web_fetch_finished";
-      toolCallId: string;
-      url: string;
-      status: "success" | "error";
-      costUsd?: number;
-    }
-  | {
-      type: "read_success";
-      path: string;
-      startLine: number;
-      endLine?: number;
-      content: string;
-      modelTruncation: {
-        truncated: boolean;
-        totalLines: number;
-        outputLines: number;
-      };
-      uiText: ToolUiText;
-    }
-  | { type: "read_blocked"; path: string; reason: string }
-  | {
-      type: "view_image_success";
-      path: string;
-      mimeType: string;
-      bytes: number;
-      uiText: ToolUiText;
-    }
-  | { type: "view_image_blocked"; path: string; reason: string }
-  | {
-      type: "list_success";
-      path: string;
-      offset: number;
-      limit: number;
-      total: number;
-      returned: number;
-      entries: string[];
-      uiText: ToolUiText;
-    }
-  | { type: "list_blocked"; path: string; reason: string }
-  | {
-      type: "grep_started";
-      toolCallId: string;
-      pattern: string;
-    }
-  | {
-      type: "grep_finished";
-      toolCallId: string;
-      pattern: string;
-      status: "success" | "error";
-      exitCode: number | null;
-      stdout: string;
-      stderr: string;
-      captureTruncated: boolean;
-      uiText: ToolUiText;
-    }
-  | {
-      type: "grep_blocked";
-      toolCallId: string;
-      pattern: string;
-      reason: string;
-    }
-  | {
-      type: "write_success";
-      path: string;
-      bytes: number;
-      lines: number;
-      content: string;
-      uiText: ToolUiText;
-    }
-  | { type: "write_blocked"; path: string; reason: string }
-  | {
-      type: "edit_success";
-      path: string;
-      oldLength: number;
-      newLength: number;
-      oldText: string;
-      newText: string;
-      uiText: ToolUiText;
-    }
-  | { type: "edit_blocked"; path: string; reason: string };
+type ToolUiEventBase = {
+  headerTarget?: string;
+};
+
+export type ToolUiEvent = ToolUiEventBase &
+  (
+    | {
+        type: "bash_started";
+        toolCallId: string;
+        command: string;
+      }
+    | {
+        type: "bash_execution";
+        toolCallId: string;
+        command: string;
+        exitCode: number | null;
+        truncationInfo: BashTruncationInfo;
+        uiText: ToolUiText;
+        durationMs?: number;
+        labelOverride?: string;
+      }
+    | {
+        type: "bash_aborted";
+        toolCallId: string;
+        command: string;
+        reason: "aborted" | "interrupted";
+      }
+    | { type: "bash_blocked"; command: string; reason: string; toolCallId?: string }
+    | {
+        type: "spawn_agent_started";
+        toolCallId: string;
+        name: string;
+        title: string;
+      }
+    | {
+        type: "spawn_agent_finished";
+        toolCallId: string;
+        name: string;
+        title: string;
+        status: "success" | "error";
+        agentId?: string;
+        message?: string;
+        uiText?: ToolUiText;
+      }
+    | {
+        type: "spawn_agent_blocked";
+        toolCallId: string;
+        name?: string;
+        title: string;
+        reason: string;
+      }
+    | {
+        type: "send_input_to_agent_started";
+        toolCallId: string;
+        agentId: string;
+        name: string;
+        title: string;
+      }
+    | {
+        type: "send_input_to_agent_finished";
+        toolCallId: string;
+        agentId: string;
+        name: string;
+        title: string;
+        status: "success" | "error";
+        message?: string;
+        uiText?: ToolUiText;
+      }
+    | {
+        type: "send_input_to_agent_blocked";
+        toolCallId: string;
+        agentId?: string;
+        name?: string;
+        title: string;
+        reason: string;
+      }
+    | {
+        type: "wait_for_agent_started";
+        toolCallId: string;
+        agentIds: string[];
+      }
+    | {
+        type: "wait_for_agent_finished";
+        toolCallId: string;
+        agentIds: string[];
+        status: "success" | "error";
+        message?: string;
+        uiText?: ToolUiText;
+      }
+    | {
+        type: "wait_for_agent_blocked";
+        toolCallId: string;
+        agentIds?: string[];
+        reason: string;
+      }
+    | {
+        type: "terminate_agent_started";
+        toolCallId: string;
+        agentId: string;
+      }
+    | {
+        type: "terminate_agent_finished";
+        toolCallId: string;
+        agentId: string;
+        status: "success" | "error";
+        finalStatus?: SubagentStatus;
+        message?: string;
+        uiText?: ToolUiText;
+      }
+    | {
+        type: "terminate_agent_blocked";
+        toolCallId: string;
+        agentId?: string;
+        reason: string;
+      }
+    | {
+        type: "web_search_started";
+        toolCallId: string;
+        objective: string;
+      }
+    | {
+        type: "web_search_finished";
+        toolCallId: string;
+        objective: string;
+        status: "success" | "error";
+        costUsd?: number;
+      }
+    | {
+        type: "web_fetch_started";
+        toolCallId: string;
+        url: string;
+      }
+    | {
+        type: "web_fetch_finished";
+        toolCallId: string;
+        url: string;
+        status: "success" | "error";
+        costUsd?: number;
+      }
+    | {
+        type: "read_success";
+        path: string;
+        startLine: number;
+        endLine?: number;
+        content: string;
+        modelTruncation: {
+          truncated: boolean;
+          totalLines: number;
+          outputLines: number;
+        };
+        uiText: ToolUiText;
+      }
+    | { type: "read_blocked"; path: string; reason: string }
+    | {
+        type: "view_image_success";
+        path: string;
+        mimeType: string;
+        bytes: number;
+        uiText: ToolUiText;
+      }
+    | { type: "view_image_blocked"; path: string; reason: string }
+    | {
+        type: "list_success";
+        path: string;
+        offset: number;
+        limit: number;
+        total: number;
+        returned: number;
+        entries: string[];
+        uiText: ToolUiText;
+      }
+    | { type: "list_blocked"; path: string; reason: string }
+    | {
+        type: "grep_started";
+        toolCallId: string;
+        pattern: string;
+      }
+    | {
+        type: "grep_finished";
+        toolCallId: string;
+        pattern: string;
+        status: "success" | "error";
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        captureTruncated: boolean;
+        uiText: ToolUiText;
+      }
+    | {
+        type: "grep_blocked";
+        toolCallId: string;
+        pattern: string;
+        reason: string;
+      }
+    | {
+        type: "write_success";
+        path: string;
+        bytes: number;
+        lines: number;
+        content: string;
+        uiText: ToolUiText;
+      }
+    | { type: "write_blocked"; path: string; reason: string }
+    | {
+        type: "edit_success";
+        path: string;
+        oldLength: number;
+        newLength: number;
+        oldText: string;
+        newText: string;
+        uiText: ToolUiText;
+      }
+    | { type: "edit_blocked"; path: string; reason: string }
+  );
 
 export type ToolUiLineTone = "diffAdd" | "diffRemove";
 

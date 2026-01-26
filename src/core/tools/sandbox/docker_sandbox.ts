@@ -149,7 +149,7 @@ function resolveSandboxPaths(
 }
 
 async function preflightImage(deps: CoreDeps, containerId: string): Promise<void> {
-  const required = ["sh", "cat", "ls", "rg", "tee", "mkdir", "tail", "find"];
+  const required = ["sh", "cat", "ls", "rg", "tee", "mkdir", "tail", "find", "wc", "base64"];
   const check = [
     ...required.map((cmd) => `command -v ${cmd} >/dev/null 2>&1`),
     "find . -maxdepth 0 -printf '' >/dev/null 2>&1",

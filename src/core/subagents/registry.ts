@@ -11,6 +11,7 @@ const INHERITABLE_TOOL_NAMES = new Set<SubagentToolName>([
   "bash",
   "write",
   "edit",
+  "view_image",
   "web_search",
   "web_fetch",
 ]);

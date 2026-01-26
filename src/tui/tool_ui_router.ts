@@ -228,6 +228,8 @@ export class ToolUiRouter {
       uiEvent.type === "edit_blocked" ||
       uiEvent.type === "read_success" ||
       uiEvent.type === "read_blocked" ||
+      uiEvent.type === "view_image_success" ||
+      uiEvent.type === "view_image_blocked" ||
       uiEvent.type === "list_success" ||
       uiEvent.type === "list_blocked"
     ) {

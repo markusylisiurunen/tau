@@ -154,6 +154,14 @@ export type ToolUiEvent =
     }
   | { type: "read_blocked"; path: string; reason: string }
   | {
+      type: "view_image_success";
+      path: string;
+      mimeType: string;
+      bytes: number;
+      uiText: ToolUiText;
+    }
+  | { type: "view_image_blocked"; path: string; reason: string }
+  | {
       type: "list_success";
       path: string;
       offset: number;

@@ -16,6 +16,7 @@ import { EDIT_TOOL } from "../tools/edit.js";
 import { SEND_INPUT_TO_AGENT_TOOL } from "../tools/send_input_to_agent.js";
 import { SPAWN_AGENT_TOOL } from "../tools/spawn_agent.js";
 import { TERMINATE_AGENT_TOOL } from "../tools/terminate_agent.js";
+import { VIEW_IMAGE_TOOL } from "../tools/view_image.js";
 import { WAIT_FOR_AGENT_TOOL } from "../tools/wait_for_agent.js";
 import { WRITE_TOOL } from "../tools/write.js";
 import type { Persona, Skill } from "../types.js";
@@ -152,6 +153,7 @@ const SUBAGENT_TOOL_NAMES = new Set<SubagentToolName>([
   "bash",
   "write",
   "edit",
+  "view_image",
   "web_search",
   "web_fetch",
   "emit_output",
@@ -528,13 +530,14 @@ const PERSONA_TOOL_DEFINITIONS = new Map([
   ["bash", BASH_TOOL],
   ["write", WRITE_TOOL],
   ["edit", EDIT_TOOL],
+  ["view_image", VIEW_IMAGE_TOOL],
   ["spawn_agent", SPAWN_AGENT_TOOL],
   ["send_input_to_agent", SEND_INPUT_TO_AGENT_TOOL],
   ["wait_for_agent", WAIT_FOR_AGENT_TOOL],
   ["terminate_agent", TERMINATE_AGENT_TOOL],
 ]);
 
-const DEFAULT_PERSONA_TOOLS = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL];
+const DEFAULT_PERSONA_TOOLS = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL, VIEW_IMAGE_TOOL];
 const DEFAULT_SUBAGENT_TOOLS = [
   SPAWN_AGENT_TOOL,
   SEND_INPUT_TO_AGENT_TOOL,

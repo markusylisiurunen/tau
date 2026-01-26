@@ -43,6 +43,10 @@ export function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | und
       return `edit: ${uiEvent.path}`;
     case "edit_blocked":
       return `tool blocked: edit ${uiEvent.path} (${normalizeOneLine(uiEvent.reason)})`;
+    case "view_image_success":
+      return `view image: ${uiEvent.path}`;
+    case "view_image_blocked":
+      return `tool blocked: view image ${uiEvent.path} (${normalizeOneLine(uiEvent.reason)})`;
     default:
       return undefined;
   }

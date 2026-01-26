@@ -45,6 +45,7 @@ export function buildReadSuccessView(
     labelStyle: palette.textMuted,
     accent: pathInline,
     accentStyle: palette.brandAccent,
+    wrapIndex: 5,
   });
   const compactParts: string[] = [];
   const previewText = renderToolUiTextLines({
@@ -117,6 +118,7 @@ export function buildListSuccessView(
     labelStyle: palette.textMuted,
     accent: pathInline,
     accentStyle: palette.brandAccent,
+    wrapIndex: 5,
   });
 
   const compactParts: string[] = [];
@@ -169,14 +171,11 @@ export function buildGrepRunningView(theme: Theme, pattern: string): ToolOutputV
   const header = buildHeaderLine({
     bulletStyle: runningColor,
     bullet: "⏵",
-    label: "grep",
+    label: "grep (running)",
     labelStyle: palette.textMuted,
     accent: patternInline,
     accentStyle: palette.brandAccent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      { text: "(running)", style: palette.textMuted },
-    ],
+    wrapIndex: 5,
   });
 
   return {
@@ -219,6 +218,7 @@ export function buildGrepFinishedView(
     labelStyle: palette.textMuted,
     accent: patternInline,
     accentStyle: palette.brandAccent,
+    wrapIndex: 5,
   });
   const previewStyle = isSuccess ? palette.textDim : palette.actionError;
   const statusStyle = isSuccess ? palette.textMuted : palette.actionError;

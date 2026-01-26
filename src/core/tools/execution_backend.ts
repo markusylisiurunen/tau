@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, posix as pathPosix, sep as pathSep } from "node:path";
 import type { SandboxConfig } from "../config/index.js";
 import type { CoreDeps } from "../runtime/deps.js";
@@ -24,6 +24,12 @@ export type BashExecutionResult = {
 export type ReadFileResult = {
   path: string;
   content: string;
+};
+
+export type ReadFileBinaryResult = {
+  path: string;
+  content: Buffer;
+  bytes: number;
 };
 
 export type WriteFileResult = {
@@ -58,6 +64,7 @@ export interface ToolExecutionBackend {
     options?: { timeoutMs?: number; signal?: AbortSignal; cwd?: string },
   ): Promise<BashExecutionResult>;
   readFile(path: string, options?: { restricted?: boolean }): Promise<ReadFileResult>;
+  readFileBinary(path: string, options?: { maxBytes?: number }): Promise<ReadFileBinaryResult>;
   writeFile(path: string, content: string): Promise<WriteFileResult>;
   editFile(path: string, patch: { oldText: string; newText: string }): Promise<void>;
   listDir(path: string): Promise<ListDirResult>;
@@ -162,6 +169,20 @@ export function createLocalToolExecutionBackend(
     async readFile(path, _options) {
       const content = readFileSync(path, "utf-8");
       return { path, content };
+    },
+
+    async readFileBinary(path, options = {}) {
+      const stats = statSync(path);
+      if (!stats.isFile()) {
+        throw new Error("path is not a file.");
+      }
+      const bytes = stats.size;
+      const maxBytes = options.maxBytes;
+      if (maxBytes !== undefined && bytes > maxBytes) {
+        throw new Error(`file exceeds maximum size of ${maxBytes} bytes (got ${bytes} bytes).`);
+      }
+      const content = readFileSync(path);
+      return { path, content, bytes };
     },
 
     async writeFile(path, content) {
@@ -362,6 +383,41 @@ export async function createSandboxToolExecutionBackend(options: {
       }
 
       return { path: resolved.displayPath, content: result.stdout };
+    },
+
+    async readFileBinary(path, options = {}) {
+      const resolved = resolveContainerPath(path);
+      const sizeResult = await sandbox.exec(["wc", "-c", "--", resolved.containerPath]);
+
+      if (sizeResult.exitCode !== 0) {
+        const message = sizeResult.stderr.trim() || "failed to read file size.";
+        throw new Error(message);
+      }
+
+      const sizeText = sizeResult.stdout.trim();
+      const bytes = Number.parseInt(sizeText.split(/\s+/)[0] ?? "", 10);
+      if (!Number.isFinite(bytes)) {
+        throw new Error("failed to parse file size.");
+      }
+
+      const maxBytes = options.maxBytes;
+      if (maxBytes !== undefined && bytes > maxBytes) {
+        throw new Error(`file exceeds maximum size of ${maxBytes} bytes (got ${bytes} bytes).`);
+      }
+
+      const captureLimit = Math.max(1024, Math.ceil(bytes * 1.5));
+      const result = await sandbox.exec(["base64", "--", resolved.containerPath], {
+        maxCaptureBytes: captureLimit,
+      });
+
+      if (result.exitCode !== 0) {
+        const message = result.stderr.trim() || "failed to read file.";
+        throw new Error(message);
+      }
+
+      const normalized = result.stdout.replace(/\s+/g, "");
+      const content = Buffer.from(normalized, "base64");
+      return { path: resolved.displayPath, content, bytes };
     },
 
     async writeFile(path, content) {

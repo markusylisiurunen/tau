@@ -8,6 +8,8 @@ import {
 import {
   buildEditBlockedView,
   buildEditSuccessView,
+  buildViewImageBlockedView,
+  buildViewImageSuccessView,
   buildWriteBlockedView,
   buildWriteSuccessView,
 } from "./file_execution.js";
@@ -39,14 +41,11 @@ function buildSimpleToolRunningView(
   const header = buildHeaderLine({
     bulletStyle: runningColor,
     bullet: "⏵",
-    label,
+    label: `${label} (running)`,
     labelStyle: palette.textMuted,
     accent: inlineText(target),
     accentStyle: palette.brandAccent,
-    tailSegments: [
-      { text: " ", style: (s) => s },
-      { text: "(running)", style: palette.textMuted },
-    ],
+    wrapIndex: 5,
   });
 
   return {
@@ -77,6 +76,7 @@ function buildSimpleToolFinishedView(args: {
     labelStyle: palette.textMuted,
     accent: inlineText(target),
     accentStyle: palette.brandAccent,
+    wrapIndex: 5,
   });
 
   const messageLine = message
@@ -473,6 +473,16 @@ export function createToolUiRegistry(): ToolUiRegistry {
   registry.register("edit_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "edit_blocked" }>;
     return buildEditBlockedView(context.theme, uiEvent.path, uiEvent.reason);
+  });
+
+  registry.register("view_image_success", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "view_image_success" }>;
+    return buildViewImageSuccessView(context.theme, uiEvent.path, uiEvent.uiText);
+  });
+
+  registry.register("view_image_blocked", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "view_image_blocked" }>;
+    return buildViewImageBlockedView(context.theme, uiEvent.path, uiEvent.reason);
   });
 
   return registry;

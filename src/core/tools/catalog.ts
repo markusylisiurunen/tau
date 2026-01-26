@@ -9,6 +9,7 @@ import { ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
 import { createSpawnAgentToolDefinition } from "./spawn_agent.js";
 import { createTerminateAgentToolDefinition } from "./terminate_agent.js";
+import { createViewImageToolDefinition } from "./view_image.js";
 import { createWaitForAgentToolDefinition } from "./wait_for_agent.js";
 import { createWebFetchToolDefinition } from "./web_fetch.js";
 import { createWebSearchToolDefinition } from "./web_search.js";
@@ -20,6 +21,7 @@ export const ToolCatalog = {
       createBashToolDefinition(backend),
       createWriteToolDefinition(backend),
       createEditToolDefinition(backend),
+      createViewImageToolDefinition(backend),
       createSpawnAgentToolDefinition(backend),
       createSendInputToAgentToolDefinition(backend),
       createWaitForAgentToolDefinition(),
@@ -48,6 +50,9 @@ export const ToolCatalog = {
           break;
         case "edit":
           definitions.push(createEditToolDefinition(backend));
+          break;
+        case "view_image":
+          definitions.push(createViewImageToolDefinition(backend));
           break;
         case "web_search":
           definitions.push(createWebSearchToolDefinition(config));

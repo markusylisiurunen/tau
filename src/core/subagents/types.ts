@@ -9,6 +9,7 @@ export type SubagentToolName =
   | "bash"
   | "write"
   | "edit"
+  | "view_image"
   | "web_search"
   | "web_fetch"
   | "emit_output";

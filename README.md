@@ -422,7 +422,7 @@ optional frontmatter fields:
       tools: [web_search, web_fetch, bash]
       riskLevel: read-only
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit` (and subagent tools when subagents are enabled). risk levels still apply.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled). risk levels still apply.
 
 the markdown body becomes the system prompt.
 

@@ -225,6 +225,7 @@ export function buildBlockedToolView(args: {
     labelStyle: palette.textMuted,
     accent: accentInline,
     accentStyle: palette.brandAccent,
+    wrapIndex: 5,
   });
 
   return {

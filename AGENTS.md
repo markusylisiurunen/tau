@@ -18,7 +18,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface and RPC stub for alternate front-ends
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools (local host or docker sandbox)
-- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent) and sub-agent (emit_output plus allowed tools) registries
+- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent) and sub-agent (emit_output plus allowed tools) registries
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
@@ -96,6 +96,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 | `bash`               | Shell execution                | `read-only` for reads, `read-write` for writes |
 | `write`              | Create/overwrite files         | `read-write`                                   |
 | `edit`               | Replace exact text in files    | `read-write`                                   |
+| `view_image`         | View an image file             | `read-only`                                    |
 | `spawn_agent`        | Start a background subagent    | `read-only` or `read-write`                    |
 | `send_input_to_agent` | Send input to an idle subagent | `read-only` or `read-write`                    |
 | `wait_for_agent`     | Await subagent completion      | `read-only` or `read-write`                    |
@@ -140,7 +141,7 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `allowedReasoningLevels`: list of reasoning levels shown in the UI
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
 - `subagents`: optional map of subagent definitions. The built-in `default` subagent is implicitly enabled unless `default: false` is provided. Custom subagents must be defined as `{ systemPrompt, description?, provider+model?, reasoning?, tools?, riskLevel? }` with lowercase-dash names (max 64 chars). The `default` subagent cannot be overridden.
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit` (and subagent tools when subagents are enabled). risk levels still apply.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled). risk levels still apply.
 
 On conflicts, the most specific level wins (built-ins are the base layer).
 

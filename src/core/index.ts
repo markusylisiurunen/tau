@@ -67,6 +67,7 @@ export { ToolRegistry } from "./tools/registry.js";
 export { createSendInputToAgentToolDefinition } from "./tools/send_input_to_agent.js";
 export { createSpawnAgentToolDefinition } from "./tools/spawn_agent.js";
 export { createTerminateAgentToolDefinition } from "./tools/terminate_agent.js";
+export { createViewImageToolDefinition } from "./tools/view_image.js";
 export { createWaitForAgentToolDefinition } from "./tools/wait_for_agent.js";
 export { createWriteToolDefinition } from "./tools/write.js";
 export type { Persona, ReasoningEffort, RiskLevel, Skill } from "./types.js";

@@ -40,7 +40,7 @@ test("renderWriteSuccess (compact) shows preview lines", () => {
   const component = renderWriteSuccess(
     theme,
     "notes.txt",
-    makeUiText("    first\n    second", "    (2 lines)", "first\nsecond"),
+    makeUiText("first\nsecond", "2 lines", "first\nsecond"),
     true,
   );
   const text = renderText(component, 80);

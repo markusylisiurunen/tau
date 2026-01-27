@@ -10,12 +10,15 @@ export class UsageCliError extends Error {
   }
 }
 
+type UsageGroupBy = "day" | "model";
+
 type UsageCliOptions = {
   help: boolean;
   since?: string;
   persona?: string;
   provider?: string;
   model?: string;
+  groupBy: UsageGroupBy;
 };
 
 type UsageAggregate = {
@@ -54,6 +57,7 @@ function parseUsageArgs(argv: string[]): UsageCliOptions {
   let persona: string | undefined;
   let provider: string | undefined;
   let model: string | undefined;
+  let groupBy: UsageGroupBy = "day";
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -91,6 +95,16 @@ function parseUsageArgs(argv: string[]): UsageCliOptions {
       continue;
     }
 
+    if (arg === "--group-by" || arg.startsWith("--group-by=")) {
+      const parsed = parseValue(arg, argv, i);
+      i = parsed.next;
+      if (parsed.value !== "day" && parsed.value !== "model") {
+        throw new UsageCliError(`invalid group-by '${parsed.value}'. expected day or model.`);
+      }
+      groupBy = parsed.value;
+      continue;
+    }
+
     if (arg.startsWith("-")) {
       throw new UsageCliError(`unknown option: ${arg}`);
     }
@@ -98,7 +112,7 @@ function parseUsageArgs(argv: string[]): UsageCliOptions {
     throw new UsageCliError(`unexpected argument: ${arg}`);
   }
 
-  return { help, since, persona, provider, model };
+  return { help, since, persona, provider, model, groupBy };
 }
 
 function parseSinceDate(raw: string): string {
@@ -174,6 +188,7 @@ export function printUsageHelp(): void {
       "  --persona <id>      filter by persona id.",
       "  --provider <name>   filter by provider.",
       "  --model <id>        filter by model id.",
+      "  --group-by <value>  group by day or model (default: day).",
       "  --help              show this help and exit.",
     ].join("\n"),
   );
@@ -270,9 +285,13 @@ export async function runUsageCommand(argv: string[]): Promise<void> {
       const cost = parsed.cost as Record<string, unknown> | undefined;
       const costTotal = readNumber(cost?.total);
 
-      const aggregate = aggregates.get(entryDateKey) ?? toAggregate();
+      const groupKey =
+        options.groupBy === "model"
+          ? `${provider ?? "unknown"}/${model ?? "unknown"}`
+          : entryDateKey;
+      const aggregate = aggregates.get(groupKey) ?? toAggregate();
       appendAggregate(aggregate, { input, output, cacheRead, cacheWrite, total, costTotal });
-      aggregates.set(entryDateKey, aggregate);
+      aggregates.set(groupKey, aggregate);
     }
   }
 
@@ -281,14 +300,70 @@ export async function runUsageCommand(argv: string[]): Promise<void> {
     return;
   }
 
+  const rows: string[][] = [];
+  const totalAggregate = toAggregate();
+
   for (const dateKey of [...aggregates.keys()].sort()) {
     const aggregate = aggregates.get(dateKey)!;
-    const usage = `↑${formatTokenWindow(aggregate.input)} ↓${formatTokenWindow(aggregate.output)} (r${formatTokenWindow(aggregate.cacheRead)} w${formatTokenWindow(aggregate.cacheWrite)})`;
+    totalAggregate.requests += aggregate.requests;
+    totalAggregate.input += aggregate.input;
+    totalAggregate.output += aggregate.output;
+    totalAggregate.cacheRead += aggregate.cacheRead;
+    totalAggregate.cacheWrite += aggregate.cacheWrite;
+    totalAggregate.total += aggregate.total;
+    totalAggregate.costTotal += aggregate.costTotal;
+
+    const input = `↑${formatTokenWindow(aggregate.input)}`;
+    const output = `↓${formatTokenWindow(aggregate.output)}`;
+    const cacheRead = `r${formatTokenWindow(aggregate.cacheRead)}`;
+    const cacheWrite = `w${formatTokenWindow(aggregate.cacheWrite)}`;
     const total = formatTokenWindow(aggregate.total);
     const cost = `$${formatAdaptiveNumber(aggregate.costTotal, 2, 5)}`;
 
-    console.log(
-      `${dateKey}  requests: ${aggregate.requests}  ${usage}  total: ${total}  cost: ${cost}`,
-    );
+    rows.push([
+      dateKey,
+      `requests: ${aggregate.requests}`,
+      input,
+      output,
+      cacheRead,
+      cacheWrite,
+      `total: ${total}`,
+      `cost: ${cost}`,
+    ]);
   }
+
+  const totalInput = `↑${formatTokenWindow(totalAggregate.input)}`;
+  const totalOutput = `↓${formatTokenWindow(totalAggregate.output)}`;
+  const totalCacheRead = `r${formatTokenWindow(totalAggregate.cacheRead)}`;
+  const totalCacheWrite = `w${formatTokenWindow(totalAggregate.cacheWrite)}`;
+  const totalTokens = formatTokenWindow(totalAggregate.total);
+  const totalCost = `$${formatAdaptiveNumber(totalAggregate.costTotal, 2, 5)}`;
+  const totalRow = [
+    "total",
+    `requests: ${totalAggregate.requests}`,
+    totalInput,
+    totalOutput,
+    totalCacheRead,
+    totalCacheWrite,
+    `total: ${totalTokens}`,
+    `cost: ${totalCost}`,
+  ];
+  const allRows = [...rows, totalRow];
+  const columnWidths = allRows.reduce((widths, row) => {
+    row.forEach((cell, index) => {
+      widths[index] = Math.max(widths[index] ?? 0, cell.length);
+    });
+    return widths;
+  }, [] as number[]);
+  const formatRow = (row: string[]): string =>
+    row
+      .map((cell, index) => (index === row.length - 1 ? cell : cell.padEnd(columnWidths[index]!)))
+      .join("  ");
+
+  for (const row of rows) {
+    console.log(formatRow(row));
+  }
+
+  console.log("");
+  console.log(formatRow(totalRow));
 }

@@ -199,7 +199,7 @@ function truncateMiddleCore(args: {
   };
 }
 
-export type TokenTruncationStrategy = "middle" | "tail";
+export type TokenTruncationStrategy = "head" | "middle" | "tail";
 
 function tokenCountFromBytes(bytesTruncated: number): number {
   if (bytesTruncated <= 0) return 0;
@@ -247,10 +247,14 @@ export function truncateForTokens(
   let outputContent = "";
   let keptBytes = 0;
 
-  if (strategy === "tail") {
+  if (strategy === "head") {
     const head = truncateToBytesFromStart(content, maxBytes);
     keptBytes = Buffer.byteLength(head, "utf-8");
     outputContent = `${head}…${tokenCountFromBytes(totalBytes - keptBytes)} tokens truncated…`;
+  } else if (strategy === "tail") {
+    const tail = truncateToBytesFromEnd(content, maxBytes);
+    keptBytes = Buffer.byteLength(tail, "utf-8");
+    outputContent = `…${tokenCountFromBytes(totalBytes - keptBytes)} tokens truncated…${tail}`;
   } else {
     const headBytes = Math.floor(maxBytes / 2);
     const tailBytes = maxBytes - headBytes;

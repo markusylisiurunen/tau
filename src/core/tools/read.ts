@@ -213,7 +213,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
 
         const modelTruncation = truncateForTokens(captured, {
           maxTokens: READ_TOOL_MAX_TOKENS,
-          strategy: "tail",
+          strategy: "head",
         });
 
         const toolText = formatReadToolResultText({

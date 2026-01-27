@@ -490,6 +490,15 @@ the model sees your messages, any file contents you've shared, and the results o
 
 tool calls are displayed in the UI so you can see exactly what the model is doing. use `ctrl+o` to toggle between compact and detailed views.
 
+## tool output truncation
+
+tool output is truncated using a `bytes / 6` token heuristic (shown as `…N tokens truncated…`).
+
+- **bash (assistant, default)**: 4096 token limit. when exceeded, output is middle-truncated to 512 tokens and gated with a grant code note. re-running with a `grantCode` enables extended mode with a 20,480 token limit. bash captures the last 1MB of output.
+- **bash (user `!`)**: 65,536 token limit.
+- **read/grep**: capture the first 1MB of output, then cap to 8,192 tokens with tail truncation and a note to read smaller chunks or narrow the search.
+- **web_search/web_fetch**: large responses are middle-truncated to their token limits (8,192 / 16,384 tokens).
+
 ## creating a release
 
 publishing to npm happens automatically via github actions when a github release is published.

@@ -188,8 +188,7 @@ export type ToolUiEvent = ToolUiEventBase &
         pattern: string;
         status: "success" | "error";
         exitCode: number | null;
-        stdout: string;
-        stderr: string;
+        output: string;
         captureTruncated: boolean;
         uiText: ToolUiText;
       }

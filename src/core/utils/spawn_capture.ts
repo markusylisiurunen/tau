@@ -1,15 +1,42 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { truncateToBytesFromEnd } from "./truncate.js";
+
+export type SpawnCaptureOutputMode = "split" | "combined";
+export type SpawnCaptureStrategy = "head" | "tail";
 
 export type SpawnCaptureResult = {
   stdout: string;
   stderr: string;
+  output?: string;
   exitCode: number | null;
   captureLimitExceeded: boolean;
   timedOut: boolean;
   aborted: boolean;
   closeSignal: NodeJS.Signals | null;
 };
+
+type CaptureBuffer = {
+  text: string;
+  bytes: number;
+};
+
+function appendWithTail(buffer: CaptureBuffer, text: string, maxBytes: number): void {
+  if (!text) return;
+
+  if (!Number.isFinite(maxBytes)) {
+    buffer.text += text;
+    buffer.bytes += Buffer.byteLength(text, "utf-8");
+    return;
+  }
+
+  buffer.text += text;
+  buffer.bytes += Buffer.byteLength(text, "utf-8");
+  if (buffer.bytes <= maxBytes) return;
+
+  buffer.text = truncateToBytesFromEnd(buffer.text, maxBytes);
+  buffer.bytes = Buffer.byteLength(buffer.text, "utf-8");
+}
 
 export async function spawnWithCapture(
   cmd: string,
@@ -24,6 +51,8 @@ export async function spawnWithCapture(
     timeoutMs?: number;
     maxCaptureBytes?: number;
     maxCaptureMode?: "terminate" | "ignore";
+    maxCaptureStrategy?: SpawnCaptureStrategy;
+    captureOutput?: SpawnCaptureOutputMode;
     killGraceMs?: number;
     killProcessGroup?: boolean;
     stdio?: ["ignore" | "pipe", "ignore" | "pipe", "ignore" | "pipe"];
@@ -40,6 +69,8 @@ export async function spawnWithCapture(
     timeoutMs,
     maxCaptureBytes = Number.POSITIVE_INFINITY,
     maxCaptureMode = "terminate",
+    maxCaptureStrategy = "head",
+    captureOutput = "split",
     killGraceMs = 2000,
     killProcessGroup = false,
     stdio: stdioOption,
@@ -63,8 +94,13 @@ export async function spawnWithCapture(
       child.stdin.end(input);
     }
 
-    let stdout = "";
-    let stderr = "";
+    const captureCombined = captureOutput === "combined";
+    const captureSplit = captureOutput === "split";
+
+    const stdoutBuffer: CaptureBuffer = { text: "", bytes: 0 };
+    const stderrBuffer: CaptureBuffer = { text: "", bytes: 0 };
+    const outputBuffer: CaptureBuffer = { text: "", bytes: 0 };
+
     const stdoutDecoder = new StringDecoder("utf8");
     const stderrDecoder = new StringDecoder("utf8");
 
@@ -75,6 +111,16 @@ export async function spawnWithCapture(
     let aborted = false;
     let settled = false;
     let terminationRequested = false;
+
+    const appendText = (buffer: CaptureBuffer, text: string): void => {
+      if (!text) return;
+      if (maxCaptureStrategy === "tail") {
+        appendWithTail(buffer, text, maxCaptureBytes);
+        return;
+      }
+      buffer.text += text;
+      buffer.bytes += Buffer.byteLength(text, "utf-8");
+    };
 
     const killProcess = (sig: NodeJS.Signals) => {
       if (child.killed) return;
@@ -141,18 +187,25 @@ export async function spawnWithCapture(
       captureBytes += chunk.length;
       if (captureBytes > maxCaptureBytes) {
         captureLimitExceeded = true;
-        captureFrozen = true;
         if (maxCaptureMode === "terminate") {
           requestTermination("limit");
         }
-        return;
+        if (maxCaptureStrategy === "head") {
+          captureFrozen = true;
+          return;
+        }
       }
 
       const text = (target === "stdout" ? stdoutDecoder : stderrDecoder).write(chunk);
-      if (target === "stdout") {
-        stdout += text;
-      } else {
-        stderr += text;
+      if (captureCombined) {
+        appendText(outputBuffer, text);
+      }
+      if (captureSplit) {
+        if (target === "stdout") {
+          appendText(stdoutBuffer, text);
+        } else {
+          appendText(stderrBuffer, text);
+        }
       }
     };
 
@@ -170,22 +223,32 @@ export async function spawnWithCapture(
       reject(err instanceof Error ? err : new Error(String(err)));
     });
 
-    child.on("close", (code, signal) => {
+    child.on("close", (code, signalValue) => {
       if (settled) return;
       settled = true;
       cleanup();
 
-      stdout += stdoutDecoder.end();
-      stderr += stderrDecoder.end();
+      const stdoutTail = stdoutDecoder.end();
+      const stderrTail = stderrDecoder.end();
+
+      if (captureCombined) {
+        appendText(outputBuffer, stdoutTail);
+        appendText(outputBuffer, stderrTail);
+      }
+      if (captureSplit) {
+        appendText(stdoutBuffer, stdoutTail);
+        appendText(stderrBuffer, stderrTail);
+      }
 
       resolve({
-        stdout,
-        stderr,
+        stdout: captureSplit ? stdoutBuffer.text : "",
+        stderr: captureSplit ? stderrBuffer.text : "",
+        output: captureCombined ? outputBuffer.text : undefined,
         exitCode: code,
         captureLimitExceeded,
         timedOut,
         aborted,
-        closeSignal: signal ?? null,
+        closeSignal: signalValue ?? null,
       });
     });
   });

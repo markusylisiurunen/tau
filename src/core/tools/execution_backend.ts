@@ -5,18 +5,16 @@ import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { sanitizeEnvironment } from "../utils/sanitize_env.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
-import { truncateToBytesFromStart } from "../utils/truncate.js";
 import { createDockerSandbox } from "./sandbox/docker_sandbox.js";
 
-const BASH_MAX_CAPTURE_BYTES = 2 * 1024 * 1024; // 2MB
+const BASH_MAX_CAPTURE_BYTES = 1024 * 1024; // 1MB
 const BASH_KILL_GRACE_MS = 2_000;
 
-const GREP_MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
+const GREP_MAX_CAPTURE_BYTES = 1024 * 1024;
 const GREP_KILL_GRACE_MS = 2_000;
 
 export type BashExecutionResult = {
-  stdout: string;
-  stderr: string;
+  output: string;
   exitCode: number | null;
   truncated: boolean;
 };
@@ -50,8 +48,7 @@ export type ListDirResult = {
 };
 
 export type GrepExecutionResult = {
-  stdout: string;
-  stderr: string;
+  output: string;
   exitCode: number | null;
   captureTruncated: boolean;
   resolvedPaths: string[];
@@ -123,17 +120,13 @@ export function createLocalToolExecutionBackend(
         timeoutMs: effectiveTimeoutMs,
         maxCaptureBytes: BASH_MAX_CAPTURE_BYTES,
         maxCaptureMode: "ignore",
+        maxCaptureStrategy: "tail",
+        captureOutput: "combined",
         killGraceMs: BASH_KILL_GRACE_MS,
       });
 
-      let stdout = result.stdout;
-      let stderr = result.stderr;
-      let truncated = result.captureLimitExceeded;
-
-      if (result.captureLimitExceeded) {
-        stdout = truncateToBytesFromStart(stdout, BASH_MAX_CAPTURE_BYTES / 2);
-        stderr = truncateToBytesFromStart(stderr, BASH_MAX_CAPTURE_BYTES / 2);
-      }
+      let output = result.output ?? "";
+      const truncated = result.captureLimitExceeded;
 
       let terminationNote: string | undefined;
       if (result.timedOut && effectiveTimeoutMs !== undefined) {
@@ -145,25 +138,12 @@ export function createLocalToolExecutionBackend(
       }
 
       const note = terminationNote?.trim();
-      if (note && !stdout.includes(note) && !stderr.includes(note)) {
-        const noteText = `${stderr && !stderr.endsWith("\n") ? "\n" : ""}${note}\n`;
-        const noteBytes = Buffer.byteLength(noteText, "utf-8");
-        const currentBytes =
-          Buffer.byteLength(stdout, "utf-8") + Buffer.byteLength(stderr, "utf-8");
-
-        if (currentBytes + noteBytes > BASH_MAX_CAPTURE_BYTES) {
-          truncated = true;
-          const remaining = Math.max(0, BASH_MAX_CAPTURE_BYTES - noteBytes);
-          const stdoutBudget = Math.floor(remaining / 2);
-          const stderrBudget = remaining - stdoutBudget;
-          stdout = truncateToBytesFromStart(stdout, stdoutBudget);
-          stderr = truncateToBytesFromStart(stderr, stderrBudget);
-        }
-
-        stderr += noteText;
+      if (note && !output.includes(note)) {
+        const noteText = `${output && !output.endsWith("\n") ? "\n" : ""}${note}\n`;
+        output += noteText;
       }
 
-      return { stdout, stderr, exitCode: result.exitCode, truncated };
+      return { output, exitCode: result.exitCode, truncated };
     },
 
     async readFile(path, _options) {
@@ -222,8 +202,7 @@ export function createLocalToolExecutionBackend(
 
       if (dryRun) {
         return {
-          stdout: "",
-          stderr: "",
+          output: "",
           exitCode: 0,
           captureTruncated: false,
           resolvedPaths,
@@ -237,20 +216,19 @@ export function createLocalToolExecutionBackend(
           signal,
           timeoutMs,
           maxCaptureBytes: GREP_MAX_CAPTURE_BYTES,
+          captureOutput: "combined",
           killGraceMs: GREP_KILL_GRACE_MS,
         });
 
         return {
-          stdout: result.stdout,
-          stderr: result.stderr,
+          output: result.output ?? "",
           exitCode: result.exitCode,
           captureTruncated: result.captureLimitExceeded || result.timedOut,
           resolvedPaths,
         };
       } catch (err) {
         return {
-          stdout: "",
-          stderr: err instanceof Error ? err.message : String(err),
+          output: err instanceof Error ? err.message : String(err),
           exitCode: 2,
           captureTruncated: false,
           resolvedPaths,
@@ -322,6 +300,8 @@ export async function createSandboxToolExecutionBackend(options: {
         timeoutMs: effectiveTimeoutMs,
         maxCaptureBytes: BASH_MAX_CAPTURE_BYTES,
         maxCaptureMode: "ignore",
+        maxCaptureStrategy: "tail",
+        captureOutput: "combined",
         killGraceMs: BASH_KILL_GRACE_MS,
         env: {
           GIT_TERMINAL_PROMPT: "0",
@@ -333,14 +313,8 @@ export async function createSandboxToolExecutionBackend(options: {
         },
       });
 
-      let stdout = result.stdout;
-      let stderr = result.stderr;
-      let truncated = result.captureLimitExceeded;
-
-      if (result.captureLimitExceeded) {
-        stdout = truncateToBytesFromStart(stdout, BASH_MAX_CAPTURE_BYTES / 2);
-        stderr = truncateToBytesFromStart(stderr, BASH_MAX_CAPTURE_BYTES / 2);
-      }
+      let output = result.output ?? "";
+      const truncated = result.captureLimitExceeded;
 
       let terminationNote: string | undefined;
       if (result.timedOut && effectiveTimeoutMs !== undefined) {
@@ -352,25 +326,12 @@ export async function createSandboxToolExecutionBackend(options: {
       }
 
       const note = terminationNote?.trim();
-      if (note && !stdout.includes(note) && !stderr.includes(note)) {
-        const noteText = `${stderr && !stderr.endsWith("\n") ? "\n" : ""}${note}\n`;
-        const noteBytes = Buffer.byteLength(noteText, "utf-8");
-        const currentBytes =
-          Buffer.byteLength(stdout, "utf-8") + Buffer.byteLength(stderr, "utf-8");
-
-        if (currentBytes + noteBytes > BASH_MAX_CAPTURE_BYTES) {
-          truncated = true;
-          const remaining = Math.max(0, BASH_MAX_CAPTURE_BYTES - noteBytes);
-          const stdoutBudget = Math.floor(remaining / 2);
-          const stderrBudget = remaining - stdoutBudget;
-          stdout = truncateToBytesFromStart(stdout, stdoutBudget);
-          stderr = truncateToBytesFromStart(stderr, stderrBudget);
-        }
-
-        stderr += noteText;
+      if (note && !output.includes(note)) {
+        const noteText = `${output && !output.endsWith("\n") ? "\n" : ""}${note}\n`;
+        output += noteText;
       }
 
-      return { stdout, stderr, exitCode: result.exitCode, truncated };
+      return { output, exitCode: result.exitCode, truncated };
     },
 
     async readFile(path, _options) {
@@ -500,8 +461,7 @@ export async function createSandboxToolExecutionBackend(options: {
 
       if (dryRun) {
         return {
-          stdout: "",
-          stderr: "",
+          output: "",
           exitCode: 0,
           captureTruncated: false,
           resolvedPaths,
@@ -516,20 +476,19 @@ export async function createSandboxToolExecutionBackend(options: {
           signal,
           timeoutMs,
           maxCaptureBytes: GREP_MAX_CAPTURE_BYTES,
+          captureOutput: "combined",
           killGraceMs: GREP_KILL_GRACE_MS,
         });
 
         return {
-          stdout: result.stdout,
-          stderr: result.stderr,
+          output: result.output ?? "",
           exitCode: result.exitCode,
           captureTruncated: result.captureLimitExceeded || result.timedOut,
           resolvedPaths,
         };
       } catch (err) {
         return {
-          stdout: "",
-          stderr: err instanceof Error ? err.message : String(err),
+          output: err instanceof Error ? err.message : String(err),
           exitCode: 2,
           captureTruncated: false,
           resolvedPaths,

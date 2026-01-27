@@ -9,7 +9,11 @@ import {
   READ_UI_MAX_LINES,
   READ_UI_MAX_TOKENS,
 } from "../utils/tool_preview.js";
-import { truncateMiddleForModel, truncateToBytesFromStart } from "../utils/truncate.js";
+import {
+  type TruncationResult,
+  truncateForTokens,
+  truncateToBytesFromStart,
+} from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -19,9 +23,8 @@ import type {
   ToolUiText,
 } from "./registry.js";
 
-export const READ_TOOL_MAX_LINES = 4096;
-export const READ_TOOL_MAX_TOKENS = 25000;
-export const READ_MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
+export const READ_TOOL_MAX_TOKENS = 8192;
+export const READ_MAX_CAPTURE_BYTES = 1024 * 1024;
 
 const READ_DESCRIPTION = ["Read a file from the project safely."].join(" ");
 
@@ -71,7 +74,7 @@ function formatReadToolResultText(args: {
   startLine: number;
   endLine?: number;
   content: string;
-  truncation: ReturnType<typeof truncateMiddleForModel>;
+  truncation: TruncationResult;
 }): string {
   const header = `read ${args.path} (${formatRange(args.startLine, args.endLine)})`;
   const parts: string[] = [header];
@@ -84,7 +87,7 @@ function formatReadToolResultText(args: {
   if (args.truncation.truncated) {
     parts.push(
       "",
-      `truncated for model: ${args.truncation.outputLines} of ${args.truncation.totalLines} lines`,
+      `truncated for model: ${args.truncation.outputLines} of ${args.truncation.totalLines} lines. read smaller chunks with startLine/endLine to see more.`,
     );
   }
 
@@ -93,7 +96,7 @@ function formatReadToolResultText(args: {
 
 function buildReadUiText(args: {
   content: string;
-  modelTruncation: ReturnType<typeof truncateMiddleForModel>;
+  modelTruncation: TruncationResult;
   startLine: number;
   endLine?: number;
 }): ToolUiText {
@@ -201,14 +204,16 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         const startIndex = Math.max(0, start - 1);
         const endIndex = Math.max(startIndex, endEffective);
 
-        let selected = allLines.slice(startIndex, endIndex).join("\n");
-        if (Buffer.byteLength(selected, "utf-8") > READ_MAX_CAPTURE_BYTES) {
-          selected = truncateToBytesFromStart(selected, READ_MAX_CAPTURE_BYTES);
-        }
+        const selected = allLines.slice(startIndex, endIndex).join("\n");
+        const selectedBytes = Buffer.byteLength(selected, "utf-8");
+        const captured =
+          selectedBytes > READ_MAX_CAPTURE_BYTES
+            ? truncateToBytesFromStart(selected, READ_MAX_CAPTURE_BYTES)
+            : selected;
 
-        const modelTruncation = truncateMiddleForModel(selected, {
-          maxLines: READ_TOOL_MAX_LINES,
+        const modelTruncation = truncateForTokens(captured, {
           maxTokens: READ_TOOL_MAX_TOKENS,
+          strategy: "tail",
         });
 
         const toolText = formatReadToolResultText({
@@ -220,7 +225,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         });
 
         const uiText = buildReadUiText({
-          content: selected,
+          content: captured,
           modelTruncation,
           startLine: start,
           endLine: endDisplay,

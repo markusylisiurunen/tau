@@ -109,15 +109,16 @@ Risk levels (`read-only`, `read-write`) gate model tool calls. Subagents inherit
 
 Main session system prompts are immutable after session start to preserve model caching. The environment tag is not updated mid-session. `/risk` and `/cd` changes are injected as system messages on the next user turn instead. Subagent prompts are rebuilt on risk changes so inherited risk applies to subagents.
 
-**Bash limits**: 2MB raw capture, 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized by dropping vars that match sensitive key patterns, git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
+**Bash limits**: 1MB raw capture (tail of output, stdout/stderr merged in arrival order), 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized by dropping vars that match sensitive key patterns, git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 
-- **Bash (assistant, default mode)**: 1,024 total lines / 8,000 total tokens, per-line cap of 256 tokens. If raw output exceeds totals or the line cap, the tool output is gated with a grant code and a short preview.
-- **Bash (assistant, extended mode)**: enabled when any `grantCode` is provided. Uses per-stream caps of 4,096 lines / 25,000 tokens each (combined totals 8,192 lines / 50,000 tokens) with no per-line cap.
-- **Bash (user/!/@/$)**: 16,384 lines / 100,000 tokens for stdout; 4,096 lines / 25,000 tokens for stderr.
-- **web_fetch**: 8,192 lines / 50,000 tokens.
-- **web_search**: 4,096 lines / 25,000 tokens.
+- **Bash (assistant, default mode)**: 4,096 token limit. When exceeded, output is middle-truncated to 512 tokens and gated with a grant code prompt.
+- **Bash (assistant, extended mode)**: enabled when any `grantCode` is provided. 20,480 token limit, middle-truncated when exceeded.
+- **Bash (user/!/@/$)**: 65,536 token limit, middle-truncated when exceeded.
+- **read/grep**: 8,192 token limit (tail-truncated), after 1MB capture.
+- **web_fetch**: 16,384 token limit (middle-truncated).
+- **web_search**: 8,192 token limit (middle-truncated).
 
 **Tool UI preview formatting**:
 

@@ -5,7 +5,11 @@ import type { CoreDeps } from "../../runtime/deps.js";
 import { getGitRoot } from "../../utils/git.js";
 import { normalizeSandboxMountPath, resolveSandboxWorkdir } from "../../utils/sandbox_paths.js";
 import { sanitizeEnvironment } from "../../utils/sanitize_env.js";
-import type { SpawnCaptureResult } from "../../utils/spawn_capture.js";
+import type {
+  SpawnCaptureOutputMode,
+  SpawnCaptureResult,
+  SpawnCaptureStrategy,
+} from "../../utils/spawn_capture.js";
 
 const DEFAULT_MOUNT_PATH = "/workspace";
 const DEFAULT_PRUNE_AFTER_HOURS = 72;
@@ -42,6 +46,8 @@ export type DockerExecOptions = {
   stdio?: ["ignore" | "pipe", "ignore" | "pipe", "ignore" | "pipe"];
   maxCaptureBytes?: number;
   maxCaptureMode?: "terminate" | "ignore";
+  maxCaptureStrategy?: SpawnCaptureStrategy;
+  captureOutput?: SpawnCaptureOutputMode;
   killGraceMs?: number;
 };
 
@@ -90,6 +96,8 @@ async function runDocker(
     timeoutMs: options?.timeoutMs,
     maxCaptureBytes: options?.maxCaptureBytes,
     maxCaptureMode: options?.maxCaptureMode,
+    maxCaptureStrategy: options?.maxCaptureStrategy,
+    captureOutput: options?.captureOutput,
     killGraceMs: options?.killGraceMs,
     stdio: options?.stdio,
     input: options?.input,

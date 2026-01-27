@@ -282,8 +282,8 @@ tau supports slash commands for common actions:
 | `/checkpoint`                      | save a checkpoint file for loading later                                     |
 | `/reload`                          | reload personas, prompts, skills, and themes from disk                       |
 | `/cd <path>`                       | change the working directory                                                 |
-| `/compact:only-summary`            | compress history and continue with a summary                                 |
-| `/compact:with-last-turn`          | compress history but keep the last exchange                                  |
+| `/compact:only-summary [prompt]`   | compress history and continue with a summary                                 |
+| `/compact:with-last-turn [prompt]` | compress history but keep the last exchange                                  |
 | `/prune:earliest-first [fraction]` | prune tool results from the start of the session                             |
 | `/prune:largest-first [fraction]`  | prune largest tool results first                                             |
 | `/persona:<id>`                    | switch to a different persona                                                |

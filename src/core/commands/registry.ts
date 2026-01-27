@@ -281,7 +281,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "compactOnlySummary",
-    usage: "/compact:only-summary",
+    usage: "/compact:only-summary [prompt]",
     description: "summarize and start new session",
     autocompleteDescription: "compact history to a summary",
     argument: "none",
@@ -296,7 +296,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "compactSummaryAndLastTurn",
-    usage: "/compact:with-last-turn",
+    usage: "/compact:with-last-turn [prompt]",
     description: "summarize and include previous last turn",
     autocompleteDescription: "compact history, keep last turn",
     argument: "none",
@@ -311,7 +311,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "pruneEarliestFirst",
-    usage: "/prune:earliest-first [fraction]",
+    usage: "/prune:earliest-first [frac]",
     description: "prune earliest tool results from context",
     autocompleteDescription: "prune earliest tool results",
     argument: "none",
@@ -326,7 +326,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "pruneLargestFirst",
-    usage: "/prune:largest-first [fraction]",
+    usage: "/prune:largest-first [frac]",
     description: "prune largest tool results from context",
     autocompleteDescription: "prune largest tool results",
     argument: "none",
@@ -342,9 +342,8 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
   registry.register({
     id: "reload",
     usage: "/reload",
-    description: "reload prompts, skills, themes, bash commands, and AGENTS.md from disk",
-    autocompleteDescription:
-      "reload prompts, skills, themes, bash commands, and AGENTS.md from disk",
+    description: "reload prompts, skills, themes, bash commands, and AGENTS.md",
+    autocompleteDescription: "reload prompts, skills, themes, bash commands, and AGENTS.md",
     argument: "none",
     section: "base",
     parse: (raw) => {

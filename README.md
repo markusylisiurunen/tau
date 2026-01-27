@@ -272,27 +272,27 @@ tau will create or update AGENTS.md at your project root, integrating the new in
 
 tau supports slash commands for common actions:
 
-| command                   | description                                                                  |
-| ------------------------- | ---------------------------------------------------------------------------- |
-| `/help`                   | show available commands                                                      |
-| `/new`                    | clear the session and start fresh                                            |
-| `/copy`                   | copy the last assistant message                                              |
-| `/copy:code`              | copy just the code blocks                                                    |
-| `/export:html`            | export chat history to html                                                  |
-| `/checkpoint`             | save a checkpoint file for loading later                                     |
-| `/reload`                 | reload personas, prompts, skills, and themes from disk                       |
-| `/cd <path>`              | change the working directory                                                 |
-| `/compact:only-summary`   | compress history and continue with a summary                                 |
-| `/compact:with-last-turn` | compress history but keep the last exchange                                  |
-| `/prune:earliest-first [fraction]` | prune tool results from the start of the session                     |
-| `/prune:largest-first [fraction]`  | prune largest tool results first                                    |
-| `/persona:<id>`           | switch to a different persona                                                |
-| `/prompt:<id>`            | insert a saved prompt template                                               |
-| `/theme:<id>`             | switch to a loaded theme                                                     |
-| `/bash:<id>`              | run a saved shell command                                                    |
-| `/risk:<level>`           | change the risk level                                                        |
-| `!<cmd>`                  | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
-| `!!<cmd>`                 | run a shell command without adding output to the model context               |
+| command                            | description                                                                  |
+| ---------------------------------- | ---------------------------------------------------------------------------- |
+| `/help`                            | show available commands                                                      |
+| `/new`                             | clear the session and start fresh                                            |
+| `/copy`                            | copy the last assistant message                                              |
+| `/copy:code`                       | copy just the code blocks                                                    |
+| `/export:html`                     | export chat history to html                                                  |
+| `/checkpoint`                      | save a checkpoint file for loading later                                     |
+| `/reload`                          | reload personas, prompts, skills, and themes from disk                       |
+| `/cd <path>`                       | change the working directory                                                 |
+| `/compact:only-summary`            | compress history and continue with a summary                                 |
+| `/compact:with-last-turn`          | compress history but keep the last exchange                                  |
+| `/prune:earliest-first [fraction]` | prune tool results from the start of the session                             |
+| `/prune:largest-first [fraction]`  | prune largest tool results first                                             |
+| `/persona:<id>`                    | switch to a different persona                                                |
+| `/prompt:<id>`                     | insert a saved prompt template                                               |
+| `/theme:<id>`                      | switch to a loaded theme                                                     |
+| `/bash:<id>`                       | run a saved shell command                                                    |
+| `/risk:<level>`                    | change the risk level                                                        |
+| `!<cmd>`                           | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
+| `!!<cmd>`                          | run a shell command without adding output to the model context               |
 
 use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
 
@@ -358,8 +358,15 @@ define shortcuts for common shell commands in any in-scope config file (`~/.conf
 ```json
 {
   "bashCommands": [
-    { "id": "check", "description": "lint + typecheck", "cmd": "npm run check" },
-    { "id": "test", "cmd": "npm test" }
+    {
+      "id": "check",
+      "description": "lint + typecheck",
+      "cmd": "npm run check"
+    },
+    {
+      "id": "test",
+      "cmd": "npm test"
+    }
   ]
 }
 ```

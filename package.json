@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "biome check --write . && tsc -p tsconfig.json --noEmit",
+    "check": "prettier -w .tau/**/*.md *.md && biome check --write . && tsc -p tsconfig.json --noEmit",
     "precheck": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "prebuild": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "start": "node dist/main.js",
@@ -33,6 +33,7 @@
     "@biomejs/biome": "2.3.11",
     "@types/node": "^24.10.9",
     "colorjs.io": "^0.6.1",
+    "prettier": "^3.8.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },

@@ -140,7 +140,7 @@ Skills and sub-agents specify when they should be activated:
 
 - **eager**: Use proactively whenever the capability would help, even if not explicitly requested.
 - **balanced**: Use when the request clearly matches. This is the default when not specified.
-- **explicit**: Use only when the user specifically names or requests it with \`@skill:<name>\` or \`@agent:<name>\`.
+- **explicit**: Use only when the user explicitly names the skill or sub-agent (use \`@skill:<name>\` or \`@agent:<name>\`). Do not infer from generic language or keyword overlap.
 `.trim();
 
 const BLOCK_PROJECT_CONTEXT = `

@@ -19,6 +19,6 @@ Be direct and concise. No meta commentary about your process.
 
 export const DEFAULT_SUBAGENT_DEFINITION: SubagentDefinition = {
   name: DEFAULT_SUBAGENT_NAME,
-  description: "General-purpose sub-agent for background work. Trigger: balanced.",
+  description: "General-purpose sub-agent for background work. Trigger: explicit.",
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
 };

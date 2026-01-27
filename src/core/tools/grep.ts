@@ -324,7 +324,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
 
           const outputModel = truncateForTokens(output, {
             maxTokens: GREP_TOOL_MAX_TOKENS,
-            strategy: "tail",
+            strategy: "head",
           });
 
           const toolText = formatGrepToolResultText({

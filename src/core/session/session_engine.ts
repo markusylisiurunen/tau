@@ -117,6 +117,14 @@ export class SessionEngine {
     this.messages.push(message);
   }
 
+  replaceMessage(index: number, message: Message): boolean {
+    if (index < 0 || index >= this.messages.length) {
+      return false;
+    }
+    this.messages[index] = message;
+    return true;
+  }
+
   get history(): readonly Message[] {
     return this.messages;
   }

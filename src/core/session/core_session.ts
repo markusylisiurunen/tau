@@ -61,6 +61,10 @@ export class CoreSession {
     this.engine.addMessage(message);
   }
 
+  replaceMessage(index: number, message: Message): boolean {
+    return this.engine.replaceMessage(index, message);
+  }
+
   get history(): readonly Message[] {
     return this.engine.history;
   }

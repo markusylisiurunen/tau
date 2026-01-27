@@ -73,6 +73,7 @@ import { getGitRoot } from "../core/utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
+import { bytesToTokens, formatTokenEstimate } from "../core/utils/token.js";
 import { APP_VERSION } from "../core/version.js";
 import type { ChatInputMode, ChatView, ChatViewInputHandlers } from "./chat_view.js";
 import { copyTextToClipboard } from "./clipboard.js";
@@ -105,6 +106,14 @@ export interface ChatControllerOptions {
 }
 
 type AssistantState = { id?: string; inserted: boolean; model: AssistantMessageModel };
+
+type ToolResultPruneCandidate = {
+  index: number;
+  toolResult: ToolResultMessage;
+  bytes: number;
+  tokens: number;
+  order: number;
+};
 
 type ReloadScope = "new-session" | "reload-command";
 
@@ -152,6 +161,8 @@ const RELOAD_PLANS: Record<ReloadScope, ReloadPlan> = {
 };
 
 const ALLOWED_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
+const DEFAULT_PRUNE_FRACTION = 0.25;
+const PRUNED_TOOL_RESULT_PREFIX = "[tool result pruned]";
 
 export class ChatController {
   private readonly view: ChatView;
@@ -316,6 +327,8 @@ export class ChatController {
       cd: (path) => this.changeDirectory(path),
       compactOnlySummary: (extra) => this.compactSessionOnlySummary(extra),
       compactSummaryAndLastTurn: (extra) => this.compactSessionSummaryAndLastTurn(extra),
+      pruneEarliestFirst: (extra) => this.pruneToolResults("earliest", extra),
+      pruneLargestFirst: (extra) => this.pruneToolResults("largest", extra),
       reload: () => this.reloadContent(),
       risk: (level) => this.setRiskLevel(level),
       persona: (id) => this.switchPersona(id),
@@ -1779,6 +1792,163 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.view.requestRender();
       void this.drainQueuedUserMessages();
     }
+  }
+
+  private pruneToolResults(strategy: "earliest" | "largest", extra?: string): void {
+    const fraction = this.parsePruneFraction(extra);
+    if (fraction === null) {
+      this.view.addSystemMessage("invalid prune fraction. use a number between 0 and 1.", "error");
+      return;
+    }
+
+    if (fraction === 0) {
+      this.view.addSystemMessage("prune fraction is 0, nothing to prune.", "warn");
+      return;
+    }
+
+    const history = this.engine.history;
+    if (history.length === 0) {
+      this.view.addSystemMessage("no conversation to prune.", "warn");
+      return;
+    }
+
+    const candidates: ToolResultPruneCandidate[] = [];
+    let totalTokens = 0;
+
+    for (let index = 0; index < history.length; index++) {
+      const message = history[index];
+      if (message?.role !== "toolResult") continue;
+      const toolResult = message as ToolResultMessage;
+      const info = this.getToolResultContentInfo(toolResult);
+      if (info.firstText?.startsWith(PRUNED_TOOL_RESULT_PREFIX)) {
+        continue;
+      }
+      if (info.hasImage) {
+        continue;
+      }
+      const tokens = bytesToTokens(info.bytes);
+      candidates.push({
+        index,
+        toolResult,
+        bytes: info.bytes,
+        tokens,
+        order: candidates.length,
+      });
+      totalTokens += tokens;
+    }
+
+    if (candidates.length === 0 || totalTokens === 0) {
+      this.view.addSystemMessage("no tool results to prune.", "warn");
+      return;
+    }
+
+    const targetTokens = Math.ceil(totalTokens * fraction);
+    if (targetTokens <= 0) {
+      this.view.addSystemMessage("prune fraction is too small to remove anything.", "warn");
+      return;
+    }
+
+    const ordered =
+      strategy === "largest"
+        ? [...candidates].sort(
+            (a, b) => b.tokens - a.tokens || b.bytes - a.bytes || a.order - b.order,
+          )
+        : candidates;
+
+    const toPrune: ToolResultPruneCandidate[] = [];
+    let prunedTokens = 0;
+    let prunedBytes = 0;
+
+    for (const candidate of ordered) {
+      if (prunedTokens >= targetTokens) break;
+      toPrune.push(candidate);
+      prunedTokens += candidate.tokens;
+      prunedBytes += candidate.bytes;
+    }
+
+    if (toPrune.length === 0) {
+      this.view.addSystemMessage("no tool results to prune.", "warn");
+      return;
+    }
+
+    for (const candidate of toPrune) {
+      const noticeText = this.buildPrunedToolResultNotice(candidate.toolResult, candidate.bytes);
+      const prunedResult: ToolResultMessage = {
+        ...candidate.toolResult,
+        content: [{ type: "text", text: noticeText }],
+      };
+      this.engine.replaceMessage(candidate.index, prunedResult);
+    }
+
+    const prunedLabel = formatTokenEstimate(prunedBytes);
+    const noun = toPrune.length === 1 ? "result" : "results";
+    this.view.addSystemMessage(
+      `pruned ${toPrune.length} tool ${noun} (${prunedLabel}).`,
+      "success",
+    );
+  }
+
+  private parsePruneFraction(extra?: string): number | null {
+    if (!extra) {
+      return DEFAULT_PRUNE_FRACTION;
+    }
+    const parsed = Number(extra);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+    if (parsed < 0 || parsed > 1) {
+      return null;
+    }
+    return parsed;
+  }
+
+  private buildPrunedToolResultNotice(toolResult: ToolResultMessage, bytes: number): string {
+    const tokenEstimate = formatTokenEstimate(bytes);
+    return `${PRUNED_TOOL_RESULT_PREFIX} ${toolResult.toolName} output removed (${tokenEstimate}). re-run the command if needed.`;
+  }
+
+  private getToolResultContentInfo(toolResult: ToolResultMessage): {
+    bytes: number;
+    hasImage: boolean;
+    firstText?: string;
+  } {
+    if (typeof toolResult.content === "string") {
+      const text = toolResult.content;
+      return { bytes: Buffer.byteLength(text, "utf8"), hasImage: false, firstText: text };
+    }
+
+    let bytes = 0;
+    let hasImage = false;
+    let firstText: string | undefined;
+
+    if (!Array.isArray(toolResult.content)) {
+      return { bytes, hasImage, firstText };
+    }
+
+    for (const block of toolResult.content) {
+      if (typeof block === "string") {
+        if (firstText === undefined) {
+          firstText = block;
+        }
+        bytes += Buffer.byteLength(block, "utf8");
+        continue;
+      }
+
+      if (block.type === "text") {
+        const text = block.text ?? "";
+        if (firstText === undefined) {
+          firstText = text;
+        }
+        bytes += Buffer.byteLength(text, "utf8");
+        continue;
+      }
+
+      if (block.type === "image") {
+        hasImage = true;
+      }
+    }
+
+    return { bytes, hasImage, firstText };
   }
 
   private formatRiskLevelNotice(level: RiskLevel): string {

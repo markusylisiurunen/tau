@@ -224,6 +224,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 - `/help`, `/new`, `/cd <path>`, `/copy`, `/copy:code`, `/export:html`, `/checkpoint`, `/reload`
 - `/compact:only-summary`, `/compact:with-last-turn` - Compact history to continue
+- `/prune:earliest-first [fraction]`, `/prune:largest-first [fraction]` - Prune tool results
 - `/risk:read-only|read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model; runs inside sandbox when enabled)
 - `!!<cmd>` - Direct bash execution without adding output to the model context

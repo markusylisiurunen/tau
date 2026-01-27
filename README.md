@@ -284,6 +284,8 @@ tau supports slash commands for common actions:
 | `/cd <path>`              | change the working directory                                                 |
 | `/compact:only-summary`   | compress history and continue with a summary                                 |
 | `/compact:with-last-turn` | compress history but keep the last exchange                                  |
+| `/prune:earliest-first [fraction]` | prune tool results from the start of the session                     |
+| `/prune:largest-first [fraction]`  | prune largest tool results first                                    |
 | `/persona:<id>`           | switch to a different persona                                                |
 | `/prompt:<id>`            | insert a saved prompt template                                               |
 | `/theme:<id>`             | switch to a loaded theme                                                     |
@@ -294,7 +296,7 @@ tau supports slash commands for common actions:
 
 use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
 
-the compact commands are useful when conversations get long. they compress everything into a summary so the model retains context without the overhead of a full history.
+the compact commands are useful when conversations get long. they compress everything into a summary so the model retains context without the overhead of a full history. the prune commands drop tool results from the active context without summarizing, and default to pruning 25% if you omit the fraction.
 
 ## keyboard shortcuts
 

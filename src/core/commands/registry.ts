@@ -12,6 +12,8 @@ export type Command = (
   | { type: "cd"; path: string }
   | { type: "compactOnlySummary" }
   | { type: "compactSummaryAndLastTurn" }
+  | { type: "pruneEarliestFirst" }
+  | { type: "pruneLargestFirst" }
   | { type: "reload" }
   | { type: "risk"; level: RiskLevel }
   | { type: "bash"; id: string }
@@ -51,6 +53,8 @@ export interface CommandDispatchContext {
   cd: (path: string) => void;
   compactOnlySummary: (extra?: string) => Promise<void>;
   compactSummaryAndLastTurn: (extra?: string) => Promise<void>;
+  pruneEarliestFirst: (extra?: string) => void;
+  pruneLargestFirst: (extra?: string) => void;
   reload: () => Promise<void>;
   risk: (level: RiskLevel) => void;
   persona: (id: string) => void;
@@ -303,6 +307,36 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "compactSummaryAndLastTurn", extra };
     },
     run: (ctx, command) => ctx.compactSummaryAndLastTurn(command.extra),
+  });
+
+  registry.register({
+    id: "pruneEarliestFirst",
+    usage: "/prune:earliest-first [fraction]",
+    description: "prune earliest tool results from context",
+    autocompleteDescription: "prune earliest tool results",
+    argument: "none",
+    section: "base",
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/prune:earliest-first") return null;
+      return { type: "pruneEarliestFirst", extra };
+    },
+    run: (ctx, command) => ctx.pruneEarliestFirst(command.extra),
+  });
+
+  registry.register({
+    id: "pruneLargestFirst",
+    usage: "/prune:largest-first [fraction]",
+    description: "prune largest tool results from context",
+    autocompleteDescription: "prune largest tool results",
+    argument: "none",
+    section: "base",
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/prune:largest-first") return null;
+      return { type: "pruneLargestFirst", extra };
+    },
+    run: (ctx, command) => ctx.pruneLargestFirst(command.extra),
   });
 
   registry.register({

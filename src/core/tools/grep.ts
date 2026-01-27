@@ -9,7 +9,7 @@ import {
   GREP_UI_MAX_LINES,
   GREP_UI_MAX_TOKENS,
 } from "../utils/tool_preview.js";
-import { truncateMiddleForModel } from "../utils/truncate.js";
+import { type TruncationResult, truncateForTokens } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -20,8 +20,7 @@ import type {
   ToolUiText,
 } from "./registry.js";
 
-export const GREP_TOOL_MAX_LINES = 4096;
-export const GREP_TOOL_MAX_TOKENS = 25000;
+export const GREP_TOOL_MAX_TOKENS = 8192;
 
 export const GREP_DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -168,8 +167,7 @@ function buildGrepArgs(raw: z.infer<typeof grepArgsSchema>): {
 function formatGrepToolResultText(args: {
   pattern: string;
   paths: string[];
-  stdout: ReturnType<typeof truncateMiddleForModel>;
-  stderr: ReturnType<typeof truncateMiddleForModel>;
+  output: TruncationResult;
   exitCode: number | null;
   captureTruncated: boolean;
 }): string {
@@ -177,19 +175,14 @@ function formatGrepToolResultText(args: {
   const pathsStr = args.paths.length ? ` ${args.paths.join(" ")}` : "";
   parts.push(`grep ${args.pattern}${pathsStr}`);
 
-  const out = args.stdout.content.trimEnd();
+  const out = args.output.content.trimEnd();
   if (out) {
     parts.push("", out);
   }
 
-  const err = args.stderr.content.trimEnd();
-  if (err) {
-    parts.push("", "stderr:", err);
-  }
-
-  if (args.captureTruncated || args.stdout.truncated || args.stderr.truncated) {
-    const shown = `${args.stdout.outputLines} of ${args.stdout.totalLines} lines`;
-    parts.push("", `truncated for model: ${shown}`);
+  if (args.captureTruncated || args.output.truncated) {
+    const shown = `${args.output.outputLines} of ${args.output.totalLines} lines`;
+    parts.push("", `truncated for model: ${shown}. narrow the search scope to see more.`);
   }
 
   if (args.exitCode === null) {
@@ -202,25 +195,15 @@ function formatGrepToolResultText(args: {
 }
 
 function buildGrepUiText(args: {
-  stdout: string;
-  stderr: string;
-  stdoutModel: ReturnType<typeof truncateMiddleForModel>;
-  stderrModel: ReturnType<typeof truncateMiddleForModel>;
+  output: string;
+  modelTruncation: TruncationResult;
   exitCode: number | null;
   captureTruncated: boolean;
 }): ToolUiText {
-  const { stdout, stderr, stdoutModel, stderrModel, exitCode, captureTruncated } = args;
+  const { output, modelTruncation, exitCode, captureTruncated } = args;
 
-  const { truncation: stdoutPreview, previewLines: stdoutLines } = applyPreviewPolicy(
-    stdoutModel.content,
-    {
-      maxLines: GREP_UI_MAX_LINES,
-      maxTokens: GREP_UI_MAX_TOKENS,
-      strategy: "middle",
-    },
-  );
-  const { truncation: stderrPreview, previewLines: stderrLines } = applyPreviewPolicy(
-    stderrModel.content,
+  const { truncation: previewTruncation, previewLines: outputLines } = applyPreviewPolicy(
+    modelTruncation.content,
     {
       maxLines: GREP_UI_MAX_LINES,
       maxTokens: GREP_UI_MAX_TOKENS,
@@ -228,21 +211,14 @@ function buildGrepUiText(args: {
     },
   );
 
-  const err = stderrPreview.content.trimEnd();
-  const out = stdoutPreview.content.trimEnd();
-  const previewText = err
-    ? (buildCompactPreviewLines(stderrLines, {
-        totalLines: stderrPreview.totalLines,
+  const out = previewTruncation.content.trimEnd();
+  const previewText = out
+    ? (buildCompactPreviewLines(outputLines, {
+        totalLines: previewTruncation.totalLines,
         maxLines: 16,
         indent: 0,
       }) ?? "")
-    : out
-      ? (buildCompactPreviewLines(stdoutLines, {
-          totalLines: stdoutPreview.totalLines,
-          maxLines: 16,
-          indent: 0,
-        }) ?? "")
-      : "";
+    : "";
 
   const previewLines: ToolUiLine[] = previewText
     ? previewText.split("\n").map((text) => ({ text }))
@@ -259,18 +235,14 @@ function buildGrepUiText(args: {
     }
   };
 
-  const trimmedOut = stdout.trimEnd();
+  const trimmedOut = output.trimEnd();
   if (trimmedOut) {
     pushSection(trimmedOut);
   }
-  const trimmedErr = stderr.trimEnd();
-  if (trimmedErr) {
-    pushSection(["stderr:", trimmedErr].join("\n"));
-  }
 
-  if (stdoutModel.truncated || stderrModel.truncated || captureTruncated) {
+  if (modelTruncation.truncated || captureTruncated) {
     pushSection(
-      `truncated for model: ${stdoutModel.outputLines} of ${stdoutModel.totalLines} lines`,
+      `truncated for model: ${modelTruncation.outputLines} of ${modelTruncation.totalLines} lines`,
     );
   }
 
@@ -348,30 +320,23 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
             return blocked(`grep failed: ${errorMessage}`);
           }
 
-          const { stdout, stderr, exitCode, captureTruncated, resolvedPaths } = result;
+          const { output, exitCode, captureTruncated, resolvedPaths } = result;
 
-          const stdoutModel = truncateMiddleForModel(stdout, {
-            maxLines: GREP_TOOL_MAX_LINES,
+          const outputModel = truncateForTokens(output, {
             maxTokens: GREP_TOOL_MAX_TOKENS,
-          });
-          const stderrModel = truncateMiddleForModel(stderr, {
-            maxLines: GREP_TOOL_MAX_LINES,
-            maxTokens: GREP_TOOL_MAX_TOKENS,
+            strategy: "tail",
           });
 
           const toolText = formatGrepToolResultText({
             pattern: parsed.pattern,
             paths: resolvedPaths,
-            stdout: stdoutModel,
-            stderr: stderrModel,
+            output: outputModel,
             exitCode,
             captureTruncated,
           });
           const uiText = buildGrepUiText({
-            stdout,
-            stderr,
-            stdoutModel,
-            stderrModel,
+            output,
+            modelTruncation: outputModel,
             exitCode,
             captureTruncated,
           });
@@ -386,8 +351,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
             headerTarget,
             status: isError ? "error" : "success",
             exitCode,
-            stdout: stdoutModel.content,
-            stderr: stderrModel.content,
+            output: outputModel.content,
             captureTruncated,
             uiText,
           };

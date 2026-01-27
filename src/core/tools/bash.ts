@@ -5,18 +5,8 @@ import stripAnsi from "strip-ansi";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import {
-  BYTES_PER_TOKEN,
-  bytesToTokens,
-  formatTokenEstimate,
-  tokensToBytes,
-} from "../utils/token.js";
-import {
-  formatBytes,
-  type TruncationResult,
-  truncateMiddleForModel,
-  truncateToBytesFromStart,
-} from "../utils/truncate.js";
+import { formatTokenEstimate } from "../utils/token.js";
+import { formatBytes, type TruncationResult, truncateForTokens } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -27,72 +17,31 @@ import type {
   ToolUiText,
 } from "./registry.js";
 
-export const BASH_TOOL_MAX_STDOUT_LINES = 4096;
-export const BASH_TOOL_MAX_STDOUT_TOKENS = 25000;
-export const BASH_TOOL_MAX_STDERR_LINES = 4096;
-export const BASH_TOOL_MAX_STDERR_TOKENS = 25000;
-
-export const BASH_USER_MAX_STDOUT_LINES = 16384;
-export const BASH_USER_MAX_STDOUT_TOKENS = 100000;
-export const BASH_USER_MAX_STDERR_LINES = 4096;
-export const BASH_USER_MAX_STDERR_TOKENS = 25000;
-
-const BASH_MODEL_DEFAULT_MAX_TOTAL_LINES = 1024;
-const BASH_MODEL_DEFAULT_MAX_TOTAL_TOKENS = 8000;
-const BASH_MODEL_DEFAULT_MAX_LINE_TOKENS = 256;
-const BASH_MODEL_DEFAULT_PREVIEW_HEAD_LINES = 4;
-const BASH_MODEL_DEFAULT_PREVIEW_TAIL_LINES = 4;
-const BASH_MODEL_DEFAULT_PREVIEW_MAX_LINE_CHARS = 512;
-
-const BASH_STREAM_MIN_LINES = 16;
-const BASH_STREAM_MIN_TOKENS = 256;
+const BASH_MODEL_DEFAULT_MAX_TOKENS = 4096;
+const BASH_MODEL_DEFAULT_PREVIEW_TOKENS = 512;
+const BASH_MODEL_EXTENDED_MAX_TOKENS = 20480;
+const BASH_USER_MAX_TOKENS = 65536;
 
 export type BashOutputMode = "model_default" | "model_extended" | "user";
 
 export interface BashOutputPolicy {
-  maxTotalTokens: number;
-  maxTotalLines: number;
-  maxLineTokens: number;
-  maxStdoutTokens: number;
-  maxStdoutLines: number;
-  maxStderrTokens: number;
-  maxStderrLines: number;
-  previewHeadLines?: number;
-  previewTailLines?: number;
-  previewMaxLineChars?: number;
+  maxTokens: number;
+  gateOnExcess?: boolean;
+  previewTokens?: number;
 }
 
 const BASH_MODEL_DEFAULT_POLICY: BashOutputPolicy = {
-  maxTotalTokens: BASH_MODEL_DEFAULT_MAX_TOTAL_TOKENS,
-  maxTotalLines: BASH_MODEL_DEFAULT_MAX_TOTAL_LINES,
-  maxLineTokens: BASH_MODEL_DEFAULT_MAX_LINE_TOKENS,
-  maxStdoutTokens: BASH_MODEL_DEFAULT_MAX_TOTAL_TOKENS,
-  maxStdoutLines: BASH_MODEL_DEFAULT_MAX_TOTAL_LINES,
-  maxStderrTokens: BASH_MODEL_DEFAULT_MAX_TOTAL_TOKENS,
-  maxStderrLines: BASH_MODEL_DEFAULT_MAX_TOTAL_LINES,
-  previewHeadLines: BASH_MODEL_DEFAULT_PREVIEW_HEAD_LINES,
-  previewTailLines: BASH_MODEL_DEFAULT_PREVIEW_TAIL_LINES,
-  previewMaxLineChars: BASH_MODEL_DEFAULT_PREVIEW_MAX_LINE_CHARS,
+  maxTokens: BASH_MODEL_DEFAULT_MAX_TOKENS,
+  gateOnExcess: true,
+  previewTokens: BASH_MODEL_DEFAULT_PREVIEW_TOKENS,
 };
 
 const BASH_MODEL_EXTENDED_POLICY: BashOutputPolicy = {
-  maxTotalTokens: BASH_TOOL_MAX_STDOUT_TOKENS + BASH_TOOL_MAX_STDERR_TOKENS,
-  maxTotalLines: BASH_TOOL_MAX_STDOUT_LINES + BASH_TOOL_MAX_STDERR_LINES,
-  maxLineTokens: Number.POSITIVE_INFINITY,
-  maxStdoutTokens: BASH_TOOL_MAX_STDOUT_TOKENS,
-  maxStdoutLines: BASH_TOOL_MAX_STDOUT_LINES,
-  maxStderrTokens: BASH_TOOL_MAX_STDERR_TOKENS,
-  maxStderrLines: BASH_TOOL_MAX_STDERR_LINES,
+  maxTokens: BASH_MODEL_EXTENDED_MAX_TOKENS,
 };
 
 const BASH_USER_POLICY: BashOutputPolicy = {
-  maxTotalTokens: BASH_USER_MAX_STDOUT_TOKENS + BASH_USER_MAX_STDERR_TOKENS,
-  maxTotalLines: BASH_USER_MAX_STDOUT_LINES + BASH_USER_MAX_STDERR_LINES,
-  maxLineTokens: Number.POSITIVE_INFINITY,
-  maxStdoutTokens: BASH_USER_MAX_STDOUT_TOKENS,
-  maxStdoutLines: BASH_USER_MAX_STDOUT_LINES,
-  maxStderrTokens: BASH_USER_MAX_STDERR_TOKENS,
-  maxStderrLines: BASH_USER_MAX_STDERR_LINES,
+  maxTokens: BASH_USER_MAX_TOKENS,
 };
 
 export function getBashOutputPolicy(mode: BashOutputMode): BashOutputPolicy {
@@ -109,7 +58,7 @@ export function getBashOutputPolicy(mode: BashOutputMode): BashOutputPolicy {
 export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 
 const BASH_DESCRIPTION = [
-  "Execute a shell command in the current working directory and return stdout/stderr.",
+  "Execute a shell command in the current working directory and return its output.",
   "Interactive commands are not supported (no TTY/stdin); commands that prompt or open editors will hang or fail.",
   "CRITICAL: Always evaluate and provide an accurate safetyLevel assessment.",
 ].join(" ");
@@ -178,283 +127,40 @@ export interface BashTruncationInfo {
   };
 }
 
-type OutputStats = {
-  lines: number;
-  bytes: number;
-  tokens: number;
-};
-
-type LineCapResult = {
-  output: string;
-  truncated: boolean;
-};
-
-function getOutputStats(content: string): OutputStats {
-  if (content.trim().length === 0) {
-    return { lines: 0, bytes: 0, tokens: 0 };
-  }
-  const bytes = Buffer.byteLength(content, "utf-8");
-  return {
-    lines: content.split("\n").length,
-    bytes,
-    tokens: Math.max(1, bytesToTokens(bytes)),
-  };
-}
-
-function applyLineTokenCap(content: string, maxLineTokens: number): LineCapResult {
-  if (!Number.isFinite(maxLineTokens)) {
-    return { output: content, truncated: false };
-  }
-  if (maxLineTokens <= 0) {
-    return { output: "", truncated: content.length > 0 };
-  }
-
-  const maxLineBytes = tokensToBytes(maxLineTokens);
-  const lines = content.split("\n");
-  let truncated = false;
-  const outLines = lines.map((line) => {
-    if (Buffer.byteLength(line, "utf-8") <= maxLineBytes) return line;
-    truncated = true;
-    return truncateToBytesFromStart(line, maxLineBytes);
+export function prepareBashOutput(
+  output: string,
+  captureTruncated: boolean,
+  policy: BashOutputPolicy,
+): BashTruncationInfo {
+  const cleanOutput = stripAnsi(output);
+  const maxTruncation = truncateForTokens(cleanOutput, {
+    maxTokens: policy.maxTokens,
+    strategy: "middle",
   });
-  return { output: outLines.join("\n"), truncated };
-}
 
-function truncateStreamForModel(
-  content: string,
-  limits: { maxLines: number; maxTokens: number },
-): TruncationResult {
-  if (content.trim().length === 0) {
+  if (policy.gateOnExcess && maxTruncation.truncated) {
+    const previewTokens = policy.previewTokens ?? BASH_MODEL_DEFAULT_PREVIEW_TOKENS;
+    const previewTruncation = truncateForTokens(cleanOutput, {
+      maxTokens: previewTokens,
+      strategy: "middle",
+    });
     return {
-      content: "",
-      truncated: false,
-      truncatedBy: null,
-      totalLines: 0,
-      totalBytes: 0,
-      outputLines: 0,
-      outputBytes: 0,
-      maxLines: limits.maxLines,
-      maxTokens: limits.maxTokens,
+      output: previewTruncation.content,
+      rawOutput: cleanOutput,
+      model: previewTruncation,
+      captureTruncated,
+      gate: {
+        grantCode: randomUUID(),
+        preview: previewTruncation.content,
+      },
     };
   }
 
-  return truncateMiddleForModel(content, limits);
-}
-
-function buildCombinedOutput(
-  stdout: string,
-  stderr: string,
-): {
-  output: string;
-  stdoutHasOutput: boolean;
-  stderrHasOutput: boolean;
-} {
-  const stdoutHasOutput = stdout.trim().length > 0;
-  const stderrHasOutput = stderr.trim().length > 0;
-
-  const parts: string[] = [];
-  if (stdoutHasOutput) {
-    parts.push(stdout);
-  }
-  if (stderrHasOutput) {
-    parts.push(`[stderr]\n${stderr}`);
-  }
-  return { output: parts.join("\n"), stdoutHasOutput, stderrHasOutput };
-}
-
-function allocateStreamBudget(args: {
-  total: number;
-  stdoutSize: number;
-  stderrSize: number;
-  maxStdout: number;
-  maxStderr: number;
-  minReserve: number;
-}): { stdout: number; stderr: number } {
-  const total = Math.max(0, args.total);
-  const stdoutHasOutput = args.stdoutSize > 0;
-  const stderrHasOutput = args.stderrSize > 0;
-
-  if (!stdoutHasOutput && !stderrHasOutput) {
-    return { stdout: 0, stderr: 0 };
-  }
-  if (stdoutHasOutput && !stderrHasOutput) {
-    return { stdout: Math.min(total, args.maxStdout), stderr: 0 };
-  }
-  if (!stdoutHasOutput && stderrHasOutput) {
-    return { stdout: 0, stderr: Math.min(total, args.maxStderr) };
-  }
-
-  const minStdout = Math.min(args.minReserve, args.maxStdout);
-  const minStderr = Math.min(args.minReserve, args.maxStderr);
-
-  if (total <= minStdout + minStderr) {
-    const totalSize = args.stdoutSize + args.stderrSize;
-    if (totalSize <= 0) {
-      const half = Math.floor(total / 2);
-      return {
-        stdout: Math.min(half, args.maxStdout),
-        stderr: Math.min(total - half, args.maxStderr),
-      };
-    }
-    const stdoutShare = Math.min(args.maxStdout, Math.floor(total * (args.stdoutSize / totalSize)));
-    const stderrShare = Math.min(args.maxStderr, Math.max(0, total - stdoutShare));
-    return { stdout: stdoutShare, stderr: stderrShare };
-  }
-
-  const remaining = total - minStdout - minStderr;
-  const totalSize = args.stdoutSize + args.stderrSize;
-  let stdoutExtra = 0;
-  let stderrExtra = 0;
-  if (totalSize > 0 && remaining > 0) {
-    stdoutExtra = Math.floor(remaining * (args.stdoutSize / totalSize));
-    stderrExtra = remaining - stdoutExtra;
-  }
-
-  stdoutExtra = Math.min(stdoutExtra, Math.max(0, args.maxStdout - minStdout));
-  stderrExtra = Math.min(stderrExtra, Math.max(0, args.maxStderr - minStderr));
-
-  let stdoutBudget = minStdout + stdoutExtra;
-  let stderrBudget = minStderr + stderrExtra;
-  let leftover = total - (stdoutBudget + stderrBudget);
-  if (leftover > 0) {
-    const stdoutCapacity = Math.max(0, args.maxStdout - stdoutBudget);
-    const stderrCapacity = Math.max(0, args.maxStderr - stderrBudget);
-    if (args.stdoutSize >= args.stderrSize) {
-      const addStdout = Math.min(leftover, stdoutCapacity);
-      stdoutBudget += addStdout;
-      leftover -= addStdout;
-      if (leftover > 0) {
-        const addStderr = Math.min(leftover, stderrCapacity);
-        stderrBudget += addStderr;
-      }
-    } else {
-      const addStderr = Math.min(leftover, stderrCapacity);
-      stderrBudget += addStderr;
-      leftover -= addStderr;
-      if (leftover > 0) {
-        const addStdout = Math.min(leftover, stdoutCapacity);
-        stdoutBudget += addStdout;
-      }
-    }
-  }
-
-  return { stdout: stdoutBudget, stderr: stderrBudget };
-}
-
-function buildGrantPreview(output: string, policy: BashOutputPolicy): string {
-  const previewLines = buildCompactOutputLines(
-    output,
-    policy.previewHeadLines ?? BASH_MODEL_DEFAULT_PREVIEW_HEAD_LINES,
-    policy.previewTailLines ?? BASH_MODEL_DEFAULT_PREVIEW_TAIL_LINES,
-    policy.previewMaxLineChars ?? BASH_MODEL_DEFAULT_PREVIEW_MAX_LINE_CHARS,
-  );
-  return previewLines.join("\n");
-}
-
-export function prepareBashOutput(
-  stdout: string,
-  stderr: string,
-  captureTruncated: boolean,
-  options: {
-    mode: BashOutputMode;
-    policy: BashOutputPolicy;
-  },
-): BashTruncationInfo {
-  const { mode, policy } = options;
-  const cleanStdout = stripAnsi(stdout);
-  const cleanStderr = stripAnsi(stderr);
-
-  const rawCombined = buildCombinedOutput(cleanStdout, cleanStderr);
-  const stdoutStats = getOutputStats(cleanStdout);
-  const stderrStats = getOutputStats(cleanStderr);
-
-  const markerLines = rawCombined.stdoutHasOutput && rawCombined.stderrHasOutput ? 1 : 0;
-  const markerBytes =
-    rawCombined.stdoutHasOutput && rawCombined.stderrHasOutput
-      ? Buffer.byteLength("[stderr]\n", "utf-8")
-      : 0;
-  const markerTokens = markerBytes === 0 ? 0 : Math.ceil(markerBytes / BYTES_PER_TOKEN);
-
-  const totalLineBudget = Math.max(0, policy.maxTotalLines - markerLines);
-  const totalTokenBudget = Math.max(0, policy.maxTotalTokens - markerTokens);
-
-  const lineBudgets = allocateStreamBudget({
-    total: totalLineBudget,
-    stdoutSize: stdoutStats.lines,
-    stderrSize: stderrStats.lines,
-    maxStdout: policy.maxStdoutLines,
-    maxStderr: policy.maxStderrLines,
-    minReserve: BASH_STREAM_MIN_LINES,
-  });
-
-  const tokenBudgets = allocateStreamBudget({
-    total: totalTokenBudget,
-    stdoutSize: stdoutStats.tokens,
-    stderrSize: stderrStats.tokens,
-    maxStdout: policy.maxStdoutTokens,
-    maxStderr: policy.maxStderrTokens,
-    minReserve: BASH_STREAM_MIN_TOKENS,
-  });
-
-  const stdoutLineCap =
-    mode === "model_default"
-      ? applyLineTokenCap(cleanStdout, policy.maxLineTokens)
-      : { output: cleanStdout, truncated: false };
-  const stderrLineCap =
-    mode === "model_default"
-      ? applyLineTokenCap(cleanStderr, policy.maxLineTokens)
-      : { output: cleanStderr, truncated: false };
-  const lineTruncated = stdoutLineCap.truncated || stderrLineCap.truncated;
-
-  const stdoutTrunc = truncateStreamForModel(stdoutLineCap.output, {
-    maxLines: lineBudgets.stdout,
-    maxTokens: tokenBudgets.stdout,
-  });
-
-  const stderrTrunc = truncateStreamForModel(stderrLineCap.output, {
-    maxLines: lineBudgets.stderr,
-    maxTokens: tokenBudgets.stderr,
-  });
-
-  const combined = buildCombinedOutput(stdoutTrunc.content, stderrTrunc.content);
-  const rawOutput = rawCombined.output;
-  const combinedOutput = combined.output;
-
-  const truncated = stdoutTrunc.truncated || stderrTrunc.truncated || lineTruncated;
-  const truncatedBy =
-    stdoutTrunc.truncatedBy || stderrTrunc.truncatedBy || (lineTruncated ? "bytes" : null);
-
-  const modelTruncation: TruncationResult = {
-    content: combinedOutput,
-    truncated,
-    truncatedBy,
-    totalLines: rawOutput === "" ? 0 : rawOutput.split("\n").length,
-    totalBytes: Buffer.byteLength(rawOutput, "utf-8"),
-    outputLines: combinedOutput === "" ? 0 : combinedOutput.split("\n").length,
-    outputBytes: Buffer.byteLength(combinedOutput, "utf-8"),
-    maxLines: policy.maxTotalLines,
-    maxTokens: policy.maxTotalTokens,
-  };
-
-  let gate: BashTruncationInfo["gate"];
-  if (mode === "model_default") {
-    const totalTokens = bytesToTokens(modelTruncation.totalBytes);
-    const exceedsTotals =
-      modelTruncation.totalLines > policy.maxTotalLines || totalTokens > policy.maxTotalTokens;
-    if (exceedsTotals || lineTruncated) {
-      gate = {
-        grantCode: randomUUID(),
-        preview: buildGrantPreview(rawOutput, policy),
-      };
-    }
-  }
-
   return {
-    output: combinedOutput,
-    rawOutput,
-    model: modelTruncation,
+    output: maxTruncation.content,
+    rawOutput: cleanOutput,
+    model: maxTruncation,
     captureTruncated,
-    ...(gate ? { gate } : {}),
   };
 }
 
@@ -467,7 +173,7 @@ export function formatBashToolResultText(args: {
 
   if (gate) {
     const preview = gate.preview.trimEnd() || "(no output)";
-    const grantNote = `\n\n[output gated: re-run this bash tool call with grantCode "${gate.grantCode}" to retrieve full output]`;
+    const grantNote = `\n\n[output gated: this command already ran and any side effects have persisted. if the large output was expected, consider re-running this bash tool call with grantCode "${gate.grantCode}" to retrieve more output]`;
     const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
     return `${preview}${grantNote}${exitNote}`;
   }
@@ -713,8 +419,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
           try {
             const startedAt = Date.now();
             const {
-              stdout,
-              stderr,
+              output,
               exitCode,
               truncated: captureTruncated,
             } = await backend.runBash(command, {
@@ -725,10 +430,11 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
             const durationMs = Math.max(0, Date.now() - startedAt);
 
             const outputMode: BashOutputMode = grantCode ? "model_extended" : "model_default";
-            const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {
-              mode: outputMode,
-              policy: getBashOutputPolicy(outputMode),
-            });
+            const truncationInfo = prepareBashOutput(
+              output,
+              captureTruncated,
+              getBashOutputPolicy(outputMode),
+            );
             const toolText = formatBashToolResultText({ truncationInfo, exitCode });
             const isError = exitCode === null || exitCode !== 0;
             const uiText = buildBashUiText({ truncationInfo, exitCode, durationMs });

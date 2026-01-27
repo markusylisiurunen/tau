@@ -9,74 +9,42 @@ import { tokensToBytes } from "../dist/core/utils/token.js";
 describe("bash output policy", () => {
   it("gates default mode output and returns grant code instructions", () => {
     const policy = getBashOutputPolicy("model_default");
-    const stdout = Array(policy.maxTotalLines + 5)
-      .fill("ok")
-      .join("\n");
-    const truncationInfo = prepareBashOutput(stdout, "", false, {
-      mode: "model_default",
-      policy,
-    });
+    const output = "a".repeat(tokensToBytes(policy.maxTokens) + 12);
+    const truncationInfo = prepareBashOutput(output, false, policy);
 
     expect(truncationInfo.gate).toBeDefined();
+    expect(truncationInfo.output).toContain("tokens truncated");
     const toolText = formatBashToolResultText({ truncationInfo, exitCode: 0 });
     expect(toolText).toContain("grantCode");
     expect(toolText).toContain(truncationInfo.gate.grantCode);
+    expect(toolText).toContain("side effects");
   });
 
-  it("applies per-line caps in default mode", () => {
+  it("skips gating when output is under the default limit", () => {
     const policy = getBashOutputPolicy("model_default");
-    const maxLineBytes = tokensToBytes(policy.maxLineTokens);
-    const longLine = "a".repeat(maxLineBytes + 12);
-    const truncationInfo = prepareBashOutput(longLine, "", false, {
-      mode: "model_default",
-      policy,
-    });
+    const output = "ok".repeat(10);
+    const truncationInfo = prepareBashOutput(output, false, policy);
 
-    const outputBytes = Buffer.byteLength(truncationInfo.output, "utf-8");
-    expect(outputBytes).toBeLessThan(Buffer.byteLength(longLine, "utf-8"));
-    expect(outputBytes).toBeLessThanOrEqual(maxLineBytes);
+    expect(truncationInfo.gate).toBeUndefined();
+    expect(truncationInfo.model.truncated).toBe(false);
+    expect(truncationInfo.output).toBe(output);
   });
 
-  it("skips per-line caps in extended mode and uses per-stream truncation", () => {
-    const defaultPolicy = getBashOutputPolicy("model_default");
-    const extendedPolicy = getBashOutputPolicy("model_extended");
-    const longLine = "b".repeat(tokensToBytes(defaultPolicy.maxLineTokens) + 12);
+  it("truncates in extended mode without gating", () => {
+    const policy = getBashOutputPolicy("model_extended");
+    const output = "b".repeat(tokensToBytes(policy.maxTokens) + 12);
+    const truncationInfo = prepareBashOutput(output, false, policy);
 
-    const lineInfo = prepareBashOutput(longLine, "", false, {
-      mode: "model_extended",
-      policy: extendedPolicy,
-    });
-
-    expect(lineInfo.gate).toBeUndefined();
-    expect(lineInfo.output).toBe(longLine);
-
-    const manyLines = Array(extendedPolicy.maxStdoutLines + 12)
-      .fill("ok")
-      .join("\n");
-    const truncInfo = prepareBashOutput(manyLines, "", false, {
-      mode: "model_extended",
-      policy: extendedPolicy,
-    });
-
-    expect(truncInfo.gate).toBeUndefined();
-    expect(truncInfo.model.truncated).toBe(true);
+    expect(truncationInfo.gate).toBeUndefined();
+    expect(truncationInfo.model.truncated).toBe(true);
+    expect(truncationInfo.output).toContain("tokens truncated");
   });
 
-  it("preserves stderr markers while respecting total budgets", () => {
-    const policy = getBashOutputPolicy("model_default");
-    const stdout = Array(policy.maxTotalLines + 12)
-      .fill("out")
-      .join("\n");
-    const stderr = Array(policy.maxTotalLines + 12)
-      .fill("err")
-      .join("\n");
+  it("uses a larger limit for user mode", () => {
+    const policy = getBashOutputPolicy("user");
+    const output = "c".repeat(tokensToBytes(policy.maxTokens) - 6);
+    const truncationInfo = prepareBashOutput(output, false, policy);
 
-    const truncationInfo = prepareBashOutput(stdout, stderr, false, {
-      mode: "model_default",
-      policy,
-    });
-
-    expect(truncationInfo.output).toContain("[stderr]");
-    expect(truncationInfo.model.outputLines).toBeLessThanOrEqual(policy.maxTotalLines);
+    expect(truncationInfo.model.truncated).toBe(false);
   });
 });

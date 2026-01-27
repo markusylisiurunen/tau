@@ -10,7 +10,7 @@ import {
   PARALLEL_API_BASE_URL,
   PARALLEL_BETA_HEADER,
 } from "../utils/parallel_api.js";
-import { truncateMiddleForModel } from "../utils/truncate.js";
+import { truncateForTokens } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type {
   ToolDefinition,
@@ -180,9 +180,9 @@ function formatSearchResults(response: ParallelSearchResponse): string {
   }
 
   const formatted = lines.join("\n");
-  return truncateMiddleForModel(formatted, {
-    maxLines: 4096,
-    maxTokens: 25000,
+  return truncateForTokens(formatted, {
+    maxTokens: 8192,
+    strategy: "middle",
   }).content;
 }
 

@@ -2285,8 +2285,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     try {
       const startedAt = Date.now();
       const {
-        stdout,
-        stderr,
+        output,
         exitCode,
         truncated: captureTruncated,
       } = await this.toolBackend.runBash(command, {
@@ -2294,10 +2293,11 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         signal: abortController.signal,
       });
       const durationMs = Math.max(0, Date.now() - startedAt);
-      const truncationInfo = prepareBashOutput(stdout, stderr, captureTruncated, {
-        mode: "user",
-        policy: getBashOutputPolicy("user"),
-      });
+      const truncationInfo = prepareBashOutput(
+        output,
+        captureTruncated,
+        getBashOutputPolicy("user"),
+      );
 
       const uiText = buildBashUiText({
         truncationInfo,

@@ -231,14 +231,30 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     accountId: string,
     _error: unknown,
   ): Promise<boolean> {
-    const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
-    if (!account) return false;
-    const usage = await this.getUsageSnapshot(authStorage, account, {
+    const accounts = getAccounts(authStorage);
+    if (accounts.length === 0) return false;
+
+    const selectedAccount = accounts.find((account) => account.accountId === accountId);
+    if (!selectedAccount) return false;
+
+    const selectedUsage = await this.getUsageSnapshot(authStorage, selectedAccount, {
       forceRefresh: true,
       refreshIfMissing: true,
     });
-    if (!usage) return false;
-    return isUsageExhausted(usage);
+    if (!selectedUsage) return false;
+
+    const exhausted = isUsageExhausted(selectedUsage);
+    if (exhausted) {
+      for (const account of accounts) {
+        if (account.accountId === accountId) continue;
+        await this.getUsageSnapshot(authStorage, account, {
+          forceRefresh: true,
+          refreshIfMissing: true,
+        });
+      }
+    }
+
+    return exhausted;
   }
 
   private async getUsageSnapshot(
@@ -471,11 +487,28 @@ function compareAccountPriority(
   const activeA = hasActivePrimaryWindow(a.usage, now);
   const activeB = hasActivePrimaryWindow(b.usage, now);
   if (activeA !== activeB) return activeA ? -1 : 1;
+
+  const usedA = getUsageUsedPercent(a.usage, now);
+  const usedB = getUsageUsedPercent(b.usage, now);
+  if (usedA === undefined && usedB !== undefined) return 1;
+  if (usedA !== undefined && usedB === undefined) return -1;
+  if (usedA !== undefined && usedB !== undefined && usedA !== usedB) {
+    return usedB - usedA;
+  }
+
   return a.index - b.index;
 }
 
 function findWindow(usage: AuthAccountUsage, name: string): AuthAccountUsageWindow | undefined {
   return usage.windows.find((window) => window.name === name);
+}
+
+function getUsageUsedPercent(usage: AuthAccountUsage | undefined, now: number): number | undefined {
+  if (!usage) return undefined;
+  if (isUsageExpired(usage, now)) return undefined;
+  const primary = findWindow(usage, "primary");
+  const secondary = findWindow(usage, "secondary");
+  return Math.max(primary?.usedPercent ?? 0, secondary?.usedPercent ?? 0);
 }
 
 function nowSeconds(): number {

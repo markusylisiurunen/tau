@@ -10,7 +10,7 @@ import {
   PARALLEL_API_BASE_URL,
   PARALLEL_BETA_HEADER,
 } from "../utils/parallel_api.js";
-import { truncateForTokens } from "../utils/truncate.js";
+import { TRUNCATION_MARKER, type TruncationResult, truncateForTokens } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type {
   ToolDefinition,
@@ -153,12 +153,24 @@ function estimateParallelExtractCostUsd(urlCount: number): number {
   return 0.001 * urlCount;
 }
 
-function formatExtractResults(response: ExtractResponse): string {
+function formatExtractResults(response: ExtractResponse): TruncationResult {
   const results = response.results;
   const errors = response.errors;
 
   if (results.length === 0 && errors.length === 0) {
-    return "no extract results";
+    const content = "no extract results";
+    const bytes = Buffer.byteLength(content, "utf-8");
+    return {
+      content,
+      truncated: false,
+      truncatedBy: null,
+      totalLines: 1,
+      totalBytes: bytes,
+      outputLines: 1,
+      outputBytes: bytes,
+      maxLines: 1,
+      maxTokens: 16384,
+    };
   }
 
   const lines: string[] = [];
@@ -201,7 +213,7 @@ function formatExtractResults(response: ExtractResponse): string {
   return truncateForTokens(formatted, {
     maxTokens: 16384,
     strategy: "middle",
-  }).content;
+  });
 }
 
 export function createWebFetchToolDefinition(config: Config): ToolDefinition {
@@ -291,8 +303,12 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
             }
 
             const response = responseParsed.data;
-            const text = formatExtractResults(response);
-            const toolResult: ToolResultMessage = createToolResult(toolCall, text, false);
+            const resultText = formatExtractResults(response);
+            const toolResult: ToolResultMessage = createToolResult(
+              toolCall,
+              resultText.content,
+              false,
+            );
             const uiEvent: ToolUiEvent = {
               type: "web_fetch_finished",
               toolCallId: toolCall.id,
@@ -300,6 +316,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
               headerTarget,
               status: "success",
               costUsd: estimateParallelExtractCostUsd(1),
+              message: resultText.truncated ? TRUNCATION_MARKER : undefined,
             };
             return { kind: "single", toolResult, uiEvent };
           } catch (e) {

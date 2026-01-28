@@ -264,9 +264,7 @@ export function buildBashUiText(args: {
   const summaryLine = summaryParts.join(" · ");
 
   const fullText = args.fullText?.trimEnd() ?? "";
-  const fullLines: ToolUiLine[] = fullText
-    ? fullText.split("\n").map((text) => ({ text }))
-    : [];
+  const fullLines: ToolUiLine[] = fullText ? fullText.split("\n").map((text) => ({ text })) : [];
 
   return {
     previewLines,

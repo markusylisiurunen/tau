@@ -131,6 +131,7 @@ export type ToolUiEvent = ToolUiEventBase &
         objective: string;
         status: "success" | "error";
         costUsd?: number;
+        message?: string;
       }
     | {
         type: "web_fetch_started";
@@ -143,6 +144,7 @@ export type ToolUiEvent = ToolUiEventBase &
         url: string;
         status: "success" | "error";
         costUsd?: number;
+        message?: string;
       }
     | {
         type: "read_success";

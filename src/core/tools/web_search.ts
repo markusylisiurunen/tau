@@ -10,7 +10,7 @@ import {
   PARALLEL_API_BASE_URL,
   PARALLEL_BETA_HEADER,
 } from "../utils/parallel_api.js";
-import { truncateForTokens } from "../utils/truncate.js";
+import { TRUNCATION_MARKER, type TruncationResult, truncateForTokens } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type {
   ToolDefinition,
@@ -158,10 +158,22 @@ function estimateParallelSearchCostUsd(
   return 0.005 + 0.001 * additionalResults;
 }
 
-function formatSearchResults(response: ParallelSearchResponse): string {
+function formatSearchResults(response: ParallelSearchResponse): TruncationResult {
   const results = response.results;
   if (results.length === 0) {
-    return "no results";
+    const content = "no results";
+    const bytes = Buffer.byteLength(content, "utf-8");
+    return {
+      content,
+      truncated: false,
+      truncatedBy: null,
+      totalLines: 1,
+      totalBytes: bytes,
+      outputLines: 1,
+      outputBytes: bytes,
+      maxLines: 1,
+      maxTokens: 8192,
+    };
   }
 
   const lines: string[] = [];
@@ -183,7 +195,7 @@ function formatSearchResults(response: ParallelSearchResponse): string {
   return truncateForTokens(formatted, {
     maxTokens: 8192,
     strategy: "middle",
-  }).content;
+  });
 }
 
 export function createWebSearchToolDefinition(config: Config): ToolDefinition {
@@ -278,8 +290,12 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
 
             const response = responseParsed.data;
 
-            const text = formatSearchResults(response);
-            const toolResult: ToolResultMessage = createToolResult(toolCall, text, false);
+            const resultText = formatSearchResults(response);
+            const toolResult: ToolResultMessage = createToolResult(
+              toolCall,
+              resultText.content,
+              false,
+            );
             const uiEvent: ToolUiEvent = {
               type: "web_search_finished",
               toolCallId: toolCall.id,
@@ -287,6 +303,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
               headerTarget,
               status: "success",
               costUsd: estimateParallelSearchCostUsd(args.maxResults, response.results.length),
+              message: resultText.truncated ? TRUNCATION_MARKER : undefined,
             };
             return { kind: "single", toolResult, uiEvent };
           } catch (e) {

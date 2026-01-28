@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
-import { type TruncationResult, truncateForTokens } from "../utils/truncate.js";
+import { TRUNCATION_MARKER, type TruncationResult, truncateForTokens } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -197,8 +197,9 @@ function formatGrepToolResultText(args: {
 function buildGrepUiText(args: {
   modelTruncation: TruncationResult;
   fullText: string;
+  captureTruncated: boolean;
 }): ToolUiText {
-  const { modelTruncation, fullText } = args;
+  const { modelTruncation, fullText, captureTruncated } = args;
 
   const previewContentLines = buildHeadTailPreviewLines(modelTruncation.content, {
     headLines: 5,
@@ -212,9 +213,12 @@ function buildGrepUiText(args: {
     ? trimmedFullText.split("\n").map((text) => ({ text }))
     : [];
 
+  const statusLine = modelTruncation.truncated || captureTruncated ? TRUNCATION_MARKER : undefined;
+
   return {
     previewLines,
     fullLines,
+    statusLine,
   };
 }
 
@@ -297,6 +301,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
           const uiText = buildGrepUiText({
             modelTruncation: outputModel,
             fullText: toolText,
+            captureTruncated,
           });
 
           const isError = exitCode === null || (exitCode !== 0 && exitCode !== 1);

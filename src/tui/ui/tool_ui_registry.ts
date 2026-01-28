@@ -447,6 +447,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       label: "web search",
       target: uiEvent.headerTarget ?? uiEvent.objective,
       status: uiEvent.status,
+      message: uiEvent.message,
     });
   });
 
@@ -466,6 +467,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       label: "web fetch",
       target: uiEvent.headerTarget ?? uiEvent.url,
       status: uiEvent.status,
+      message: uiEvent.message,
     });
   });
 

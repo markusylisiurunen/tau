@@ -5,6 +5,7 @@ import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import {
+  TRUNCATION_MARKER,
   type TruncationResult,
   truncateForTokens,
   truncateToBytesFromStart,
@@ -105,7 +106,8 @@ function buildReadUiText(args: {
     tailLines: 5,
   });
   const infoText = `${totalLinesForSummary} lines · ${formatRange(startLine, endLine)}`;
-  const summaryLine = infoText;
+  const summaryLine =
+    modelTruncation.truncated || captureTruncated ? `${TRUNCATION_MARKER} · ${infoText}` : infoText;
   const previewLines: ToolUiLine[] = previewContentLines.map((text) => ({ text }));
 
   const trimmedFullText = fullText.trimEnd();

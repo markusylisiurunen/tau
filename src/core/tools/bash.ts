@@ -4,7 +4,7 @@ import stripAnsi from "strip-ansi";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { formatTokenEstimate } from "../utils/token.js";
+import { bytesToTokens, formatTokenEstimate } from "../utils/token.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import {
   formatBytes,
@@ -190,7 +190,7 @@ export function formatBashToolResultText(args: {
   const outputForContext = model.content.trimEnd() || "(no output)";
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)}]`
+      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (~${bytesToTokens(model.totalBytes)} tokens)]`
       : "";
   const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
   return `${outputForContext}${truncNote}${exitNote}`;
@@ -206,7 +206,7 @@ export function formatBashUserMessageText(args: {
   const outputForContext = model.content.trimEnd() || "(no output)";
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)}]`
+      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (~${bytesToTokens(model.totalBytes)} tokens)]`
       : "";
   const bashContextText = `$ ${command}\n${outputForContext}${truncNote}`;
   return `Bash command output:\n${bashContextText}`;

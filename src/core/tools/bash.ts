@@ -143,7 +143,7 @@ export interface BashTruncationInfo {
   fullOutputPath?: string;
 }
 
-const BASH_TEMP_FILE_TEMPLATE = "/tmp/tau-bash-output-XXXXXX.log";
+const BASH_TEMP_FILE_TEMPLATE = "/tmp/tau-bash-output.XXXXXX";
 const BASH_TEMP_FILE_TIMEOUT_MS = 2_000;
 
 async function createBashTempFilePath(backend: ToolExecutionBackend): Promise<string | undefined> {

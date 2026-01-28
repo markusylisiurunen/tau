@@ -11,6 +11,7 @@ import type {
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { TOOL_NAME_EDIT } from "./tool_names.js";
 
 const EDIT_DESCRIPTION = [
   "Edit a file by replacing exact text matches.",
@@ -28,7 +29,7 @@ const EDIT_NEW_TEXT_DESCRIPTION = "The text to replace oldText with.";
 const EDIT_DIFF_LCS_MAX_LINES = 1024;
 
 export const EDIT_TOOL: Tool = {
-  name: "edit",
+  name: TOOL_NAME_EDIT,
   description: EDIT_DESCRIPTION,
   parameters: Type.Object(
     {

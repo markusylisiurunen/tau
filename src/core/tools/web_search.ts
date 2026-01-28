@@ -18,6 +18,7 @@ import type {
   ToolDispatchResultWithPhases,
   ToolUiEvent,
 } from "./registry.js";
+import { TOOL_NAME_WEB_SEARCH } from "./tool_names.js";
 
 const WEB_SEARCH_DESCRIPTION = [
   "Search the web for relevant sources.",
@@ -36,7 +37,7 @@ const WEB_SEARCH_INCLUDE_DOMAINS_DESCRIPTION = "List of domains to include in se
 const WEB_SEARCH_EXCLUDE_DOMAINS_DESCRIPTION = "List of domains to exclude from search.";
 
 export const WEB_SEARCH_TOOL: Tool = {
-  name: "web_search",
+  name: TOOL_NAME_WEB_SEARCH,
   description: WEB_SEARCH_DESCRIPTION,
   parameters: Type.Object(
     {

@@ -18,6 +18,7 @@ import type {
   ToolDispatchResultWithPhases,
   ToolUiEvent,
 } from "./registry.js";
+import { TOOL_NAME_WEB_FETCH } from "./tool_names.js";
 
 const WEB_FETCH_DESCRIPTION = [
   "Fetch and extract relevant content from a URL.",
@@ -40,7 +41,7 @@ const WEB_FETCH_MAX_CHARS_PER_RESULT_DESCRIPTION =
   "Max number of characters per extracted excerpt.";
 
 export const WEB_FETCH_TOOL: Tool = {
-  name: "web_fetch",
+  name: TOOL_NAME_WEB_FETCH,
   description: WEB_FETCH_DESCRIPTION,
   parameters: Type.Object(
     {

@@ -13,6 +13,7 @@ import type {
   ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
+import { TOOL_NAME_WAIT_FOR_AGENT } from "./tool_names.js";
 
 const WAIT_FOR_AGENT_DESCRIPTION = [
   "Wait for one or more subagents to finish and return their outputs.",
@@ -23,7 +24,7 @@ const WAIT_FOR_AGENT_IDS_DESCRIPTION = "List of subagent ids to wait for.";
 const WAIT_FOR_AGENT_OUTPUT_MAX_TOKENS = 256;
 
 export const WAIT_FOR_AGENT_TOOL: Tool = {
-  name: "wait_for_agent",
+  name: TOOL_NAME_WAIT_FOR_AGENT,
   description: WAIT_FOR_AGENT_DESCRIPTION,
   parameters: Type.Object(
     {

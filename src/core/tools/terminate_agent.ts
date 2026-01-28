@@ -12,6 +12,7 @@ import type {
   ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
+import { TOOL_NAME_TERMINATE_AGENT } from "./tool_names.js";
 
 const TERMINATE_AGENT_DESCRIPTION = [
   "Terminate a running subagent and return its final status.",
@@ -21,7 +22,7 @@ const TERMINATE_AGENT_DESCRIPTION = [
 const TERMINATE_AGENT_ID_DESCRIPTION = "Subagent id to terminate.";
 
 export const TERMINATE_AGENT_TOOL: Tool = {
-  name: "terminate_agent",
+  name: TOOL_NAME_TERMINATE_AGENT,
   description: TERMINATE_AGENT_DESCRIPTION,
   parameters: Type.Object(
     {

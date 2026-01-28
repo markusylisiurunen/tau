@@ -1,18 +1,30 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
+import {
+  TOOL_NAME_BASH,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_EMIT_OUTPUT,
+  TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_WEB_FETCH,
+  TOOL_NAME_WEB_SEARCH,
+  TOOL_NAME_WRITE,
+} from "../tools/tool_names.js";
 import type { PersonaSettings, RiskLevel } from "../types.js";
 
 export const DEFAULT_SUBAGENT_NAME = "default";
 
 export type SubagentName = string;
 
-export type SubagentToolName =
-  | "bash"
-  | "write"
-  | "edit"
-  | "view_image"
-  | "web_search"
-  | "web_fetch"
-  | "emit_output";
+export const SUBAGENT_TOOL_NAMES = [
+  TOOL_NAME_BASH,
+  TOOL_NAME_WRITE,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_WEB_SEARCH,
+  TOOL_NAME_WEB_FETCH,
+  TOOL_NAME_EMIT_OUTPUT,
+] as const;
+
+export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
 
 export type SubagentRiskLevel = RiskLevel;
 

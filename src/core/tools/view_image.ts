@@ -7,6 +7,7 @@ import { createToolError } from "../utils/messages.js";
 import { formatBytes } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
+import { TOOL_NAME_VIEW_IMAGE } from "./tool_names.js";
 
 const VIEW_IMAGE_DESCRIPTION = [
   "View an image file and return it to the model.",
@@ -19,7 +20,7 @@ const VIEW_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 
 export const VIEW_IMAGE_TOOL: Tool = {
-  name: "view_image",
+  name: TOOL_NAME_VIEW_IMAGE,
   description: VIEW_IMAGE_DESCRIPTION,
   parameters: Type.Object(
     {

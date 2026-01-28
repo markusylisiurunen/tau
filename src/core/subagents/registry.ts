@@ -1,3 +1,11 @@
+import {
+  TOOL_NAME_BASH,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_WEB_FETCH,
+  TOOL_NAME_WEB_SEARCH,
+  TOOL_NAME_WRITE,
+} from "../tools/tool_names.js";
 import type { Persona, RiskLevel } from "../types.js";
 import { DEFAULT_SUBAGENT_DEFINITION } from "./default.js";
 import {
@@ -8,12 +16,12 @@ import {
 } from "./types.js";
 
 const INHERITABLE_TOOL_NAMES = new Set<SubagentToolName>([
-  "bash",
-  "write",
-  "edit",
-  "view_image",
-  "web_search",
-  "web_fetch",
+  TOOL_NAME_BASH,
+  TOOL_NAME_WRITE,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_WEB_SEARCH,
+  TOOL_NAME_WEB_FETCH,
 ]);
 
 function normalizeTools(tools: SubagentToolName[]): SubagentToolName[] {
@@ -30,7 +38,11 @@ function normalizeTools(tools: SubagentToolName[]): SubagentToolName[] {
 }
 
 function getInheritedSubagentTools(persona: Persona): SubagentToolName[] {
-  const toolNames = persona.tools?.map((tool) => tool.name) ?? ["bash", "write", "edit"];
+  const toolNames = persona.tools?.map((tool) => tool.name) ?? [
+    TOOL_NAME_BASH,
+    TOOL_NAME_WRITE,
+    TOOL_NAME_EDIT,
+  ];
   const selected: SubagentToolName[] = [];
 
   for (const name of toolNames) {

@@ -13,6 +13,7 @@ import type {
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { TOOL_NAME_LIST } from "./tool_names.js";
 
 export const LIST_MAX_ENTRIES = 4096;
 
@@ -26,7 +27,7 @@ const LIST_OFFSET_DESCRIPTION = "Number of entries to skip.";
 const LIST_LIMIT_DESCRIPTION = "Max number of entries to return (<= 4096).";
 
 export const LIST_TOOL: Tool = {
-  name: "list",
+  name: TOOL_NAME_LIST,
   description: LIST_DESCRIPTION,
   parameters: Type.Object(
     {

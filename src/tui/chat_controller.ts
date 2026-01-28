@@ -45,6 +45,7 @@ import {
 import { ToolCatalog } from "../core/tools/catalog.js";
 import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
 import { createLocalToolExecutionBackend } from "../core/tools/execution_backend.js";
+import { TOOL_NAME_BASH } from "../core/tools/tool_names.js";
 import {
   type Persona,
   REASONING_LEVELS,
@@ -1816,6 +1817,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const message = history[index];
       if (message?.role !== "toolResult") continue;
       const toolResult = message as ToolResultMessage;
+      if (toolResult.toolName !== TOOL_NAME_BASH) {
+        continue;
+      }
       const info = this.getToolResultContentInfo(toolResult);
       if (info.firstText?.startsWith(PRUNED_TOOL_RESULT_PREFIX)) {
         continue;
@@ -1835,7 +1839,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
 
     if (candidates.length === 0 || totalTokens === 0) {
-      this.view.addSystemMessage("no tool results to prune.", "warn");
+      this.view.addSystemMessage("no bash tool results to prune.", "warn");
       return;
     }
 
@@ -1864,7 +1868,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
 
     if (toPrune.length === 0) {
-      this.view.addSystemMessage("no tool results to prune.", "warn");
+      this.view.addSystemMessage("no bash tool results to prune.", "warn");
       return;
     }
 
@@ -1880,7 +1884,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     const prunedLabel = formatTokenEstimate(prunedBytes);
     const noun = toPrune.length === 1 ? "result" : "results";
     this.view.addSystemMessage(
-      `pruned ${toPrune.length} tool ${noun} (${prunedLabel}).`,
+      `pruned ${toPrune.length} bash tool ${noun} (${prunedLabel}).`,
       "success",
     );
   }

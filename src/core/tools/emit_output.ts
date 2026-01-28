@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import type { ToolDefinition, ToolDispatchContext, ToolDispatchResult } from "./registry.js";
+import { TOOL_NAME_EMIT_OUTPUT } from "./tool_names.js";
 
 const EMIT_OUTPUT_DESCRIPTION = [
   "Send output from a subagent back to the main agent.",
@@ -13,7 +14,7 @@ const EMIT_OUTPUT_DESCRIPTION = [
 const EMIT_OUTPUT_TEXT_DESCRIPTION = "Text to send to the main agent.";
 
 export const EMIT_OUTPUT_TOOL: Tool = {
-  name: "emit_output",
+  name: TOOL_NAME_EMIT_OUTPUT,
   description: EMIT_OUTPUT_DESCRIPTION,
   parameters: Type.Object(
     {

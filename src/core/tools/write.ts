@@ -18,6 +18,7 @@ import type {
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { TOOL_NAME_WRITE } from "./tool_names.js";
 
 const WRITE_DESCRIPTION = [
   "Write content to a file, creating the file if it doesn't exist or overwriting if it does.",
@@ -28,7 +29,7 @@ const WRITE_PATH_DESCRIPTION = "Absolute or relative path to the file to write."
 const WRITE_CONTENT_DESCRIPTION = "The content to write to the file.";
 
 export const WRITE_TOOL: Tool = {
-  name: "write",
+  name: TOOL_NAME_WRITE,
   description: WRITE_DESCRIPTION,
   parameters: Type.Object(
     {

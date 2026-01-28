@@ -14,6 +14,7 @@ import type {
   ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText } from "./subagent_ui.js";
+import { TOOL_NAME_SPAWN_AGENT } from "./tool_names.js";
 
 const SPAWN_AGENT_DESCRIPTION = [
   "Spawn a subagent to run in the background and return its id.",
@@ -39,7 +40,7 @@ const SPAWN_AGENT_PROMPT_DESCRIPTION = [
 ].join(" ");
 
 export const SPAWN_AGENT_TOOL: Tool = {
-  name: "spawn_agent",
+  name: TOOL_NAME_SPAWN_AGENT,
   description: SPAWN_AGENT_DESCRIPTION,
   parameters: Type.Object(
     {

@@ -13,6 +13,7 @@ import type {
   ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText } from "./subagent_ui.js";
+import { TOOL_NAME_SEND_INPUT_TO_AGENT } from "./tool_names.js";
 
 const SEND_INPUT_TO_AGENT_DESCRIPTION = [
   "Send a follow-up prompt to an existing subagent.",
@@ -27,7 +28,7 @@ const SEND_INPUT_TO_AGENT_PROMPT_DESCRIPTION = [
 ].join(" ");
 
 export const SEND_INPUT_TO_AGENT_TOOL: Tool = {
-  name: "send_input_to_agent",
+  name: TOOL_NAME_SEND_INPUT_TO_AGENT,
   description: SEND_INPUT_TO_AGENT_DESCRIPTION,
   parameters: Type.Object(
     {

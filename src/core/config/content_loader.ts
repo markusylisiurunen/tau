@@ -10,12 +10,22 @@ import type {
   SubagentPersonaConfig,
   SubagentToolName,
 } from "../subagents/types.js";
-import { DEFAULT_SUBAGENT_NAME } from "../subagents/types.js";
+import { DEFAULT_SUBAGENT_NAME, SUBAGENT_TOOL_NAMES } from "../subagents/types.js";
 import { BASH_TOOL } from "../tools/bash.js";
 import { EDIT_TOOL } from "../tools/edit.js";
 import { SEND_INPUT_TO_AGENT_TOOL } from "../tools/send_input_to_agent.js";
 import { SPAWN_AGENT_TOOL } from "../tools/spawn_agent.js";
 import { TERMINATE_AGENT_TOOL } from "../tools/terminate_agent.js";
+import {
+  TOOL_NAME_BASH,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_SEND_INPUT_TO_AGENT,
+  TOOL_NAME_SPAWN_AGENT,
+  TOOL_NAME_TERMINATE_AGENT,
+  TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_WAIT_FOR_AGENT,
+  TOOL_NAME_WRITE,
+} from "../tools/tool_names.js";
 import { VIEW_IMAGE_TOOL } from "../tools/view_image.js";
 import { WAIT_FOR_AGENT_TOOL } from "../tools/wait_for_agent.js";
 import { WRITE_TOOL } from "../tools/write.js";
@@ -149,15 +159,7 @@ const SubagentSpecSchema = z
 
 const subagentToolsSchema = z.union([z.string(), z.array(z.string())]).optional();
 
-const SUBAGENT_TOOL_NAMES = new Set<SubagentToolName>([
-  "bash",
-  "write",
-  "edit",
-  "view_image",
-  "web_search",
-  "web_fetch",
-  "emit_output",
-]);
+const SUBAGENT_TOOL_NAME_SET = new Set<SubagentToolName>(SUBAGENT_TOOL_NAMES);
 
 function parseSubagentTools(toolsRaw: unknown): { tools?: SubagentToolName[]; error?: string } {
   if (toolsRaw === undefined) {
@@ -186,7 +188,7 @@ function parseSubagentTools(toolsRaw: unknown): { tools?: SubagentToolName[]; er
   for (const name of cleaned) {
     if (seen.has(name)) continue;
     seen.add(name);
-    if (SUBAGENT_TOOL_NAMES.has(name as SubagentToolName)) {
+    if (SUBAGENT_TOOL_NAME_SET.has(name as SubagentToolName)) {
       selected.push(name as SubagentToolName);
     } else {
       unknown.push(name);
@@ -194,7 +196,7 @@ function parseSubagentTools(toolsRaw: unknown): { tools?: SubagentToolName[]; er
   }
 
   if (unknown.length > 0) {
-    const allowed = Array.from(SUBAGENT_TOOL_NAMES).join(", ");
+    const allowed = SUBAGENT_TOOL_NAMES.join(", ");
     return { error: `unknown subagent tool(s): ${unknown.join(", ")}. allowed: ${allowed}` };
   }
 
@@ -527,14 +529,14 @@ const skillFrontMatterSchema = z
 const toolsSchema = z.union([z.string(), z.array(z.string())]).optional();
 
 const PERSONA_TOOL_DEFINITIONS = new Map([
-  ["bash", BASH_TOOL],
-  ["write", WRITE_TOOL],
-  ["edit", EDIT_TOOL],
-  ["view_image", VIEW_IMAGE_TOOL],
-  ["spawn_agent", SPAWN_AGENT_TOOL],
-  ["send_input_to_agent", SEND_INPUT_TO_AGENT_TOOL],
-  ["wait_for_agent", WAIT_FOR_AGENT_TOOL],
-  ["terminate_agent", TERMINATE_AGENT_TOOL],
+  [TOOL_NAME_BASH, BASH_TOOL],
+  [TOOL_NAME_WRITE, WRITE_TOOL],
+  [TOOL_NAME_EDIT, EDIT_TOOL],
+  [TOOL_NAME_VIEW_IMAGE, VIEW_IMAGE_TOOL],
+  [TOOL_NAME_SPAWN_AGENT, SPAWN_AGENT_TOOL],
+  [TOOL_NAME_SEND_INPUT_TO_AGENT, SEND_INPUT_TO_AGENT_TOOL],
+  [TOOL_NAME_WAIT_FOR_AGENT, WAIT_FOR_AGENT_TOOL],
+  [TOOL_NAME_TERMINATE_AGENT, TERMINATE_AGENT_TOOL],
 ]);
 
 const DEFAULT_PERSONA_TOOLS = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL, VIEW_IMAGE_TOOL];

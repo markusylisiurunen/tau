@@ -14,6 +14,7 @@ import type {
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { TOOL_NAME_GREP } from "./tool_names.js";
 
 export const GREP_TOOL_MAX_TOKENS = 8192;
 
@@ -38,7 +39,7 @@ const GREP_GLOB_DESCRIPTION = "Include/exclude glob(s) passed via --glob.";
 const GREP_HIDDEN_DESCRIPTION = "Search hidden files and directories.";
 
 export const GREP_TOOL: Tool = {
-  name: "grep",
+  name: TOOL_NAME_GREP,
   description: GREP_DESCRIPTION,
   parameters: Type.Object(
     {

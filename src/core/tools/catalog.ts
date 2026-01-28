@@ -9,6 +9,15 @@ import { ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
 import { createSpawnAgentToolDefinition } from "./spawn_agent.js";
 import { createTerminateAgentToolDefinition } from "./terminate_agent.js";
+import {
+  TOOL_NAME_BASH,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_EMIT_OUTPUT,
+  TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_WEB_FETCH,
+  TOOL_NAME_WEB_SEARCH,
+  TOOL_NAME_WRITE,
+} from "./tool_names.js";
 import { createViewImageToolDefinition } from "./view_image.js";
 import { createWaitForAgentToolDefinition } from "./wait_for_agent.js";
 import { createWebFetchToolDefinition } from "./web_fetch.js";
@@ -42,25 +51,25 @@ export const ToolCatalog = {
       seen.add(tool);
 
       switch (tool) {
-        case "bash":
+        case TOOL_NAME_BASH:
           definitions.push(createBashToolDefinition(backend));
           break;
-        case "write":
+        case TOOL_NAME_WRITE:
           definitions.push(createWriteToolDefinition(backend));
           break;
-        case "edit":
+        case TOOL_NAME_EDIT:
           definitions.push(createEditToolDefinition(backend));
           break;
-        case "view_image":
+        case TOOL_NAME_VIEW_IMAGE:
           definitions.push(createViewImageToolDefinition(backend));
           break;
-        case "web_search":
+        case TOOL_NAME_WEB_SEARCH:
           definitions.push(createWebSearchToolDefinition(config));
           break;
-        case "web_fetch":
+        case TOOL_NAME_WEB_FETCH:
           definitions.push(createWebFetchToolDefinition(config));
           break;
-        case "emit_output":
+        case TOOL_NAME_EMIT_OUTPUT:
           break;
       }
     };

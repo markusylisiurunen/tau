@@ -21,6 +21,7 @@ import type {
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { TOOL_NAME_BASH } from "./tool_names.js";
 
 const BASH_MODEL_DEFAULT_MAX_TOKENS = 4096;
 const BASH_MODEL_DEFAULT_PREVIEW_TOKENS = 512;
@@ -99,7 +100,7 @@ const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
 ].join(" ");
 
 export const BASH_TOOL: Tool = {
-  name: "bash",
+  name: TOOL_NAME_BASH,
   description: BASH_DESCRIPTION,
   parameters: Type.Object(
     {

@@ -18,6 +18,7 @@ import type {
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { TOOL_NAME_READ } from "./tool_names.js";
 
 export const READ_TOOL_MAX_TOKENS = 8192;
 export const READ_MAX_CAPTURE_BYTES = 1024 * 1024;
@@ -29,7 +30,7 @@ const READ_START_LINE_DESCRIPTION = "1-based inclusive start line.";
 const READ_END_LINE_DESCRIPTION = "1-based inclusive end line.";
 
 export const READ_TOOL: Tool = {
-  name: "read",
+  name: TOOL_NAME_READ,
   description: READ_DESCRIPTION,
   parameters: Type.Object(
     {

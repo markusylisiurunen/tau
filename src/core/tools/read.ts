@@ -65,25 +65,23 @@ function formatRange(startLine: number, endLine: number | undefined): string {
 }
 
 function formatReadToolResultText(args: {
-  path: string;
-  startLine: number;
-  endLine?: number;
   content: string;
   truncation: TruncationResult;
   captureTruncated: boolean;
   totalLines: number;
 }): string {
-  const header = `read ${args.path} (${formatRange(args.startLine, args.endLine)})`;
-  const parts: string[] = [header];
+  const parts: string[] = [];
 
   const body = args.content.trimEnd();
   if (body) {
-    parts.push("", body);
+    parts.push(body);
   }
 
   if (args.truncation.truncated || args.captureTruncated) {
+    if (parts.length > 0) {
+      parts.push("");
+    }
     parts.push(
-      "",
       `truncated for model: ${args.truncation.outputLines} of ${args.totalLines} lines. read smaller chunks with startLine/endLine to see more.`,
     );
   }
@@ -187,9 +185,6 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         });
 
         const toolText = formatReadToolResultText({
-          path: resolvedPath,
-          startLine: start,
-          endLine: endDisplay,
           content: modelTruncation.content,
           truncation: modelTruncation,
           captureTruncated,

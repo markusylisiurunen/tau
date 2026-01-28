@@ -5,6 +5,7 @@ import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { sanitizeEnvironment } from "../utils/sanitize_env.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
+import { formatBytes } from "../utils/truncate.js";
 import { createDockerSandbox } from "./sandbox/docker_sandbox.js";
 
 const BASH_MAX_CAPTURE_BYTES = 1024 * 1024; // 1MB
@@ -159,7 +160,9 @@ export function createLocalToolExecutionBackend(
       const bytes = stats.size;
       const maxBytes = options.maxBytes;
       if (maxBytes !== undefined && bytes > maxBytes) {
-        throw new Error(`file exceeds maximum size of ${maxBytes} bytes (got ${bytes} bytes).`);
+        throw new Error(
+          `file exceeds maximum size of ${formatBytes(maxBytes)} (got ${formatBytes(bytes)}).`,
+        );
       }
       const content = readFileSync(path);
       return { path, content, bytes };
@@ -364,7 +367,9 @@ export async function createSandboxToolExecutionBackend(options: {
 
       const maxBytes = options.maxBytes;
       if (maxBytes !== undefined && bytes > maxBytes) {
-        throw new Error(`file exceeds maximum size of ${maxBytes} bytes (got ${bytes} bytes).`);
+        throw new Error(
+          `file exceeds maximum size of ${formatBytes(maxBytes)} (got ${formatBytes(bytes)}).`,
+        );
       }
 
       const captureLimit = Math.max(1024, Math.ceil(bytes * 1.5));

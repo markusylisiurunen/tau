@@ -197,12 +197,8 @@ function buildLineDiff(oldText: string, newText: string): LineDiffResult {
   return { lines, added, removed };
 }
 
-function formatEditToolResultText(args: { summaryLine: string; diffLines: string[] }): string {
-  const parts = [args.summaryLine];
-  if (args.diffLines.length > 0) {
-    parts.push("", ...args.diffLines);
-  }
-  return parts.join("\n");
+function formatEditToolResultText(args: { summaryLine: string }): string {
+  return args.summaryLine;
 }
 
 function buildEditUiText(args: {
@@ -318,20 +314,14 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
       try {
         await backend.writeFile(path, newContent);
 
-        const oldLines = oldText.split("\n").length;
-        const newLines = newText.split("\n").length;
-        const lineDiff = newLines - oldLines;
-        const lineDiffStr =
-          lineDiff === 0 ? "" : lineDiff > 0 ? ` (+${lineDiff} lines)` : ` (${lineDiff} lines)`;
-
         const { lines: diffLines, added, removed } = buildLineDiff(oldText, newText);
         const sizeDiff = newText.length - oldText.length;
         const sizeDiffStr =
           sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
-        const summaryLine = `successfully edited ${path}: replaced ${oldText.length} → ${newText.length} chars (${sizeDiffStr})${lineDiffStr}`;
-        const statusLine = `+${added}, -${removed} · ${summaryLine}`;
+        const summaryLine = `successfully edited ${path}: ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
+        const statusLine = `+${added}, -${removed} · ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
 
-        const resultText = formatEditToolResultText({ summaryLine, diffLines });
+        const resultText = formatEditToolResultText({ summaryLine });
 
         const toolResult = createToolSuccess(toolCall, resultText);
         const uiText = buildEditUiText({ summaryLine, statusLine, diffLines });

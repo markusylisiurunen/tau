@@ -160,30 +160,35 @@ function buildGrepArgs(raw: z.infer<typeof grepArgsSchema>): {
 }
 
 function formatGrepToolResultText(args: {
-  pattern: string;
-  paths: string[];
   output: TruncationResult;
   exitCode: number | null;
   captureTruncated: boolean;
 }): string {
   const parts: string[] = [];
-  const pathsStr = args.paths.length ? ` ${args.paths.join(" ")}` : "";
-  parts.push(`grep ${args.pattern}${pathsStr}`);
 
   const out = args.output.content.trimEnd();
   if (out) {
-    parts.push("", out);
+    parts.push(out);
   }
 
   if (args.captureTruncated || args.output.truncated) {
+    if (parts.length > 0) {
+      parts.push("");
+    }
     const shown = `${args.output.outputLines} of ${args.output.totalLines} lines`;
-    parts.push("", `truncated for model: ${shown}. narrow the search scope to see more.`);
+    parts.push(`truncated for model: ${shown}. narrow the search scope to see more.`);
   }
 
   if (args.exitCode === null) {
-    parts.push("", "(terminated)");
+    if (parts.length > 0) {
+      parts.push("");
+    }
+    parts.push("(terminated)");
   } else if (args.exitCode !== 0 && args.exitCode !== 1) {
-    parts.push("", `(exit ${args.exitCode})`);
+    if (parts.length > 0) {
+      parts.push("");
+    }
+    parts.push(`(exit ${args.exitCode})`);
   }
 
   return parts.join("\n");
@@ -277,7 +282,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
             return blocked(`grep failed: ${errorMessage}`);
           }
 
-          const { output, exitCode, captureTruncated, resolvedPaths } = result;
+          const { output, exitCode, captureTruncated } = result;
 
           const outputModel = truncateForTokens(output, {
             maxTokens: GREP_TOOL_MAX_TOKENS,
@@ -285,8 +290,6 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
           });
 
           const toolText = formatGrepToolResultText({
-            pattern: parsed.pattern,
-            paths: resolvedPaths,
             output: outputModel,
             exitCode,
             captureTruncated,

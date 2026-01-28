@@ -4,6 +4,7 @@ import { fileTypeFromBuffer } from "file-type";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
+import { formatBytes } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
 
@@ -37,15 +38,6 @@ function parseViewImageArgs(raw: unknown): { path: string } {
   return parsed.success ? parsed.data : { path: "" };
 }
 
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 bytes";
-  if (bytes < 1024) return `${bytes} bytes`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
-  const mb = kb / 1024;
-  return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
-}
-
 function buildViewImageUiText(args: {
   mimeType: string;
   bytes: number;
@@ -53,7 +45,7 @@ function buildViewImageUiText(args: {
 }): ToolUiText {
   const { mimeType, bytes, fullText } = args;
   const sizeLabel = formatBytes(bytes);
-  const summary = `${sizeLabel} · ${bytes} bytes`;
+  const summary = sizeLabel;
   const trimmedFullText = fullText.trimEnd();
   const fullLines = trimmedFullText
     ? trimmedFullText.split("\n").map((text) => ({ text }))
@@ -109,7 +101,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
         }
 
         const data = content.toString("base64");
-        const resultText = `viewed ${resolvedPath} (${mimeType}, ${bytes} bytes)`;
+        const resultText = `viewed ${resolvedPath} (${mimeType}, ${formatBytes(bytes)})`;
         const toolResult: ToolResultMessage = {
           role: "toolResult",
           toolCallId: toolCall.id,

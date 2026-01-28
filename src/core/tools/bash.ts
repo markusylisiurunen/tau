@@ -183,7 +183,8 @@ export function formatBashToolResultText(args: {
 
   if (gated) {
     const preview = model.content.trimEnd() || "(no output)";
-    const gateNote = `\n\n[output gated: this command already ran and any side effects have persisted. if the large output was expected, re-run this bash tool call with maxOutputTokens set (${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}; up to ${BASH_MAX_OUTPUT_TOKENS} only when the user explicitly requests it). user requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
+    const totalTokenEstimate = bytesToTokens(model.totalBytes);
+    const gateNote = `\n\n[output gated: this command already ran and any side effects have persisted. full output estimate: ~${totalTokenEstimate} tokens. if the large output was expected, re-run this bash tool call with maxOutputTokens set (${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}; up to ${BASH_MAX_OUTPUT_TOKENS} only when the user explicitly requests it). user requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
     const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
     return `${preview}${gateNote}${exitNote}`;
   }
@@ -191,7 +192,7 @@ export function formatBashToolResultText(args: {
   const outputForContext = model.content.trimEnd() || "(no output)";
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (~${bytesToTokens(model.totalBytes)} tokens)]`
+      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens)]`
       : "";
   const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
   return `${outputForContext}${truncNote}${exitNote}`;
@@ -207,7 +208,7 @@ export function formatBashUserMessageText(args: {
   const outputForContext = model.content.trimEnd() || "(no output)";
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (~${bytesToTokens(model.totalBytes)} tokens)]`
+      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens)]`
       : "";
   const bashContextText = `$ ${command}\n${outputForContext}${truncNote}`;
   return `Bash command output:\n${bashContextText}`;

@@ -168,6 +168,7 @@ export function createSendInputToAgentToolDefinition(
             output: prompt,
             statusText: `${sendResult.name} · ${sendResult.id}`,
             maxOutputLines: 16,
+            fullText: resultText,
           });
           const uiEvent: ToolUiEvent = {
             type: "send_input_to_agent_finished",

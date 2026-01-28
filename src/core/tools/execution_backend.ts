@@ -216,6 +216,7 @@ export function createLocalToolExecutionBackend(
           signal,
           timeoutMs,
           maxCaptureBytes: GREP_MAX_CAPTURE_BYTES,
+          maxCaptureMode: "ignore",
           captureOutput: "combined",
           killGraceMs: GREP_KILL_GRACE_MS,
         });
@@ -476,6 +477,7 @@ export async function createSandboxToolExecutionBackend(options: {
           signal,
           timeoutMs,
           maxCaptureBytes: GREP_MAX_CAPTURE_BYTES,
+          maxCaptureMode: "ignore",
           captureOutput: "combined",
           killGraceMs: GREP_KILL_GRACE_MS,
         });

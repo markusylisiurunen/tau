@@ -3,12 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import {
-  applyPreviewPolicy,
-  buildCompactPreviewLines,
-  GREP_UI_MAX_LINES,
-  GREP_UI_MAX_TOKENS,
-} from "../utils/tool_preview.js";
+import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import { type TruncationResult, truncateForTokens } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
@@ -195,60 +190,22 @@ function formatGrepToolResultText(args: {
 }
 
 function buildGrepUiText(args: {
-  output: string;
   modelTruncation: TruncationResult;
-  exitCode: number | null;
-  captureTruncated: boolean;
+  fullText: string;
 }): ToolUiText {
-  const { output, modelTruncation, exitCode, captureTruncated } = args;
+  const { modelTruncation, fullText } = args;
 
-  const { truncation: previewTruncation, previewLines: outputLines } = applyPreviewPolicy(
-    modelTruncation.content,
-    {
-      maxLines: GREP_UI_MAX_LINES,
-      maxTokens: GREP_UI_MAX_TOKENS,
-      strategy: "middle",
-    },
-  );
+  const previewContentLines = buildHeadTailPreviewLines(modelTruncation.content, {
+    headLines: 5,
+    tailLines: 5,
+  });
 
-  const out = previewTruncation.content.trimEnd();
-  const previewText = out
-    ? (buildCompactPreviewLines(outputLines, {
-        totalLines: previewTruncation.totalLines,
-        maxLines: 16,
-        indent: 0,
-      }) ?? "")
-    : "";
+  const previewLines: ToolUiLine[] = previewContentLines.map((text) => ({ text }));
 
-  const previewLines: ToolUiLine[] = previewText
-    ? previewText.split("\n").map((text) => ({ text }))
+  const trimmedFullText = fullText.trimEnd();
+  const fullLines: ToolUiLine[] = trimmedFullText
+    ? trimmedFullText.split("\n").map((text) => ({ text }))
     : [];
-
-  const fullLines: ToolUiLine[] = [];
-  const pushSection = (text: string): void => {
-    if (!text) return;
-    if (fullLines.length > 0) {
-      fullLines.push({ text: "" });
-    }
-    for (const line of text.split("\n")) {
-      fullLines.push({ text: line });
-    }
-  };
-
-  const trimmedOut = output.trimEnd();
-  if (trimmedOut) {
-    pushSection(trimmedOut);
-  }
-
-  if (modelTruncation.truncated || captureTruncated) {
-    pushSection(
-      `truncated for model: ${modelTruncation.outputLines} of ${modelTruncation.totalLines} lines`,
-    );
-  }
-
-  if (exitCode !== null && exitCode !== 0 && exitCode !== 1) {
-    pushSection(`(exit ${exitCode})`);
-  }
 
   return {
     previewLines,
@@ -335,10 +292,8 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
             captureTruncated,
           });
           const uiText = buildGrepUiText({
-            output,
             modelTruncation: outputModel,
-            exitCode,
-            captureTruncated,
+            fullText: toolText,
           });
 
           const isError = exitCode === null || (exitCode !== 0 && exitCode !== 1);

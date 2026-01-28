@@ -21,6 +21,8 @@ export interface TruncateMiddleOptions {
 
 const DEFAULT_MIDDLE_MARKER = "… (truncated) …";
 
+export const TRUNCATION_MARKER = "◆";
+
 type MarkerStrategy = { type: "none" } | { type: "static"; marker: string };
 
 function getEffectiveMaxBytes(options: { maxBytes?: number; maxTokens?: number }): number {

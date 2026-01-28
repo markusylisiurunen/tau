@@ -3,12 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import {
-  applyPreviewPolicy,
-  buildCompactPreviewLines,
-  READ_UI_MAX_LINES,
-  READ_UI_MAX_TOKENS,
-} from "../utils/tool_preview.js";
+import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import {
   type TruncationResult,
   truncateForTokens,
@@ -75,6 +70,8 @@ function formatReadToolResultText(args: {
   endLine?: number;
   content: string;
   truncation: TruncationResult;
+  captureTruncated: boolean;
+  totalLines: number;
 }): string {
   const header = `read ${args.path} (${formatRange(args.startLine, args.endLine)})`;
   const parts: string[] = [header];
@@ -84,10 +81,10 @@ function formatReadToolResultText(args: {
     parts.push("", body);
   }
 
-  if (args.truncation.truncated) {
+  if (args.truncation.truncated || args.captureTruncated) {
     parts.push(
       "",
-      `truncated for model: ${args.truncation.outputLines} of ${args.truncation.totalLines} lines. read smaller chunks with startLine/endLine to see more.`,
+      `truncated for model: ${args.truncation.outputLines} of ${args.totalLines} lines. read smaller chunks with startLine/endLine to see more.`,
     );
   }
 
@@ -95,56 +92,28 @@ function formatReadToolResultText(args: {
 }
 
 function buildReadUiText(args: {
-  content: string;
   modelTruncation: TruncationResult;
   startLine: number;
   endLine?: number;
+  fullText: string;
+  totalLines: number;
+  captureTruncated: boolean;
 }): ToolUiText {
-  const { content, modelTruncation, startLine, endLine } = args;
-  const { truncation: previewTruncation, previewLines: previewContentLines } = applyPreviewPolicy(
-    modelTruncation.content,
-    {
-      maxLines: READ_UI_MAX_LINES,
-      maxTokens: READ_UI_MAX_TOKENS,
-      strategy: "middle",
-    },
-  );
-
-  const totalLinesForSummary = modelTruncation.truncated
-    ? modelTruncation.totalLines
-    : previewTruncation.totalLines;
-  const compactLines = buildCompactPreviewLines(previewContentLines, {
-    totalLines: totalLinesForSummary,
-    maxLines: 16,
-    unitLabel: "lines",
-    indent: 0,
+  const { modelTruncation, startLine, endLine, fullText, totalLines, captureTruncated } = args;
+  const totalLinesForSummary =
+    modelTruncation.truncated || captureTruncated ? totalLines : modelTruncation.outputLines;
+  const previewContentLines = buildHeadTailPreviewLines(modelTruncation.content, {
+    headLines: 5,
+    tailLines: 5,
   });
   const infoText = `${totalLinesForSummary} lines · ${formatRange(startLine, endLine)}`;
   const summaryLine = infoText;
-  const previewLines: ToolUiLine[] = compactLines
-    ? compactLines.split("\n").map((text) => ({ text }))
+  const previewLines: ToolUiLine[] = previewContentLines.map((text) => ({ text }));
+
+  const trimmedFullText = fullText.trimEnd();
+  const fullLines: ToolUiLine[] = trimmedFullText
+    ? trimmedFullText.split("\n").map((text) => ({ text }))
     : [];
-
-  const fullLines: ToolUiLine[] = [];
-  const pushSection = (text: string): void => {
-    if (!text) return;
-    if (fullLines.length > 0) {
-      fullLines.push({ text: "" });
-    }
-    for (const line of text.split("\n")) {
-      fullLines.push({ text: line });
-    }
-  };
-
-  const trimmed = content.trimEnd();
-  if (trimmed) {
-    pushSection(trimmed);
-  }
-  if (modelTruncation.truncated) {
-    pushSection(
-      `truncated for model: ${modelTruncation.outputLines} of ${modelTruncation.totalLines} lines`,
-    );
-  }
 
   return {
     previewLines,
@@ -205,11 +174,12 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         const endIndex = Math.max(startIndex, endEffective);
 
         const selected = allLines.slice(startIndex, endIndex).join("\n");
+        const selectedLines = Math.max(0, endIndex - startIndex);
         const selectedBytes = Buffer.byteLength(selected, "utf-8");
-        const captured =
-          selectedBytes > READ_MAX_CAPTURE_BYTES
-            ? truncateToBytesFromStart(selected, READ_MAX_CAPTURE_BYTES)
-            : selected;
+        const captureTruncated = selectedBytes > READ_MAX_CAPTURE_BYTES;
+        const captured = captureTruncated
+          ? truncateToBytesFromStart(selected, READ_MAX_CAPTURE_BYTES)
+          : selected;
 
         const modelTruncation = truncateForTokens(captured, {
           maxTokens: READ_TOOL_MAX_TOKENS,
@@ -222,13 +192,17 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
           endLine: endDisplay,
           content: modelTruncation.content,
           truncation: modelTruncation,
+          captureTruncated,
+          totalLines: selectedLines,
         });
 
         const uiText = buildReadUiText({
-          content: captured,
           modelTruncation,
           startLine: start,
           endLine: endDisplay,
+          fullText: toolText,
+          totalLines: selectedLines,
+          captureTruncated,
         });
 
         const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);

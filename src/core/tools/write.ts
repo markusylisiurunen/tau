@@ -48,8 +48,13 @@ function parseWriteArgs(raw: unknown): { path: string; content: string } {
   return parsed.success ? parsed.data : { path: "", content: "" };
 }
 
-function buildWriteUiText(args: { bytes: number; lines: number; content: string }): ToolUiText {
-  const { bytes, lines, content } = args;
+function buildWriteUiText(args: {
+  bytes: number;
+  lines: number;
+  content: string;
+  fullText: string;
+}): ToolUiText {
+  const { bytes, lines, content, fullText } = args;
   const { previewLines: previewContentLines } = applyPreviewPolicy(content, {
     maxLines: WRITE_UI_PREVIEW_LINES,
     strategy: "head",
@@ -67,23 +72,10 @@ function buildWriteUiText(args: { bytes: number; lines: number; content: string 
     ? compactLines.split("\n").map((text) => ({ text }))
     : [];
 
-  const fullLines: ToolUiLine[] = [];
-  const pushSection = (text: string): void => {
-    if (!text) return;
-    if (fullLines.length > 0) {
-      fullLines.push({ text: "" });
-    }
-    for (const line of text.split("\n")) {
-      fullLines.push({ text: line });
-    }
-  };
-
-  const summary = infoText;
-  const trimmed = content.trimEnd();
-  pushSection(summary);
-  if (trimmed) {
-    pushSection(trimmed);
-  }
+  const trimmedFullText = fullText.trimEnd();
+  const fullLines: ToolUiLine[] = trimmedFullText
+    ? trimmedFullText.split("\n").map((text) => ({ text }))
+    : [];
 
   return {
     previewLines,
@@ -125,7 +117,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
         const resultText = `successfully wrote ${bytes} bytes (${lines} lines) to ${path}`;
 
         const toolResult = createToolSuccess(toolCall, resultText);
-        const uiText = buildWriteUiText({ bytes, lines, content });
+        const uiText = buildWriteUiText({ bytes, lines, content, fullText: resultText });
         const uiEvent: ToolUiEvent = {
           type: "write_success",
           path,

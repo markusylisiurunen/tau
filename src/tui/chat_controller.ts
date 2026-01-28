@@ -2299,11 +2299,13 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         getBashOutputPolicy({ mode: "user" }),
       );
 
+      const userMessageText = formatBashUserMessageText({ command, truncationInfo });
       const uiText = buildBashUiText({
         truncationInfo,
         exitCode,
         durationMs,
         previewLines: { head: 12, tail: 12 },
+        fullText: userMessageText,
       });
 
       this.view.handleToolUiEvent({
@@ -2320,7 +2322,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       this.refreshStatus();
 
       if (opts?.addToContext !== false) {
-        this.engine.addUserText(formatBashUserMessageText({ command, truncationInfo }));
+        this.engine.addUserText(userMessageText);
       }
 
       this.view.requestRender();

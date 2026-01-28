@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { buildCompactPreviewLines } from "../utils/tool_preview.js";
+import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -13,16 +13,16 @@ import type {
   ToolUiText,
 } from "./registry.js";
 
-export const LIST_MAX_ENTRIES = 256;
+export const LIST_MAX_ENTRIES = 4096;
 
-const LIST_DEFAULT_LIMIT = 64;
+const LIST_DEFAULT_LIMIT = 256;
 
 const LIST_DESCRIPTION = ["List files in a directory (non-recursive)."].join(" ");
 
 const LIST_PATH_DESCRIPTION =
   "Directory path to list (relative to the current working directory). Use '.' for root.";
 const LIST_OFFSET_DESCRIPTION = "Number of entries to skip.";
-const LIST_LIMIT_DESCRIPTION = "Max number of entries to return (<= 256).";
+const LIST_LIMIT_DESCRIPTION = "Max number of entries to return (<= 4096).";
 
 export const LIST_TOOL: Tool = {
   name: "list",
@@ -82,37 +82,23 @@ function buildListUiText(args: {
   total: number;
   returned: number;
   entries: string[];
+  fullText: string;
 }): ToolUiText {
-  const { offset, limit, total, returned, entries } = args;
-  const compactLines = buildCompactPreviewLines(entries, {
-    totalLines: entries.length,
-    maxLines: 16,
+  const { offset, limit, total, returned, entries, fullText } = args;
+  const previewContentLines = buildHeadTailPreviewLines(entries.join("\n"), {
+    headLines: 5,
+    tailLines: 5,
     unitLabel: "entries",
-    indent: 0,
+    unitLabelSingular: "entry",
   });
   const infoText = `${returned} of ${total} entries · offset ${offset} · limit ${limit}`;
   const summaryLine = infoText;
-  const previewLines: ToolUiLine[] = compactLines
-    ? compactLines.split("\n").map((text) => ({ text }))
+  const previewLines: ToolUiLine[] = previewContentLines.map((text) => ({ text }));
+
+  const trimmedFullText = fullText.trimEnd();
+  const fullLines: ToolUiLine[] = trimmedFullText
+    ? trimmedFullText.split("\n").map((text) => ({ text }))
     : [];
-
-  const fullLines: ToolUiLine[] = [];
-  const pushSection = (text: string): void => {
-    if (!text) return;
-    if (fullLines.length > 0) {
-      fullLines.push({ text: "" });
-    }
-    for (const line of text.split("\n")) {
-      fullLines.push({ text: line });
-    }
-  };
-
-  const summary = `${returned} of ${total} entries (offset ${offset}, limit ${limit})`;
-  const listText = entries.length > 0 ? entries.join("\n") : "";
-  pushSection(summary);
-  if (listText) {
-    pushSection(listText);
-  }
 
   return { previewLines, statusLine: summaryLine, fullLines };
 }
@@ -174,6 +160,7 @@ export function createListToolDefinition(backend: ToolExecutionBackend): ToolDef
           total,
           returned: windowed.length,
           entries: windowed,
+          fullText: toolText,
         });
 
         const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);

@@ -147,6 +147,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               output: formatTerminateOutput(result),
               statusText,
               maxOutputLines: 16,
+              fullText: resultText,
             });
             const uiEvent: ToolUiEvent = {
               type: "terminate_agent_finished",

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { SubagentResult } from "../subagents/control_plane.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
+import { truncateForTokens } from "../utils/truncate.js";
 import type {
   ToolDefinition,
   ToolDispatchContext,
@@ -11,11 +12,7 @@ import type {
   ToolDispatchResultWithPhases,
   ToolUiEvent,
 } from "./registry.js";
-import {
-  buildSubagentUiText,
-  formatSubagentStatusLine,
-  truncateOutputLines,
-} from "./subagent_ui.js";
+import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
 
 const WAIT_FOR_AGENT_DESCRIPTION = [
   "Wait for one or more subagents to finish and return their outputs.",
@@ -23,6 +20,7 @@ const WAIT_FOR_AGENT_DESCRIPTION = [
 ].join(" ");
 
 const WAIT_FOR_AGENT_IDS_DESCRIPTION = "List of subagent ids to wait for.";
+const WAIT_FOR_AGENT_OUTPUT_MAX_TOKENS = 256;
 
 export const WAIT_FOR_AGENT_TOOL: Tool = {
   name: "wait_for_agent",
@@ -51,22 +49,7 @@ function parseWaitArgs(raw: unknown): { ids: string[] } {
   return { ids };
 }
 
-function formatWaitResult(results: SubagentResult[]): string {
-  const payload = {
-    subagents: results.map((result) => ({
-      id: result.id,
-      name: result.name,
-      title: result.title,
-      status: result.status,
-      outputs: result.outputs,
-      error: result.error,
-    })),
-  };
-
-  return JSON.stringify(payload, null, 2);
-}
-
-function formatSubagentOutputLines(result: SubagentResult, maxLines: number): string[] {
+function buildSubagentBody(result: SubagentResult): string {
   const outputs = result.outputs
     .map((text) => text.trimEnd())
     .filter((text) => text.trim().length > 0);
@@ -75,38 +58,47 @@ function formatSubagentOutputLines(result: SubagentResult, maxLines: number): st
   if (trimmedFinal && !outputs.some((text) => text.trim() === trimmedFinal)) {
     outputs.push(finalText);
   }
-  const body = outputs.join("\n\n");
 
-  const header = `**${result.id}**`;
-  const outputLines = body ? body.split("\n") : [];
   const errorLine =
     result.status !== "success"
       ? result.error
         ? `error: ${result.error}`
         : `status: ${result.status}`
       : undefined;
-  const remainingLines = errorLine ? Math.max(1, maxLines - 1) : maxLines;
-  const truncated = truncateOutputLines(outputLines, remainingLines);
-  if (errorLine) {
-    return [header, errorLine, ...truncated];
-  }
-  return truncated.length > 0 ? [header, ...truncated] : [header];
+  const bodyParts = [errorLine, outputs.join("\n\n")].filter((text) => text?.trim().length);
+  return bodyParts.join("\n");
 }
 
-function formatWaitOutput(results: SubagentResult[]): string {
-  const limit = getWaitOutputLimit(results.length);
+function formatSubagentOutputLines(result: SubagentResult): string[] {
+  const header = `**${result.id}**`;
+  const body = buildSubagentBody(result);
+  if (!body.trim()) {
+    return [header];
+  }
+  return [header, ...body.split("\n")];
+}
+
+function formatSubagentOutputLinesForUi(result: SubagentResult, maxTokens: number): string[] {
+  const header = `**${result.id}**`;
+  const body = buildSubagentBody(result);
+  if (!body.trim()) {
+    return [header];
+  }
+  const truncated = truncateForTokens(body, { maxTokens, strategy: "head" }).content.trimEnd();
+  const bodyLines = truncated ? truncated.split("\n") : [];
+  return [header, ...bodyLines];
+}
+
+function formatWaitOutput(results: SubagentResult[], maxTokensPerSubagent?: number): string {
   const output: string[] = [];
   results.forEach((result, index) => {
     if (index > 0) output.push("");
-    output.push(...formatSubagentOutputLines(result, limit));
+    const lines = maxTokensPerSubagent
+      ? formatSubagentOutputLinesForUi(result, maxTokensPerSubagent)
+      : formatSubagentOutputLines(result);
+    output.push(...lines);
   });
   return output.join("\n");
-}
-
-function getWaitOutputLimit(count: number): number {
-  if (count <= 1) return 16;
-  if (count === 2) return 12;
-  return 8;
 }
 
 function getWaitDurationMs(results: SubagentResult[]): number | undefined {
@@ -184,15 +176,17 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
         run: (async (): Promise<ToolDispatchResult> => {
           try {
             const results = await controlPlane.waitFor(deduped, signal);
-            const resultText = formatWaitResult(results);
+            const resultText = formatWaitOutput(results);
+            const outputText = formatWaitOutput(results, WAIT_FOR_AGENT_OUTPUT_MAX_TOKENS);
             const hasFailures = results.some((result) => result.status !== "success");
             const statusText = formatSubagentStatusLine({
               costTotal: getWaitCostTotal(results),
               durationMs: getWaitDurationMs(results),
             });
             const uiText = buildSubagentUiText({
-              output: formatWaitOutput(results),
+              output: outputText,
               statusText,
+              fullText: resultText,
             });
             const uiEvent: ToolUiEvent = {
               type: "wait_for_agent_finished",

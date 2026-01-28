@@ -75,14 +75,61 @@ export function buildCompactPreviewLines(
   return output.length > 0 ? output.join("\n") : undefined;
 }
 
+export interface HeadTailPreviewOptions {
+  headLines?: number;
+  tailLines?: number;
+  maxLineChars?: number;
+  unitLabel?: string;
+  unitLabelSingular?: string;
+}
+
+const DEFAULT_HEAD_TAIL_PREVIEW_HEAD_LINES = 3;
+const DEFAULT_HEAD_TAIL_PREVIEW_TAIL_LINES = 3;
+const DEFAULT_HEAD_TAIL_MAX_LINE_CHARS = 256;
+
+function truncateLineToMax(line: string, maxLineLength: number): string {
+  if (!Number.isFinite(maxLineLength) || maxLineLength <= 0) return "";
+  const chars = Array.from(line);
+  if (chars.length <= maxLineLength) return line;
+  if (maxLineLength === 1) return "…";
+  return `${chars.slice(0, maxLineLength - 1).join("")}…`;
+}
+
+export function buildHeadTailPreviewLines(
+  content: string,
+  {
+    headLines = DEFAULT_HEAD_TAIL_PREVIEW_HEAD_LINES,
+    tailLines = DEFAULT_HEAD_TAIL_PREVIEW_TAIL_LINES,
+    maxLineChars = DEFAULT_HEAD_TAIL_MAX_LINE_CHARS,
+    unitLabel = "lines",
+    unitLabelSingular = "line",
+  }: HeadTailPreviewOptions = {},
+): string[] {
+  const cleaned = content.replace(/\n+$/, "");
+  if (!cleaned.trim()) return [];
+
+  const lines = cleaned.split("\n");
+  const total = lines.length;
+  const maxLines = headLines + tailLines;
+
+  if (total <= maxLines) {
+    return lines.map((line) => truncateLineToMax(line, maxLineChars));
+  }
+
+  const head = lines.slice(0, headLines).map((line) => truncateLineToMax(line, maxLineChars));
+  const tailStart = Math.max(total - tailLines, headLines);
+  const tail =
+    tailLines > 0
+      ? lines.slice(tailStart).map((line) => truncateLineToMax(line, maxLineChars))
+      : [];
+  const remaining = Math.max(0, total - head.length - tail.length);
+  const label = remaining === 1 ? unitLabelSingular : unitLabel;
+
+  return [...head, `…${remaining} more ${label}…`, ...tail];
+}
+
 export const BASH_UI_MAX_LINES = 32;
 export const BASH_UI_MAX_TOKENS = 5000;
-
-export const READ_UI_MAX_LINES = 32;
-export const READ_UI_MAX_TOKENS = 5000;
-
-export const GREP_UI_MAX_LINES = 32;
-export const GREP_UI_MAX_TOKENS = 5000;
 
 export const WRITE_UI_PREVIEW_LINES = 16;
 

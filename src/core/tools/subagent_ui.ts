@@ -7,6 +7,7 @@ type SubagentUiTextOptions = {
   statusText?: string;
   maxOutputLines?: number;
   maxPreviewLines?: number;
+  fullText?: string;
 };
 
 type SubagentStatusOptions = {
@@ -28,6 +29,7 @@ export function buildSubagentUiText({
   statusText,
   maxOutputLines,
   maxPreviewLines,
+  fullText,
 }: SubagentUiTextOptions): ToolUiText {
   const trimmed = output.trimEnd();
   const outputLines = trimmed ? trimmed.split("\n") : [];
@@ -43,7 +45,10 @@ export function buildSubagentUiText({
     indent: 0,
   });
   const previewLines: ToolUiLine[] = preview ? preview.split("\n").map((text) => ({ text })) : [];
-  const fullLines: ToolUiLine[] = truncatedLines.map((text) => ({ text }));
+  const trimmedFullText = fullText?.trimEnd();
+  const fullLines: ToolUiLine[] = trimmedFullText
+    ? trimmedFullText.split("\n").map((text) => ({ text }))
+    : truncatedLines.map((text) => ({ text }));
   const statusLine = statusText || undefined;
 
   return {

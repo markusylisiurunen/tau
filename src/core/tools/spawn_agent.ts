@@ -215,6 +215,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             output: prompt,
             statusText: `${name} · ${spawnResult.id}`,
             maxOutputLines: 16,
+            fullText: resultText,
           });
           const uiEvent: ToolUiEvent = {
             type: "spawn_agent_finished",

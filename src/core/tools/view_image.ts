@@ -46,15 +46,23 @@ function formatBytes(bytes: number): string {
   return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
 }
 
-function buildViewImageUiText(args: { mimeType: string; bytes: number }): ToolUiText {
-  const { mimeType, bytes } = args;
+function buildViewImageUiText(args: {
+  mimeType: string;
+  bytes: number;
+  fullText: string;
+}): ToolUiText {
+  const { mimeType, bytes, fullText } = args;
   const sizeLabel = formatBytes(bytes);
   const summary = `${sizeLabel} · ${bytes} bytes`;
+  const trimmedFullText = fullText.trimEnd();
+  const fullLines = trimmedFullText
+    ? trimmedFullText.split("\n").map((text) => ({ text }))
+    : [{ text: summary }];
 
   return {
     previewLines: [],
     statusLine: `${mimeType} · ${sizeLabel}`,
-    fullLines: [{ text: summary }],
+    fullLines,
   };
 }
 
@@ -114,7 +122,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
           timestamp: Date.now(),
         };
 
-        const uiText = buildViewImageUiText({ mimeType, bytes });
+        const uiText = buildViewImageUiText({ mimeType, bytes, fullText: resultText });
         const uiEvent: ToolUiEvent = {
           type: "view_image_success",
           path: resolvedPath,

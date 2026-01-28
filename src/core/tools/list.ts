@@ -57,23 +57,8 @@ function parseListArgs(raw: unknown): {
   return { path, offset, limit };
 }
 
-function formatListToolResultText(args: {
-  path: string;
-  offset: number;
-  limit: number;
-  total: number;
-  returned: number;
-  entries: string[];
-}): string {
-  const parts: string[] = [];
-  parts.push(`list ${args.path} (offset ${args.offset}, limit ${args.limit})`);
-  parts.push(`${args.returned} of ${args.total} entries`);
-
-  if (args.entries.length > 0) {
-    parts.push("", ...args.entries);
-  }
-
-  return parts.join("\n");
+function formatListToolResultText(entries: string[]): string {
+  return entries.join("\n");
 }
 
 function buildListUiText(args: {
@@ -146,14 +131,7 @@ export function createListToolDefinition(backend: ToolExecutionBackend): ToolDef
         const total = entries.length;
         const windowed = entries.slice(offset, offset + effectiveLimit);
 
-        const toolText = formatListToolResultText({
-          path: resolvedPath,
-          offset,
-          limit: effectiveLimit,
-          total,
-          returned: windowed.length,
-          entries: windowed,
-        });
+        const toolText = formatListToolResultText(windowed);
         const uiText = buildListUiText({
           offset,
           limit: effectiveLimit,

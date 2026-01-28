@@ -161,6 +161,8 @@ What to review: {{review_scope}}
 
 Read the diff carefully. When you need more context (surrounding code, related functions, type definitions), use additional commands: \`cat\`, \`rg\`, \`sed -n '<start>,<end>p'\`, or similar. Fetch only what you need to evaluate the change. If referenced code falls outside what you can access, note that gap; a missing expected change often indicates a bug.
 
+When you run the diff command, set the bash tool's max output tokens limit to 32768. Large diffs are expected here.
+
 ## What to flag
 
 Flag an issue only when it meets all of these criteria:
@@ -221,7 +223,7 @@ function getCodeReviewTemplateWithScope(scope: string): string {
 
 const TEMPLATE_COMMIT = [
   "Please commit my staged changes.",
-  "Run `git diff --staged` to see what's there, and if nothing is staged, just tell me and stop.",
+  "Run `git diff --staged` (set max output tokens to 32768) to see what's there, and if nothing is staged, just tell me and stop.",
   "Write a commit message that uses imperative mood, stays lowercase except for proper nouns, skips trailing punctuation, and omits conventional prefixes like `feat:` or `fix:`.",
   "Keep it to a single line under 90 characters that summarizes everything staged.",
   'Run `git commit -m "<message>"` immediately after.',

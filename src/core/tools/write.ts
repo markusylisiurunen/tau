@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import { formatTokenEstimate } from "../utils/token.js";
+import { formatBytes } from "../utils/truncate.js";
 import {
   applyPreviewPolicy,
   buildCompactPreviewLines,
@@ -66,7 +67,7 @@ function buildWriteUiText(args: {
     unitLabel: "lines",
     indent: 0,
   });
-  const infoText = `${lines} lines · ${formatTokenEstimate(bytes)} · ${bytes} bytes`;
+  const infoText = `${lines} lines · ${formatTokenEstimate(bytes)} · ${formatBytes(bytes)}`;
   const summaryLine = infoText;
   const previewLines: ToolUiLine[] = compactLines
     ? compactLines.split("\n").map((text) => ({ text }))
@@ -114,7 +115,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
 
       try {
         const { bytes, lines } = await backend.writeFile(path, content);
-        const resultText = `successfully wrote ${bytes} bytes (${lines} lines) to ${path}`;
+        const resultText = `successfully wrote ${formatBytes(bytes)} (${lines} lines) to ${path}`;
 
         const toolResult = createToolSuccess(toolCall, resultText);
         const uiText = buildWriteUiText({ bytes, lines, content, fullText: resultText });

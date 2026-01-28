@@ -190,7 +190,7 @@ export function formatBashToolResultText(args: {
   const outputForContext = model.content.trimEnd() || "(no output)";
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${model.outputBytes} bytes shown of ${model.totalLines} lines / ${model.totalBytes} bytes]`
+      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)}]`
       : "";
   const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
   return `${outputForContext}${truncNote}${exitNote}`;
@@ -206,7 +206,7 @@ export function formatBashUserMessageText(args: {
   const outputForContext = model.content.trimEnd() || "(no output)";
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${model.outputBytes} bytes shown of ${model.totalLines} lines / ${model.totalBytes} bytes]`
+      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)}]`
       : "";
   const bashContextText = `$ ${command}\n${outputForContext}${truncNote}`;
   return `Bash command output:\n${bashContextText}`;
@@ -251,7 +251,7 @@ export function buildBashUiText(args: {
   const exitSummary = exitCode === null ? "exit ?" : `exit ${exitCode}`;
   const durationLabel = formatDurationMs(durationMs);
   const lineLabel = hasOutput ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "no output";
-  const bytesLabel = hasOutput ? formatBytes(outputBytes).toLowerCase() : undefined;
+  const bytesLabel = hasOutput ? formatBytes(outputBytes) : undefined;
   const tokenLabel = hasOutput ? formatTokenEstimate(outputBytes) : undefined;
   const summaryParts: string[] = [];
   if (model.truncated || captureTruncated) {

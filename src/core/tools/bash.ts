@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import stripAnsi from "strip-ansi";
@@ -19,10 +18,9 @@ import type {
 
 const BASH_MODEL_DEFAULT_MAX_TOKENS = 4096;
 const BASH_MODEL_DEFAULT_PREVIEW_TOKENS = 512;
-const BASH_MODEL_EXTENDED_MAX_TOKENS = 20480;
-const BASH_USER_MAX_TOKENS = 65536;
-
-export type BashOutputMode = "model_default" | "model_extended" | "user";
+const BASH_MODEL_MAX_AUTONOMOUS_TOKENS = 16384;
+const BASH_MAX_OUTPUT_TOKENS = 65536;
+const BASH_USER_MAX_TOKENS = BASH_MAX_OUTPUT_TOKENS;
 
 export interface BashOutputPolicy {
   maxTokens: number;
@@ -36,23 +34,30 @@ const BASH_MODEL_DEFAULT_POLICY: BashOutputPolicy = {
   previewTokens: BASH_MODEL_DEFAULT_PREVIEW_TOKENS,
 };
 
-const BASH_MODEL_EXTENDED_POLICY: BashOutputPolicy = {
-  maxTokens: BASH_MODEL_EXTENDED_MAX_TOKENS,
-};
-
 const BASH_USER_POLICY: BashOutputPolicy = {
   maxTokens: BASH_USER_MAX_TOKENS,
 };
 
-export function getBashOutputPolicy(mode: BashOutputMode): BashOutputPolicy {
-  switch (mode) {
-    case "model_default":
-      return BASH_MODEL_DEFAULT_POLICY;
-    case "model_extended":
-      return BASH_MODEL_EXTENDED_POLICY;
-    case "user":
-      return BASH_USER_POLICY;
+function clampOutputTokens(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  return Math.min(Math.max(value, BASH_MODEL_DEFAULT_MAX_TOKENS), BASH_MAX_OUTPUT_TOKENS);
+}
+
+export function getBashOutputPolicy(args: {
+  mode: "model" | "user";
+  maxOutputTokens?: number;
+  hasMaxOutputTokens?: boolean;
+}): BashOutputPolicy {
+  if (args.mode === "user") {
+    return BASH_USER_POLICY;
   }
+
+  if (args.hasMaxOutputTokens) {
+    const maxTokens = clampOutputTokens(args.maxOutputTokens) ?? BASH_MODEL_DEFAULT_MAX_TOKENS;
+    return { maxTokens };
+  }
+
+  return BASH_MODEL_DEFAULT_POLICY;
 }
 
 export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
@@ -79,8 +84,13 @@ const BASH_WORKING_DIRECTORY_DESCRIPTION =
 const BASH_TIMEOUT_DESCRIPTION =
   "Timeout in milliseconds. If omitted, defaults to 60 seconds. Use a longer timeout for known slow operations like builds or large clones.";
 
-const BASH_GRANT_CODE_DESCRIPTION =
-  "Optional grant code for extended output when default mode gating is triggered.";
+const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
+  "Optional maximum number of output tokens to return to the model.",
+  `Leave unset by default. If more output is needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
+  `Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}.`,
+  `User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.`,
+  `If unset and output exceeds ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens, the tool returns a ${BASH_MODEL_DEFAULT_PREVIEW_TOKENS}-token preview with a gating notice.`,
+].join(" ");
 
 export const BASH_TOOL: Tool = {
   name: "bash",
@@ -104,9 +114,11 @@ export const BASH_TOOL: Tool = {
           description: BASH_TIMEOUT_DESCRIPTION,
         }),
       ),
-      grantCode: Type.Optional(
-        Type.String({
-          description: BASH_GRANT_CODE_DESCRIPTION,
+      maxOutputTokens: Type.Optional(
+        Type.Integer({
+          description: BASH_MAX_OUTPUT_TOKENS_DESCRIPTION,
+          minimum: 1,
+          maximum: BASH_MAX_OUTPUT_TOKENS,
         }),
       ),
     },
@@ -121,10 +133,7 @@ export interface BashTruncationInfo {
   rawOutput: string;
   model: TruncationResult;
   captureTruncated: boolean;
-  gate?: {
-    grantCode: string;
-    preview: string;
-  };
+  gated?: boolean;
 }
 
 export function prepareBashOutput(
@@ -149,10 +158,7 @@ export function prepareBashOutput(
       rawOutput: cleanOutput,
       model: previewTruncation,
       captureTruncated,
-      gate: {
-        grantCode: randomUUID(),
-        preview: previewTruncation.content,
-      },
+      gated: true,
     };
   }
 
@@ -169,13 +175,13 @@ export function formatBashToolResultText(args: {
   exitCode: number | null;
 }): string {
   const { truncationInfo, exitCode } = args;
-  const { model, captureTruncated, gate } = truncationInfo;
+  const { model, captureTruncated, gated } = truncationInfo;
 
-  if (gate) {
-    const preview = gate.preview.trimEnd() || "(no output)";
-    const grantNote = `\n\n[output gated: this command already ran and any side effects have persisted. if the large output was expected, consider re-running this bash tool call with grantCode "${gate.grantCode}" to retrieve more output]`;
+  if (gated) {
+    const preview = model.content.trimEnd() || "(no output)";
+    const gateNote = `\n\n[output gated: this command already ran and any side effects have persisted. if the large output was expected, re-run this bash tool call with maxOutputTokens set (${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}; up to ${BASH_MAX_OUTPUT_TOKENS} only when the user explicitly requests it). user requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
     const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
-    return `${preview}${grantNote}${exitNote}`;
+    return `${preview}${gateNote}${exitNote}`;
   }
 
   const outputForContext = model.content.trimEnd() || "(no output)";
@@ -335,7 +341,7 @@ const bashArgsSchema = z.object({
   safetyLevel: z.enum(["read", "write"]).optional().catch(undefined),
   workingDirectory: z.string().trim().optional().catch(undefined),
   timeout: z.number().positive().optional().catch(undefined),
-  grantCode: z.string().trim().optional().catch(undefined),
+  maxOutputTokens: z.number().int().positive().optional().catch(undefined),
 });
 
 function parseBashArgs(raw: unknown): {
@@ -343,7 +349,8 @@ function parseBashArgs(raw: unknown): {
   safetyLevel: BashSafetyLevel | undefined;
   workingDirectory: string | undefined;
   timeout: number | undefined;
-  grantCode: string | undefined;
+  maxOutputTokens: number | undefined;
+  hasMaxOutputTokens: boolean;
   commandForDisplay: string;
 } {
   const parsed = bashArgsSchema.safeParse(raw);
@@ -353,14 +360,16 @@ function parseBashArgs(raw: unknown): {
     : undefined;
   const workingDirectory = parsed.success ? parsed.data.workingDirectory : undefined;
   const timeout = parsed.success ? parsed.data.timeout : undefined;
-  const grantCode = parsed.success ? parsed.data.grantCode : undefined;
+  const maxOutputTokens = parsed.success ? parsed.data.maxOutputTokens : undefined;
+  const hasMaxOutputTokens = typeof raw === "object" && raw !== null && "maxOutputTokens" in raw;
   const commandForDisplay = command || "(missing command)";
   return {
     command,
     safetyLevel,
     workingDirectory,
     timeout,
-    grantCode: grantCode?.trim() ? grantCode : undefined,
+    maxOutputTokens: clampOutputTokens(maxOutputTokens),
+    hasMaxOutputTokens,
     commandForDisplay,
   };
 }
@@ -373,8 +382,15 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
       riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { command, safetyLevel, workingDirectory, timeout, grantCode, commandForDisplay } =
-        parseBashArgs(toolCall.arguments);
+      const {
+        command,
+        safetyLevel,
+        workingDirectory,
+        timeout,
+        maxOutputTokens,
+        hasMaxOutputTokens,
+        commandForDisplay,
+      } = parseBashArgs(toolCall.arguments);
       const headerTarget = commandForDisplay.split(/\r?\n/)[0] ?? commandForDisplay;
 
       const blocked = (reason: string): ToolDispatchResult => {
@@ -429,12 +445,12 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
             });
             const durationMs = Math.max(0, Date.now() - startedAt);
 
-            const outputMode: BashOutputMode = grantCode ? "model_extended" : "model_default";
-            const truncationInfo = prepareBashOutput(
-              output,
-              captureTruncated,
-              getBashOutputPolicy(outputMode),
-            );
+            const outputPolicy = getBashOutputPolicy({
+              mode: "model",
+              maxOutputTokens,
+              hasMaxOutputTokens,
+            });
+            const truncationInfo = prepareBashOutput(output, captureTruncated, outputPolicy);
             const toolText = formatBashToolResultText({ truncationInfo, exitCode });
             const isError = exitCode === null || exitCode !== 0;
             const uiText = buildBashUiText({ truncationInfo, exitCode, durationMs });

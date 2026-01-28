@@ -7,41 +7,45 @@ import {
 import { tokensToBytes } from "../dist/core/utils/token.js";
 
 describe("bash output policy", () => {
-  it("gates default mode output and returns grant code instructions", () => {
-    const policy = getBashOutputPolicy("model_default");
+  it("gates default output and includes maxOutputTokens instructions", () => {
+    const policy = getBashOutputPolicy({ mode: "model" });
     const output = "a".repeat(tokensToBytes(policy.maxTokens) + 12);
     const truncationInfo = prepareBashOutput(output, false, policy);
 
-    expect(truncationInfo.gate).toBeDefined();
+    expect(truncationInfo.gated).toBe(true);
     expect(truncationInfo.output).toContain("tokens truncated");
     const toolText = formatBashToolResultText({ truncationInfo, exitCode: 0 });
-    expect(toolText).toContain("grantCode");
-    expect(toolText).toContain(truncationInfo.gate.grantCode);
+    expect(toolText).toContain("maxOutputTokens");
+    expect(toolText).toContain("user requests are checked");
     expect(toolText).toContain("side effects");
   });
 
   it("skips gating when output is under the default limit", () => {
-    const policy = getBashOutputPolicy("model_default");
+    const policy = getBashOutputPolicy({ mode: "model" });
     const output = "ok".repeat(10);
     const truncationInfo = prepareBashOutput(output, false, policy);
 
-    expect(truncationInfo.gate).toBeUndefined();
+    expect(truncationInfo.gated).toBeUndefined();
     expect(truncationInfo.model.truncated).toBe(false);
     expect(truncationInfo.output).toBe(output);
   });
 
-  it("truncates in extended mode without gating", () => {
-    const policy = getBashOutputPolicy("model_extended");
+  it("truncates without gating when maxOutputTokens is set", () => {
+    const policy = getBashOutputPolicy({
+      mode: "model",
+      maxOutputTokens: 12000,
+      hasMaxOutputTokens: true,
+    });
     const output = "b".repeat(tokensToBytes(policy.maxTokens) + 12);
     const truncationInfo = prepareBashOutput(output, false, policy);
 
-    expect(truncationInfo.gate).toBeUndefined();
+    expect(truncationInfo.gated).toBeUndefined();
     expect(truncationInfo.model.truncated).toBe(true);
     expect(truncationInfo.output).toContain("tokens truncated");
   });
 
   it("uses a larger limit for user mode", () => {
-    const policy = getBashOutputPolicy("user");
+    const policy = getBashOutputPolicy({ mode: "user" });
     const output = "c".repeat(tokensToBytes(policy.maxTokens) - 6);
     const truncationInfo = prepareBashOutput(output, false, policy);
 

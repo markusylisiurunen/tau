@@ -494,9 +494,9 @@ tool calls are displayed in the UI so you can see exactly what the model is doin
 
 tool output is truncated using a `bytes / 6` token heuristic (shown as `…N tokens truncated…`).
 
-- **bash (assistant, default)**: 4096 token limit. when exceeded, output is middle-truncated to 512 tokens and gated with a grant code note. re-running with a `grantCode` enables extended mode with a 20,480 token limit. bash captures the last 1MB of output.
+- **bash (assistant)**: 4,096 token limit. if output exceeds this and `maxOutputTokens` is unset, output is middle-truncated to a 512-token gated preview. re-run with `maxOutputTokens` set to 4,096-16,384; if the user explicitly requests more, it may be set up to 65,536 (user requests are checked). bash captures the last 1MB of output.
 - **bash (user `!`)**: 65,536 token limit.
-- **read/grep**: capture the first 1MB of output, then cap to 8,192 tokens with tail truncation and a note to read smaller chunks or narrow the search.
+- **read/grep**: capture the first 1MB of output, then cap to 8,192 tokens by keeping the start and truncating the tail, with a note to read smaller chunks or narrow the search.
 - **web_search/web_fetch**: large responses are middle-truncated to their token limits (8,192 / 16,384 tokens).
 
 ## creating a release

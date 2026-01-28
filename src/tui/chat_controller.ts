@@ -2296,7 +2296,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const truncationInfo = prepareBashOutput(
         output,
         captureTruncated,
-        getBashOutputPolicy("user"),
+        getBashOutputPolicy({ mode: "user" }),
       );
 
       const uiText = buildBashUiText({

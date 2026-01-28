@@ -2297,10 +2297,11 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         signal: abortController.signal,
       });
       const durationMs = Math.max(0, Date.now() - startedAt);
-      const truncationInfo = prepareBashOutput(
+      const truncationInfo = await prepareBashOutput(
         output,
         captureTruncated,
         getBashOutputPolicy({ mode: "user" }),
+        this.toolBackend,
       );
 
       const userMessageText = formatBashUserMessageText({ command, truncationInfo });

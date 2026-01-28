@@ -113,7 +113,7 @@ Main session system prompts are immutable after session start to preserve model 
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 
-- **Bash (assistant)**: 4,096 token limit. If output exceeds this and `maxOutputTokens` is unset, output is middle-truncated to a 512-token gated preview. Re-run with `maxOutputTokens` set to 4,096-16,384; if the user explicitly requests more, it may be set up to 65,536 (user requests are checked).
+- **Bash (assistant)**: 8,192 token limit. If output exceeds this and `maxOutputTokens` is unset, output is middle-truncated to a 2,048-token gated preview. Re-run with `maxOutputTokens` set to 8,192-16,384; if the user explicitly requests more, it may be set up to 65,536 (user requests are checked).
 - **Bash (user/!/@/$)**: 65,536 token limit, middle-truncated when exceeded.
 - **read/grep**: 8,192 token limit (keeps the head, truncates the tail), after 1MB capture.
 - **web_fetch**: 16,384 token limit (middle-truncated).
@@ -322,4 +322,4 @@ Notes:
 
 ## Maintaining this file
 
-Keep AGENTS.md/README.md in sync with the codebase. After making code changes, reflect on whether documentation needs updates. When making changes that affect architecture, commands, configuration, or other documented behavior, update the relevant sections here. This includes updates to this file itself, README.md, or any other user-facing docs. Do not add documentation for previously undocumented features or behavior unless explicitly requested.
+Keep AGENTS.md/README.md in sync with the codebase. After making code changes, reflect on whether documentation needs updates. When making changes that affect architecture, commands, configuration, or other documented behavior, update the relevant sections here and in README.md. This includes updates to this file itself, README.md, or any other user-facing docs. Do not add documentation for previously undocumented features or behavior unless explicitly requested.

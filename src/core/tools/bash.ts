@@ -23,8 +23,8 @@ import type {
 } from "./registry.js";
 import { TOOL_NAME_BASH } from "./tool_names.js";
 
-const BASH_MODEL_DEFAULT_MAX_TOKENS = 4096;
-const BASH_MODEL_DEFAULT_PREVIEW_TOKENS = 512;
+const BASH_MODEL_DEFAULT_MAX_TOKENS = 8192;
+const BASH_MODEL_DEFAULT_PREVIEW_TOKENS = 2048;
 const BASH_MODEL_MAX_AUTONOMOUS_TOKENS = 16384;
 const BASH_MAX_OUTPUT_TOKENS = 65536;
 const BASH_USER_MAX_TOKENS = BASH_MAX_OUTPUT_TOKENS;
@@ -93,10 +93,10 @@ const BASH_TIMEOUT_DESCRIPTION =
 
 const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
   "Optional maximum number of output tokens to return to the model.",
-  `Leave unset by default. If more output is needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
+  `Defaults to ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens if unset. If more output is needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
   `Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}.`,
   `User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.`,
-  `If unset and output exceeds ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens, the tool returns a ${BASH_MODEL_DEFAULT_PREVIEW_TOKENS}-token preview with a gating notice.`,
+  `If unset and output exceeds the default ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens, the tool returns a ${BASH_MODEL_DEFAULT_PREVIEW_TOKENS}-token preview with a gating notice.`,
 ].join(" ");
 
 export const BASH_TOOL: Tool = {
@@ -140,18 +140,59 @@ export interface BashTruncationInfo {
   model: TruncationResult;
   captureTruncated: boolean;
   gated?: boolean;
+  fullOutputPath?: string;
 }
 
-export function prepareBashOutput(
+const BASH_TEMP_FILE_TEMPLATE = "/tmp/tau-bash-output-XXXXXX.log";
+const BASH_TEMP_FILE_TIMEOUT_MS = 2_000;
+
+async function createBashTempFilePath(backend: ToolExecutionBackend): Promise<string | undefined> {
+  try {
+    const result = await backend.runBash(`mktemp ${BASH_TEMP_FILE_TEMPLATE}`, {
+      timeoutMs: BASH_TEMP_FILE_TIMEOUT_MS,
+    });
+    if (result.exitCode !== 0) return undefined;
+    const path = result.output.trim().split(/\r?\n/)[0]?.trim();
+    return path || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeBashTempFile(
+  backend: ToolExecutionBackend,
+  content: string,
+): Promise<string | undefined> {
+  if (!content) return undefined;
+  const tempPath = await createBashTempFilePath(backend);
+  if (!tempPath) return undefined;
+  try {
+    const result = await backend.writeFile(tempPath, content);
+    return result.path;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatBashOutputFileHint(args: { path?: string }): string {
+  if (!args.path) return "";
+  return ` full output saved to ${args.path}. to see more output, either read the file or re-run with a higher maxOutputTokens. if reading the file, be mindful of its size.`;
+}
+
+export async function prepareBashOutput(
   output: string,
   captureTruncated: boolean,
   policy: BashOutputPolicy,
-): BashTruncationInfo {
+  backend: ToolExecutionBackend,
+): Promise<BashTruncationInfo> {
   const cleanOutput = stripAnsi(output);
   const maxTruncation = truncateForTokens(cleanOutput, {
     maxTokens: policy.maxTokens,
     strategy: "middle",
   });
+  const fullOutputPath = maxTruncation.truncated
+    ? await writeBashTempFile(backend, cleanOutput)
+    : undefined;
 
   if (policy.gateOnExcess && maxTruncation.truncated) {
     const previewTokens = policy.previewTokens ?? BASH_MODEL_DEFAULT_PREVIEW_TOKENS;
@@ -164,6 +205,7 @@ export function prepareBashOutput(
       model: previewTruncation,
       captureTruncated,
       gated: true,
+      fullOutputPath,
     };
   }
 
@@ -171,6 +213,7 @@ export function prepareBashOutput(
     output: maxTruncation.content,
     model: maxTruncation,
     captureTruncated,
+    fullOutputPath,
   };
 }
 
@@ -179,12 +222,12 @@ export function formatBashToolResultText(args: {
   exitCode: number | null;
 }): string {
   const { truncationInfo, exitCode } = args;
-  const { model, captureTruncated, gated } = truncationInfo;
+  const { model, captureTruncated, gated, fullOutputPath } = truncationInfo;
 
   if (gated) {
     const preview = model.content.trimEnd() || "(no output)";
     const totalTokenEstimate = bytesToTokens(model.totalBytes);
-    const gateNote = `\n\n[output gated: this command already ran and any side effects have persisted. full output estimate: ~${totalTokenEstimate} tokens. if the large output was expected, re-run this bash tool call with maxOutputTokens set (${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}; up to ${BASH_MAX_OUTPUT_TOKENS} only when the user explicitly requests it). user requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
+    const gateNote = `\n\n[output gated: this command already ran and any side effects have persisted. full output estimate: ~${totalTokenEstimate} tokens.${formatBashOutputFileHint({ path: fullOutputPath })} maxOutputTokens can be set to ${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}; up to ${BASH_MAX_OUTPUT_TOKENS} only when the user explicitly requests it. user requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
     const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
     return `${preview}${gateNote}${exitNote}`;
   }
@@ -192,7 +235,7 @@ export function formatBashToolResultText(args: {
   const outputForContext = model.content.trimEnd() || "(no output)";
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens)]`
+      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
       : "";
   const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
   return `${outputForContext}${truncNote}${exitNote}`;
@@ -203,12 +246,12 @@ export function formatBashUserMessageText(args: {
   truncationInfo: BashTruncationInfo;
 }): string {
   const { command, truncationInfo } = args;
-  const { model, captureTruncated } = truncationInfo;
+  const { model, captureTruncated, fullOutputPath } = truncationInfo;
 
   const outputForContext = model.content.trimEnd() || "(no output)";
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens)]`
+      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
       : "";
   const bashContextText = `$ ${command}\n${outputForContext}${truncNote}`;
   return `Bash command output:\n${bashContextText}`;
@@ -399,7 +442,12 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               maxOutputTokens,
               hasMaxOutputTokens,
             });
-            const truncationInfo = prepareBashOutput(output, captureTruncated, outputPolicy);
+            const truncationInfo = await prepareBashOutput(
+              output,
+              captureTruncated,
+              outputPolicy,
+              backend,
+            );
             const toolText = formatBashToolResultText({ truncationInfo, exitCode });
             const isError = exitCode === null || exitCode !== 0;
             const uiText = buildBashUiText({

@@ -4,12 +4,12 @@ import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import { formatTokenEstimate } from "../utils/token.js";
-import { formatBytes } from "../utils/truncate.js";
 import {
   applyPreviewPolicy,
   buildCompactPreviewLines,
   WRITE_UI_PREVIEW_LINES,
 } from "../utils/tool_preview.js";
+import { formatBytes } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
+import { TRUNCATION_MARKER } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -77,7 +78,8 @@ function buildListUiText(args: {
     unitLabelSingular: "entry",
   });
   const infoText = `${returned} of ${total} entries · offset ${offset} · limit ${limit}`;
-  const summaryLine = infoText;
+  const hasMore = total > offset + returned;
+  const summaryLine = hasMore ? `${TRUNCATION_MARKER} · ${infoText}` : infoText;
   const previewLines: ToolUiLine[] = previewContentLines.map((text) => ({ text }));
 
   const trimmedFullText = fullText.trimEnd();

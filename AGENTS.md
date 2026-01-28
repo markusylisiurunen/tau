@@ -113,10 +113,9 @@ Main session system prompts are immutable after session start to preserve model 
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 
-- **Bash (assistant, default mode)**: 4,096 token limit. When exceeded, output is middle-truncated to 512 tokens and gated with a grant code prompt.
-- **Bash (assistant, extended mode)**: enabled when any `grantCode` is provided. 20,480 token limit, middle-truncated when exceeded.
+- **Bash (assistant)**: 4,096 token limit. If output exceeds this and `maxOutputTokens` is unset, output is middle-truncated to a 512-token gated preview. Re-run with `maxOutputTokens` set to 4,096-16,384; if the user explicitly requests more, it may be set up to 65,536 (user requests are checked).
 - **Bash (user/!/@/$)**: 65,536 token limit, middle-truncated when exceeded.
-- **read/grep**: 8,192 token limit (tail-truncated), after 1MB capture.
+- **read/grep**: 8,192 token limit (keeps the head, truncates the tail), after 1MB capture.
 - **web_fetch**: 16,384 token limit (middle-truncated).
 - **web_search**: 8,192 token limit (middle-truncated).
 

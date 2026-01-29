@@ -73,7 +73,6 @@ export interface HelpTextOptions {
   themes?: string[];
 }
 
-const DEFAULT_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
 const RISK_LEVEL_HELP_DESCRIPTIONS: Record<RiskLevel, string> = {
   "read-only": "allow read-only tool calls",
   "read-write": "allow all tools",
@@ -160,7 +159,7 @@ export class CommandRegistry<Ctx = unknown> {
 
   buildHelpText(options: HelpTextOptions = {}): string {
     const lines: string[] = [];
-    const { agentsFiles, skills, riskLevels, themes } = options;
+    const { agentsFiles, skills, themes } = options;
 
     if (agentsFiles && agentsFiles.length > 0) {
       lines.push("context:");
@@ -193,11 +192,7 @@ export class CommandRegistry<Ctx = unknown> {
     });
 
     if (riskCommand) {
-      const allowed = riskLevels ?? DEFAULT_RISK_LEVELS;
-      allowed.forEach((level) => {
-        const description = RISK_LEVEL_HELP_DESCRIPTIONS[level];
-        commandEntries.push([`/risk:${level}`, description]);
-      });
+      commandEntries.push([riskCommand.usage, riskCommand.description]);
     }
 
     trailingCommands.forEach((command) => {
@@ -268,7 +263,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "cd",
-    usage: "/cd <path>",
+    usage: "/cd",
     description: "change working directory",
     autocompleteDescription: "change working directory",
     argument: "none",
@@ -283,7 +278,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "compactOnlySummary",
-    usage: "/compact:only-summary [prompt]",
+    usage: "/compact:only-summary",
     description: "summarize and start new session",
     autocompleteDescription: "compact history to a summary",
     argument: "none",
@@ -298,7 +293,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "compactSummaryAndLastTurn",
-    usage: "/compact:with-last-turn [prompt]",
+    usage: "/compact:with-last-turn",
     description: "summarize and include previous last turn",
     autocompleteDescription: "compact history, keep last turn",
     argument: "none",
@@ -313,7 +308,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "pruneEarliestFirst",
-    usage: "/prune:earliest-first [frac]",
+    usage: "/prune:earliest-first",
     description: "prune earliest tool results from context",
     autocompleteDescription: "prune earliest tool results",
     argument: "none",
@@ -328,7 +323,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "pruneLargestFirst",
-    usage: "/prune:largest-first [frac]",
+    usage: "/prune:largest-first",
     description: "prune largest tool results from context",
     autocompleteDescription: "prune largest tool results",
     argument: "none",
@@ -343,7 +338,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "pruneLeastImportant",
-    usage: "/prune:least-important [fraction] [guidance]",
+    usage: "/prune:least-important",
     description: "prune tool results using model selection",
     autocompleteDescription: "prune least important tool results",
     argument: "none",
@@ -433,7 +428,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "risk",
-    usage: "/risk:<level>",
+    usage: "/risk:",
     description: "set risk level",
     argument: "risk",
     section: "risk",
@@ -450,7 +445,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "bash",
-    usage: "/bash:<id>",
+    usage: "/bash:",
     description: "run saved bash command",
     argument: "bash",
     section: "trailing",
@@ -466,7 +461,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "persona",
-    usage: "/persona:<id>",
+    usage: "/persona:",
     description: "switch persona",
     argument: "persona",
     section: "trailing",
@@ -482,7 +477,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "prompt",
-    usage: "/prompt:<id>",
+    usage: "/prompt:",
     description: "insert prompt template",
     argument: "prompt",
     section: "trailing",
@@ -499,7 +494,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "theme",
-    usage: "/theme:<id>",
+    usage: "/theme:",
     description: "switch theme",
     argument: "theme",
     section: "trailing",

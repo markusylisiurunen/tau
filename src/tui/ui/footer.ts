@@ -10,6 +10,7 @@ export interface FooterStatus {
   riskLevel: RiskLevel;
   duration?: string;
   sandboxed?: boolean;
+  commandHint?: string;
 }
 
 export class FooterComponent implements Component {
@@ -87,7 +88,8 @@ export class FooterComponent implements Component {
       ? `${this.status.duration ? `${this.status.duration} · ` : ""}${this.status.contextUsage} · ${this.status.sessionCost}`
       : "";
     const toast = this.toast;
-    const leftRaw = toast ? toast.text : leftFull;
+    const commandHint = this.status?.commandHint?.trim();
+    const leftRaw = toast ? toast.text : commandHint || leftFull;
     const leftStyle = toast ? this.getToastStyle(toast.kind) : palette.textDim;
     const rightPrefixRaw = "";
     const { riskText, riskStyled } = this.status

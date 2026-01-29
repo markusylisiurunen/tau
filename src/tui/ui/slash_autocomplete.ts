@@ -278,49 +278,90 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
 
     const commandInfos = this.commandRegistry.list();
 
-    const addCommandSuggestion = (command: {
-      usage: string;
-      description: string;
-      autocompleteDescription?: string;
-    }): void => {
+    for (const command of commandInfos) {
+      if (command.argument !== "none") continue;
       const usage = command.usage.startsWith("/") ? command.usage.slice(1) : command.usage;
       const value = usage.split(/\s+/, 1)[0] ?? usage;
-      if (!value) return;
       const description = command.autocompleteDescription ?? command.description;
       candidates.push({
         item: { value, label: value, description },
         searchText: `${usage} ${description}`,
       });
-    };
-
-    for (const command of commandInfos) {
-      if (command.argument !== "none") continue;
-      addCommandSuggestion(command);
     }
 
-    const riskCommand = commandInfos.find((command) => command.argument === "risk");
-    if (riskCommand) {
-      addCommandSuggestion(riskCommand);
+    const hasRisk = commandInfos.some((command) => command.argument === "risk");
+    if (hasRisk) {
+      const options = getRiskLevelAutocompleteOptions(this.getRiskLevels());
+      for (const option of options) {
+        const value = `risk:${option.id}`;
+        candidates.push({
+          item: { value, label: value, description: option.description },
+          searchText: `${value} ${option.description}`,
+        });
+      }
     }
 
-    const personaCommand = commandInfos.find((command) => command.argument === "persona");
-    if (personaCommand) {
-      addCommandSuggestion(personaCommand);
+    const hasPersona = commandInfos.some((command) => command.argument === "persona");
+    if (hasPersona) {
+      for (const p of this.getPersonas()) {
+        const full = `persona:${p.id}`;
+        candidates.push({
+          item: {
+            value: full,
+            label: full,
+            description: p.label ? `switch to ${p.label}` : "switch persona",
+          },
+          searchText: `${p.id} ${p.label ?? ""} ${full}`,
+        });
+      }
     }
 
-    const promptCommand = commandInfos.find((command) => command.argument === "prompt");
-    if (promptCommand) {
-      addCommandSuggestion(promptCommand);
+    const hasPrompt = commandInfos.some((command) => command.argument === "prompt");
+    if (hasPrompt) {
+      for (const t of this.getPrompts()) {
+        const full = `prompt:${t.id}`;
+        candidates.push({
+          item: {
+            value: full,
+            label: full,
+            description: t.label ? `insert ${t.label}` : "insert prompt template",
+          },
+          searchText: `${t.id} ${t.label ?? ""} ${full}`,
+        });
+      }
     }
 
-    const themeCommand = commandInfos.find((command) => command.argument === "theme");
-    if (themeCommand && this.getThemes().length > 0) {
-      addCommandSuggestion(themeCommand);
+    const hasTheme = commandInfos.some((command) => command.argument === "theme");
+    if (hasTheme) {
+      const themes = this.getThemes();
+      if (themes.length > 0) {
+        for (const t of themes) {
+          const full = `theme:${t.id}`;
+          candidates.push({
+            item: {
+              value: full,
+              label: full,
+              description: t.label ? `switch to ${t.label}` : "switch theme",
+            },
+            searchText: `${t.id} ${t.label ?? ""} ${full}`,
+          });
+        }
+      }
     }
 
-    const bashCommand = commandInfos.find((command) => command.argument === "bash");
-    if (bashCommand) {
-      addCommandSuggestion(bashCommand);
+    const hasBash = commandInfos.some((command) => command.argument === "bash");
+    if (hasBash) {
+      for (const b of this.getBashCommands()) {
+        const full = `bash:${b.id}`;
+        candidates.push({
+          item: {
+            value: full,
+            label: full,
+            description: b.description ? b.description : "run saved bash command",
+          },
+          searchText: `${b.id} ${b.description ?? ""} ${full}`,
+        });
+      }
     }
 
     const filteredCandidates = fuzzyFilter(candidates, afterSlash, (c) => c.searchText);

@@ -225,14 +225,14 @@ export function formatBashToolResultText(args: {
   const { model, captureTruncated, gated, fullOutputPath } = truncationInfo;
 
   if (gated) {
-    const preview = model.content.trimEnd() || "(no output)";
+    const preview = model.content;
     const totalTokenEstimate = bytesToTokens(model.totalBytes);
     const gateNote = `\n\n[output gated: this command already ran and any side effects have persisted. full output estimate: ~${totalTokenEstimate} tokens.${formatBashOutputFileHint({ path: fullOutputPath })} maxOutputTokens can be set to ${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}; up to ${BASH_MAX_OUTPUT_TOKENS} only when the user explicitly requests it. user requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
     const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
     return `${preview}${gateNote}${exitNote}`;
   }
 
-  const outputForContext = model.content.trimEnd() || "(no output)";
+  const outputForContext = model.content;
   const truncNote =
     model.truncated || captureTruncated
       ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`

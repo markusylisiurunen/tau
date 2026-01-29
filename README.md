@@ -157,7 +157,7 @@ start with a specific risk level:
 tau --risk read-write
 ```
 
-or change it during a session with `/risk`.
+or change it during a session with `/risk:read-only` or `/risk:read-write`.
 
 the default is read-only because it lets the model investigate your code and answer questions without risk of unintended changes. bump it to read-write when you're ready to let the model make edits.
 
@@ -198,7 +198,7 @@ tau comes with several built-in personas across different models:
 
 chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.
 
-switch personas at startup with `--persona` or mid-session with `/persona`:
+switch personas at startup with `--persona` or mid-session with `/persona:<id>`:
 
 ```sh
 tau --persona opus-4.5-coder
@@ -287,11 +287,12 @@ tau supports slash commands for common actions:
 | `/prune:earliest-first`   | prune tool results from the start of the session                             |
 | `/prune:largest-first`    | prune largest tool results first                                             |
 | `/prune:least-important`  | prune tool results using model selection                                     |
-| `/persona`                | switch to a different persona                                                |
-| `/prompt`                 | insert a saved prompt template                                               |
-| `/theme`                  | switch to a loaded theme                                                     |
-| `/bash`                   | run a saved shell command                                                    |
-| `/risk`                   | change the risk level                                                        |
+| `/persona:<id>`           | switch to a different persona                                                |
+| `/prompt:<id>`            | insert a saved prompt template                                               |
+| `/theme:<id>`             | switch to a loaded theme                                                     |
+| `/bash:<id>`              | run a saved shell command                                                    |
+| `/risk:read-only`         | allow read-only tool calls                                                   |
+| `/risk:read-write`        | allow all tools                                                              |
 | `!<cmd>`                  | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
 | `!!<cmd>`                 | run a shell command without adding output to the model context               |
 
@@ -404,7 +405,7 @@ focus on clarity and efficiency.
 
 the frontmatter defines the persona. required fields:
 
-- `id`: unique id used by `--persona` and `/persona`
+- `id`: unique id used by `--persona` and `/persona:<id>`
 - `provider`: model provider id (for example `openai`, `anthropic`, `google`)
 - `model`: model id for the provider (for example `gpt-5.2`, `claude-opus-4-5`)
 

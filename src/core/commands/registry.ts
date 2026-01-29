@@ -73,6 +73,7 @@ export interface HelpTextOptions {
   themes?: string[];
 }
 
+const DEFAULT_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
 const RISK_LEVEL_HELP_DESCRIPTIONS: Record<RiskLevel, string> = {
   "read-only": "allow read-only tool calls",
   "read-write": "allow all tools",
@@ -159,7 +160,7 @@ export class CommandRegistry<Ctx = unknown> {
 
   buildHelpText(options: HelpTextOptions = {}): string {
     const lines: string[] = [];
-    const { agentsFiles, skills, themes } = options;
+    const { agentsFiles, skills, riskLevels, themes } = options;
 
     if (agentsFiles && agentsFiles.length > 0) {
       lines.push("context:");
@@ -192,7 +193,11 @@ export class CommandRegistry<Ctx = unknown> {
     });
 
     if (riskCommand) {
-      commandEntries.push([riskCommand.usage, riskCommand.description]);
+      const allowed = riskLevels ?? DEFAULT_RISK_LEVELS;
+      allowed.forEach((level) => {
+        const description = RISK_LEVEL_HELP_DESCRIPTIONS[level];
+        commandEntries.push([`/risk:${level}`, description]);
+      });
     }
 
     trailingCommands.forEach((command) => {
@@ -428,7 +433,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "risk",
-    usage: "/risk",
+    usage: "/risk:<level>",
     description: "set risk level",
     argument: "risk",
     section: "risk",
@@ -445,7 +450,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "bash",
-    usage: "/bash",
+    usage: "/bash:<id>",
     description: "run saved bash command",
     argument: "bash",
     section: "trailing",
@@ -461,7 +466,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "persona",
-    usage: "/persona",
+    usage: "/persona:<id>",
     description: "switch persona",
     argument: "persona",
     section: "trailing",
@@ -477,7 +482,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "prompt",
-    usage: "/prompt",
+    usage: "/prompt:<id>",
     description: "insert prompt template",
     argument: "prompt",
     section: "trailing",
@@ -494,7 +499,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "theme",
-    usage: "/theme",
+    usage: "/theme:<id>",
     description: "switch theme",
     argument: "theme",
     section: "trailing",

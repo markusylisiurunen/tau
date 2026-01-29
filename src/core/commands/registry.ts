@@ -428,7 +428,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "risk",
-    usage: "/risk:",
+    usage: "/risk",
     description: "set risk level",
     argument: "risk",
     section: "risk",
@@ -445,7 +445,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "bash",
-    usage: "/bash:",
+    usage: "/bash",
     description: "run saved bash command",
     argument: "bash",
     section: "trailing",
@@ -461,7 +461,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "persona",
-    usage: "/persona:",
+    usage: "/persona",
     description: "switch persona",
     argument: "persona",
     section: "trailing",
@@ -477,7 +477,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "prompt",
-    usage: "/prompt:",
+    usage: "/prompt",
     description: "insert prompt template",
     argument: "prompt",
     section: "trailing",
@@ -494,7 +494,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "theme",
-    usage: "/theme:",
+    usage: "/theme",
     description: "switch theme",
     argument: "theme",
     section: "trailing",

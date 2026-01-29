@@ -18,6 +18,7 @@ import {
   createCredentialResolver,
 } from "../core/auth/credential_resolver.js";
 import {
+  type Command,
   type CommandDispatchContext,
   type CommandRegistry,
   createCommandRegistry,
@@ -199,6 +200,7 @@ export class ChatController {
   private isMemoryMode = false;
   private showThinking = false;
   private compactToolUi = true;
+  private commandHint?: string;
   private currentTurnAbort?: AbortController;
   private riskLevel: RiskLevel = "read-only";
   private environmentTag = "";
@@ -600,6 +602,7 @@ export class ChatController {
         duration,
         riskLevel: this.riskLevel,
         sandboxed: this.sandboxEnabled,
+        commandHint: this.commandHint,
       },
       editor: {
         mode: this.getInputMode(),
@@ -994,6 +997,7 @@ export class ChatController {
     const wasBashIncognito = this.isBashIncognito;
     const wasMemory = this.isMemoryMode;
     const wasInFileAutocomplete = this.isInFileAutocomplete;
+    const previousCommandHint = this.commandHint;
 
     if (text.trim().length > 0) {
       this.lastEmptySubmitAt = undefined;
@@ -1012,12 +1016,71 @@ export class ChatController {
       this.refreshProjectFilesInBackground();
     }
 
+    this.commandHint = this.getCommandHintForInput(text);
+    const commandHintChanged = this.commandHint !== previousCommandHint;
+
     if (
       wasBash !== this.isBashMode ||
       wasBashIncognito !== this.isBashIncognito ||
-      wasMemory !== this.isMemoryMode
+      wasMemory !== this.isMemoryMode ||
+      commandHintChanged
     ) {
       this.refreshStatus();
+    }
+  }
+
+  private getCommandHintForInput(text: string): string | undefined {
+    const trimmed = text.trimStart();
+    if (!trimmed.startsWith("/")) {
+      return undefined;
+    }
+    const parsed = this.commandRegistry.parse(trimmed);
+    if (parsed.type === "unknown") {
+      return undefined;
+    }
+    return this.getCommandHint(parsed);
+  }
+
+  private getCommandHint(command: Command): string | undefined {
+    switch (command.type) {
+      case "help":
+        return "show available commands";
+      case "copy":
+        return "copy last assistant message";
+      case "copyCode":
+        return "copy last assistant code blocks";
+      case "export":
+        return "export chat history to html";
+      case "checkpoint":
+        return "save a checkpoint file";
+      case "new":
+        return "clear the session and start fresh";
+      case "cd":
+        return "change directory: /cd <path>";
+      case "compactOnlySummary":
+        return "summarize session and start new, optional prompt";
+      case "compactSummaryAndLastTurn":
+        return "summarize session and keep last turn, optional prompt";
+      case "pruneEarliestFirst":
+        return "prune earliest bash tool results, optional fraction 0-1";
+      case "pruneLargestFirst":
+        return "prune largest bash tool results, optional fraction 0-1";
+      case "pruneLeastImportant":
+        return "prune least important bash tool results, optional fraction and guidance";
+      case "reload":
+        return "reload prompts, skills, themes, bash commands, and AGENTS.md";
+      case "risk":
+        return "set risk level: /risk:read-only or /risk:read-write";
+      case "bash":
+        return "run saved bash command: /bash:<id>";
+      case "persona":
+        return "switch persona: /persona:<id>";
+      case "prompt":
+        return "insert prompt template: /prompt:<id>";
+      case "theme":
+        return "switch theme: /theme:<id>";
+      case "unknown":
+        return undefined;
     }
   }
 

@@ -157,7 +157,7 @@ start with a specific risk level:
 tau --risk read-write
 ```
 
-or change it during a session with `/risk:read-only` or `/risk:read-write`.
+or change it during a session with `/risk:`.
 
 the default is read-only because it lets the model investigate your code and answer questions without risk of unintended changes. bump it to read-write when you're ready to let the model make edits.
 
@@ -198,7 +198,7 @@ tau comes with several built-in personas across different models:
 
 chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.
 
-switch personas at startup with `--persona` or mid-session with `/persona:<id>`:
+switch personas at startup with `--persona` or mid-session with `/persona:`:
 
 ```sh
 tau --persona opus-4.5-coder
@@ -272,28 +272,28 @@ tau will create or update AGENTS.md at your project root, integrating the new in
 
 tau supports slash commands for common actions:
 
-| command                                        | description                                                                  |
-| ---------------------------------------------- | ---------------------------------------------------------------------------- |
-| `/help`                                        | show available commands                                                      |
-| `/new`                                         | clear the session and start fresh                                            |
-| `/copy`                                        | copy the last assistant message                                              |
-| `/copy:code`                                   | copy just the code blocks                                                    |
-| `/export:html`                                 | export chat history to html                                                  |
-| `/checkpoint`                                  | save a checkpoint file for loading later                                     |
-| `/reload`                                      | reload personas, prompts, skills, and themes from disk                       |
-| `/cd <path>`                                   | change the working directory                                                 |
-| `/compact:only-summary [prompt]`               | compress history and continue with a summary                                 |
-| `/compact:with-last-turn [prompt]`             | compress history but keep the last exchange                                  |
-| `/prune:earliest-first [fraction]`             | prune tool results from the start of the session                             |
-| `/prune:largest-first [fraction]`              | prune largest tool results first                                             |
-| `/prune:least-important [fraction] [guidance]` | prune tool results using model selection                                     |
-| `/persona:<id>`                                | switch to a different persona                                                |
-| `/prompt:<id>`                                 | insert a saved prompt template                                               |
-| `/theme:<id>`                                  | switch to a loaded theme                                                     |
-| `/bash:<id>`                                   | run a saved shell command                                                    |
-| `/risk:<level>`                                | change the risk level                                                        |
-| `!<cmd>`                                       | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
-| `!!<cmd>`                                      | run a shell command without adding output to the model context               |
+| command                   | description                                                                  |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| `/help`                   | show available commands                                                      |
+| `/new`                    | clear the session and start fresh                                            |
+| `/copy`                   | copy the last assistant message                                              |
+| `/copy:code`              | copy just the code blocks                                                    |
+| `/export:html`            | export chat history to html                                                  |
+| `/checkpoint`             | save a checkpoint file for loading later                                     |
+| `/reload`                 | reload personas, prompts, skills, and themes from disk                       |
+| `/cd`                     | change the working directory                                                 |
+| `/compact:only-summary`   | compress history and continue with a summary                                 |
+| `/compact:with-last-turn` | compress history but keep the last exchange                                  |
+| `/prune:earliest-first`   | prune tool results from the start of the session                             |
+| `/prune:largest-first`    | prune largest tool results first                                             |
+| `/prune:least-important`  | prune tool results using model selection                                     |
+| `/persona:`               | switch to a different persona                                                |
+| `/prompt:`                | insert a saved prompt template                                               |
+| `/theme:`                 | switch to a loaded theme                                                     |
+| `/bash:`                  | run a saved shell command                                                    |
+| `/risk:`                  | change the risk level                                                        |
+| `!<cmd>`                  | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
+| `!!<cmd>`                 | run a shell command without adding output to the model context               |
 
 use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
 
@@ -404,7 +404,7 @@ focus on clarity and efficiency.
 
 the frontmatter defines the persona. required fields:
 
-- `id`: unique id used by `--persona` and `/persona:<id>`
+- `id`: unique id used by `--persona` and `/persona:`
 - `provider`: model provider id (for example `openai`, `anthropic`, `google`)
 - `model`: model id for the provider (for example `gpt-5.2`, `claude-opus-4-5`)
 

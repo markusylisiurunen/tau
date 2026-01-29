@@ -27,6 +27,7 @@ export type ChatViewStatus = {
     duration: string;
     riskLevel: RiskLevel;
     sandboxed?: boolean;
+    commandHint?: string;
   };
   editor: {
     mode: ChatInputMode;
@@ -216,6 +217,7 @@ export class TuiChatView implements ChatView {
       duration: status.footer.duration,
       riskLevel: status.footer.riskLevel,
       sandboxed: status.footer.sandboxed,
+      commandHint: status.footer.commandHint,
     });
 
     this.updateEditorVisualState(status.editor);

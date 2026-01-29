@@ -14,6 +14,7 @@ export type Command = (
   | { type: "compactSummaryAndLastTurn" }
   | { type: "pruneEarliestFirst" }
   | { type: "pruneLargestFirst" }
+  | { type: "pruneLeastImportant" }
   | { type: "reload" }
   | { type: "risk"; level: RiskLevel }
   | { type: "bash"; id: string }
@@ -55,6 +56,7 @@ export interface CommandDispatchContext {
   compactSummaryAndLastTurn: (extra?: string) => Promise<void>;
   pruneEarliestFirst: (extra?: string) => void;
   pruneLargestFirst: (extra?: string) => void;
+  pruneLeastImportant: (extra?: string) => Promise<void> | void;
   reload: () => Promise<void>;
   risk: (level: RiskLevel) => void;
   persona: (id: string) => void;
@@ -337,6 +339,21 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "pruneLargestFirst", extra };
     },
     run: (ctx, command) => ctx.pruneLargestFirst(command.extra),
+  });
+
+  registry.register({
+    id: "pruneLeastImportant",
+    usage: "/prune:least-important [fraction] [guidance]",
+    description: "prune tool results using model selection",
+    autocompleteDescription: "prune least important tool results",
+    argument: "none",
+    section: "base",
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/prune:least-important") return null;
+      return { type: "pruneLeastImportant", extra };
+    },
+    run: (ctx, command) => ctx.pruneLeastImportant(command.extra),
   });
 
   registry.register({

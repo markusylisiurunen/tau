@@ -7,6 +7,7 @@ import type {
   AssistantMessage,
   KnownProvider,
   Message,
+  ToolCall,
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
 import { formatCodexAuthError } from "../core/auth/auth_messages.js";
@@ -71,7 +72,8 @@ import { getGitRoot } from "../core/utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
-import { bytesToTokens, formatTokenEstimate } from "../core/utils/token.js";
+import { bytesToTokens, formatTokenEstimate, tokensToBytes } from "../core/utils/token.js";
+import { truncateToBytesFromStart } from "../core/utils/truncate.js";
 import { APP_VERSION } from "../core/version.js";
 import type { ChatInputMode, ChatView, ChatViewInputHandlers } from "./chat_view.js";
 import { copyTextToClipboard } from "./clipboard.js";
@@ -161,6 +163,7 @@ const RELOAD_PLANS: Record<ReloadScope, ReloadPlan> = {
 const ALLOWED_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
 const DEFAULT_PRUNE_FRACTION = 0.25;
 const PRUNED_TOOL_RESULT_PREFIX = "[tool result pruned]";
+const PRUNE_PREVIEW_MAX_TOKENS = 512;
 
 export class ChatController {
   private readonly view: ChatView;
@@ -327,6 +330,7 @@ export class ChatController {
       compactSummaryAndLastTurn: (extra) => this.compactSessionSummaryAndLastTurn(extra),
       pruneEarliestFirst: (extra) => this.pruneToolResults("earliest", extra),
       pruneLargestFirst: (extra) => this.pruneToolResults("largest", extra),
+      pruneLeastImportant: (extra) => this.pruneToolResultsLeastImportant(extra),
       reload: () => this.reloadContent(),
       risk: (level) => this.setRiskLevel(level),
       persona: (id) => this.switchPersona(id),
@@ -1459,6 +1463,10 @@ export class ChatController {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
+  private escapeXmlAttribute(text: string): string {
+    return this.escapeXml(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  }
+
   private extractLastTurn(history: readonly Message[]): {
     lastUserText?: string;
     lastAssistantText?: string;
@@ -1889,6 +1897,114 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     );
   }
 
+  private async pruneToolResultsLeastImportant(extra?: string): Promise<void> {
+    const parsed = this.parsePruneFractionAndGuidance(extra);
+    if (parsed.fraction === null) {
+      this.view.addSystemMessage("invalid prune fraction. use a number between 0 and 1.", "error");
+      return;
+    }
+
+    const fraction = parsed.fraction;
+    if (fraction === 0) {
+      this.view.addSystemMessage("prune fraction is 0, nothing to prune.", "warn");
+      return;
+    }
+
+    const history = this.engine.history;
+    if (history.length === 0) {
+      this.view.addSystemMessage("no conversation to prune.", "warn");
+      return;
+    }
+
+    const candidates: ToolResultPruneCandidate[] = [];
+    let totalTokens = 0;
+
+    for (let index = 0; index < history.length; index++) {
+      const message = history[index];
+      if (message?.role !== "toolResult") continue;
+      const toolResult = message as ToolResultMessage;
+      if (toolResult.toolName !== TOOL_NAME_BASH) {
+        continue;
+      }
+      const details = this.getToolResultContentDetails(toolResult);
+      if (details.firstText?.startsWith(PRUNED_TOOL_RESULT_PREFIX)) {
+        continue;
+      }
+      if (details.hasImage) {
+        continue;
+      }
+      const tokens = bytesToTokens(details.bytes);
+      candidates.push({
+        index,
+        toolResult,
+        bytes: details.bytes,
+        tokens,
+        order: candidates.length,
+      });
+      totalTokens += tokens;
+    }
+
+    if (candidates.length === 0 || totalTokens === 0) {
+      this.view.addSystemMessage("no bash tool results to prune.", "warn");
+      return;
+    }
+
+    const targetTokens = Math.ceil(totalTokens * fraction);
+    if (targetTokens <= 0) {
+      this.view.addSystemMessage("prune fraction is too small to remove anything.", "warn");
+      return;
+    }
+
+    this.view.addSystemMessage("sampling prune candidates...", "success");
+    this.isStreaming = true;
+    this.view.startWorkingIcon();
+
+    try {
+      const prompt = this.buildLeastImportantPrunePrompt({
+        history,
+        targetTokens,
+        guidance: parsed.guidance,
+      });
+      const selection = await this.requestLeastImportantPruneSelection(prompt);
+      if (selection.length === 0) {
+        this.view.addSystemMessage("model returned no prune candidates.", "warn");
+        return;
+      }
+
+      const toPrune = this.selectLeastImportantCandidates(selection, candidates, targetTokens);
+
+      if (toPrune.length === 0) {
+        this.view.addSystemMessage("no bash tool results to prune.", "warn");
+        return;
+      }
+
+      let prunedBytes = 0;
+      for (const candidate of toPrune) {
+        prunedBytes += candidate.bytes;
+        const noticeText = this.buildPrunedToolResultNotice(candidate.toolResult, candidate.bytes);
+        const prunedResult: ToolResultMessage = {
+          ...candidate.toolResult,
+          content: [{ type: "text", text: noticeText }],
+        };
+        this.engine.replaceMessage(candidate.index, prunedResult);
+      }
+
+      const prunedLabel = formatTokenEstimate(prunedBytes);
+      const noun = toPrune.length === 1 ? "result" : "results";
+      this.view.addSystemMessage(
+        `pruned ${toPrune.length} bash tool ${noun} (${prunedLabel}).`,
+        "success",
+      );
+    } catch (err) {
+      this.view.addSystemMessage(`prune failed: ${(err as Error).message}`, "error");
+    } finally {
+      this.view.stopWorkingIcon();
+      this.isStreaming = false;
+      this.view.requestRender();
+      void this.drainQueuedUserMessages();
+    }
+  }
+
   private parsePruneFraction(extra?: string): number | null {
     if (!extra) {
       return DEFAULT_PRUNE_FRACTION;
@@ -1901,6 +2017,32 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       return null;
     }
     return parsed;
+  }
+
+  private parsePruneFractionAndGuidance(extra?: string): {
+    fraction: number | null;
+    guidance?: string;
+  } {
+    if (!extra) {
+      return { fraction: DEFAULT_PRUNE_FRACTION };
+    }
+
+    const trimmed = extra.trim();
+    if (!trimmed) {
+      return { fraction: DEFAULT_PRUNE_FRACTION };
+    }
+
+    const [firstToken, ...rest] = trimmed.split(/\s+/);
+    const parsed = Number(firstToken);
+    if (Number.isFinite(parsed)) {
+      if (parsed < 0 || parsed > 1) {
+        return { fraction: null };
+      }
+      const guidance = rest.join(" ").trim();
+      return guidance ? { fraction: parsed, guidance } : { fraction: parsed };
+    }
+
+    return { fraction: DEFAULT_PRUNE_FRACTION, guidance: trimmed };
   }
 
   private buildPrunedToolResultNotice(toolResult: ToolResultMessage, bytes: number): string {
@@ -1950,6 +2092,332 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
 
     return { bytes, hasImage, firstText };
+  }
+
+  private getToolResultContentDetails(toolResult: ToolResultMessage): {
+    text: string;
+    bytes: number;
+    hasImage: boolean;
+    firstText?: string;
+  } {
+    if (typeof toolResult.content === "string") {
+      const text = (toolResult.content as string).trimEnd();
+      return {
+        text,
+        bytes: Buffer.byteLength(text, "utf8"),
+        hasImage: false,
+        firstText: toolResult.content as string,
+      };
+    }
+
+    const parts: string[] = [];
+    let hasImage = false;
+    let firstText: string | undefined;
+
+    if (!Array.isArray(toolResult.content)) {
+      return { text: "", bytes: 0, hasImage, firstText };
+    }
+
+    for (const block of toolResult.content) {
+      if (typeof block === "string") {
+        if (firstText === undefined) {
+          firstText = block;
+        }
+        parts.push(block);
+        continue;
+      }
+
+      if (block.type === "text") {
+        const text = block.text ?? "";
+        if (firstText === undefined) {
+          firstText = text;
+        }
+        parts.push(text);
+        continue;
+      }
+
+      if (block.type === "image") {
+        hasImage = true;
+      }
+    }
+
+    const text = parts.join("\n").trimEnd();
+    return {
+      text,
+      bytes: Buffer.byteLength(text, "utf8"),
+      hasImage,
+      firstText,
+    };
+  }
+
+  private buildLeastImportantPrunePrompt(args: {
+    history: readonly Message[];
+    targetTokens: number;
+    guidance?: string;
+  }): string {
+    const lines: string[] = [];
+    lines.push(`Target pruning token budget: ${args.targetTokens}`);
+    lines.push(`Guidance: ${args.guidance ?? ""}`);
+    lines.push("");
+    lines.push("Conversation history:");
+    lines.push("<conversation>");
+    lines.push(...this.formatPruneConversationHistory(args.history));
+    lines.push("</conversation>");
+    return lines.join("\n");
+  }
+
+  private formatPruneConversationHistory(history: readonly Message[]): string[] {
+    const lines: string[] = [];
+
+    for (const message of history) {
+      if (message.role === "user") {
+        lines.push("<user>");
+        this.appendPruneContentLines(lines, message.content);
+        lines.push("</user>");
+        lines.push("");
+        continue;
+      }
+
+      if (message.role === "assistant") {
+        lines.push("<assistant>");
+        const assistant = message as AssistantMessage;
+        for (const block of assistant.content) {
+          if (typeof block === "string") {
+            this.appendPruneText(lines, block);
+            continue;
+          }
+
+          if (block.type === "text") {
+            this.appendPruneText(lines, block.text ?? "");
+            continue;
+          }
+
+          if (block.type === "toolCall") {
+            const toolCall = block as ToolCall;
+            lines.push(this.buildPruneToolCallTag(toolCall));
+          }
+        }
+        lines.push("</assistant>");
+        lines.push("");
+        continue;
+      }
+
+      if (message.role === "toolResult") {
+        const toolResult = message as ToolResultMessage;
+        lines.push(...this.buildPruneToolResultLines(toolResult));
+        lines.push("");
+      }
+    }
+
+    if (lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+
+    return lines;
+  }
+
+  private appendPruneContentLines(lines: string[], content: Message["content"]): void {
+    if (typeof content === "string") {
+      this.appendPruneText(lines, content);
+      return;
+    }
+
+    if (!Array.isArray(content)) {
+      return;
+    }
+
+    for (const block of content) {
+      if (typeof block === "string") {
+        this.appendPruneText(lines, block);
+      } else if (block.type === "text") {
+        this.appendPruneText(lines, block.text ?? "");
+      }
+    }
+  }
+
+  private appendPruneText(lines: string[], text: string): void {
+    const escaped = this.escapeXml(text);
+    const parts = escaped.split(/\r?\n/);
+    for (const part of parts) {
+      lines.push(part);
+    }
+  }
+
+  private buildPruneToolCallTag(toolCall: ToolCall): string {
+    const name = this.escapeXmlAttribute(toolCall.name);
+    const id = this.escapeXmlAttribute(toolCall.id);
+    const argsValue =
+      typeof toolCall.arguments === "string"
+        ? toolCall.arguments
+        : JSON.stringify(toolCall.arguments ?? {});
+    const args = this.escapeXmlAttribute(argsValue);
+    return `<tool_call name="${name}" id="${id}" args="${args}" />`;
+  }
+
+  private buildPruneToolResultLines(toolResult: ToolResultMessage): string[] {
+    const lines: string[] = [];
+    const name = this.escapeXmlAttribute(toolResult.toolName);
+    const toolCallId = this.escapeXmlAttribute(toolResult.toolCallId);
+    const details = this.getToolResultContentDetails(toolResult);
+
+    if (details.hasImage) {
+      lines.push(`<tool_result name="${name}" tool_call_id="${toolCallId}">`);
+      lines.push("<preview>[image omitted]</preview>");
+      lines.push("</tool_result>");
+      return lines;
+    }
+
+    const preview = this.buildPruneToolResultPreview(details.text);
+    lines.push(
+      `<tool_result name="${name}" tool_call_id="${toolCallId}" total_tokens="${preview.totalTokens}">`,
+    );
+    lines.push(`<preview max_tokens="${PRUNE_PREVIEW_MAX_TOKENS}">`);
+    lines.push(...preview.lines);
+    lines.push("</preview>");
+    lines.push("</tool_result>");
+    return lines;
+  }
+
+  private buildPruneToolResultPreview(text: string): {
+    lines: string[];
+    totalTokens: number;
+  } {
+    const normalized = text.trimEnd();
+    const totalBytes = Buffer.byteLength(normalized, "utf8");
+    const totalTokens = bytesToTokens(totalBytes);
+
+    if (totalTokens <= PRUNE_PREVIEW_MAX_TOKENS) {
+      const escaped = this.escapeXml(normalized);
+      const lines = escaped ? escaped.split(/\r?\n/) : [""];
+      return { lines, totalTokens };
+    }
+
+    const head = truncateToBytesFromStart(normalized, tokensToBytes(PRUNE_PREVIEW_MAX_TOKENS));
+    const remainingTokens = Math.max(0, totalTokens - PRUNE_PREVIEW_MAX_TOKENS);
+    const suffix = `…${remainingTokens} more tokens…`;
+    const previewText =
+      head.endsWith("\n") || head === "" ? `${head}${suffix}` : `${head}\n${suffix}`;
+    const escaped = this.escapeXml(previewText);
+    const lines = escaped ? escaped.split(/\r?\n/) : [""];
+    return { lines, totalTokens };
+  }
+
+  private selectLeastImportantCandidates(
+    ids: string[],
+    candidates: ToolResultPruneCandidate[],
+    targetTokens: number,
+  ): ToolResultPruneCandidate[] {
+    const candidatesById = new Map<string, ToolResultPruneCandidate>();
+    for (const candidate of candidates) {
+      candidatesById.set(candidate.toolResult.toolCallId, candidate);
+    }
+
+    const selected: ToolResultPruneCandidate[] = [];
+    const seen = new Set<string>();
+    let tokens = 0;
+
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      const candidate = candidatesById.get(id);
+      if (!candidate) continue;
+      if (tokens + candidate.tokens > targetTokens) continue;
+      selected.push(candidate);
+      seen.add(id);
+      tokens += candidate.tokens;
+    }
+
+    return selected;
+  }
+
+  private async requestLeastImportantPruneSelection(prompt: string): Promise<string[]> {
+    let apiKey: string | undefined;
+    try {
+      apiKey = await this.credentialResolver.getApiKey(
+        this.currentPersona.model.provider as KnownProvider,
+        { sessionId: this.engine.sessionId },
+      );
+    } catch (error) {
+      if (this.currentPersona.model.provider === "openai-codex") {
+        throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));
+      }
+      throw error;
+    }
+
+    if (!apiKey && this.currentPersona.model.provider === "openai-codex") {
+      throw new Error(formatCodexAuthError(this.authPath));
+    }
+
+    const reasoning = this.currentPersona.settings.reasoning;
+    const stream = streamModel(
+      this.currentPersona.model,
+      {
+        systemPrompt: [
+          "You are a pruning selector. Choose which bash tool outputs to remove from context.",
+          'Return only JSON: {"prune":[...]} with tool_call_id values from the conversation history.',
+          "Do not include tool_call_id values for non-bash tools.",
+          "Order ids from least important to most important to prune.",
+          "Prefer to stay under the target token budget.",
+        ].join(" "),
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: prompt }],
+            timestamp: Date.now(),
+          },
+        ],
+      },
+      {
+        ...(reasoning && reasoning !== "none" ? { reasoning } : {}),
+        sessionId: `tau-prune-${randomUUID()}`,
+        ...(apiKey && { apiKey }),
+      },
+    );
+
+    const final = await stream.result();
+    const raw = extractAssistantText(final).trim();
+    const parsed = this.parseLeastImportantPruneResponse(raw);
+    if (!parsed) {
+      throw new Error("model returned an invalid prune selection.");
+    }
+
+    return parsed;
+  }
+
+  private parseLeastImportantPruneResponse(raw: string): string[] | null {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return [];
+    }
+
+    const fenced = extractAllFencedCodeBlocks(trimmed);
+    const source = (fenced ?? trimmed).trim();
+    const start = source.indexOf("{");
+    const end = source.lastIndexOf("}");
+    if (start === -1 || end === -1 || end < start) {
+      return null;
+    }
+
+    const jsonText = source.slice(start, end + 1);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      return null;
+    }
+
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    const prune = (parsed as { prune?: unknown }).prune;
+    if (!Array.isArray(prune)) {
+      return null;
+    }
+
+    return prune
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
   }
 
   private formatRiskLevelNotice(level: RiskLevel): string {

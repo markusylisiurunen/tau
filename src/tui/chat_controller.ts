@@ -165,6 +165,7 @@ const ALLOWED_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
 const DEFAULT_PRUNE_FRACTION = 0.25;
 const PRUNED_TOOL_RESULT_PREFIX = "[tool result pruned]";
 const PRUNE_PREVIEW_MAX_TOKENS = 512;
+const PRUNE_MAX_OVERAGE_RATIO = 0.1;
 
 export class ChatController {
   private readonly view: ChatView;
@@ -2220,7 +2221,21 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
   }): string {
     const lines: string[] = [];
     lines.push(`Target pruning token budget: ${args.targetTokens}`);
-    lines.push(`Guidance: ${args.guidance ?? ""}`);
+    lines.push(
+      [
+        "The budget is the total tokens to prune.",
+        "It is better to slightly exceed it than to be significantly below it.",
+      ].join(" "),
+    );
+    lines.push(
+      'Return only JSON: {"prune":[...]} with tool_call_id values from the conversation history.',
+    );
+    lines.push("Only include tool_call_id values for bash tool results.");
+    if (args.guidance?.trim()) {
+      lines.push(`Guidance (prioritize this): ${args.guidance.trim()}`);
+    } else {
+      lines.push("Guidance: (none provided, use your best judgment)");
+    }
     lines.push("");
     lines.push("Conversation history:");
     lines.push("<conversation>");
@@ -2379,14 +2394,19 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     const seen = new Set<string>();
     let tokens = 0;
 
+    const maxTokens = Math.ceil(targetTokens * (1 + PRUNE_MAX_OVERAGE_RATIO));
+
     for (const id of ids) {
       if (seen.has(id)) continue;
       const candidate = candidatesById.get(id);
       if (!candidate) continue;
-      if (tokens + candidate.tokens > targetTokens) continue;
+      if (tokens + candidate.tokens > maxTokens) continue;
       selected.push(candidate);
       seen.add(id);
       tokens += candidate.tokens;
+      if (tokens >= targetTokens) {
+        break;
+      }
     }
 
     return selected;
@@ -2410,16 +2430,17 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       throw new Error(formatCodexAuthError(this.authPath));
     }
 
-    const reasoning = this.currentPersona.settings.reasoning;
+    const reasoning = this.clampPruneReasoning(this.currentPersona.settings.reasoning);
     const stream = streamModel(
       this.currentPersona.model,
       {
         systemPrompt: [
-          "You are a pruning selector. Choose which bash tool outputs to remove from context.",
-          'Return only JSON: {"prune":[...]} with tool_call_id values from the conversation history.',
-          "Do not include tool_call_id values for non-bash tools.",
-          "Order ids from least important to most important to prune.",
-          "Prefer to stay under the target token budget.",
+          "You are a context pruning assistant.",
+          "Your task is to select which bash tool outputs should be pruned from the conversation history.",
+          "Analyze the conversation to understand what the user is working on and which tool outputs are most relevant.",
+          "Prioritize keeping outputs that contain important information, errors, or results that may be referenced later.",
+          "Prefer pruning outputs that are verbose, redundant, or contain routine information that can be regenerated if needed.",
+          "Follow the user's guidance carefully when provided.",
         ].join(" "),
         messages: [
           {
@@ -2430,7 +2451,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
         ],
       },
       {
-        ...(reasoning && reasoning !== "none" ? { reasoning } : {}),
+        ...(reasoning ? { reasoning } : {}),
         sessionId: `tau-prune-${randomUUID()}`,
         ...(apiKey && { apiKey }),
       },
@@ -2444,6 +2465,23 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
 
     return parsed;
+  }
+
+  private clampPruneReasoning(
+    reasoning?: ReasoningEffort,
+  ): Exclude<ReasoningEffort, "none"> | undefined {
+    switch (reasoning) {
+      case undefined:
+      case "none":
+        return undefined;
+      case "minimal":
+        return "low";
+      case "low":
+      case "medium":
+        return reasoning;
+      default:
+        return "medium";
+    }
   }
 
   private parseLeastImportantPruneResponse(raw: string): string[] | null {

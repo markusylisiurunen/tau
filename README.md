@@ -260,7 +260,7 @@ run `tau --help` to see all available options, or `tau --debug` to inspect loade
 
 ## memory mode
 
-prefix a message with `#` to update your project's AGENTS.md file. this is useful for capturing decisions, conventions, and context as you work.
+prefix a single-line message with `#` to update your project's AGENTS.md file. this is useful for capturing decisions, conventions, and context as you work.
 
 ```
 # prefer explicit error messages with context about what operation failed

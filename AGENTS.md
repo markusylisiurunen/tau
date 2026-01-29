@@ -229,7 +229,9 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model; runs inside sandbox when enabled)
 - `!!<cmd>` - Direct bash execution without adding output to the model context
-- `#<request>` - Memory mode for updating AGENTS.md
+- `#<request>` - Memory mode for updating AGENTS.md (single-line only)
+
+Slash commands only trigger on single-line inputs. Unknown slash-prefixed text is sent as a normal prompt.
 
 **Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @file: and @skill: mentions), `Ctrl+S` (stash input to clipboard), `Ctrl+G` (terminate selected subagent), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+Down` (cycle active subagents), `Escape` (interrupt), `Ctrl+C` (press twice to exit)
 

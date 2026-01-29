@@ -986,11 +986,18 @@ export class ChatController {
     if (trimmed.startsWith("!")) {
       return false;
     }
-    if (trimmed.startsWith("/")) {
+    if (trimmed.startsWith("/") && this.isSingleLineInput(text)) {
       const parsed = this.commandRegistry.parse(trimmed);
+      if (parsed.type === "unknown") {
+        return true;
+      }
       return this.commandRegistry.allowsDuringStreaming(parsed);
     }
     return true;
+  }
+
+  private isSingleLineInput(text: string): boolean {
+    return !/[\r\n]/.test(text);
   }
 
   private handleEditorChange(text: string): void {
@@ -1005,10 +1012,11 @@ export class ChatController {
     }
 
     const trimmed = text.trimStart();
+    const isSingleLine = this.isSingleLineInput(text);
     const isIncognito = trimmed.startsWith("!!");
     this.isBashIncognito = isIncognito;
     this.isBashMode = trimmed.startsWith("!") && !isIncognito;
-    this.isMemoryMode = trimmed.startsWith("#");
+    this.isMemoryMode = isSingleLine && trimmed.startsWith("#");
 
     const beforeCursor = this.getEditorTextBeforeCursor();
     this.isInFileAutocomplete = Boolean(getFileAutocompleteToken(beforeCursor));
@@ -1032,7 +1040,7 @@ export class ChatController {
 
   private getCommandHintForInput(text: string): string | undefined {
     const trimmed = text.trimStart();
-    if (!trimmed.startsWith("/")) {
+    if (!trimmed.startsWith("/") || !this.isSingleLineInput(text)) {
       return undefined;
     }
     const parsed = this.commandRegistry.parse(trimmed);
@@ -1227,6 +1235,7 @@ export class ChatController {
 
   private async handleSubmit(text: string): Promise<void> {
     const trimmed = text.trim();
+    const isSingleLine = this.isSingleLineInput(text);
     if (!trimmed) {
       if (this.isStreaming) return;
 
@@ -1246,12 +1255,14 @@ export class ChatController {
     this.lastEmptySubmitAt = undefined;
 
     if (this.isStreaming) {
-      if (trimmed.startsWith("/")) {
+      if (trimmed.startsWith("/") && isSingleLine) {
         const parsed = this.commandRegistry.parse(trimmed);
-        if (this.commandRegistry.allowsDuringStreaming(parsed)) {
-          await this.commandRegistry.dispatch(parsed, this.commandHandlers);
+        if (parsed.type !== "unknown") {
+          if (this.commandRegistry.allowsDuringStreaming(parsed)) {
+            await this.commandRegistry.dispatch(parsed, this.commandHandlers);
+          }
+          return;
         }
-        return;
       }
       if (trimmed.startsWith("!")) {
         return;
@@ -1260,9 +1271,12 @@ export class ChatController {
       return;
     }
 
-    if (trimmed.startsWith("/")) {
-      await this.handleCommand(trimmed);
-      return;
+    if (trimmed.startsWith("/") && isSingleLine) {
+      const parsed = this.commandRegistry.parse(trimmed);
+      if (parsed.type !== "unknown") {
+        await this.handleCommand(trimmed);
+        return;
+      }
     }
 
     if (trimmed.startsWith("!!")) {
@@ -1279,7 +1293,7 @@ export class ChatController {
       return;
     }
 
-    if (trimmed.startsWith("#")) {
+    if (isSingleLine && trimmed.startsWith("#")) {
       const request = trimmed.slice(1).trim();
       if (!request) {
         this.view.addSystemMessage("memory mode request was empty.", "warn");

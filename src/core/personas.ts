@@ -195,9 +195,9 @@ type PersonaSpec = {
 
 const PERSONA_SPECS: PersonaSpec[] = [
   {
-    id: "opus-4.5",
-    description: "Claude Opus 4.5",
-    model: getModel("anthropic", "claude-opus-4-5"),
+    id: "opus-4.6",
+    description: "Claude Opus 4.6",
+    model: getModel("anthropic", "claude-opus-4-6"),
     allowedReasoningLevels: ["low", "high"],
     settings: { reasoning: "high" },
   },
@@ -210,9 +210,9 @@ const PERSONA_SPECS: PersonaSpec[] = [
     settings: { reasoning: "medium" },
   },
   {
-    id: "gpt-5.2-codex-chatgpt",
-    description: "GPT-5.2-Codex (ChatGPT)",
-    model: getModel("openai-codex", "gpt-5.2-codex"),
+    id: "gpt-5.3-codex-chatgpt",
+    description: "GPT-5.3-Codex (ChatGPT)",
+    model: getModel("openai-codex", "gpt-5.3-codex"),
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
   },
@@ -285,7 +285,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
 }
 
 export const personas: Persona[] = PERSONA_SPECS.flatMap((spec) => {
-  if (spec.id.startsWith("gpt-5.2-codex-")) {
+  if (spec.id.includes("-codex-")) {
     const coderPersona = buildPersona(spec, "coder");
     return [
       {

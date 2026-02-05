@@ -91,7 +91,7 @@ note that there is no confirmation step before tool execution. the model runs co
 
 ## getting started
 
-tau requires Node.js 20+ and runs on macOS.
+tau requires Node.js 24.x and runs on macOS.
 
 for development from source:
 
@@ -191,9 +191,10 @@ note: when `--sandbox` is enabled, `!` commands also run inside the container.
 
 tau comes with several built-in personas across different models:
 
-- **Claude Opus 4.5** (Anthropic): chat and coder variants
+- **Claude Opus 4.6** (Anthropic): chat and coder variants
 - **GPT-5.2** (OpenAI): chat and coder variants
-- **GPT-5.2-Codex** (OpenAI): two coder-only variants, one for ChatGPT Plus/Pro subscriptions (`gpt-5.2-codex-chatgpt`) and one for direct API access (`gpt-5.2-codex-api`)
+- **GPT-5.3-Codex** (OpenAI): coder-only variant for ChatGPT Plus/Pro subscriptions (`gpt-5.3-codex-chatgpt`)
+- **GPT-5.2-Codex** (OpenAI API): coder-only variant for direct API access (`gpt-5.2-codex-api`)
 - **Gemini 3 Pro** and **Gemini 3 Flash** (Google): chat variants only
 
 chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.
@@ -201,7 +202,7 @@ chat variants are for general-purpose assistance; coder variants are optimized f
 switch personas at startup with `--persona` or mid-session with `/persona:<id>`:
 
 ```sh
-tau --persona opus-4.5-coder
+tau --persona opus-4.6-coder
 ```
 
 ## sub-agents
@@ -229,7 +230,7 @@ when you write custom skills, you can specify trigger sensitivity in the skill d
 some models support extended thinking, where they reason through problems before responding. cycle through reasoning levels with `shift+tab`, or set one at startup:
 
 ```sh
-tau --persona opus-4.5-chat:high
+tau --persona opus-4.6-chat:high
 ```
 
 toggle visibility of the model's thinking with `ctrl+t`.
@@ -243,7 +244,7 @@ reference skills by typing `$` followed by the skill name (for example, `$skill-
 you can also pipe content directly:
 
 ```sh
-cat src/tui/app.ts | tau --persona opus-4.5-chat
+cat src/tui/app.ts | tau --persona opus-4.6-chat
 ```
 
 by default, tau injects your AGENTS.md into the system prompt. use `--no-agent-context-files` to disable this behavior. tau searches for AGENTS.md in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home).

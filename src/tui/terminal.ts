@@ -1,6 +1,11 @@
 import { closeSync, openSync } from "node:fs";
 import { ReadStream } from "node:tty";
-import { ProcessTerminal, type Terminal } from "@mariozechner/pi-tui";
+import {
+  ProcessTerminal,
+  StdinBuffer,
+  setKittyProtocolActive,
+  type Terminal,
+} from "@mariozechner/pi-tui";
 
 type InputStream = NodeJS.ReadStream & {
   isRaw?: boolean;
@@ -17,6 +22,8 @@ export class TauTerminal implements Terminal {
   private inputHandler?: (data: string) => void;
   private resizeHandler?: () => void;
   private _kittyProtocolActive = false;
+  private stdinBuffer?: StdinBuffer;
+  private stdinDataHandler?: (data: string) => void;
 
   constructor(
     private input: InputStream,
@@ -37,21 +44,112 @@ export class TauTerminal implements Terminal {
 
     this.output.write("\x1b[?2004h");
 
-    this.input.on("data", this.inputHandler);
     this.output.on("resize", this.resizeHandler);
+
+    if (process.platform !== "win32") {
+      process.kill(process.pid, "SIGWINCH");
+    }
+
+    this.queryAndEnableKittyProtocol();
+  }
+
+  private setupStdinBuffer(): void {
+    this.stdinBuffer = new StdinBuffer({ timeout: 10 });
+
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: kitty keyboard response is an ESC sequence
+    const kittyResponsePattern = /^\x1b\[\?(\d+)u$/;
+
+    this.stdinBuffer.on("data", (sequence) => {
+      if (!this._kittyProtocolActive) {
+        const match = sequence.match(kittyResponsePattern);
+        if (match) {
+          this._kittyProtocolActive = true;
+          setKittyProtocolActive(true);
+
+          this.output.write("\x1b[>7u");
+          return;
+        }
+      }
+
+      if (this.inputHandler) {
+        this.inputHandler(sequence);
+      }
+    });
+
+    this.stdinBuffer.on("paste", (content) => {
+      if (this.inputHandler) {
+        this.inputHandler(`\x1b[200~${content}\x1b[201~`);
+      }
+    });
+
+    this.stdinDataHandler = (data: string) => {
+      this.stdinBuffer!.process(data);
+    };
+  }
+
+  private queryAndEnableKittyProtocol(): void {
+    this.setupStdinBuffer();
+    this.input.on("data", this.stdinDataHandler!);
+    this.output.write("\x1b[?u");
+  }
+
+  async drainInput(maxMs = 1000, idleMs = 50): Promise<void> {
+    if (this._kittyProtocolActive) {
+      this.output.write("\x1b[<u");
+      this._kittyProtocolActive = false;
+      setKittyProtocolActive(false);
+    }
+
+    const previousHandler = this.inputHandler;
+    this.inputHandler = undefined;
+
+    let lastDataTime = Date.now();
+    const onData = () => {
+      lastDataTime = Date.now();
+    };
+
+    this.input.on("data", onData);
+    const endTime = Date.now() + maxMs;
+
+    try {
+      while (true) {
+        const now = Date.now();
+        const timeLeft = endTime - now;
+        if (timeLeft <= 0) break;
+        if (now - lastDataTime >= idleMs) break;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(idleMs, timeLeft)));
+      }
+    } finally {
+      this.input.removeListener("data", onData);
+      this.inputHandler = previousHandler;
+    }
   }
 
   stop(): void {
     this.output.write("\x1b[?2004l");
 
-    if (this.inputHandler) {
-      this.input.removeListener("data", this.inputHandler);
-      this.inputHandler = undefined;
+    if (this._kittyProtocolActive) {
+      this.output.write("\x1b[<u");
+      this._kittyProtocolActive = false;
+      setKittyProtocolActive(false);
     }
+
+    if (this.stdinBuffer) {
+      this.stdinBuffer.destroy();
+      this.stdinBuffer = undefined;
+    }
+
+    if (this.stdinDataHandler) {
+      this.input.removeListener("data", this.stdinDataHandler);
+      this.stdinDataHandler = undefined;
+    }
+    this.inputHandler = undefined;
     if (this.resizeHandler) {
       this.output.removeListener("resize", this.resizeHandler);
       this.resizeHandler = undefined;
     }
+
+    this.input.pause();
 
     if (this.input.setRawMode) {
       this.input.setRawMode(this.wasRaw);

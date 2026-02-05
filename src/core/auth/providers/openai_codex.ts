@@ -45,6 +45,8 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     const claims = assertCodexClaims(credentials);
     const accountId = claims.accountId;
     const providerAccountId = normalizeString(credentials.accountId) ?? claims.accountId;
+    const enterpriseUrl = normalizeString(credentials.enterpriseUrl);
+    const projectId = normalizeString(credentials.projectId);
     const account: CodexAccount = {
       type: "oauth",
       accountId,
@@ -52,8 +54,8 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       access: credentials.access,
       refresh: credentials.refresh,
       expires: credentials.expires,
-      enterpriseUrl: credentials.enterpriseUrl,
-      projectId: credentials.projectId,
+      enterpriseUrl,
+      projectId,
     };
 
     authStorage.update((data) => {
@@ -571,22 +573,30 @@ function normalizeNumber(value: unknown): number {
 }
 
 function shouldUpdateAccount(current: CodexAccount, updated: OAuthCredentials): boolean {
+  const updatedAccountId = normalizeString(updated.accountId);
+  const updatedEnterpriseUrl = normalizeString(updated.enterpriseUrl);
+  const updatedProjectId = normalizeString(updated.projectId);
   return (
     current.access !== updated.access ||
     current.refresh !== updated.refresh ||
     current.expires !== updated.expires ||
-    Boolean(updated.accountId && updated.accountId !== current.providerAccountId)
+    Boolean(updatedAccountId && updatedAccountId !== current.providerAccountId) ||
+    Boolean(updatedEnterpriseUrl && updatedEnterpriseUrl !== current.enterpriseUrl) ||
+    Boolean(updatedProjectId && updatedProjectId !== current.projectId)
   );
 }
 
 function mergeUpdatedCredentials(account: CodexAccount, updated: OAuthCredentials): CodexAccount {
+  const providerAccountId = normalizeString(updated.accountId) ?? account.providerAccountId;
+  const enterpriseUrl = normalizeString(updated.enterpriseUrl) ?? account.enterpriseUrl;
+  const projectId = normalizeString(updated.projectId) ?? account.projectId;
   return {
     ...account,
     access: updated.access,
     refresh: updated.refresh,
     expires: updated.expires,
-    providerAccountId: updated.accountId ?? account.providerAccountId,
-    enterpriseUrl: updated.enterpriseUrl ?? account.enterpriseUrl,
-    projectId: updated.projectId ?? account.projectId,
+    providerAccountId,
+    enterpriseUrl,
+    projectId,
   };
 }

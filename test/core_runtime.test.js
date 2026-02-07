@@ -3,6 +3,13 @@ import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import {
+  TOOL_NAME_BASH,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_GREP,
+  TOOL_NAME_LIST,
+  TOOL_NAME_READ,
+} from "../dist/core/tools/tool_names.js";
+import {
   buildCompactionUserMessage,
   extractCompactionSummaryFromText,
   formatHistoryForCompaction,
@@ -57,9 +64,9 @@ describe("tool enablement by risk level", () => {
       .map((tool) => tool.name)
       .sort();
 
-    expect(allTools).not.toContain("read");
-    expect(allTools).not.toContain("grep");
-    expect(allTools).not.toContain("list");
+    expect(allTools).not.toContain(TOOL_NAME_READ);
+    expect(allTools).not.toContain(TOOL_NAME_GREP);
+    expect(allTools).not.toContain(TOOL_NAME_LIST);
     expect(enabled).toEqual(allTools);
   });
 });
@@ -106,13 +113,13 @@ describe("summary formatting", () => {
           {
             type: "toolCall",
             id: "1",
-            name: "read",
+            name: TOOL_NAME_READ,
             arguments: { path: "README.md" },
           },
           {
             type: "toolCall",
             id: "2",
-            name: "edit",
+            name: TOOL_NAME_EDIT,
             arguments: {
               path: "src/parser.ts",
               oldText: "const stable = 0;\nconst before = 1;\nreturn stable;",
@@ -125,7 +132,7 @@ describe("summary formatting", () => {
       {
         role: "toolResult",
         toolCallId: "1",
-        toolName: "read",
+        toolName: TOOL_NAME_READ,
         content: [{ type: "text", text: "output" }],
         isError: false,
         timestamp: 2,
@@ -136,13 +143,13 @@ describe("summary formatting", () => {
 
     expect(summary).toContain("[User]:\nhello");
     expect(summary).toContain("[Assistant]:\nhi");
-    expect(summary).toContain('[Assistant tool calls]:\nread(path="README.md")');
-    expect(summary).toContain('edit(path="src/parser.ts")');
+    expect(summary).toContain(`[Assistant tool calls]:\n${TOOL_NAME_READ}(path="README.md")`);
+    expect(summary).toContain(`${TOOL_NAME_EDIT}(path="src/parser.ts")`);
     expect(summary).toContain("const stable = 0;");
     expect(summary).toContain("- const before = 1;");
     expect(summary).toContain("+ const after = 2;");
     expect(summary).toContain("return stable;");
-    expect(summary).toContain("[Tool result]: read (ok)\noutput");
+    expect(summary).toContain(`[Tool result]: ${TOOL_NAME_READ} (ok)\noutput`);
     expect(summary).not.toContain("hmm");
     expect(summary).not.toContain('oldText="const before = 1;"');
     expect(summary).not.toContain('newText="const after = 2;"');
@@ -158,7 +165,7 @@ describe("summary formatting", () => {
           {
             type: "toolCall",
             id: "edit-long",
-            name: "edit",
+            name: TOOL_NAME_EDIT,
             arguments: {
               path: "src/example.ts",
               oldText: [...unchangedPrefix, "before", ...unchangedSuffix].join("\n"),
@@ -191,7 +198,7 @@ describe("summary formatting", () => {
           {
             type: "toolCall",
             id: "edit-hunks",
-            name: "edit",
+            name: TOOL_NAME_EDIT,
             arguments: {
               path: "src/hunks.ts",
               oldText,
@@ -220,7 +227,7 @@ describe("summary formatting", () => {
       {
         role: "toolResult",
         toolCallId: "bash-1",
-        toolName: "bash",
+        toolName: TOOL_NAME_BASH,
         content: [{ type: "text", text: longOutput }],
         isError: false,
         timestamp: 0,
@@ -229,7 +236,7 @@ describe("summary formatting", () => {
 
     const summary = formatHistoryForCompaction(history);
 
-    expect(summary).toContain("[Tool result]: bash (ok)");
+    expect(summary).toContain(`[Tool result]: ${TOOL_NAME_BASH} (ok)`);
     expect(summary).toContain("tokens truncated");
     expect(summary.length).toBeLessThan(longOutput.length);
   });

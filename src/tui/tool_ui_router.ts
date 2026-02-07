@@ -1,4 +1,10 @@
 import type { ToolUiEvent } from "../core/tools/registry.js";
+import {
+  TOOL_NAME_SEND_INPUT_TO_AGENT,
+  TOOL_NAME_SPAWN_AGENT,
+  TOOL_NAME_TERMINATE_AGENT,
+  TOOL_NAME_WAIT_FOR_AGENT,
+} from "../core/tools/tool_names.js";
 import type { ChatContainerComponent } from "./ui/chat_container.js";
 
 type RunningBashComponent = {
@@ -7,22 +13,22 @@ type RunningBashComponent = {
 
 type RunningSubagentTool =
   | {
-      kind: "spawn_agent";
+      kind: typeof TOOL_NAME_SPAWN_AGENT;
       name: string;
       title: string;
     }
   | {
-      kind: "send_input_to_agent";
+      kind: typeof TOOL_NAME_SEND_INPUT_TO_AGENT;
       agentId: string;
       name: string;
       title: string;
     }
   | {
-      kind: "wait_for_agent";
+      kind: typeof TOOL_NAME_WAIT_FOR_AGENT;
       agentIds: string[];
     }
   | {
-      kind: "terminate_agent";
+      kind: typeof TOOL_NAME_TERMINATE_AGENT;
       agentId: string;
     };
 
@@ -111,7 +117,7 @@ export class ToolUiRouter {
     if (uiEvent.type === "spawn_agent_started") {
       this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
       this.runningSubagentTools.set(uiEvent.toolCallId, {
-        kind: "spawn_agent",
+        kind: TOOL_NAME_SPAWN_AGENT,
         name: uiEvent.name,
         title: uiEvent.headerTarget ?? uiEvent.title,
       });
@@ -140,7 +146,7 @@ export class ToolUiRouter {
     if (uiEvent.type === "send_input_to_agent_started") {
       this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
       this.runningSubagentTools.set(uiEvent.toolCallId, {
-        kind: "send_input_to_agent",
+        kind: TOOL_NAME_SEND_INPUT_TO_AGENT,
         agentId: uiEvent.agentId,
         name: uiEvent.name,
         title: uiEvent.headerTarget ?? uiEvent.title,
@@ -170,7 +176,7 @@ export class ToolUiRouter {
     if (uiEvent.type === "wait_for_agent_started") {
       this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
       this.runningSubagentTools.set(uiEvent.toolCallId, {
-        kind: "wait_for_agent",
+        kind: TOOL_NAME_WAIT_FOR_AGENT,
         agentIds: uiEvent.agentIds,
       });
       this.requestRender();
@@ -198,7 +204,7 @@ export class ToolUiRouter {
     if (uiEvent.type === "terminate_agent_started") {
       this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
       this.runningSubagentTools.set(uiEvent.toolCallId, {
-        kind: "terminate_agent",
+        kind: TOOL_NAME_TERMINATE_AGENT,
         agentId: uiEvent.agentId,
       });
       this.requestRender();
@@ -275,7 +281,7 @@ export class ToolUiRouter {
     running: RunningSubagentTool,
     reason: "aborted" | "interrupted",
   ): ToolUiEvent {
-    if (running.kind === "spawn_agent") {
+    if (running.kind === TOOL_NAME_SPAWN_AGENT) {
       return {
         type: "spawn_agent_finished",
         toolCallId,
@@ -287,7 +293,7 @@ export class ToolUiRouter {
       };
     }
 
-    if (running.kind === "send_input_to_agent") {
+    if (running.kind === TOOL_NAME_SEND_INPUT_TO_AGENT) {
       return {
         type: "send_input_to_agent_finished",
         toolCallId,
@@ -300,7 +306,7 @@ export class ToolUiRouter {
       };
     }
 
-    if (running.kind === "wait_for_agent") {
+    if (running.kind === TOOL_NAME_WAIT_FOR_AGENT) {
       const headerTarget = running.agentIds.length > 0 ? running.agentIds.join(", ") : "(no ids)";
       return {
         type: "wait_for_agent_finished",

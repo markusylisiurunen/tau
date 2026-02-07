@@ -1842,7 +1842,13 @@ export class ChatController {
       return;
     }
 
-    const editSummary = this.pruneEditToolHistory(history);
+    let editSummary: EditPruneSummary | undefined;
+    const getEditSummary = (): EditPruneSummary => {
+      if (!editSummary) {
+        editSummary = this.pruneEditToolHistory(history);
+      }
+      return editSummary;
+    };
 
     const candidates: ToolResultPruneCandidate[] = [];
     let totalTokens = 0;
@@ -1873,8 +1879,9 @@ export class ChatController {
     }
 
     if (candidates.length === 0 || totalTokens === 0) {
-      if (this.hasAnyPrunedEditChanges(editSummary)) {
-        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+      const summary = getEditSummary();
+      if (this.hasAnyPrunedEditChanges(summary)) {
+        this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
       } else {
         this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
       }
@@ -1883,8 +1890,9 @@ export class ChatController {
 
     const targetTokens = Math.ceil(totalTokens * fraction);
     if (targetTokens <= 0) {
-      if (this.hasAnyPrunedEditChanges(editSummary)) {
-        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+      const summary = getEditSummary();
+      if (this.hasAnyPrunedEditChanges(summary)) {
+        this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
       } else {
         this.view.addSystemMessage("prune fraction is too small to remove anything.", "warn");
       }
@@ -1903,8 +1911,9 @@ export class ChatController {
       });
       const selection = await this.requestLeastImportantPruneSelection(prompt);
       if (selection.length === 0) {
-        if (this.hasAnyPrunedEditChanges(editSummary)) {
-          this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+        const summary = getEditSummary();
+        if (this.hasAnyPrunedEditChanges(summary)) {
+          this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
         } else {
           this.view.addSystemMessage("model returned no prune candidates.", "warn");
         }
@@ -1914,14 +1923,16 @@ export class ChatController {
       const toPrune = this.selectLeastImportantCandidates(selection, candidates, targetTokens);
 
       if (toPrune.length === 0) {
-        if (this.hasAnyPrunedEditChanges(editSummary)) {
-          this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+        const summary = getEditSummary();
+        if (this.hasAnyPrunedEditChanges(summary)) {
+          this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
         } else {
           this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
         }
         return;
       }
 
+      const summary = getEditSummary();
       let prunedBytes = 0;
       for (const candidate of toPrune) {
         prunedBytes += candidate.bytes;
@@ -1934,7 +1945,7 @@ export class ChatController {
       }
 
       this.view.addSystemMessage(
-        this.buildPruneSummaryMessage(editSummary, toPrune.length, prunedBytes),
+        this.buildPruneSummaryMessage(summary, toPrune.length, prunedBytes),
         "success",
       );
     } catch (err) {
@@ -2111,6 +2122,9 @@ export class ChatController {
       if (toolResult.toolName !== TOOL_NAME_EDIT) {
         continue;
       }
+      if (toolResult.isError) {
+        continue;
+      }
 
       const callDiff = editCallsById.get(toolResult.toolCallId);
       if (!callDiff) {
@@ -2169,7 +2183,7 @@ export class ChatController {
       maxUnchangedLines: PRUNE_EDIT_UNCHANGED_CONTEXT_LINES,
     });
 
-    return collapsed.join("\n").trim() || "(no textual changes)";
+    return collapsed.length > 0 ? collapsed.join("\n") : "(no textual changes)";
   }
 
   private buildPrunedToolResultNotice(toolResult: ToolResultMessage, bytes: number): string {

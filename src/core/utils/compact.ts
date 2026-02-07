@@ -1,4 +1,5 @@
 import type { AssistantMessage, Message, ToolResultMessage } from "@mariozechner/pi-ai";
+import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../tools/tool_names.js";
 import { buildLineDiff, collapseLongUnchangedDiffRuns } from "./line_diff.js";
 import { truncateForTokens } from "./truncate.js";
 
@@ -65,13 +66,13 @@ function buildEditCallDiff(argumentsValue: unknown): string {
 }
 
 function serializeToolCall(name: string, argumentsValue: unknown): string {
-  if (name === "edit") {
+  if (name === TOOL_NAME_EDIT) {
     const args =
       argumentsValue && typeof argumentsValue === "object"
         ? (argumentsValue as Record<string, unknown>)
         : undefined;
     const path = typeof args?.path === "string" ? args.path : undefined;
-    const header = path ? `edit(path=${JSON.stringify(path)})` : "edit()";
+    const header = path ? `${TOOL_NAME_EDIT}(path=${JSON.stringify(path)})` : `${TOOL_NAME_EDIT}()`;
     return `${header}\n${buildEditCallDiff(argumentsValue)}`;
   }
 
@@ -107,7 +108,7 @@ function serializeToolResultMessage(message: ToolResultMessage): string {
   const status = message.isError ? "error" : "ok";
 
   let content = outputText || "(no text output)";
-  if (message.toolName === "bash") {
+  if (message.toolName === TOOL_NAME_BASH) {
     content = truncateForTokens(content, {
       maxTokens: COMPACTION_BASH_TOOL_RESULT_MAX_TOKENS,
       strategy: "middle",

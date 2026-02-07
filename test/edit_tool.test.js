@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createEditToolDefinition } from "../dist/core/tools/edit.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { TOOL_NAME_EDIT } from "../dist/core/tools/tool_names.js";
 
 function setupFixture() {
   const dir = mkdtempSync(join(tmpdir(), "tau-edit-tool-"));
@@ -31,7 +32,7 @@ describe("edit tool", () => {
       await editTool.dispatch(
         {
           id: "tool-1",
-          name: "edit",
+          name: TOOL_NAME_EDIT,
           arguments: {
             path: filePath,
             oldText: originalLines[0],
@@ -44,7 +45,7 @@ describe("edit tool", () => {
       await editTool.dispatch(
         {
           id: "tool-2",
-          name: "edit",
+          name: TOOL_NAME_EDIT,
           arguments: {
             path: filePath,
             oldText: originalLines[1],

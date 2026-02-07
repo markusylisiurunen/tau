@@ -273,33 +273,33 @@ tau will create or update AGENTS.md at your project root, integrating the new in
 
 tau supports slash commands for common actions:
 
-| command                   | description                                                                  |
-| ------------------------- | ---------------------------------------------------------------------------- |
-| `/help`                   | show available commands                                                      |
-| `/new`                    | clear the session and start fresh                                            |
-| `/copy`                   | copy the last assistant message                                              |
-| `/copy:code`              | copy just the code blocks                                                    |
-| `/export:html`            | export chat history to html                                                  |
-| `/checkpoint`             | save a checkpoint file for loading later                                     |
-| `/reload`                 | reload personas, prompts, skills, and themes from disk                       |
-| `/cd`                     | change the working directory                                                 |
-| `/compact:only-summary`   | compress history into one synthetic user summary message                     |
-| `/compact:with-last-turn` | compress history and include the last assistant message verbatim in summary  |
-| `/prune:earliest-first`   | prune tool results from the start of the session                             |
-| `/prune:largest-first`    | prune largest tool results first                                             |
-| `/prune:least-important`  | prune tool results using model selection                                     |
-| `/persona:<id>`           | switch to a different persona                                                |
-| `/prompt:<id>`            | insert a saved prompt template                                               |
-| `/theme:<id>`             | switch to a loaded theme                                                     |
-| `/bash:<id>`              | run a saved shell command                                                    |
-| `/risk:read-only`         | allow read-only tool calls                                                   |
-| `/risk:read-write`        | allow all tools                                                              |
-| `!<cmd>`                  | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
-| `!!<cmd>`                 | run a shell command without adding output to the model context               |
+| command                   | description                                                                   |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| `/help`                   | show available commands                                                       |
+| `/new`                    | clear the session and start fresh                                             |
+| `/copy`                   | copy the last assistant message                                               |
+| `/copy:code`              | copy just the code blocks                                                     |
+| `/export:html`            | export chat history to html                                                   |
+| `/checkpoint`             | save a checkpoint file for loading later                                      |
+| `/reload`                 | reload personas, prompts, skills, and themes from disk                        |
+| `/cd`                     | change the working directory                                                  |
+| `/compact:only-summary`   | compress history into one synthetic user summary message                      |
+| `/compact:with-last-turn` | compress history and include the last assistant message verbatim when present |
+| `/prune:earliest-first`   | prune tool results from the start of the session                              |
+| `/prune:largest-first`    | prune largest tool results first                                              |
+| `/prune:least-important`  | prune tool results using model selection                                      |
+| `/persona:<id>`           | switch to a different persona                                                 |
+| `/prompt:<id>`            | insert a saved prompt template                                                |
+| `/theme:<id>`             | switch to a loaded theme                                                      |
+| `/bash:<id>`              | run a saved shell command                                                     |
+| `/risk:read-only`         | allow read-only tool calls                                                    |
+| `/risk:read-write`        | allow all tools                                                               |
+| `!<cmd>`                  | run a shell command directly (bypasses risk checks; uses sandbox if enabled)  |
+| `!!<cmd>`                 | run a shell command without adding output to the model context                |
 
 use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
 
-the compact commands are useful when conversations get long. they replace prior context with a single synthetic user message that contains the compacted summary (and optionally the last assistant message verbatim), so the model keeps continuity without carrying full history. the prune commands drop tool results from the active context without summarizing, and default to pruning 25% if you omit the fraction.
+the compact commands are manual and useful when conversations get long. they replace prior context with a single synthetic user message that contains the compacted summary (and, for `/compact:with-last-turn`, the last assistant message verbatim when present), so the model keeps continuity without carrying full history. the prune commands drop tool results from the active context without summarizing, and default to pruning 25% if you omit the fraction.
 
 ## keyboard shortcuts
 

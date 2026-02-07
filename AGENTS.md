@@ -13,7 +13,8 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **ChatController** (`src/tui/chat_controller.ts`): Orchestrates session state, commands, and core events
 - **TuiChatView** (`src/tui/chat_view.ts`): TUI adapter for rendering, editor, and tool UI
 - **CoreSession** (`src/core/session/core_session.ts`): Owns session state and emits core events for consumers
-- **SessionEngine** (`src/core/session/session_engine.ts`): Internal streaming/tool dispatch runner used by CoreSession
+- **SessionEngine** (`src/core/session/session_engine.ts`): Internal streaming/tool dispatch runner used by CoreSession, and host for manual session compaction
+- **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly and history preparation for `/compact:*` flows (summary-only and summary + last assistant)
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface and RPC stub for alternate front-ends
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
@@ -53,7 +54,8 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `auth/auth_messages.ts` - Auth error messaging
   - `auth/codex_prompt.ts` - Codex system prompt handling
   - `events/` - Core event protocol types and serialization
-  - `session/` - Turn processing, streaming, and tool dispatch
+  - `session/` - Turn processing, streaming, tool dispatch, and manual compaction
+  - `session/compaction.ts` - Core compaction preparation/prompt building and synthetic summary message construction
   - `tools/` - Tool definitions (bash, write, edit, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent, emit_output, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
   - `tools/execution_backend.ts` - Local and sandbox tool backends
   - `tools/sandbox/docker_sandbox.ts` - Docker sandbox runner
@@ -224,7 +226,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 ## Commands
 
 - `/help`, `/new`, `/cd`, `/copy`, `/copy:code`, `/export:html`, `/checkpoint`, `/reload`
-- `/compact:only-summary`, `/compact:with-last-turn` - Compact history into a single synthetic user summary message (optionally includes last assistant message verbatim)
+- `/compact:only-summary`, `/compact:with-last-turn` - Compact history into a single synthetic user summary message (optionally includes last assistant message verbatim when available)
 - `/prune:earliest-first`, `/prune:largest-first`, `/prune:least-important` - Prune tool results
 - `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model; runs inside sandbox when enabled)

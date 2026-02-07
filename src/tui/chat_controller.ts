@@ -58,11 +58,6 @@ import {
 import { resolveAgentCwd, resolveSandboxPath } from "../core/utils/agent_environment.js";
 import { findAgentsFilesFromCwdToHome } from "../core/utils/agents_files.js";
 import {
-  buildCompactionUserMessage,
-  formatHistoryForCompaction,
-  partitionHistoryForCompaction,
-} from "../core/utils/compact.js";
-import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
   buildProjectContextBlock,
@@ -169,85 +164,6 @@ const DEFAULT_PRUNE_FRACTION = 0.25;
 const PRUNED_TOOL_RESULT_PREFIX = "[tool result pruned]";
 const PRUNE_PREVIEW_MAX_TOKENS = 512;
 const PRUNE_MAX_OVERAGE_RATIO = 0.1;
-
-const COMPACTION_SUMMARIZATION_SYSTEM_PROMPT =
-  "You are a context summarization assistant. Do not continue the conversation. Do not answer any conversation questions. Only output the structured summary in the exact format requested.";
-
-const COMPACTION_SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another assistant will use to continue the work.
-
-Use this exact format:
-
-## Goal
-[What the user is trying to accomplish.]
-
-## Constraints & Preferences
-- [Constraints, preferences, or requirements from the user]
-- [Use "(none)" when nothing explicit exists]
-
-## Progress
-### Done
-- [x] [Completed tasks and confirmed outcomes]
-
-### In Progress
-- [ ] [Current work in progress]
-
-### Blocked
-- [Open blockers, or "(none)"]
-
-## Key Decisions
-- **[Decision]**: [Brief rationale]
-
-## Next Steps
-1. [Ordered next action]
-
-## Critical Context
-- [Concrete details needed to resume: file paths, function names, commands, errors]
-
-Rules:
-- Keep each section concise.
-- Distinguish attempted work from confirmed outcomes.
-- Preserve exact file paths, function names, commands, and error messages.`;
-
-const COMPACTION_UPDATE_SUMMARIZATION_PROMPT = `The messages above are new conversation messages to incorporate into the existing summary in <previous-summary> tags.
-
-Update the existing structured summary with these rules:
-- Preserve all still-relevant information from the previous summary.
-- Add new progress, decisions, and context from the new messages.
-- Move items from In Progress to Done when completed.
-- Update Next Steps based on the current state.
-- Remove information that is no longer relevant.
-
-Use the exact same format as before:
-
-## Goal
-[Preserve and extend goals as needed]
-
-## Constraints & Preferences
-- [Preserve and extend constraints]
-
-## Progress
-### Done
-- [x] [Previously done and newly completed]
-
-### In Progress
-- [ ] [Current work]
-
-### Blocked
-- [Current blockers, or "(none)"]
-
-## Key Decisions
-- **[Decision]**: [Brief rationale]
-
-## Next Steps
-1. [Updated ordered actions]
-
-## Critical Context
-- [Concrete details needed to resume: file paths, function names, commands, errors]
-
-Rules:
-- Keep each section concise.
-- Distinguish attempted work from confirmed outcomes.
-- Preserve exact file paths, function names, commands, and error messages.`;
 
 export class ChatController {
   private readonly view: ChatView;
@@ -1613,21 +1529,6 @@ export class ChatController {
     return this.escapeXml(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
   }
 
-  private extractLastAssistantMessage(history: readonly Message[]): string | undefined {
-    for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i]!.role !== "assistant") {
-        continue;
-      }
-
-      const text = extractAssistantText(history[i]! as AssistantMessage).trim();
-      if (text) {
-        return text;
-      }
-    }
-
-    return undefined;
-  }
-
   private updateSystemPrompts(skillsBlock?: string): void {
     const timestamp = new Date(this.deps.clock.now()).toISOString();
     this.environmentTag = buildEnvironmentTag({
@@ -1722,81 +1623,11 @@ export class ChatController {
     return prompts;
   }
 
-  private async generateSummary(history: readonly Message[], guidance?: string): Promise<string> {
-    const { previousSummary, messagesToSummarize } = partitionHistoryForCompaction(history);
-    const formattedHistory = formatHistoryForCompaction(messagesToSummarize);
-
-    if (!formattedHistory) {
-      throw new Error("nothing new to compact.");
-    }
-
-    let summaryPrompt = `<conversation>\n${formattedHistory}\n</conversation>\n\n`;
-    if (previousSummary?.trim()) {
-      summaryPrompt += `<previous-summary>\n${previousSummary.trim()}\n</previous-summary>\n\n`;
-    }
-    summaryPrompt += previousSummary
-      ? COMPACTION_UPDATE_SUMMARIZATION_PROMPT
-      : COMPACTION_SUMMARIZATION_PROMPT;
-
-    const guidanceBlock = guidance?.trim();
-    if (guidanceBlock) {
-      summaryPrompt += `\n\nAdditional focus: ${guidanceBlock}`;
-    }
-
-    let apiKey: string | undefined;
-    try {
-      apiKey = await this.credentialResolver.getApiKey(
-        this.currentPersona.model.provider as KnownProvider,
-        { sessionId: this.engine.sessionId },
-      );
-    } catch (error) {
-      if (this.currentPersona.model.provider === "openai-codex") {
-        throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));
-      }
-      throw error;
-    }
-
-    if (!apiKey && this.currentPersona.model.provider === "openai-codex") {
-      throw new Error(formatCodexAuthError(this.authPath));
-    }
-
-    const stream = streamModel(
-      this.currentPersona.model,
-      {
-        systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [{ type: "text", text: summaryPrompt }],
-            timestamp: Date.now(),
-          },
-        ],
-      },
-      { reasoning: "high", sessionId: `tau-summary-${randomUUID()}`, ...(apiKey && { apiKey }) },
-    );
-
-    const final = await stream.result();
-    const summary = extractAssistantText(final).trim();
-    if (!summary) {
-      throw new Error("summarization returned an empty response.");
-    }
-
-    return summary;
-  }
-
-  private canCompactHistory(history: readonly Message[]): boolean {
-    const { messagesToSummarize } = partitionHistoryForCompaction(history);
-    return messagesToSummarize.length > 0;
-  }
-
-  private applyCompactedHistory(compactionMessage: string): void {
-    this.engine.reset();
+  private applyCompactedHistoryUi(compactionMessage: string): void {
     this.view.resetToolUiSession();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
     this.view.addMessage({ type: "session_divider", label: "new session" });
-
-    this.engine.addUserText(compactionMessage);
     this.view.addMessage({ type: "user", text: compactionMessage });
 
     this.isBashMode = false;
@@ -1807,28 +1638,33 @@ export class ChatController {
     this.refreshStatus();
   }
 
-  private async compactSessionOnlySummary(guidance?: string): Promise<void> {
-    const history = this.engine.history;
-    if (!this.canCompactHistory(history)) {
-      this.view.addSystemMessage("no conversation to compact.", "warn");
+  private handleCompactionError(err: unknown): void {
+    const message = (err as Error).message || "compaction failed";
+    if (message === "no conversation to compact.") {
+      this.view.addSystemMessage(message, "warn");
       return;
     }
+    this.view.addSystemMessage(`compact failed: ${message}`, "error");
+  }
 
+  private async compactSessionOnlySummary(guidance?: string): Promise<void> {
     this.view.addSystemMessage("summarizing session...", "success");
     this.isStreaming = true;
     this.view.startWorkingIcon();
 
     try {
-      const summary = await this.generateSummary(history, guidance);
-      const compactionMessage = buildCompactionUserMessage({ summary });
-      this.applyCompactedHistory(compactionMessage);
+      const result = await this.engine.compact({
+        mode: "only-summary",
+        guidance,
+      });
+      this.applyCompactedHistoryUi(result.compactionMessage);
 
       this.view.addSystemMessage(
         "session compacted. previous context has been summarized.",
         "success",
       );
     } catch (err) {
-      this.view.addSystemMessage(`compact failed: ${(err as Error).message}`, "error");
+      this.handleCompactionError(err);
     } finally {
       this.view.stopWorkingIcon();
       this.isStreaming = false;
@@ -1838,33 +1674,23 @@ export class ChatController {
   }
 
   private async compactSessionSummaryAndLastTurn(guidance?: string): Promise<void> {
-    const history = this.engine.history;
-    if (!this.canCompactHistory(history)) {
-      this.view.addSystemMessage("no conversation to compact.", "warn");
-      return;
-    }
-
     this.view.addSystemMessage("summarizing session...", "success");
     this.isStreaming = true;
     this.view.startWorkingIcon();
 
     try {
-      const summary = await this.generateSummary(history, guidance);
-      const { messagesToSummarize } = partitionHistoryForCompaction(history);
-      const lastAssistantMessage = this.extractLastAssistantMessage(messagesToSummarize);
-      const compactionMessage = buildCompactionUserMessage({
-        summary,
-        lastAssistantMessage,
+      const result = await this.engine.compact({
+        mode: "with-last-assistant",
+        guidance,
       });
+      this.applyCompactedHistoryUi(result.compactionMessage);
 
-      this.applyCompactedHistory(compactionMessage);
-
-      this.view.addSystemMessage(
-        "session compacted. previous context and last assistant message have been included.",
-        "success",
-      );
+      const successText = result.includedLastAssistant
+        ? "session compacted. previous context and last assistant message have been included."
+        : "session compacted. previous context has been summarized.";
+      this.view.addSystemMessage(successText, "success");
     } catch (err) {
-      this.view.addSystemMessage(`compact failed: ${(err as Error).message}`, "error");
+      this.handleCompactionError(err);
     } finally {
       this.view.stopWorkingIcon();
       this.isStreaming = false;

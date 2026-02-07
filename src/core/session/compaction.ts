@@ -1,0 +1,171 @@
+import type { AssistantMessage, Message } from "@mariozechner/pi-ai";
+import {
+  buildCompactionUserMessage,
+  formatHistoryForCompaction,
+  partitionHistoryForCompaction,
+} from "../utils/compact.js";
+import { extractAssistantText } from "../utils/messages.js";
+
+export type SessionCompactionMode = "only-summary" | "with-last-assistant";
+
+export type SessionCompactionPreparation = {
+  previousSummary?: string;
+  messagesToSummarize: Message[];
+  formattedHistory: string;
+};
+
+export type SessionCompactionMessageResult = {
+  compactionMessage: string;
+  includedLastAssistant: boolean;
+};
+
+export const COMPACTION_SUMMARIZATION_SYSTEM_PROMPT =
+  "You are a context summarization assistant. Do not continue the conversation. Do not answer any conversation questions. Only output the structured summary in the exact format requested.";
+
+const COMPACTION_SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another assistant will use to continue the work.
+
+Use this exact format:
+
+## Goal
+[What the user is trying to accomplish.]
+
+## Constraints & Preferences
+- [Constraints, preferences, or requirements from the user]
+- [Use "(none)" when nothing explicit exists]
+
+## Progress
+### Done
+- [x] [Completed tasks and confirmed outcomes]
+
+### In Progress
+- [ ] [Current work in progress]
+
+### Blocked
+- [Open blockers, or "(none)"]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [Ordered next action]
+
+## Critical Context
+- [Concrete details needed to resume: file paths, function names, commands, errors]
+
+Rules:
+- Keep each section concise.
+- Distinguish attempted work from confirmed outcomes.
+- Preserve exact file paths, function names, commands, and error messages.`;
+
+const COMPACTION_UPDATE_SUMMARIZATION_PROMPT = `The messages above are new conversation messages to incorporate into the existing summary in <previous-summary> tags.
+
+Update the existing structured summary with these rules:
+- Preserve all still-relevant information from the previous summary.
+- Add new progress, decisions, and context from the new messages.
+- Move items from In Progress to Done when completed.
+- Update Next Steps based on the current state.
+- Remove information that is no longer relevant.
+
+Use the exact same format as before:
+
+## Goal
+[Preserve and extend goals as needed]
+
+## Constraints & Preferences
+- [Preserve and extend constraints]
+
+## Progress
+### Done
+- [x] [Previously done and newly completed]
+
+### In Progress
+- [ ] [Current work]
+
+### Blocked
+- [Current blockers, or "(none)"]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [Updated ordered actions]
+
+## Critical Context
+- [Concrete details needed to resume: file paths, function names, commands, errors]
+
+Rules:
+- Keep each section concise.
+- Distinguish attempted work from confirmed outcomes.
+- Preserve exact file paths, function names, commands, and error messages.`;
+
+export function prepareSessionCompaction(
+  history: readonly Message[],
+): SessionCompactionPreparation | undefined {
+  const { previousSummary, messagesToSummarize } = partitionHistoryForCompaction(history);
+  const formattedHistory = formatHistoryForCompaction(messagesToSummarize);
+  if (!formattedHistory) {
+    return undefined;
+  }
+
+  return {
+    previousSummary,
+    messagesToSummarize,
+    formattedHistory,
+  };
+}
+
+export function buildSessionCompactionPrompt(args: {
+  preparation: SessionCompactionPreparation;
+  guidance?: string;
+}): string {
+  const { preparation, guidance } = args;
+  let summaryPrompt = `<conversation>\n${preparation.formattedHistory}\n</conversation>\n\n`;
+  if (preparation.previousSummary?.trim()) {
+    summaryPrompt += `<previous-summary>\n${preparation.previousSummary.trim()}\n</previous-summary>\n\n`;
+  }
+
+  summaryPrompt += preparation.previousSummary
+    ? COMPACTION_UPDATE_SUMMARIZATION_PROMPT
+    : COMPACTION_SUMMARIZATION_PROMPT;
+
+  const guidanceBlock = guidance?.trim();
+  if (guidanceBlock) {
+    summaryPrompt += `\n\nAdditional focus: ${guidanceBlock}`;
+  }
+
+  return summaryPrompt;
+}
+
+export function buildSessionCompactionMessage(args: {
+  summary: string;
+  mode: SessionCompactionMode;
+  messagesToSummarize: readonly Message[];
+}): SessionCompactionMessageResult {
+  const lastAssistantMessage =
+    args.mode === "with-last-assistant"
+      ? extractLastAssistantMessage(args.messagesToSummarize)
+      : undefined;
+
+  return {
+    compactionMessage: buildCompactionUserMessage({
+      summary: args.summary,
+      lastAssistantMessage,
+    }),
+    includedLastAssistant: Boolean(lastAssistantMessage),
+  };
+}
+
+function extractLastAssistantMessage(history: readonly Message[]): string | undefined {
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i]!.role !== "assistant") {
+      continue;
+    }
+
+    const text = extractAssistantText(history[i]! as AssistantMessage).trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  return undefined;
+}

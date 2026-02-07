@@ -21,8 +21,17 @@ import type { Persona, RiskLevel } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
+import { extractAssistantText } from "../utils/messages.js";
+import { streamModel } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
+import {
+  buildSessionCompactionMessage,
+  buildSessionCompactionPrompt,
+  COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
+  prepareSessionCompaction,
+  type SessionCompactionMode,
+} from "./compaction.js";
 import { runModelSubturn, runToolCalls } from "./runner.js";
 
 const MAX_ASSISTANT_SUBTURNS = 200;
@@ -35,6 +44,16 @@ export type SessionEngineOptions = {
   toolRegistry: ToolRegistry;
   config?: Config;
   deps?: CoreDeps;
+};
+
+export type SessionCompactionOptions = {
+  mode: SessionCompactionMode;
+  guidance?: string;
+};
+
+export type SessionCompactionResult = {
+  compactionMessage: string;
+  includedLastAssistant: boolean;
 };
 
 export class SessionEngine {
@@ -133,6 +152,54 @@ export class SessionEngine {
     return this.sessionId;
   }
 
+  async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {
+    const preparation = prepareSessionCompaction(this.messages);
+    if (!preparation) {
+      throw new Error("no conversation to compact.");
+    }
+
+    const summaryPrompt = buildSessionCompactionPrompt({
+      preparation,
+      guidance: options.guidance,
+    });
+
+    const apiKey = await this.resolveApiKeyForCurrentPersona();
+    const stream = streamModel(
+      this.persona.model,
+      {
+        systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: summaryPrompt }],
+            timestamp: this.deps.clock.now(),
+          },
+        ],
+      },
+      { reasoning: "high", sessionId: `tau-summary-${randomUUID()}`, ...(apiKey && { apiKey }) },
+    );
+
+    const final = await stream.result();
+    const summary = extractAssistantText(final).trim();
+    if (!summary) {
+      throw new Error("summarization returned an empty response.");
+    }
+
+    const { compactionMessage, includedLastAssistant } = buildSessionCompactionMessage({
+      summary,
+      mode: options.mode,
+      messagesToSummarize: preparation.messagesToSummarize,
+    });
+
+    this.reset();
+    this.addUserText(compactionMessage);
+
+    return {
+      compactionMessage,
+      includedLastAssistant,
+    };
+  }
+
   private emitSubagentEvent(event: SubagentUiEvent): void {
     const coreEvent: CoreSubagentUiEvent = { type: "subagent_ui", event };
     for (const listener of this.subagentListeners) {
@@ -147,6 +214,27 @@ export class SessionEngine {
 
   private getEnabledToolSchemas() {
     return this.toolRegistry.getEnabledToolSchemas(this.persona.tools);
+  }
+
+  private async resolveApiKeyForCurrentPersona(): Promise<string | undefined> {
+    let apiKey: string | undefined;
+    try {
+      apiKey = await this.credentialResolver.getApiKey(
+        this.persona.model.provider as KnownProvider,
+        { sessionId: this.sessionId },
+      );
+    } catch (error) {
+      if (this.persona.model.provider === "openai-codex") {
+        throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));
+      }
+      throw error;
+    }
+
+    if (!apiKey && this.persona.model.provider === "openai-codex") {
+      throw new Error(formatCodexAuthError(this.authPath));
+    }
+
+    return apiKey;
   }
 
   async *processTurn(signal: AbortSignal): AsyncGenerator<CoreEvent> {
@@ -218,22 +306,7 @@ export class SessionEngine {
       tools,
     };
 
-    let apiKey: string | undefined;
-    try {
-      apiKey = await this.credentialResolver.getApiKey(
-        this.persona.model.provider as KnownProvider,
-        { sessionId: this.sessionId },
-      );
-    } catch (error) {
-      if (this.persona.model.provider === "openai-codex") {
-        throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));
-      }
-      throw error;
-    }
-
-    if (!apiKey && this.persona.model.provider === "openai-codex") {
-      throw new Error(formatCodexAuthError(this.authPath));
-    }
+    const apiKey = await this.resolveApiKeyForCurrentPersona();
     const baseOptions: TauStreamOptions = {
       ...this.getStreamingSettings(this.persona),
       signal,

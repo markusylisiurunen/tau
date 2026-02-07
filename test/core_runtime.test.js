@@ -243,7 +243,7 @@ describe("compaction context message", () => {
     });
 
     expect(message).toContain("<summary>");
-    expect(message).toContain("<last_assistant_message_verbatim>");
+    expect(message).toContain("<last-assistant-message-verbatim>");
     expect(extractCompactionSummaryFromText(message)).toBe("## Goal\nShip feature");
   });
 

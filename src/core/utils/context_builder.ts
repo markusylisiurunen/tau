@@ -27,7 +27,7 @@ export function buildSkillsIndexBlock(skills: Skill[]): string | undefined {
     "",
     "Discovered skills:",
     "",
-    "<available_skills>",
+    "<available-skills>",
   ];
 
   for (const skill of skills) {
@@ -38,7 +38,7 @@ export function buildSkillsIndexBlock(skills: Skill[]): string | undefined {
     lines.push("  </skill>");
   }
 
-  lines.push("</available_skills>");
+  lines.push("</available-skills>");
 
   lines.push(
     "",
@@ -83,7 +83,7 @@ export function buildBaseSystemPrompt(args: {
 export function buildSandboxInfoBlock(info?: string): string | undefined {
   const trimmed = info?.trim();
   if (!trimmed) return undefined;
-  return ["### Sandbox environment", "", "<sandbox_info>", trimmed, "</sandbox_info>"].join("\n");
+  return ["### Sandbox environment", "", "<sandbox-info>", trimmed, "</sandbox-info>"].join("\n");
 }
 
 export function buildProjectContextBlock(args: {
@@ -138,7 +138,7 @@ export function buildEnvironmentTag(args: {
     "<environment>",
     `  <datetime>${args.datetime}</datetime>`,
     `  <cwd>${args.cwd}</cwd>`,
-    `  <risk_level level="${args.riskLevel}">${riskDesc}</risk_level>`,
+    `  <risk-level level="${args.riskLevel}">${riskDesc}</risk-level>`,
     `  <node>${nodeVersion}</node>`,
     `  <platform>${platform}</platform>`,
     "  <notes>This environment tag reflects the current session environment. If the user changes risk level or cwd, you will be informed in a <system> tag at the start of the next user message.</notes>",

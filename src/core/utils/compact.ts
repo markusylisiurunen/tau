@@ -6,8 +6,8 @@ export const COMPACTION_SUMMARY_HEADER =
   "The conversation history before this point was compacted into the following summary:";
 const SUMMARY_OPEN_TAG = "<summary>";
 const SUMMARY_CLOSE_TAG = "</summary>";
-const LAST_ASSISTANT_OPEN_TAG = "<last_assistant_message_verbatim>";
-const LAST_ASSISTANT_CLOSE_TAG = "</last_assistant_message_verbatim>";
+const LAST_ASSISTANT_OPEN_TAG = "<last-assistant-message-verbatim>";
+const LAST_ASSISTANT_CLOSE_TAG = "</last-assistant-message-verbatim>";
 const COMPACTION_BASH_TOOL_RESULT_MAX_TOKENS = 4096;
 const COMPACTION_EDIT_UNCHANGED_CONTEXT_LINES = 8;
 

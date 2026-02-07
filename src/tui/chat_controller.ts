@@ -2164,7 +2164,7 @@ export class ChatController {
         ? toolCall.arguments
         : JSON.stringify(toolCall.arguments ?? {});
     const args = this.escapeXmlAttribute(argsValue);
-    return `<tool_call name="${name}" id="${id}" args="${args}" />`;
+    return `<tool-call name="${name}" id="${id}" args="${args}" />`;
   }
 
   private buildPruneToolResultLines(toolResult: ToolResultMessage): string[] {
@@ -2174,20 +2174,20 @@ export class ChatController {
     const details = this.getToolResultContentDetails(toolResult);
 
     if (details.hasImage) {
-      lines.push(`<tool_result name="${name}" tool_call_id="${toolCallId}">`);
+      lines.push(`<tool-result name="${name}" tool_call_id="${toolCallId}">`);
       lines.push("<preview>[image omitted]</preview>");
-      lines.push("</tool_result>");
+      lines.push("</tool-result>");
       return lines;
     }
 
     const preview = this.buildPruneToolResultPreview(details.text);
     lines.push(
-      `<tool_result name="${name}" tool_call_id="${toolCallId}" total_tokens="${preview.totalTokens}">`,
+      `<tool-result name="${name}" tool_call_id="${toolCallId}" total_tokens="${preview.totalTokens}">`,
     );
     lines.push(`<preview max_tokens="${PRUNE_PREVIEW_MAX_TOKENS}">`);
     lines.push(...preview.lines);
     lines.push("</preview>");
-    lines.push("</tool_result>");
+    lines.push("</tool-result>");
     return lines;
   }
 

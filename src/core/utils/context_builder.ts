@@ -61,7 +61,6 @@ export function buildBaseSystemPrompt(args: {
   projectContextBlock?: string;
   sandboxInfoBlock?: string;
   environmentTag: string;
-  previousSessionSummary?: string;
   subagentsBlock?: string;
 }): string {
   const parts: string[] = [args.personaSystemPrompt.trim()];
@@ -70,18 +69,6 @@ export function buildBaseSystemPrompt(args: {
   }
   if (args.projectContextBlock?.trim()) {
     parts.push(args.projectContextBlock.trim());
-  }
-  if (args.previousSessionSummary?.trim()) {
-    parts.push(
-      [
-        "### Previous session context",
-        "",
-        "The following is a summary of a previous conversation session that provides relevant context:",
-        "<previous_session_summary>",
-        args.previousSessionSummary.trim(),
-        "</previous_session_summary>",
-      ].join("\n"),
-    );
   }
   if (args.subagentsBlock?.trim()) {
     parts.push(args.subagentsBlock.trim());

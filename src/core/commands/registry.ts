@@ -299,8 +299,8 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
   registry.register({
     id: "compactSummaryAndLastTurn",
     usage: "/compact:with-last-turn",
-    description: "summarize and include previous last turn",
-    autocompleteDescription: "compact history, keep last turn",
+    description: "summarize and include previous last assistant message",
+    autocompleteDescription: "compact history, keep last assistant message",
     argument: "none",
     section: "base",
     parse: (raw) => {

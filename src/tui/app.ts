@@ -20,7 +20,6 @@ export interface ChatAppOptions {
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
   initialHistory?: Message[];
-  initialPreviousSessionSummary?: string;
   noAgentContextFiles?: boolean;
   config?: Config;
   sandboxEnabled?: boolean;

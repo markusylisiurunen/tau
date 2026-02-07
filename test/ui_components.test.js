@@ -12,7 +12,6 @@ import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
 import { FooterComponent } from "../dist/tui/ui/footer.js";
 import { QueuedMessagesComponent } from "../dist/tui/ui/queued_messages.js";
 import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
-import { SessionSummaryComponent } from "../dist/tui/ui/session_summary.js";
 import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
@@ -48,14 +47,6 @@ test("SessionDividerComponent renders a muted divider line", () => {
   const component = new SessionDividerComponent(theme, { label: "new session" });
   const lines = renderLines(component, 20);
   expect(lines[0]).toBe("<textMuted>── new session ─────</textMuted>");
-});
-
-test("SessionSummaryComponent renders borders and summary text", () => {
-  const theme = createTagTheme();
-  const component = new SessionSummaryComponent(theme, { summary: "summary line" });
-  const text = renderText(component, 200);
-  expect(text).toContain("<brandAccent>context from previous session</brandAccent>");
-  expect(text).toContain("<italic><textMuted>summary line</textMuted></italic>");
 });
 
 test("UserMessageComponent applies memory mode styling", () => {

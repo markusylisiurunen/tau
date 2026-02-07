@@ -111,6 +111,8 @@ Risk levels (`read-only`, `read-write`) gate model tool calls. Subagents inherit
 
 Main session system prompts are immutable after session start to preserve model caching. The environment tag is not updated mid-session. `/risk` and `/cd` changes are injected as system messages on the next user turn instead. Subagent prompts are rebuilt on risk changes so inherited risk applies to subagents.
 
+Prompt/context tag style: use dash-case for XML-like tag names in prompt text (for example `<risk-level>`, `<sandbox-info>`, `<available-skills>`, `<tool-call>`, `<tool-result>`, `<last-assistant-message-verbatim>`). Do not introduce new snake_case tag names.
+
 **Bash limits**: 1MB raw capture (tail of output, stdout/stderr merged in arrival order), 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized by dropping vars that match sensitive key patterns, git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.

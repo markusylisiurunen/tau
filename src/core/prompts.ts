@@ -208,7 +208,7 @@ Structure your review as follows:
 
 2. **Findings**: List each finding with:
     - **Title**: \`[P#] <Imperative title>\`
-    - **Location**: \`<file_path>:<line_range>\`
+    - **Location**: \`<file-path>:<line-range>\`
     - **Description**: One paragraph explaining the issue.
     - **Suggestion**: (Optional) A code block with replacement code.
 

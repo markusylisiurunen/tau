@@ -887,9 +887,9 @@ export class Editor implements Component {
     // Split into lines
     const pastedLines = filteredText.split("\n");
 
-    // Check if this is a large paste (> 10 lines or > 1000 characters)
+    // Check if this is a large paste (> 32 lines or > 2000 characters)
     const totalChars = filteredText.length;
-    if (pastedLines.length > 10 || totalChars > 1000) {
+    if (pastedLines.length > 32 || totalChars > 2000) {
       // Store the paste and insert a marker
       this.pasteCounter++;
       const pasteId = this.pasteCounter;
@@ -897,7 +897,7 @@ export class Editor implements Component {
 
       // Insert marker like "[paste #1 +123 lines]" or "[paste #1 1234 chars]"
       const marker =
-        pastedLines.length > 10
+        pastedLines.length > 32
           ? `[paste #${pasteId} +${pastedLines.length} lines]`
           : `[paste #${pasteId} ${totalChars} chars]`;
       for (const char of marker) {

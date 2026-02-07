@@ -185,6 +185,98 @@ describe("ChatController risk level changes", () => {
   });
 });
 
+describe("ChatController prune handling", () => {
+  function seedEditHistory(controller, oldText, newText) {
+    controller.engine.addMessage({
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "edit-call-1",
+          name: "edit",
+          arguments: {
+            path: "src/example.ts",
+            oldText,
+            newText,
+          },
+        },
+      ],
+      timestamp: 1,
+    });
+
+    controller.engine.addMessage({
+      role: "toolResult",
+      toolCallId: "edit-call-1",
+      toolName: "edit",
+      content: [{ type: "text", text: "successfully edited src/example.ts" }],
+      isError: false,
+      timestamp: 2,
+    });
+  }
+
+  it("prunes edit call arguments and rewrites edit result diff with 4-line unchanged context", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    const prefix = Array.from({ length: 10 }, (_, i) => `pre ${i}`);
+    const suffix = Array.from({ length: 10 }, (_, i) => `post ${i}`);
+    const oldText = [...prefix, "before", ...suffix].join("\n");
+    const newText = [...prefix, "after", ...suffix].join("\n");
+
+    seedEditHistory(controller, oldText, newText);
+
+    await controller.onUserInput("/prune:earliest-first");
+
+    const history = controller.engine.history;
+    const assistant = history.find((message) => message.role === "assistant");
+    const toolCall = assistant.content.find((block) => block.type === "toolCall");
+    expect(toolCall.arguments.oldText).toBe("[content pruned]");
+    expect(toolCall.arguments.newText).toBe("[content pruned]");
+
+    const toolResult = history.find((message) => message.role === "toolResult");
+    const text = toolResult.content[0].text;
+    expect(text).toContain("[tool result pruned] edit diff");
+    expect(text).toContain("… 6 unchanged line(s) omitted …");
+    expect(text).toContain("  pre 6");
+    expect(text).not.toContain("  pre 0");
+    expect(text).toContain("- before");
+    expect(text).toContain("+ after");
+    expect(text).toContain("  post 3");
+    expect(text).not.toContain("  post 9");
+
+    expect(stub.systemMessages).toContainEqual(
+      expect.objectContaining({ kind: "success", text: expect.stringContaining("edit tool call") }),
+    );
+    expect(stub.systemMessages).not.toContainEqual(
+      expect.objectContaining({ text: "no bash tool results to prune." }),
+    );
+  });
+
+  it("keeps prune fraction 0 as a no-op for edit payloads", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    const oldText = "line before";
+    const newText = "line after";
+    seedEditHistory(controller, oldText, newText);
+
+    await controller.onUserInput("/prune:earliest-first 0");
+
+    const history = controller.engine.history;
+    const assistant = history.find((message) => message.role === "assistant");
+    const toolCall = assistant.content.find((block) => block.type === "toolCall");
+    expect(toolCall.arguments.oldText).toBe(oldText);
+    expect(toolCall.arguments.newText).toBe(newText);
+
+    const toolResult = history.find((message) => message.role === "toolResult");
+    expect(toolResult.content[0].text).toBe("successfully edited src/example.ts");
+    expect(stub.systemMessages.at(-1)).toEqual({
+      text: "prune fraction is 0, nothing to prune.",
+      kind: "warn",
+    });
+  });
+});
+
 describe("ChatController manual retry", () => {
   it("retries on double empty submit within window", async () => {
     vi.useFakeTimers();

@@ -47,7 +47,7 @@ import {
 import { ToolCatalog } from "../core/tools/catalog.js";
 import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
 import { createLocalToolExecutionBackend } from "../core/tools/execution_backend.js";
-import { TOOL_NAME_BASH } from "../core/tools/tool_names.js";
+import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../core/tools/tool_names.js";
 import {
   type Persona,
   REASONING_LEVELS,
@@ -69,6 +69,7 @@ import {
 } from "../core/utils/context.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { getGitRoot } from "../core/utils/git.js";
+import { buildLineDiff, collapseLongUnchangedDiffRuns } from "../core/utils/line_diff.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
@@ -112,6 +113,17 @@ type ToolResultPruneCandidate = {
   bytes: number;
   tokens: number;
   order: number;
+};
+
+type EditPruneCallDiff = {
+  oldText: string;
+  newText: string;
+};
+
+type EditPruneSummary = {
+  callsPruned: number;
+  resultsPruned: number;
+  bytesRemoved: number;
 };
 
 type ReloadScope = "new-session" | "reload-command";
@@ -162,6 +174,9 @@ const RELOAD_PLANS: Record<ReloadScope, ReloadPlan> = {
 const ALLOWED_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
 const DEFAULT_PRUNE_FRACTION = 0.25;
 const PRUNED_TOOL_RESULT_PREFIX = "[tool result pruned]";
+const PRUNED_EDIT_RESULT_PREFIX = "[tool result pruned] edit diff";
+const PRUNED_EDIT_ARGUMENT_MARKER = "[content pruned]";
+const PRUNE_EDIT_UNCHANGED_CONTEXT_LINES = 4;
 const PRUNE_PREVIEW_MAX_TOKENS = 512;
 const PRUNE_MAX_OVERAGE_RATIO = 0.1;
 
@@ -1057,11 +1072,11 @@ export class ChatController {
       case "compactSummaryAndLastTurn":
         return "summarize session and keep last turn, optional prompt";
       case "pruneEarliestFirst":
-        return "prune earliest bash tool results, optional fraction 0-1";
+        return "prune earliest tool results and compact edit calls, optional fraction 0-1";
       case "pruneLargestFirst":
-        return "prune largest bash tool results, optional fraction 0-1";
+        return "prune largest tool results and compact edit calls, optional fraction 0-1";
       case "pruneLeastImportant":
-        return "prune least important bash tool results, optional fraction and guidance";
+        return "prune least important tool results and compact edit calls, optional fraction and guidance";
       case "reload":
         return "reload prompts, skills, themes, bash commands, and AGENTS.md";
       case "risk":
@@ -1717,6 +1732,8 @@ export class ChatController {
       return;
     }
 
+    const editSummary = this.pruneEditToolHistory(history);
+
     const candidates: ToolResultPruneCandidate[] = [];
     let totalTokens = 0;
 
@@ -1746,13 +1763,21 @@ export class ChatController {
     }
 
     if (candidates.length === 0 || totalTokens === 0) {
-      this.view.addSystemMessage("no bash tool results to prune.", "warn");
+      if (this.hasAnyPrunedEditChanges(editSummary)) {
+        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+      } else {
+        this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
+      }
       return;
     }
 
     const targetTokens = Math.ceil(totalTokens * fraction);
     if (targetTokens <= 0) {
-      this.view.addSystemMessage("prune fraction is too small to remove anything.", "warn");
+      if (this.hasAnyPrunedEditChanges(editSummary)) {
+        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+      } else {
+        this.view.addSystemMessage("prune fraction is too small to remove anything.", "warn");
+      }
       return;
     }
 
@@ -1775,7 +1800,11 @@ export class ChatController {
     }
 
     if (toPrune.length === 0) {
-      this.view.addSystemMessage("no bash tool results to prune.", "warn");
+      if (this.hasAnyPrunedEditChanges(editSummary)) {
+        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+      } else {
+        this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
+      }
       return;
     }
 
@@ -1788,10 +1817,8 @@ export class ChatController {
       this.engine.replaceMessage(candidate.index, prunedResult);
     }
 
-    const prunedLabel = formatTokenEstimate(prunedBytes);
-    const noun = toPrune.length === 1 ? "result" : "results";
     this.view.addSystemMessage(
-      `pruned ${toPrune.length} bash tool ${noun} (${prunedLabel}).`,
+      this.buildPruneSummaryMessage(editSummary, toPrune.length, prunedBytes),
       "success",
     );
   }
@@ -1814,6 +1841,8 @@ export class ChatController {
       this.view.addSystemMessage("no conversation to prune.", "warn");
       return;
     }
+
+    const editSummary = this.pruneEditToolHistory(history);
 
     const candidates: ToolResultPruneCandidate[] = [];
     let totalTokens = 0;
@@ -1844,13 +1873,21 @@ export class ChatController {
     }
 
     if (candidates.length === 0 || totalTokens === 0) {
-      this.view.addSystemMessage("no bash tool results to prune.", "warn");
+      if (this.hasAnyPrunedEditChanges(editSummary)) {
+        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+      } else {
+        this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
+      }
       return;
     }
 
     const targetTokens = Math.ceil(totalTokens * fraction);
     if (targetTokens <= 0) {
-      this.view.addSystemMessage("prune fraction is too small to remove anything.", "warn");
+      if (this.hasAnyPrunedEditChanges(editSummary)) {
+        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+      } else {
+        this.view.addSystemMessage("prune fraction is too small to remove anything.", "warn");
+      }
       return;
     }
 
@@ -1866,14 +1903,22 @@ export class ChatController {
       });
       const selection = await this.requestLeastImportantPruneSelection(prompt);
       if (selection.length === 0) {
-        this.view.addSystemMessage("model returned no prune candidates.", "warn");
+        if (this.hasAnyPrunedEditChanges(editSummary)) {
+          this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+        } else {
+          this.view.addSystemMessage("model returned no prune candidates.", "warn");
+        }
         return;
       }
 
       const toPrune = this.selectLeastImportantCandidates(selection, candidates, targetTokens);
 
       if (toPrune.length === 0) {
-        this.view.addSystemMessage("no bash tool results to prune.", "warn");
+        if (this.hasAnyPrunedEditChanges(editSummary)) {
+          this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+        } else {
+          this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
+        }
         return;
       }
 
@@ -1888,10 +1933,8 @@ export class ChatController {
         this.engine.replaceMessage(candidate.index, prunedResult);
       }
 
-      const prunedLabel = formatTokenEstimate(prunedBytes);
-      const noun = toPrune.length === 1 ? "result" : "results";
       this.view.addSystemMessage(
-        `pruned ${toPrune.length} bash tool ${noun} (${prunedLabel}).`,
+        this.buildPruneSummaryMessage(editSummary, toPrune.length, prunedBytes),
         "success",
       );
     } catch (err) {
@@ -1942,6 +1985,191 @@ export class ChatController {
     }
 
     return { fraction: DEFAULT_PRUNE_FRACTION, guidance: trimmed };
+  }
+
+  private hasAnyPrunedEditChanges(summary: EditPruneSummary): boolean {
+    return summary.callsPruned > 0 || summary.resultsPruned > 0;
+  }
+
+  private buildPruneSummaryMessage(
+    editSummary: EditPruneSummary,
+    bashResultsPruned: number = 0,
+    bashBytesPruned: number = 0,
+  ): string {
+    const editSummaryText = this.formatPrunedEditSummary(editSummary);
+
+    if (bashResultsPruned <= 0) {
+      if (!editSummaryText) {
+        return "no bash tool results or edit tool calls to prune.";
+      }
+      return `pruned ${editSummaryText}.`;
+    }
+
+    const bashLabel = formatTokenEstimate(bashBytesPruned);
+    const bashNoun = bashResultsPruned === 1 ? "result" : "results";
+    if (!editSummaryText) {
+      return `pruned ${bashResultsPruned} bash tool ${bashNoun} (${bashLabel}).`;
+    }
+
+    return `pruned ${bashResultsPruned} bash tool ${bashNoun} (${bashLabel}) and ${editSummaryText}.`;
+  }
+
+  private formatPrunedEditSummary(summary: EditPruneSummary): string {
+    if (!this.hasAnyPrunedEditChanges(summary)) {
+      return "";
+    }
+
+    const parts: string[] = [];
+    if (summary.callsPruned > 0) {
+      const noun = summary.callsPruned === 1 ? "call" : "calls";
+      parts.push(`${summary.callsPruned} edit tool ${noun}`);
+    }
+    if (summary.resultsPruned > 0) {
+      const noun = summary.resultsPruned === 1 ? "result" : "results";
+      parts.push(`${summary.resultsPruned} edit tool ${noun}`);
+    }
+
+    const tokenEstimate = formatTokenEstimate(summary.bytesRemoved);
+    return `${parts.join(" and ")} (${tokenEstimate})`;
+  }
+
+  private pruneEditToolHistory(history: readonly Message[]): EditPruneSummary {
+    const summary: EditPruneSummary = {
+      callsPruned: 0,
+      resultsPruned: 0,
+      bytesRemoved: 0,
+    };
+    const editCallsById = new Map<string, EditPruneCallDiff>();
+
+    for (let index = 0; index < history.length; index++) {
+      const message = history[index];
+      if (message?.role !== "assistant") {
+        continue;
+      }
+
+      const assistant = message as AssistantMessage;
+      let changed = false;
+      const nextContent = assistant.content.map((block) => {
+        if (typeof block === "string" || block.type !== "toolCall") {
+          return block;
+        }
+
+        const toolCall = block as ToolCall;
+        if (toolCall.name !== TOOL_NAME_EDIT) {
+          return block;
+        }
+
+        const args = this.getToolCallArgumentsObject(toolCall.arguments);
+        if (!args) {
+          return block;
+        }
+
+        const oldText = typeof args.oldText === "string" ? args.oldText : undefined;
+        const newText = typeof args.newText === "string" ? args.newText : undefined;
+        if (oldText === undefined || newText === undefined) {
+          return block;
+        }
+
+        if (oldText === PRUNED_EDIT_ARGUMENT_MARKER && newText === PRUNED_EDIT_ARGUMENT_MARKER) {
+          return block;
+        }
+
+        changed = true;
+        summary.callsPruned += 1;
+        const oldBytes = Buffer.byteLength(oldText, "utf8");
+        const newBytes = Buffer.byteLength(newText, "utf8");
+        const markerBytes = Buffer.byteLength(PRUNED_EDIT_ARGUMENT_MARKER, "utf8") * 2;
+        summary.bytesRemoved += Math.max(0, oldBytes + newBytes - markerBytes);
+        editCallsById.set(toolCall.id, { oldText, newText });
+
+        return {
+          ...toolCall,
+          arguments: {
+            ...args,
+            oldText: PRUNED_EDIT_ARGUMENT_MARKER,
+            newText: PRUNED_EDIT_ARGUMENT_MARKER,
+          },
+        };
+      });
+
+      if (changed) {
+        this.engine.replaceMessage(index, { ...assistant, content: nextContent });
+      }
+    }
+
+    if (editCallsById.size === 0) {
+      return summary;
+    }
+
+    for (let index = 0; index < history.length; index++) {
+      const message = history[index];
+      if (message?.role !== "toolResult") {
+        continue;
+      }
+
+      const toolResult = message as ToolResultMessage;
+      if (toolResult.toolName !== TOOL_NAME_EDIT) {
+        continue;
+      }
+
+      const callDiff = editCallsById.get(toolResult.toolCallId);
+      if (!callDiff) {
+        continue;
+      }
+
+      const info = this.getToolResultContentInfo(toolResult);
+      if (info.firstText?.startsWith(PRUNED_EDIT_RESULT_PREFIX)) {
+        continue;
+      }
+
+      const prunedResult: ToolResultMessage = {
+        ...toolResult,
+        content: [{ type: "text", text: this.buildPrunedEditToolResult(callDiff) }],
+      };
+      this.engine.replaceMessage(index, prunedResult);
+      summary.resultsPruned += 1;
+    }
+
+    return summary;
+  }
+
+  private getToolCallArgumentsObject(argumentsValue: unknown): Record<string, unknown> | undefined {
+    if (argumentsValue && typeof argumentsValue === "object" && !Array.isArray(argumentsValue)) {
+      return argumentsValue as Record<string, unknown>;
+    }
+
+    if (typeof argumentsValue !== "string") {
+      return undefined;
+    }
+
+    try {
+      const parsed = JSON.parse(argumentsValue);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return undefined;
+      }
+      return parsed as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private buildPrunedEditToolResult(diff: EditPruneCallDiff): string {
+    const diffText = this.buildPrunedEditDiff(diff.oldText, diff.newText);
+    return `${PRUNED_EDIT_RESULT_PREFIX}\n${diffText}`;
+  }
+
+  private buildPrunedEditDiff(oldText: string, newText: string): string {
+    const diff = buildLineDiff(oldText, newText);
+    if (diff.added === 0 && diff.removed === 0) {
+      return "(no textual changes)";
+    }
+
+    const collapsed = collapseLongUnchangedDiffRuns({
+      diffLines: diff.lines,
+      maxUnchangedLines: PRUNE_EDIT_UNCHANGED_CONTEXT_LINES,
+    });
+
+    return collapsed.join("\n").trim() || "(no textual changes)";
   }
 
   private buildPrunedToolResultNotice(toolResult: ToolResultMessage, bytes: number): string {

@@ -82,6 +82,7 @@ export interface ChatView {
   getSelectedSubagentId(): string | undefined;
   sendTerminalNotification(title: string): void;
   getEditorText(): string;
+  getExpandedEditorText(): string;
   setEditorText(text: string): void;
   getEditorCursor(): { line: number; col: number };
   getEditorLines(): string[];
@@ -285,6 +286,10 @@ export class TuiChatView implements ChatView {
 
   getEditorText(): string {
     return this.editor.getText();
+  }
+
+  getExpandedEditorText(): string {
+    return this.editor.getExpandedText();
   }
 
   setEditorText(text: string): void {

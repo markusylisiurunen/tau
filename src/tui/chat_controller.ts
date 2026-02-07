@@ -1500,7 +1500,7 @@ export class ChatController {
   }
 
   private async stashEditorToClipboard(): Promise<void> {
-    const text = this.view.getEditorText();
+    const text = this.view.getExpandedEditorText();
     if (!text.trim()) {
       this.view.addSystemMessage("no input to stash yet", "warn");
       return;

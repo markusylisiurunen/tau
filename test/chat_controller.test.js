@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { personas } from "../dist/core/personas.js";
 import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../dist/core/tools/tool_names.js";
 import { ChatController } from "../dist/tui/chat_controller.js";
+import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import { DOUBLE_PRESS_WINDOW_MS } from "../dist/tui/constants.js";
+
+vi.mock("../dist/tui/clipboard.js", () => ({
+  copyTextToClipboard: vi.fn(async () => {}),
+}));
 
 function createStubView() {
   const added = [];
@@ -44,6 +49,7 @@ function createStubView() {
       getSelectedSubagentId: () => undefined,
       sendTerminalNotification: () => {},
       getEditorText: () => "",
+      getExpandedEditorText: () => "",
       setEditorText: (text) => {
         editorTextUpdates.push(text);
       },
@@ -154,6 +160,24 @@ describe("ChatController streaming command handling", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(stub.editorTextUpdates).toEqual(["hello there"]);
+  });
+});
+
+describe("ChatController clipboard stashing", () => {
+  it("copies expanded editor text instead of paste markers", async () => {
+    const stub = createStubView();
+    stub.view.getEditorText = () => "[paste #1 +12 lines]";
+    stub.view.getExpandedEditorText = () => "line 1\nline 2";
+
+    const controller = createController(stub.view);
+    await controller.getInputHandlers().onCtrlS?.();
+
+    expect(copyTextToClipboard).toHaveBeenCalledWith("line 1\nline 2");
+    expect(stub.editorTextUpdates).toEqual([""]);
+    expect(stub.systemMessages).toContainEqual({
+      text: "stashed input to clipboard",
+      kind: "success",
+    });
   });
 });
 

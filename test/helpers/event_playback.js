@@ -66,6 +66,7 @@ export function createPlaybackHarness(options = {}) {
     getSelectedSubagentId: () => undefined,
     sendTerminalNotification: () => {},
     getEditorText: () => "",
+    getExpandedEditorText: () => "",
     setEditorText: () => {},
     getEditorCursor: () => ({ line: 0, col: 0 }),
     getEditorLines: () => [""],

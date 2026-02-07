@@ -27,7 +27,7 @@ const COMPACTION_SUMMARIZATION_PROMPT = `The messages above are a conversation t
 Use this exact format:
 
 ## Goal
-[What the user is trying to accomplish.]
+[What the user is currently trying to accomplish. If the goal changed, briefly note the shift.]
 
 ## Constraints & Preferences
 - [Constraints, preferences, or requirements from the user]
@@ -53,8 +53,11 @@ Use this exact format:
 - [Concrete details needed to resume: file paths, function names, commands, errors]
 
 Rules:
-- Keep each section concise.
+- Preserve enough detail for seamless continuation from this summary alone.
+- Keep each section concise and focused on continuity-critical information.
 - Distinguish attempted work from confirmed outcomes.
+- If goals evolved over time, capture the current goal and briefly note the change.
+- Collapse tangents, retries, and pleasantries unless they materially affect decisions, blockers, or next steps.
 - Preserve exact file paths, function names, commands, and error messages.`;
 
 const COMPACTION_UPDATE_SUMMARIZATION_PROMPT = `The messages above are new conversation messages to incorporate into the existing summary in <previous-summary> tags.
@@ -69,7 +72,7 @@ Update the existing structured summary with these rules:
 Use the exact same format as before:
 
 ## Goal
-[Preserve and extend goals as needed]
+[Preserve and extend goals as needed. If the goal shifted, reflect the latest goal and note the change briefly.]
 
 ## Constraints & Preferences
 - [Preserve and extend constraints]
@@ -94,8 +97,11 @@ Use the exact same format as before:
 - [Concrete details needed to resume: file paths, function names, commands, errors]
 
 Rules:
-- Keep each section concise.
+- Preserve enough detail for seamless continuation from this summary alone.
+- Keep each section concise and focused on continuity-critical information.
 - Distinguish attempted work from confirmed outcomes.
+- If goals evolved over time, capture the current goal and briefly note the change.
+- Collapse tangents, retries, and pleasantries unless they materially affect decisions, blockers, or next steps.
 - Preserve exact file paths, function names, commands, and error messages.`;
 
 export function prepareSessionCompaction(

@@ -211,7 +211,7 @@ some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_
 
 the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, tool access (minus sub-agent management tools), and the session risk level. custom sub-agents can override model, reasoning, tools, and risk level. a sub-agent configured with `riskLevel: read-write` can perform writes even when the main session is `read-only`.
 
-sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 3.
+sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 8.
 
 to use `web_search`/`web_fetch` in a sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when you explicitly ask for web research.
 
@@ -237,9 +237,11 @@ toggle visibility of the model's thinking with `ctrl+t`.
 
 ## working with files
 
-reference files in your message by typing `@` followed by the filename. autocomplete helps you find the right path. press `ctrl+f` to expand file contents into the conversation, letting the model see the actual code.
+reference files in your message with `@file:<path>` (for example, `@file:src/tui/app.ts`). autocomplete helps you find the right path. press `ctrl+f` to expand file contents into the conversation, letting the model see the actual code.
 
-reference skills by typing `$` followed by the skill name (for example, `$skill-name`). autocomplete will suggest available skills. press `ctrl+f` to expand the skill's `SKILL.md` into the conversation.
+reference skills with `@skill:<name>` (for example, `@skill:skill-name`). autocomplete will suggest available skills. press `ctrl+f` to expand the skill's `SKILL.md` into the conversation.
+
+to explicitly target a sub-agent, use `@agent:<name>` (for example, `@agent:default`).
 
 you can also pipe content directly:
 

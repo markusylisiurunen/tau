@@ -132,7 +132,7 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 
 **Subagent-only tools**: subagents run with a dedicated tool registry that always includes `emit_output` plus the tools enabled for that subagent (inherited from the main persona or explicitly overridden). Risk level is inherited by default but can be overridden per subagent, including `read-write` even when the main session is `read-only`. See `src/core/subagents/subagent_engine.ts`.
 
-**Subagent limit**: at most 3 subagents may run concurrently.
+**Subagent limit**: at most 8 subagents may run concurrently.
 
 ## Personas and subagents
 

@@ -91,7 +91,7 @@ describe("context builder", () => {
 });
 
 describe("summary formatting", () => {
-  it("omits thinking and shows tool markers", () => {
+  it("omits thinking, uses marker-newline format, and compacts edit calls", () => {
     const history = [
       {
         role: "user",
@@ -109,6 +109,16 @@ describe("summary formatting", () => {
             name: "read",
             arguments: { path: "README.md" },
           },
+          {
+            type: "toolCall",
+            id: "2",
+            name: "edit",
+            arguments: {
+              path: "src/parser.ts",
+              oldText: "const stable = 0;\nconst before = 1;\nreturn stable;",
+              newText: "const stable = 0;\nconst after = 2;\nreturn stable;",
+            },
+          },
         ],
         timestamp: 1,
       },
@@ -124,10 +134,104 @@ describe("summary formatting", () => {
 
     const summary = formatHistoryForCompaction(history);
 
-    expect(summary).toContain("[User]: hello");
-    expect(summary).toContain('[Assistant tool calls]: read(path="README.md")');
-    expect(summary).toContain("[Tool result]: read (ok) output");
+    expect(summary).toContain("[User]:\nhello");
+    expect(summary).toContain("[Assistant]:\nhi");
+    expect(summary).toContain('[Assistant tool calls]:\nread(path="README.md")');
+    expect(summary).toContain('edit(path="src/parser.ts")');
+    expect(summary).toContain("const stable = 0;");
+    expect(summary).toContain("- const before = 1;");
+    expect(summary).toContain("+ const after = 2;");
+    expect(summary).toContain("return stable;");
+    expect(summary).toContain("[Tool result]: read (ok)\noutput");
     expect(summary).not.toContain("hmm");
+    expect(summary).not.toContain('oldText="const before = 1;"');
+    expect(summary).not.toContain('newText="const after = 2;"');
+  });
+
+  it("omits unchanged edit regions only when they are long", () => {
+    const unchangedPrefix = Array.from({ length: 12 }, (_, index) => `pre ${index}`);
+    const unchangedSuffix = Array.from({ length: 12 }, (_, index) => `post ${index}`);
+    const history = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "edit-long",
+            name: "edit",
+            arguments: {
+              path: "src/example.ts",
+              oldText: [...unchangedPrefix, "before", ...unchangedSuffix].join("\n"),
+              newText: [...unchangedPrefix, "after", ...unchangedSuffix].join("\n"),
+            },
+          },
+        ],
+        timestamp: 0,
+      },
+    ];
+
+    const summary = formatHistoryForCompaction(history);
+
+    expect(summary).toContain("… 4 unchanged line(s) omitted …");
+    expect(summary).toContain("  pre 4");
+    expect(summary).not.toContain("  pre 0");
+    expect(summary).toContain("  post 7");
+    expect(summary).not.toContain("  post 11");
+  });
+
+  it("limits unchanged lines between edit hunks to at most 8", () => {
+    const middle = Array.from({ length: 14 }, (_, index) => `middle ${index}`);
+    const oldText = ["before 1", ...middle, "before 2"].join("\n");
+    const newText = ["after 1", ...middle, "after 2"].join("\n");
+
+    const history = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "edit-hunks",
+            name: "edit",
+            arguments: {
+              path: "src/hunks.ts",
+              oldText,
+              newText,
+            },
+          },
+        ],
+        timestamp: 0,
+      },
+    ];
+
+    const summary = formatHistoryForCompaction(history);
+
+    expect(summary).toContain("  middle 0");
+    expect(summary).toContain("  middle 3");
+    expect(summary).toContain("… 6 unchanged line(s) omitted …");
+    expect(summary).toContain("  middle 10");
+    expect(summary).toContain("  middle 13");
+    expect(summary).not.toContain("  middle 4");
+    expect(summary).not.toContain("  middle 9");
+  });
+
+  it("middle-truncates bash tool results to 4096 tokens", () => {
+    const longOutput = "a".repeat(30000);
+    const history = [
+      {
+        role: "toolResult",
+        toolCallId: "bash-1",
+        toolName: "bash",
+        content: [{ type: "text", text: longOutput }],
+        isError: false,
+        timestamp: 0,
+      },
+    ];
+
+    const summary = formatHistoryForCompaction(history);
+
+    expect(summary).toContain("[Tool result]: bash (ok)");
+    expect(summary).toContain("tokens truncated");
+    expect(summary.length).toBeLessThan(longOutput.length);
   });
 });
 

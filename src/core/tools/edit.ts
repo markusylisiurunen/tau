@@ -2,6 +2,7 @@ import type { Tool, ToolCall } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
+import { buildLineDiff } from "../utils/line_diff.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
@@ -26,7 +27,6 @@ const EDIT_OLD_TEXT_DESCRIPTION = [
   "If multiple matches are found, you should re-attempt with a more specific oldText.",
 ].join(" ");
 const EDIT_NEW_TEXT_DESCRIPTION = "The text to replace oldText with.";
-const EDIT_DIFF_LCS_MAX_LINES = 1024;
 
 export const EDIT_TOOL: Tool = {
   name: TOOL_NAME_EDIT,
@@ -77,125 +77,6 @@ function findMatchContext(content: string, search: string, contextLines: number 
 
   const contextSnippet = lines.slice(startLine, endLine + 1).join("\n");
   return `Lines ${startLine + 1}-${endLine + 1}:\n${contextSnippet}`;
-}
-
-interface LineDiffResult {
-  lines: string[];
-  added: number;
-  removed: number;
-}
-
-function* iterateTextLinesForDiff(text: string): Iterable<string> {
-  if (text.length === 0) return;
-
-  let start = 0;
-  while (true) {
-    const idx = text.indexOf("\n", start);
-    if (idx === -1) {
-      yield text.slice(start);
-      break;
-    }
-    yield text.slice(start, idx);
-    start = idx + 1;
-    if (start === text.length) {
-      yield "";
-      break;
-    }
-  }
-}
-
-function buildLineDiff(oldText: string, newText: string): LineDiffResult {
-  const oldLines = [...iterateTextLinesForDiff(oldText)];
-  const newLines = [...iterateTextLinesForDiff(newText)];
-  const oldLen = oldLines.length;
-  const newLen = newLines.length;
-
-  const lines: string[] = [];
-  let added = 0;
-  let removed = 0;
-
-  if (oldLen === 0 && newLen === 0) {
-    return { lines, added, removed };
-  }
-
-  if (oldLen === 0) {
-    for (const line of newLines) {
-      lines.push(`+ ${line}`);
-      added++;
-    }
-    return { lines, added, removed };
-  }
-
-  if (newLen === 0) {
-    for (const line of oldLines) {
-      lines.push(`- ${line}`);
-      removed++;
-    }
-    return { lines, added, removed };
-  }
-
-  if (oldLen + newLen > EDIT_DIFF_LCS_MAX_LINES) {
-    for (const line of oldLines) {
-      lines.push(`- ${line}`);
-      removed++;
-    }
-    for (const line of newLines) {
-      lines.push(`+ ${line}`);
-      added++;
-    }
-    return { lines, added, removed };
-  }
-
-  const dp: number[][] = Array.from({ length: oldLen + 1 }, () =>
-    new Array<number>(newLen + 1).fill(0),
-  );
-
-  for (let i = oldLen - 1; i >= 0; i--) {
-    const row = dp[i]!;
-    const nextRow = dp[i + 1]!;
-    for (let j = newLen - 1; j >= 0; j--) {
-      if (oldLines[i] === newLines[j]) {
-        row[j] = (nextRow[j + 1] ?? 0) + 1;
-      } else {
-        row[j] = Math.max(nextRow[j] ?? 0, row[j + 1] ?? 0);
-      }
-    }
-  }
-
-  let i = 0;
-  let j = 0;
-  while (i < oldLen && j < newLen) {
-    if (oldLines[i] === newLines[j]) {
-      lines.push(`  ${oldLines[i]}`);
-      i++;
-      j++;
-      continue;
-    }
-
-    const down = dp[i + 1]?.[j] ?? 0;
-    const right = dp[i]?.[j + 1] ?? 0;
-    if (down >= right) {
-      lines.push(`- ${oldLines[i]}`);
-      removed++;
-      i++;
-    } else {
-      lines.push(`+ ${newLines[j]}`);
-      added++;
-      j++;
-    }
-  }
-
-  for (; i < oldLen; i++) {
-    lines.push(`- ${oldLines[i]}`);
-    removed++;
-  }
-
-  for (; j < newLen; j++) {
-    lines.push(`+ ${newLines[j]}`);
-    added++;
-  }
-
-  return { lines, added, removed };
 }
 
 function formatEditToolResultText(args: { summaryLine: string }): string {

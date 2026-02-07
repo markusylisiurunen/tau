@@ -1,4 +1,6 @@
 import type { AssistantMessage, Message, ToolResultMessage } from "@mariozechner/pi-ai";
+import { buildLineDiff, collapseLongUnchangedDiffRuns } from "./line_diff.js";
+import { truncateForTokens } from "./truncate.js";
 
 export const COMPACTION_SUMMARY_HEADER =
   "The conversation history before this point was compacted into the following summary:";
@@ -6,6 +8,8 @@ const SUMMARY_OPEN_TAG = "<summary>";
 const SUMMARY_CLOSE_TAG = "</summary>";
 const LAST_ASSISTANT_OPEN_TAG = "<last_assistant_message_verbatim>";
 const LAST_ASSISTANT_CLOSE_TAG = "</last_assistant_message_verbatim>";
+const COMPACTION_BASH_TOOL_RESULT_MAX_TOKENS = 4096;
+const COMPACTION_EDIT_UNCHANGED_CONTEXT_LINES = 8;
 
 function extractTextFromContent(content: Message["content"]): string {
   if (typeof content === "string") {
@@ -24,6 +28,10 @@ function extractTextFromContent(content: Message["content"]): string {
   return parts.join("\n").trim();
 }
 
+function formatCompactionBlock(marker: string, text: string): string {
+  return `${marker}\n${text}`;
+}
+
 function formatToolCallArguments(argumentsValue: unknown): string {
   if (!argumentsValue || typeof argumentsValue !== "object") {
     return JSON.stringify(argumentsValue) ?? "null";
@@ -34,6 +42,43 @@ function formatToolCallArguments(argumentsValue: unknown): string {
     .join(", ");
 }
 
+function buildEditCallDiff(argumentsValue: unknown): string {
+  if (!argumentsValue || typeof argumentsValue !== "object") {
+    return "(diff unavailable)";
+  }
+
+  const args = argumentsValue as Record<string, unknown>;
+  const oldText = typeof args.oldText === "string" ? args.oldText : "";
+  const newText = typeof args.newText === "string" ? args.newText : "";
+
+  const diff = buildLineDiff(oldText, newText);
+  if (diff.added === 0 && diff.removed === 0) {
+    return "(no textual changes)";
+  }
+
+  const collapsed = collapseLongUnchangedDiffRuns({
+    diffLines: diff.lines,
+    maxUnchangedLines: COMPACTION_EDIT_UNCHANGED_CONTEXT_LINES,
+  });
+
+  return collapsed.join("\n").trim() || "(no textual changes)";
+}
+
+function serializeToolCall(name: string, argumentsValue: unknown): string {
+  if (name === "edit") {
+    const args =
+      argumentsValue && typeof argumentsValue === "object"
+        ? (argumentsValue as Record<string, unknown>)
+        : undefined;
+    const path = typeof args?.path === "string" ? args.path : undefined;
+    const header = path ? `edit(path=${JSON.stringify(path)})` : "edit()";
+    return `${header}\n${buildEditCallDiff(argumentsValue)}`;
+  }
+
+  const args = formatToolCallArguments(argumentsValue);
+  return `${name}(${args})`;
+}
+
 function serializeAssistantMessage(message: AssistantMessage): string[] {
   const textParts: string[] = [];
   const toolCalls: string[] = [];
@@ -42,17 +87,16 @@ function serializeAssistantMessage(message: AssistantMessage): string[] {
     if (block.type === "text") {
       textParts.push(block.text);
     } else if (block.type === "toolCall") {
-      const args = formatToolCallArguments(block.arguments);
-      toolCalls.push(`${block.name}(${args})`);
+      toolCalls.push(serializeToolCall(block.name, block.arguments));
     }
   }
 
   const lines: string[] = [];
   if (textParts.length > 0) {
-    lines.push(`[Assistant]: ${textParts.join("\n")}`);
+    lines.push(formatCompactionBlock("[Assistant]:", textParts.join("\n")));
   }
   if (toolCalls.length > 0) {
-    lines.push(`[Assistant tool calls]: ${toolCalls.join("; ")}`);
+    lines.push(formatCompactionBlock("[Assistant tool calls]:", toolCalls.join("\n\n")));
   }
 
   return lines;
@@ -61,8 +105,16 @@ function serializeAssistantMessage(message: AssistantMessage): string[] {
 function serializeToolResultMessage(message: ToolResultMessage): string {
   const outputText = extractTextFromContent(message.content);
   const status = message.isError ? "error" : "ok";
-  const content = outputText || "(no text output)";
-  return `[Tool result]: ${message.toolName} (${status}) ${content}`;
+
+  let content = outputText || "(no text output)";
+  if (message.toolName === "bash") {
+    content = truncateForTokens(content, {
+      maxTokens: COMPACTION_BASH_TOOL_RESULT_MAX_TOKENS,
+      strategy: "middle",
+    }).content;
+  }
+
+  return formatCompactionBlock(`[Tool result]: ${message.toolName} (${status})`, content);
 }
 
 export function formatHistoryForCompaction(history: readonly Message[]): string {
@@ -72,7 +124,7 @@ export function formatHistoryForCompaction(history: readonly Message[]): string 
     if (message.role === "user") {
       const text = extractTextFromContent(message.content);
       if (text) {
-        lines.push(`[User]: ${text}`);
+        lines.push(formatCompactionBlock("[User]:", text));
       }
       continue;
     }

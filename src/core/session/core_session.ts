@@ -4,9 +4,13 @@ import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
-import { SessionEngine } from "./session_engine.js";
+import {
+  type SessionCompactionOptions,
+  type SessionCompactionResult,
+  SessionEngine,
+} from "./session_engine.js";
 
-export type { CoreEvent, CoreSubagentUiEvent };
+export type { CoreEvent, CoreSubagentUiEvent, SessionCompactionOptions, SessionCompactionResult };
 
 export type CoreSessionOptions = {
   persona: Persona;
@@ -71,6 +75,10 @@ export class CoreSession {
 
   get sessionId(): string {
     return this.engine.sessionIdValue;
+  }
+
+  async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {
+    return await this.engine.compact(options);
   }
 
   async *events(signal: AbortSignal): AsyncGenerator<CoreEvent> {

@@ -16,7 +16,6 @@ const CheckpointSchema = z.object({
   personaId: z.string(),
   reasoning: ReasoningEffortSchema.optional(),
   riskLevel: RiskLevelSchema,
-  previousSessionSummary: z.string().optional(),
   history: z.array(MessageSchema),
 });
 
@@ -26,7 +25,6 @@ export function createCheckpoint(args: {
   personaId: string;
   reasoning?: ReasoningEffort;
   riskLevel: Checkpoint["riskLevel"];
-  previousSessionSummary?: string;
   history: Message[];
   createdAt?: string;
   appVersion?: string;
@@ -38,7 +36,6 @@ export function createCheckpoint(args: {
     personaId: args.personaId,
     reasoning: args.reasoning,
     riskLevel: args.riskLevel,
-    previousSessionSummary: args.previousSessionSummary,
     history: args.history,
   };
 }

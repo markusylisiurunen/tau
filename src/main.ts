@@ -253,7 +253,6 @@ let checkpointPersonaId: string | undefined;
 let checkpointReasoning: ReasoningEffort | undefined;
 let checkpointRiskLevel: Checkpoint["riskLevel"] | undefined;
 let checkpointHistory: Checkpoint["history"] | undefined;
-let checkpointPreviousSessionSummary: string | undefined;
 
 if (cli.loadPath) {
   const checkpointPath = resolve(cwd, cli.loadPath);
@@ -278,7 +277,6 @@ if (cli.loadPath) {
   checkpointReasoning = checkpoint.reasoning;
   checkpointRiskLevel = checkpoint.riskLevel;
   checkpointHistory = checkpoint.history;
-  checkpointPreviousSessionSummary = checkpoint.previousSessionSummary;
 }
 
 let initialPersonaId: string | undefined;
@@ -371,7 +369,6 @@ const app = new ChatApp({
   initialUserMessage,
   initialRiskLevel,
   initialHistory: checkpointHistory,
-  initialPreviousSessionSummary: checkpointPreviousSessionSummary,
   noAgentContextFiles: cli.noAgentContextFiles,
   config,
   sandboxEnabled: cli.sandbox,

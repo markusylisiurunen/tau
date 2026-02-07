@@ -283,8 +283,8 @@ tau supports slash commands for common actions:
 | `/checkpoint`             | save a checkpoint file for loading later                                     |
 | `/reload`                 | reload personas, prompts, skills, and themes from disk                       |
 | `/cd`                     | change the working directory                                                 |
-| `/compact:only-summary`   | compress history and continue with a summary                                 |
-| `/compact:with-last-turn` | compress history but keep the last exchange                                  |
+| `/compact:only-summary`   | compress history into one synthetic user summary message                     |
+| `/compact:with-last-turn` | compress history and include the last assistant message verbatim in summary  |
 | `/prune:earliest-first`   | prune tool results from the start of the session                             |
 | `/prune:largest-first`    | prune largest tool results first                                             |
 | `/prune:least-important`  | prune tool results using model selection                                     |
@@ -299,7 +299,7 @@ tau supports slash commands for common actions:
 
 use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
 
-the compact commands are useful when conversations get long. they compress everything into a summary so the model retains context without the overhead of a full history. the prune commands drop tool results from the active context without summarizing, and default to pruning 25% if you omit the fraction.
+the compact commands are useful when conversations get long. they replace prior context with a single synthetic user message that contains the compacted summary (and optionally the last assistant message verbatim), so the model keeps continuity without carrying full history. the prune commands drop tool results from the active context without summarizing, and default to pruning 25% if you omit the fraction.
 
 ## keyboard shortcuts
 

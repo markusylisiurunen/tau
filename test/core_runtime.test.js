@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
-import { formatHistoryForCompaction } from "../dist/core/utils/compact.js";
+import {
+  buildCompactionUserMessage,
+  extractCompactionSummaryFromText,
+  formatHistoryForCompaction,
+  partitionHistoryForCompaction,
+} from "../dist/core/utils/compact.js";
 import {
   buildEnvironmentTag,
   buildProjectContextBlock,
@@ -119,10 +124,44 @@ describe("summary formatting", () => {
 
     const summary = formatHistoryForCompaction(history);
 
-    expect(summary).toContain("--- USER ---");
-    expect(summary).toContain("hello");
-    expect(summary).toContain('[Tool call: read({"path":"README.md"})]');
-    expect(summary).toContain("[Tool output: read (truncated)]");
+    expect(summary).toContain("[User]: hello");
+    expect(summary).toContain('[Assistant tool calls]: read(path="README.md")');
+    expect(summary).toContain("[Tool result]: read (ok) output");
     expect(summary).not.toContain("hmm");
+  });
+});
+
+describe("compaction context message", () => {
+  it("builds and extracts compaction summary text", () => {
+    const message = buildCompactionUserMessage({
+      summary: "## Goal\nShip feature",
+      lastAssistantMessage: "Done. Tests passed.",
+    });
+
+    expect(message).toContain("<summary>");
+    expect(message).toContain("<last_assistant_message_verbatim>");
+    expect(extractCompactionSummaryFromText(message)).toBe("## Goal\nShip feature");
+  });
+
+  it("excludes previous compaction user message from the next summary input", () => {
+    const compactionMessage = buildCompactionUserMessage({ summary: "old summary" });
+    const history = [
+      {
+        role: "user",
+        content: [{ type: "text", text: compactionMessage }],
+        timestamp: 0,
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "new request" }],
+        timestamp: 1,
+      },
+    ];
+
+    const result = partitionHistoryForCompaction(history);
+
+    expect(result.previousSummary).toBe("old summary");
+    expect(result.messagesToSummarize).toHaveLength(1);
+    expect(result.messagesToSummarize[0].role).toBe("user");
   });
 });

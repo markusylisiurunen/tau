@@ -57,7 +57,11 @@ import {
 } from "../core/types.js";
 import { resolveAgentCwd, resolveSandboxPath } from "../core/utils/agent_environment.js";
 import { findAgentsFilesFromCwdToHome } from "../core/utils/agents_files.js";
-import { formatHistoryForCompaction } from "../core/utils/compact.js";
+import {
+  buildCompactionUserMessage,
+  formatHistoryForCompaction,
+  partitionHistoryForCompaction,
+} from "../core/utils/compact.js";
 import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
@@ -96,7 +100,6 @@ export interface ChatControllerOptions {
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
   initialHistory?: Message[];
-  initialPreviousSessionSummary?: string;
   noAgentContextFiles?: boolean;
   config?: Config;
   sandboxEnabled?: boolean;
@@ -167,6 +170,85 @@ const PRUNED_TOOL_RESULT_PREFIX = "[tool result pruned]";
 const PRUNE_PREVIEW_MAX_TOKENS = 512;
 const PRUNE_MAX_OVERAGE_RATIO = 0.1;
 
+const COMPACTION_SUMMARIZATION_SYSTEM_PROMPT =
+  "You are a context summarization assistant. Do not continue the conversation. Do not answer any conversation questions. Only output the structured summary in the exact format requested.";
+
+const COMPACTION_SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another assistant will use to continue the work.
+
+Use this exact format:
+
+## Goal
+[What the user is trying to accomplish.]
+
+## Constraints & Preferences
+- [Constraints, preferences, or requirements from the user]
+- [Use "(none)" when nothing explicit exists]
+
+## Progress
+### Done
+- [x] [Completed tasks and confirmed outcomes]
+
+### In Progress
+- [ ] [Current work in progress]
+
+### Blocked
+- [Open blockers, or "(none)"]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [Ordered next action]
+
+## Critical Context
+- [Concrete details needed to resume: file paths, function names, commands, errors]
+
+Rules:
+- Keep each section concise.
+- Distinguish attempted work from confirmed outcomes.
+- Preserve exact file paths, function names, commands, and error messages.`;
+
+const COMPACTION_UPDATE_SUMMARIZATION_PROMPT = `The messages above are new conversation messages to incorporate into the existing summary in <previous-summary> tags.
+
+Update the existing structured summary with these rules:
+- Preserve all still-relevant information from the previous summary.
+- Add new progress, decisions, and context from the new messages.
+- Move items from In Progress to Done when completed.
+- Update Next Steps based on the current state.
+- Remove information that is no longer relevant.
+
+Use the exact same format as before:
+
+## Goal
+[Preserve and extend goals as needed]
+
+## Constraints & Preferences
+- [Preserve and extend constraints]
+
+## Progress
+### Done
+- [x] [Previously done and newly completed]
+
+### In Progress
+- [ ] [Current work]
+
+### Blocked
+- [Current blockers, or "(none)"]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [Updated ordered actions]
+
+## Critical Context
+- [Concrete details needed to resume: file paths, function names, commands, errors]
+
+Rules:
+- Keep each section concise.
+- Distinguish attempted work from confirmed outcomes.
+- Preserve exact file paths, function names, commands, and error messages.`;
+
 export class ChatController {
   private readonly view: ChatView;
   private personas: Persona[];
@@ -216,7 +298,6 @@ export class ChatController {
   private subagentPrompts: Record<string, string> = {};
   private pendingRiskLevelChange?: { from: RiskLevel; to: RiskLevel };
   private pendingCwdChange?: { from: string; to: string };
-  private previousSessionSummary?: string;
   private expandedFilesInCurrentPrompt: Set<string> = new Set();
   private expandedSkillsInCurrentPrompt: Set<string> = new Set();
   private assistantState?: AssistantState;
@@ -294,10 +375,8 @@ export class ChatController {
     if (options.initialRiskLevel) {
       this.riskLevel = options.initialRiskLevel;
     }
-    this.previousSessionSummary = options.initialPreviousSessionSummary;
-
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-    this.updateSystemPrompts(this.previousSessionSummary, skillsContext.skillsBlock);
+    this.updateSystemPrompts(skillsContext.skillsBlock);
 
     this.toolBackend =
       options.toolBackend ??
@@ -533,16 +612,7 @@ export class ChatController {
 
   private hydrateCheckpoint(history?: readonly Message[]): void {
     if (!history || history.length === 0) {
-      if (this.previousSessionSummary) {
-        this.view.addMessage({ type: "session_divider", label: "loaded session" });
-        this.view.addMessage({ type: "session_summary", summary: this.previousSessionSummary });
-      }
       return;
-    }
-
-    if (this.previousSessionSummary) {
-      this.view.addMessage({ type: "session_divider", label: "loaded session" });
-      this.view.addMessage({ type: "session_summary", summary: this.previousSessionSummary });
     }
 
     for (const message of history) {
@@ -902,7 +972,7 @@ export class ChatController {
     this.refreshProjectFilesInBackground();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
-    this.rebuildSubagentPrompts(this.previousSessionSummary);
+    this.rebuildSubagentPrompts();
     this.refreshStatus();
 
     const from = this.pendingCwdChange?.from ?? previousAgentCwd;
@@ -1475,7 +1545,7 @@ export class ChatController {
 
   private async checkpointSession(): Promise<void> {
     const history = this.engine.history;
-    if (history.length === 0 && !this.previousSessionSummary) {
+    if (history.length === 0) {
       this.view.addSystemMessage("no conversation to checkpoint.", "warn", { persist: false });
       return;
     }
@@ -1485,7 +1555,6 @@ export class ChatController {
         personaId: this.currentPersona.id,
         reasoning: this.currentPersona.settings.reasoning ?? "none",
         riskLevel: this.riskLevel,
-        previousSessionSummary: this.previousSessionSummary,
         history: [...history],
       });
       const dir = await mkdtemp(join(tmpdir(), "tau-checkpoint-"));
@@ -1524,7 +1593,6 @@ export class ChatController {
     this.isBashMode = false;
     this.isBashIncognito = false;
     this.isMemoryMode = false;
-    this.previousSessionSummary = undefined;
 
     try {
       const report = await this.refreshReloadableContent("new-session");
@@ -1533,7 +1601,7 @@ export class ChatController {
       this.view.addSystemMessage(`reload failed: ${(err as Error).message}`, "error");
     }
 
-    this.rebuildSystemPromptForCurrentPersona(this.previousSessionSummary);
+    this.rebuildSystemPromptForCurrentPersona();
     this.refreshStatus();
   }
 
@@ -1545,68 +1613,22 @@ export class ChatController {
     return this.escapeXml(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
   }
 
-  private extractLastTurn(history: readonly Message[]): {
-    lastUserText?: string;
-    lastAssistantText?: string;
-  } {
-    if (history.length === 0) {
-      return {};
-    }
-
-    let lastUserIndex = -1;
-    let lastUserText: string | undefined;
-
-    // Find the last user message and extract its text
+  private extractLastAssistantMessage(history: readonly Message[]): string | undefined {
     for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i]!.role === "user") {
-        lastUserIndex = i;
-        const userMessage = history[i]!;
-        const textParts: string[] = [];
-        for (const block of userMessage.content) {
-          if (typeof block === "string") {
-            textParts.push(block);
-          } else if (block.type === "text") {
-            textParts.push(block.text);
-          }
-        }
-        const combined = textParts.join("\n").trim();
-        if (combined) {
-          lastUserText = combined;
-        }
-        break;
+      if (history[i]!.role !== "assistant") {
+        continue;
+      }
+
+      const text = extractAssistantText(history[i]! as AssistantMessage).trim();
+      if (text) {
+        return text;
       }
     }
 
-    let lastAssistantText: string | undefined;
-
-    if (lastUserIndex >= 0) {
-      // Find the last assistant message after the last user message
-      for (let i = history.length - 1; i > lastUserIndex; i--) {
-        if (history[i]!.role === "assistant") {
-          const text = extractAssistantText(history[i]! as AssistantMessage).trim();
-          if (text) {
-            lastAssistantText = text;
-          }
-          break;
-        }
-      }
-    } else {
-      // No user message found; look for the last assistant message overall
-      for (let i = history.length - 1; i >= 0; i--) {
-        if (history[i]!.role === "assistant") {
-          const text = extractAssistantText(history[i]! as AssistantMessage).trim();
-          if (text) {
-            lastAssistantText = text;
-          }
-          break;
-        }
-      }
-    }
-
-    return { lastUserText, lastAssistantText };
+    return undefined;
   }
 
-  private updateSystemPrompts(previousSessionSummary?: string, skillsBlock?: string): void {
+  private updateSystemPrompts(skillsBlock?: string): void {
     const timestamp = new Date(this.deps.clock.now()).toISOString();
     this.environmentTag = buildEnvironmentTag({
       riskLevel: this.riskLevel,
@@ -1620,43 +1642,36 @@ export class ChatController {
     this.baseSystemPrompt = this.buildSystemPrompt({
       persona: this.currentPersona,
       skillsBlock: resolvedSkillsBlock,
-      previousSessionSummary,
     });
     this.subagentPrompts = this.buildSubagentPromptMap({
       persona: this.currentPersona,
       skillsBlock: resolvedSkillsBlock,
-      previousSessionSummary,
       timestamp,
     });
   }
 
-  private updateSubagentPrompts(previousSessionSummary?: string, skillsBlock?: string): void {
+  private updateSubagentPrompts(skillsBlock?: string): void {
     const timestamp = new Date(this.deps.clock.now()).toISOString();
     const resolvedSkillsBlock =
       skillsBlock ?? this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock;
     this.subagentPrompts = this.buildSubagentPromptMap({
       persona: this.currentPersona,
       skillsBlock: resolvedSkillsBlock,
-      previousSessionSummary,
       timestamp,
     });
   }
 
-  private rebuildSystemPrompt(previousSessionSummary?: string, skillsBlock?: string): void {
-    this.updateSystemPrompts(previousSessionSummary, skillsBlock);
+  private rebuildSystemPrompt(skillsBlock?: string): void {
+    this.updateSystemPrompts(skillsBlock);
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt, this.subagentPrompts);
   }
 
-  private rebuildSubagentPrompts(previousSessionSummary?: string, skillsBlock?: string): void {
-    this.updateSubagentPrompts(previousSessionSummary, skillsBlock);
+  private rebuildSubagentPrompts(skillsBlock?: string): void {
+    this.updateSubagentPrompts(skillsBlock);
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt, this.subagentPrompts);
   }
 
-  private buildSystemPrompt(args: {
-    persona: Persona;
-    skillsBlock?: string;
-    previousSessionSummary?: string;
-  }): string {
+  private buildSystemPrompt(args: { persona: Persona; skillsBlock?: string }): string {
     return buildBaseSystemPrompt({
       personaSystemPrompt: args.persona.systemPrompt,
       skillsBlock: args.skillsBlock,
@@ -1665,7 +1680,6 @@ export class ChatController {
         ? buildSandboxInfoBlock(this.config.sandbox?.environmentInfo)
         : undefined,
       environmentTag: this.environmentTag,
-      previousSessionSummary: args.previousSessionSummary,
       subagentsBlock: formatSubagentsForPrompt(args.persona),
     });
   }
@@ -1673,7 +1687,6 @@ export class ChatController {
   private buildSubagentPromptMap(args: {
     persona: Persona;
     skillsBlock?: string;
-    previousSessionSummary?: string;
     timestamp: string;
   }): Record<string, string> {
     const subagents = args.persona.subagents;
@@ -1703,7 +1716,6 @@ export class ChatController {
         projectContextBlock: this.projectContextBlock,
         sandboxInfoBlock,
         environmentTag,
-        previousSessionSummary: args.previousSessionSummary,
       });
     }
 
@@ -1711,31 +1723,25 @@ export class ChatController {
   }
 
   private async generateSummary(history: readonly Message[], guidance?: string): Promise<string> {
-    const formattedHistory = formatHistoryForCompaction(history);
+    const { previousSummary, messagesToSummarize } = partitionHistoryForCompaction(history);
+    const formattedHistory = formatHistoryForCompaction(messagesToSummarize);
+
+    if (!formattedHistory) {
+      throw new Error("nothing new to compact.");
+    }
+
+    let summaryPrompt = `<conversation>\n${formattedHistory}\n</conversation>\n\n`;
+    if (previousSummary?.trim()) {
+      summaryPrompt += `<previous-summary>\n${previousSummary.trim()}\n</previous-summary>\n\n`;
+    }
+    summaryPrompt += previousSummary
+      ? COMPACTION_UPDATE_SUMMARIZATION_PROMPT
+      : COMPACTION_SUMMARIZATION_PROMPT;
+
     const guidanceBlock = guidance?.trim();
-    const guidanceSection = guidanceBlock
-      ? `\nAdditional guidance from the user:\n${guidanceBlock}\n`
-      : "\n";
-    const summaryPrompt = `
-Summarize this conversation so another assistant can continue without losing context. Be specific and factual. Aim for extreme compression; at least 90% reduction from the original conversation length, preferably more. Every word should earn its place.
-${guidanceSection}<conversation>
-${formattedHistory.trim()}
-</conversation>
-
-The conversation format uses \`--- USER ---\` and \`--- ASSISTANT ---\` markers. Tool calls appear as \`[Tool call: name(arguments)]\` and outputs as \`[Tool output: name (truncated)]\`. Outputs are truncated, so when tools were used, describe what was attempted rather than assuming outcomes.
-
-Capture only what matters for continuity:
-
-- The goal or topic. What did the user want to accomplish or discuss? Note how this evolved if it changed during the conversation.
-- Key substance. For discussions: important facts, explanations, or ideas that were shared. For coding tasks: files created or modified, commands run, with concrete paths and names. Distinguish between "attempted" and "confirmed working" when tools were involved.
-- Decisions and preferences. Conclusions reached, options chosen, or constraints the user specified. These should carry forward.
-- Open threads. What's unresolved? For discussions: unanswered questions, topics to revisit. For tasks: what's incomplete, broken, or in progress when the conversation ended.
-- Skip the back-and-forth. Collapse tangents and false starts into what ultimately mattered. The reader has no context beyond what you provide, so name things concretely and include enough detail to resume without guessing.
-
-Ruthlessly compress: collapse tangents, skip back-and-forth, omit pleasantries. Name things concretely (paths, functions, errors) but use minimal words.
-
-Write plain prose, no formatting. Be thorough enough that the reader can resume without guessing, but don't narrate every exchange. When relevant, name things concretely: file paths, function names, error messages. The reader has no context beyond what you provide as the summary.
-    `.trim();
+    if (guidanceBlock) {
+      summaryPrompt += `\n\nAdditional focus: ${guidanceBlock}`;
+    }
 
     let apiKey: string | undefined;
     try {
@@ -1753,16 +1759,11 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     if (!apiKey && this.currentPersona.model.provider === "openai-codex") {
       throw new Error(formatCodexAuthError(this.authPath));
     }
+
     const stream = streamModel(
       this.currentPersona.model,
       {
-        systemPrompt: [
-          "You are a precise and thorough conversation summarizer.",
-          "Your task is to distill conversations into clear, actionable summaries that preserve all context needed for seamless continuation.",
-          "Focus on facts, decisions, and concrete details rather than narrative flow.",
-          "Be specific about file paths, function names, and technical details when present.",
-          "Distinguish between what was attempted versus what was confirmed to work.",
-        ].join(" "),
+        systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
         messages: [
           {
             role: "user",
@@ -1771,39 +1772,44 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
           },
         ],
       },
-      { reasoning: "medium", sessionId: `tau-summary-${randomUUID()}`, ...(apiKey && { apiKey }) },
+      { reasoning: "high", sessionId: `tau-summary-${randomUUID()}`, ...(apiKey && { apiKey }) },
     );
 
     const final = await stream.result();
-    return extractAssistantText(final).trim();
+    const summary = extractAssistantText(final).trim();
+    if (!summary) {
+      throw new Error("summarization returned an empty response.");
+    }
+
+    return summary;
   }
 
-  private applySessionContext(previousSessionContext: string): void {
-    this.previousSessionSummary = previousSessionContext;
+  private canCompactHistory(history: readonly Message[]): boolean {
+    const { messagesToSummarize } = partitionHistoryForCompaction(history);
+    return messagesToSummarize.length > 0;
+  }
 
-    // Reset the session state but preserve history with divider and summary
+  private applyCompactedHistory(compactionMessage: string): void {
     this.engine.reset();
     this.view.resetToolUiSession();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
     this.view.addMessage({ type: "session_divider", label: "new session" });
-    this.view.addMessage({
-      type: "session_summary",
-      summary: this.previousSessionSummary,
-    });
+
+    this.engine.addUserText(compactionMessage);
+    this.view.addMessage({ type: "user", text: compactionMessage });
+
     this.isBashMode = false;
     this.isBashIncognito = false;
     this.isMemoryMode = false;
 
-    // Rebuild environment tag and system prompt with the new summary and current risk level
-    this.rebuildSystemPrompt(this.previousSessionSummary);
-
+    this.rebuildSystemPrompt();
     this.refreshStatus();
   }
 
   private async compactSessionOnlySummary(guidance?: string): Promise<void> {
     const history = this.engine.history;
-    if (history.length === 0) {
+    if (!this.canCompactHistory(history)) {
       this.view.addSystemMessage("no conversation to compact.", "warn");
       return;
     }
@@ -1814,7 +1820,8 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     try {
       const summary = await this.generateSummary(history, guidance);
-      this.applySessionContext(summary);
+      const compactionMessage = buildCompactionUserMessage({ summary });
+      this.applyCompactedHistory(compactionMessage);
 
       this.view.addSystemMessage(
         "session compacted. previous context has been summarized.",
@@ -1832,7 +1839,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
   private async compactSessionSummaryAndLastTurn(guidance?: string): Promise<void> {
     const history = this.engine.history;
-    if (history.length === 0) {
+    if (!this.canCompactHistory(history)) {
       this.view.addSystemMessage("no conversation to compact.", "warn");
       return;
     }
@@ -1843,29 +1850,17 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
 
     try {
       const summary = await this.generateSummary(history, guidance);
+      const { messagesToSummarize } = partitionHistoryForCompaction(history);
+      const lastAssistantMessage = this.extractLastAssistantMessage(messagesToSummarize);
+      const compactionMessage = buildCompactionUserMessage({
+        summary,
+        lastAssistantMessage,
+      });
 
-      // Extract the last turn from history
-      const lastTurn = this.extractLastTurn(history);
-
-      // Build the combined context with summary and last turn
-      let sessionContext = summary;
-
-      if (lastTurn.lastUserText || lastTurn.lastAssistantText) {
-        sessionContext += "\n\nLast turn from previous session (verbatim):\n";
-        sessionContext += "<last_turn>";
-        if (lastTurn.lastUserText) {
-          sessionContext += `\n<last_user_message>${this.escapeXml(lastTurn.lastUserText)}</last_user_message>`;
-        }
-        if (lastTurn.lastAssistantText) {
-          sessionContext += `\n<last_assistant_message>${this.escapeXml(lastTurn.lastAssistantText)}</last_assistant_message>`;
-        }
-        sessionContext += "\n</last_turn>";
-      }
-
-      this.applySessionContext(sessionContext);
+      this.applyCompactedHistory(compactionMessage);
 
       this.view.addSystemMessage(
-        "session compacted. previous context and last turn have been included.",
+        "session compacted. previous context and last assistant message have been included.",
         "success",
       );
     } catch (err) {
@@ -2547,7 +2542,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.refreshStatus();
 
     if (previous !== level) {
-      this.rebuildSubagentPrompts(this.previousSessionSummary);
+      this.rebuildSubagentPrompts();
       const from = this.pendingRiskLevelChange?.from ?? previous;
       if (from === level) {
         this.pendingRiskLevelChange = undefined;
@@ -2574,7 +2569,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     this.currentPersona = persona;
     this.clampPersonaReasoning(this.currentPersona);
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-    this.rebuildSystemPrompt(this.previousSessionSummary, skillsContext.skillsBlock);
+    this.rebuildSystemPrompt(skillsContext.skillsBlock);
     this.refreshStatus();
 
     if (skillsContext.unknown.length > 0) {
@@ -2741,12 +2736,9 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
     }
   }
 
-  private rebuildSystemPromptForCurrentPersona(
-    previousSessionSummary: string | undefined,
-    options?: { showUnknownSkills?: boolean },
-  ): void {
+  private rebuildSystemPromptForCurrentPersona(options?: { showUnknownSkills?: boolean }): void {
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-    this.rebuildSystemPrompt(previousSessionSummary, skillsContext.skillsBlock);
+    this.rebuildSystemPrompt(skillsContext.skillsBlock);
 
     if (options?.showUnknownSkills && skillsContext.unknown.length > 0) {
       this.view.addSystemMessage(
@@ -2797,7 +2789,7 @@ Write plain prose, no formatting. Be thorough enough that the reader can resume 
       const report = await this.refreshReloadableContent("reload-command");
       this.applyReloadMessages(report.messages);
 
-      this.rebuildSystemPromptForCurrentPersona(this.previousSessionSummary, {
+      this.rebuildSystemPromptForCurrentPersona({
         showUnknownSkills: true,
       });
 

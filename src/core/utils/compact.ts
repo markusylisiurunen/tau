@@ -163,23 +163,55 @@ export function buildCompactionUserMessage(args: {
 }
 
 export function extractCompactionSummaryFromText(text: string): string | undefined {
-  if (!text.includes(COMPACTION_SUMMARY_HEADER)) {
+  const summaryPrefix = `${COMPACTION_SUMMARY_HEADER}\n\n${SUMMARY_OPEN_TAG}\n`;
+  if (!text.startsWith(summaryPrefix)) {
     return undefined;
   }
 
-  const summaryStart = text.indexOf(SUMMARY_OPEN_TAG);
-  if (summaryStart === -1) {
-    return undefined;
-  }
-
-  const summaryContentStart = summaryStart + SUMMARY_OPEN_TAG.length;
-  const summaryEnd = text.indexOf(SUMMARY_CLOSE_TAG, summaryContentStart);
+  const summaryContentStart = summaryPrefix.length;
+  const summaryEndMarker = `\n${SUMMARY_CLOSE_TAG}`;
+  const summaryEnd = text.indexOf(summaryEndMarker, summaryContentStart);
   if (summaryEnd === -1) {
     return undefined;
   }
 
   const summary = text.slice(summaryContentStart, summaryEnd).trim();
-  return summary || undefined;
+  if (!summary) {
+    return undefined;
+  }
+
+  const remainderStart = summaryEnd + summaryEndMarker.length;
+  const remainder = text.slice(remainderStart);
+  if (!remainder) {
+    return summary;
+  }
+
+  if (!remainder.startsWith("\n\n")) {
+    return undefined;
+  }
+
+  const lastAssistantPrefix = `${LAST_ASSISTANT_OPEN_TAG}\n`;
+  const lastAssistantBlock = remainder.slice(2);
+  if (!lastAssistantBlock.startsWith(lastAssistantPrefix)) {
+    return undefined;
+  }
+
+  const lastAssistantContentStart = lastAssistantPrefix.length;
+  const lastAssistantEndMarker = `\n${LAST_ASSISTANT_CLOSE_TAG}`;
+  const lastAssistantEnd = lastAssistantBlock.indexOf(
+    lastAssistantEndMarker,
+    lastAssistantContentStart,
+  );
+  if (lastAssistantEnd === -1) {
+    return undefined;
+  }
+
+  const trailing = lastAssistantBlock.slice(lastAssistantEnd + lastAssistantEndMarker.length);
+  if (trailing.length > 0) {
+    return undefined;
+  }
+
+  return summary;
 }
 
 export function extractCompactionSummaryFromMessage(message: Message): string | undefined {

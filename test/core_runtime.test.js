@@ -247,6 +247,26 @@ describe("compaction context message", () => {
     expect(extractCompactionSummaryFromText(message)).toBe("## Goal\nShip feature");
   });
 
+  it("does not extract summary from non-canonical marker text", () => {
+    const quotedCompactionText = [
+      "Please echo this format:",
+      "The conversation history before this point was compacted into the following summary:",
+      "<summary>",
+      "quoted content",
+      "</summary>",
+    ].join("\n");
+
+    expect(extractCompactionSummaryFromText(quotedCompactionText)).toBeUndefined();
+  });
+
+  it("does not extract summary when extra trailing text is present", () => {
+    const messageWithTrailingText = `${buildCompactionUserMessage({
+      summary: "old summary",
+    })}\n\ntrailing text`;
+
+    expect(extractCompactionSummaryFromText(messageWithTrailingText)).toBeUndefined();
+  });
+
   it("excludes previous compaction user message from the next summary input", () => {
     const compactionMessage = buildCompactionUserMessage({ summary: "old summary" });
     const history = [

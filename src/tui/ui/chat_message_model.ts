@@ -3,7 +3,6 @@ import type { ToolUiEvent } from "../../core/tools/registry.js";
 import { AppIntroComponent, type AppIntroModel } from "./app_intro.js";
 import { AssistantMessageComponent, type AssistantMessageModel } from "./assistant_message.js";
 import { SessionDividerComponent, type SessionDividerModel } from "./session_divider.js";
-import { SessionSummaryComponent, type SessionSummaryModel } from "./session_summary.js";
 import type { SystemMessageModel } from "./system_message.js";
 import { SystemMessageComponent } from "./system_message.js";
 import type { Theme } from "./theme/index.js";
@@ -20,8 +19,7 @@ export type ChatMessageModel =
       type: "tool";
       event: ToolUiEvent;
     }
-  | (SessionDividerModel & { type: "session_divider" })
-  | (SessionSummaryModel & { type: "session_summary" });
+  | (SessionDividerModel & { type: "session_divider" });
 
 export type { AssistantMessageModel };
 
@@ -160,18 +158,6 @@ export function renderChatMessage(
         update: (nextModel) => {
           if (nextModel.type !== "session_divider") return false;
           component.update({ label: nextModel.label });
-          return true;
-        },
-      };
-    }
-    case "session_summary": {
-      const component = new SessionSummaryComponent(theme, { summary: model.summary });
-      return {
-        component,
-        isAssistant: false,
-        update: (nextModel) => {
-          if (nextModel.type !== "session_summary") return false;
-          component.update({ summary: nextModel.summary });
           return true;
         },
       };

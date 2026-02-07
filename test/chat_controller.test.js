@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { personas } from "../dist/core/personas.js";
+import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../dist/core/tools/tool_names.js";
 import { ChatController } from "../dist/tui/chat_controller.js";
 import { DOUBLE_PRESS_WINDOW_MS } from "../dist/tui/constants.js";
 
@@ -193,7 +194,7 @@ describe("ChatController prune handling", () => {
         {
           type: "toolCall",
           id: "edit-call-1",
-          name: "edit",
+          name: TOOL_NAME_EDIT,
           arguments: {
             path: "src/example.ts",
             oldText,
@@ -207,10 +208,21 @@ describe("ChatController prune handling", () => {
     controller.engine.addMessage({
       role: "toolResult",
       toolCallId: "edit-call-1",
-      toolName: "edit",
+      toolName: TOOL_NAME_EDIT,
       content: [{ type: "text", text: "successfully edited src/example.ts" }],
       isError: false,
       timestamp: 2,
+    });
+  }
+
+  function seedBashResult(controller, text) {
+    controller.engine.addMessage({
+      role: "toolResult",
+      toolCallId: "bash-call-1",
+      toolName: TOOL_NAME_BASH,
+      content: [{ type: "text", text }],
+      isError: false,
+      timestamp: 3,
     });
   }
 
@@ -235,7 +247,7 @@ describe("ChatController prune handling", () => {
 
     const toolResult = history.find((message) => message.role === "toolResult");
     const text = toolResult.content[0].text;
-    expect(text).toContain("[tool result pruned] edit diff");
+    expect(text).toContain(`[tool result pruned] ${TOOL_NAME_EDIT} diff`);
     expect(text).toContain("… 6 unchanged line(s) omitted …");
     expect(text).toContain("  pre 6");
     expect(text).not.toContain("  pre 0");
@@ -245,7 +257,10 @@ describe("ChatController prune handling", () => {
     expect(text).not.toContain("  post 9");
 
     expect(stub.systemMessages).toContainEqual(
-      expect.objectContaining({ kind: "success", text: expect.stringContaining("edit tool call") }),
+      expect.objectContaining({
+        kind: "success",
+        text: expect.stringContaining(`${TOOL_NAME_EDIT} tool call`),
+      }),
     );
     expect(stub.systemMessages).not.toContainEqual(
       expect.objectContaining({ text: "no bash tool results to prune." }),
@@ -273,6 +288,63 @@ describe("ChatController prune handling", () => {
     expect(stub.systemMessages.at(-1)).toEqual({
       text: "prune fraction is 0, nothing to prune.",
       kind: "warn",
+    });
+  });
+
+  it("keeps failed edit tool results intact", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    const oldText = "before";
+    const newText = "after";
+    seedEditHistory(controller, oldText, newText);
+
+    controller.engine.replaceMessage(1, {
+      role: "toolResult",
+      toolCallId: "edit-call-1",
+      toolName: TOOL_NAME_EDIT,
+      content: [{ type: "text", text: "oldText not found in file." }],
+      isError: true,
+      timestamp: 2,
+    });
+
+    await controller.onUserInput("/prune:earliest-first");
+
+    const history = controller.engine.history;
+    const toolResult = history.find((message) => message.role === "toolResult");
+    expect(toolResult.content[0].text).toBe("oldText not found in file.");
+    expect(toolResult.isError).toBe(true);
+  });
+
+  it("does not prune edit payloads when least-important sampling fails", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    const oldText = "line before";
+    const newText = "line after";
+    seedEditHistory(controller, oldText, newText);
+    seedBashResult(controller, "bash output");
+
+    controller.requestLeastImportantPruneSelection = async () => {
+      throw new Error("sampling failed");
+    };
+
+    await controller.onUserInput("/prune:least-important");
+
+    const history = controller.engine.history;
+    const assistant = history.find((message) => message.role === "assistant");
+    const toolCall = assistant.content.find((block) => block.type === "toolCall");
+    expect(toolCall.arguments.oldText).toBe(oldText);
+    expect(toolCall.arguments.newText).toBe(newText);
+
+    const editResult = history.find(
+      (message) => message.role === "toolResult" && message.toolName === TOOL_NAME_EDIT,
+    );
+    expect(editResult.content[0].text).toBe("successfully edited src/example.ts");
+
+    expect(stub.systemMessages.at(-1)).toEqual({
+      text: "prune failed: sampling failed",
+      kind: "error",
     });
   });
 });

@@ -573,13 +573,21 @@ export class ChatController {
     }
   }
 
-  private rebuildViewHistoryFromSession(): void {
-    this.view.resetToolUiSession();
-    this.view.clearMessages({ preserveAppIntro: true });
+  private getRenderedHistoryMessageCount(messages: readonly Message[]): number {
+    let count = 0;
 
-    for (const message of this.engine.history) {
-      this.renderHistoryMessage(message);
+    for (const message of messages) {
+      if (message.role === "assistant" || message.role === "toolResult") {
+        count += 1;
+        continue;
+      }
+
+      if (message.role === "user" && this.extractUserText(message)) {
+        count += 1;
+      }
     }
+
+    return count;
   }
 
   private extractUserText(message: Message): string {
@@ -1567,13 +1575,19 @@ export class ChatController {
 
   private applyRewindSelection(historyIndex: number): void {
     this.view.hideRewindPicker();
+
+    const removedHistoryTail = this.engine.history.slice(historyIndex);
     const rewound = this.engine.rewindToHistoryIndex(historyIndex);
     if (!rewound) {
       this.view.addSystemMessage("rewind failed.", "error");
       return;
     }
 
-    this.rebuildViewHistoryFromSession();
+    const removeCount = this.getRenderedHistoryMessageCount(removedHistoryTail);
+    if (removeCount > 0) {
+      this.view.removeLastMessages(removeCount);
+    }
+
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
     this.view.setEditorText(rewound.text);
@@ -1585,10 +1599,7 @@ export class ChatController {
     if (!firstLine) {
       return "(empty user message)";
     }
-    if (firstLine.length <= 120) {
-      return firstLine;
-    }
-    return `${firstLine.slice(0, 117)}...`;
+    return firstLine;
   }
 
   private async clearSession(): Promise<void> {

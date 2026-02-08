@@ -6,9 +6,10 @@ describe("core event playback", () => {
     const playback = createPlaybackHarness();
 
     playback.playEvents([
-      { type: "assistant_start" },
+      { type: "assistant_start", historyEntryId: "assistant-1" },
       {
         type: "assistant_partial",
+        historyEntryId: "assistant-1",
         snapshot: { text: "", thinking: "hmm", hasTextStarted: false, hasAnyThinking: true },
       },
     ]);
@@ -22,9 +23,10 @@ describe("core event playback", () => {
     playback.reset();
 
     playback.playEvents([
-      { type: "assistant_start" },
+      { type: "assistant_start", historyEntryId: "assistant-2" },
       {
         type: "assistant_partial",
+        historyEntryId: "assistant-2",
         snapshot: { text: "", thinking: "hmm", hasTextStarted: false, hasAnyThinking: true },
       },
     ]);
@@ -55,7 +57,12 @@ describe("core event playback", () => {
     await playback.playTurn([
       {
         type: "tool_ui",
-        uiEvent: { type: "write_blocked", path: "notes.txt", reason: "blocked" },
+        uiEvent: {
+          type: "write_blocked",
+          toolCallId: "write-1",
+          path: "notes.txt",
+          reason: "blocked",
+        },
       },
     ]);
 

@@ -40,9 +40,9 @@ function createStubView() {
       removeMessages: (ids) => {
         removeMessagesCalls.push(ids);
       },
-      addMessage: (model) => {
+      addMessage: (model, id) => {
         added.push(model);
-        return `msg-${added.length}`;
+        return id ?? `msg-${added.length}`;
       },
       updateAssistantMessage: (id, model) => {
         updated.push({ id, model });
@@ -102,9 +102,10 @@ describe("ChatController event handling", () => {
     const controller = createController(stub.view);
 
     stub.added.length = 0;
-    controller.onEvent({ type: "assistant_start" });
+    controller.onEvent({ type: "assistant_start", historyEntryId: "assistant-1" });
     controller.onEvent({
       type: "assistant_partial",
+      historyEntryId: "assistant-1",
       snapshot: { text: "", thinking: "hmm", hasTextStarted: false, hasAnyThinking: true },
     });
 
@@ -115,9 +116,10 @@ describe("ChatController event handling", () => {
     handlers.onCtrlT?.();
 
     stub.added.length = 0;
-    controller.onEvent({ type: "assistant_start" });
+    controller.onEvent({ type: "assistant_start", historyEntryId: "assistant-2" });
     controller.onEvent({
       type: "assistant_partial",
+      historyEntryId: "assistant-2",
       snapshot: { text: "", thinking: "hmm", hasTextStarted: false, hasAnyThinking: true },
     });
 
@@ -231,7 +233,7 @@ describe("ChatController rewind flow", () => {
     expect(stub.rewindPickerShows[0].items.map((item) => item.label)).toEqual(["user text"]);
 
     const picker = stub.rewindPickerShows[0];
-    picker.onSelect("0");
+    picker.onSelect(picker.items[0].id);
     expect(stub.editorTextUpdates.at(-1)).toBe("user text");
   });
 
@@ -262,12 +264,14 @@ describe("ChatController rewind flow", () => {
 
     await controller.onUserInput("/rewind");
     const picker = stub.rewindPickerShows[0];
-    picker.onSelect("1");
+    const selectedId = picker.items[1].id;
+    picker.onSelect(selectedId);
 
     expect(controller.engine.history).toHaveLength(1);
     expect(controller.engine.history[0].role).toBe("user");
     expect(controller.engine.history[0].content[0].text).toBe("first message");
-    expect(stub.removeLastMessagesCalls).toEqual([2]);
+    expect(stub.removeMessagesCalls).toEqual([[picker.items[1].id, picker.items[2].id]]);
+    expect(stub.removeLastMessagesCalls).toEqual([]);
     expect(stub.editorTextUpdates.at(-1)).toBe("second message");
     expect(stub.rewindPickerHideCount).toBe(1);
   });
@@ -286,9 +290,9 @@ describe("ChatController rewind flow", () => {
 
     await controller.onUserInput("/rewind");
     const picker = stub.rewindPickerShows[0];
-    picker.onSelect("1");
+    picker.onSelect(picker.items[1].id);
 
-    expect(stub.removeMessagesCalls).toEqual([["msg-3", "msg-4"]]);
+    expect(stub.removeMessagesCalls).toEqual([[picker.items[1].id, picker.items[2].id]]);
     expect(stub.removeLastMessagesCalls).toEqual([]);
     expect(stub.editorTextUpdates.at(-1)).toBe("second message");
   });

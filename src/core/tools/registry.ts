@@ -148,6 +148,7 @@ export type ToolUiEvent = ToolUiEventBase &
       }
     | {
         type: "read_success";
+        toolCallId: string;
         path: string;
         startLine: number;
         endLine?: number;
@@ -159,17 +160,19 @@ export type ToolUiEvent = ToolUiEventBase &
         };
         uiText: ToolUiText;
       }
-    | { type: "read_blocked"; path: string; reason: string }
+    | { type: "read_blocked"; toolCallId: string; path: string; reason: string }
     | {
         type: "view_image_success";
+        toolCallId: string;
         path: string;
         mimeType: string;
         bytes: number;
         uiText: ToolUiText;
       }
-    | { type: "view_image_blocked"; path: string; reason: string }
+    | { type: "view_image_blocked"; toolCallId: string; path: string; reason: string }
     | {
         type: "list_success";
+        toolCallId: string;
         path: string;
         offset: number;
         limit: number;
@@ -178,7 +181,7 @@ export type ToolUiEvent = ToolUiEventBase &
         entries: string[];
         uiText: ToolUiText;
       }
-    | { type: "list_blocked"; path: string; reason: string }
+    | { type: "list_blocked"; toolCallId: string; path: string; reason: string }
     | {
         type: "grep_started";
         toolCallId: string;
@@ -202,15 +205,17 @@ export type ToolUiEvent = ToolUiEventBase &
       }
     | {
         type: "write_success";
+        toolCallId: string;
         path: string;
         bytes: number;
         lines: number;
         content: string;
         uiText: ToolUiText;
       }
-    | { type: "write_blocked"; path: string; reason: string }
+    | { type: "write_blocked"; toolCallId: string; path: string; reason: string }
     | {
         type: "edit_success";
+        toolCallId: string;
         path: string;
         oldLength: number;
         newLength: number;
@@ -218,7 +223,7 @@ export type ToolUiEvent = ToolUiEventBase &
         newText: string;
         uiText: ToolUiText;
       }
-    | { type: "edit_blocked"; path: string; reason: string }
+    | { type: "edit_blocked"; toolCallId: string; path: string; reason: string }
   );
 
 export type ToolUiLineTone = "diffAdd" | "diffRemove";

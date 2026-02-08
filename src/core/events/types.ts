@@ -7,15 +7,18 @@ export type CoreEventVersion = 1;
 
 export type CoreAssistantStartEvent = {
   type: "assistant_start";
+  historyEntryId: string;
 };
 
 export type CoreAssistantFinalEvent = {
   type: "assistant_final";
+  historyEntryId: string;
   message: AssistantMessage;
 };
 
 export type CoreAssistantPartialEvent = {
   type: "assistant_partial";
+  historyEntryId: string;
   snapshot: AssistantPartialSnapshot;
 };
 
@@ -37,6 +40,7 @@ export type CoreSubagentUiEvent = {
 
 export type CoreToolResultEvent = {
   type: "tool_result";
+  historyEntryId: string;
   message: ToolResultMessage;
 };
 
@@ -49,11 +53,21 @@ export type CoreEvent =
   | CoreSubagentUiEvent
   | CoreToolResultEvent;
 
+export type RunnerAssistantPartialEvent = {
+  type: "assistant_partial";
+  snapshot: AssistantPartialSnapshot;
+};
+
+export type RunnerToolResultEvent = {
+  type: "tool_result";
+  message: ToolResultMessage;
+};
+
 export type RunnerEvent =
   | CoreNoticeEvent
-  | CoreAssistantPartialEvent
+  | RunnerAssistantPartialEvent
   | CoreToolUiEvent
-  | CoreToolResultEvent;
+  | RunnerToolResultEvent;
 
 export type CoreEventEnvelope = {
   version: CoreEventVersion;

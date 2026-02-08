@@ -120,20 +120,26 @@ describe("core session rewind APIs", () => {
     session.addUserText("third line");
 
     const candidates = session.listRewindCandidates();
-    expect(candidates).toEqual([
-      { historyIndex: 0, text: "first line\nsecond line" },
-      { historyIndex: 2, text: "third line" },
+    expect(candidates.map((candidate) => candidate.text)).toEqual([
+      "first line\nsecond line",
+      "third line",
     ]);
 
-    const rewound = session.rewindToHistoryIndex(2);
-    expect(rewound).toEqual({ historyIndex: 2, text: "third line" });
+    const secondCandidate = candidates[1];
+    expect(secondCandidate).toBeDefined();
+    const rewound = session.rewindToHistoryEntryId(secondCandidate.historyEntryId);
+    expect(rewound).toEqual({
+      historyEntryId: secondCandidate.historyEntryId,
+      text: "third line",
+      removedEntryIds: [secondCandidate.historyEntryId],
+    });
 
     const remaining = session.history;
     expect(remaining).toHaveLength(2);
     expect(remaining[0]?.role).toBe("user");
     expect(remaining[1]?.role).toBe("assistant");
 
-    expect(session.rewindToHistoryIndex(99)).toBeUndefined();
+    expect(session.rewindToHistoryEntryId("missing-id")).toBeUndefined();
   });
 });
 

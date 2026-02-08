@@ -56,9 +56,20 @@ export type SessionCompactionResult = {
   includedLastAssistant: boolean;
 };
 
+export type HistoryEntry = {
+  id: string;
+  message: Message;
+};
+
 export type RewindCandidate = {
-  historyIndex: number;
+  historyEntryId: string;
   text: string;
+};
+
+export type RewindResult = {
+  historyEntryId: string;
+  text: string;
+  removedEntryIds: string[];
 };
 
 export class SessionEngine {
@@ -73,7 +84,7 @@ export class SessionEngine {
   private readonly authPath: string;
   private readonly subagentControlPlane: SubagentControlPlane;
   private readonly subagentListeners = new Set<(event: CoreSubagentUiEvent) => void>();
-  private messages: Message[] = [];
+  private historyEntries: HistoryEntry[] = [];
   private sessionId = `tau-main-${randomUUID()}`;
 
   constructor(options: SessionEngineOptions) {
@@ -96,7 +107,7 @@ export class SessionEngine {
   }
 
   reset(): void {
-    this.messages = [];
+    this.historyEntries = [];
     this.sessionId = `tau-main-${randomUUID()}`;
     this.subagentControlPlane.reset();
   }
@@ -129,52 +140,70 @@ export class SessionEngine {
     return Boolean(result);
   }
 
-  addUserText(textForModel: string): void {
-    this.messages.push({
-      role: "user",
-      content: [{ type: "text", text: textForModel }],
-      timestamp: this.deps.clock.now(),
-    });
+  addUserText(textForModel: string, options?: { historyEntryId?: string }): string {
+    return this.addMessage(
+      {
+        role: "user",
+        content: [{ type: "text", text: textForModel }],
+        timestamp: this.deps.clock.now(),
+      },
+      options,
+    );
   }
 
-  addMessage(message: Message): void {
-    this.messages.push(message);
+  addMessage(message: Message, options?: { historyEntryId?: string }): string {
+    const entry = this.appendHistoryEntry(message, options?.historyEntryId);
+    return entry.id;
   }
 
   replaceMessage(index: number, message: Message): boolean {
-    if (index < 0 || index >= this.messages.length) {
+    if (index < 0 || index >= this.historyEntries.length) {
       return false;
     }
-    this.messages[index] = message;
+    const current = this.historyEntries[index];
+    if (!current) {
+      return false;
+    }
+    this.historyEntries[index] = { ...current, message };
     return true;
   }
 
   listRewindCandidates(): RewindCandidate[] {
-    return this.messages.flatMap((message, historyIndex) => {
-      if (message.role !== "user") {
+    return this.historyEntries.flatMap((entry) => {
+      if (entry.message.role !== "user") {
         return [];
       }
-      return [{ historyIndex, text: this.extractRewindUserText(message) }];
+      return [{ historyEntryId: entry.id, text: this.extractRewindUserText(entry.message) }];
     });
   }
 
-  rewindToHistoryIndex(historyIndex: number): RewindCandidate | undefined {
-    const message = this.messages[historyIndex];
-    if (!message || message.role !== "user") {
+  rewindToHistoryEntryId(historyEntryId: string): RewindResult | undefined {
+    const historyIndex = this.historyEntries.findIndex((entry) => entry.id === historyEntryId);
+    if (historyIndex < 0) {
       return undefined;
     }
 
-    const candidate: RewindCandidate = {
-      historyIndex,
-      text: this.extractRewindUserText(message),
-    };
+    const entry = this.historyEntries[historyIndex];
+    if (!entry || entry.message.role !== "user") {
+      return undefined;
+    }
 
-    this.messages = this.messages.slice(0, historyIndex);
-    return candidate;
+    const removedEntryIds = this.historyEntries.slice(historyIndex).map((item) => item.id);
+    this.historyEntries = this.historyEntries.slice(0, historyIndex);
+
+    return {
+      historyEntryId: entry.id,
+      text: this.extractRewindUserText(entry.message),
+      removedEntryIds,
+    };
   }
 
   get history(): readonly Message[] {
-    return this.messages;
+    return this.historyEntries.map((entry) => entry.message);
+  }
+
+  get historyEntriesSnapshot(): readonly HistoryEntry[] {
+    return this.historyEntries;
   }
 
   get sessionIdValue(): string {
@@ -182,7 +211,7 @@ export class SessionEngine {
   }
 
   async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {
-    const preparation = prepareSessionCompaction(this.messages);
+    const preparation = prepareSessionCompaction(this.history);
     if (!preparation) {
       throw new Error("no conversation to compact.");
     }
@@ -227,6 +256,26 @@ export class SessionEngine {
       compactionMessage,
       includedLastAssistant,
     };
+  }
+
+  private appendHistoryEntry(message: Message, preferredId?: string): HistoryEntry {
+    const id = this.createHistoryEntryId(preferredId);
+    const entry: HistoryEntry = { id, message };
+    this.historyEntries.push(entry);
+    return entry;
+  }
+
+  private createHistoryEntryId(preferredId?: string): string {
+    const preferred = preferredId?.trim();
+    if (preferred && !this.historyEntries.some((entry) => entry.id === preferred)) {
+      return preferred;
+    }
+
+    let generated = `history-${randomUUID()}`;
+    while (this.historyEntries.some((entry) => entry.id === generated)) {
+      generated = `history-${randomUUID()}`;
+    }
+    return generated;
   }
 
   private extractUserText(message: Message): string {
@@ -325,7 +374,7 @@ export class SessionEngine {
       const dispatchContext: ToolDispatchContext = {
         persona: this.persona,
         config: this.config,
-        history: [...this.messages],
+        history: [...this.history],
         systemPrompt: this.systemPrompt,
         riskLevel: this.riskLevel,
         subagentPrompts: this.subagentPrompts,
@@ -343,7 +392,14 @@ export class SessionEngine {
         dispatchContext,
       })) {
         if (event.type === "tool_result") {
-          this.messages.push(event.message);
+          const historyEntryId = this.addMessage(event.message, {
+            historyEntryId: event.message.toolCallId,
+          });
+          yield {
+            ...event,
+            historyEntryId,
+          };
+          continue;
         }
         yield event;
       }
@@ -361,12 +417,13 @@ export class SessionEngine {
   private async *runSingleSubturn(
     signal: AbortSignal,
   ): AsyncGenerator<CoreEvent, { finalMessage?: AssistantMessage }, void> {
-    yield { type: "assistant_start" };
+    const historyEntryId = this.createHistoryEntryId();
+    yield { type: "assistant_start", historyEntryId };
     const tools = this.getEnabledToolSchemas();
 
     const context: Context = {
       systemPrompt: this.systemPrompt,
-      messages: this.messages,
+      messages: [...this.history],
       tools,
     };
 
@@ -387,7 +444,7 @@ export class SessionEngine {
     }
 
     try {
-      const finalMessage = yield* runModelSubturn({
+      const stream = runModelSubturn({
         model: this.persona.model,
         context,
         streamOptions: baseOptions,
@@ -401,7 +458,31 @@ export class SessionEngine {
         },
       });
 
-      this.messages.push(finalMessage);
+      let finalMessage: AssistantMessage | undefined;
+      while (true) {
+        const next = await stream.next();
+        if (next.done) {
+          finalMessage = next.value;
+          break;
+        }
+
+        if (next.value.type === "assistant_partial") {
+          yield {
+            type: "assistant_partial",
+            historyEntryId,
+            snapshot: next.value.snapshot,
+          };
+          continue;
+        }
+
+        yield next.value;
+      }
+
+      if (!finalMessage) {
+        return { finalMessage: undefined };
+      }
+
+      this.addMessage(finalMessage, { historyEntryId });
       appendUsageLogEntry({
         timestamp: finalMessage.timestamp,
         sessionId: this.sessionId,
@@ -414,7 +495,7 @@ export class SessionEngine {
         cost: { total: getUsageCostTotal(finalMessage.usage) },
         agent: { type: "main" },
       });
-      yield { type: "assistant_final", message: finalMessage };
+      yield { type: "assistant_final", historyEntryId, message: finalMessage };
       return { finalMessage };
     } catch (err) {
       if (!signal.aborted) {

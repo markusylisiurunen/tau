@@ -134,6 +134,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "read_blocked",
+          toolCallId: toolCall.id,
           path: path || "(missing path)",
           headerTarget,
           reason,
@@ -206,6 +207,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
         const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
         const uiEvent: ToolUiEvent = {
           type: "read_success",
+          toolCallId: toolCall.id,
           path: resolvedPath,
           headerTarget: resolvedPath,
           startLine: start,

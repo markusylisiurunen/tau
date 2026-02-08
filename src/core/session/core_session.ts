@@ -5,7 +5,9 @@ import type { CoreDeps } from "../runtime/deps.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import {
+  type HistoryEntry,
   type RewindCandidate,
+  type RewindResult,
   type SessionCompactionOptions,
   type SessionCompactionResult,
   SessionEngine,
@@ -14,7 +16,9 @@ import {
 export type {
   CoreEvent,
   CoreSubagentUiEvent,
+  HistoryEntry,
   RewindCandidate,
+  RewindResult,
   SessionCompactionOptions,
   SessionCompactionResult,
 };
@@ -64,12 +68,12 @@ export class CoreSession {
     return await this.engine.terminateSubagent(id);
   }
 
-  addUserText(textForModel: string): void {
-    this.engine.addUserText(textForModel);
+  addUserText(textForModel: string, options?: { historyEntryId?: string }): string {
+    return this.engine.addUserText(textForModel, options);
   }
 
-  addMessage(message: Message): void {
-    this.engine.addMessage(message);
+  addMessage(message: Message, options?: { historyEntryId?: string }): string {
+    return this.engine.addMessage(message, options);
   }
 
   replaceMessage(index: number, message: Message): boolean {
@@ -80,12 +84,16 @@ export class CoreSession {
     return this.engine.listRewindCandidates();
   }
 
-  rewindToHistoryIndex(historyIndex: number): RewindCandidate | undefined {
-    return this.engine.rewindToHistoryIndex(historyIndex);
+  rewindToHistoryEntryId(historyEntryId: string): RewindResult | undefined {
+    return this.engine.rewindToHistoryEntryId(historyEntryId);
   }
 
   get history(): readonly Message[] {
     return this.engine.history;
+  }
+
+  get historyEntries(): readonly HistoryEntry[] {
+    return this.engine.historyEntriesSnapshot;
   }
 
   get sessionId(): string {

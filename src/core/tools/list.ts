@@ -102,6 +102,7 @@ export function createListToolDefinition(backend: ToolExecutionBackend): ToolDef
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "list_blocked",
+          toolCallId: toolCall.id,
           path: path || "(missing path)",
           headerTarget,
           reason,
@@ -147,6 +148,7 @@ export function createListToolDefinition(backend: ToolExecutionBackend): ToolDef
         const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
         const uiEvent: ToolUiEvent = {
           type: "list_success",
+          toolCallId: toolCall.id,
           path: resolvedPath,
           headerTarget: resolvedPath,
           offset,

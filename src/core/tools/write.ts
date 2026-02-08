@@ -97,6 +97,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "write_blocked",
+          toolCallId: toolCall.id,
           path: path || "(missing path)",
           headerTarget,
           reason,
@@ -122,6 +123,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
         const uiText = buildWriteUiText({ bytes, lines, content, fullText: resultText });
         const uiEvent: ToolUiEvent = {
           type: "write_success",
+          toolCallId: toolCall.id,
           path,
           headerTarget,
           bytes,

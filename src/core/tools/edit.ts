@@ -122,6 +122,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "edit_blocked",
+          toolCallId: toolCall.id,
           path: path || "(missing path)",
           headerTarget,
           reason,
@@ -209,6 +210,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
         const uiText = buildEditUiText({ summaryLine, statusLine, diffLines });
         const uiEvent: ToolUiEvent = {
           type: "edit_success",
+          toolCallId: toolCall.id,
           path,
           headerTarget,
           oldLength: oldText.length,

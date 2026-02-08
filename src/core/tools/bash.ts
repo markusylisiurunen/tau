@@ -389,6 +389,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "bash_blocked",
+          toolCallId: toolCall.id,
           command: commandForDisplay,
           headerTarget,
           reason,
@@ -401,6 +402,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
         const toolResult = createToolError(toolCall, msg);
         const uiEvent: ToolUiEvent = {
           type: "bash_blocked",
+          toolCallId: toolCall.id,
           command: commandForDisplay,
           headerTarget,
           reason: msg,

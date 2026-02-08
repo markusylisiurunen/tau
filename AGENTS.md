@@ -129,6 +129,7 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 - Preview truncation/formatting happens in core tools via `src/core/utils/tool_preview.ts`.
 - The TUI only styles output: compact uses `previewText` + `statusLine`, expanded uses raw `fullText`.
 - Current preview shapes: bash uses head/tail output plus a status line; write shows up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
+- Pruned tool results patch existing tool cards by `toolCallId`, preserve headers, replace the body with model-visible pruned content, and prefix status as `✂ pruned · <existing status>` (or `✂ pruned` when no status exists).
 
 **Subagent-only tools**: subagents run with a dedicated tool registry that always includes `emit_output` plus the tools enabled for that subagent (inherited from the main persona or explicitly overridden). Risk level is inherited by default but can be overridden per subagent, including `read-write` even when the main session is `read-only`. See `src/core/subagents/subagent_engine.ts`.
 

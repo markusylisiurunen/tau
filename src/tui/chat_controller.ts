@@ -1865,6 +1865,7 @@ export class ChatController {
         content: [{ type: "text", text: noticeText }],
       };
       this.engine.replaceMessage(candidate.index, prunedResult);
+      this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, noticeText);
     }
 
     this.view.addSystemMessage(
@@ -1992,6 +1993,7 @@ export class ChatController {
           content: [{ type: "text", text: noticeText }],
         };
         this.engine.replaceMessage(candidate.index, prunedResult);
+        this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, noticeText);
       }
 
       this.view.addSystemMessage(
@@ -2186,11 +2188,13 @@ export class ChatController {
         continue;
       }
 
+      const prunedText = this.buildPrunedEditToolResult(callDiff);
       const prunedResult: ToolResultMessage = {
         ...toolResult,
-        content: [{ type: "text", text: this.buildPrunedEditToolResult(callDiff) }],
+        content: [{ type: "text", text: prunedText }],
       };
       this.engine.replaceMessage(index, prunedResult);
+      this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, prunedText);
       summary.resultsPruned += 1;
     }
 
@@ -2239,6 +2243,14 @@ export class ChatController {
   private buildPrunedToolResultNotice(toolResult: ToolResultMessage, bytes: number): string {
     const tokenEstimate = formatTokenEstimate(bytes);
     return `${PRUNED_TOOL_RESULT_PREFIX} ${toolResult.toolName} output removed (${tokenEstimate}). re-run the command if needed.`;
+  }
+
+  private emitToolResultPrunedUiEvent(toolCallId: string, content: string): void {
+    this.view.handleToolUiEvent({
+      type: "tool_pruned",
+      toolCallId,
+      content,
+    });
   }
 
   private getToolResultContentInfo(toolResult: ToolResultMessage): {

@@ -279,6 +279,7 @@ tau supports slash commands for common actions:
 | ------------------------- | ----------------------------------------------------------------------------- |
 | `/help`                   | show available commands                                                       |
 | `/new`                    | clear the session and start fresh                                             |
+| `/rewind`                 | open a picker to rewind context from a selected user message                  |
 | `/copy`                   | copy the last assistant message                                               |
 | `/copy:code`              | copy just the code blocks                                                     |
 | `/export:html`            | export chat history to html                                                   |
@@ -301,7 +302,7 @@ tau supports slash commands for common actions:
 
 use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
 
-the compact commands are manual and useful when conversations get long. they replace prior context with a single synthetic user message that contains the compacted summary (and, for `/compact:with-last-turn`, the last assistant message verbatim when present), so the model keeps continuity without carrying full history. the prune commands drop tool results from the active context without summarizing and compact edit call payloads/results, and default to pruning 25% if you omit the fraction.
+the compact commands are manual and useful when conversations get long. they replace prior context with a single synthetic user message that contains the compacted summary (and, for `/compact:with-last-turn`, the last assistant message verbatim when present), so the model keeps continuity without carrying full history. the prune commands drop tool results from the active context without summarizing and compact edit call payloads/results, and default to pruning 25% if you omit the fraction. `/rewind` opens a picker over prior user messages in the current context, truncates history from the selected message onward (including the selected message), and prefills the editor with that message so you can retry from there.
 
 ## keyboard shortcuts
 

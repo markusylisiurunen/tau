@@ -9,6 +9,7 @@ export type Command = (
   | { type: "export" }
   | { type: "checkpoint" }
   | { type: "new" }
+  | { type: "rewind" }
   | { type: "cd"; path: string }
   | { type: "compactOnlySummary" }
   | { type: "compactSummaryAndLastTurn" }
@@ -51,6 +52,7 @@ export interface CommandDispatchContext {
   export: () => Promise<void>;
   checkpoint: () => Promise<void>;
   newSession: () => Promise<void>;
+  rewind: () => void;
   cd: (path: string) => void;
   compactOnlySummary: (extra?: string) => Promise<void>;
   compactSummaryAndLastTurn: (extra?: string) => Promise<void>;
@@ -264,6 +266,21 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "new", extra };
     },
     run: (ctx) => ctx.newSession(),
+  });
+
+  registry.register({
+    id: "rewind",
+    usage: "/rewind",
+    description: "rewind context to an earlier user message",
+    autocompleteDescription: "rewind context to a selected user message",
+    argument: "none",
+    section: "base",
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/rewind") return null;
+      return { type: "rewind", extra };
+    },
+    run: (ctx) => ctx.rewind(),
   });
 
   registry.register({

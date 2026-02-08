@@ -14,12 +14,18 @@ function createStubView() {
   const updated = [];
   const systemMessages = [];
   const editorTextUpdates = [];
+  const rewindPickerShows = [];
+  let rewindPickerHideCount = 0;
 
   return {
     added,
     updated,
     systemMessages,
     editorTextUpdates,
+    rewindPickerShows,
+    get rewindPickerHideCount() {
+      return rewindPickerHideCount;
+    },
     view: {
       start: () => {},
       stop: () => {},
@@ -52,6 +58,12 @@ function createStubView() {
       getExpandedEditorText: () => "",
       setEditorText: (text) => {
         editorTextUpdates.push(text);
+      },
+      showRewindPicker: (options) => {
+        rewindPickerShows.push(options);
+      },
+      hideRewindPicker: () => {
+        rewindPickerHideCount += 1;
       },
       getEditorCursor: () => ({ line: 0, col: 0 }),
       getEditorLines: () => [""],
@@ -160,6 +172,75 @@ describe("ChatController streaming command handling", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(stub.editorTextUpdates).toEqual(["hello there"]);
+  });
+});
+
+describe("ChatController rewind flow", () => {
+  it("shows a warning when there are no user messages to rewind", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    await controller.onUserInput("/rewind");
+
+    expect(stub.rewindPickerShows).toHaveLength(0);
+    expect(stub.systemMessages).toContainEqual({
+      text: "no user messages available to rewind.",
+      kind: "warn",
+    });
+  });
+
+  it("opens the picker with user messages in chat order", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.engine.addUserText("first message");
+    controller.engine.addUserText("second message");
+    controller.engine.addUserText("third message");
+
+    await controller.onUserInput("/rewind");
+
+    expect(stub.rewindPickerShows).toHaveLength(1);
+    expect(stub.rewindPickerShows[0].items.map((item) => item.label)).toEqual([
+      "first message",
+      "second message",
+      "third message",
+    ]);
+  });
+
+  it("rewinds history from the selected user message and prefills the editor", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.engine.addUserText("first message");
+    controller.engine.addUserText("second message");
+    controller.engine.addUserText("third message");
+
+    await controller.onUserInput("/rewind");
+    const picker = stub.rewindPickerShows[0];
+    picker.onSelect("1");
+
+    expect(controller.engine.history).toHaveLength(1);
+    expect(controller.engine.history[0].role).toBe("user");
+    expect(controller.engine.history[0].content[0].text).toBe("first message");
+    expect(stub.editorTextUpdates.at(-1)).toBe("second message");
+    expect(stub.rewindPickerHideCount).toBe(1);
+  });
+
+  it("cancels rewind on escape without mutating history", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.engine.addUserText("first message");
+    controller.engine.addUserText("second message");
+
+    await controller.onUserInput("/rewind");
+    const historyBefore = [...controller.engine.history];
+    const picker = stub.rewindPickerShows[0];
+    picker.onCancel();
+
+    expect(controller.engine.history).toEqual(historyBefore);
+    expect(stub.editorTextUpdates).toEqual([]);
+    expect(stub.rewindPickerHideCount).toBe(1);
   });
 });
 

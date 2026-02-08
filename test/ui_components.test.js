@@ -11,6 +11,7 @@ import {
 import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
 import { FooterComponent } from "../dist/tui/ui/footer.js";
 import { QueuedMessagesComponent } from "../dist/tui/ui/queued_messages.js";
+import { RewindPickerComponent } from "../dist/tui/ui/rewind_picker.js";
 import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
 import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
@@ -243,4 +244,44 @@ test("CustomEditor renders cursor with theme tags", () => {
   const content = lines.slice(1, -1).join("");
   expect(content).toContain("<cursor>");
   expect(content).not.toContain("\x1b[7m");
+});
+
+test("RewindPickerComponent shows at most eight options", () => {
+  const theme = createTagTheme();
+  const items = Array.from({ length: 12 }, (_, index) => ({
+    id: String(index),
+    label: `message-${String(index + 1).padStart(2, "0")}`,
+  }));
+  const picker = new RewindPickerComponent(theme, items);
+
+  const lines = renderLines(picker, 60).map(stripTags);
+  const optionLines = lines.filter((line) => line.includes("message-"));
+
+  expect(optionLines).toHaveLength(8);
+  expect(lines.join("\n")).toContain("message-12");
+  expect(lines.join("\n")).not.toContain("message-01");
+});
+
+test("RewindPickerComponent confirms and cancels selection", () => {
+  const theme = createTagTheme();
+  const items = [
+    { id: "0", label: "first" },
+    { id: "1", label: "second" },
+  ];
+  const picker = new RewindPickerComponent(theme, items);
+
+  let selected;
+  let cancelled = false;
+  picker.onSelect = (id) => {
+    selected = id;
+  };
+  picker.onCancel = () => {
+    cancelled = true;
+  };
+
+  picker.handleInput("\r");
+  picker.handleInput("\u001b");
+
+  expect(selected).toBe("1");
+  expect(cancelled).toBe(true);
 });

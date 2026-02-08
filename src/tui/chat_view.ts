@@ -1,4 +1,4 @@
-import type { AutocompleteProvider } from "@mariozechner/pi-tui";
+import type { AutocompleteProvider, Component } from "@mariozechner/pi-tui";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
 import type { ThemeDefinition } from "../core/config/index.js";
 import type { SubagentUiEvent } from "../core/subagents/types.js";
@@ -12,6 +12,7 @@ import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_
 import { CustomEditor } from "./ui/custom_editor.js";
 import { FooterComponent } from "./ui/footer.js";
 import { QueuedMessagesComponent } from "./ui/queued_messages.js";
+import { RewindPickerComponent, type RewindPickerItem } from "./ui/rewind_picker.js";
 import { SubagentEditorPaneComponent } from "./ui/subagent_editor_pane.js";
 import { SubagentPanelComponent } from "./ui/subagent_panel.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
@@ -56,6 +57,12 @@ export type ChatViewInputHandlers = {
   onSubmit?: (text: string) => void;
 };
 
+export type RewindPickerOptions = {
+  items: RewindPickerItem[];
+  onSelect: (id: string) => void;
+  onCancel: () => void;
+};
+
 export interface ChatView {
   start(): void;
   stop(): void;
@@ -84,6 +91,8 @@ export interface ChatView {
   getEditorText(): string;
   getExpandedEditorText(): string;
   setEditorText(text: string): void;
+  showRewindPicker(options: RewindPickerOptions): void;
+  hideRewindPicker(): void;
   getEditorCursor(): { line: number; col: number };
   getEditorLines(): string[];
   bindInputHandlers(handlers: ChatViewInputHandlers): void;
@@ -118,6 +127,8 @@ export class TuiChatView implements ChatView {
   private subagentPanel: SubagentPanelComponent;
   private editor: CustomEditor;
   private editorPane: SubagentEditorPaneComponent;
+  private rewindPicker?: RewindPickerComponent;
+  private activeInputPane: Component;
   private uiTheme: Theme;
   private toolUiRegistry = createToolUiRegistry();
   private toolUiRouter: ToolUiRouter;
@@ -149,6 +160,7 @@ export class TuiChatView implements ChatView {
       this.subagentPanel,
       this.editor,
     );
+    this.activeInputPane = this.editorPane;
     this.toolUiRouter = new ToolUiRouter({
       chatContainer: this.chatContainer,
       requestRender: () => this.ui.requestRender(),
@@ -297,6 +309,28 @@ export class TuiChatView implements ChatView {
     this.ui.requestRender();
   }
 
+  showRewindPicker(options: RewindPickerOptions): void {
+    const picker = new RewindPickerComponent(this.uiTheme, options.items);
+    picker.onSelect = options.onSelect;
+    picker.onCancel = options.onCancel;
+
+    this.rewindPicker = picker;
+    this.activeInputPane = picker;
+    this.renderLayout();
+    this.ui.setFocus(picker);
+    this.ui.requestRender();
+  }
+
+  hideRewindPicker(): void {
+    if (!this.rewindPicker) return;
+
+    this.rewindPicker = undefined;
+    this.activeInputPane = this.editorPane;
+    this.renderLayout();
+    this.ui.setFocus(this.editor);
+    this.ui.requestRender();
+  }
+
   getEditorCursor(): { line: number; col: number } {
     return this.editor.getCursor();
   }
@@ -361,6 +395,7 @@ export class TuiChatView implements ChatView {
     this.subagentPanel.setTheme(this.uiTheme);
     this.editor.setUiTheme(this.uiTheme);
     this.editorPane.setTheme(this.uiTheme);
+    this.rewindPicker?.setTheme(this.uiTheme);
 
     if (this.lastStatus) {
       this.updateEditorVisualState(this.lastStatus.editor);
@@ -371,13 +406,17 @@ export class TuiChatView implements ChatView {
   }
 
   private setupUi(): void {
+    this.renderLayout();
+    this.ui.setFocus(this.editor);
+  }
+
+  private renderLayout(): void {
+    this.ui.clear();
     this.ui.addChild(this.chatContainer);
     this.ui.addChild(new Spacer(1));
     this.ui.addChild(this.queuedMessages);
-    this.ui.addChild(this.editorPane);
+    this.ui.addChild(this.activeInputPane);
     this.ui.addChild(this.footer);
-
-    this.ui.setFocus(this.editor);
   }
 
   private updateEditorVisualState(state: ChatViewStatus["editor"]): void {

@@ -338,6 +338,7 @@ export class ChatController {
       export: () => this.exportSessionHtml(),
       checkpoint: () => this.checkpointSession(),
       newSession: () => this.clearSession(),
+      rewind: () => this.startRewindFlow(),
       cd: (path) => this.changeDirectory(path),
       compactOnlySummary: (extra) => this.compactSessionOnlySummary(extra),
       compactSummaryAndLastTurn: (extra) => this.compactSessionSummaryAndLastTurn(extra),
@@ -1065,6 +1066,8 @@ export class ChatController {
         return "save a checkpoint file";
       case "new":
         return "clear the session and start fresh";
+      case "rewind":
+        return "rewind context to a selected prior user message";
       case "cd":
         return "change directory: /cd <path>";
       case "compactOnlySummary":
@@ -1513,6 +1516,70 @@ export class ChatController {
     } catch (err) {
       this.view.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, "error");
     }
+  }
+
+  private startRewindFlow(): void {
+    const candidates = this.engine.history
+      .map((message, historyIndex) => ({ message, historyIndex }))
+      .filter(({ message }) => message.role === "user")
+      .map(({ message, historyIndex }, candidateIndex) => {
+        const text = this.extractUserText(message);
+        return {
+          id: String(candidateIndex),
+          historyIndex,
+          text,
+          label: this.formatRewindCandidateLabel(text),
+        };
+      });
+
+    if (candidates.length === 0) {
+      this.view.addSystemMessage("no user messages available to rewind.", "warn");
+      return;
+    }
+
+    this.view.showRewindPicker({
+      items: candidates.map((candidate) => ({
+        id: candidate.id,
+        label: candidate.label,
+      })),
+      onSelect: (id) => {
+        const selected = candidates.find((candidate) => candidate.id === id);
+        if (!selected) {
+          this.view.hideRewindPicker();
+          this.view.addSystemMessage("rewind selection failed.", "error");
+          return;
+        }
+        this.applyRewindSelection(selected.historyIndex, selected.text);
+      },
+      onCancel: () => {
+        this.view.hideRewindPicker();
+      },
+    });
+  }
+
+  private applyRewindSelection(historyIndex: number, text: string): void {
+    this.view.hideRewindPicker();
+    const truncated = this.engine.truncateHistoryFrom(historyIndex);
+    if (!truncated) {
+      this.view.addSystemMessage("rewind failed.", "error");
+      return;
+    }
+
+    this.expandedFilesInCurrentPrompt.clear();
+    this.expandedSkillsInCurrentPrompt.clear();
+    this.view.setEditorText(text);
+    this.refreshStatus();
+  }
+
+  private formatRewindCandidateLabel(text: string): string {
+    const normalized = text.replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      return "(empty user message)";
+    }
+    if (normalized.length <= 120) {
+      return normalized;
+    }
+    return `${normalized.slice(0, 117)}...`;
   }
 
   private async clearSession(): Promise<void> {

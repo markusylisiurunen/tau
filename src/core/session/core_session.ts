@@ -69,6 +69,10 @@ export class CoreSession {
     return this.engine.replaceMessage(index, message);
   }
 
+  truncateHistoryFrom(index: number): boolean {
+    return this.engine.truncateHistoryFrom(index);
+  }
+
   get history(): readonly Message[] {
     return this.engine.history;
   }

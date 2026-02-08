@@ -5,12 +5,19 @@ import type { CoreDeps } from "../runtime/deps.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import {
+  type RewindCandidate,
   type SessionCompactionOptions,
   type SessionCompactionResult,
   SessionEngine,
 } from "./session_engine.js";
 
-export type { CoreEvent, CoreSubagentUiEvent, SessionCompactionOptions, SessionCompactionResult };
+export type {
+  CoreEvent,
+  CoreSubagentUiEvent,
+  RewindCandidate,
+  SessionCompactionOptions,
+  SessionCompactionResult,
+};
 
 export type CoreSessionOptions = {
   persona: Persona;
@@ -67,6 +74,14 @@ export class CoreSession {
 
   replaceMessage(index: number, message: Message): boolean {
     return this.engine.replaceMessage(index, message);
+  }
+
+  listRewindCandidates(): RewindCandidate[] {
+    return this.engine.listRewindCandidates();
+  }
+
+  rewindToHistoryIndex(historyIndex: number): RewindCandidate | undefined {
+    return this.engine.rewindToHistoryIndex(historyIndex);
   }
 
   truncateHistoryFrom(index: number): boolean {

@@ -56,6 +56,11 @@ export type SessionCompactionResult = {
   includedLastAssistant: boolean;
 };
 
+export type RewindCandidate = {
+  historyIndex: number;
+  text: string;
+};
+
 export class SessionEngine {
   private persona: Persona;
   private systemPrompt: string;
@@ -144,6 +149,30 @@ export class SessionEngine {
     return true;
   }
 
+  listRewindCandidates(): RewindCandidate[] {
+    return this.messages.flatMap((message, historyIndex) => {
+      if (message.role !== "user") {
+        return [];
+      }
+      return [{ historyIndex, text: this.extractUserText(message) }];
+    });
+  }
+
+  rewindToHistoryIndex(historyIndex: number): RewindCandidate | undefined {
+    const message = this.messages[historyIndex];
+    if (!message || message.role !== "user") {
+      return undefined;
+    }
+
+    const candidate: RewindCandidate = {
+      historyIndex,
+      text: this.extractUserText(message),
+    };
+
+    this.messages = this.messages.slice(0, historyIndex);
+    return candidate;
+  }
+
   truncateHistoryFrom(index: number): boolean {
     if (index < 0 || index >= this.messages.length) {
       return false;
@@ -206,6 +235,23 @@ export class SessionEngine {
       compactionMessage,
       includedLastAssistant,
     };
+  }
+
+  private extractUserText(message: Message): string {
+    if (typeof message.content === "string") {
+      return message.content.trim();
+    }
+
+    const parts: string[] = [];
+    for (const block of message.content) {
+      if (typeof block === "string") {
+        parts.push(block);
+      } else if (block.type === "text") {
+        parts.push(block.text ?? "");
+      }
+    }
+
+    return parts.join("\n").trim();
   }
 
   private emitSubagentEvent(event: SubagentUiEvent): void {

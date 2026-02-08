@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
+import { personas } from "../dist/core/personas.js";
+import { CoreSession } from "../dist/core/session/core_session.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import {
@@ -80,6 +82,56 @@ describe("tool enablement by risk level", () => {
     expect(allTools).not.toContain(TOOL_NAME_GREP);
     expect(allTools).not.toContain(TOOL_NAME_LIST);
     expect(enabled).toEqual(allTools);
+  });
+});
+
+describe("core session rewind APIs", () => {
+  it("lists user rewind candidates and rewinds by history index", () => {
+    const backend = createLocalToolExecutionBackend();
+    const toolRegistry = ToolCatalog.createRegistry(backend);
+    const session = new CoreSession({
+      persona: personas[0],
+      systemPrompt: "system",
+      subagentPrompts: {},
+      riskLevel: "read-only",
+      toolRegistry,
+    });
+
+    session.addUserText("first line\nsecond line");
+    session.addMessage({
+      role: "assistant",
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      stopReason: "stop",
+      timestamp: 1,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      content: [{ type: "text", text: "ok" }],
+    });
+    session.addUserText("third line");
+
+    const candidates = session.listRewindCandidates();
+    expect(candidates).toEqual([
+      { historyIndex: 0, text: "first line\nsecond line" },
+      { historyIndex: 2, text: "third line" },
+    ]);
+
+    const rewound = session.rewindToHistoryIndex(2);
+    expect(rewound).toEqual({ historyIndex: 2, text: "third line" });
+
+    const remaining = session.history;
+    expect(remaining).toHaveLength(2);
+    expect(remaining[0]?.role).toBe("user");
+    expect(remaining[1]?.role).toBe("assistant");
+
+    expect(session.rewindToHistoryIndex(99)).toBeUndefined();
   });
 });
 

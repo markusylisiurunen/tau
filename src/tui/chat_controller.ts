@@ -1534,18 +1534,11 @@ export class ChatController {
   }
 
   private startRewindFlow(): void {
-    const candidates = this.engine.history
-      .map((message, historyIndex) => ({ message, historyIndex }))
-      .filter(({ message }) => message.role === "user")
-      .map(({ message, historyIndex }, candidateIndex) => {
-        const text = this.extractUserText(message);
-        return {
-          id: String(candidateIndex),
-          historyIndex,
-          text,
-          label: this.formatRewindCandidateLabel(text),
-        };
-      });
+    const candidates = this.engine.listRewindCandidates().map((candidate, candidateIndex) => ({
+      id: String(candidateIndex),
+      historyIndex: candidate.historyIndex,
+      label: this.formatRewindCandidateLabel(candidate.text),
+    }));
 
     if (candidates.length === 0) {
       this.view.addSystemMessage("no user messages available to rewind.", "warn");
@@ -1564,7 +1557,7 @@ export class ChatController {
           this.view.addSystemMessage("rewind selection failed.", "error");
           return;
         }
-        this.applyRewindSelection(selected.historyIndex, selected.text);
+        this.applyRewindSelection(selected.historyIndex);
       },
       onCancel: () => {
         this.view.hideRewindPicker();
@@ -1572,10 +1565,10 @@ export class ChatController {
     });
   }
 
-  private applyRewindSelection(historyIndex: number, text: string): void {
+  private applyRewindSelection(historyIndex: number): void {
     this.view.hideRewindPicker();
-    const truncated = this.engine.truncateHistoryFrom(historyIndex);
-    if (!truncated) {
+    const rewound = this.engine.rewindToHistoryIndex(historyIndex);
+    if (!rewound) {
       this.view.addSystemMessage("rewind failed.", "error");
       return;
     }
@@ -1583,7 +1576,7 @@ export class ChatController {
     this.rebuildViewHistoryFromSession();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
-    this.view.setEditorText(text);
+    this.view.setEditorText(rewound.text);
     this.refreshStatus();
   }
 

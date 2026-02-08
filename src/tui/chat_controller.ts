@@ -1588,14 +1588,14 @@ export class ChatController {
   }
 
   private formatRewindCandidateLabel(text: string): string {
-    const normalized = text.replace(/\s+/g, " ").trim();
-    if (!normalized) {
+    const firstLine = text.split(/\r?\n/, 1)[0]?.trim() ?? "";
+    if (!firstLine) {
       return "(empty user message)";
     }
-    if (normalized.length <= 120) {
-      return normalized;
+    if (firstLine.length <= 120) {
+      return firstLine;
     }
-    return `${normalized.slice(0, 117)}...`;
+    return `${firstLine.slice(0, 117)}...`;
   }
 
   private async clearSession(): Promise<void> {

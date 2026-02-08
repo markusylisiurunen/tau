@@ -212,6 +212,23 @@ describe("ChatController rewind flow", () => {
     ]);
   });
 
+  it("shows only the first line and truncates long rewind labels", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    const longLine = "x".repeat(130);
+    controller.engine.addUserText("first line\nsecond line");
+    controller.engine.addUserText(`${longLine}\nextra`);
+
+    await controller.onUserInput("/rewind");
+
+    expect(stub.rewindPickerShows).toHaveLength(1);
+    expect(stub.rewindPickerShows[0].items.map((item) => item.label)).toEqual([
+      "first line",
+      `${"x".repeat(117)}...`,
+    ]);
+  });
+
   it("rewinds history from the selected user message and prefills the editor", async () => {
     const stub = createStubView();
     const controller = createController(stub.view);

@@ -97,7 +97,9 @@ describe("core session rewind APIs", () => {
       toolRegistry,
     });
 
-    session.addUserText("first line\nsecond line");
+    session.addUserText(
+      "<system>notice one</system>\n\n<system>notice two</system>\n\nfirst line\nsecond line",
+    );
     session.addMessage({
       role: "assistant",
       api: "anthropic-messages",

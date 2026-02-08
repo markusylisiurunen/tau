@@ -231,6 +231,7 @@ export class ChatController {
   private pendingCwdChange?: { from: string; to: string };
   private expandedFilesInCurrentPrompt: Set<string> = new Set();
   private expandedSkillsInCurrentPrompt: Set<string> = new Set();
+  private readonly historyMessageIds = new Map<number, string>();
   private assistantState?: AssistantState;
   private currentTurnStartedAt?: number;
   private lastTurnDurationMs = 0;
@@ -498,6 +499,7 @@ export class ChatController {
         }
         if (state.id) {
           this.view.updateAssistantMessage(state.id, model);
+          this.recordHistoryMessageId(this.engine.history.length - 1, state.id);
         }
         this.refreshStatus();
         this.assistantState = undefined;
@@ -542,35 +544,47 @@ export class ChatController {
     state.id = this.view.addMessage(state.model);
   }
 
+  private recordHistoryMessageId(historyIndex: number, messageId?: string): void {
+    if (historyIndex < 0 || !messageId) {
+      return;
+    }
+    this.historyMessageIds.set(historyIndex, messageId);
+  }
+
   private hydrateCheckpoint(history?: readonly Message[]): void {
     if (!history || history.length === 0) {
       return;
     }
 
-    for (const message of history) {
+    for (const [historyIndex, message] of history.entries()) {
       this.engine.addMessage(message);
-      this.renderHistoryMessage(message);
+      const messageId = this.renderHistoryMessage(message);
+      this.recordHistoryMessageId(historyIndex, messageId);
     }
   }
 
-  private renderHistoryMessage(message: Message): void {
+  private renderHistoryMessage(message: Message): string | undefined {
     if (message.role === "user") {
       const text = this.extractUserText(message);
       if (text) {
-        this.view.addMessage({ type: "user", text });
+        return this.view.addMessage({ type: "user", text });
       }
-      return;
+      return undefined;
     }
 
     if (message.role === "assistant") {
-      this.view.addMessage({ type: "assistant", message: message as AssistantMessage });
-      return;
+      return this.view.addMessage({ type: "assistant", message: message as AssistantMessage });
     }
 
     if (message.role === "toolResult") {
       const toolResult = message as ToolResultMessage;
-      this.view.addSystemMessage(this.formatToolResultNotice(toolResult), "muted");
+      return this.view.addMessage(
+        { type: "system", text: this.formatToolResultNotice(toolResult), kind: "muted" },
+        toolResult.toolCallId,
+      );
     }
+
+    return undefined;
   }
 
   private getRenderedHistoryMessageCount(messages: readonly Message[]): number {
@@ -1340,7 +1354,7 @@ export class ChatController {
     text: string,
     opts?: { textForModel?: string; isMemoryMode?: boolean },
   ): Promise<void> {
-    this.view.addMessage({
+    const userMessageId = this.view.addMessage({
       type: "user",
       text,
       isMemoryMode: opts?.isMemoryMode,
@@ -1362,6 +1376,7 @@ export class ChatController {
     const baseTextForModel = opts?.textForModel ?? text;
     const textForModel = systemNotice ? `${systemNotice}\n\n${baseTextForModel}` : baseTextForModel;
     this.engine.addUserText(textForModel);
+    this.recordHistoryMessageId(this.engine.history.length - 1, userMessageId);
 
     await this.runAssistantTurn();
   }
@@ -1370,10 +1385,11 @@ export class ChatController {
     const trimmed = text.trim();
     if (!trimmed || this.isStreaming) return;
 
-    this.view.addMessage({ type: "user", text: trimmed });
+    const userMessageId = this.view.addMessage({ type: "user", text: trimmed });
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
     this.engine.addUserText(trimmed);
+    this.recordHistoryMessageId(this.engine.history.length - 1, userMessageId);
 
     await this.runAssistantTurn();
   }
@@ -1576,6 +1592,7 @@ export class ChatController {
   private applyRewindSelection(historyIndex: number): void {
     this.view.hideRewindPicker();
 
+    const historyLength = this.engine.history.length;
     const removedHistoryTail = this.engine.history.slice(historyIndex);
     const rewound = this.engine.rewindToHistoryIndex(historyIndex);
     if (!rewound) {
@@ -1583,9 +1600,20 @@ export class ChatController {
       return;
     }
 
-    const removeCount = this.getRenderedHistoryMessageCount(removedHistoryTail);
-    if (removeCount > 0) {
-      this.view.removeLastMessages(removeCount);
+    const expectedRenderedCount = this.getRenderedHistoryMessageCount(removedHistoryTail);
+    const removedMessageIds: string[] = [];
+    for (let index = historyIndex; index < historyLength; index += 1) {
+      const messageId = this.historyMessageIds.get(index);
+      if (messageId) {
+        removedMessageIds.push(messageId);
+      }
+      this.historyMessageIds.delete(index);
+    }
+
+    if (expectedRenderedCount > 0 && removedMessageIds.length === expectedRenderedCount) {
+      this.view.removeMessages(removedMessageIds);
+    } else if (expectedRenderedCount > 0) {
+      this.view.removeLastMessages(expectedRenderedCount);
     }
 
     this.expandedFilesInCurrentPrompt.clear();
@@ -1604,6 +1632,7 @@ export class ChatController {
 
   private async clearSession(): Promise<void> {
     this.engine.reset();
+    this.historyMessageIds.clear();
     this.view.resetToolUiSession();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
@@ -1729,8 +1758,10 @@ export class ChatController {
     this.view.resetToolUiSession();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
+    this.historyMessageIds.clear();
     this.view.addMessage({ type: "session_divider", label: "new session" });
-    this.view.addMessage({ type: "user", text: compactionMessage });
+    const userMessageId = this.view.addMessage({ type: "user", text: compactionMessage });
+    this.recordHistoryMessageId(0, userMessageId);
 
     this.isBashMode = false;
     this.isBashIncognito = false;
@@ -3058,6 +3089,7 @@ export class ChatController {
 
       if (opts?.addToContext !== false) {
         this.engine.addUserText(userMessageText);
+        this.recordHistoryMessageId(this.engine.history.length - 1, toolCallId);
       }
 
       this.view.requestRender();

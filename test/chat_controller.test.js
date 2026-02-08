@@ -16,6 +16,7 @@ function createStubView() {
   const editorTextUpdates = [];
   const rewindPickerShows = [];
   const removeLastMessagesCalls = [];
+  const removeMessagesCalls = [];
   let rewindPickerHideCount = 0;
 
   return {
@@ -25,6 +26,7 @@ function createStubView() {
     editorTextUpdates,
     rewindPickerShows,
     removeLastMessagesCalls,
+    removeMessagesCalls,
     get rewindPickerHideCount() {
       return rewindPickerHideCount;
     },
@@ -34,6 +36,9 @@ function createStubView() {
       requestRender: () => {},
       removeLastMessages: (count) => {
         removeLastMessagesCalls.push(count);
+      },
+      removeMessages: (ids) => {
+        removeMessagesCalls.push(ids);
       },
       addMessage: (model) => {
         added.push(model);
@@ -212,6 +217,24 @@ describe("ChatController rewind flow", () => {
     ]);
   });
 
+  it("strips leading system notices from rewind labels and prefill text", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.engine.addUserText(
+      "<system>notice one</system>\n\n<system>notice two</system>\n\nuser text",
+    );
+
+    await controller.onUserInput("/rewind");
+
+    expect(stub.rewindPickerShows).toHaveLength(1);
+    expect(stub.rewindPickerShows[0].items.map((item) => item.label)).toEqual(["user text"]);
+
+    const picker = stub.rewindPickerShows[0];
+    picker.onSelect("0");
+    expect(stub.editorTextUpdates.at(-1)).toBe("user text");
+  });
+
   it("shows only the first line of each rewind label", async () => {
     const stub = createStubView();
     const controller = createController(stub.view);
@@ -247,6 +270,27 @@ describe("ChatController rewind flow", () => {
     expect(stub.removeLastMessagesCalls).toEqual([2]);
     expect(stub.editorTextUpdates.at(-1)).toBe("second message");
     expect(stub.rewindPickerHideCount).toBe(1);
+  });
+
+  it("removes rewound history messages by id instead of tail count when ids are tracked", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.runAssistantTurn = async () => {};
+
+    await controller.onUserInput("first message");
+    await controller.onUserInput("second message");
+    await controller.onUserInput("third message");
+
+    controller.onEvent({ type: "notice", severity: "warn", text: "ephemeral warning" });
+
+    await controller.onUserInput("/rewind");
+    const picker = stub.rewindPickerShows[0];
+    picker.onSelect("1");
+
+    expect(stub.removeMessagesCalls).toEqual([["msg-3", "msg-4"]]);
+    expect(stub.removeLastMessagesCalls).toEqual([]);
+    expect(stub.editorTextUpdates.at(-1)).toBe("second message");
   });
 
   it("cancels rewind on escape without mutating history", async () => {

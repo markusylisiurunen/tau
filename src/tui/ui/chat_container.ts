@@ -126,21 +126,6 @@ export class ChatContainerComponent extends Container {
     this.chatContainer.clear();
   }
 
-  removeLastMessages(count: number): void {
-    const removeCount = Math.max(0, Math.floor(count));
-    if (removeCount === 0 || this.allMessages.length === 0) return;
-
-    this.allMessages = this.allMessages.slice(
-      0,
-      Math.max(0, this.allMessages.length - removeCount),
-    );
-    this.idToIndex.clear();
-    this.allMessages.forEach((record, index) => {
-      this.idToIndex.set(record.id, index);
-    });
-    this.rebuild();
-  }
-
   removeMessages(ids: readonly string[]): void {
     if (ids.length === 0 || this.allMessages.length === 0) return;
 

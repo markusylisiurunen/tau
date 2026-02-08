@@ -15,7 +15,6 @@ function createStubView() {
   const systemMessages = [];
   const editorTextUpdates = [];
   const rewindPickerShows = [];
-  const removeLastMessagesCalls = [];
   const removeMessagesCalls = [];
   let rewindPickerHideCount = 0;
 
@@ -25,7 +24,6 @@ function createStubView() {
     systemMessages,
     editorTextUpdates,
     rewindPickerShows,
-    removeLastMessagesCalls,
     removeMessagesCalls,
     get rewindPickerHideCount() {
       return rewindPickerHideCount;
@@ -34,9 +32,6 @@ function createStubView() {
       start: () => {},
       stop: () => {},
       requestRender: () => {},
-      removeLastMessages: (count) => {
-        removeLastMessagesCalls.push(count);
-      },
       removeMessages: (ids) => {
         removeMessagesCalls.push(ids);
       },
@@ -271,7 +266,6 @@ describe("ChatController rewind flow", () => {
     expect(controller.engine.history[0].role).toBe("user");
     expect(controller.engine.history[0].content[0].text).toBe("first message");
     expect(stub.removeMessagesCalls).toEqual([[picker.items[1].id, picker.items[2].id]]);
-    expect(stub.removeLastMessagesCalls).toEqual([]);
     expect(stub.editorTextUpdates.at(-1)).toBe("second message");
     expect(stub.rewindPickerHideCount).toBe(1);
   });
@@ -293,7 +287,6 @@ describe("ChatController rewind flow", () => {
     picker.onSelect(picker.items[1].id);
 
     expect(stub.removeMessagesCalls).toEqual([[picker.items[1].id, picker.items[2].id]]);
-    expect(stub.removeLastMessagesCalls).toEqual([]);
     expect(stub.editorTextUpdates.at(-1)).toBe("second message");
   });
 

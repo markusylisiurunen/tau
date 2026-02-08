@@ -15,6 +15,7 @@ function createStubView() {
   const systemMessages = [];
   const editorTextUpdates = [];
   const rewindPickerShows = [];
+  const clearMessagesCalls = [];
   let rewindPickerHideCount = 0;
 
   return {
@@ -23,6 +24,7 @@ function createStubView() {
     systemMessages,
     editorTextUpdates,
     rewindPickerShows,
+    clearMessagesCalls,
     get rewindPickerHideCount() {
       return rewindPickerHideCount;
     },
@@ -30,6 +32,9 @@ function createStubView() {
       start: () => {},
       stop: () => {},
       requestRender: () => {},
+      clearMessages: (options) => {
+        clearMessagesCalls.push(options);
+      },
       addMessage: (model) => {
         added.push(model);
         return `msg-${added.length}`;
@@ -222,6 +227,7 @@ describe("ChatController rewind flow", () => {
     expect(controller.engine.history).toHaveLength(1);
     expect(controller.engine.history[0].role).toBe("user");
     expect(controller.engine.history[0].content[0].text).toBe("first message");
+    expect(stub.clearMessagesCalls).toEqual([{ preserveAppIntro: true }]);
     expect(stub.editorTextUpdates.at(-1)).toBe("second message");
     expect(stub.rewindPickerHideCount).toBe(1);
   });

@@ -23,6 +23,7 @@ export function createPlaybackHarness(options = {}) {
     requestRender: () => {
       calls.renders += 1;
     },
+    clearMessages: () => {},
     addMessage: (model, id) => {
       calls.added.push({ model, id });
       return id ?? `msg-${calls.added.length}`;

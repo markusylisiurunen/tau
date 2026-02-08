@@ -549,21 +549,36 @@ export class ChatController {
 
     for (const message of history) {
       this.engine.addMessage(message);
-      if (message.role === "user") {
-        const text = this.extractUserText(message);
-        if (text) {
-          this.view.addMessage({ type: "user", text });
-        }
-        continue;
+      this.renderHistoryMessage(message);
+    }
+  }
+
+  private renderHistoryMessage(message: Message): void {
+    if (message.role === "user") {
+      const text = this.extractUserText(message);
+      if (text) {
+        this.view.addMessage({ type: "user", text });
       }
-      if (message.role === "assistant") {
-        this.view.addMessage({ type: "assistant", message: message as AssistantMessage });
-        continue;
-      }
-      if (message.role === "toolResult") {
-        const toolResult = message as ToolResultMessage;
-        this.view.addSystemMessage(this.formatToolResultNotice(toolResult), "muted");
-      }
+      return;
+    }
+
+    if (message.role === "assistant") {
+      this.view.addMessage({ type: "assistant", message: message as AssistantMessage });
+      return;
+    }
+
+    if (message.role === "toolResult") {
+      const toolResult = message as ToolResultMessage;
+      this.view.addSystemMessage(this.formatToolResultNotice(toolResult), "muted");
+    }
+  }
+
+  private rebuildViewHistoryFromSession(): void {
+    this.view.resetToolUiSession();
+    this.view.clearMessages({ preserveAppIntro: true });
+
+    for (const message of this.engine.history) {
+      this.renderHistoryMessage(message);
     }
   }
 
@@ -1565,6 +1580,7 @@ export class ChatController {
       return;
     }
 
+    this.rebuildViewHistoryFromSession();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
     this.view.setEditorText(text);

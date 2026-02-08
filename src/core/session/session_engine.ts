@@ -154,7 +154,7 @@ export class SessionEngine {
       if (message.role !== "user") {
         return [];
       }
-      return [{ historyIndex, text: this.extractUserText(message) }];
+      return [{ historyIndex, text: this.extractRewindUserText(message) }];
     });
   }
 
@@ -166,7 +166,7 @@ export class SessionEngine {
 
     const candidate: RewindCandidate = {
       historyIndex,
-      text: this.extractUserText(message),
+      text: this.extractRewindUserText(message),
     };
 
     this.messages = this.messages.slice(0, historyIndex);
@@ -244,6 +244,24 @@ export class SessionEngine {
     }
 
     return parts.join("\n\n").trim();
+  }
+
+  private extractRewindUserText(message: Message): string {
+    return this.stripLeadingSystemNotices(this.extractUserText(message));
+  }
+
+  private stripLeadingSystemNotices(text: string): string {
+    let remaining = text.trim();
+
+    while (remaining.startsWith("<system>")) {
+      const end = remaining.indexOf("</system>");
+      if (end < 0) {
+        break;
+      }
+      remaining = remaining.slice(end + "</system>".length).trimStart();
+    }
+
+    return remaining.trim();
   }
 
   private emitSubagentEvent(event: SubagentUiEvent): void {

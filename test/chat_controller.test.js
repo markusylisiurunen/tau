@@ -15,7 +15,7 @@ function createStubView() {
   const systemMessages = [];
   const editorTextUpdates = [];
   const rewindPickerShows = [];
-  const clearMessagesCalls = [];
+  const removeLastMessagesCalls = [];
   let rewindPickerHideCount = 0;
 
   return {
@@ -24,7 +24,7 @@ function createStubView() {
     systemMessages,
     editorTextUpdates,
     rewindPickerShows,
-    clearMessagesCalls,
+    removeLastMessagesCalls,
     get rewindPickerHideCount() {
       return rewindPickerHideCount;
     },
@@ -32,8 +32,8 @@ function createStubView() {
       start: () => {},
       stop: () => {},
       requestRender: () => {},
-      clearMessages: (options) => {
-        clearMessagesCalls.push(options);
+      removeLastMessages: (count) => {
+        removeLastMessagesCalls.push(count);
       },
       addMessage: (model) => {
         added.push(model);
@@ -212,7 +212,7 @@ describe("ChatController rewind flow", () => {
     ]);
   });
 
-  it("shows only the first line and truncates long rewind labels", async () => {
+  it("shows only the first line of each rewind label", async () => {
     const stub = createStubView();
     const controller = createController(stub.view);
 
@@ -225,7 +225,7 @@ describe("ChatController rewind flow", () => {
     expect(stub.rewindPickerShows).toHaveLength(1);
     expect(stub.rewindPickerShows[0].items.map((item) => item.label)).toEqual([
       "first line",
-      `${"x".repeat(117)}...`,
+      longLine,
     ]);
   });
 
@@ -244,7 +244,7 @@ describe("ChatController rewind flow", () => {
     expect(controller.engine.history).toHaveLength(1);
     expect(controller.engine.history[0].role).toBe("user");
     expect(controller.engine.history[0].content[0].text).toBe("first message");
-    expect(stub.clearMessagesCalls).toEqual([{ preserveAppIntro: true }]);
+    expect(stub.removeLastMessagesCalls).toEqual([2]);
     expect(stub.editorTextUpdates.at(-1)).toBe("second message");
     expect(stub.rewindPickerHideCount).toBe(1);
   });

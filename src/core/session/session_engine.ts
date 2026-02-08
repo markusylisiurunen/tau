@@ -173,14 +173,6 @@ export class SessionEngine {
     return candidate;
   }
 
-  truncateHistoryFrom(index: number): boolean {
-    if (index < 0 || index >= this.messages.length) {
-      return false;
-    }
-    this.messages = this.messages.slice(0, index);
-    return true;
-  }
-
   get history(): readonly Message[] {
     return this.messages;
   }
@@ -251,7 +243,7 @@ export class SessionEngine {
       }
     }
 
-    return parts.join("\n").trim();
+    return parts.join("\n\n").trim();
   }
 
   private emitSubagentEvent(event: SubagentUiEvent): void {

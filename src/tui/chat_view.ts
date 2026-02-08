@@ -67,7 +67,7 @@ export interface ChatView {
   start(): void;
   stop(): void;
   requestRender(): void;
-  clearMessages(options?: { preserveAppIntro?: boolean }): void;
+  removeLastMessages(count: number): void;
   addMessage(model: ChatMessageModel, id?: string): string;
   updateAssistantMessage(id: string, model: AssistantMessageModel): void;
   addSystemMessage(
@@ -134,7 +134,6 @@ export class TuiChatView implements ChatView {
   private toolUiRegistry = createToolUiRegistry();
   private toolUiRouter: ToolUiRouter;
   private lastStatus?: ChatViewStatus;
-  private appIntroMessage?: ChatMessageModel;
 
   constructor(options: {
     queuedUserMessages: string[];
@@ -185,21 +184,12 @@ export class TuiChatView implements ChatView {
     this.ui.requestRender();
   }
 
-  clearMessages(options?: { preserveAppIntro?: boolean }): void {
-    const preserveAppIntro = options?.preserveAppIntro ?? false;
-    this.chatContainer.clear();
-
-    if (preserveAppIntro && this.appIntroMessage) {
-      this.chatContainer.addMessage(this.appIntroMessage);
-    }
-
+  removeLastMessages(count: number): void {
+    this.chatContainer.removeLastMessages(count);
     this.ui.requestRender();
   }
 
   addMessage(model: ChatMessageModel, id?: string): string {
-    if (model.type === "app_intro") {
-      this.appIntroMessage = model;
-    }
     const messageId = this.chatContainer.addMessage(model, id);
     this.ui.requestRender();
     return messageId;

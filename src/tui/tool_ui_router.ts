@@ -1,4 +1,4 @@
-import type { ToolUiEvent } from "../core/tools/registry.js";
+import type { ToolUiEvent, ToolUiLine, ToolUiText } from "../core/tools/registry.js";
 import {
   TOOL_NAME_SEND_INPUT_TO_AGENT,
   TOOL_NAME_SPAWN_AGENT,
@@ -32,12 +32,18 @@ type RunningSubagentTool =
       agentId: string;
     };
 
+type ToolUiEventWithToolCallId = Extract<ToolUiEvent, { toolCallId: string }>;
+type ToolPrunedEvent = Extract<ToolUiEvent, { type: "tool_pruned" }>;
+
+const PRUNED_STATUS_PREFIX = "✂ pruned";
+
 export class ToolUiRouter {
   private readonly chatContainer: ChatContainerComponent;
   private readonly requestRender: () => void;
 
   private runningBashComponents: Map<string, RunningBashComponent> = new Map();
   private runningSubagentTools: Map<string, RunningSubagentTool> = new Map();
+  private latestToolEventsById: Map<string, ToolUiEventWithToolCallId> = new Map();
 
   constructor(options: { chatContainer: ChatContainerComponent; requestRender: () => void }) {
     this.chatContainer = options.chatContainer;
@@ -47,6 +53,7 @@ export class ToolUiRouter {
   resetSession(): void {
     this.runningBashComponents.clear();
     this.runningSubagentTools.clear();
+    this.latestToolEventsById.clear();
   }
 
   clearTransientState(): void {
@@ -57,65 +64,63 @@ export class ToolUiRouter {
   finalizePending(reason: "aborted" | "interrupted"): void {
     for (const [id, running] of this.runningBashComponents.entries()) {
       const headerTarget = running.command.split(/\r?\n/)[0] ?? running.command;
-      const event: ToolUiEvent = {
+      const event: ToolUiEventWithToolCallId = {
         type: "bash_aborted",
         toolCallId: id,
         command: running.command,
         headerTarget,
         reason,
       };
-      this.chatContainer.replaceMessage(id, { type: "tool", event });
+      this.replaceToolMessage(event);
     }
 
     for (const [id, running] of this.runningSubagentTools.entries()) {
       const event = this.toSubagentAbortEvent(id, running, reason);
-      this.chatContainer.replaceMessage(id, { type: "tool", event });
+      this.replaceToolMessage(event);
     }
 
     this.requestRender();
   }
 
   handle(uiEvent: ToolUiEvent): void {
+    if (uiEvent.type === "tool_pruned") {
+      const updated = this.applyPrunedMutation(uiEvent);
+      if (updated) {
+        this.requestRender();
+      }
+      return;
+    }
+
     if (uiEvent.type === "bash_started") {
-      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.upsertToolMessage(uiEvent);
       this.runningBashComponents.set(uiEvent.toolCallId, { command: uiEvent.command });
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "bash_execution") {
-      const running = this.runningBashComponents.get(uiEvent.toolCallId);
-      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
-      if (running) {
-        this.runningBashComponents.delete(uiEvent.toolCallId);
-      }
+      this.upsertToolMessage(uiEvent);
+      this.runningBashComponents.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "bash_aborted") {
-      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.upsertToolMessage(uiEvent);
       this.runningBashComponents.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "bash_blocked") {
-      if (uiEvent.toolCallId) {
-        const running = this.runningBashComponents.get(uiEvent.toolCallId);
-        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
-        if (running) {
-          this.runningBashComponents.delete(uiEvent.toolCallId);
-        }
-      } else {
-        this.chatContainer.addMessage({ type: "tool", event: uiEvent });
-      }
+      this.upsertToolMessage(uiEvent);
+      this.runningBashComponents.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "spawn_agent_started") {
-      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.set(uiEvent.toolCallId, {
         kind: TOOL_NAME_SPAWN_AGENT,
         name: uiEvent.name,
@@ -126,25 +131,21 @@ export class ToolUiRouter {
     }
 
     if (uiEvent.type === "spawn_agent_finished") {
-      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "spawn_agent_blocked") {
-      if (this.runningSubagentTools.has(uiEvent.toolCallId)) {
-        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
-      } else {
-        this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
-      }
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "send_input_to_agent_started") {
-      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.set(uiEvent.toolCallId, {
         kind: TOOL_NAME_SEND_INPUT_TO_AGENT,
         agentId: uiEvent.agentId,
@@ -156,25 +157,21 @@ export class ToolUiRouter {
     }
 
     if (uiEvent.type === "send_input_to_agent_finished") {
-      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "send_input_to_agent_blocked") {
-      if (this.runningSubagentTools.has(uiEvent.toolCallId)) {
-        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
-      } else {
-        this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
-      }
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "wait_for_agent_started") {
-      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.set(uiEvent.toolCallId, {
         kind: TOOL_NAME_WAIT_FOR_AGENT,
         agentIds: uiEvent.agentIds,
@@ -184,25 +181,21 @@ export class ToolUiRouter {
     }
 
     if (uiEvent.type === "wait_for_agent_finished") {
-      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "wait_for_agent_blocked") {
-      if (this.runningSubagentTools.has(uiEvent.toolCallId)) {
-        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
-      } else {
-        this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
-      }
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "terminate_agent_started") {
-      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.set(uiEvent.toolCallId, {
         kind: TOOL_NAME_TERMINATE_AGENT,
         agentId: uiEvent.agentId,
@@ -212,18 +205,14 @@ export class ToolUiRouter {
     }
 
     if (uiEvent.type === "terminate_agent_finished") {
-      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "terminate_agent_blocked") {
-      if (this.runningSubagentTools.has(uiEvent.toolCallId)) {
-        this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
-      } else {
-        this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
-      }
+      this.upsertToolMessage(uiEvent);
       this.runningSubagentTools.delete(uiEvent.toolCallId);
       this.requestRender();
       return;
@@ -241,46 +230,102 @@ export class ToolUiRouter {
       uiEvent.type === "list_success" ||
       uiEvent.type === "list_blocked"
     ) {
-      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.upsertToolMessage(uiEvent);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "grep_started") {
-      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.upsertToolMessage(uiEvent);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "grep_finished") {
-      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.upsertToolMessage(uiEvent);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "grep_blocked") {
-      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.upsertToolMessage(uiEvent);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "web_search_started" || uiEvent.type === "web_fetch_started") {
-      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+      this.upsertToolMessage(uiEvent);
       this.requestRender();
       return;
     }
 
     if (uiEvent.type === "web_search_finished" || uiEvent.type === "web_fetch_finished") {
-      this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+      this.upsertToolMessage(uiEvent);
       this.requestRender();
     }
+  }
+
+  private upsertToolMessage(uiEvent: ToolUiEventWithToolCallId): void {
+    if (this.latestToolEventsById.has(uiEvent.toolCallId)) {
+      this.replaceToolMessage(uiEvent);
+      return;
+    }
+    this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
+    this.latestToolEventsById.set(uiEvent.toolCallId, uiEvent);
+  }
+
+  private replaceToolMessage(uiEvent: ToolUiEventWithToolCallId): void {
+    this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+    this.latestToolEventsById.set(uiEvent.toolCallId, uiEvent);
+  }
+
+  private applyPrunedMutation(uiEvent: ToolPrunedEvent): boolean {
+    const existing = this.latestToolEventsById.get(uiEvent.toolCallId);
+    if (!existing) {
+      return false;
+    }
+
+    if (!("uiText" in existing) || !existing.uiText) {
+      return false;
+    }
+
+    const statusLine = existing.uiText.statusLine?.trim();
+    const nextStatusLine = statusLine
+      ? `${PRUNED_STATUS_PREFIX} · ${statusLine}`
+      : PRUNED_STATUS_PREFIX;
+    const nextLines = this.toToolUiLines(uiEvent.content);
+    const nextUiText: ToolUiText = {
+      previewLines: nextLines,
+      statusLine: nextStatusLine,
+      fullLines: nextLines,
+    };
+
+    const nextEvent = { ...existing, uiText: nextUiText } as ToolUiEventWithToolCallId;
+    this.replaceToolMessage(nextEvent);
+    return true;
+  }
+
+  private toToolUiLines(content: string): ToolUiLine[] {
+    if (!content) {
+      return [];
+    }
+
+    return content.split("\n").map((text) => {
+      if (text.startsWith("+ ")) {
+        return { text, tone: "diffAdd" };
+      }
+      if (text.startsWith("- ")) {
+        return { text, tone: "diffRemove" };
+      }
+      return { text };
+    });
   }
 
   private toSubagentAbortEvent(
     toolCallId: string,
     running: RunningSubagentTool,
     reason: "aborted" | "interrupted",
-  ): ToolUiEvent {
+  ): ToolUiEventWithToolCallId {
     if (running.kind === TOOL_NAME_SPAWN_AGENT) {
       return {
         type: "spawn_agent_finished",

@@ -13,6 +13,7 @@ function createStubView() {
   const added = [];
   const updated = [];
   const systemMessages = [];
+  const toolUiEvents = [];
   const editorTextUpdates = [];
   const rewindPickerShows = [];
   const removeMessagesCalls = [];
@@ -24,6 +25,7 @@ function createStubView() {
     added,
     updated,
     systemMessages,
+    toolUiEvents,
     editorTextUpdates,
     rewindPickerShows,
     removeMessagesCalls,
@@ -59,7 +61,9 @@ function createStubView() {
       updateStatus: () => {},
       startWorkingIcon: () => {},
       stopWorkingIcon: () => {},
-      handleToolUiEvent: () => {},
+      handleToolUiEvent: (event) => {
+        toolUiEvents.push(event);
+      },
       handleSubagentEvent: () => {},
       resetToolUiSession: () => {},
       finalizeToolUiPending: () => {},
@@ -444,6 +448,12 @@ describe("ChatController prune handling", () => {
     expect(text).toContain("  post 3");
     expect(text).not.toContain("  post 9");
 
+    expect(stub.toolUiEvents).toContainEqual({
+      type: "tool_pruned",
+      toolCallId: "edit-call-1",
+      content: text,
+    });
+
     expect(stub.systemMessages).toContainEqual(
       expect.objectContaining({
         kind: "success",
@@ -479,6 +489,26 @@ describe("ChatController prune handling", () => {
     });
   });
 
+  it("emits prune ui mutations for pruned bash results", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    seedBashResult(controller, "bash output");
+
+    await controller.onUserInput("/prune:earliest 1");
+
+    const history = controller.engine.history;
+    const toolResult = history.find((message) => message.role === "toolResult");
+    const text = toolResult.content[0].text;
+
+    expect(text).toContain("[tool result pruned] bash output removed");
+    expect(stub.toolUiEvents).toContainEqual({
+      type: "tool_pruned",
+      toolCallId: "bash-call-1",
+      content: text,
+    });
+  });
+
   it("keeps failed edit tool results intact", async () => {
     const stub = createStubView();
     const controller = createController(stub.view);
@@ -502,6 +532,28 @@ describe("ChatController prune handling", () => {
     const toolResult = history.find((message) => message.role === "toolResult");
     expect(toolResult.content[0].text).toBe("oldText not found in file.");
     expect(toolResult.isError).toBe(true);
+  });
+
+  it("emits prune ui mutations for smart pruning", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    seedBashResult(controller, "bash output");
+
+    controller.requestSmartPruneSelection = async () => ["bash-call-1"];
+
+    await controller.onUserInput("/prune:smart 1");
+
+    const history = controller.engine.history;
+    const toolResult = history.find((message) => message.role === "toolResult");
+    const text = toolResult.content[0].text;
+
+    expect(text).toContain("[tool result pruned] bash output removed");
+    expect(stub.toolUiEvents).toContainEqual({
+      type: "tool_pruned",
+      toolCallId: "bash-call-1",
+      content: text,
+    });
   });
 
   it("does not prune edit payloads when smart prune sampling fails", async () => {
@@ -534,6 +586,7 @@ describe("ChatController prune handling", () => {
       text: "prune failed: sampling failed",
       kind: "error",
     });
+    expect(stub.toolUiEvents).toEqual([]);
   });
 });
 

@@ -32,7 +32,7 @@ export type ToolUiEvent = ToolUiEventBase &
         command: string;
         reason: "aborted" | "interrupted";
       }
-    | { type: "bash_blocked"; command: string; reason: string; toolCallId?: string }
+    | { type: "bash_blocked"; toolCallId: string; command: string; reason: string }
     | {
         type: "spawn_agent_started";
         toolCallId: string;
@@ -224,6 +224,11 @@ export type ToolUiEvent = ToolUiEventBase &
         uiText: ToolUiText;
       }
     | { type: "edit_blocked"; toolCallId: string; path: string; reason: string }
+    | {
+        type: "tool_pruned";
+        toolCallId: string;
+        content: string;
+      }
   );
 
 export type ToolUiLineTone = "diffAdd" | "diffRemove";

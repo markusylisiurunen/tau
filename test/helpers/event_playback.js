@@ -69,6 +69,7 @@ export function createPlaybackHarness(options = {}) {
     getExpandedEditorText: () => "",
     setEditorText: () => {},
     removeMessages: () => {},
+    removeMessagesFrom: () => {},
     showRewindPicker: () => {},
     hideRewindPicker: () => {},
     getEditorCursor: () => ({ line: 0, col: 0 }),

@@ -138,6 +138,18 @@ export class ChatContainerComponent extends Container {
     this.rebuild();
   }
 
+  removeMessagesFrom(id: string): void {
+    const index = this.idToIndex.get(id);
+    if (index === undefined) return;
+
+    this.allMessages = this.allMessages.slice(0, index);
+    this.idToIndex.clear();
+    this.allMessages.forEach((record, messageIndex) => {
+      this.idToIndex.set(record.id, messageIndex);
+    });
+    this.rebuild();
+  }
+
   rebuild() {
     this.chatContainer.clear();
 

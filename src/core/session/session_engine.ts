@@ -144,6 +144,14 @@ export class SessionEngine {
     return true;
   }
 
+  truncateHistoryFrom(index: number): boolean {
+    if (index < 0 || index >= this.messages.length) {
+      return false;
+    }
+    this.messages = this.messages.slice(0, index);
+    return true;
+  }
+
   get history(): readonly Message[] {
     return this.messages;
   }

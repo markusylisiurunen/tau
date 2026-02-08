@@ -30,13 +30,20 @@ describe("command registry", () => {
       copy: async () => calls.push({ type: "copy" }),
       copyCode: async () => calls.push({ type: "copyCode" }),
       export: async () => calls.push({ type: "export" }),
+      checkpoint: async () => calls.push({ type: "checkpoint" }),
       newSession: () => calls.push({ type: "new" }),
+      rewind: () => calls.push({ type: "rewind" }),
+      cd: () => calls.push({ type: "cd" }),
       compactOnlySummary: async () => calls.push({ type: "compactOnlySummary" }),
       compactSummaryAndLastTurn: async () => calls.push({ type: "compactSummaryAndLastTurn" }),
+      pruneEarliestFirst: () => calls.push({ type: "pruneEarliestFirst" }),
+      pruneLargestFirst: () => calls.push({ type: "pruneLargestFirst" }),
+      pruneLeastImportant: () => calls.push({ type: "pruneLeastImportant" }),
       reload: async () => calls.push({ type: "reload" }),
       risk: (level) => calls.push({ type: "risk", level }),
       persona: (id) => calls.push({ type: "persona", id }),
       prompt: (id) => calls.push({ type: "prompt", id }),
+      theme: (id) => calls.push({ type: "theme", id }),
       bash: async (id) => calls.push({ type: "bash", id }),
       unknown: (raw) => calls.push({ type: "unknown", raw }),
     };
@@ -45,10 +52,15 @@ describe("command registry", () => {
     expect(cmd).toEqual({ type: "risk", level: "read-only" });
     await registry.dispatch(cmd, ctx);
 
+    const rewind = registry.parse("/rewind");
+    expect(rewind).toEqual({ type: "rewind" });
+    await registry.dispatch(rewind, ctx);
+
     const unknown = registry.parse("/not-a-command");
     await registry.dispatch(unknown, ctx);
 
     expect(calls).toContainEqual({ type: "risk", level: "read-only" });
+    expect(calls).toContainEqual({ type: "rewind" });
     expect(calls).toContainEqual({ type: "unknown", raw: "/not-a-command" });
   });
 });

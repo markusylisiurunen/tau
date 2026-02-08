@@ -68,6 +68,7 @@ export interface ChatView {
   stop(): void;
   requestRender(): void;
   removeMessages(ids: readonly string[]): void;
+  removeMessagesFrom(id: string): void;
   addMessage(model: ChatMessageModel, id?: string): string;
   updateAssistantMessage(id: string, model: AssistantMessageModel): void;
   addSystemMessage(
@@ -186,6 +187,11 @@ export class TuiChatView implements ChatView {
 
   removeMessages(ids: readonly string[]): void {
     this.chatContainer.removeMessages(ids);
+    this.ui.requestRender();
+  }
+
+  removeMessagesFrom(id: string): void {
+    this.chatContainer.removeMessagesFrom(id);
     this.ui.requestRender();
   }
 

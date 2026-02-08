@@ -1579,6 +1579,7 @@ export class ChatController {
       return;
     }
 
+    this.view.removeMessagesFrom(rewound.historyEntryId);
     this.view.removeMessages(rewound.removedEntryIds);
 
     this.expandedFilesInCurrentPrompt.clear();

@@ -16,6 +16,7 @@ function createStubView() {
   const editorTextUpdates = [];
   const rewindPickerShows = [];
   const removeMessagesCalls = [];
+  const removeMessagesFromCalls = [];
   let rewindPickerHideCount = 0;
 
   return {
@@ -25,6 +26,7 @@ function createStubView() {
     editorTextUpdates,
     rewindPickerShows,
     removeMessagesCalls,
+    removeMessagesFromCalls,
     get rewindPickerHideCount() {
       return rewindPickerHideCount;
     },
@@ -34,6 +36,9 @@ function createStubView() {
       requestRender: () => {},
       removeMessages: (ids) => {
         removeMessagesCalls.push(ids);
+      },
+      removeMessagesFrom: (id) => {
+        removeMessagesFromCalls.push(id);
       },
       addMessage: (model, id) => {
         added.push(model);
@@ -265,12 +270,13 @@ describe("ChatController rewind flow", () => {
     expect(controller.engine.history).toHaveLength(1);
     expect(controller.engine.history[0].role).toBe("user");
     expect(controller.engine.history[0].content[0].text).toBe("first message");
+    expect(stub.removeMessagesFromCalls).toEqual([picker.items[1].id]);
     expect(stub.removeMessagesCalls).toEqual([[picker.items[1].id, picker.items[2].id]]);
     expect(stub.editorTextUpdates.at(-1)).toBe("second message");
     expect(stub.rewindPickerHideCount).toBe(1);
   });
 
-  it("removes rewound history messages by id instead of tail count when ids are tracked", async () => {
+  it("removes from the selected message so non-history rows are dropped", async () => {
     const stub = createStubView();
     const controller = createController(stub.view);
 
@@ -281,11 +287,18 @@ describe("ChatController rewind flow", () => {
     await controller.onUserInput("third message");
 
     controller.onEvent({ type: "notice", severity: "warn", text: "ephemeral warning" });
+    controller.onEvent({ type: "assistant_start", historyEntryId: "assistant-stale" });
+    controller.onEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-stale",
+      snapshot: { text: "partial", thinking: "", hasTextStarted: true, hasAnyThinking: false },
+    });
 
     await controller.onUserInput("/rewind");
     const picker = stub.rewindPickerShows[0];
     picker.onSelect(picker.items[1].id);
 
+    expect(stub.removeMessagesFromCalls).toEqual([picker.items[1].id]);
     expect(stub.removeMessagesCalls).toEqual([[picker.items[1].id, picker.items[2].id]]);
     expect(stub.editorTextUpdates.at(-1)).toBe("second message");
   });

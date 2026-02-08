@@ -105,7 +105,11 @@ export interface ChatControllerOptions {
   queuedUserMessages?: string[];
 }
 
-type AssistantState = { id?: string; inserted: boolean; model: AssistantMessageModel };
+type AssistantState = {
+  historyEntryId: string;
+  inserted: boolean;
+  model: AssistantMessageModel;
+};
 
 type ToolResultPruneCandidate = {
   index: number;
@@ -231,7 +235,6 @@ export class ChatController {
   private pendingCwdChange?: { from: string; to: string };
   private expandedFilesInCurrentPrompt: Set<string> = new Set();
   private expandedSkillsInCurrentPrompt: Set<string> = new Set();
-  private readonly historyMessageIds = new Map<number, string>();
   private assistantState?: AssistantState;
   private currentTurnStartedAt?: number;
   private lastTurnDurationMs = 0;
@@ -463,13 +466,14 @@ export class ChatController {
     switch (event.type) {
       case "assistant_start":
         this.assistantState = {
+          historyEntryId: event.historyEntryId,
           inserted: false,
           model: { type: "assistant_partial", text: "", thinking: "" },
         };
         return;
 
       case "assistant_partial": {
-        const state = this.ensureAssistantState();
+        const state = this.ensureAssistantState(event.historyEntryId);
         const { snapshot } = event;
         const model: AssistantMessageModel = {
           type: "assistant_partial",
@@ -484,22 +488,21 @@ export class ChatController {
           this.ensureAssistantInserted(state);
         }
 
-        if (state.inserted && state.id) {
-          this.view.updateAssistantMessage(state.id, model);
+        if (state.inserted) {
+          this.view.updateAssistantMessage(state.historyEntryId, model);
         }
         return;
       }
 
       case "assistant_final": {
-        const state = this.ensureAssistantState();
+        const state = this.ensureAssistantState(event.historyEntryId);
         const model: AssistantMessageModel = { type: "assistant", message: event.message };
         state.model = model;
         if (!state.inserted) {
           this.ensureAssistantInserted(state);
         }
-        if (state.id) {
-          this.view.updateAssistantMessage(state.id, model);
-          this.recordHistoryMessageId(this.engine.history.length - 1, state.id);
+        if (state.inserted) {
+          this.view.updateAssistantMessage(state.historyEntryId, model);
         }
         this.refreshStatus();
         this.assistantState = undefined;
@@ -528,9 +531,13 @@ export class ChatController {
     }
   }
 
-  private ensureAssistantState(): AssistantState {
-    if (this.assistantState) return this.assistantState;
+  private ensureAssistantState(historyEntryId: string): AssistantState {
+    if (this.assistantState?.historyEntryId === historyEntryId) {
+      return this.assistantState;
+    }
+
     const state: AssistantState = {
+      historyEntryId,
       inserted: false,
       model: { type: "assistant_partial", text: "", thinking: "" },
     };
@@ -541,14 +548,7 @@ export class ChatController {
   private ensureAssistantInserted(state: AssistantState): void {
     if (state.inserted) return;
     state.inserted = true;
-    state.id = this.view.addMessage(state.model);
-  }
-
-  private recordHistoryMessageId(historyIndex: number, messageId?: string): void {
-    if (historyIndex < 0 || !messageId) {
-      return;
-    }
-    this.historyMessageIds.set(historyIndex, messageId);
+    this.view.addMessage(state.model, state.historyEntryId);
   }
 
   private hydrateCheckpoint(history?: readonly Message[]): void {
@@ -556,52 +556,36 @@ export class ChatController {
       return;
     }
 
-    for (const [historyIndex, message] of history.entries()) {
-      this.engine.addMessage(message);
-      const messageId = this.renderHistoryMessage(message);
-      this.recordHistoryMessageId(historyIndex, messageId);
+    for (const message of history) {
+      const historyEntryId = this.engine.addMessage(message);
+      this.renderHistoryMessage(message, historyEntryId);
     }
   }
 
-  private renderHistoryMessage(message: Message): string | undefined {
+  private renderHistoryMessage(message: Message, historyEntryId: string): void {
     if (message.role === "user") {
       const text = this.extractUserText(message);
       if (text) {
-        return this.view.addMessage({ type: "user", text });
+        this.view.addMessage({ type: "user", text }, historyEntryId);
       }
-      return undefined;
+      return;
     }
 
     if (message.role === "assistant") {
-      return this.view.addMessage({ type: "assistant", message: message as AssistantMessage });
+      this.view.addMessage(
+        { type: "assistant", message: message as AssistantMessage },
+        historyEntryId,
+      );
+      return;
     }
 
     if (message.role === "toolResult") {
       const toolResult = message as ToolResultMessage;
-      return this.view.addMessage(
+      this.view.addMessage(
         { type: "system", text: this.formatToolResultNotice(toolResult), kind: "muted" },
-        toolResult.toolCallId,
+        historyEntryId,
       );
     }
-
-    return undefined;
-  }
-
-  private getRenderedHistoryMessageCount(messages: readonly Message[]): number {
-    let count = 0;
-
-    for (const message of messages) {
-      if (message.role === "assistant" || message.role === "toolResult") {
-        count += 1;
-        continue;
-      }
-
-      if (message.role === "user" && this.extractUserText(message)) {
-        count += 1;
-      }
-    }
-
-    return count;
   }
 
   private extractUserText(message: Message): string {
@@ -1354,11 +1338,6 @@ export class ChatController {
     text: string,
     opts?: { textForModel?: string; isMemoryMode?: boolean },
   ): Promise<void> {
-    const userMessageId = this.view.addMessage({
-      type: "user",
-      text,
-      isMemoryMode: opts?.isMemoryMode,
-    });
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
 
@@ -1375,8 +1354,15 @@ export class ChatController {
     const systemNotice = notices.length > 0 ? notices.join("\n") : undefined;
     const baseTextForModel = opts?.textForModel ?? text;
     const textForModel = systemNotice ? `${systemNotice}\n\n${baseTextForModel}` : baseTextForModel;
-    this.engine.addUserText(textForModel);
-    this.recordHistoryMessageId(this.engine.history.length - 1, userMessageId);
+    const historyEntryId = this.engine.addUserText(textForModel);
+    this.view.addMessage(
+      {
+        type: "user",
+        text,
+        isMemoryMode: opts?.isMemoryMode,
+      },
+      historyEntryId,
+    );
 
     await this.runAssistantTurn();
   }
@@ -1385,11 +1371,10 @@ export class ChatController {
     const trimmed = text.trim();
     if (!trimmed || this.isStreaming) return;
 
-    const userMessageId = this.view.addMessage({ type: "user", text: trimmed });
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
-    this.engine.addUserText(trimmed);
-    this.recordHistoryMessageId(this.engine.history.length - 1, userMessageId);
+    const historyEntryId = this.engine.addUserText(trimmed);
+    this.view.addMessage({ type: "user", text: trimmed }, historyEntryId);
 
     await this.runAssistantTurn();
   }
@@ -1558,9 +1543,8 @@ export class ChatController {
   }
 
   private startRewindFlow(): void {
-    const candidates = this.engine.listRewindCandidates().map((candidate, candidateIndex) => ({
-      id: String(candidateIndex),
-      historyIndex: candidate.historyIndex,
+    const candidates = this.engine.listRewindCandidates().map((candidate) => ({
+      id: candidate.historyEntryId,
       label: this.formatRewindCandidateLabel(candidate.text),
     }));
 
@@ -1570,10 +1554,7 @@ export class ChatController {
     }
 
     this.view.showRewindPicker({
-      items: candidates.map((candidate) => ({
-        id: candidate.id,
-        label: candidate.label,
-      })),
+      items: candidates,
       onSelect: (id) => {
         const selected = candidates.find((candidate) => candidate.id === id);
         if (!selected) {
@@ -1581,7 +1562,7 @@ export class ChatController {
           this.view.addSystemMessage("rewind selection failed.", "error");
           return;
         }
-        this.applyRewindSelection(selected.historyIndex);
+        this.applyRewindSelection(selected.id);
       },
       onCancel: () => {
         this.view.hideRewindPicker();
@@ -1589,32 +1570,16 @@ export class ChatController {
     });
   }
 
-  private applyRewindSelection(historyIndex: number): void {
+  private applyRewindSelection(historyEntryId: string): void {
     this.view.hideRewindPicker();
 
-    const historyLength = this.engine.history.length;
-    const removedHistoryTail = this.engine.history.slice(historyIndex);
-    const rewound = this.engine.rewindToHistoryIndex(historyIndex);
+    const rewound = this.engine.rewindToHistoryEntryId(historyEntryId);
     if (!rewound) {
       this.view.addSystemMessage("rewind failed.", "error");
       return;
     }
 
-    const expectedRenderedCount = this.getRenderedHistoryMessageCount(removedHistoryTail);
-    const removedMessageIds: string[] = [];
-    for (let index = historyIndex; index < historyLength; index += 1) {
-      const messageId = this.historyMessageIds.get(index);
-      if (messageId) {
-        removedMessageIds.push(messageId);
-      }
-      this.historyMessageIds.delete(index);
-    }
-
-    if (expectedRenderedCount > 0 && removedMessageIds.length === expectedRenderedCount) {
-      this.view.removeMessages(removedMessageIds);
-    } else if (expectedRenderedCount > 0) {
-      this.view.removeLastMessages(expectedRenderedCount);
-    }
+    this.view.removeMessages(rewound.removedEntryIds);
 
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
@@ -1632,7 +1597,6 @@ export class ChatController {
 
   private async clearSession(): Promise<void> {
     this.engine.reset();
-    this.historyMessageIds.clear();
     this.view.resetToolUiSession();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
@@ -1758,10 +1722,9 @@ export class ChatController {
     this.view.resetToolUiSession();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
-    this.historyMessageIds.clear();
     this.view.addMessage({ type: "session_divider", label: "new session" });
-    const userMessageId = this.view.addMessage({ type: "user", text: compactionMessage });
-    this.recordHistoryMessageId(0, userMessageId);
+    const summaryEntryId = this.engine.historyEntries[0]?.id;
+    this.view.addMessage({ type: "user", text: compactionMessage }, summaryEntryId);
 
     this.isBashMode = false;
     this.isBashIncognito = false;
@@ -3088,8 +3051,7 @@ export class ChatController {
       this.refreshStatus();
 
       if (opts?.addToContext !== false) {
-        this.engine.addUserText(userMessageText);
-        this.recordHistoryMessageId(this.engine.history.length - 1, toolCallId);
+        this.engine.addUserText(userMessageText, { historyEntryId: toolCallId });
       }
 
       this.view.requestRender();

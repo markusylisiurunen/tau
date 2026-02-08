@@ -180,6 +180,7 @@ describe("ToolUiRegistry", () => {
   it("renders file tool events", () => {
     const writeSuccess = renderEvent(registry, theme, {
       type: "write_success",
+      toolCallId: "write-1",
       path: "notes.txt",
       bytes: 12,
       lines: 1,
@@ -190,6 +191,7 @@ describe("ToolUiRegistry", () => {
 
     const writeBlocked = renderEvent(registry, theme, {
       type: "write_blocked",
+      toolCallId: "write-2",
       path: "notes.txt",
       reason: "blocked",
     });
@@ -197,6 +199,7 @@ describe("ToolUiRegistry", () => {
 
     const editSuccess = renderEvent(registry, theme, {
       type: "edit_success",
+      toolCallId: "edit-1",
       path: "notes.txt",
       oldLength: 5,
       newLength: 11,
@@ -212,6 +215,7 @@ describe("ToolUiRegistry", () => {
 
     const editBlocked = renderEvent(registry, theme, {
       type: "edit_blocked",
+      toolCallId: "edit-2",
       path: "notes.txt",
       reason: "blocked",
     });

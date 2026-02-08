@@ -27,7 +27,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 **Data flow**: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering.
 
-**Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Subagent UI updates (spawned, progress, emit_output messages, finished) are delivered via `CoreSession.onSubagentEvent()` as `subagent_ui` events for background updates. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
+**Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Assistant and tool-result events include stable `historyEntryId` values so the UI can correlate rendered rows with session history across rewind operations. Subagent UI updates (spawned, progress, emit_output messages, finished) are delivered via `CoreSession.onSubagentEvent()` as `subagent_ui` events for background updates. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
 
 ## Key modules
 

@@ -8,7 +8,12 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
-import type { CoreNoticeEvent, RunnerEvent as CoreRunnerEvent } from "../events/types.js";
+import type {
+  CoreNoticeEvent,
+  CoreToolUiEvent,
+  RunnerAssistantPartialEvent,
+  RunnerToolResultEvent,
+} from "../events/types.js";
 import type {
   ToolDefinition,
   ToolDispatchContext,
@@ -22,7 +27,9 @@ import { streamModel } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { MessageAccumulator } from "./message_accumulator.js";
 
-export type RunnerEvent = CoreRunnerEvent;
+export type ModelRunnerEvent = CoreNoticeEvent | RunnerAssistantPartialEvent;
+export type ToolRunnerEvent = CoreNoticeEvent | CoreToolUiEvent | RunnerToolResultEvent;
+export type RunnerEvent = ModelRunnerEvent | ToolRunnerEvent;
 
 export type RetryOptions = {
   notice?: { text: string; severity?: CoreNoticeEvent["severity"] };
@@ -42,12 +49,12 @@ export type RunModelSubturnOptions = {
 
 export async function* runModelSubturn(
   options: RunModelSubturnOptions,
-): AsyncGenerator<RunnerEvent, AssistantMessage, void> {
+): AsyncGenerator<ModelRunnerEvent, AssistantMessage, void> {
   const { model, context, streamOptions, signal, emitPartials = false, retry } = options;
 
   const runAttempt = async function* (
     attemptOptions: TauStreamOptions,
-  ): AsyncGenerator<RunnerEvent, AssistantMessage, void> {
+  ): AsyncGenerator<ModelRunnerEvent, AssistantMessage, void> {
     const stream = streamModel(model, context, attemptOptions);
     const accumulator = emitPartials ? new MessageAccumulator() : undefined;
 
@@ -146,7 +153,7 @@ export type RunToolCallsOptions = {
 
 export async function* runToolCalls(
   options: RunToolCallsOptions,
-): AsyncGenerator<RunnerEvent, void, void> {
+): AsyncGenerator<ToolRunnerEvent, void, void> {
   const {
     toolCalls,
     toolRegistry,

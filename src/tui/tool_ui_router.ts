@@ -241,7 +241,7 @@ export class ToolUiRouter {
       uiEvent.type === "list_success" ||
       uiEvent.type === "list_blocked"
     ) {
-      this.chatContainer.addMessage({ type: "tool", event: uiEvent });
+      this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
       this.requestRender();
       return;
     }

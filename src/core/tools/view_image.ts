@@ -70,6 +70,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "view_image_blocked",
+          toolCallId: toolCall.id,
           path: path || "(missing path)",
           headerTarget,
           reason,
@@ -118,6 +119,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
         const uiText = buildViewImageUiText({ mimeType, bytes, fullText: resultText });
         const uiEvent: ToolUiEvent = {
           type: "view_image_success",
+          toolCallId: toolCall.id,
           path: resolvedPath,
           headerTarget: resolvedPath,
           mimeType,

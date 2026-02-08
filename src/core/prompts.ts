@@ -141,9 +141,6 @@ End your response after the plan. Do not offer to implement it. Do not write cod
 
 Request:
 describe_the_feature_or_change
-
-Context:
-constraints_non_goals_or_other_relevant_information
 `.trim();
 
 const TEMPLATE_CODE_REVIEW = `
@@ -215,6 +212,10 @@ Structure your review as follows:
 3. **Unverified assumptions**: List only assumptions that are critical to correctness and cannot reasonably be inferred from context.
     - Worth listing: breaking API changes, incompatible schema migrations, missing configuration that would cause runtime failures.
     - Skip: routine function calls, standard library usage, typical dependencies.
+
+---
+
+Perform the code review. Think hard and be thorough.
 `.trim();
 
 function getCodeReviewTemplateWithScope(scope: string): string {
@@ -222,7 +223,7 @@ function getCodeReviewTemplateWithScope(scope: string): string {
 }
 
 const TEMPLATE_COMMIT = [
-  "Please commit my staged changes.",
+  "Commit my staged changes.",
   "Run `git diff --staged` (set max output tokens to 32768) to see what's there, and if nothing is staged, just tell me and stop.",
   "Write a commit message that uses imperative mood, stays lowercase except for proper nouns, skips trailing punctuation, and omits conventional prefixes like `feat:` or `fix:`.",
   "Keep it to a single line under 90 characters that summarizes everything staged.",

@@ -30,15 +30,19 @@ Do not guess at requirements. Do not fill gaps with assumptions. But do use the 
 Once the user confirms your understanding, explore the codebase and produce a plan with exactly these sections:
 
 ### Summary
+
 One paragraph: what is being built and why.
 
 ### Background
+
 The context a developer would need: relevant existing behavior, constraints, edge cases, and dependencies.
 
 ### Plan
+
 Numbered steps describing what to change and where. Each step should be concrete enough that a developer could execute it without re-reading the original request. Reference specific files, functions, or patterns when you know them.
 
 ### Relevant files
+
 A list of files and code sections involved, with a one-line note on each file's role. If you found none, say so.
 
 ## Writing style

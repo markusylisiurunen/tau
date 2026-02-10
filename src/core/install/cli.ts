@@ -56,7 +56,12 @@ function parseValue(
     throw new InstallCliError(`missing value for ${arg}`);
   }
 
-  return { value: next.trim(), nextIndex: index + 1 };
+  const value = next.trim();
+  if (!value) {
+    throw new InstallCliError(`missing value for ${arg}`);
+  }
+
+  return { value, nextIndex: index + 1 };
 }
 
 function parseInstallArgs(argv: string[]): InstallCliOptions {
@@ -184,6 +189,10 @@ function installPrompts(args: {
       skipped += 1;
       log(`skipped prompt '${id}' (${targetPath} already exists)`);
       continue;
+    }
+
+    if (alreadyExists && force) {
+      rmSync(targetPath, { recursive: true, force: true });
     }
 
     copyFileSync(sourcePath, targetPath);

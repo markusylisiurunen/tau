@@ -221,6 +221,59 @@ describe("install cli", () => {
     }
   });
 
+  it("overwrites a prompt directory target with --force", async () => {
+    const fx = setupFixture();
+    try {
+      const promptsDir = join(fx.cwd, ".tau", "prompts");
+      const samplePromptPath = join(promptsDir, "sample.md");
+
+      mkdirSync(samplePromptPath, { recursive: true });
+
+      await runInstallCommand(["--prompt", "sample", "--force"], {
+        cwd: fx.cwd,
+        home: fx.home,
+        starterContentRoot: fx.starter,
+        log: () => {},
+      });
+
+      expect(readFileSync(samplePromptPath, "utf-8")).toContain("id: sample");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("throws for empty prompt values", async () => {
+    const fx = setupFixture();
+    try {
+      await expect(
+        runInstallCommand(["--prompt", "   "], {
+          cwd: fx.cwd,
+          home: fx.home,
+          starterContentRoot: fx.starter,
+          log: () => {},
+        }),
+      ).rejects.toBeInstanceOf(InstallCliError);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("throws for empty skill values", async () => {
+    const fx = setupFixture();
+    try {
+      await expect(
+        runInstallCommand(["--skill", "   "], {
+          cwd: fx.cwd,
+          home: fx.home,
+          starterContentRoot: fx.starter,
+          log: () => {},
+        }),
+      ).rejects.toBeInstanceOf(InstallCliError);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("throws for unknown options", async () => {
     await expect(runInstallCommand(["--nope"], { log: () => {} })).rejects.toBeInstanceOf(
       InstallCliError,

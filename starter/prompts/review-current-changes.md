@@ -51,27 +51,27 @@ Prefix each finding title with a priority:
 4. **Snippets**: Use code blocks. Keep them short.
 5. **Line ranges**: Keep ranges tight to pinpoint the problem.
 6. **Suggestions**: When providing replacement code:
-    - Use a markdown code block.
-    - Preserve exact leading whitespace (spaces vs tabs).
-    - Do not change outer indentation unless that is the fix.
+   - Use a markdown code block.
+   - Preserve exact leading whitespace (spaces vs tabs).
+   - Do not change outer indentation unless that is the fix.
 
 ## Output format
 
 Structure your review as follows:
 
 1. **Verdict**: Start with `Verdict: [Correct|Incorrect]` followed by a one to three sentence summary.
-    - "Correct" means no blocking issues (P0/P1).
-    - "Incorrect" means blocking bugs or broken functionality.
+   - "Correct" means no blocking issues (P0/P1).
+   - "Incorrect" means blocking bugs or broken functionality.
 
 2. **Findings**: List each finding with:
-    - **Title**: `[P#] <Imperative title>`
-    - **Location**: `<file-path>:<line-range>`
-    - **Description**: One paragraph explaining the issue.
-    - **Suggestion**: (Optional) A code block with replacement code.
+   - **Title**: `[P#] <Imperative title>`
+   - **Location**: `<file-path>:<line-range>`
+   - **Description**: One paragraph explaining the issue.
+   - **Suggestion**: (Optional) A code block with replacement code.
 
 3. **Unverified assumptions**: List only assumptions that are critical to correctness and cannot reasonably be inferred from context.
-    - Worth listing: breaking API changes, incompatible schema migrations, missing configuration that would cause runtime failures.
-    - Skip: routine function calls, standard library usage, typical dependencies.
+   - Worth listing: breaking API changes, incompatible schema migrations, missing configuration that would cause runtime failures.
+   - Skip: routine function calls, standard library usage, typical dependencies.
 
 ---
 

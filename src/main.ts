@@ -22,6 +22,7 @@ import {
   createLocalToolExecutionBackend,
   createSandboxToolExecutionBackend,
   getAuthPath,
+  InstallCliError,
   loadConfig,
   loadRuntimeConfig,
   parseCheckpoint,
@@ -29,7 +30,9 @@ import {
   parsePersonaString,
   printDebugInfo,
   printHelp,
+  printInstallHelp,
   printUsageHelp,
+  runInstallCommand,
   runListCommand,
   runLoginCommand,
   runLogoutCommand,
@@ -157,6 +160,26 @@ if (argv[0] === "usage") {
       // eslint-disable-next-line no-console
       console.error("");
       printUsageHelp();
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+if (argv[0] === "install") {
+  try {
+    await runInstallCommand(argv.slice(1), {
+      cwd,
+      home: process.env.HOME,
+    });
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof InstallCliError) {
+      // eslint-disable-next-line no-console
+      console.error(err.message);
+      // eslint-disable-next-line no-console
+      console.error("");
+      printInstallHelp();
       process.exit(1);
     }
     throw err;

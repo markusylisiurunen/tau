@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "postbuild": "node scripts/copy-starter.js",
     "check": "prettier -w .tau/**/*.md *.md && biome check --write . && tsc -p tsconfig.json --noEmit",
     "precheck": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "prebuild": "node scripts/generate-version.js && node scripts/generate-themes.js",

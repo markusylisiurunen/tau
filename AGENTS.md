@@ -34,7 +34,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
 - `src/core/`
   - `personas.ts` - Built-in persona definitions and system prompt blocks
-  - `prompts.ts` - Built-in prompt templates
+  - `prompts.ts` - Prompt template types
   - `types.ts` - Core types and reasoning levels
   - `commands/registry.ts` - Slash command parsing and dispatch
   - `cli.ts` - CLI argument parsing and help text
@@ -48,6 +48,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `config/content_loader.ts` - Load personas, prompts, skills, themes
   - `config/schema.ts` - Config schema and merge rules
   - `auth/cli.ts` - login/logout flows
+  - `install/cli.ts` - starter prompts/skills installer (`tau install`)
   - `auth/auth_storage.ts` - Credential storage and refresh
   - `auth/credential_resolver.ts` - API key resolution
   - `auth/auth_paths.ts` - Auth file path resolution
@@ -152,13 +153,12 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinPrompts`, `disableBuiltinThemes`, `defaultTheme`, `bashCommands`, `agentContextFiles`, `sandbox`). This level is only included when cwd is inside home.
+- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `bashCommands`, `agentContextFiles`, `sandbox`). This level is only included when cwd is inside home.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `sandbox` (optional): Docker sandbox settings (see below).
   - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.
-  - `disableBuiltinPrompts` (optional): If true, tau will not load built-in prompts, only entries from disk.
   - `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.
   - `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Defaults to `gold`.
 - **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys` and `sandbox` merge per field; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
@@ -223,6 +223,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau auth list` - List authenticated accounts and usage windows
 - `tau auth logout codex --account <email>` - Remove stored OAuth credentials
 - `tau usage` - Summarize usage logs from `~/.config/tau/logs/`
+- `tau install [--global] [--force] [--prompt <id> | --skill <name>]` - Install starter prompts and skills (or one selected item)
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 
 ## Commands

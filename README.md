@@ -77,6 +77,18 @@ tau usage --since 2025-01-01 --persona gpt-5.2-coder
 
 filters: `--since`, `--persona`, `--provider`, `--model`.
 
+## install starter prompts and skills
+
+tau ships starter prompt and skill templates as markdown content in this repository. install them with:
+
+```sh
+tau install
+```
+
+this writes prompts and skills into `.tau/` under your current working directory. use `--global` to
+install into `~/.config/tau/` instead, and `--force` to overwrite existing files/directories.
+use `--prompt <id>` or `--skill <name>` to install only one item (for targeted updates).
+
 ## security notice
 
 **the risk level system is a UX guardrail, not a hard security boundary.** it helps prevent accidental writes and guides model behavior, but it has significant limitations:
@@ -341,7 +353,6 @@ settings merge from least-specific to most-specific.
   "defaultPersona": "gpt-5.2-chat",
   "defaultRisk": "read-write",
   "disableBuiltinPersonas": false,
-  "disableBuiltinPrompts": false,
   "disableBuiltinThemes": false,
   "defaultTheme": "solarized"
 }
@@ -353,7 +364,7 @@ the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`
 
 the `defaultTheme` field sets the theme id to load at startup. if not specified, it defaults to `gold`.
 
-if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinPrompts` is set to `true`, tau will not load built-in prompts. if `disableBuiltinThemes` is set to `true`, tau will not load built-in themes. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
+if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinThemes` is set to `true`, tau will not load built-in themes. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 
 the `sandbox` field configures docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `72`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
 
@@ -458,7 +469,7 @@ when persona ids collide across levels, the most specific level wins (for exampl
 
 ### custom prompts
 
-save reusable prompt templates in `~/.config/tau/prompts/` (global, only when cwd is under home) or `.tau/prompts/` (project). `.tau/` directories are discovered by walking up from the current working directory to home (or filesystem root if cwd is outside home):
+tau does not include prompt templates by default. run `tau install` to bootstrap starter templates, or save your own in `~/.config/tau/prompts/` (global, only when cwd is under home) or `.tau/prompts/` (project). `.tau/` directories are discovered by walking up from the current working directory to home (or filesystem root if cwd is outside home):
 
 ```markdown
 ---
@@ -469,7 +480,7 @@ review this code for bugs, edge cases, and style issues.
 suggest specific improvements with code examples.
 ```
 
-insert them with `/prompt:review`. if a prompt id conflicts across levels (including built-ins), the most specific level wins.
+insert them with `/prompt:review`. if a prompt id conflicts across levels, the most specific level wins.
 
 the prompt file name (without the `.md` extension) must match the `id`.
 

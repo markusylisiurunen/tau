@@ -20,7 +20,6 @@ export interface Config {
   defaultPersona?: string;
   defaultRisk?: RiskLevel;
   disableBuiltinPersonas?: boolean;
-  disableBuiltinPrompts?: boolean;
   disableBuiltinThemes?: boolean;
   defaultTheme?: string;
   bashCommands?: BashCommand[];
@@ -117,14 +116,6 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
       config.disableBuiltinPersonas = data.disableBuiltinPersonas;
     } else {
       errors.push(`${sourceLabel}: 'disableBuiltinPersonas' must be a boolean.`);
-    }
-  }
-
-  if (data.disableBuiltinPrompts !== undefined) {
-    if (typeof data.disableBuiltinPrompts === "boolean") {
-      config.disableBuiltinPrompts = data.disableBuiltinPrompts;
-    } else {
-      errors.push(`${sourceLabel}: 'disableBuiltinPrompts' must be a boolean.`);
     }
   }
 
@@ -372,10 +363,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
     if (config.disableBuiltinPersonas !== undefined) {
       merged.disableBuiltinPersonas = config.disableBuiltinPersonas;
-    }
-
-    if (config.disableBuiltinPrompts !== undefined) {
-      merged.disableBuiltinPrompts = config.disableBuiltinPrompts;
     }
 
     if (config.disableBuiltinThemes !== undefined) {

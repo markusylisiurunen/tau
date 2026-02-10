@@ -9,6 +9,12 @@ Examine proposed changes made by another engineer. Identify discrete, actionable
 
 Think hard and be thorough. A sloppy review is worse than no review.
 
+## Review mode and focus
+
+By default, run a comprehensive, balanced PR-style review. Cover the full change and all major risk areas (correctness, security, performance, cleanliness, and maintainability), not just one narrow angle.
+
+If you were given a specific review focus, angle, or additional instructions (for example, "focus on performance" or "look only for security issues"), follow that requested focus instead of the default broad pass.
+
 ## Select review scope
 
 Infer scope from the user request. Wrapper prompts may include `What to review: ...`, but do not require that exact line.

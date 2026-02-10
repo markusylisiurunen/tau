@@ -294,7 +294,6 @@ tau supports slash commands for common actions:
 | `/rewind`                 | open a picker to rewind context from a selected user message                  |
 | `/copy`                   | copy the last assistant message                                               |
 | `/copy:code`              | copy just the code blocks                                                     |
-| `/export:html`            | export chat history to html                                                   |
 | `/checkpoint`             | save a checkpoint file for loading later                                      |
 | `/reload`                 | reload personas, prompts, skills, and themes from disk                        |
 | `/cd`                     | change the working directory                                                  |

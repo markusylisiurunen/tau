@@ -31,7 +31,6 @@ describe("command registry", () => {
       help: () => calls.push({ type: "help" }),
       copy: async () => calls.push({ type: "copy" }),
       copyCode: async () => calls.push({ type: "copyCode" }),
-      export: async () => calls.push({ type: "export" }),
       checkpoint: async () => calls.push({ type: "checkpoint" }),
       newSession: () => calls.push({ type: "new" }),
       rewind: () => calls.push({ type: "rewind" }),

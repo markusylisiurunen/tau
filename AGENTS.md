@@ -84,7 +84,6 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `tool_ui_router.ts` - Tool UI event sequencing and routing
   - `terminal.ts` - Terminal adapter
   - `clipboard.ts` - Clipboard helper
-  - `export/` - HTML export pipeline
   - `ui/` - Terminal UI surface (messages, tool output, editor, autocomplete)
   - `ui/components/` - Editor and layout primitives
   - `ui/theme/` - Theme tokens, palette, and renderer
@@ -228,7 +227,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 ## Commands
 
-- `/help`, `/new`, `/rewind`, `/cd`, `/copy`, `/copy:code`, `/export:html`, `/checkpoint`, `/reload`
+- `/help`, `/new`, `/rewind`, `/cd`, `/copy`, `/copy:code`, `/checkpoint`, `/reload`
 - `/compact:only-summary`, `/compact:with-last-turn` - Compact history into a single synthetic user summary message (optionally includes last assistant message verbatim when available)
 - `/prune:earliest-first`, `/prune:largest-first`, `/prune:least-important` - Prune tool results and compact edit call payloads/results
 - `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`

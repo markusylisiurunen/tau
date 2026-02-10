@@ -6,7 +6,6 @@ export type Command = (
   | { type: "help" }
   | { type: "copy" }
   | { type: "copyCode" }
-  | { type: "export" }
   | { type: "checkpoint" }
   | { type: "new" }
   | { type: "rewind" }
@@ -49,7 +48,6 @@ export interface CommandDispatchContext {
   help: () => void;
   copy: () => Promise<void>;
   copyCode: () => Promise<void>;
-  export: () => Promise<void>;
   checkpoint: () => Promise<void>;
   newSession: () => Promise<void>;
   rewind: () => void;
@@ -416,21 +414,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "copyCode", extra };
     },
     run: (ctx) => ctx.copyCode(),
-  });
-
-  registry.register({
-    id: "export",
-    usage: "/export:html",
-    description: "export chat history to HTML",
-    autocompleteDescription: "export chat history to HTML",
-    argument: "none",
-    section: "base",
-    parse: (raw) => {
-      const { command, extra } = splitCommandInput(raw);
-      if (command !== "/export:html") return null;
-      return { type: "export", extra };
-    },
-    run: (ctx) => ctx.export(),
   });
 
   registry.register({

@@ -79,8 +79,6 @@ import { APP_VERSION } from "../core/version.js";
 import type { ChatInputMode, ChatView, ChatViewInputHandlers } from "./chat_view.js";
 import { copyTextToClipboard } from "./clipboard.js";
 import { DOUBLE_PRESS_WINDOW_MS } from "./constants.js";
-import { buildExportEntriesFromHistory } from "./export/engine_history.js";
-import { renderExport } from "./export/index.js";
 import type { AssistantMessageModel } from "./ui/chat_message_model.js";
 import { getFileAutocompleteToken } from "./ui/slash_autocomplete.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
@@ -339,7 +337,6 @@ export class ChatController {
       help: () => this.showHelp(),
       copy: () => this.copyLastAssistantMessage(),
       copyCode: () => this.copyLastAssistantCodeBlock(),
-      export: () => this.exportSessionHtml(),
       checkpoint: () => this.checkpointSession(),
       newSession: () => this.clearSession(),
       rewind: () => this.startRewindFlow(),
@@ -1081,8 +1078,6 @@ export class ChatController {
         return "copy last assistant message";
       case "copyCode":
         return "copy last assistant code blocks";
-      case "export":
-        return "export chat history to html";
       case "checkpoint":
         return "save a checkpoint file";
       case "new":
@@ -1471,33 +1466,6 @@ export class ChatController {
       this.view.addSystemMessage("copied all code blocks to clipboard.", "success");
     } catch (err) {
       this.view.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, "error");
-    }
-  }
-
-  private async exportSessionHtml(): Promise<void> {
-    const history = this.engine.history;
-    if (history.length === 0) {
-      this.view.addSystemMessage("no conversation to export.", "warn");
-      return;
-    }
-
-    try {
-      const entries = buildExportEntriesFromHistory(history);
-      if (entries.length === 0) {
-        this.view.addSystemMessage("no conversation to export.", "warn");
-        return;
-      }
-
-      const html = renderExport("html", entries, {
-        title: "tau chat export",
-        generatedAt: Date.now(),
-      });
-      const dir = await mkdtemp(join(tmpdir(), "tau-export-"));
-      const filePath = join(dir, "index.html");
-      await writeFile(filePath, html, "utf8");
-      this.view.addSystemMessage(filePath, "muted");
-    } catch (err) {
-      this.view.addSystemMessage(`export failed: ${(err as Error).message}`, "error");
     }
   }
 

@@ -17,7 +17,7 @@ Default to uncommitted changes when scope is not explicitly specified.
 
 Use this mapping:
 
-- Uncommitted or current changes -> `git diff HEAD`
+- Uncommitted or current changes -> `git status --short` and `git diff HEAD`
 - Current branch -> `git diff main...HEAD`
 - Most recent commit -> `git show HEAD`
 

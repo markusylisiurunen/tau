@@ -198,10 +198,9 @@ const PERSONA_SPECS: PersonaSpec[] = [
     id: "opus-4.6",
     description: "Claude Opus 4.6",
     model: getModel("anthropic", "claude-opus-4-6"),
-    allowedReasoningLevels: ["low", "high"],
+    allowedReasoningLevels: ["low", "high", "xhigh"],
     settings: { reasoning: "high" },
   },
-
   {
     id: "gpt-5.2",
     description: "GPT-5.2",
@@ -235,7 +234,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
     description: "Gemini 3 Flash",
     model: getModel("google", "gemini-3-flash-preview"),
     allowedReasoningLevels: ["low", "medium", "high"],
-    settings: { reasoning: "high" },
+    settings: { reasoning: "medium" },
   },
 ];
 

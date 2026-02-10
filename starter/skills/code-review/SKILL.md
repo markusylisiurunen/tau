@@ -3,7 +3,13 @@ name: code-review
 description: Conduct rigorous code review for git changes and return prioritized, actionable findings in a strict verdict/findings format. Trigger: explicit.
 ---
 
-## Select review scope and primary diff command
+## Goal
+
+Examine proposed changes made by another engineer. Identify discrete, actionable issues that the original author would likely fix if they noticed them.
+
+Think hard and be thorough. A sloppy review is worse than no review.
+
+## Select review scope
 
 Infer scope from the user request. Wrapper prompts may include `What to review: ...`, but do not require that exact line.
 
@@ -17,59 +23,74 @@ Use this mapping:
 
 If the request contains conflicting scope signals, ask a clarifying question first.
 
-For every diff/show command you run (`git diff ...`, `git show ...`), set bash `maxOutputTokens` to `32768`.
+For every diff/show command, set bash `maxOutputTokens` to `32768`.
 
-## Gather context
+## Understand the change
 
-Read the primary diff output carefully before surfacing findings.
+Start with the diff, but do not stop there. Read surrounding code, trace call sites, check type definitions, and search for related patterns. Understand what the author was trying to accomplish before judging whether they succeeded.
 
-When you need more context (surrounding code, related functions, type definitions), use focused follow-up reads: `cat`, `rg`, `sed -n '<start>,<end>p'`, or similar. Fetch only what you need to evaluate the change. If referenced code is inaccessible, call out that gap because missing expected changes can indicate real issues.
+Examine every changed file, not just the obvious ones. Trace how changes interact across files. Consider edge cases, error paths, and implicit assumptions. When changes in one file imply corresponding changes elsewhere and those are absent, treat that as a red flag. Do not guess when reading more code would give you the answer. If a change looks suspicious, verify before flagging.
 
-## What to flag
+## What to look for
 
-Flag an issue only when it meets all criteria below:
+Actively hunt for issues across these categories:
 
-1. **Impact**: It meaningfully affects correctness, performance, security, or maintainability.
-2. **Cleanliness**: It is leftover debug code (`console.log`, print statements), commented-out code, or exposed secrets.
-3. **Actionable**: The fix is discrete, not a general complaint.
-4. **New**: The issue was introduced in the reviewed change, not pre-existing (unless the change made it worse).
-5. **Provable**: You can point to specific code. No speculation.
-6. **No assumptions**: The issue does not rely on unstated assumptions about intent.
-7. **Proportionate**: The fix does not demand excessive rigor for the context.
+- **Correctness**: Logic errors, broken edge cases, off-by-one mistakes, race conditions, missing error handling.
+- **Security**: Injection vulnerabilities, exposed secrets, missing input validation, broken access controls.
+- **Performance**: Unnecessary allocations in hot paths, O(n²) where O(n) is straightforward, missing indexes.
+- **Cleanliness**: Leftover debug code (`console.log`, print statements), commented-out code, dead imports.
+- **Maintainability**: Fragile coupling, misleading names, duplicated logic that will drift.
 
-Report all qualifying findings. Do not stop at the first one. If none qualify, say so.
+## When to flag
+
+Report a finding only when it is:
+
+1. **Actionable**: The fix is discrete, not a general complaint.
+2. **New**: Introduced in the reviewed change, not pre-existing (unless the change made it worse).
+3. **Provable**: You can point to specific code and explain why it breaks. No speculation, no unstated assumptions about the codebase or author intent.
+4. **Proportionate**: The fix does not demand excessive rigor for the context.
+
+Report all qualifying findings, not just the first one. If none qualify, say so.
 
 ## Priority levels
 
 Prefix each finding title with one priority:
 
 - **[P0]**: Critical. Drop everything. (for example, crashes, security holes, data loss)
-- **[P1]**: Urgent. Fix this cycle. (for example, wrong logic, major regression, debug code left in)
-- **[P2]**: Normal. Fix soon. (for example, minor bugs, maintainability issues)
-- **[P3]**: Low. Nice to have. (for example, style and naming nits)
+- **[P1]**: Urgent. Fix this cycle. (for example, wrong logic, major perf regression, debug code left in)
+- **[P2]**: Normal. Fix soon. (for example, minor bugs, maintainability issues, clear typos)
+- **[P3]**: Low. Nice to have. (for example, style, naming nits)
 
 ## How to comment
 
-1. **Clear and brief**: One paragraph max. No filler. Matter-of-fact tone.
-2. **Instant grasp**: Make the issue obvious at a glance.
-3. **Context**: Explain why it matters and when it breaks.
-4. **Snippets**: Use short code blocks when needed.
-5. **Line ranges**: Keep ranges tight.
-6. **Suggestions**: If providing replacement code:
-   - Use a markdown code block.
-   - Preserve exact leading whitespace.
-   - Do not change outer indentation unless that is the fix.
+Write so the author understands at a glance. One paragraph max per finding. No filler ("Great job", "Thanks"). Explain why the issue matters and when it breaks. Mention specific scenarios or inputs if relevant.
+
+Use short code blocks for snippets. Keep line ranges tight to pinpoint the problem. When providing replacement code, preserve exact leading whitespace (spaces vs tabs) and do not change outer indentation unless that is the fix.
 
 ## Output format
 
-1. **Verdict**: `Verdict: [Correct|Incorrect]` plus a one to three sentence summary.
-   - "Correct" means no blocking issues (P0/P1).
-   - "Incorrect" means blocking bugs or broken functionality.
+Use "Correct" when there are no blocking issues (P0/P1). Use "Incorrect" when there are blocking bugs or broken functionality.
 
-2. **Findings**: For each finding include:
-   - **Title**: `[P#] <Imperative title>`
-   - **Location**: `<file-path>:<line-range>`
-   - **Description**: One paragraph.
-   - **Suggestion**: Optional replacement code block.
+Gaps are things that matter for correctness but require information from outside the codebase to verify: external API contracts, deployment configuration, third-party service behavior, upstream schema compatibility. If the answer lives somewhere in the code, it is not a gap. Read the code and resolve it. Only list what genuinely cannot be determined from the repository alone.
 
-3. **Unverified assumptions**: List only assumptions that are critical to correctness and cannot be inferred from context.
+```
+Verdict: [Correct|Incorrect]
+
+<one to three sentence summary>
+
+## Findings
+
+### [P#] <imperative title>
+
+**Location**: `<file-path>:<line-range>`
+
+<one to two paragraph description>
+
+<optional suggestion code block(s)>
+
+(...repeat for each finding, or "No findings." if none qualify)
+
+## Gaps
+
+- <gap, or "None.">
+```

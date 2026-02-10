@@ -237,11 +237,11 @@ toggle visibility of the model's thinking with `ctrl+t`.
 
 ## working with files
 
-reference files in your message with `@file:<path>` (for example, `@file:src/tui/app.ts`). autocomplete helps you find the right path. press `ctrl+f` to expand file contents into the conversation, letting the model see the actual code.
+reference files in your message with `@<path>` (for example, `@src/tui/app.ts`). autocomplete helps you find the right path. press `ctrl+f` to expand file contents into the conversation, letting the model see the actual code.
 
-reference skills with `@skill:<name>` (for example, `@skill:skill-name`). autocomplete will suggest available skills. press `ctrl+f` to expand the skill's `SKILL.md` into the conversation.
+reference skills with `@@skill:<name>` (for example, `@@skill:skill-name`). autocomplete will suggest available skills. press `ctrl+f` to expand the skill's `SKILL.md` into the conversation.
 
-to explicitly target a sub-agent, use `@agent:<name>` (for example, `@agent:default`).
+to explicitly target a sub-agent, use `@@agent:<name>` (for example, `@@agent:default`).
 
 you can also pipe content directly:
 
@@ -306,20 +306,20 @@ the compact commands are manual and useful when conversations get long. they rep
 
 ## keyboard shortcuts
 
-| key         | action                             |
-| ----------- | ---------------------------------- |
-| `shift+tab` | cycle reasoning effort             |
-| `ctrl+r`    | cycle risk level                   |
-| `ctrl+p`    | cycle personality                  |
-| `ctrl+t`    | toggle thinking visibility         |
-| `ctrl+o`    | toggle compact tool display        |
-| `ctrl+f`    | expand @file: and @skill: mentions |
-| `ctrl+s`    | stash input to clipboard           |
-| `enter x2`  | retry last response on empty input |
-| `esc x2`    | clear current prompt               |
-| `alt+up`    | pop queued message                 |
-| `esc`       | interrupt generation               |
-| `ctrl+c`    | press twice to exit                |
+| key         | action                                     |
+| ----------- | ------------------------------------------ |
+| `shift+tab` | cycle reasoning effort                     |
+| `ctrl+r`    | cycle risk level                           |
+| `ctrl+p`    | cycle personality                          |
+| `ctrl+t`    | toggle thinking visibility                 |
+| `ctrl+o`    | toggle compact tool display                |
+| `ctrl+f`    | expand @<file> and @@skill:<name> mentions |
+| `ctrl+s`    | stash input to clipboard                   |
+| `enter x2`  | retry last response on empty input         |
+| `esc x2`    | clear current prompt                       |
+| `alt+up`    | pop queued message                         |
+| `esc`       | interrupt generation                       |
+| `ctrl+c`    | press twice to exit                        |
 
 ## configuration
 

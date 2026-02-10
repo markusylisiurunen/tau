@@ -212,7 +212,7 @@ export class CommandRegistry<Ctx = unknown> {
       ["ctrl+p", "cycle personality"],
       ["ctrl+t", "toggle thoughts visibility"],
       ["ctrl+o", "toggle compact tool UI"],
-      ["ctrl+f", "expand @file: and @skill: mentions"],
+      ["ctrl+f", "expand @<file> and @@skill:<name> mentions"],
       ["ctrl+s", "stash input to clipboard"],
       ["enter x2", "retry last response"],
       ["esc x2", "clear current prompt"],

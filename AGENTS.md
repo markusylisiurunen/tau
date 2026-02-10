@@ -64,7 +64,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `runtime/deps.ts` - Core dependency injection
   - `utils/context_builder.ts` - System prompt assembly
   - `utils/agents_files.ts` - AGENTS.md discovery
-  - `utils/project_files.ts` - Project file discovery for `@file:` autocomplete
+  - `utils/project_files.ts` - Project file discovery for `@<path>` autocomplete
   - `utils/tool_preview.ts` - Tool UI preview truncation
   - `utils/truncate.ts` - Truncation helpers
   - `utils/model_stream.ts` - Model streaming wrapper
@@ -183,7 +183,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   **Trigger sensitivity**: Skills can specify when they should be activated by including a trigger keyword in their description. If not specified, the default is **balanced**:
   - Include "Trigger: eager" to use whenever the capability helps, even if not explicitly requested
   - Include "Trigger: balanced" (or omit to use default) to use when the request clearly matches the skill's purpose
-  - Include "Trigger: explicit" to use only when the user explicitly names the skill (for example with @skill:<name>), not via keyword overlap
+  - Include "Trigger: explicit" to use only when the user explicitly names the skill (for example with @@skill:<name>), not via keyword overlap
 
   Example: "Git workflow helper. Trigger: eager." or "Database migrator. Trigger: explicit."
 
@@ -197,7 +197,7 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 
 - **eager**: Use proactively whenever the capability would help, even if not explicitly requested. The model should consider using it for related problems.
 - **balanced**: Use when the request clearly matches the capability. This is the default if not specified. The model should activate it when appropriate, but not speculatively.
-- **explicit**: Use only when the user explicitly names the skill or sub-agent (for example with @skill:<name> or @agent:<name>). Do not infer from generic language or keyword overlap.
+- **explicit**: Use only when the user explicitly names the skill or sub-agent (for example with @@skill:<name> or @@agent:<name>). Do not infer from generic language or keyword overlap.
 
 **Built-in subagents:**
 
@@ -237,7 +237,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 Slash commands only trigger on single-line inputs. Unknown slash-prefixed text is sent as a normal prompt.
 
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @file: and @skill: mentions), `Ctrl+S` (stash input to clipboard), `Ctrl+G` (terminate selected subagent), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+Down` (cycle active subagents), `Escape` (interrupt), `Ctrl+C` (press twice to exit)
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @<file> and @@skill:<name> mentions), `Ctrl+S` (stash input to clipboard), `Ctrl+G` (terminate selected subagent), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+Down` (cycle active subagents), `Escape` (interrupt), `Ctrl+C` (press twice to exit)
 
 ## Development
 

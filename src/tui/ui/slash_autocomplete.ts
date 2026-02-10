@@ -6,7 +6,7 @@ import { fuzzyFilter } from "../../core/utils/fuzzy.js";
 
 const MENTION_TOKEN_REGEX = /(?:^|[\t ])(@[^\t ]*)$/;
 
-type MentionKind = "file" | "skill" | "agent";
+type MentionKind = "skill" | "agent";
 
 export function getMentionAutocompleteToken(beforeCursor: string): string | null {
   const match = beforeCursor.match(MENTION_TOKEN_REGEX);
@@ -15,7 +15,7 @@ export function getMentionAutocompleteToken(beforeCursor: string): string | null
 
 export function getFileAutocompleteToken(beforeCursor: string): string | null {
   const token = getMentionAutocompleteToken(beforeCursor);
-  if (!token?.startsWith("@file:")) return null;
+  if (!token?.startsWith("@") || token.startsWith("@@")) return null;
   return token;
 }
 
@@ -139,20 +139,46 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     const token = getMentionAutocompleteToken(beforeCursor);
     if (!token) return null;
 
-    const colonIndex = token.indexOf(":");
-    if (colonIndex === -1) {
-      return this.getMentionKindSuggestions(token);
+    if (token.startsWith("@@")) {
+      return this.getTypedMentionSuggestions(token);
     }
 
-    const kind = token.slice(1, colonIndex) as MentionKind;
-    const valuePrefix = token.slice(colonIndex + 1);
+    return this.getFileMentionSuggestions(token);
+  }
+
+  private getFileMentionSuggestions(
+    token: string,
+  ): { items: AutocompleteItem[]; prefix: string } | null {
+    const source = this.getFiles();
+    if (source.length === 0) return null;
+
+    const valuePrefix = token.slice(1);
+    const filtered = fuzzyFilter(source, valuePrefix, (path) => path);
+    const items = filtered.slice(0, 25).map((path) => ({ value: path, label: path }));
+
+    if (items.length === 0) return null;
+    return { items, prefix: token };
+  }
+
+  private getTypedMentionSuggestions(
+    token: string,
+  ): { items: AutocompleteItem[]; prefix: string } | null {
+    const body = token.slice(2);
+    const colonIndex = body.indexOf(":");
+
+    if (colonIndex === -1) {
+      return this.getMentionKindSuggestions(token, body);
+    }
+
+    const kind = body.slice(0, colonIndex) as MentionKind;
+    const valuePrefix = body.slice(colonIndex + 1);
     return this.getMentionEntrySuggestions(kind, valuePrefix, token);
   }
 
   private getMentionKindSuggestions(
     token: string,
+    kindPrefix: string,
   ): { items: AutocompleteItem[]; prefix: string } | null {
-    const kindPrefix = token.slice(1);
     const kinds = this.getAvailableMentionKinds();
     if (kinds.length === 0) return null;
 
@@ -184,9 +210,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
 
   private getAvailableMentionKinds(): MentionKindSuggestion[] {
     const kinds: MentionKindSuggestion[] = [];
-    if (this.getFiles().length > 0) {
-      kinds.push({ kind: "file", description: "project files" });
-    }
     if (this.getSkills().length > 0) {
       kinds.push({ kind: "skill", description: "available skills" });
     }
@@ -198,8 +221,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
 
   private getMentionSource(kind: MentionKind): string[] | null {
     switch (kind) {
-      case "file":
-        return this.getFiles();
       case "skill":
         return this.getSkills();
       case "agent":
@@ -372,11 +393,15 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
   }
 
   private buildInsertText(item: AutocompleteItem, prefix: string, beforePrefix: string): string {
-    if (prefix.startsWith("@")) {
-      const mentionMatch = prefix.match(/^@([^:\s]+):/);
+    if (prefix.startsWith("@@")) {
+      const mentionMatch = prefix.match(/^@@([^:\s]+):/);
       if (mentionMatch) {
-        return `@${mentionMatch[1]}:${item.value}`;
+        return `@@${mentionMatch[1]}:${item.value}`;
       }
+      return `@@${item.value}`;
+    }
+
+    if (prefix.startsWith("@")) {
       return `@${item.value}`;
     }
 

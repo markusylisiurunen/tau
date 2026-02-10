@@ -18,6 +18,7 @@ function createStubView() {
   const removeMessagesCalls = [];
   const removeMessagesFromCalls = [];
   let rewindPickerHideCount = 0;
+  let editorText = "";
 
   return {
     added,
@@ -27,6 +28,9 @@ function createStubView() {
     rewindPickerShows,
     removeMessagesCalls,
     removeMessagesFromCalls,
+    setEditorText: (text) => {
+      editorText = text;
+    },
     get rewindPickerHideCount() {
       return rewindPickerHideCount;
     },
@@ -64,9 +68,10 @@ function createStubView() {
       cycleSubagentSelection: () => undefined,
       getSelectedSubagentId: () => undefined,
       sendTerminalNotification: () => {},
-      getEditorText: () => "",
-      getExpandedEditorText: () => "",
+      getEditorText: () => editorText,
+      getExpandedEditorText: () => editorText,
       setEditorText: (text) => {
+        editorText = text;
         editorTextUpdates.push(text);
       },
       showRewindPicker: (options) => {
@@ -90,9 +95,10 @@ function createController(view, options = {}) {
     view,
     personas,
     prompts: options.prompts ?? [],
-    skills: [],
-    bashCommands: [],
+    skills: options.skills ?? [],
+    bashCommands: options.bashCommands ?? [],
     config: {},
+    toolBackend: options.toolBackend,
   });
 }
 
@@ -528,6 +534,50 @@ describe("ChatController prune handling", () => {
       text: "prune failed: sampling failed",
       kind: "error",
     });
+  });
+});
+
+describe("ChatController mention expansion", () => {
+  it("expands @<file> and @@skill:<name> mentions and ignores @@agent:<name>", async () => {
+    const stub = createStubView();
+    stub.setEditorText("@src/main.ts @@skill:alpha @@agent:default @src/main.ts");
+    const controller = createController(stub.view, {
+      skills: [{ name: "alpha", description: "alpha skill", path: "skills/alpha/SKILL.md" }],
+    });
+
+    controller.projectFiles = ["src/main.ts"];
+
+    const commands = [];
+    controller.runBashCommand = async (command) => {
+      commands.push(command);
+      return false;
+    };
+
+    await controller.expandFileMentions();
+
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toContain("cat -- 'src/main.ts'");
+    expect(commands[1]).toContain("cat -- 'skills/alpha/SKILL.md'");
+  });
+
+  it("does not expand removed legacy mention syntax", async () => {
+    const stub = createStubView();
+    stub.setEditorText("@file:src/main.ts @skill:alpha @agent:default");
+    const controller = createController(stub.view, {
+      skills: [{ name: "alpha", description: "alpha skill", path: "skills/alpha/SKILL.md" }],
+    });
+
+    controller.projectFiles = ["src/main.ts"];
+
+    const commands = [];
+    controller.runBashCommand = async (command) => {
+      commands.push(command);
+      return false;
+    };
+
+    await controller.expandFileMentions();
+
+    expect(commands).toEqual([]);
   });
 });
 

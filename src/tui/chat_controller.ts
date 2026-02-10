@@ -3100,18 +3100,22 @@ export class ChatController {
 
     const editorText = this.view.getEditorText();
 
-    // Extract @file: and @skill: tokens
-    const tokenRegex = /@([a-z-]+):([^\s]+)/g;
+    // Extract @<file> and @@skill:<name> tokens
+    const tokenRegex = /(?:@@skill:([^\s]+)|(?<!@)@([^@\s][^\s]*))/g;
     const tokens: Array<{ type: "file" | "skill"; value: string }> = [];
     let match: RegExpExecArray | null = null;
     // biome-ignore lint/suspicious/noAssignInExpressions: regex iteration pattern
     while ((match = tokenRegex.exec(editorText)) !== null) {
-      const kind = match[1];
-      if (kind !== "file" && kind !== "skill") continue;
-      tokens.push({
-        type: kind,
-        value: match[2]!,
-      });
+      const skillToken = match[1];
+      if (skillToken) {
+        tokens.push({ type: "skill", value: skillToken });
+        continue;
+      }
+
+      const fileToken = match[2];
+      if (fileToken) {
+        tokens.push({ type: "file", value: fileToken });
+      }
     }
 
     if (tokens.length === 0) {
@@ -3130,7 +3134,7 @@ export class ChatController {
     const seenSkills = new Set(this.expandedSkillsInCurrentPrompt);
 
     for (const entry of tokens) {
-      // Strip trailing punctuation to handle cases like "@file:src/tui/app.ts," or "(see @file:README.md)"
+      // Strip trailing punctuation to handle cases like "@src/tui/app.ts," or "(see @README.md)"
       const cleanToken = entry.value.replace(/[.,;:)}\]]+$/, "");
       if (entry.type === "file") {
         if (projectFilesSet.has(cleanToken) && !seenFiles.has(cleanToken)) {
@@ -3140,7 +3144,7 @@ export class ChatController {
       } else {
         const key = cleanToken.toLowerCase();
         const skill = skillsByName.get(key);
-        if (!skill) continue; // Only expand @skill mentions that match a loaded skill.
+        if (!skill) continue; // Only expand @@skill mentions that match a loaded skill.
         if (seenSkills.has(key)) continue;
         expansions.push({ type: "skill", skill });
         seenSkills.add(key);

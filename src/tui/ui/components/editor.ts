@@ -1396,7 +1396,7 @@ export class Editor implements Component {
   ): boolean {
     const line = lines[cursorLine] ?? "";
     const beforeCursor = line.slice(0, cursorCol);
-    return /(?:^|[\s])@[a-z-]+:$/.test(beforeCursor);
+    return /(?:^|[\s])@@[a-z-]+:$/.test(beforeCursor);
   }
 
   // Autocomplete methods

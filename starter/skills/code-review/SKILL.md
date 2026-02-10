@@ -1,6 +1,6 @@
 ---
-name: code-review
-description: Conduct rigorous code review for git changes and return prioritized, actionable findings in a strict verdict/findings format. Trigger: explicit.
+name: "code-review"
+description: "Conduct rigorous code review for git changes and return prioritized, actionable findings in a strict verdict/findings format. Trigger: explicit."
 ---
 
 ## Goal

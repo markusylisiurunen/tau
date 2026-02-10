@@ -235,6 +235,32 @@ test("CustomEditor strips ANSI sequences from input", () => {
   expect(editor.getLines()[0]).toBe("hello red");
 });
 
+test("CustomEditor expands large paste markers without token interpolation", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  const pasted = Array.from({ length: 33 }, () => "...is $1.75 / $14 for Codex...").join("\n");
+
+  editor.handleInput(`\x1b[200~${pasted}\x1b[201~`);
+
+  expect(editor.getText()).toBe("[paste #1 +33 lines]");
+  expect(editor.getExpandedText()).toBe(pasted);
+});
+
+test("CustomEditor submit preserves replacement-like tokens in large pastes", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  const pasted = Array.from({ length: 33 }, () => "...is $1.75 / $14 for Codex...").join("\n");
+  let submitted;
+  editor.onSubmit = (text) => {
+    submitted = text;
+  };
+
+  editor.handleInput(`\x1b[200~${pasted}\x1b[201~`);
+  editor.handleInput("\r");
+
+  expect(submitted).toBe(pasted);
+});
+
 test("CustomEditor renders cursor with theme tags", () => {
   const theme = createTagTheme();
   const editor = new CustomEditor(theme);

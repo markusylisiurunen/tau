@@ -615,13 +615,7 @@ export class Editor implements Component {
       if (this.disableSubmit) return;
 
       let result = this.state.lines.join("\n").trim();
-      for (const [pasteId, pasteContent] of this.pastes) {
-        const markerRegex = new RegExp(
-          `\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`,
-          "g",
-        );
-        result = result.replace(markerRegex, pasteContent);
-      }
+      result = this.expandPasteMarkers(result);
 
       this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
       this.pastes.clear();
@@ -773,10 +767,17 @@ export class Editor implements Component {
    * Use this when you need the full content (e.g., for external editor).
    */
   getExpandedText(): string {
-    let result = this.state.lines.join("\n");
+    return this.expandPasteMarkers(this.state.lines.join("\n"));
+  }
+
+  private expandPasteMarkers(text: string): string {
+    let result = text;
     for (const [pasteId, pasteContent] of this.pastes) {
-      const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
-      result = result.replace(markerRegex, pasteContent);
+      const markerRegex = new RegExp(
+        `\\[paste #${pasteId}(?: (?:\\+\\d+ lines|\\d+ chars))?\\]`,
+        "g",
+      );
+      result = result.replace(markerRegex, () => pasteContent);
     }
     return result;
   }

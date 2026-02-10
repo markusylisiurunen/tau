@@ -227,9 +227,9 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 ## Commands
 
-- `/help`, `/new`, `/rewind`, `/cd`, `/copy`, `/copy:code`, `/checkpoint`, `/reload`
-- `/compact:only-summary`, `/compact:with-last-turn` - Compact history into a single synthetic user summary message (optionally includes last assistant message verbatim when available)
-- `/prune:earliest-first`, `/prune:largest-first`, `/prune:least-important` - Prune tool results and compact edit call payloads/results
+- `/help`, `/new`, `/rewind`, `/cd`, `/copy:text`, `/copy:code`, `/checkpoint`, `/reload`
+- `/compact:summary-only`, `/compact:summary-and-last` - Compact history into a single synthetic user summary message (optionally includes last assistant message verbatim when available)
+- `/prune:earliest`, `/prune:largest`, `/prune:smart` - Prune tool results and compact edit call payloads/results
 - `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model; runs inside sandbox when enabled)
 - `!!<cmd>` - Direct bash execution without adding output to the model context

@@ -335,17 +335,17 @@ export class ChatController {
     this.commandRegistry = createCommandRegistry();
     this.commandHandlers = {
       help: () => this.showHelp(),
-      copy: () => this.copyLastAssistantMessage(),
-      copyCode: () => this.copyLastAssistantCodeBlock(),
+      copyText: () => this.copyLastAssistantText(),
+      copyCode: () => this.copyLastAssistantCode(),
       checkpoint: () => this.checkpointSession(),
       newSession: () => this.clearSession(),
       rewind: () => this.startRewindFlow(),
       cd: (path) => this.changeDirectory(path),
-      compactOnlySummary: (extra) => this.compactSessionOnlySummary(extra),
-      compactSummaryAndLastTurn: (extra) => this.compactSessionSummaryAndLastTurn(extra),
-      pruneEarliestFirst: (extra) => this.pruneToolResults("earliest", extra),
-      pruneLargestFirst: (extra) => this.pruneToolResults("largest", extra),
-      pruneLeastImportant: (extra) => this.pruneToolResultsLeastImportant(extra),
+      compactSummaryOnly: (extra) => this.compactSessionSummaryOnly(extra),
+      compactSummaryAndLast: (extra) => this.compactSessionSummaryAndLast(extra),
+      pruneEarliest: (extra) => this.pruneToolResults("earliest", extra),
+      pruneLargest: (extra) => this.pruneToolResults("largest", extra),
+      pruneSmart: (extra) => this.pruneToolResultsSmart(extra),
       reload: () => this.reloadContent(),
       risk: (level) => this.setRiskLevel(level),
       persona: (id) => this.switchPersona(id),
@@ -1074,7 +1074,7 @@ export class ChatController {
     switch (command.type) {
       case "help":
         return "show available commands";
-      case "copy":
+      case "copyText":
         return "copy last assistant message";
       case "copyCode":
         return "copy last assistant code blocks";
@@ -1086,16 +1086,16 @@ export class ChatController {
         return "rewind context to a selected prior user message";
       case "cd":
         return "change directory: /cd <path>";
-      case "compactOnlySummary":
+      case "compactSummaryOnly":
         return "summarize session and start new, optional prompt";
-      case "compactSummaryAndLastTurn":
+      case "compactSummaryAndLast":
         return "summarize session and keep last turn, optional prompt";
-      case "pruneEarliestFirst":
+      case "pruneEarliest":
         return "prune earliest tool results and compact edit calls, optional fraction 0-1";
-      case "pruneLargestFirst":
+      case "pruneLargest":
         return "prune largest tool results and compact edit calls, optional fraction 0-1";
-      case "pruneLeastImportant":
-        return "prune least important tool results and compact edit calls, optional fraction and guidance";
+      case "pruneSmart":
+        return "prune smart-selected tool results and compact edit calls, optional fraction and guidance";
       case "reload":
         return "reload prompts, skills, themes, bash commands, and AGENTS.md";
       case "risk":
@@ -1426,7 +1426,7 @@ export class ChatController {
     );
   }
 
-  private async copyLastAssistantMessage(): Promise<void> {
+  private async copyLastAssistantText(): Promise<void> {
     const lastAssistant = this.getLastAssistantMessage();
     if (!lastAssistant) {
       this.view.addSystemMessage("no assistant message to copy yet.", "warn");
@@ -1447,7 +1447,7 @@ export class ChatController {
     }
   }
 
-  private async copyLastAssistantCodeBlock(): Promise<void> {
+  private async copyLastAssistantCode(): Promise<void> {
     const lastAssistant = this.getLastAssistantMessage();
     if (!lastAssistant) {
       this.view.addSystemMessage("no assistant message to copy yet.", "warn");
@@ -1712,7 +1712,7 @@ export class ChatController {
     this.view.addSystemMessage(`compact failed: ${message}`, "error");
   }
 
-  private async compactSessionOnlySummary(guidance?: string): Promise<void> {
+  private async compactSessionSummaryOnly(guidance?: string): Promise<void> {
     this.view.addSystemMessage("summarizing session...", "success");
     this.isStreaming = true;
     this.view.startWorkingIcon();
@@ -1738,7 +1738,7 @@ export class ChatController {
     }
   }
 
-  private async compactSessionSummaryAndLastTurn(guidance?: string): Promise<void> {
+  private async compactSessionSummaryAndLast(guidance?: string): Promise<void> {
     this.view.addSystemMessage("summarizing session...", "success");
     this.isStreaming = true;
     this.view.startWorkingIcon();
@@ -1873,7 +1873,7 @@ export class ChatController {
     );
   }
 
-  private async pruneToolResultsLeastImportant(extra?: string): Promise<void> {
+  private async pruneToolResultsSmart(extra?: string): Promise<void> {
     const parsed = this.parsePruneFractionAndGuidance(extra);
     if (parsed.fraction === null) {
       this.view.addSystemMessage("invalid prune fraction. use a number between 0 and 1.", "error");
@@ -1954,12 +1954,12 @@ export class ChatController {
     this.view.startWorkingIcon();
 
     try {
-      const prompt = this.buildLeastImportantPrunePrompt({
+      const prompt = this.buildSmartPrunePrompt({
         history,
         targetTokens,
         guidance: parsed.guidance,
       });
-      const selection = await this.requestLeastImportantPruneSelection(prompt);
+      const selection = await this.requestSmartPruneSelection(prompt);
       if (selection.length === 0) {
         const summary = getEditSummary();
         if (this.hasAnyPrunedEditChanges(summary)) {
@@ -1970,7 +1970,7 @@ export class ChatController {
         return;
       }
 
-      const toPrune = this.selectLeastImportantCandidates(selection, candidates, targetTokens);
+      const toPrune = this.selectSmartPruneCandidates(selection, candidates, targetTokens);
 
       if (toPrune.length === 0) {
         const summary = getEditSummary();
@@ -2341,7 +2341,7 @@ export class ChatController {
     };
   }
 
-  private buildLeastImportantPrunePrompt(args: {
+  private buildSmartPrunePrompt(args: {
     history: readonly Message[];
     targetTokens: number;
     guidance?: string;
@@ -2507,7 +2507,7 @@ export class ChatController {
     return { lines, totalTokens };
   }
 
-  private selectLeastImportantCandidates(
+  private selectSmartPruneCandidates(
     ids: string[],
     candidates: ToolResultPruneCandidate[],
     targetTokens: number,
@@ -2539,7 +2539,7 @@ export class ChatController {
     return selected;
   }
 
-  private async requestLeastImportantPruneSelection(prompt: string): Promise<string[]> {
+  private async requestSmartPruneSelection(prompt: string): Promise<string[]> {
     let apiKey: string | undefined;
     try {
       apiKey = await this.credentialResolver.getApiKey(
@@ -2586,7 +2586,7 @@ export class ChatController {
 
     const final = await stream.result();
     const raw = extractAssistantText(final).trim();
-    const parsed = this.parseLeastImportantPruneResponse(raw);
+    const parsed = this.parseSmartPruneResponse(raw);
     if (!parsed) {
       throw new Error("model returned an invalid prune selection.");
     }
@@ -2611,7 +2611,7 @@ export class ChatController {
     }
   }
 
-  private parseLeastImportantPruneResponse(raw: string): string[] | null {
+  private parseSmartPruneResponse(raw: string): string[] | null {
     const trimmed = raw.trim();
     if (!trimmed) {
       return [];

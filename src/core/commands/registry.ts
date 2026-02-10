@@ -4,17 +4,17 @@ import { type RiskLevel, RiskLevelSchema, type Skill } from "../types.js";
 
 export type Command = (
   | { type: "help" }
-  | { type: "copy" }
+  | { type: "copyText" }
   | { type: "copyCode" }
   | { type: "checkpoint" }
   | { type: "new" }
   | { type: "rewind" }
   | { type: "cd"; path: string }
-  | { type: "compactOnlySummary" }
-  | { type: "compactSummaryAndLastTurn" }
-  | { type: "pruneEarliestFirst" }
-  | { type: "pruneLargestFirst" }
-  | { type: "pruneLeastImportant" }
+  | { type: "compactSummaryOnly" }
+  | { type: "compactSummaryAndLast" }
+  | { type: "pruneEarliest" }
+  | { type: "pruneLargest" }
+  | { type: "pruneSmart" }
   | { type: "reload" }
   | { type: "risk"; level: RiskLevel }
   | { type: "bash"; id: string }
@@ -46,17 +46,17 @@ interface CommandDefinition<Ctx, T extends Command = Command> extends CommandInf
 
 export interface CommandDispatchContext {
   help: () => void;
-  copy: () => Promise<void>;
+  copyText: () => Promise<void>;
   copyCode: () => Promise<void>;
   checkpoint: () => Promise<void>;
   newSession: () => Promise<void>;
   rewind: () => void;
   cd: (path: string) => void;
-  compactOnlySummary: (extra?: string) => Promise<void>;
-  compactSummaryAndLastTurn: (extra?: string) => Promise<void>;
-  pruneEarliestFirst: (extra?: string) => void;
-  pruneLargestFirst: (extra?: string) => void;
-  pruneLeastImportant: (extra?: string) => Promise<void> | void;
+  compactSummaryOnly: (extra?: string) => Promise<void>;
+  compactSummaryAndLast: (extra?: string) => Promise<void>;
+  pruneEarliest: (extra?: string) => void;
+  pruneLargest: (extra?: string) => void;
+  pruneSmart: (extra?: string) => Promise<void> | void;
   reload: () => Promise<void>;
   risk: (level: RiskLevel) => void;
   persona: (id: string) => void;
@@ -297,78 +297,78 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
   });
 
   registry.register({
-    id: "compactOnlySummary",
-    usage: "/compact:only-summary",
+    id: "compactSummaryOnly",
+    usage: "/compact:summary-only",
     description: "summarize and start new session",
     autocompleteDescription: "compact history to a summary",
     argument: "none",
     section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
-      if (command !== "/compact:only-summary") return null;
-      return { type: "compactOnlySummary", extra };
+      if (command !== "/compact:summary-only") return null;
+      return { type: "compactSummaryOnly", extra };
     },
-    run: (ctx, command) => ctx.compactOnlySummary(command.extra),
+    run: (ctx, command) => ctx.compactSummaryOnly(command.extra),
   });
 
   registry.register({
-    id: "compactSummaryAndLastTurn",
-    usage: "/compact:with-last-turn",
+    id: "compactSummaryAndLast",
+    usage: "/compact:summary-and-last",
     description: "summarize and include previous last assistant message",
     autocompleteDescription: "compact history, keep last assistant message",
     argument: "none",
     section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
-      if (command !== "/compact:with-last-turn") return null;
-      return { type: "compactSummaryAndLastTurn", extra };
+      if (command !== "/compact:summary-and-last") return null;
+      return { type: "compactSummaryAndLast", extra };
     },
-    run: (ctx, command) => ctx.compactSummaryAndLastTurn(command.extra),
+    run: (ctx, command) => ctx.compactSummaryAndLast(command.extra),
   });
 
   registry.register({
-    id: "pruneEarliestFirst",
-    usage: "/prune:earliest-first",
+    id: "pruneEarliest",
+    usage: "/prune:earliest",
     description: "prune earliest tool results from context",
     autocompleteDescription: "prune earliest tool results",
     argument: "none",
     section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
-      if (command !== "/prune:earliest-first") return null;
-      return { type: "pruneEarliestFirst", extra };
+      if (command !== "/prune:earliest") return null;
+      return { type: "pruneEarliest", extra };
     },
-    run: (ctx, command) => ctx.pruneEarliestFirst(command.extra),
+    run: (ctx, command) => ctx.pruneEarliest(command.extra),
   });
 
   registry.register({
-    id: "pruneLargestFirst",
-    usage: "/prune:largest-first",
+    id: "pruneLargest",
+    usage: "/prune:largest",
     description: "prune largest tool results from context",
     autocompleteDescription: "prune largest tool results",
     argument: "none",
     section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
-      if (command !== "/prune:largest-first") return null;
-      return { type: "pruneLargestFirst", extra };
+      if (command !== "/prune:largest") return null;
+      return { type: "pruneLargest", extra };
     },
-    run: (ctx, command) => ctx.pruneLargestFirst(command.extra),
+    run: (ctx, command) => ctx.pruneLargest(command.extra),
   });
 
   registry.register({
-    id: "pruneLeastImportant",
-    usage: "/prune:least-important",
+    id: "pruneSmart",
+    usage: "/prune:smart",
     description: "prune tool results using model selection",
-    autocompleteDescription: "prune least important tool results",
+    autocompleteDescription: "prune tool results with model selection",
     argument: "none",
     section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
-      if (command !== "/prune:least-important") return null;
-      return { type: "pruneLeastImportant", extra };
+      if (command !== "/prune:smart") return null;
+      return { type: "pruneSmart", extra };
     },
-    run: (ctx, command) => ctx.pruneLeastImportant(command.extra),
+    run: (ctx, command) => ctx.pruneSmart(command.extra),
   });
 
   registry.register({
@@ -387,18 +387,18 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
   });
 
   registry.register({
-    id: "copy",
-    usage: "/copy",
+    id: "copyText",
+    usage: "/copy:text",
     description: "copy last assistant message",
     autocompleteDescription: "copy last assistant message",
     argument: "none",
     section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
-      if (command !== "/copy") return null;
-      return { type: "copy", extra };
+      if (command !== "/copy:text") return null;
+      return { type: "copyText", extra };
     },
-    run: (ctx) => ctx.copy(),
+    run: (ctx) => ctx.copyText(),
   });
 
   registry.register({

@@ -287,33 +287,33 @@ tau will create or update AGENTS.md at your project root, integrating the new in
 
 tau supports slash commands for common actions:
 
-| command                   | description                                                                   |
-| ------------------------- | ----------------------------------------------------------------------------- |
-| `/help`                   | show available commands                                                       |
-| `/new`                    | clear the session and start fresh                                             |
-| `/rewind`                 | open a picker to rewind context from a selected user message                  |
-| `/copy`                   | copy the last assistant message                                               |
-| `/copy:code`              | copy just the code blocks                                                     |
-| `/checkpoint`             | save a checkpoint file for loading later                                      |
-| `/reload`                 | reload personas, prompts, skills, and themes from disk                        |
-| `/cd`                     | change the working directory                                                  |
-| `/compact:only-summary`   | compress history into one synthetic user summary message                      |
-| `/compact:with-last-turn` | compress history and include the last assistant message verbatim when present |
-| `/prune:earliest-first`   | prune tool results from the start and compact edit payloads/results           |
-| `/prune:largest-first`    | prune largest tool results first and compact edit payloads/results            |
-| `/prune:least-important`  | prune tool results via model selection and compact edit payloads/results      |
-| `/persona:<id>`           | switch to a different persona                                                 |
-| `/prompt:<id>`            | insert a saved prompt template                                                |
-| `/theme:<id>`             | switch to a loaded theme                                                      |
-| `/bash:<id>`              | run a saved shell command                                                     |
-| `/risk:read-only`         | allow read-only tool calls                                                    |
-| `/risk:read-write`        | allow all tools                                                               |
-| `!<cmd>`                  | run a shell command directly (bypasses risk checks; uses sandbox if enabled)  |
-| `!!<cmd>`                 | run a shell command without adding output to the model context                |
+| command                     | description                                                                   |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `/help`                     | show available commands                                                       |
+| `/new`                      | clear the session and start fresh                                             |
+| `/rewind`                   | open a picker to rewind context from a selected user message                  |
+| `/copy:text`                | copy the last assistant message                                               |
+| `/copy:code`                | copy just the code blocks                                                     |
+| `/checkpoint`               | save a checkpoint file for loading later                                      |
+| `/reload`                   | reload personas, prompts, skills, and themes from disk                        |
+| `/cd`                       | change the working directory                                                  |
+| `/compact:summary-only`     | compress history into one synthetic user summary message                      |
+| `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present |
+| `/prune:earliest`           | prune tool results from the start and compact edit payloads/results           |
+| `/prune:largest`            | prune largest tool results first and compact edit payloads/results            |
+| `/prune:smart`              | prune tool results via model selection and compact edit payloads/results      |
+| `/persona:<id>`             | switch to a different persona                                                 |
+| `/prompt:<id>`              | insert a saved prompt template                                                |
+| `/theme:<id>`               | switch to a loaded theme                                                      |
+| `/bash:<id>`                | run a saved shell command                                                     |
+| `/risk:read-only`           | allow read-only tool calls                                                    |
+| `/risk:read-write`          | allow all tools                                                               |
+| `!<cmd>`                    | run a shell command directly (bypasses risk checks; uses sandbox if enabled)  |
+| `!!<cmd>`                   | run a shell command without adding output to the model context                |
 
 use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
 
-the compact commands are manual and useful when conversations get long. they replace prior context with a single synthetic user message that contains the compacted summary (and, for `/compact:with-last-turn`, the last assistant message verbatim when present), so the model keeps continuity without carrying full history. the prune commands drop tool results from the active context without summarizing and compact edit call payloads/results, and default to pruning 25% if you omit the fraction. `/rewind` opens a picker over prior user messages in the current context, truncates history from the selected message onward (including the selected message), and prefills the editor with that message so you can retry from there.
+the compact commands are manual and useful when conversations get long. they replace prior context with a single synthetic user message that contains the compacted summary (and, for `/compact:summary-and-last`, the last assistant message verbatim when present), so the model keeps continuity without carrying full history. the prune commands drop tool results from the active context without summarizing and compact edit call payloads/results, and default to pruning 25% if you omit the fraction. `/rewind` opens a picker over prior user messages in the current context, truncates history from the selected message onward (including the selected message), and prefills the editor with that message so you can retry from there.
 
 ## keyboard shortcuts
 

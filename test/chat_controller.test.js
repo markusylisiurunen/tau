@@ -425,7 +425,7 @@ describe("ChatController prune handling", () => {
 
     seedEditHistory(controller, oldText, newText);
 
-    await controller.onUserInput("/prune:earliest-first");
+    await controller.onUserInput("/prune:earliest");
 
     const history = controller.engine.history;
     const assistant = history.find((message) => message.role === "assistant");
@@ -463,7 +463,7 @@ describe("ChatController prune handling", () => {
     const newText = "line after";
     seedEditHistory(controller, oldText, newText);
 
-    await controller.onUserInput("/prune:earliest-first 0");
+    await controller.onUserInput("/prune:earliest 0");
 
     const history = controller.engine.history;
     const assistant = history.find((message) => message.role === "assistant");
@@ -496,7 +496,7 @@ describe("ChatController prune handling", () => {
       timestamp: 2,
     });
 
-    await controller.onUserInput("/prune:earliest-first");
+    await controller.onUserInput("/prune:earliest");
 
     const history = controller.engine.history;
     const toolResult = history.find((message) => message.role === "toolResult");
@@ -504,7 +504,7 @@ describe("ChatController prune handling", () => {
     expect(toolResult.isError).toBe(true);
   });
 
-  it("does not prune edit payloads when least-important sampling fails", async () => {
+  it("does not prune edit payloads when smart prune sampling fails", async () => {
     const stub = createStubView();
     const controller = createController(stub.view);
 
@@ -513,11 +513,11 @@ describe("ChatController prune handling", () => {
     seedEditHistory(controller, oldText, newText);
     seedBashResult(controller, "bash output");
 
-    controller.requestLeastImportantPruneSelection = async () => {
+    controller.requestSmartPruneSelection = async () => {
       throw new Error("sampling failed");
     };
 
-    await controller.onUserInput("/prune:least-important");
+    await controller.onUserInput("/prune:smart");
 
     const history = controller.engine.history;
     const assistant = history.find((message) => message.role === "assistant");

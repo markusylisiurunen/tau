@@ -29,17 +29,17 @@ describe("command registry", () => {
 
     const ctx = {
       help: () => calls.push({ type: "help" }),
-      copy: async () => calls.push({ type: "copy" }),
+      copyText: async () => calls.push({ type: "copyText" }),
       copyCode: async () => calls.push({ type: "copyCode" }),
       checkpoint: async () => calls.push({ type: "checkpoint" }),
       newSession: () => calls.push({ type: "new" }),
       rewind: () => calls.push({ type: "rewind" }),
       cd: () => calls.push({ type: "cd" }),
-      compactOnlySummary: async () => calls.push({ type: "compactOnlySummary" }),
-      compactSummaryAndLastTurn: async () => calls.push({ type: "compactSummaryAndLastTurn" }),
-      pruneEarliestFirst: () => calls.push({ type: "pruneEarliestFirst" }),
-      pruneLargestFirst: () => calls.push({ type: "pruneLargestFirst" }),
-      pruneLeastImportant: () => calls.push({ type: "pruneLeastImportant" }),
+      compactSummaryOnly: async () => calls.push({ type: "compactSummaryOnly" }),
+      compactSummaryAndLast: async () => calls.push({ type: "compactSummaryAndLast" }),
+      pruneEarliest: () => calls.push({ type: "pruneEarliest" }),
+      pruneLargest: () => calls.push({ type: "pruneLargest" }),
+      pruneSmart: () => calls.push({ type: "pruneSmart" }),
       reload: async () => calls.push({ type: "reload" }),
       risk: (level) => calls.push({ type: "risk", level }),
       persona: (id) => calls.push({ type: "persona", id }),
@@ -57,11 +57,26 @@ describe("command registry", () => {
     expect(rewind).toEqual({ type: "rewind" });
     await registry.dispatch(rewind, ctx);
 
+    const copyText = registry.parse("/copy:text");
+    expect(copyText).toEqual({ type: "copyText" });
+    await registry.dispatch(copyText, ctx);
+
+    const compactSummaryOnly = registry.parse("/compact:summary-only");
+    expect(compactSummaryOnly).toEqual({ type: "compactSummaryOnly" });
+    await registry.dispatch(compactSummaryOnly, ctx);
+
+    const pruneSmart = registry.parse("/prune:smart");
+    expect(pruneSmart).toEqual({ type: "pruneSmart" });
+    await registry.dispatch(pruneSmart, ctx);
+
     const unknown = registry.parse("/not-a-command");
     await registry.dispatch(unknown, ctx);
 
     expect(calls).toContainEqual({ type: "risk", level: "read-only" });
     expect(calls).toContainEqual({ type: "rewind" });
+    expect(calls).toContainEqual({ type: "copyText" });
+    expect(calls).toContainEqual({ type: "compactSummaryOnly" });
+    expect(calls).toContainEqual({ type: "pruneSmart" });
     expect(calls).toContainEqual({ type: "unknown", raw: "/not-a-command" });
   });
 });

@@ -121,15 +121,12 @@ describe("custom personas", () => {
     }
   });
 
-  it("disables built-in prompts when disableBuiltinPrompts is set", async () => {
+  it("loads no prompts when prompt files are not present", async () => {
     const fx = setupFixture();
 
     try {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { prompts, errors } = await loadAllContent(
-        { disableBuiltinPrompts: true },
-        { deps, cwd: fx.cwd },
-      );
+      const { prompts, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
       expect(prompts).toEqual([]);
     } finally {

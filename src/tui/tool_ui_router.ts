@@ -266,17 +266,26 @@ export class ToolUiRouter {
   }
 
   private upsertToolMessage(uiEvent: ToolUiEventWithToolCallId): void {
-    if (this.latestToolEventsById.has(uiEvent.toolCallId)) {
-      this.replaceToolMessage(uiEvent);
+    if (this.replaceToolMessage(uiEvent)) {
       return;
     }
+
     this.chatContainer.addMessage({ type: "tool", event: uiEvent }, uiEvent.toolCallId);
     this.latestToolEventsById.set(uiEvent.toolCallId, uiEvent);
   }
 
-  private replaceToolMessage(uiEvent: ToolUiEventWithToolCallId): void {
-    this.chatContainer.replaceMessage(uiEvent.toolCallId, { type: "tool", event: uiEvent });
+  private replaceToolMessage(uiEvent: ToolUiEventWithToolCallId): boolean {
+    const replaced = this.chatContainer.replaceMessage(uiEvent.toolCallId, {
+      type: "tool",
+      event: uiEvent,
+    });
+    if (!replaced) {
+      this.latestToolEventsById.delete(uiEvent.toolCallId);
+      return false;
+    }
+
     this.latestToolEventsById.set(uiEvent.toolCallId, uiEvent);
+    return true;
   }
 
   private applyPrunedMutation(uiEvent: ToolPrunedEvent): boolean {
@@ -301,8 +310,7 @@ export class ToolUiRouter {
     };
 
     const nextEvent = { ...existing, uiText: nextUiText } as ToolUiEventWithToolCallId;
-    this.replaceToolMessage(nextEvent);
-    return true;
+    return this.replaceToolMessage(nextEvent);
   }
 
   private toToolUiLines(content: string): ToolUiLine[] {

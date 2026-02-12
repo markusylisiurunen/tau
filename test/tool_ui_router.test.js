@@ -4,15 +4,21 @@ import { ToolUiRouter } from "../dist/tui/tool_ui_router.js";
 function createHarness() {
   const added = [];
   const replaced = [];
+  const messageIds = new Set();
   let renders = 0;
 
   const chatContainer = {
     addMessage: (model, id) => {
       added.push({ model, id });
+      messageIds.add(id);
       return id;
     },
     replaceMessage: (id, model) => {
+      if (!messageIds.has(id)) {
+        return false;
+      }
       replaced.push({ id, model });
+      return true;
     },
   };
 
@@ -27,6 +33,9 @@ function createHarness() {
     router,
     added,
     replaced,
+    removeMessage: (id) => {
+      messageIds.delete(id);
+    },
     get renders() {
       return renders;
     },
@@ -119,5 +128,41 @@ describe("ToolUiRouter prune mutations", () => {
       { text: "- old", tone: "diffRemove" },
       { text: "+ new", tone: "diffAdd" },
     ]);
+  });
+
+  it("falls back to adding when cached tool ids are no longer present", () => {
+    const harness = createHarness();
+
+    harness.router.handle({
+      type: "write_success",
+      toolCallId: "write-1",
+      path: "notes.txt",
+      bytes: 9,
+      lines: 1,
+      content: "first",
+      uiText: {
+        previewLines: [{ text: "first" }],
+        fullLines: [{ text: "first" }],
+      },
+    });
+
+    harness.removeMessage("write-1");
+
+    harness.router.handle({
+      type: "write_success",
+      toolCallId: "write-1",
+      path: "notes.txt",
+      bytes: 10,
+      lines: 1,
+      content: "second",
+      uiText: {
+        previewLines: [{ text: "second" }],
+        fullLines: [{ text: "second" }],
+      },
+    });
+
+    expect(harness.added).toHaveLength(2);
+    expect(harness.added.at(-1)).toMatchObject({ id: "write-1" });
+    expect(harness.replaced).toHaveLength(0);
   });
 });

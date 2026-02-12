@@ -133,6 +133,7 @@ export class TuiChatView implements ChatView {
   private toolUiRouter: ToolUiRouter;
   private lastStatus?: ChatViewStatus;
   private recordingIndicatorFrame = 0;
+  private recordingStartedAt?: number;
   private recordingIndicatorTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: {
@@ -477,9 +478,13 @@ export class TuiChatView implements ChatView {
     }
 
     if (state.mode === "recording") {
-      this.editor.setHeader(`${this.getRecordingIndicator()} recording`, "", {
-        leftStyle: this.editor.borderColor,
-      });
+      this.editor.setHeader(
+        `${this.getRecordingIndicator()} recording (${this.getRecordingDurationLabel()})`,
+        "",
+        {
+          leftStyle: this.editor.borderColor,
+        },
+      );
       return;
     }
 
@@ -493,6 +498,7 @@ export class TuiChatView implements ChatView {
         this.recordingIndicatorTimer = undefined;
       }
       this.recordingIndicatorFrame = 0;
+      this.recordingStartedAt = undefined;
       return;
     }
 
@@ -501,6 +507,7 @@ export class TuiChatView implements ChatView {
     }
 
     this.recordingIndicatorFrame = 0;
+    this.recordingStartedAt = Date.now();
     this.recordingIndicatorTimer = setInterval(() => {
       if (!this.lastStatus || this.lastStatus.editor.mode !== "recording") {
         return;
@@ -514,6 +521,17 @@ export class TuiChatView implements ChatView {
 
   private getRecordingIndicator(): string {
     return this.recordingIndicatorFrame === 0 ? "●" : "○";
+  }
+
+  private getRecordingDurationLabel(): string {
+    if (!this.recordingStartedAt) {
+      return "00:00";
+    }
+
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - this.recordingStartedAt) / 1000));
+    const minutes = Math.floor(elapsedSeconds / 60);
+    const seconds = elapsedSeconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }
 
   private normalizeSystemMessageText(text: string, kind: SystemMessageKind): string {

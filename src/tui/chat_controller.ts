@@ -479,6 +479,11 @@ export class ChatController {
   }
 
   public onInterrupt(): void {
+    if (this.speakRecording) {
+      void this.runSpeakTransition(() => this.stopSpeakCapture());
+      return;
+    }
+
     this.interruptAssistantTurn();
   }
 

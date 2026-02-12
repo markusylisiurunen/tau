@@ -1,10 +1,10 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { fileTypeFromBuffer } from "file-type";
+import sharp from "sharp";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
-import { formatBytes } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
 import { TOOL_NAME_VIEW_IMAGE } from "./tool_names.js";
@@ -16,7 +16,8 @@ const VIEW_IMAGE_DESCRIPTION = [
 
 const VIEW_IMAGE_PATH_DESCRIPTION = "Path to the image file to view.";
 
-const VIEW_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const VIEW_IMAGE_READ_MAX_BYTES = 50 * 1024 * 1024;
+const VIEW_IMAGE_MAX_DIMENSION_PX = 2048;
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 
 export const VIEW_IMAGE_TOOL: Tool = {
@@ -39,22 +40,56 @@ function parseViewImageArgs(raw: unknown): { path: string } {
   return parsed.success ? parsed.data : { path: "" };
 }
 
-function buildViewImageUiText(args: {
-  mimeType: string;
-  bytes: number;
-  fullText: string;
-}): ToolUiText {
-  const { mimeType, bytes, fullText } = args;
-  const sizeLabel = formatBytes(bytes);
-  const summary = sizeLabel;
+type SupportedImageType = (typeof SUPPORTED_IMAGE_TYPES)[number];
+
+function isSupportedImageType(mimeType: string | undefined): mimeType is SupportedImageType {
+  return mimeType ? SUPPORTED_IMAGE_TYPES.includes(mimeType as SupportedImageType) : false;
+}
+
+async function downscaleImageForModel(
+  content: Buffer,
+  mimeType: SupportedImageType,
+): Promise<Buffer> {
+  const metadata = await sharp(content).metadata();
+  const width = metadata.width;
+  const height = metadata.height;
+
+  if (!width || !height) {
+    throw new Error("failed to read image dimensions.");
+  }
+
+  if (width <= VIEW_IMAGE_MAX_DIMENSION_PX && height <= VIEW_IMAGE_MAX_DIMENSION_PX) {
+    return content;
+  }
+
+  const pipeline = sharp(content).resize({
+    width: VIEW_IMAGE_MAX_DIMENSION_PX,
+    height: VIEW_IMAGE_MAX_DIMENSION_PX,
+    fit: "inside",
+    withoutEnlargement: true,
+  });
+
+  if (mimeType === "image/jpeg") {
+    return pipeline.jpeg({ quality: 90 }).toBuffer();
+  }
+
+  if (mimeType === "image/png") {
+    return pipeline.png({ compressionLevel: 9 }).toBuffer();
+  }
+
+  return pipeline.webp({ quality: 90 }).toBuffer();
+}
+
+function buildViewImageUiText(args: { mimeType: string; fullText: string }): ToolUiText {
+  const { mimeType, fullText } = args;
   const trimmedFullText = fullText.trimEnd();
   const fullLines = trimmedFullText
     ? trimmedFullText.split("\n").map((text) => ({ text }))
-    : [{ text: summary }];
+    : [{ text: mimeType }];
 
   return {
     previewLines: [],
-    statusLine: `${mimeType} · ${sizeLabel}`,
+    statusLine: mimeType,
     fullLines,
   };
 }
@@ -83,27 +118,21 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
       }
 
       try {
-        const {
-          path: resolvedPath,
-          content,
-          bytes,
-        } = await backend.readFileBinary(path, {
-          maxBytes: VIEW_IMAGE_MAX_BYTES,
+        const { path: resolvedPath, content } = await backend.readFileBinary(path, {
+          maxBytes: VIEW_IMAGE_READ_MAX_BYTES,
         });
 
         const detected = await fileTypeFromBuffer(content);
         const mimeType = detected?.mime;
-        const isSupported = mimeType
-          ? SUPPORTED_IMAGE_TYPES.includes(mimeType as (typeof SUPPORTED_IMAGE_TYPES)[number])
-          : false;
-        if (!isSupported || !mimeType) {
+        if (!isSupportedImageType(mimeType)) {
           return blocked(
             `unsupported image format. supported: ${SUPPORTED_IMAGE_TYPES.join(", ")}.`,
           );
         }
 
-        const data = content.toString("base64");
-        const resultText = `viewed ${resolvedPath} (${mimeType}, ${formatBytes(bytes)})`;
+        const resizedContent = await downscaleImageForModel(content, mimeType);
+        const data = resizedContent.toString("base64");
+        const resultText = `viewed ${resolvedPath} (${mimeType})`;
         const toolResult: ToolResultMessage = {
           role: "toolResult",
           toolCallId: toolCall.id,
@@ -116,14 +145,14 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
           timestamp: Date.now(),
         };
 
-        const uiText = buildViewImageUiText({ mimeType, bytes, fullText: resultText });
+        const uiText = buildViewImageUiText({ mimeType, fullText: resultText });
         const uiEvent: ToolUiEvent = {
           type: "view_image_success",
           toolCallId: toolCall.id,
           path: resolvedPath,
           headerTarget: resolvedPath,
           mimeType,
-          bytes,
+          bytes: resizedContent.byteLength,
           uiText,
         };
 

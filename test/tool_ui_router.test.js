@@ -92,7 +92,7 @@ describe("ToolUiRouter prune mutations", () => {
     expect(patched.uiText.fullLines).toEqual([{ text: prunedContent }]);
   });
 
-  it("adds one-shot tool cards with ids and marks pruned diffs with standard tones", () => {
+  it("adds one-shot tool cards with ids and renders pruned content without tones", () => {
     const harness = createHarness();
 
     harness.router.handle({
@@ -120,14 +120,8 @@ describe("ToolUiRouter prune mutations", () => {
     expect(patched.type).toBe("write_success");
     expect(patched.path).toBe("notes.txt");
     expect(patched.uiText.statusLine).toBe("✂ pruned");
-    expect(patched.uiText.previewLines).toEqual([
-      { text: "- old", tone: "diffRemove" },
-      { text: "+ new", tone: "diffAdd" },
-    ]);
-    expect(patched.uiText.fullLines).toEqual([
-      { text: "- old", tone: "diffRemove" },
-      { text: "+ new", tone: "diffAdd" },
-    ]);
+    expect(patched.uiText.previewLines).toEqual([{ text: "- old" }, { text: "+ new" }]);
+    expect(patched.uiText.fullLines).toEqual([{ text: "- old" }, { text: "+ new" }]);
   });
 
   it("falls back to adding when cached tool ids are no longer present", () => {

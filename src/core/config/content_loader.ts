@@ -62,9 +62,14 @@ type JsonPathsResult = {
   errors: string[];
 };
 
+export type ThemeAppearance = "dark" | "light";
+
+export type ThemeVariantTokens = Partial<Record<ThemeAppearance, Record<string, string>>>;
+
 export interface ThemeDefinition {
   id: string;
   tokens: Record<string, string>;
+  variants?: ThemeVariantTokens;
   sourcePath: string;
   scope: ConfigLevelScope;
 }

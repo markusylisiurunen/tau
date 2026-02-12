@@ -41,6 +41,7 @@ import {
   UsageCliError,
 } from "./core/index.js";
 import { ChatApp } from "./tui/index.js";
+import { detectTerminalAppearance } from "./tui/terminal_appearance.js";
 
 const cwd = process.cwd();
 const argv = process.argv.slice(2);
@@ -381,6 +382,7 @@ if (reasoningOverride !== undefined) {
 const initialUserMessage = await readPipedStdin();
 
 const sandboxBackend = cli.sandbox ? await createSandboxBackend(config) : undefined;
+const terminalAppearance = await detectTerminalAppearance();
 
 const app = new ChatApp({
   personas,
@@ -388,6 +390,7 @@ const app = new ChatApp({
   skills,
   themes,
   bashCommands,
+  terminalAppearance,
   initialPersonaId,
   initialUserMessage,
   initialRiskLevel,

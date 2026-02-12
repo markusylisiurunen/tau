@@ -23,7 +23,9 @@ export type {
   Config,
   ConfigDeps,
   SandboxConfig,
+  ThemeAppearance,
   ThemeDefinition,
+  ThemeVariantTokens,
   VirtualBundle,
 } from "./config/index.js";
 export {
@@ -34,6 +36,8 @@ export {
   loadConfig,
   loadRuntimeConfig,
   resolveConfigLevels,
+  resolveThemeTokensById,
+  resolveThemeTokensForAppearance,
 } from "./config/index.js";
 export { printDebugInfo } from "./debug.js";
 export type {

@@ -1,6 +1,10 @@
 import type { AutocompleteProvider, Component } from "@mariozechner/pi-tui";
 import { Spacer, TUI } from "@mariozechner/pi-tui";
-import type { ThemeDefinition } from "../core/config/index.js";
+import {
+  resolveThemeTokensById,
+  type ThemeAppearance,
+  type ThemeDefinition,
+} from "../core/config/index.js";
 import type { SubagentUiEvent } from "../core/subagents/types.js";
 import type { BashTruncationInfo } from "../core/tools/bash.js";
 import type { ToolUiEvent, ToolUiText } from "../core/tools/registry.js";
@@ -110,17 +114,6 @@ export interface ChatView {
   updateTheme(options: { themeId?: string; themes?: ThemeDefinition[] }): void;
 }
 
-function resolveThemeTokens(
-  themeId: string | undefined,
-  themes: ThemeDefinition[] | undefined,
-): Record<string, string> | undefined {
-  if (!themeId || !themes || themes.length === 0) {
-    return undefined;
-  }
-  const match = themes.find((theme) => theme.id.toLowerCase() === themeId.toLowerCase());
-  return match?.tokens;
-}
-
 export class TuiChatView implements ChatView {
   private ui: TUI;
   private chatContainer: ChatContainerComponent;
@@ -132,6 +125,7 @@ export class TuiChatView implements ChatView {
   private rewindPicker?: RewindPickerComponent;
   private activeInputPane: Component;
   private uiTheme: Theme;
+  private terminalAppearance: ThemeAppearance;
   private toolUiRegistry = createToolUiRegistry();
   private toolUiRouter: ToolUiRouter;
   private lastStatus?: ChatViewStatus;
@@ -140,10 +134,16 @@ export class TuiChatView implements ChatView {
     queuedUserMessages: string[];
     compactToolUi: boolean;
     showThinking: boolean;
+    terminalAppearance?: ThemeAppearance;
     themeId?: string;
     themes?: ThemeDefinition[];
   }) {
-    const themeTokens = resolveThemeTokens(options.themeId, options.themes);
+    this.terminalAppearance = options.terminalAppearance ?? "dark";
+    const themeTokens = resolveThemeTokensById(
+      options.themeId,
+      options.themes,
+      this.terminalAppearance,
+    );
     const paletteOverrides = coercePaletteOverrides(themeTokens);
     this.uiTheme = createUiTheme("ansi", paletteOverrides);
     this.ui = new TUI(createAppTerminal());
@@ -397,7 +397,11 @@ export class TuiChatView implements ChatView {
   }
 
   updateTheme(options: { themeId?: string; themes?: ThemeDefinition[] }): void {
-    const themeTokens = resolveThemeTokens(options.themeId, options.themes);
+    const themeTokens = resolveThemeTokensById(
+      options.themeId,
+      options.themes,
+      this.terminalAppearance,
+    );
     const paletteOverrides = coercePaletteOverrides(themeTokens);
     this.uiTheme = createUiTheme("ansi", paletteOverrides);
 

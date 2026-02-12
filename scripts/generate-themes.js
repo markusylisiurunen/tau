@@ -37,7 +37,7 @@ const scaleC = (factor) => (color) => {
   return color.clone().set("oklch.c", Math.max(0, color.get("oklch.c") * factor));
 };
 
-const generatePalette = (brandHue) => {
+const generatePalette = (brandHue, appearance) => {
   const HUE_BRAND = wrapHue(brandHue);
   const HUE_DIFF_PLUS = wrapHue(108);
   const HUE_DIFF_MINUS = wrapHue(12);
@@ -50,38 +50,61 @@ const generatePalette = (brandHue) => {
   const HUE_MEMORY = wrapHue(280);
   const HUE_BASH = wrapHue(92);
 
-  const BRAND_L = 72;
-  const BRAND_C = 0.1;
+  const isDark = appearance === "dark";
 
-  const brandAccent = makeColor(BRAND_L, BRAND_C, HUE_BRAND);
-  const textMuted = transform(brandAccent, [scaleC(0.12), shiftL(-4)]);
-  const textDim = transform(brandAccent, [scaleC(0.08), shiftL(-14)]);
+  const brandAccent = makeColor(isDark ? 72 : 48, isDark ? 0.1 : 0.2, HUE_BRAND);
+  const textMuted = transform(brandAccent, [scaleC(0.12), shiftL(isDark ? -4 : 4)]);
+  const textDim = transform(brandAccent, [scaleC(0.08), shiftL(isDark ? -14 : 14)]);
   const codeText = transform(brandAccent, [setH(HUE_CODE)]);
 
-  const editorBorder = transform(brandAccent, [setH(HUE_EDITOR_BORDER), scaleC(0.56), shiftL(-10)]);
+  const editorBorder = transform(brandAccent, [
+    setH(HUE_EDITOR_BORDER),
+    scaleC(0.56),
+    shiftL(isDark ? -10 : 10),
+  ]);
   const editorSubagentBorder = transform(brandAccent, [
     setH(HUE_EDITOR_SUBAGENT_BORDER),
     scaleC(0.96),
-    shiftL(16),
+    shiftL(isDark ? 16 : 10),
   ]);
 
-  const actionRunning = transform(brandAccent, [setH(HUE_WARN), scaleC(0.84), shiftL(8)]);
+  const actionRunning = transform(brandAccent, [
+    setH(HUE_WARN),
+    scaleC(0.84),
+    shiftL(isDark ? 8 : 0),
+  ]);
   const actionSuccess = transform(actionRunning, [setH(HUE_SUCCESS)]);
   const actionError = transform(actionRunning, [setH(HUE_ERROR)]);
   const actionOutput = textDim;
 
-  const diffAdd = transform(brandAccent, [setH(HUE_DIFF_PLUS), scaleC(0.92), shiftL(-6)]);
+  const diffAdd = transform(brandAccent, [
+    setH(HUE_DIFF_PLUS),
+    scaleC(isDark ? 0.92 : 1),
+    shiftL(isDark ? -6 : 4),
+  ]);
   const diffRemove = transform(diffAdd, [setH(HUE_DIFF_MINUS)]);
 
-  const toastSuccess = transform(brandAccent, [setH(HUE_SUCCESS), scaleC(1.08), shiftL(6)]);
+  const toastSuccess = transform(brandAccent, [
+    setH(HUE_SUCCESS),
+    scaleC(1.08),
+    shiftL(isDark ? 6 : 0),
+  ]);
   const toastWarn = transform(toastSuccess, [setH(HUE_WARN)]);
   const toastError = transform(toastSuccess, [setH(HUE_ERROR)]);
 
-  const userSurface = transform(brandAccent, [scaleC(0.04), setL(22)]);
-  const userMemorySurface = transform(brandAccent, [setH(HUE_MEMORY), scaleC(0.24), setL(24)]);
-  const userMemoryText = transform(brandAccent, [setH(HUE_MEMORY), scaleC(0.76), setL(84)]);
+  const userSurface = transform(brandAccent, [scaleC(isDark ? 0.01 : 0), setL(isDark ? 21 : 97)]);
+  const userMemorySurface = transform(brandAccent, [
+    setH(HUE_MEMORY),
+    scaleC(isDark ? 0.24 : 0.04),
+    setL(isDark ? 24 : 94),
+  ]);
+  const userMemoryText = transform(brandAccent, [
+    setH(HUE_MEMORY),
+    scaleC(0.76),
+    setL(isDark ? 84 : 28),
+  ]);
 
-  const statusWarn = transform(brandAccent, [setH(HUE_WARN), scaleC(0.92), setL(68)]);
+  const statusWarn = transform(brandAccent, [setH(HUE_WARN), scaleC(0.92), setL(isDark ? 68 : 44)]);
   const statusError = transform(statusWarn, [setH(HUE_ERROR)]);
 
   return {
@@ -104,8 +127,8 @@ const generatePalette = (brandHue) => {
     statusWarn: toHex(statusWarn),
     statusError: toHex(statusError),
 
-    modeMemory: toHex(transform(brandAccent, [setH(HUE_MEMORY), shiftL(12)])),
-    modeBash: toHex(transform(brandAccent, [setH(HUE_BASH), shiftL(12)])),
+    modeMemory: toHex(transform(brandAccent, [setH(HUE_MEMORY), shiftL(isDark ? 12 : -10)])),
+    modeBash: toHex(transform(brandAccent, [setH(HUE_BASH), shiftL(isDark ? 12 : -10)])),
 
     actionRunning: toHex(actionRunning),
     actionSuccess: toHex(actionSuccess),
@@ -146,12 +169,20 @@ const brands = [
   { hue: 336, name: "rose" },
 ];
 
-const themes = brands.map((brand) => ({
-  id: brand.name,
-  tokens: generatePalette(brand.hue),
-  sourcePath: `builtin:themes/${brand.name}.json`,
-  scope: "builtin",
-}));
+const themes = brands.map((brand) => {
+  const darkTokens = generatePalette(brand.hue, "dark");
+  const lightTokens = generatePalette(brand.hue, "light");
+
+  return {
+    id: brand.name,
+    tokens: darkTokens,
+    variants: {
+      light: lightTokens,
+    },
+    sourcePath: `builtin:themes/${brand.name}.json`,
+    scope: "builtin",
+  };
+});
 
 const goldTheme = themes.find((theme) => theme.id === "gold");
 if (!goldTheme) {
@@ -169,6 +200,7 @@ const themeEntries = themes.map((theme) => {
     "  {",
     `    id: "${theme.id}",`,
     `    tokens: ${formatTokens(theme.tokens)},`,
+    `    variants: ${formatTokens(theme.variants)},`,
     `    sourcePath: "${theme.sourcePath}",`,
     '    scope: "builtin"',
     "  },",

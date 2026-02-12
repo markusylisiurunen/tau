@@ -124,6 +124,30 @@ describe("ToolUiRouter prune mutations", () => {
     expect(patched.uiText.fullLines).toEqual([{ text: "- old" }, { text: "+ new" }]);
   });
 
+  it("patches blocked events that do not expose uiText", () => {
+    const harness = createHarness();
+
+    harness.router.handle({
+      type: "bash_blocked",
+      toolCallId: "bash-2",
+      command: "echo hi",
+      reason: "blocked",
+    });
+
+    const prunedContent =
+      "[tool result pruned] bash output removed (20 tokens). re-run the command if needed.";
+    harness.router.handle({
+      type: "tool_pruned",
+      toolCallId: "bash-2",
+      content: prunedContent,
+    });
+
+    const patched = harness.replaced.at(-1)?.model.event;
+    expect(patched.type).toBe("bash_blocked");
+    expect(patched.command).toBe("echo hi");
+    expect(patched.reason).toBe(prunedContent);
+  });
+
   it("falls back to adding when cached tool ids are no longer present", () => {
     const harness = createHarness();
 

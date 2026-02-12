@@ -23,7 +23,7 @@ const VIEW_IMAGE_MAX_DIMENSION_PX = 2048;
 const VIEW_IMAGE_DIMENSION_STEPS = [
   2048, 1920, 1792, 1664, 1536, 1408, 1280, 1152, 1024, 896, 768, 640, 512,
 ] as const;
-const VIEW_IMAGE_LOSSY_QUALITY_STEPS = [95, 90, 85, 80, 75, 70, 65, 60] as const;
+const VIEW_IMAGE_LOSSY_QUALITY_STEPS = [95, 90, 85, 80, 75] as const;
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 
 export const VIEW_IMAGE_TOOL: Tool = {

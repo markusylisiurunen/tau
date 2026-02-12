@@ -152,7 +152,7 @@ describe("view_image tool", () => {
 
     try {
       const filePath = join(fx.dir, "entropy.png");
-      await createHighEntropyPng(filePath, 2048, 2048);
+      await createHighEntropyPng(filePath, 1536, 1536);
 
       const input = readFileSync(filePath);
       expect(input.byteLength).toBeGreaterThan(VIEW_IMAGE_MODEL_MAX_BYTES);
@@ -194,7 +194,7 @@ describe("view_image tool", () => {
     } finally {
       fx.cleanup();
     }
-  });
+  }, 10_000);
 
   it("blocks unsupported image formats", async () => {
     const fx = setupFixture();

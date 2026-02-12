@@ -294,23 +294,37 @@ export class ToolUiRouter {
       return false;
     }
 
-    if (!("uiText" in existing) || !existing.uiText) {
-      return false;
+    if ("uiText" in existing && existing.uiText) {
+      const statusLine = existing.uiText.statusLine?.trim();
+      const nextStatusLine = statusLine
+        ? `${PRUNED_STATUS_PREFIX} · ${statusLine}`
+        : PRUNED_STATUS_PREFIX;
+      const nextLines = this.toToolUiLines(uiEvent.content);
+      const nextUiText: ToolUiText = {
+        previewLines: nextLines,
+        statusLine: nextStatusLine,
+        fullLines: nextLines,
+      };
+
+      const nextEvent = { ...existing, uiText: nextUiText } as ToolUiEventWithToolCallId;
+      return this.replaceToolMessage(nextEvent);
     }
 
-    const statusLine = existing.uiText.statusLine?.trim();
-    const nextStatusLine = statusLine
-      ? `${PRUNED_STATUS_PREFIX} · ${statusLine}`
-      : PRUNED_STATUS_PREFIX;
-    const nextLines = this.toToolUiLines(uiEvent.content);
-    const nextUiText: ToolUiText = {
-      previewLines: nextLines,
-      statusLine: nextStatusLine,
-      fullLines: nextLines,
-    };
+    if ("reason" in existing && typeof existing.reason === "string") {
+      return this.replaceToolMessage({
+        ...existing,
+        reason: uiEvent.content,
+      } as ToolUiEventWithToolCallId);
+    }
 
-    const nextEvent = { ...existing, uiText: nextUiText } as ToolUiEventWithToolCallId;
-    return this.replaceToolMessage(nextEvent);
+    if ("message" in existing) {
+      return this.replaceToolMessage({
+        ...existing,
+        message: uiEvent.content,
+      } as ToolUiEventWithToolCallId);
+    }
+
+    return false;
   }
 
   private toToolUiLines(content: string): ToolUiLine[] {

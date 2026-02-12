@@ -147,6 +147,26 @@ describe("ChatController event handling", () => {
   });
 });
 
+describe("ChatController interrupt handling", () => {
+  it("stops speak recording instead of interrupting assistant", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.speakRecording = {};
+
+    const stopSpeakCaptureSpy = vi
+      .spyOn(controller, "stopSpeakCapture")
+      .mockImplementation(async () => {});
+    const interruptAssistantTurnSpy = vi.spyOn(controller, "interruptAssistantTurn");
+
+    controller.onInterrupt();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(stopSpeakCaptureSpy).toHaveBeenCalledTimes(1);
+    expect(interruptAssistantTurnSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("ChatController queued message draining", () => {
   it("drains queued user messages in order", async () => {
     const stub = createStubView();

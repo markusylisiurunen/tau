@@ -125,7 +125,9 @@ tau can load custom palette overrides from theme files. create a theme at:
 then set `"defaultTheme": "<id>"` in config. any palette token not defined in the file renders as plain text.
 theme values accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, or `hsl(h, s%, l%)`. hex without `#` is ignored.
 
-built-in themes are available by default with ids: `crimson`, `ember`, `gold`, `lime`, `grass`, `emerald`, `jade`, `teal`, `cyan`, `azure`, `cobalt`, `violet`, `purple`, `magenta`, `rose`. set `defaultTheme` to one of these ids, or disable them with `disableBuiltinThemes`.
+built-in themes are available by default with ids: `crimson`, `ember`, `gold`, `lime`, `grass`, `emerald`, `jade`, `teal`, `cyan`, `azure`, `cobalt`, `violet`, `purple`, `magenta`, `rose`. built-ins auto-adapt to dark/light terminal backgrounds via OSC 11 detection at startup (best effort, dark fallback). set `defaultTheme` to one of these ids, or disable them with `disableBuiltinThemes`.
+
+custom themes loaded from `.tau/themes` or `~/.config/tau/themes` are single-variant and use exactly the tokens you define.
 
 available palette tokens (theme keys):
 

@@ -1,5 +1,10 @@
 import type { Message } from "@mariozechner/pi-ai";
-import type { BashCommand, Config, ThemeDefinition } from "../core/config/index.js";
+import type {
+  BashCommand,
+  Config,
+  ThemeAppearance,
+  ThemeDefinition,
+} from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { ModeAdapter } from "../core/modes/mode_adapter.js";
 import type { PromptTemplate } from "../core/prompts.js";
@@ -16,6 +21,7 @@ export interface ChatAppOptions {
   skills?: Skill[];
   themes?: ThemeDefinition[];
   bashCommands?: BashCommand[];
+  terminalAppearance?: ThemeAppearance;
   initialPersonaId?: string;
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
@@ -38,6 +44,7 @@ export class ChatApp implements ModeAdapter {
       queuedUserMessages,
       compactToolUi: true,
       showThinking: false,
+      terminalAppearance: options.terminalAppearance,
       themeId: options.config?.defaultTheme,
       themes: options.themes ?? [],
     });

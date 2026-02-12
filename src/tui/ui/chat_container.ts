@@ -56,12 +56,13 @@ export class ChatContainerComponent extends Container {
     return finalId;
   }
 
-  replaceMessage(id: string, model: ChatMessageModel): void {
+  replaceMessage(id: string, model: ChatMessageModel): boolean {
     const index = this.idToIndex.get(id);
-    if (index === undefined) return;
+    if (index === undefined) return false;
 
     this.allMessages[index] = { id, model, rendered: false };
     this.rebuild();
+    return true;
   }
 
   updateMessage(id: string, model: ChatMessageModel): void {

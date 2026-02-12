@@ -197,6 +197,35 @@ describe("ChatController streaming command handling", () => {
   });
 });
 
+describe("ChatController speak capture", () => {
+  it("ignores concurrent toggle requests while speak transition is running", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    let resolveStart;
+    const startPromise = new Promise((resolve) => {
+      resolveStart = resolve;
+    });
+
+    const startSpy = vi.spyOn(controller, "startSpeakCapture").mockImplementation(async () => {
+      await startPromise;
+    });
+
+    const first = controller.toggleSpeakCapture();
+    const second = controller.toggleSpeakCapture();
+
+    expect(startSpy).toHaveBeenCalledTimes(1);
+
+    resolveStart();
+    await Promise.all([first, second]);
+
+    expect(stub.systemMessages).toContainEqual({
+      text: "speech recording state change already in progress",
+      kind: "warn",
+    });
+  });
+});
+
 describe("ChatController rewind flow", () => {
   it("shows a warning when there are no user messages to rewind", async () => {
     const stub = createStubView();

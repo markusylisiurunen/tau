@@ -441,12 +441,29 @@ export function getApiKeyForProvider(config: Config, provider: KnownProvider): s
   }
 }
 
-export function getParallelApiKey(config: Config): string | undefined {
-  return config.apiKeys?.parallel;
+function getTrimmedEnvValue(key: string, env?: NodeJS.ProcessEnv): string | undefined {
+  const source = env ?? process.env;
+  const value = source[key];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+export function getParallelApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
+  const envKey = getTrimmedEnvValue("PARALLEL_API_KEY", env);
+  if (envKey) {
+    return envKey;
+  }
+
+  const configKey = config.apiKeys?.parallel?.trim();
+  return configKey || undefined;
 }
 
 export function getMistralApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
-  const envKey = (env?.MISTRAL_API_KEY ?? process.env.MISTRAL_API_KEY)?.trim();
+  const envKey = getTrimmedEnvValue("MISTRAL_API_KEY", env);
   if (envKey) {
     return envKey;
   }
@@ -458,5 +475,5 @@ export function getMistralApiKey(config: Config, env?: NodeJS.ProcessEnv): strin
 export function isGoogleAuthAvailable(config: Config, deps?: ConfigDeps): boolean {
   const resolvedDeps = deps ?? createDefaultConfigDeps();
   const env = resolvedDeps.env.getEnv();
-  return !!(config.apiKeys?.google || env.GEMINI_API_KEY);
+  return !!(config.apiKeys?.google?.trim() || getTrimmedEnvValue("GEMINI_API_KEY", env));
 }

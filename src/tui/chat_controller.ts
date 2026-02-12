@@ -254,6 +254,7 @@ export class ChatController {
   private lastEmptySubmitAt?: number;
   private speakRecording?: SpeakRecording;
   private isTranscribingSpeak = false;
+  private speakTransition?: Promise<void>;
 
   constructor(options: ChatControllerOptions) {
     this.view = options.view;
@@ -463,6 +464,9 @@ export class ChatController {
 
   async dispose(): Promise<void> {
     this.subagentUnsubscribe?.();
+    if (this.speakTransition) {
+      await this.speakTransition;
+    }
     await this.cancelSpeakCapture();
     if (!this.toolBackendDispose) return;
     await this.toolBackendDispose();
@@ -1398,8 +1402,13 @@ export class ChatController {
   }
 
   private async toggleSpeakCapture(): Promise<void> {
+    if (this.speakTransition) {
+      this.view.addSystemMessage("speech recording state change already in progress", "warn");
+      return;
+    }
+
     if (this.speakRecording) {
-      await this.stopSpeakCapture();
+      await this.runSpeakTransition(() => this.stopSpeakCapture());
       return;
     }
 
@@ -1413,7 +1422,24 @@ export class ChatController {
       return;
     }
 
-    await this.startSpeakCapture();
+    await this.runSpeakTransition(() => this.startSpeakCapture());
+  }
+
+  private async runSpeakTransition(task: () => Promise<void>): Promise<void> {
+    if (this.speakTransition) {
+      return;
+    }
+
+    const transition = task();
+    this.speakTransition = transition;
+
+    try {
+      await transition;
+    } finally {
+      if (this.speakTransition === transition) {
+        this.speakTransition = undefined;
+      }
+    }
   }
 
   private async startSpeakCapture(): Promise<void> {
@@ -1464,8 +1490,8 @@ export class ChatController {
         completion,
       };
       recording.maxDurationTimeout = setTimeout(() => {
-        if (this.speakRecording !== recording) return;
-        void this.stopSpeakCapture();
+        if (this.speakRecording !== recording || this.speakTransition) return;
+        void this.runSpeakTransition(() => this.stopSpeakCapture());
       }, SPEAK_RECORDING_MAX_DURATION_MS);
       this.speakRecording = recording;
       this.view.setEditorInputEnabled(false);

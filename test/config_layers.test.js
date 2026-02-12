@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { resolveConfigLevels } from "../dist/core/config/paths.js";
 import {
   getMistralApiKey,
+  getParallelApiKey,
   loadConfig,
   loadConfigWithDiagnostics,
 } from "../dist/core/config/schema.js";
@@ -255,5 +256,46 @@ describe("loadConfig", () => {
 
     expect(getMistralApiKey(config, { MISTRAL_API_KEY: "env-mistral" })).toBe("env-mistral");
     expect(getMistralApiKey(config, {})).toBe("config-mistral");
+  });
+
+  it("uses the injected env map when resolving MISTRAL_API_KEY", () => {
+    const previous = process.env.MISTRAL_API_KEY;
+    process.env.MISTRAL_API_KEY = "process-mistral";
+
+    try {
+      const config = { apiKeys: { mistral: "config-mistral" } };
+      expect(getMistralApiKey(config, {})).toBe("config-mistral");
+      expect(getMistralApiKey(config)).toBe("process-mistral");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.MISTRAL_API_KEY;
+      } else {
+        process.env.MISTRAL_API_KEY = previous;
+      }
+    }
+  });
+
+  it("prefers PARALLEL_API_KEY over apiKeys.parallel", () => {
+    const config = { apiKeys: { parallel: "config-parallel" } };
+
+    expect(getParallelApiKey(config, { PARALLEL_API_KEY: "env-parallel" })).toBe("env-parallel");
+    expect(getParallelApiKey(config, {})).toBe("config-parallel");
+  });
+
+  it("uses the injected env map when resolving PARALLEL_API_KEY", () => {
+    const previous = process.env.PARALLEL_API_KEY;
+    process.env.PARALLEL_API_KEY = "process-parallel";
+
+    try {
+      const config = { apiKeys: { parallel: "config-parallel" } };
+      expect(getParallelApiKey(config, {})).toBe("config-parallel");
+      expect(getParallelApiKey(config)).toBe("process-parallel");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PARALLEL_API_KEY;
+      } else {
+        process.env.PARALLEL_API_KEY = previous;
+      }
+    }
   });
 });

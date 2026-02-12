@@ -14,7 +14,7 @@ you'll need an API key from at least one provider. set it via environment variab
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
-# or OPENAI_API_KEY, or GEMINI_API_KEY, or MISTRAL_API_KEY (for /speak)
+# or OPENAI_API_KEY, or GEMINI_API_KEY, or PARALLEL_API_KEY, or MISTRAL_API_KEY (for /speak)
 ```
 
 or store keys in `~/.config/tau/config.json`:
@@ -33,7 +33,7 @@ or store keys in `~/.config/tau/config.json`:
 
 environment variables take precedence over the config file.
 
-`parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents.
+`parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents and can be provided through `apiKeys.parallel` or `PARALLEL_API_KEY`.
 
 `/speak` uses `apiKeys.mistral` or `MISTRAL_API_KEY` for transcription and requires `ffmpeg` on your system.
 
@@ -230,7 +230,7 @@ the built-in `default` sub-agent is available unless disabled. it inherits the m
 
 sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 8.
 
-to use `web_search`/`web_fetch` in a sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above). tau will only make web calls when you explicitly ask for web research.
+to use `web_search`/`web_fetch` in a sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above) or export `PARALLEL_API_KEY`. tau will only make web calls when you explicitly ask for web research.
 
 ## trigger sensitivity
 

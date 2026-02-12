@@ -10,10 +10,12 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 ## Architecture
 
 - **ChatApp** (`src/tui/app.ts`): Thin wiring between the controller and TUI view adapter
-- **ChatController** (`src/tui/chat_controller.ts`): Orchestrates session state, commands, and core events
+- **ChatController** (`src/tui/chat_controller.ts`): Orchestrates session state, commands, and core events; delegates assistant turn execution and prompt composition to core runtime helpers
 - **TuiChatView** (`src/tui/chat_view.ts`): TUI adapter for rendering, editor, and tool UI
 - **CoreSession** (`src/core/session/core_session.ts`): Owns session state and emits core events for consumers
 - **SessionEngine** (`src/core/session/session_engine.ts`): Internal streaming/tool dispatch runner used by CoreSession, and host for manual session compaction
+- **ConversationTurnRuntime** (`src/core/runtime/conversation_turn_runtime.ts`): Assistant-turn runner with interruption and abort handling for core event streams
+- **Session prompt composer** (`src/core/runtime/session_prompt_composer.ts`): Composes main-session and subagent system prompts with environment and context blocks
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly and history preparation for `/compact:*` flows (summary-only and summary + last assistant)
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface and RPC stub for alternate front-ends
@@ -62,6 +64,8 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `tools/sandbox/docker_sandbox.ts` - Docker sandbox runner
   - `subagents/` - Default subagent prompt and runner
   - `modes/` - ModeAdapter interface and RPC stub
+  - `runtime/conversation_turn_runtime.ts` - Assistant-turn runtime with interruption and abort handling
+  - `runtime/session_prompt_composer.ts` - Session prompt composition for main-session and subagent prompts
   - `runtime/deps.ts` - Core dependency injection
   - `utils/context_builder.ts` - System prompt assembly
   - `utils/agents_files.ts` - AGENTS.md discovery

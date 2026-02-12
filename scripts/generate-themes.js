@@ -47,6 +47,7 @@ const generatePalette = (brandHue, appearance) => {
   const HUE_CODE = wrapHue(HUE_BRAND + 24);
   const HUE_EDITOR_BORDER = HUE_BRAND;
   const HUE_EDITOR_SUBAGENT_BORDER = wrapHue(HUE_BRAND - 32);
+  const HUE_EDITOR_RECORDING_BORDER = HUE_ERROR;
   const HUE_MEMORY = wrapHue(280);
   const HUE_BASH = wrapHue(92);
 
@@ -66,6 +67,11 @@ const generatePalette = (brandHue, appearance) => {
     setH(HUE_EDITOR_SUBAGENT_BORDER),
     scaleC(0.96),
     shiftL(isDark ? 16 : 10),
+  ]);
+  const editorRecordingBorder = transform(brandAccent, [
+    setH(HUE_EDITOR_RECORDING_BORDER),
+    scaleC(0.72),
+    setL(isDark ? 72 : 38),
   ]);
 
   const actionRunning = transform(brandAccent, [
@@ -123,6 +129,7 @@ const generatePalette = (brandHue, appearance) => {
     editorBorderHigh: toHex(editorBorder),
     editorBorderXhigh: toHex(editorBorder),
     editorSubagentBorder: toHex(editorSubagentBorder),
+    editorBorderRecording: toHex(editorRecordingBorder),
 
     statusWarn: toHex(statusWarn),
     statusError: toHex(statusError),

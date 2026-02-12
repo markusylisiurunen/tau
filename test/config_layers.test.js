@@ -12,7 +12,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveConfigLevels } from "../dist/core/config/paths.js";
-import { loadConfig, loadConfigWithDiagnostics } from "../dist/core/config/schema.js";
+import {
+  getMistralApiKey,
+  loadConfig,
+  loadConfigWithDiagnostics,
+} from "../dist/core/config/schema.js";
 
 function createConfigDeps({ cwd, home, env }) {
   return {
@@ -107,7 +111,7 @@ describe("loadConfig", () => {
         join(fx.home, ".config", "tau", "config.json"),
         JSON.stringify({
           defaultRisk: "read-only",
-          apiKeys: { openai: "global", anthropic: "anthropic-key" },
+          apiKeys: { openai: "global", anthropic: "anthropic-key", mistral: "mistral-key" },
           sandbox: { image: "sandbox-base" },
           bashCommands: [{ id: "check", cmd: "npm run check" }],
           agentContextFiles: ["AGENTS.md"],
@@ -151,6 +155,7 @@ describe("loadConfig", () => {
         openai: "repo",
         anthropic: "anthropic-key",
         google: "google-key",
+        mistral: "mistral-key",
       });
       expect(config.sandbox).toEqual({
         image: "sandbox-base",
@@ -243,5 +248,12 @@ describe("loadConfig", () => {
     } finally {
       fx.cleanup();
     }
+  });
+
+  it("prefers MISTRAL_API_KEY over apiKeys.mistral", () => {
+    const config = { apiKeys: { mistral: "config-mistral" } };
+
+    expect(getMistralApiKey(config, { MISTRAL_API_KEY: "env-mistral" })).toBe("env-mistral");
+    expect(getMistralApiKey(config, {})).toBe("config-mistral");
   });
 });

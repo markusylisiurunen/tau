@@ -15,6 +15,7 @@ export interface Config {
     google?: string;
     openai?: string;
     parallel?: string;
+    mistral?: string;
   };
   sandbox?: SandboxConfig;
   defaultPersona?: string;
@@ -72,7 +73,7 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
     } else {
       const apiKeys: Config["apiKeys"] = {};
       const keys = data.apiKeys as Record<string, unknown>;
-      const providers = ["anthropic", "google", "openai", "parallel"] as const;
+      const providers = ["anthropic", "google", "openai", "parallel", "mistral"] as const;
       for (const provider of providers) {
         const value = keys[provider];
         if (value === undefined) continue;
@@ -442,6 +443,16 @@ export function getApiKeyForProvider(config: Config, provider: KnownProvider): s
 
 export function getParallelApiKey(config: Config): string | undefined {
   return config.apiKeys?.parallel;
+}
+
+export function getMistralApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
+  const envKey = (env?.MISTRAL_API_KEY ?? process.env.MISTRAL_API_KEY)?.trim();
+  if (envKey) {
+    return envKey;
+  }
+
+  const configKey = config.apiKeys?.mistral?.trim();
+  return configKey || undefined;
 }
 
 export function isGoogleAuthAvailable(config: Config, deps?: ConfigDeps): boolean {

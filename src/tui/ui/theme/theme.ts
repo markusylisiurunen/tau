@@ -36,6 +36,7 @@ export interface Palette {
   editorBorderHigh: (text: string) => string;
   editorBorderXhigh: (text: string) => string;
   editorSubagentBorder: (text: string) => string;
+  editorBorderRecording: (text: string) => string;
 
   // Status
   statusWarn: (text: string) => string;

@@ -23,7 +23,7 @@ import type { SystemMessageKind } from "./ui/system_message.js";
 import { coercePaletteOverrides, createUiTheme, type Theme } from "./ui/theme/index.js";
 import { createToolUiRegistry } from "./ui/tool_ui_registry.js";
 
-export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "memory";
+export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "memory" | "recording";
 
 export type ChatViewStatus = {
   footer: {
@@ -51,6 +51,7 @@ export type ChatViewInputHandlers = {
   onCtrlR?: () => void;
   onCtrlP?: () => void;
   onCtrlS?: () => void;
+  onCtrlY?: () => void;
   onEscape?: () => void;
   onCtrlF?: () => void;
   onAltUp?: () => void;
@@ -97,6 +98,8 @@ export interface ChatView {
   getEditorText(): string;
   getExpandedEditorText(): string;
   setEditorText(text: string): void;
+  insertEditorTextAtCursor(text: string): void;
+  setEditorInputEnabled(enabled: boolean): void;
   showRewindPicker(options: RewindPickerOptions): void;
   hideRewindPicker(): void;
   getEditorCursor(): { line: number; col: number };
@@ -129,6 +132,8 @@ export class TuiChatView implements ChatView {
   private toolUiRegistry = createToolUiRegistry();
   private toolUiRouter: ToolUiRouter;
   private lastStatus?: ChatViewStatus;
+  private recordingIndicatorFrame = 0;
+  private recordingIndicatorTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: {
     queuedUserMessages: string[];
@@ -176,6 +181,7 @@ export class TuiChatView implements ChatView {
   }
 
   stop(): void {
+    this.setRecordingIndicatorActive(false);
     this.ui.stop();
     // Ensure cursor is visible after shutdown (some terminals keep it hidden).
     this.ui.terminal.showCursor();
@@ -236,6 +242,7 @@ export class TuiChatView implements ChatView {
 
   updateStatus(status: ChatViewStatus): void {
     this.lastStatus = status;
+    this.setRecordingIndicatorActive(status.editor.mode === "recording");
     this.footer.setStatus({
       contextUsage: status.footer.contextUsage,
       sessionCost: status.footer.sessionCost,
@@ -321,6 +328,16 @@ export class TuiChatView implements ChatView {
     this.ui.requestRender();
   }
 
+  insertEditorTextAtCursor(text: string): void {
+    this.editor.insertTextAtCursor(text);
+    this.ui.requestRender();
+  }
+
+  setEditorInputEnabled(enabled: boolean): void {
+    this.editor.setInputEnabled(enabled);
+    this.ui.requestRender();
+  }
+
   showRewindPicker(options: RewindPickerOptions): void {
     const picker = new RewindPickerComponent(this.uiTheme, options.items);
     picker.onSelect = options.onSelect;
@@ -359,6 +376,7 @@ export class TuiChatView implements ChatView {
     this.editor.onCtrlR = handlers.onCtrlR;
     this.editor.onCtrlP = handlers.onCtrlP;
     this.editor.onCtrlS = handlers.onCtrlS;
+    this.editor.onCtrlY = handlers.onCtrlY;
     this.editor.onEscape = handlers.onEscape;
     this.editor.onCtrlF = handlers.onCtrlF;
     this.editor.onAltUp = handlers.onAltUp;
@@ -441,6 +459,8 @@ export class TuiChatView implements ChatView {
       this.editor.borderColor = (s: string) => palette.modeBash(s);
     } else if (state.mode === "memory") {
       this.editor.borderColor = (s: string) => palette.modeMemory(s);
+    } else if (state.mode === "recording") {
+      this.editor.borderColor = (s: string) => palette.editorBorderRecording(s);
     } else {
       this.editor.borderColor = this.uiTheme.editorBorderForReasoning(state.reasoning);
     }
@@ -456,7 +476,44 @@ export class TuiChatView implements ChatView {
       return;
     }
 
+    if (state.mode === "recording") {
+      this.editor.setHeader(`${this.getRecordingIndicator()} recording`, "", {
+        leftStyle: this.editor.borderColor,
+      });
+      return;
+    }
+
     this.editor.setHeader(state.cwdLabel, `${state.personaName} (${state.reasoningLabel})`);
+  }
+
+  private setRecordingIndicatorActive(active: boolean): void {
+    if (!active) {
+      if (this.recordingIndicatorTimer) {
+        clearInterval(this.recordingIndicatorTimer);
+        this.recordingIndicatorTimer = undefined;
+      }
+      this.recordingIndicatorFrame = 0;
+      return;
+    }
+
+    if (this.recordingIndicatorTimer) {
+      return;
+    }
+
+    this.recordingIndicatorFrame = 0;
+    this.recordingIndicatorTimer = setInterval(() => {
+      if (!this.lastStatus || this.lastStatus.editor.mode !== "recording") {
+        return;
+      }
+
+      this.recordingIndicatorFrame = (this.recordingIndicatorFrame + 1) % 2;
+      this.updateEditorVisualState(this.lastStatus.editor);
+      this.ui.requestRender();
+    }, 500);
+  }
+
+  private getRecordingIndicator(): string {
+    return this.recordingIndicatorFrame === 0 ? "●" : "○";
   }
 
   private normalizeSystemMessageText(text: string, kind: SystemMessageKind): string {

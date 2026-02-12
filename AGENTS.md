@@ -274,7 +274,7 @@ If you need dependency details (rare), check `references/repos/` first and treat
 
 **Compatibility**: Tau is pre-v1 and the goal is to have a clean implementation before v1. Do not introduce backwards compatibility layers or legacy support unless the user explicitly asks.
 
-**Commit style**: Short, imperative, lowercase subject lines (no prefixes). When explicitly working a GitHub issue, include a closing keyword line (for example, `fixes #123`) in the commit body.
+**Commit style**: Short, imperative, lowercase subject lines (no prefixes). When explicitly working a GitHub issue with a single commit (no PR), include a closing keyword line (for example, `fixes #123`) in the commit body. If opening a PR, put the closing keyword in the PR body instead of the commit body.
 
 **Branch names**: Lowercase, a few descriptive words. Do not include prefixes or issue references.
 

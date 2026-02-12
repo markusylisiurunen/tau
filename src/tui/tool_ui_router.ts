@@ -318,15 +318,7 @@ export class ToolUiRouter {
       return [];
     }
 
-    return content.split("\n").map((text) => {
-      if (text.startsWith("+ ")) {
-        return { text, tone: "diffAdd" };
-      }
-      if (text.startsWith("- ")) {
-        return { text, tone: "diffRemove" };
-      }
-      return { text };
-    });
+    return content.split("\n").map((text) => ({ text }));
   }
 
   private toSubagentAbortEvent(

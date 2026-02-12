@@ -471,9 +471,3 @@ export function getMistralApiKey(config: Config, env?: NodeJS.ProcessEnv): strin
   const configKey = config.apiKeys?.mistral?.trim();
   return configKey || undefined;
 }
-
-export function isGoogleAuthAvailable(config: Config, deps?: ConfigDeps): boolean {
-  const resolvedDeps = deps ?? createDefaultConfigDeps();
-  const env = resolvedDeps.env.getEnv();
-  return !!(config.apiKeys?.google?.trim() || getTrimmedEnvValue("GEMINI_API_KEY", env));
-}

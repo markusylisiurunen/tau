@@ -31,7 +31,6 @@ export type {
 export {
   buildVirtualBundle,
   createDefaultConfigDeps,
-  isGoogleAuthAvailable,
   loadAllContent,
   loadConfig,
   loadRuntimeConfig,

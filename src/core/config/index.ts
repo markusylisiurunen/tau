@@ -7,13 +7,7 @@ export { resolveConfigLevels } from "./paths.js";
 export type { RuntimeConfigResult } from "./runtime.js";
 export { loadRuntimeConfig } from "./runtime.js";
 export type { Config, SandboxConfig } from "./schema.js";
-export {
-  getApiKeyForProvider,
-  getMistralApiKey,
-  getParallelApiKey,
-  isGoogleAuthAvailable,
-  loadConfig,
-} from "./schema.js";
+export { getApiKeyForProvider, getMistralApiKey, getParallelApiKey, loadConfig } from "./schema.js";
 export { resolveThemeTokensById, resolveThemeTokensForAppearance } from "./theme_variants.js";
 export type { VirtualBundle } from "./virtual_bundle.js";
 export { buildVirtualBundle } from "./virtual_bundle.js";

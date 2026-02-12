@@ -19,6 +19,7 @@ export class CustomEditor extends Editor {
   private maxVisibleLines = DEFAULT_EDITOR_MAX_LINES;
   private scrollTop = 0;
   private lastEscapeAt?: number;
+  private inputEnabled = true;
 
   public onCtrlC?: () => void;
   public onCtrlT?: () => void;
@@ -29,6 +30,7 @@ export class CustomEditor extends Editor {
   public onCtrlR?: () => void;
   public onCtrlP?: () => void;
   public onCtrlS?: () => void;
+  public onCtrlY?: () => void;
   public onCtrlG?: () => void;
   public onAltUp?: () => void;
   public onAltDown?: () => void;
@@ -55,6 +57,10 @@ export class CustomEditor extends Editor {
     }
     const normalized = Math.floor(lines);
     this.maxVisibleLines = normalized > 0 ? normalized : DEFAULT_EDITOR_MAX_LINES;
+  }
+
+  setInputEnabled(enabled: boolean): void {
+    this.inputEnabled = enabled;
   }
 
   setHeader(
@@ -168,6 +174,11 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    if (matchesKey(data, Key.ctrl("y")) && this.onCtrlY && !this.isShowingAutocomplete()) {
+      this.onCtrlY();
+      return;
+    }
+
     if (isAltUp && this.onAltUp && !this.isShowingAutocomplete()) {
       this.onAltUp();
       return;
@@ -215,6 +226,10 @@ export class CustomEditor extends Editor {
 
     if (matchesKey(data, Key.pageDown) && !this.isShowingAutocomplete()) {
       this.handlePageScroll(1);
+      return;
+    }
+
+    if (!this.inputEnabled) {
       return;
     }
 

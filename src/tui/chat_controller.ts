@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import type {
@@ -28,6 +28,7 @@ import {
   type BashCommand,
   type Config,
   createDefaultConfigDeps,
+  getMistralApiKey,
   loadRuntimeConfig,
   type RuntimeConfigResult,
   type ThemeDefinition,
@@ -73,6 +74,7 @@ import { buildLineDiff, collapseLongUnchangedDiffRuns } from "../core/utils/line
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
+import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 import { bytesToTokens, formatTokenEstimate, tokensToBytes } from "../core/utils/token.js";
 import { truncateToBytesFromStart } from "../core/utils/truncate.js";
 import { APP_VERSION } from "../core/version.js";
@@ -154,6 +156,14 @@ type ReloadReport = {
   messages: ReloadMessage[];
 };
 
+type SpeakRecording = {
+  audioPath: string;
+  stopRequested: boolean;
+  abortController: AbortController;
+  completion: Promise<SpawnCaptureResult>;
+  maxDurationTimeout?: ReturnType<typeof setTimeout>;
+};
+
 const RELOAD_PLANS: Record<ReloadScope, ReloadPlan> = {
   "new-session": {
     personas: true,
@@ -181,6 +191,10 @@ const PRUNED_EDIT_ARGUMENT_MARKER = "[content pruned]";
 const PRUNE_EDIT_UNCHANGED_CONTEXT_LINES = 4;
 const PRUNE_PREVIEW_MAX_TOKENS = 512;
 const PRUNE_MAX_OVERAGE_RATIO = 0.1;
+const SPEAK_TEMP_FILE_TEMPLATE = "/tmp/tau-speak.XXXXXX";
+const SPEAK_MISTRAL_TRANSCRIBE_MODEL = "voxtral-mini-latest";
+const SPEAK_RECORDING_MIN_BYTES = 1024;
+const SPEAK_RECORDING_MAX_DURATION_MS = 5 * 60 * 1000;
 
 export class ChatController {
   private readonly view: ChatView;
@@ -238,6 +252,8 @@ export class ChatController {
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
   private lastEmptySubmitAt?: number;
+  private speakRecording?: SpeakRecording;
+  private isTranscribingSpeak = false;
 
   constructor(options: ChatControllerOptions) {
     this.view = options.view;
@@ -347,6 +363,7 @@ export class ChatController {
       pruneLargest: (extra) => this.pruneToolResults("largest", extra),
       pruneSmart: (extra) => this.pruneToolResultsSmart(extra),
       reload: () => this.reloadContent(),
+      speak: () => this.toggleSpeakCapture(),
       risk: (level) => this.setRiskLevel(level),
       persona: (id) => this.switchPersona(id),
       prompt: (id) => this.insertPrompt(id),
@@ -419,6 +436,7 @@ export class ChatController {
       onCtrlR: () => this.cycleRiskLevel(),
       onCtrlP: () => this.cyclePersonality(),
       onCtrlS: () => void this.stashEditorToClipboard(),
+      onCtrlY: () => void this.toggleSpeakCapture(),
       onEscape: () => this.onInterrupt(),
       onCtrlF: () => {
         this.expandFileMentions().catch((err) => {
@@ -445,6 +463,7 @@ export class ChatController {
 
   async dispose(): Promise<void> {
     this.subagentUnsubscribe?.();
+    await this.cancelSpeakCapture();
     if (!this.toolBackendDispose) return;
     await this.toolBackendDispose();
   }
@@ -636,6 +655,7 @@ export class ChatController {
   }
 
   private getInputMode(): ChatInputMode {
+    if (this.speakRecording) return "recording";
     if (this.isBashIncognito) return "bash_incognito";
     if (this.isBashMode) return "bash";
     if (this.isMemoryMode) return "memory";
@@ -1001,6 +1021,7 @@ export class ChatController {
   // Input Handling --------------------------------------------------------------------------------
 
   private beforeSubmit(text: string): boolean {
+    if (this.speakRecording) return false;
     if (!this.isStreaming) return true;
     const trimmed = text.trimStart();
     if (trimmed.startsWith("!")) {
@@ -1098,6 +1119,8 @@ export class ChatController {
         return "prune smart-selected tool results and compact edit calls, optional fraction and guidance";
       case "reload":
         return "reload prompts, skills, themes, bash commands, and AGENTS.md";
+      case "speak":
+        return "toggle microphone recording and transcribe to editor";
       case "risk":
         return "set risk level: /risk:read-only or /risk:read-write";
       case "bash":
@@ -1372,6 +1395,265 @@ export class ChatController {
     this.view.addMessage({ type: "user", text: trimmed }, historyEntryId);
 
     await this.runAssistantTurn();
+  }
+
+  private async toggleSpeakCapture(): Promise<void> {
+    if (this.speakRecording) {
+      await this.stopSpeakCapture();
+      return;
+    }
+
+    if (this.isTranscribingSpeak) {
+      this.view.addSystemMessage("speech transcription already in progress", "warn");
+      return;
+    }
+
+    if (this.isStreaming) {
+      this.view.addSystemMessage("wait for the assistant to finish before recording", "warn");
+      return;
+    }
+
+    await this.startSpeakCapture();
+  }
+
+  private async startSpeakCapture(): Promise<void> {
+    const apiKey = getMistralApiKey(this.config, this.deps.env.env());
+    if (!apiKey) {
+      this.view.addSystemMessage("set MISTRAL_API_KEY or apiKeys.mistral to use /speak", "error");
+      return;
+    }
+
+    let audioPath: string | undefined;
+    try {
+      audioPath = await this.createSpeakTempFilePath();
+      const abortController = new AbortController();
+      const completion = this.deps.spawn(
+        "ffmpeg",
+        [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-nostdin",
+          "-f",
+          "avfoundation",
+          "-i",
+          ":0",
+          "-ac",
+          "1",
+          "-ar",
+          "16000",
+          "-c:a",
+          "pcm_s16le",
+          "-f",
+          "wav",
+          "-y",
+          audioPath,
+        ],
+        {
+          detached: true,
+          killProcessGroup: true,
+          signal: abortController.signal,
+          stdio: ["ignore", "ignore", "ignore"],
+        },
+      );
+
+      const recording: SpeakRecording = {
+        audioPath,
+        stopRequested: false,
+        abortController,
+        completion,
+      };
+      recording.maxDurationTimeout = setTimeout(() => {
+        if (this.speakRecording !== recording) return;
+        void this.stopSpeakCapture();
+      }, SPEAK_RECORDING_MAX_DURATION_MS);
+      this.speakRecording = recording;
+      this.view.setEditorInputEnabled(false);
+      this.refreshStatus();
+      void this.watchSpeakRecording(recording);
+    } catch (err) {
+      if (audioPath) {
+        await this.cleanupSpeakTempFile(audioPath);
+      }
+      this.view.addSystemMessage(`failed to start recording: ${(err as Error).message}`, "error");
+    }
+  }
+
+  private async stopSpeakCapture(): Promise<void> {
+    const recording = this.speakRecording;
+    if (!recording) return;
+
+    recording.stopRequested = true;
+    this.clearSpeakRecordingMaxDurationTimeout(recording);
+    this.speakRecording = undefined;
+    this.view.setEditorInputEnabled(true);
+    this.refreshStatus();
+
+    recording.abortController.abort();
+
+    try {
+      await recording.completion;
+    } catch (err) {
+      this.view.addSystemMessage(`recording failed: ${(err as Error).message}`, "error");
+      await this.cleanupSpeakTempFile(recording.audioPath);
+      return;
+    }
+
+    this.isTranscribingSpeak = true;
+    try {
+      const audio = await readFile(recording.audioPath);
+      if (audio.byteLength < SPEAK_RECORDING_MIN_BYTES) {
+        this.view.addSystemMessage("recording too short, try again", "warn");
+        return;
+      }
+
+      const transcript = await this.transcribeSpeakAudio(audio);
+      const text = transcript.trim();
+      if (!text) {
+        return;
+      }
+
+      this.view.insertEditorTextAtCursor(text);
+    } catch (err) {
+      this.view.addSystemMessage(`speech transcription failed: ${(err as Error).message}`, "error");
+    } finally {
+      this.isTranscribingSpeak = false;
+      await this.cleanupSpeakTempFile(recording.audioPath);
+    }
+  }
+
+  private async cancelSpeakCapture(): Promise<void> {
+    const recording = this.speakRecording;
+    if (!recording) return;
+
+    recording.stopRequested = true;
+    this.clearSpeakRecordingMaxDurationTimeout(recording);
+    this.speakRecording = undefined;
+    this.view.setEditorInputEnabled(true);
+    this.refreshStatus();
+
+    recording.abortController.abort();
+    try {
+      await recording.completion;
+    } catch {
+      // ignore disposal errors
+    }
+    await this.cleanupSpeakTempFile(recording.audioPath);
+  }
+
+  private async watchSpeakRecording(recording: SpeakRecording): Promise<void> {
+    try {
+      const result = await recording.completion;
+      this.clearSpeakRecordingMaxDurationTimeout(recording);
+      if (this.speakRecording !== recording || recording.stopRequested) return;
+
+      this.speakRecording = undefined;
+      this.view.setEditorInputEnabled(true);
+      this.refreshStatus();
+      const detail =
+        result.exitCode !== null
+          ? `ffmpeg exited with code ${result.exitCode}`
+          : result.closeSignal
+            ? `ffmpeg terminated by signal ${result.closeSignal}`
+            : "ffmpeg exited";
+      this.view.addSystemMessage(`recording stopped unexpectedly (${detail})`, "error");
+      await this.cleanupSpeakTempFile(recording.audioPath);
+    } catch (err) {
+      this.clearSpeakRecordingMaxDurationTimeout(recording);
+      if (this.speakRecording !== recording || recording.stopRequested) return;
+
+      this.speakRecording = undefined;
+      this.view.setEditorInputEnabled(true);
+      this.refreshStatus();
+      const error = err as NodeJS.ErrnoException;
+      if (error.code === "ENOENT") {
+        this.view.addSystemMessage(
+          "ffmpeg not found. install it with: brew install ffmpeg",
+          "error",
+        );
+      } else {
+        this.view.addSystemMessage(`recording failed: ${error.message}`, "error");
+      }
+      await this.cleanupSpeakTempFile(recording.audioPath);
+    }
+  }
+
+  private clearSpeakRecordingMaxDurationTimeout(recording: SpeakRecording): void {
+    if (!recording.maxDurationTimeout) return;
+    clearTimeout(recording.maxDurationTimeout);
+    recording.maxDurationTimeout = undefined;
+  }
+
+  private async createSpeakTempFilePath(): Promise<string> {
+    const result = await this.deps.spawn("mktemp", [SPEAK_TEMP_FILE_TEMPLATE]);
+    if (result.exitCode !== 0) {
+      const message = result.stderr.trim() || result.stdout.trim() || "mktemp failed";
+      throw new Error(message);
+    }
+
+    const path = result.stdout.trim().split(/\r?\n/, 1)[0]?.trim();
+    if (!path) {
+      throw new Error("mktemp returned an empty path");
+    }
+    return path;
+  }
+
+  private async transcribeSpeakAudio(audio: Buffer): Promise<string> {
+    const apiKey = getMistralApiKey(this.config, this.deps.env.env());
+    if (!apiKey) {
+      throw new Error("missing MISTRAL_API_KEY or apiKeys.mistral");
+    }
+
+    const formData = new FormData();
+    formData.append("model", SPEAK_MISTRAL_TRANSCRIBE_MODEL);
+    formData.append("file", new Blob([audio], { type: "audio/wav" }), "speech.wav");
+    formData.append("language", "en");
+
+    const response = await fetch("https://api.mistral.ai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: formData,
+    });
+
+    let payload: unknown;
+    const responseText = await response.text();
+    if (responseText) {
+      try {
+        payload = JSON.parse(responseText) as unknown;
+      } catch {
+        payload = undefined;
+      }
+    }
+
+    if (!response.ok) {
+      const fromObject =
+        payload && typeof payload === "object" && "message" in payload
+          ? (payload as Record<string, unknown>).message
+          : undefined;
+      const fromString = typeof fromObject === "string" ? fromObject : undefined;
+      const fallback = responseText.trim() || `HTTP ${response.status}`;
+      throw new Error(fromString || fallback);
+    }
+
+    const text =
+      payload && typeof payload === "object" && "text" in payload
+        ? (payload as Record<string, unknown>).text
+        : undefined;
+    if (typeof text !== "string") {
+      return "";
+    }
+
+    return text;
+  }
+
+  private async cleanupSpeakTempFile(path: string): Promise<void> {
+    try {
+      await unlink(path);
+    } catch {
+      // best-effort cleanup
+    }
   }
 
   private getMemoryModeFilePath(): string {

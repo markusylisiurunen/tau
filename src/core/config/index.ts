@@ -9,6 +9,7 @@ export { loadRuntimeConfig } from "./runtime.js";
 export type { Config, SandboxConfig } from "./schema.js";
 export {
   getApiKeyForProvider,
+  getMistralApiKey,
   getParallelApiKey,
   isGoogleAuthAvailable,
   loadConfig,

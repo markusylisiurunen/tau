@@ -14,7 +14,7 @@ you'll need an API key from at least one provider. set it via environment variab
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
-# or OPENAI_API_KEY, or GEMINI_API_KEY
+# or OPENAI_API_KEY, or GEMINI_API_KEY, or MISTRAL_API_KEY (for /speak)
 ```
 
 or store keys in `~/.config/tau/config.json`:
@@ -25,7 +25,8 @@ or store keys in `~/.config/tau/config.json`:
     "anthropic": "sk-ant-...",
     "openai": "sk-...",
     "google": "...",
-    "parallel": "..."
+    "parallel": "...",
+    "mistral": "..."
   }
 }
 ```
@@ -33,6 +34,8 @@ or store keys in `~/.config/tau/config.json`:
 environment variables take precedence over the config file.
 
 `parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents.
+
+`/speak` uses `apiKeys.mistral` or `MISTRAL_API_KEY` for transcription and requires `ffmpeg` on your system.
 
 ### OpenAI Codex subscription (ChatGPT Plus/Pro)
 
@@ -298,6 +301,7 @@ tau supports slash commands for common actions:
 | `/copy:code`                | copy just the code blocks                                                       |
 | `/checkpoint`               | save a checkpoint file for loading later                                        |
 | `/reload`                   | reload personas, prompts, skills, and themes from disk                          |
+| `/speak`                    | toggle microphone recording and transcribe into the editor                      |
 | `/cd`                       | change the working directory                                                    |
 | `/compact:summary-only`     | compress history into one synthetic user summary message                        |
 | `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present   |
@@ -319,6 +323,8 @@ the compact commands are manual and useful when conversations get long. they rep
 
 the prune commands drop bash tool results from the active context without summarizing and compact edit call payloads/results. all three accept an optional fraction between `0` and `1` (for example, `/prune:largest 0.4`) and default to `0.25` when omitted. `/prune:smart` also accepts optional guidance text, either after a fraction (for example, `/prune:smart 0.3 keep only repetitive output`) or by itself (for example, `/prune:smart keep build logs`).
 
+`/speak` (or `ctrl+y`) starts microphone recording. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor. recording also auto-stops after 5 minutes.
+
 `/rewind` opens a picker over prior user messages in the current context. it truncates history from the selected message onward (including the selected message) and prefills the editor with that message so you can retry from there.
 
 ## keyboard shortcuts
@@ -332,6 +338,7 @@ the prune commands drop bash tool results from the active context without summar
 | `ctrl+o`    | toggle compact tool display                |
 | `ctrl+f`    | expand @<file> and @@skill:<name> mentions |
 | `ctrl+s`    | stash input to clipboard                   |
+| `ctrl+y`    | toggle voice recording                     |
 | `enter x2`  | retry last response on empty input         |
 | `esc x2`    | clear current prompt                       |
 | `alt+up`    | pop queued message                         |
@@ -353,7 +360,8 @@ settings merge from least-specific to most-specific.
     "anthropic": "sk-ant-...",
     "openai": "sk-...",
     "google": "...",
-    "parallel": "..."
+    "parallel": "...",
+    "mistral": "..."
   },
   "defaultPersona": "gpt-5.2-chat",
   "defaultRisk": "read-write",

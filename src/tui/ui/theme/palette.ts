@@ -56,6 +56,7 @@ const PALETTE_TEXT_TOKENS = [
   "editorBorderHigh",
   "editorBorderXhigh",
   "editorSubagentBorder",
+  "editorBorderRecording",
   "statusWarn",
   "statusError",
   "modeMemory",

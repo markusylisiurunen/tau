@@ -16,6 +16,7 @@ export type Command = (
   | { type: "pruneLargest" }
   | { type: "pruneSmart" }
   | { type: "reload" }
+  | { type: "speak" }
   | { type: "risk"; level: RiskLevel }
   | { type: "bash"; id: string }
   | { type: "persona"; id: string }
@@ -58,6 +59,7 @@ export interface CommandDispatchContext {
   pruneLargest: (extra?: string) => void;
   pruneSmart: (extra?: string) => Promise<void> | void;
   reload: () => Promise<void>;
+  speak: () => Promise<void> | void;
   risk: (level: RiskLevel) => void;
   persona: (id: string) => void;
   prompt: (id: string) => void;
@@ -212,6 +214,7 @@ export class CommandRegistry<Ctx = unknown> {
       ["ctrl+o", "toggle compact tool UI"],
       ["ctrl+f", "expand @<file> and @@skill:<name> mentions"],
       ["ctrl+s", "stash input to clipboard"],
+      ["ctrl+y", "toggle voice recording"],
       ["enter x2", "retry last response"],
       ["esc x2", "clear current prompt"],
       ["esc", "interrupt assistant"],
@@ -384,6 +387,21 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "reload", extra };
     },
     run: (ctx) => ctx.reload(),
+  });
+
+  registry.register({
+    id: "speak",
+    usage: "/speak",
+    description: "toggle voice recording and transcription",
+    autocompleteDescription: "toggle voice recording",
+    argument: "none",
+    section: "base",
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/speak") return null;
+      return { type: "speak", extra };
+    },
+    run: (ctx) => ctx.speak(),
   });
 
   registry.register({

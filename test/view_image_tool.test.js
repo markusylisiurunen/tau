@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -6,6 +7,8 @@ import { describe, expect, it } from "vitest";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { TOOL_NAME_VIEW_IMAGE } from "../dist/core/tools/tool_names.js";
 import { createViewImageToolDefinition } from "../dist/core/tools/view_image.js";
+
+const VIEW_IMAGE_MODEL_MAX_BYTES = 2.5 * 1024 * 1024;
 
 function setupFixture() {
   const dir = mkdtempSync(join(tmpdir(), "tau-view-image-tool-"));
@@ -25,6 +28,19 @@ async function createPng(path, width, height) {
     },
   })
     .png()
+    .toFile(path);
+}
+
+async function createHighEntropyPng(path, width, height) {
+  const raw = randomBytes(width * height * 3);
+  await sharp(raw, {
+    raw: {
+      width,
+      height,
+      channels: 3,
+    },
+  })
+    .png({ compressionLevel: 0 })
     .toFile(path);
 }
 
@@ -131,6 +147,55 @@ describe("view_image tool", () => {
     }
   });
 
+  it("compresses oversized high-entropy images under the model budget", async () => {
+    const fx = setupFixture();
+
+    try {
+      const filePath = join(fx.dir, "entropy.png");
+      await createHighEntropyPng(filePath, 2048, 2048);
+
+      const input = readFileSync(filePath);
+      expect(input.byteLength).toBeGreaterThan(VIEW_IMAGE_MODEL_MAX_BYTES);
+
+      const backend = createLocalToolExecutionBackend();
+      const tool = createViewImageToolDefinition(backend);
+      const result = await tool.dispatch(
+        {
+          id: "tool-3",
+          name: TOOL_NAME_VIEW_IMAGE,
+          arguments: { path: filePath },
+        },
+        "read-only",
+      );
+
+      expect(result.kind).toBe("single");
+      if (result.kind !== "single") {
+        throw new Error("expected single dispatch result");
+      }
+
+      expect(result.uiEvent.type).toBe("view_image_success");
+      if (result.uiEvent.type !== "view_image_success") {
+        throw new Error("expected success ui event");
+      }
+
+      const imageBlock = getImageBlock(result.toolResult.content);
+      const outputBuffer = Buffer.from(imageBlock.data, "base64");
+      const outputMetadata = await sharp(outputBuffer).metadata();
+
+      expect(outputBuffer.byteLength).toBeLessThanOrEqual(VIEW_IMAGE_MODEL_MAX_BYTES);
+      expect(result.uiEvent.bytes).toBe(outputBuffer.byteLength);
+      expect(result.uiEvent.mimeType).toBe(imageBlock.mimeType);
+      expect(Math.max(outputMetadata.width ?? 0, outputMetadata.height ?? 0)).toBeLessThanOrEqual(
+        2048,
+      );
+      expect(getTextBlock(result.toolResult.content)).toBe(
+        `viewed ${filePath} (${result.uiEvent.mimeType})`,
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("blocks unsupported image formats", async () => {
     const fx = setupFixture();
 
@@ -142,7 +207,7 @@ describe("view_image tool", () => {
       const tool = createViewImageToolDefinition(backend);
       const result = await tool.dispatch(
         {
-          id: "tool-3",
+          id: "tool-4",
           name: TOOL_NAME_VIEW_IMAGE,
           arguments: { path: filePath },
         },

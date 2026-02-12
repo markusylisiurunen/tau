@@ -18,6 +18,8 @@ function createStubView() {
   const rewindPickerShows = [];
   const removeMessagesCalls = [];
   const removeMessagesFromCalls = [];
+  const finalizeToolUiPendingCalls = [];
+  let clearToolUiTransientStateCallCount = 0;
   let rewindPickerHideCount = 0;
   let editorText = "";
 
@@ -30,6 +32,10 @@ function createStubView() {
     rewindPickerShows,
     removeMessagesCalls,
     removeMessagesFromCalls,
+    finalizeToolUiPendingCalls,
+    get clearToolUiTransientStateCallCount() {
+      return clearToolUiTransientStateCallCount;
+    },
     setEditorText: (text) => {
       editorText = text;
     },
@@ -66,8 +72,12 @@ function createStubView() {
       },
       handleSubagentEvent: () => {},
       resetToolUiSession: () => {},
-      finalizeToolUiPending: () => {},
-      clearToolUiTransientState: () => {},
+      finalizeToolUiPending: (reason) => {
+        finalizeToolUiPendingCalls.push(reason);
+      },
+      clearToolUiTransientState: () => {
+        clearToolUiTransientStateCallCount += 1;
+      },
       getToolUiCostTotal: () => 0,
       cycleSubagentSelection: () => undefined,
       getSelectedSubagentId: () => undefined,
@@ -164,6 +174,45 @@ describe("ChatController interrupt handling", () => {
 
     expect(stopSpeakCaptureSpy).toHaveBeenCalledTimes(1);
     expect(interruptAssistantTurnSpy).not.toHaveBeenCalled();
+  });
+
+  it("interrupts the conversation turn runtime when an assistant turn is running", () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.isStreaming = true;
+    const isRunningSpy = vi
+      .spyOn(controller.assistantTurnRuntime, "isRunning", "get")
+      .mockReturnValue(true);
+    const interruptSpy = vi.spyOn(controller.assistantTurnRuntime, "interrupt");
+
+    controller.onInterrupt();
+    controller.onInterrupt();
+
+    expect(interruptSpy).toHaveBeenCalledTimes(1);
+    expect(stub.systemMessages).toContainEqual({ text: "interrupted", kind: "error" });
+    expect(stub.systemMessages.filter((m) => m.text === "interrupted")).toHaveLength(1);
+
+    isRunningSpy.mockRestore();
+  });
+
+  it("keeps interrupted turn cleanup parity with runtime-driven aborts", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.queuedUserMessages.push("queued one", "queued two");
+
+    const runSpy = vi
+      .spyOn(controller.assistantTurnRuntime, "run")
+      .mockResolvedValue({ aborted: true });
+
+    await controller.runAssistantTurn();
+
+    expect(runSpy).toHaveBeenCalledTimes(1);
+    expect(stub.finalizeToolUiPendingCalls).toEqual(["aborted"]);
+    expect(stub.clearToolUiTransientStateCallCount).toBe(1);
+    expect(controller.queuedUserMessages).toEqual([]);
+    expect(stub.editorTextUpdates.at(-1)).toBe("queued one\n\n---\n\nqueued two");
   });
 });
 

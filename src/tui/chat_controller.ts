@@ -35,10 +35,14 @@ import {
 } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
+import {
+  type ConversationTurnResult,
+  ConversationTurnRuntime,
+} from "../core/runtime/conversation_turn_runtime.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
+import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
 import { createCheckpoint } from "../core/session/checkpoint.js";
 import { CoreSession } from "../core/session/core_session.js";
-import { formatSubagentsForPrompt, getSubagentBasePrompt } from "../core/subagents/registry.js";
 import {
   buildBashUiText,
   formatBashUserMessageText,
@@ -59,10 +63,7 @@ import {
 import { resolveAgentCwd, resolveSandboxPath } from "../core/utils/agent_environment.js";
 import { findAgentsFilesFromCwdToHome } from "../core/utils/agents_files.js";
 import {
-  buildBaseSystemPrompt,
-  buildEnvironmentTag,
   buildProjectContextBlock,
-  buildSandboxInfoBlock,
   buildSkillsIndexBlock,
   findAgentsFilesInScopeDetailed,
   formatCwdChangeNotice,
@@ -231,6 +232,8 @@ export class ChatController {
   private showThinking = false;
   private compactToolUi = true;
   private commandHint?: string;
+  private readonly assistantTurnRuntime: ConversationTurnRuntime;
+  private assistantTurnInterruptRequested = false;
   private currentTurnAbort?: AbortController;
   private riskLevel: RiskLevel = "read-only";
   private environmentTag = "";
@@ -347,6 +350,7 @@ export class ChatController {
       config: this.config,
       deps: this.deps,
     });
+    this.assistantTurnRuntime = new ConversationTurnRuntime(this.engine);
     this.subagentUnsubscribe = this.engine.onSubagentEvent((event) => this.onEvent(event));
 
     this.commandRegistry = createCommandRegistry();
@@ -1022,7 +1026,17 @@ export class ChatController {
   }
 
   private interruptAssistantTurn(): void {
-    if (!this.isStreaming || this.currentTurnAbort?.signal.aborted) return;
+    if (!this.isStreaming) return;
+
+    if (this.assistantTurnRuntime.isRunning) {
+      if (this.assistantTurnInterruptRequested) return;
+      this.assistantTurnInterruptRequested = true;
+      this.assistantTurnRuntime.interrupt();
+      this.view.addSystemMessage("interrupted", "error");
+      return;
+    }
+
+    if (this.currentTurnAbort?.signal.aborted) return;
     this.currentTurnAbort?.abort();
     this.view.addSystemMessage("interrupted", "error");
   }
@@ -1906,37 +1920,35 @@ export class ChatController {
     return this.escapeXml(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
   }
 
-  private updateSystemPrompts(skillsBlock?: string): void {
+  private composePromptSet(skillsBlock?: string): ReturnType<typeof composeSessionPrompts> {
+    const resolvedSkillsBlock =
+      skillsBlock ?? this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock;
     const timestamp = new Date(this.deps.clock.now()).toISOString();
-    this.environmentTag = buildEnvironmentTag({
+
+    return composeSessionPrompts({
+      persona: this.currentPersona,
       riskLevel: this.riskLevel,
       cwd: this.agentCwd,
       datetime: timestamp,
       platform: this.deps.env.platform(),
       nodeVersion: this.deps.env.nodeVersion(),
-    });
-    const resolvedSkillsBlock =
-      skillsBlock ?? this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock;
-    this.baseSystemPrompt = this.buildSystemPrompt({
-      persona: this.currentPersona,
       skillsBlock: resolvedSkillsBlock,
-    });
-    this.subagentPrompts = this.buildSubagentPromptMap({
-      persona: this.currentPersona,
-      skillsBlock: resolvedSkillsBlock,
-      timestamp,
+      projectContextBlock: this.projectContextBlock,
+      sandboxEnabled: this.sandboxEnabled,
+      sandboxEnvironmentInfo: this.config.sandbox?.environmentInfo,
     });
   }
 
+  private updateSystemPrompts(skillsBlock?: string): void {
+    const promptSet = this.composePromptSet(skillsBlock);
+    this.environmentTag = promptSet.environmentTag;
+    this.baseSystemPrompt = promptSet.baseSystemPrompt;
+    this.subagentPrompts = promptSet.subagentPrompts;
+  }
+
   private updateSubagentPrompts(skillsBlock?: string): void {
-    const timestamp = new Date(this.deps.clock.now()).toISOString();
-    const resolvedSkillsBlock =
-      skillsBlock ?? this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock;
-    this.subagentPrompts = this.buildSubagentPromptMap({
-      persona: this.currentPersona,
-      skillsBlock: resolvedSkillsBlock,
-      timestamp,
-    });
+    const promptSet = this.composePromptSet(skillsBlock);
+    this.subagentPrompts = promptSet.subagentPrompts;
   }
 
   private rebuildSystemPrompt(skillsBlock?: string): void {
@@ -1947,57 +1959,6 @@ export class ChatController {
   private rebuildSubagentPrompts(skillsBlock?: string): void {
     this.updateSubagentPrompts(skillsBlock);
     this.engine.setPersona(this.currentPersona, this.baseSystemPrompt, this.subagentPrompts);
-  }
-
-  private buildSystemPrompt(args: { persona: Persona; skillsBlock?: string }): string {
-    return buildBaseSystemPrompt({
-      personaSystemPrompt: args.persona.systemPrompt,
-      skillsBlock: args.skillsBlock,
-      projectContextBlock: this.projectContextBlock,
-      sandboxInfoBlock: this.sandboxEnabled
-        ? buildSandboxInfoBlock(this.config.sandbox?.environmentInfo)
-        : undefined,
-      environmentTag: this.environmentTag,
-      subagentsBlock: formatSubagentsForPrompt(args.persona),
-    });
-  }
-
-  private buildSubagentPromptMap(args: {
-    persona: Persona;
-    skillsBlock?: string;
-    timestamp: string;
-  }): Record<string, string> {
-    const subagents = args.persona.subagents;
-    if (!subagents || Object.keys(subagents).length === 0) {
-      return {};
-    }
-
-    const sandboxInfoBlock = this.sandboxEnabled
-      ? buildSandboxInfoBlock(this.config.sandbox?.environmentInfo)
-      : undefined;
-    const prompts: Record<string, string> = {};
-
-    for (const [name, cfg] of Object.entries(subagents)) {
-      if (!cfg) continue;
-      const basePrompt = getSubagentBasePrompt(name, cfg);
-      if (!basePrompt) continue;
-      const environmentTag = buildEnvironmentTag({
-        riskLevel: cfg.riskLevel ?? this.riskLevel,
-        cwd: this.agentCwd,
-        datetime: args.timestamp,
-        platform: this.deps.env.platform(),
-        nodeVersion: this.deps.env.nodeVersion(),
-      });
-      prompts[name] = buildBaseSystemPrompt({
-        personaSystemPrompt: basePrompt,
-        skillsBlock: args.skillsBlock,
-        projectContextBlock: this.projectContextBlock,
-        sandboxInfoBlock,
-        environmentTag,
-      });
-    }
-
-    return prompts;
   }
 
   private applyCompactedHistoryUi(compactionMessage: string): void {
@@ -3250,33 +3211,31 @@ export class ChatController {
 
   private async runAssistantTurn(): Promise<void> {
     this.isStreaming = true;
-    this.currentTurnAbort = new AbortController();
     this.view.startWorkingIcon();
     this.startTurnTimer();
     this.assistantState = undefined;
+    this.assistantTurnInterruptRequested = false;
+
+    let runResult: ConversationTurnResult = { aborted: false };
 
     try {
-      for await (const event of this.engine.events(this.currentTurnAbort.signal)) {
-        if (this.currentTurnAbort.signal.aborted) break;
-        this.onEvent(event);
-      }
+      runResult = await this.assistantTurnRuntime.run((event) => this.onEvent(event));
     } catch (err) {
       const message = (err as Error).message || "request failed";
       this.view.addSystemMessage(message, "error");
     } finally {
-      const wasAborted = this.currentTurnAbort?.signal.aborted ?? false;
-      const reason = wasAborted ? "aborted" : "interrupted";
+      const reason = runResult.aborted ? "aborted" : "interrupted";
 
       this.view.finalizeToolUiPending(reason);
 
       this.view.stopWorkingIcon();
       this.stopTurnTimer();
       this.isStreaming = false;
-      this.currentTurnAbort = undefined;
+      this.assistantTurnInterruptRequested = false;
       this.view.clearToolUiTransientState();
       this.pendingIdleNotification = true;
       this.view.requestRender();
-      if (wasAborted) {
+      if (runResult.aborted) {
         this.dequeueQueuedUserMessagesIntoEditor();
       } else {
         void this.drainQueuedUserMessages();

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { personas } from "../dist/core/personas.js";
+import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
 import { CoreSession } from "../dist/core/session/core_session.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
@@ -186,6 +187,80 @@ describe("context builder", () => {
 
     expect(block).toContain('<file path="/repo/AGENTS.md">');
     expect(block).toContain("# Agents");
+  });
+});
+
+describe("session prompt composer", () => {
+  it("composes main and subagent prompts with sandbox info and risk overrides", () => {
+    const persona = {
+      id: "test-persona",
+      label: "test persona",
+      description: "test",
+      model: personas[0].model,
+      systemPrompt: "main system prompt",
+      settings: {},
+      source: "project",
+      subagents: {
+        default: {},
+        researcher: {
+          systemPrompt: "research subagent prompt",
+          description: "deep research helper",
+          riskLevel: "read-write",
+        },
+      },
+    };
+
+    const result = composeSessionPrompts({
+      persona,
+      skillsBlock: "### Skills\n\n- skill-a",
+      projectContextBlock: '### Project context\n\n<file path="/repo/AGENTS.md">ctx</file>',
+      sandboxEnabled: true,
+      sandboxEnvironmentInfo: "ubuntu container",
+      riskLevel: "read-only",
+      cwd: "/repo",
+      datetime: "2026-01-01T00:00:00.000Z",
+      platform: "darwin",
+      nodeVersion: "v24.0.0",
+    });
+
+    expect(result.environmentTag).toContain('<risk-level level="read-only">');
+    expect(result.baseSystemPrompt).toContain("main system prompt");
+    expect(result.baseSystemPrompt).toContain("### Skills");
+    expect(result.baseSystemPrompt).toContain("### Project context");
+    expect(result.baseSystemPrompt).toContain("### Available sub-agents");
+    expect(result.baseSystemPrompt).toContain("`researcher`");
+    expect(result.baseSystemPrompt).toContain("<sandbox-info>");
+
+    expect(result.subagentPrompts.default).toContain('<risk-level level="read-only">');
+    expect(result.subagentPrompts.researcher).toContain("research subagent prompt");
+    expect(result.subagentPrompts.researcher).toContain('<risk-level level="read-write">');
+    expect(result.subagentPrompts.researcher).toContain("<sandbox-info>");
+  });
+
+  it("omits sandbox blocks and subagent prompts when not applicable", () => {
+    const persona = {
+      id: "plain-persona",
+      label: "plain persona",
+      model: personas[0].model,
+      systemPrompt: "plain prompt",
+      settings: {},
+      source: "project",
+    };
+
+    const result = composeSessionPrompts({
+      persona,
+      sandboxEnabled: false,
+      sandboxEnvironmentInfo: "ignored",
+      riskLevel: "read-only",
+      cwd: "/repo",
+      datetime: "2026-01-01T00:00:00.000Z",
+      platform: "darwin",
+      nodeVersion: "v24.0.0",
+    });
+
+    expect(result.baseSystemPrompt).toContain("plain prompt");
+    expect(result.baseSystemPrompt).not.toContain("<sandbox-info>");
+    expect(result.subagentPrompts).toEqual({});
   });
 });
 

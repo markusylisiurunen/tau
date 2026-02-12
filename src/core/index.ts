@@ -51,8 +51,15 @@ export type { ModeAdapter, RpcAdapterOptions } from "./modes/index.js";
 export { RpcAdapter } from "./modes/index.js";
 export { personas } from "./personas.js";
 export type { PromptTemplate } from "./prompts.js";
+export type { ConversationTurnResult } from "./runtime/conversation_turn_runtime.js";
+export { ConversationTurnRuntime } from "./runtime/conversation_turn_runtime.js";
 export type { CoreDeps } from "./runtime/deps.js";
 export { createDefaultCoreDeps } from "./runtime/deps.js";
+export type {
+  ComposeSessionPromptsArgs,
+  SessionPromptComposition,
+} from "./runtime/session_prompt_composer.js";
+export { composeSessionPrompts } from "./runtime/session_prompt_composer.js";
 export type { Checkpoint } from "./session/checkpoint.js";
 export { createCheckpoint, parseCheckpoint } from "./session/checkpoint.js";
 export { createBashToolDefinition } from "./tools/bash.js";

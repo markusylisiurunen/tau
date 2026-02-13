@@ -73,10 +73,21 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
   let targetId: string | undefined;
   let url: string | undefined;
   let token: string | undefined;
+  let forcePrompt = false;
   const positional: string[] = [];
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
+
+    if (forcePrompt) {
+      positional.push(arg);
+      continue;
+    }
+
+    if (arg === "--") {
+      forcePrompt = true;
+      continue;
+    }
 
     if (arg === "--help" || arg === "-h") {
       help = true;
@@ -118,6 +129,23 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
     positional.push(arg);
   }
 
+  const toCreateArgs = (): ParsedAsyncArgs => {
+    const prompt = positional.join(" ").trim();
+    if (!prompt) {
+      throw new AsyncCliError("missing prompt text");
+    }
+
+    return {
+      help,
+      command: "create",
+      prompt,
+      projectId,
+      targetId,
+      url,
+      token,
+    };
+  };
+
   const first = positional[0];
   if (!first) {
     if (help) {
@@ -126,34 +154,64 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
     throw new AsyncCliError("missing async command or prompt");
   }
 
+  if (forcePrompt) {
+    return toCreateArgs();
+  }
+
   if (first === "daemon") {
-    return { help, command: "daemon", projectId, targetId, url, token };
+    if (positional.length === 1) {
+      return { help, command: "daemon", projectId, targetId, url, token };
+    }
+    return toCreateArgs();
   }
 
   if (first === "list") {
-    return { help, command: "list", projectId, targetId, url, token };
+    if (positional.length === 1) {
+      return { help, command: "list", projectId, targetId, url, token };
+    }
+    return toCreateArgs();
   }
 
   if (first === "status") {
-    const sessionId = positional[1]?.trim();
-    if (!sessionId) {
+    if (positional.length === 1) {
       throw new AsyncCliError("missing session id for status");
     }
-    return { help, command: "status", sessionId, projectId, targetId, url, token };
+    if (positional.length === 2) {
+      const sessionId = positional[1]?.trim();
+      if (!sessionId) {
+        throw new AsyncCliError("missing session id for status");
+      }
+      return { help, command: "status", sessionId, projectId, targetId, url, token };
+    }
+    return toCreateArgs();
   }
 
   if (first === "logs") {
-    const sessionId = positional[1]?.trim();
-    if (!sessionId) {
+    if (positional.length === 1) {
       throw new AsyncCliError("missing session id for logs");
     }
-    return { help, command: "logs", sessionId, projectId, targetId, url, token };
+    if (positional.length === 2) {
+      const sessionId = positional[1]?.trim();
+      if (!sessionId) {
+        throw new AsyncCliError("missing session id for logs");
+      }
+      return { help, command: "logs", sessionId, projectId, targetId, url, token };
+    }
+    return toCreateArgs();
   }
 
   if (first === "send") {
+    if (positional.length === 1) {
+      throw new AsyncCliError("missing session id for send");
+    }
+
     const sessionId = positional[1]?.trim();
     if (!sessionId) {
       throw new AsyncCliError("missing session id for send");
+    }
+
+    if (positional.length === 2) {
+      throw new AsyncCliError("missing message text for send");
     }
 
     const text = positional.slice(2).join(" ").trim();
@@ -165,28 +223,20 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
   }
 
   if (first === "cancel") {
-    const sessionId = positional[1]?.trim();
-    if (!sessionId) {
+    if (positional.length === 1) {
       throw new AsyncCliError("missing session id for cancel");
     }
-
-    return { help, command: "cancel", sessionId, projectId, targetId, url, token };
+    if (positional.length === 2) {
+      const sessionId = positional[1]?.trim();
+      if (!sessionId) {
+        throw new AsyncCliError("missing session id for cancel");
+      }
+      return { help, command: "cancel", sessionId, projectId, targetId, url, token };
+    }
+    return toCreateArgs();
   }
 
-  const prompt = positional.join(" ").trim();
-  if (!prompt) {
-    throw new AsyncCliError("missing prompt text");
-  }
-
-  return {
-    help,
-    command: "create",
-    prompt,
-    projectId,
-    targetId,
-    url,
-    token,
-  };
+  return toCreateArgs();
 }
 
 function getTrimmedEnvValue(key: string, env: NodeJS.ProcessEnv): string | undefined {
@@ -341,6 +391,7 @@ export function printAsyncHelp(log: (line: string) => void = console.log): void 
       "  --target <id>   target id from config.async.client.targets.",
       "  --url <url>     override async target base URL.",
       "  --token <token> override async bearer token.",
+      "  --              treat remaining args as prompt text.",
       "  --help          show this help and exit.",
     ].join("\n"),
   );

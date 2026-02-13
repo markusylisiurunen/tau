@@ -92,6 +92,71 @@ describe("async cli", () => {
     expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({ text: "hello world" });
   });
 
+  it("treats reserved command words with extra tokens as create prompts", async () => {
+    const fetchMock = vi.fn(async () =>
+      createJsonResponse({ ok: true, data: { session: { id: "s1" } } }),
+    );
+
+    await runAsyncCommand(["list", "files", "to", "migrate"], {
+      config: {
+        async: {
+          client: {
+            targets: {
+              one: {
+                url: "http://localhost:9000",
+                token: "tok",
+              },
+            },
+          },
+          projects: {
+            demo: { repo: "git@example.com:demo.git" },
+          },
+        },
+      },
+      fetchImpl: fetchMock,
+      stdout: () => {},
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://localhost:9000/v1/sessions");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({
+      projectId: "demo",
+      prompt: "list files to migrate",
+    });
+  });
+
+  it("supports -- to force create prompts that begin with reserved commands", async () => {
+    const fetchMock = vi.fn(async () =>
+      createJsonResponse({ ok: true, data: { session: { id: "s1" } } }),
+    );
+
+    await runAsyncCommand(["--", "list"], {
+      config: {
+        async: {
+          client: {
+            targets: {
+              one: {
+                url: "http://localhost:9000",
+                token: "tok",
+              },
+            },
+          },
+          projects: {
+            demo: { repo: "git@example.com:demo.git" },
+          },
+        },
+      },
+      fetchImpl: fetchMock,
+      stdout: () => {},
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://localhost:9000/v1/sessions");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ projectId: "demo", prompt: "list" });
+  });
+
   it("requires --project when multiple async projects are configured", async () => {
     await expect(
       runAsyncCommand(["do", "work"], {

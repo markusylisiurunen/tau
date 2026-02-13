@@ -232,11 +232,15 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
   async cancelSession(sessionId: string): Promise<AsyncSessionRecord> {
     const entry = this.requireSession(sessionId);
-    if (entry.record.state === "canceled") {
+    if (
+      entry.record.state === "canceled" ||
+      entry.record.state === "failed" ||
+      entry.record.state === "done"
+    ) {
       return this.toRecord(entry);
     }
 
-    this.requestCancellation(entry, "cancel requested", true);
+    this.requestCancellation(entry, "cancel requested");
     await this.stopClient(entry);
     return this.toRecord(entry);
   }
@@ -352,6 +356,14 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       if (!entry.cancelRequested) {
         this.setState(entry, "waiting-input");
       }
+    } catch (error) {
+      if (!entry.cancelRequested) {
+        const message = error instanceof Error ? error.message : String(error);
+        entry.record.error = message;
+        this.setState(entry, "failed");
+        this.log(entry, "error", "submit failed", { source, cause: message });
+      }
+      throw error;
     } finally {
       if (entry.activeSubmit === submitPromise) {
         entry.activeSubmit = undefined;
@@ -383,15 +395,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     );
   }
 
-  private requestCancellation(
-    entry: SessionEntry,
-    message: string,
-    forceStateChange = false,
-  ): void {
+  private requestCancellation(entry: SessionEntry, message: string): void {
     entry.cancelRequested = true;
     entry.abortController.abort();
 
-    if (forceStateChange || this.isActiveState(entry.record.state)) {
+    if (this.isActiveState(entry.record.state)) {
       this.setState(entry, "canceled");
     }
 

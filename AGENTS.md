@@ -246,7 +246,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau usage` - Summarize usage logs from `~/.config/tau/logs/`
 - `tau install [--global] [--force] [--prompt <id> | --skill <name>]` - Install starter prompts and skills (or one selected item)
 - `tau async daemon` - Run async daemon HTTP API (plus optional Telegram DM adapter)
-- `tau async <prompt...> | list | status <id> | logs <id> | send <id> <text...> | cancel <id>` - Async client commands
+- `tau async <prompt...> | -- <prompt...> | list | status <id> | logs <id> | send <id> <text...> | cancel <id>` - Async client commands
 - `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for `async.server.authToken` in daemon mode
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 - `PARALLEL_API_KEY` (env var) - Optional override for `apiKeys.parallel` used by `web_search`/`web_fetch`

@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { KnownProvider } from "@mariozechner/pi-ai";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { type RiskLevel, RiskLevelSchema } from "../types.js";
+import { isRecord } from "../utils/type_guards.js";
 import type { BashCommand } from "./bash_commands.js";
 import { parseBashCommands } from "./bash_commands.js";
 import type { ConfigDeps } from "./deps.js";
@@ -357,10 +358,6 @@ function parseSubagentsConfig(
   }
 
   return { config, errors };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isPositiveInteger(value: unknown): value is number {

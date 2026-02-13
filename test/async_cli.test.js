@@ -84,6 +84,33 @@ describe("async cli", () => {
     expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({ text: "hello world" });
   });
 
+  it("uses explicit --url/--token when configured default target is invalid", async () => {
+    const fetchMock = vi.fn(async () => createJsonResponse({ ok: true, data: { sessions: [] } }));
+
+    await runAsyncCommand(["list", "--url", "http://localhost:9100", "--token", "override"], {
+      config: {
+        async: {
+          client: {
+            defaultTarget: "missing",
+            targets: {
+              one: {
+                url: "http://localhost:9000",
+                token: "tok",
+              },
+            },
+          },
+        },
+      },
+      fetchImpl: fetchMock,
+      stdout: () => {},
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://localhost:9100/v1/sessions");
+    expect(init.headers.authorization).toBe("Bearer override");
+  });
+
   it("requires --project for create", async () => {
     await expect(
       runAsyncCommand(["do", "work"], {

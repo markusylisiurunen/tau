@@ -309,8 +309,10 @@ function resolveTarget(config: Config, args: ParsedAsyncArgs): ResolvedTarget {
   const configuredDefault = config.async?.client?.defaultTarget;
   const targetIds = Object.keys(targets);
 
-  const selectedTargetId =
-    args.targetId ?? configuredDefault ?? (targetIds.length === 1 ? targetIds[0] : undefined);
+  let selectedTargetId = args.targetId;
+  if (!selectedTargetId && (args.url === undefined || args.token === undefined)) {
+    selectedTargetId = configuredDefault ?? (targetIds.length === 1 ? targetIds[0] : undefined);
+  }
 
   const selectedTarget = selectedTargetId ? targets[selectedTargetId] : undefined;
   if (selectedTargetId && !selectedTarget) {

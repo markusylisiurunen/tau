@@ -10,7 +10,6 @@ export type AsyncSessionState =
   | "preparing-workspace"
   | "running"
   | "waiting-input"
-  | "done"
   | "failed"
   | "canceled";
 
@@ -207,11 +206,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       throw new AsyncSessionManagerError("busy", "session is running");
     }
 
-    if (
-      entry.record.state === "failed" ||
-      entry.record.state === "canceled" ||
-      entry.record.state === "done"
-    ) {
+    if (entry.record.state === "failed" || entry.record.state === "canceled") {
       throw new AsyncSessionManagerError(
         "invalid_state",
         `cannot submit messages when session is ${entry.record.state}`,
@@ -232,11 +227,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
   async cancelSession(sessionId: string): Promise<AsyncSessionRecord> {
     const entry = this.requireSession(sessionId);
-    if (
-      entry.record.state === "canceled" ||
-      entry.record.state === "failed" ||
-      entry.record.state === "done"
-    ) {
+    if (entry.record.state === "canceled" || entry.record.state === "failed") {
       return this.toRecord(entry);
     }
 

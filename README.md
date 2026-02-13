@@ -88,9 +88,30 @@ tau can run without the TUI via NDJSON RPC over stdin/stdout:
 tau rpc --persona gpt-5.2-coder --risk read-only
 ```
 
-RPC mode reuses the same startup config/persona/risk/sandbox loading as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message).
+RPC mode reuses the same startup config/persona/risk/sandbox loading as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message). `--caffeinated` is a macOS-only TUI flag and is rejected in RPC mode.
 
 for protocol details and examples, see [docs/rpc.md](docs/rpc.md).
+
+## async daemon (http + telegram)
+
+tau also supports an async daemon for queued/background sessions:
+
+```sh
+tau async daemon
+```
+
+client command surface:
+
+```sh
+tau async <prompt...> [--project <id>]
+tau async list
+tau async status <id>
+tau async logs <id>
+tau async send <id> <text...>
+tau async cancel <id>
+```
+
+for daemon/api/telegram details, see [docs/async.md](docs/async.md).
 
 ## sdk usage (node)
 
@@ -146,7 +167,7 @@ note that there is no confirmation step before tool execution. the model runs co
 
 ## getting started
 
-tau requires Node.js 24.x and runs on macOS.
+tau requires Node.js 24.x and runs on macOS and Linux (Windows is unsupported).
 
 for development from source:
 
@@ -440,6 +461,47 @@ the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launc
 if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinThemes` is set to `true`, tau will not load built-in themes. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 
 the `sandbox` field configures docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `72`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
+
+the `async` field configures the async daemon/client project map:
+
+- `async.client.defaultTarget` + `async.client.targets`: client-side URL/token target definitions for `tau async ...` commands.
+- `async.server.host`, `async.server.port`, `async.server.authToken`, `async.server.maxSessions`: daemon bind/auth/session limits.
+- `async.server.telegram`: optional telegram dm adapter settings (`botToken`, `allowedUserIds`, `allowedChatIds`, `defaultProjectId`, `pollIntervalMs`, `requestTimeoutSeconds`).
+- `async.projects`: daemon project definitions (`repo`, optional `ref`, `workspaceRoot`, `bootstrapCommands`, `persona`, `riskLevel`, `sandbox`, `noAgentContextFiles`).
+
+example:
+
+```json
+{
+  "async": {
+    "client": {
+      "defaultTarget": "local",
+      "targets": {
+        "local": {
+          "url": "http://127.0.0.1:7788",
+          "token": "replace-me"
+        }
+      }
+    },
+    "server": {
+      "host": "127.0.0.1",
+      "port": 7788,
+      "authToken": "replace-me",
+      "telegram": {
+        "botToken": "123456:telegram-token",
+        "allowedUserIds": [123456789],
+        "allowedChatIds": [123456789],
+        "defaultProjectId": "demo"
+      }
+    },
+    "projects": {
+      "demo": {
+        "repo": "git@github.com:org/repo.git"
+      }
+    }
+  }
+}
+```
 
 ### project bash commands
 

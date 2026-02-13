@@ -1,3 +1,4 @@
+export { AsyncCliError, printAsyncHelp, runAsyncCommand } from "./async/index.js";
 export type {
   AuthLog,
   AuthLoginHandler,
@@ -19,6 +20,12 @@ export {
 export type { CliOptions } from "./cli.js";
 export { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
 export type {
+  AsyncClientConfig,
+  AsyncClientTargetConfig,
+  AsyncConfig,
+  AsyncProjectConfig,
+  AsyncServerConfig,
+  AsyncServerTelegramConfig,
   BashCommand,
   Config,
   ConfigDeps,

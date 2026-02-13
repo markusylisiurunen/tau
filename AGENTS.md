@@ -4,7 +4,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 ## Platform support
 
-- **Supported**: macOS only.
+- **Supported**: macOS and Linux.
 - **Unsupported**: Windows (do not add Windows support).
 
 ## Architecture
@@ -21,6 +21,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface plus RPC protocol/server wiring for alternate front-ends
 - **SDK client** (`src/sdk/`): Node SDK facade that drives Tau through the same RPC subprocess protocol (`tau rpc`)
+- **Async daemon runtime** (`src/core/async/`): Async CLI + daemon stack (`cli.ts`, `http_server.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools (local host or docker sandbox)
 - **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent) and sub-agent (emit_output plus allowed tools) registries
@@ -29,14 +30,14 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
 - **Tool UI registry** (`src/tui/ui/tool_ui_registry.ts`): Maps ToolUiEvent types to tool output view models
 
-**Data flow**: TUI mode: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering. RPC mode: NDJSON requests on stdin → RPC server (`src/core/modes/rpc_server.ts`) → `ChatRuntime`/`CoreSession` → NDJSON responses/events on stdout. SDK mode: Node code → `src/sdk/client.ts` → spawned `tau rpc` subprocess over stdin/stdout NDJSON.
+**Data flow**: TUI mode: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering. RPC mode: NDJSON requests on stdin → RPC server (`src/core/modes/rpc_server.ts`) → `ChatRuntime`/`CoreSession` → NDJSON responses/events on stdout. SDK mode: Node code → `src/sdk/client.ts` → spawned `tau rpc` subprocess over stdin/stdout NDJSON. Async mode: `tau async daemon` → async HTTP server (`src/core/async/http_server.ts`) + session manager (`src/core/async/session_manager.ts`) + optional Telegram long-poll adapter (`src/core/async/telegram.ts`) over `getUpdates`/`sendMessage`.
 
 **Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Assistant and tool-result events include stable `historyEntryId` values so the UI can correlate rendered rows with session history across rewind operations. Subagent UI updates (spawned, progress, emit_output messages, finished) are delivered via `CoreSession.onSubagentEvent()` as `subagent_ui` events for background updates. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
 
 ## Key modules
 
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
-- `docs/` - Extended user-facing docs that complement README.md (`rpc.md` documents RPC mode/protocol, `sdk.md` documents the Node SDK API)
+- `docs/` - Extended user-facing docs that complement README.md (`rpc.md` documents RPC mode/protocol, `sdk.md` documents the Node SDK API, `async.md` documents async daemon/client + Telegram)
 - `src/sdk/` - SDK client modules for spawning and talking to the RPC subprocess (`tau rpc`) from Node
 - `src/core/`
   - `personas.ts` - Built-in persona definitions and system prompt blocks
@@ -44,6 +45,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `types.ts` - Core types and reasoning levels
   - `commands/registry.ts` - Slash command parsing and dispatch
   - `cli.ts` - CLI argument parsing and help text
+  - `async/` - Async daemon/client modules (`cli.ts`, `http_server.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
   - `debug.ts` - `--debug` output
   - `config/deps.ts` - Config loader dependencies
   - `config/paths.ts` - Config level discovery
@@ -162,7 +164,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `bashCommands`, `agentContextFiles`, `sandbox`). This level is only included when cwd is inside home.
+- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `bashCommands`, `agentContextFiles`, `sandbox`, `async`). This level is only included when cwd is inside home.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
   - `apiKeys.mistral` (optional): Mistral API key for `/speak` transcription.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
@@ -172,7 +174,11 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.
   - `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Defaults to `gold`.
   - `subagents.defaultLaunchModels` (optional): Allowlisted `spawn_agent` launch overrides for the built-in `default` subagent (`<provider>/<model>:<effort>` entries).
-- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys` and `sandbox` merge per field; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
+  - `async.client` (optional): Async client target map (`defaultTarget`, `targets.<id>.url`, `targets.<id>.token`, `targets.<id>.timeoutMs`).
+  - `async.server` (optional): Async daemon settings (`host`, `port`, `authToken`, `maxSessions`).
+  - `async.server.telegram` (optional): Telegram DM adapter settings (`botToken`, `allowedUserIds`, `allowedChatIds`, `defaultProjectId`, `pollIntervalMs`, `requestTimeoutSeconds`).
+  - `async.projects` (optional): Async project map (`repo` required; optional `ref`, `workspaceRoot`, `bootstrapCommands`, `persona`, `riskLevel`, `sandbox`, `noAgentContextFiles`).
+- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `sandbox`, and `async` merge per field (with per-project/per-target overrides); `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`). Each command runs with cwd set to the config level root (same root used to resolve `agentContextFiles`).
 
@@ -227,7 +233,7 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 - `--caffeinated` - Keep macOS awake during active assistant turns in TUI mode
 - `--no-agent-context-files` - Disable AGENTS.md injection into the system prompt
 
-These startup flags apply to both interactive TUI mode (`tau`) and headless RPC mode (`tau rpc`).
+These startup flags apply to both interactive TUI mode (`tau`) and headless RPC mode (`tau rpc`), except `--caffeinated` (macOS-only TUI flag, rejected in RPC mode).
 
 The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you can inspect exactly what system prompt a given configuration produces.
 
@@ -239,6 +245,9 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau auth logout codex --account <email>` - Remove stored OAuth credentials
 - `tau usage` - Summarize usage logs from `~/.config/tau/logs/`
 - `tau install [--global] [--force] [--prompt <id> | --skill <name>]` - Install starter prompts and skills (or one selected item)
+- `tau async daemon` - Run async daemon HTTP API (plus optional Telegram DM adapter)
+- `tau async <prompt...> | list | status <id> | logs <id> | send <id> <text...> | cancel <id>` - Async client commands
+- `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for `async.server.authToken` in daemon mode
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 - `PARALLEL_API_KEY` (env var) - Optional override for `apiKeys.parallel` used by `web_search`/`web_fetch`
 - `MISTRAL_API_KEY` (env var) - Optional override for `/speak` microphone transcription

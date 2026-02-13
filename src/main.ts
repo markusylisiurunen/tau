@@ -18,6 +18,7 @@ import type {
   ThemeDefinition,
 } from "./core/index.js";
 import {
+  AsyncCliError,
   AuthStorage,
   buildVirtualBundle,
   ChatRuntime,
@@ -32,10 +33,12 @@ import {
   parseCheckpoint,
   parseCliArgs,
   parsePersonaString,
+  printAsyncHelp,
   printDebugInfo,
   printHelp,
   printInstallHelp,
   printUsageHelp,
+  runAsyncCommand,
   runInstallCommand,
   runListCommand,
   runLoginCommand,
@@ -45,6 +48,7 @@ import {
   ToolCatalog,
   UsageCliError,
 } from "./core/index.js";
+import { getStartupPlatformError } from "./core/platform_support.js";
 import { resolveAgentCwd } from "./core/utils/agent_environment.js";
 import {
   buildProjectContextBlock,
@@ -57,6 +61,13 @@ import { detectTerminalAppearance } from "./tui/terminal_appearance.js";
 const cwd = process.cwd();
 const argv = process.argv.slice(2);
 const isRpcSubcommand = argv[0] === "rpc";
+
+const startupPlatformError = getStartupPlatformError(process.platform);
+if (startupPlatformError) {
+  // eslint-disable-next-line no-console
+  console.error(startupPlatformError);
+  process.exit(1);
+}
 
 function registerTerminalExitCleanup(): void {
   if (!process.stdout.isTTY) return;
@@ -322,6 +333,28 @@ if (argv[0] === "install") {
       // eslint-disable-next-line no-console
       console.error("");
       printInstallHelp();
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+if (argv[0] === "async") {
+  try {
+    const asyncConfig = loadConfig(cwd);
+    await runAsyncCommand(argv.slice(1), {
+      cwd,
+      env: process.env,
+      config: asyncConfig,
+    });
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof AsyncCliError) {
+      // eslint-disable-next-line no-console
+      console.error(err.message);
+      // eslint-disable-next-line no-console
+      console.error("");
+      printAsyncHelp();
       process.exit(1);
     }
     throw err;

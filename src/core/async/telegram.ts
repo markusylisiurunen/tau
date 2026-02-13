@@ -567,11 +567,6 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    if (event.state === "done") {
-      this.notifyLifecycle(event.sessionId, "finished");
-      return;
-    }
-
     if (event.state === "waiting-input" && event.previousState === "running") {
       this.notifyLifecycle(event.sessionId, "finished");
     }

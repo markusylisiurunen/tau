@@ -126,5 +126,5 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
   }
 
   if (subagentLines.length === 0) return undefined;
-  return `\n\n### Available sub-agents\n\nYou have access to the following sub-agents:\n\n${subagentLines}`;
+  return `\n\n### Available sub-agents\n\nYou have access to the following sub-agents:\n\n${subagentLines.join("\n")}`;
 }

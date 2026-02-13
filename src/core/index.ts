@@ -47,8 +47,7 @@ export type {
 } from "./events/index.js";
 export { CORE_EVENT_VERSION, serializeCoreEvent, wrapCoreEvent } from "./events/index.js";
 export { InstallCliError, printInstallHelp, runInstallCommand } from "./install/cli.js";
-export type { ModeAdapter, RpcAdapterOptions } from "./modes/index.js";
-export { RpcAdapter } from "./modes/index.js";
+export * from "./modes/index.js";
 export { personas } from "./personas.js";
 export type { PromptTemplate } from "./prompts.js";
 export type {

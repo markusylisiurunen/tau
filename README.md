@@ -90,6 +90,8 @@ tau rpc --persona gpt-5.2-coder --risk read-only
 
 RPC mode reuses the same startup config/persona/risk/sandbox loading as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message).
 
+for protocol details and examples, see [docs/rpc.md](docs/rpc.md).
+
 ## install starter prompts and skills
 
 tau ships starter prompt and skill templates as markdown content in this repository. install them with:

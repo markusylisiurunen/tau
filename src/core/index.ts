@@ -51,6 +51,13 @@ export type { ModeAdapter, RpcAdapterOptions } from "./modes/index.js";
 export { RpcAdapter } from "./modes/index.js";
 export { personas } from "./personas.js";
 export type { PromptTemplate } from "./prompts.js";
+export type {
+  ChatRuntimeEnvironment,
+  ChatRuntimeOptions,
+  ChatRuntimePromptContext,
+  CreateChatRuntimeOptions,
+} from "./runtime/chat_runtime.js";
+export { ChatRuntime } from "./runtime/chat_runtime.js";
 export type { ConversationTurnResult } from "./runtime/conversation_turn_runtime.js";
 export { ConversationTurnRuntime } from "./runtime/conversation_turn_runtime.js";
 export type { CoreDeps } from "./runtime/deps.js";

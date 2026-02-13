@@ -181,10 +181,8 @@ describe("ChatController interrupt handling", () => {
     const controller = createController(stub.view);
 
     controller.isStreaming = true;
-    const isRunningSpy = vi
-      .spyOn(controller.assistantTurnRuntime, "isRunning", "get")
-      .mockReturnValue(true);
-    const interruptSpy = vi.spyOn(controller.assistantTurnRuntime, "interrupt");
+    const isRunningSpy = vi.spyOn(controller.runtime, "isTurnRunning", "get").mockReturnValue(true);
+    const interruptSpy = vi.spyOn(controller.runtime, "interruptTurn");
 
     controller.onInterrupt();
     controller.onInterrupt();
@@ -202,9 +200,7 @@ describe("ChatController interrupt handling", () => {
 
     controller.queuedUserMessages.push("queued one", "queued two");
 
-    const runSpy = vi
-      .spyOn(controller.assistantTurnRuntime, "run")
-      .mockResolvedValue({ aborted: true });
+    const runSpy = vi.spyOn(controller.runtime, "runTurn").mockResolvedValue({ aborted: true });
 
     await controller.runAssistantTurn();
 
@@ -452,9 +448,9 @@ describe("ChatController risk level changes", () => {
     const stub = createStubView();
     const controller = createController(stub.view);
 
-    const initialPrompt = controller.baseSystemPrompt;
-    const initialEnvironment = controller.environmentTag;
-    const initialSubagentPrompt = controller.subagentPrompts.default;
+    const initialPrompt = controller.runtime.promptComposition.baseSystemPrompt;
+    const initialEnvironment = controller.runtime.promptComposition.environmentTag;
+    const initialSubagentPrompt = controller.runtime.promptComposition.subagentPrompts.default;
     expect(initialSubagentPrompt).toBeTruthy();
 
     const userMessages = [];
@@ -465,10 +461,14 @@ describe("ChatController risk level changes", () => {
 
     controller.setRiskLevel("read-write", { silent: true });
 
-    expect(controller.baseSystemPrompt).toBe(initialPrompt);
-    expect(controller.environmentTag).toBe(initialEnvironment);
-    expect(controller.subagentPrompts.default).not.toBe(initialSubagentPrompt);
-    expect(controller.subagentPrompts.default).toContain('level="read-write"');
+    expect(controller.runtime.promptComposition.baseSystemPrompt).toBe(initialPrompt);
+    expect(controller.runtime.promptComposition.environmentTag).toBe(initialEnvironment);
+    expect(controller.runtime.promptComposition.subagentPrompts.default).not.toBe(
+      initialSubagentPrompt,
+    );
+    expect(controller.runtime.promptComposition.subagentPrompts.default).toContain(
+      'level="read-write"',
+    );
 
     await controller.onUserInput("hello");
 

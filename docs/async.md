@@ -14,6 +14,7 @@ Client commands:
 
 ```sh
 tau async <prompt...> [--project <id>]
+tau async -- <prompt...>
 tau async list
 tau async status <sessionId>
 tau async logs <sessionId>
@@ -26,6 +27,7 @@ Client target options:
 - `--target <id>`: select a configured target from `config.async.client.targets`
 - `--url <url>`: override target base URL
 - `--token <token>`: override bearer token
+- `--`: force prompt mode for the remaining tokens (useful when prompt text starts with reserved words like `list`)
 
 ## config
 
@@ -93,6 +95,9 @@ Authorization: Bearer <token>
 ```
 
 Bearer tokens are checked with constant-time comparison. Missing/invalid tokens return `401`.
+
+JSON request bodies are capped at 1 MB (`413` on overflow). Malformed JSON returns `400`. Invalid
+percent-encoding in session-id path segments also returns `400`.
 
 ## telegram dm adapter
 

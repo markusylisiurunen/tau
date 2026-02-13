@@ -1,5 +1,6 @@
 import { Api } from "grammy";
 import type { AsyncProjectConfig } from "../config/schema.js";
+import { isRecord } from "../utils/type_guards.js";
 import {
   type AsyncSessionManager,
   AsyncSessionManagerError,
@@ -73,10 +74,6 @@ type NewCommandResolution =
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
 const ABORTED = Symbol("aborted");
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function splitCommandText(text: string): string[] {
   return text

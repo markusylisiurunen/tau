@@ -114,6 +114,67 @@ describe("async session manager", () => {
     expect(manager.getSession(created.id)?.state).toBe("waiting-input");
   });
 
+  it("marks the session failed when sendMessage submit rejects", async () => {
+    const clientHarness = createClientHarness();
+    clientHarness.client.submit = vi.fn(async () => {
+      throw new Error("submit boom");
+    });
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await expect(manager.sendMessage(created.id, "first")).rejects.toThrow("submit boom");
+
+    const failed = manager.getSession(created.id);
+    expect(failed).toEqual(
+      expect.objectContaining({
+        state: "failed",
+        error: "submit boom",
+      }),
+    );
+
+    const logs = manager.getLogs(created.id) ?? [];
+    expect(logs.some((entry) => entry.message === "submit failed")).toBe(true);
+  });
+
+  it("does not rewrite terminal failed sessions to canceled", async () => {
+    const clientHarness = createClientHarness();
+    clientHarness.client.submit = vi.fn(async () => {
+      throw new Error("submit boom");
+    });
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await expect(manager.sendMessage(created.id, "first")).rejects.toThrow("submit boom");
+
+    const canceled = await manager.cancelSession(created.id);
+    expect(canceled.state).toBe("failed");
+    expect(clientHarness.client.interrupt).not.toHaveBeenCalled();
+    expect(clientHarness.client.shutdown).not.toHaveBeenCalled();
+    expect(clientHarness.client.close).not.toHaveBeenCalled();
+  });
+
   it("cancels a running session and shuts down the sdk client", async () => {
     const clientHarness = createClientHarness();
     clientHarness.client.interrupt = vi.fn(async () => {

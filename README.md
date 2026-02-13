@@ -104,12 +104,16 @@ client command surface:
 
 ```sh
 tau async <prompt...> [--project <id>]
+tau async -- <prompt...>
 tau async list
 tau async status <id>
 tau async logs <id>
 tau async send <id> <text...>
 tau async cancel <id>
 ```
+
+use `tau async -- <prompt...>` when prompt text starts with a reserved command word (for example,
+`list`).
 
 for daemon/api/telegram details, see [docs/async.md](docs/async.md).
 

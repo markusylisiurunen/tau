@@ -104,4 +104,98 @@ describe("async http server", () => {
     expect(created.status).toBe(201);
     expect(manager.createSession).toHaveBeenCalledWith({ projectId: "demo", prompt: "hello" });
   });
+
+  it("returns 400 for malformed json request bodies", async () => {
+    const manager = createManager();
+    const handle = await startAsyncHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "secret",
+      sessionManager: manager,
+    });
+    handles.push(handle);
+
+    const response = await fetch(`${handle.baseUrl}/v1/sessions`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret",
+        "content-type": "application/json",
+      },
+      body: "{",
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("returns 413 for oversized json request bodies", async () => {
+    const manager = createManager();
+    const handle = await startAsyncHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "secret",
+      sessionManager: manager,
+    });
+    handles.push(handle);
+
+    const response = await fetch(`${handle.baseUrl}/v1/sessions`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret",
+        "content-type": "application/json",
+      },
+      body: "x".repeat(1_000_001),
+    });
+
+    expect(response.status).toBe(413);
+  });
+
+  it("returns 400 for malformed session id path encoding", async () => {
+    const manager = createManager();
+    manager.getSession = vi.fn(() => ({
+      id: "s1",
+      projectId: "demo",
+      state: "waiting-input",
+      createdAt: "2024-01-01T00:00:00.000Z",
+      updatedAt: "2024-01-01T00:00:00.000Z",
+    }));
+
+    const handle = await startAsyncHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "secret",
+      sessionManager: manager,
+    });
+    handles.push(handle);
+
+    const response = await fetch(`${handle.baseUrl}/v1/sessions/%E0%A4%A`, {
+      headers: {
+        authorization: "Bearer secret",
+      },
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("returns 500 when unexpected errors escape handler branches", async () => {
+    const manager = createManager();
+    manager.listSessions = vi.fn(() => {
+      throw new Error("boom");
+    });
+
+    const handle = await startAsyncHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "secret",
+      sessionManager: manager,
+    });
+    handles.push(handle);
+
+    const response = await fetch(`${handle.baseUrl}/v1/sessions`, {
+      headers: {
+        authorization: "Bearer secret",
+      },
+    });
+
+    expect(response.status).toBe(500);
+  });
 });

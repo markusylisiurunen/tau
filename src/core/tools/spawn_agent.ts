@@ -160,6 +160,12 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       }
 
       let launchModelOverride: SubagentLaunchModel | undefined;
+      if (model !== undefined && !model) {
+        return blocked("model parameter must be a non-empty string in format <provider>/<model>:<effort>.", {
+          name,
+          title,
+        });
+      }
       if (model) {
         const parsedLaunchModel = parseSubagentLaunchModel(model);
         if (parsedLaunchModel.error || !parsedLaunchModel.launchModel) {

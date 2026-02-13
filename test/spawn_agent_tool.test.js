@@ -219,4 +219,31 @@ describe("spawn_agent tool", () => {
     expect(spawned[0].model.id).toBe(openai.id);
     expect(spawned[0].settings.reasoning).toBe("high");
   });
+
+  it("rejects an explicitly provided but empty model parameter", async () => {
+    const backend = createLocalToolExecutionBackend();
+    const tool = createSpawnAgentToolDefinition(backend);
+    const { context, spawned } = createContext();
+
+    const result = await tool.dispatch(
+      {
+        id: "call-6",
+        name: TOOL_NAME_SPAWN_AGENT,
+        arguments: {
+          name: "researcher",
+          title: "research task",
+          prompt: "collect findings",
+          model: "",
+        },
+      },
+      "read-only",
+      undefined,
+      context,
+    );
+
+    expect(result.kind).toBe("single");
+    expect(result.toolResult.isError).toBe(true);
+    expect(getText(result.toolResult)).toContain("model parameter must be a non-empty string");
+    expect(spawned).toHaveLength(0);
+  });
 });

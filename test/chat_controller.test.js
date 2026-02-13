@@ -112,6 +112,7 @@ function createController(view, options = {}) {
     skills: options.skills ?? [],
     bashCommands: options.bashCommands ?? [],
     config: {},
+    sandboxEnabled: options.sandboxEnabled ?? false,
     toolBackend: options.toolBackend,
   });
 }

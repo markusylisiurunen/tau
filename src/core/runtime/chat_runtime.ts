@@ -13,7 +13,7 @@ import { composeSessionPrompts, type SessionPromptComposition } from "./session_
 export type ChatRuntimePromptContext = {
   cwd: string;
   projectContextBlock?: string;
-  sandboxEnabled?: boolean;
+  sandboxEnabled: boolean;
   sandboxEnvironmentInfo?: string;
   skillsBlock?: string;
 };

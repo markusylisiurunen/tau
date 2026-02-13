@@ -283,7 +283,7 @@ If you need dependency details (rare), check `references/repos/` first and treat
 
 **Formatting**: Do not hand-format code (no manual import sorting or line wrapping). Run `npm run check` and let Biome handle formatting.
 
-**Compatibility**: Tau is pre-v1 and the goal is to have a clean implementation before v1. Do not introduce backwards compatibility layers or legacy support unless the user explicitly asks.
+**Compatibility**: Tau is pre-v1 and the goal is to have a clean implementation before v1. Do not introduce backwards compatibility layers or legacy support unless the user explicitly asks. Prefer the tightest practical types, require explicit fields when call sites can always provide them instead of using optional properties by default.
 
 **Commit style**: Short, imperative, lowercase subject lines (no prefixes). When explicitly working a GitHub issue with a single commit (no PR), include a closing keyword line (for example, `fixes #123`) in the commit body. If opening a PR, put the closing keyword in the PR body instead of the commit body.
 

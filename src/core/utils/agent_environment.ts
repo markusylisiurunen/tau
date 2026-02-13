@@ -23,7 +23,7 @@ function resolveSandboxCwd(cwd: string, config?: SandboxConfig): string {
 
 export function resolveAgentCwd(args: {
   cwd: string;
-  sandboxEnabled?: boolean;
+  sandboxEnabled: boolean;
   sandboxConfig?: SandboxConfig;
 }): string {
   if (!args.sandboxEnabled) {

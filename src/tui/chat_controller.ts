@@ -96,7 +96,7 @@ export interface ChatControllerOptions {
   initialHistory?: Message[];
   noAgentContextFiles?: boolean;
   config?: Config;
-  sandboxEnabled?: boolean;
+  sandboxEnabled: boolean;
   toolBackend?: ToolExecutionBackend;
   toolBackendDispose?: () => Promise<void> | void;
   deps?: CoreDeps;
@@ -271,7 +271,7 @@ export class ChatController {
     this.bashCommands = options.bashCommands ?? [];
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
-    this.sandboxEnabled = options.sandboxEnabled ?? false;
+    this.sandboxEnabled = options.sandboxEnabled;
     this.sandboxRootReal = this.sandboxEnabled ? this.resolveSandboxRoot(cwd) : undefined;
     this.agentCwd = resolveAgentCwd({
       cwd,

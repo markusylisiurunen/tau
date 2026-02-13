@@ -28,7 +28,7 @@ export interface ChatAppOptions {
   initialHistory?: Message[];
   noAgentContextFiles?: boolean;
   config?: Config;
-  sandboxEnabled?: boolean;
+  sandboxEnabled: boolean;
   toolBackend?: ToolExecutionBackend;
   toolBackendDispose?: () => Promise<void> | void;
 }

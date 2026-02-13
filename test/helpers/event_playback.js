@@ -87,6 +87,7 @@ export function createPlaybackHarness(options = {}) {
     skills: [],
     bashCommands: [],
     config: {},
+    sandboxEnabled: false,
     ...options,
   });
 

@@ -77,6 +77,7 @@ describe("ChatRuntime", () => {
       riskLevel: "read-only",
       promptContext: {
         cwd: "/repo",
+        sandboxEnabled: false,
       },
       environment: createEnvironment(),
     });
@@ -108,6 +109,7 @@ describe("ChatRuntime", () => {
       toolRegistry,
       promptContext: {
         cwd: "/repo",
+        sandboxEnabled: false,
       },
       environment: createEnvironment(),
       config: {
@@ -177,6 +179,7 @@ describe("ChatRuntime", () => {
       riskLevel: "read-only",
       promptContext: {
         cwd: "/repo/start",
+        sandboxEnabled: false,
         skillsBlock: "### Skills\n\n- initial",
       },
       environment: createEnvironment(),

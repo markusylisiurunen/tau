@@ -15,7 +15,7 @@ export type ComposeSessionPromptsArgs = {
   nodeVersion: string;
   skillsBlock?: string;
   projectContextBlock?: string;
-  sandboxEnabled?: boolean;
+  sandboxEnabled: boolean;
   sandboxEnvironmentInfo?: string;
 };
 
@@ -34,8 +34,9 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
     nodeVersion: args.nodeVersion,
   });
 
-  const sandboxInfoBlock =
-    args.sandboxEnabled === false ? undefined : buildSandboxInfoBlock(args.sandboxEnvironmentInfo);
+  const sandboxInfoBlock = args.sandboxEnabled
+    ? buildSandboxInfoBlock(args.sandboxEnvironmentInfo)
+    : undefined;
 
   const baseSystemPrompt = buildBaseSystemPrompt({
     personaSystemPrompt: args.persona.systemPrompt,

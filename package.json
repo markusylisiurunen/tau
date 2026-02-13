@@ -16,7 +16,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "postbuild": "node scripts/copy-starter.js",
+    "postbuild": "node scripts/copy-starter.js && find dist -name '*.d.ts' ! -path 'dist/sdk/*' -delete",
     "check": "prettier -w .tau/**/*.md docs/**/*.md starter/**/*.md *.md && biome check --write . && tsc -p tsconfig.json --noEmit",
     "precheck": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "prebuild": "node scripts/generate-version.js && node scripts/generate-themes.js",

@@ -12,7 +12,6 @@ import {
 } from "../core/modes/rpc_protocol.js";
 import { TauProcessError, TauRpcResponseError, TauTransportError } from "./errors.js";
 import type {
-  PendingRequest,
   TauSdkClient,
   TauSdkClientOptions,
   TauSdkEvent,
@@ -20,6 +19,13 @@ import type {
   TauSdkSpawnFunction,
   TauSdkSubmitOptions,
 } from "./types.js";
+
+type PendingRequest = {
+  readonly method: string;
+  readonly requestId: RpcRequestId;
+  readonly resolve: (value: unknown) => void;
+  readonly reject: (error: unknown) => void;
+};
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;

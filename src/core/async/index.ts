@@ -16,6 +16,8 @@ export {
 } from "./http_protocol.js";
 export type { AsyncHttpServerHandle, AsyncHttpServerOptions } from "./http_server.js";
 export { startAsyncHttpServer } from "./http_server.js";
+export type { AsyncDaemonConfig } from "./server_config.js";
+export { AsyncDaemonConfigError, loadAsyncDaemonConfig } from "./server_config.js";
 export type {
   AsyncSessionLogEntry,
   AsyncSessionLogLevel,

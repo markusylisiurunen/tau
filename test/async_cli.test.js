@@ -17,7 +17,7 @@ describe("async cli", () => {
     );
     const stdout = vi.fn();
 
-    await runAsyncCommand(["ship", "it"], {
+    await runAsyncCommand(["--project", "demo", "ship", "it"], {
       config: {
         async: {
           client: {
@@ -27,11 +27,6 @@ describe("async cli", () => {
                 url: "http://localhost:7788",
                 token: "secret",
               },
-            },
-          },
-          projects: {
-            demo: {
-              repo: "git@example.com:demo.git",
             },
           },
         },
@@ -66,9 +61,6 @@ describe("async cli", () => {
                 },
               },
             },
-            projects: {
-              demo: { repo: "git@example.com:demo.git" },
-            },
           },
         },
         fetchImpl: fetchMock,
@@ -92,72 +84,7 @@ describe("async cli", () => {
     expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({ text: "hello world" });
   });
 
-  it("treats reserved command words with extra tokens as create prompts", async () => {
-    const fetchMock = vi.fn(async () =>
-      createJsonResponse({ ok: true, data: { session: { id: "s1" } } }),
-    );
-
-    await runAsyncCommand(["list", "files", "to", "migrate"], {
-      config: {
-        async: {
-          client: {
-            targets: {
-              one: {
-                url: "http://localhost:9000",
-                token: "tok",
-              },
-            },
-          },
-          projects: {
-            demo: { repo: "git@example.com:demo.git" },
-          },
-        },
-      },
-      fetchImpl: fetchMock,
-      stdout: () => {},
-    });
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("http://localhost:9000/v1/sessions");
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toEqual({
-      projectId: "demo",
-      prompt: "list files to migrate",
-    });
-  });
-
-  it("supports -- to force create prompts that begin with reserved commands", async () => {
-    const fetchMock = vi.fn(async () =>
-      createJsonResponse({ ok: true, data: { session: { id: "s1" } } }),
-    );
-
-    await runAsyncCommand(["--", "list"], {
-      config: {
-        async: {
-          client: {
-            targets: {
-              one: {
-                url: "http://localhost:9000",
-                token: "tok",
-              },
-            },
-          },
-          projects: {
-            demo: { repo: "git@example.com:demo.git" },
-          },
-        },
-      },
-      fetchImpl: fetchMock,
-      stdout: () => {},
-    });
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("http://localhost:9000/v1/sessions");
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toEqual({ projectId: "demo", prompt: "list" });
-  });
-
-  it("requires --project when multiple async projects are configured", async () => {
+  it("requires --project for create", async () => {
     await expect(
       runAsyncCommand(["do", "work"], {
         config: {
@@ -170,15 +97,31 @@ describe("async cli", () => {
                 },
               },
             },
-            projects: {
-              a: { repo: "git@example.com:a.git" },
-              b: { repo: "git@example.com:b.git" },
-            },
           },
         },
         fetchImpl: vi.fn(),
         stdout: () => {},
       }),
     ).rejects.toBeInstanceOf(AsyncCliError);
+  });
+
+  it("requires --config-file for daemon mode", async () => {
+    await expect(
+      runAsyncCommand(["daemon"], {
+        config: {
+          async: {
+            client: {
+              targets: {
+                one: {
+                  url: "http://localhost:9000",
+                  token: "tok",
+                },
+              },
+            },
+          },
+        },
+        stdout: () => {},
+      }),
+    ).rejects.toMatchObject({ message: expect.stringContaining("--config-file") });
   });
 });

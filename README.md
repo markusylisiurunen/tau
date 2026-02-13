@@ -97,13 +97,13 @@ for protocol details and examples, see [docs/rpc.md](docs/rpc.md).
 tau also supports an async daemon for queued/background sessions:
 
 ```sh
-tau async daemon
+tau async daemon --config-file <path>
 ```
 
 client command surface:
 
 ```sh
-tau async <prompt...> [--project <id>]
+tau async --project <id> <prompt...>
 tau async -- <prompt...>
 tau async list
 tau async status <id>
@@ -466,14 +466,11 @@ if `disableBuiltinPersonas` is set to `true`, tau will not load built-in persona
 
 the `sandbox` field configures docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `72`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
 
-the `async` field configures the async daemon/client project map:
+the `async` field in normal tau config is client-side only:
 
 - `async.client.defaultTarget` + `async.client.targets`: client-side URL/token target definitions for `tau async ...` commands.
-- `async.server.host`, `async.server.port`, `async.server.authToken`, `async.server.maxSessions`: daemon bind/auth/session limits.
-- `async.server.telegram`: optional telegram dm adapter settings (`botToken`, `allowedUserIds`, `allowedChatIds`, `defaultProjectId`, `pollIntervalMs`, `requestTimeoutSeconds`).
-- `async.projects`: daemon project definitions (`repo`, optional `ref`, `workspaceRoot`, `bootstrapCommands`, `persona`, `riskLevel`, `sandbox`, `noAgentContextFiles`).
 
-example:
+example (`~/.config/tau/config.json` or `.tau/config.json`):
 
 ```json
 {
@@ -486,26 +483,18 @@ example:
           "token": "replace-me"
         }
       }
-    },
-    "server": {
-      "host": "127.0.0.1",
-      "port": 7788,
-      "authToken": "replace-me",
-      "telegram": {
-        "botToken": "123456:telegram-token",
-        "allowedUserIds": [123456789],
-        "allowedChatIds": [123456789],
-        "defaultProjectId": "demo"
-      }
-    },
-    "projects": {
-      "demo": {
-        "repo": "git@github.com:org/repo.git"
-      }
     }
   }
 }
 ```
+
+daemon-side async settings are in a separate config file passed to:
+
+```sh
+tau async daemon --config-file <path>
+```
+
+see [docs/async.md](docs/async.md) for daemon config schema (`host`, `port`, `authToken`, `telegram`, `projects`, `workspaceRoot`) and GitHub repo requirements (`owner/repo`, cloned via `gh repo clone`).
 
 ### project bash commands
 

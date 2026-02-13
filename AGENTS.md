@@ -175,10 +175,8 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Defaults to `gold`.
   - `subagents.defaultLaunchModels` (optional): Allowlisted `spawn_agent` launch overrides for the built-in `default` subagent (`<provider>/<model>:<effort>` entries).
   - `async.client` (optional): Async client target map (`defaultTarget`, `targets.<id>.url`, `targets.<id>.token`, `targets.<id>.timeoutMs`).
-  - `async.server` (optional): Async daemon settings (`host`, `port`, `authToken`, `maxSessions`).
-  - `async.server.telegram` (optional): Telegram DM adapter settings (`botToken`, `allowedUserIds`, `allowedChatIds`, `defaultProjectId`, `pollIntervalMs`, `requestTimeoutSeconds`).
-  - `async.projects` (optional): Async project map (`repo` required; optional `ref`, `workspaceRoot`, `bootstrapCommands`, `persona`, `riskLevel`, `sandbox`, `noAgentContextFiles`).
-- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `sandbox`, and `async` merge per field (with per-project/per-target overrides); `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
+  - daemon-side async settings are loaded from a separate JSON file passed via `tau async daemon --config-file <path>` (`host`, `port`, `authToken`, `maxSessions`, `telegram`, `projects`, `workspaceRoot`).
+- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `sandbox`, and `async.client` merge per field; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`). Each command runs with cwd set to the config level root (same root used to resolve `agentContextFiles`).
 
@@ -245,9 +243,9 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau auth logout codex --account <email>` - Remove stored OAuth credentials
 - `tau usage` - Summarize usage logs from `~/.config/tau/logs/`
 - `tau install [--global] [--force] [--prompt <id> | --skill <name>]` - Install starter prompts and skills (or one selected item)
-- `tau async daemon` - Run async daemon HTTP API (plus optional Telegram DM adapter)
-- `tau async <prompt...> | -- <prompt...> | list | status <id> | logs <id> | send <id> <text...> | cancel <id>` - Async client commands
-- `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for `async.server.authToken` in daemon mode
+- `tau async daemon --config-file <path>` - Run async daemon HTTP API (plus optional Telegram DM adapter)
+- `tau async --project <id> <prompt...> | -- <prompt...> | list | status <id> | logs <id> | send <id> <text...> | cancel <id>` - Async client commands
+- `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for daemon-file `authToken` in daemon mode
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 - `PARALLEL_API_KEY` (env var) - Optional override for `apiKeys.parallel` used by `web_search`/`web_fetch`
 - `MISTRAL_API_KEY` (env var) - Optional override for `/speak` microphone transcription

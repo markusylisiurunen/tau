@@ -85,18 +85,18 @@ export async function prepareWorkspace(
   });
 
   const cloneResult = await runCommand({
-    command: "git",
-    commandArgs: ["clone", options.project.repo, workspacePath],
+    command: "gh",
+    commandArgs: ["repo", "clone", options.project.repo, workspacePath],
     signal: options.signal,
   });
 
   if (cloneResult.exitCode !== 0) {
-    log(options.onLog, "error", "git clone failed", { output: cloneResult.output });
-    throw new Error(`git clone failed with exit code ${cloneResult.exitCode ?? "unknown"}`);
+    log(options.onLog, "error", "gh repo clone failed", { output: cloneResult.output });
+    throw new Error(`gh repo clone failed with exit code ${cloneResult.exitCode ?? "unknown"}`);
   }
 
   if (cloneResult.output.trim()) {
-    log(options.onLog, "info", "git clone output", { output: cloneResult.output });
+    log(options.onLog, "info", "gh repo clone output", { output: cloneResult.output });
   }
 
   if (options.project.ref) {

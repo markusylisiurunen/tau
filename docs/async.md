@@ -4,16 +4,16 @@ Tau includes an async daemon for queueing long-running sessions over HTTP, plus 
 
 ## commands
 
-Start the daemon:
+Start the daemon with a dedicated daemon config file:
 
 ```sh
-tau async daemon
+tau async daemon --config-file /etc/tau/async-daemon.json
 ```
 
 Client commands:
 
 ```sh
-tau async <prompt...> [--project <id>]
+tau async --project <projectId> <prompt...>
 tau async -- <prompt...>
 tau async list
 tau async status <sessionId>
@@ -27,9 +27,12 @@ Client target options:
 - `--target <id>`: select a configured target from `config.async.client.targets`
 - `--url <url>`: override target base URL
 - `--token <token>`: override bearer token
-- `--`: force prompt mode for the remaining tokens (useful when prompt text starts with reserved words like `list`)
 
-## config
+Use `--` when prompt text starts with a reserved command word.
+
+## client config (`~/.config/tau/config.json` or `.tau/config.json`)
+
+Client-side async config stays in the regular tau config:
 
 ```json
 {
@@ -43,38 +46,51 @@ Client target options:
           "timeoutMs": 30000
         }
       }
-    },
-    "server": {
-      "host": "127.0.0.1",
-      "port": 7788,
-      "authToken": "replace-me",
-      "maxSessions": 4,
-      "telegram": {
-        "botToken": "123456:telegram-token",
-        "allowedUserIds": [123456789],
-        "allowedChatIds": [123456789],
-        "defaultProjectId": "demo",
-        "pollIntervalMs": 1000,
-        "requestTimeoutSeconds": 30
-      }
-    },
-    "projects": {
-      "demo": {
-        "repo": "git@github.com:org/repo.git",
-        "ref": "main",
-        "workspaceRoot": ".tau/async-workspaces",
-        "bootstrapCommands": ["npm ci", "npm run build"],
-        "persona": "gpt-5.2-coder",
-        "riskLevel": "read-only",
-        "sandbox": false,
-        "noAgentContextFiles": false
-      }
     }
   }
 }
 ```
 
-`TAU_ASYNC_AUTH_TOKEN` overrides `async.server.authToken` for daemon auth.
+## daemon config file (`--config-file`)
+
+Daemon-side settings are loaded from a separate JSON file.
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 7788,
+  "authToken": "replace-me",
+  "maxSessions": 4,
+  "workspaceRoot": "/var/lib/tau/async-workspaces",
+  "telegram": {
+    "botToken": "123456:telegram-token",
+    "allowedUserIds": [123456789],
+    "allowedChatIds": [123456789],
+    "defaultProjectId": "tau",
+    "pollIntervalMs": 1000,
+    "requestTimeoutSeconds": 30
+  },
+  "projects": {
+    "tau": {
+      "repo": "markusylisiurunen/tau",
+      "ref": "main",
+      "workspaceRoot": "projects/tau",
+      "bootstrapCommands": ["npm ci", "npm run build"],
+      "persona": "gpt-5.2-coder",
+      "riskLevel": "read-only",
+      "sandbox": false,
+      "noAgentContextFiles": false
+    }
+  }
+}
+```
+
+Notes:
+
+- `projects.<id>.repo` must be GitHub `owner/repo` format.
+- Relative `workspaceRoot` values resolve from the daemon config file directory.
+- Clone uses `gh repo clone <owner/repo> <path>` (daemon host must have authenticated `gh`).
+- `TAU_ASYNC_AUTH_TOKEN` overrides daemon-file `authToken`.
 
 ## http api
 
@@ -96,14 +112,11 @@ Authorization: Bearer <token>
 
 Bearer tokens are checked with constant-time comparison. Missing/invalid tokens return `401`.
 
-JSON request bodies are capped at 1 MB (`413` on overflow). Malformed JSON returns `400`. Invalid
-percent-encoding in session-id path segments also returns `400`.
-
 ## telegram dm adapter
 
-Enable Telegram by setting `async.server.telegram.botToken` and running `tau async daemon`.
+Enable Telegram by setting `telegram.botToken` in daemon config and running the daemon.
 
-The adapter uses long-polling (`getUpdates`) and only handles private DM messages (`chat.type=private`).
+The adapter uses long-polling and only handles private DM messages (`chat.type=private`).
 
 Supported DM commands:
 

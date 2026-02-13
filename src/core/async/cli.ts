@@ -1,7 +1,7 @@
-import { resolve } from "node:path";
 import type { Config } from "../config/schema.js";
 import { loadConfig } from "../config/schema.js";
 import { startAsyncHttpServer } from "./http_server.js";
+import { AsyncDaemonConfigError, loadAsyncDaemonConfig } from "./server_config.js";
 import { createAsyncSessionManager } from "./session_manager.js";
 import { startAsyncTelegramAdapter } from "./telegram.js";
 
@@ -24,6 +24,7 @@ type ParsedAsyncArgs = {
   targetId?: string;
   url?: string;
   token?: string;
+  configFilePath?: string;
 };
 
 export type RunAsyncCommandOptions = {
@@ -73,6 +74,7 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
   let targetId: string | undefined;
   let url: string | undefined;
   let token: string | undefined;
+  let configFilePath: string | undefined;
   let forcePrompt = false;
   const positional: string[] = [];
 
@@ -122,6 +124,13 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
       continue;
     }
 
+    if (arg === "--config-file" || arg.startsWith("--config-file=")) {
+      const parsed = parseValue(arg, argv, i);
+      i = parsed.nextIndex;
+      configFilePath = parsed.value;
+      continue;
+    }
+
     if (arg.startsWith("-")) {
       throw new AsyncCliError(`unknown option: ${arg}`);
     }
@@ -143,13 +152,14 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
       targetId,
       url,
       token,
+      configFilePath,
     };
   };
 
   const first = positional[0];
   if (!first) {
     if (help) {
-      return { help: true, command: "list", projectId, targetId, url, token };
+      return { help: true, command: "list", projectId, targetId, url, token, configFilePath };
     }
     throw new AsyncCliError("missing async command or prompt");
   }
@@ -160,14 +170,14 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
 
   if (first === "daemon") {
     if (positional.length === 1) {
-      return { help, command: "daemon", projectId, targetId, url, token };
+      return { help, command: "daemon", projectId, targetId, url, token, configFilePath };
     }
     return toCreateArgs();
   }
 
   if (first === "list") {
     if (positional.length === 1) {
-      return { help, command: "list", projectId, targetId, url, token };
+      return { help, command: "list", projectId, targetId, url, token, configFilePath };
     }
     return toCreateArgs();
   }
@@ -181,7 +191,16 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
       if (!sessionId) {
         throw new AsyncCliError("missing session id for status");
       }
-      return { help, command: "status", sessionId, projectId, targetId, url, token };
+      return {
+        help,
+        command: "status",
+        sessionId,
+        projectId,
+        targetId,
+        url,
+        token,
+        configFilePath,
+      };
     }
     return toCreateArgs();
   }
@@ -195,7 +214,16 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
       if (!sessionId) {
         throw new AsyncCliError("missing session id for logs");
       }
-      return { help, command: "logs", sessionId, projectId, targetId, url, token };
+      return {
+        help,
+        command: "logs",
+        sessionId,
+        projectId,
+        targetId,
+        url,
+        token,
+        configFilePath,
+      };
     }
     return toCreateArgs();
   }
@@ -219,7 +247,17 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
       throw new AsyncCliError("missing message text for send");
     }
 
-    return { help, command: "send", sessionId, text, projectId, targetId, url, token };
+    return {
+      help,
+      command: "send",
+      sessionId,
+      text,
+      projectId,
+      targetId,
+      url,
+      token,
+      configFilePath,
+    };
   }
 
   if (first === "cancel") {
@@ -231,7 +269,16 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
       if (!sessionId) {
         throw new AsyncCliError("missing session id for cancel");
       }
-      return { help, command: "cancel", sessionId, projectId, targetId, url, token };
+      return {
+        help,
+        command: "cancel",
+        sessionId,
+        projectId,
+        targetId,
+        url,
+        token,
+        configFilePath,
+      };
     }
     return toCreateArgs();
   }
@@ -249,23 +296,12 @@ function getTrimmedEnvValue(key: string, env: NodeJS.ProcessEnv): string | undef
   return trimmed || undefined;
 }
 
-function resolveDefaultProjectId(config: Config, requestedProjectId: string | undefined): string {
-  const projects = config.async?.projects ?? {};
-
-  if (requestedProjectId) {
-    if (!projects[requestedProjectId]) {
-      throw new AsyncCliError(`unknown async project '${requestedProjectId}'`);
-    }
-    return requestedProjectId;
+function requireProjectId(projectId: string | undefined): string {
+  if (!projectId?.trim()) {
+    throw new AsyncCliError("missing project id. use --project <id>");
   }
 
-  const projectIds = Object.keys(projects);
-
-  if (projectIds.length === 1) {
-    return projectIds[0]!;
-  }
-
-  throw new AsyncCliError("missing project id. use --project <id>");
+  return projectId.trim();
 }
 
 function resolveTarget(config: Config, args: ParsedAsyncArgs): ResolvedTarget {
@@ -378,8 +414,8 @@ export function printAsyncHelp(log: (line: string) => void = console.log): void 
   log(
     [
       "usage:",
-      "  tau async daemon",
-      "  tau async <prompt...> [--project <id>]",
+      "  tau async daemon --config-file <path>",
+      "  tau async --project <id> <prompt...>",
       "  tau async list",
       "  tau async status <id>",
       "  tau async logs <id>",
@@ -387,54 +423,62 @@ export function printAsyncHelp(log: (line: string) => void = console.log): void 
       "  tau async cancel <id>",
       "",
       "options:",
-      "  --project <id>  project id for session creation.",
-      "  --target <id>   target id from config.async.client.targets.",
-      "  --url <url>     override async target base URL.",
-      "  --token <token> override async bearer token.",
-      "  --              treat remaining args as prompt text.",
-      "  --help          show this help and exit.",
+      "  --project <id>        project id for session creation.",
+      "  --config-file <path>  daemon config file path (daemon mode only).",
+      "  --target <id>         target id from config.async.client.targets.",
+      "  --url <url>           override async target base URL.",
+      "  --token <token>       override async bearer token.",
+      "  --                    treat remaining args as prompt text.",
+      "  --help                show this help and exit.",
     ].join("\n"),
   );
 }
 
 async function runDaemon(args: {
-  config: Config;
-  cwd: string;
+  configFilePath: string;
   env: NodeJS.ProcessEnv;
   stdout: (line: string) => void;
 }): Promise<void> {
-  const host = args.config.async?.server?.host ?? "127.0.0.1";
-  const port = args.config.async?.server?.port ?? 7788;
-  const authToken =
-    getTrimmedEnvValue("TAU_ASYNC_AUTH_TOKEN", args.env) ?? args.config.async?.server?.authToken;
+  let daemonConfig: ReturnType<typeof loadAsyncDaemonConfig>;
+  try {
+    daemonConfig = loadAsyncDaemonConfig(args.configFilePath);
+  } catch (error) {
+    if (error instanceof AsyncDaemonConfigError) {
+      throw new AsyncCliError(error.message);
+    }
+
+    throw error;
+  }
+
+  const authToken = getTrimmedEnvValue("TAU_ASYNC_AUTH_TOKEN", args.env) ?? daemonConfig.authToken;
 
   if (!authToken) {
     throw new AsyncCliError(
-      "missing async auth token. set async.server.authToken or TAU_ASYNC_AUTH_TOKEN",
+      "missing async auth token. set authToken in daemon config or TAU_ASYNC_AUTH_TOKEN",
     );
   }
 
   const sessionManager = createAsyncSessionManager({
-    projects: args.config.async?.projects ?? {},
-    workspaceRoot: resolve(args.cwd, ".tau", "async-workspaces"),
-    maxSessions: args.config.async?.server?.maxSessions,
+    projects: daemonConfig.projects,
+    workspaceRoot: daemonConfig.workspaceRoot,
+    maxSessions: daemonConfig.maxSessions,
   });
 
   const handle = await startAsyncHttpServer({
-    host,
-    port,
+    host: daemonConfig.host,
+    port: daemonConfig.port,
     authToken,
     sessionManager,
   });
 
-  const telegramConfig = args.config.async?.server?.telegram;
+  const telegramConfig = daemonConfig.telegram;
   let telegramHandle: { close(): Promise<void> } | undefined;
 
   try {
     if (telegramConfig?.botToken) {
       telegramHandle = await startAsyncTelegramAdapter({
         botToken: telegramConfig.botToken,
-        projects: args.config.async?.projects ?? {},
+        projects: daemonConfig.projects,
         defaultProjectId: telegramConfig.defaultProjectId,
         allowedUserIds: telegramConfig.allowedUserIds,
         allowedChatIds: telegramConfig.allowedChatIds,
@@ -500,15 +544,23 @@ export async function runAsyncCommand(
   const config = options.config ?? loadConfig(cwd);
 
   if (parsed.command === "daemon") {
-    await runDaemon({ config, cwd, env, stdout });
+    if (!parsed.configFilePath) {
+      throw new AsyncCliError("missing --config-file <path> for daemon mode");
+    }
+
+    await runDaemon({ configFilePath: parsed.configFilePath, env, stdout });
     return;
+  }
+
+  if (parsed.configFilePath) {
+    throw new AsyncCliError("--config-file can only be used with 'tau async daemon'");
   }
 
   const target = resolveTarget(config, parsed);
   const fetchImpl = options.fetchImpl ?? fetch;
 
   if (parsed.command === "create") {
-    const projectId = resolveDefaultProjectId(config, parsed.projectId);
+    const projectId = requireProjectId(parsed.projectId);
     const payload = await requestJson({
       target,
       method: "POST",

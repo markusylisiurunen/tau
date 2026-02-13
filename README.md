@@ -278,6 +278,8 @@ some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_
 
 the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, tool access (minus sub-agent management tools), and the session risk level. custom sub-agents can override model, reasoning, tools, and risk level. a sub-agent configured with `riskLevel: read-write` can perform writes even when the main session is `read-only`.
 
+`spawn_agent` also supports an optional launch override string: `model: "<provider>/<model>:<effort>"`. overrides are allowlisted per subagent. custom subagents can define `launchModels` in persona frontmatter, and the built-in `default` sub-agent uses `subagents.defaultLaunchModels` from config.
+
 sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 8.
 
 to use `web_search`/`web_fetch` in a sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above) or export `PARALLEL_API_KEY`. tau will only make web calls when you explicitly ask for web research.
@@ -417,7 +419,13 @@ settings merge from least-specific to most-specific.
   "defaultRisk": "read-write",
   "disableBuiltinPersonas": false,
   "disableBuiltinThemes": false,
-  "defaultTheme": "solarized"
+  "defaultTheme": "solarized",
+  "subagents": {
+    "defaultLaunchModels": [
+      "openai/gpt-5.2:high",
+      "anthropic/claude-haiku-4-5:low"
+    ]
+  }
 }
 ```
 
@@ -426,6 +434,8 @@ the `defaultPersona` field specifies which persona to use when starting the app.
 the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 
 the `defaultTheme` field sets the theme id to load at startup. if not specified, it defaults to `gold`.
+
+the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launch overrides for the built-in `default` sub-agent. values must use `<provider>/<model>:<effort>`.
 
 if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinThemes` is set to `true`, tau will not load built-in themes. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 
@@ -497,7 +507,7 @@ optional frontmatter fields:
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
-- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `tools`, and `riskLevel` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). example:
+- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `tools`, `riskLevel`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
   ```yaml
   subagents:
     default: false
@@ -510,6 +520,9 @@ optional frontmatter fields:
       reasoning: medium
       tools: [web_search, web_fetch, bash]
       riskLevel: read-only
+      launchModels:
+        - openai/gpt-5.2:high
+        - anthropic/claude-haiku-4-5:medium
   ```
 - `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled). risk levels still apply.
 

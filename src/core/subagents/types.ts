@@ -8,7 +8,7 @@ import {
   TOOL_NAME_WEB_SEARCH,
   TOOL_NAME_WRITE,
 } from "../tools/tool_names.js";
-import type { PersonaSettings, RiskLevel } from "../types.js";
+import type { PersonaSettings, ReasoningEffort, RiskLevel } from "../types.js";
 
 export const DEFAULT_SUBAGENT_NAME = "default";
 
@@ -28,6 +28,12 @@ export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
 
 export type SubagentRiskLevel = RiskLevel;
 
+export type SubagentLaunchModel = {
+  model: Model<Api>;
+  reasoning: ReasoningEffort;
+  normalized: string;
+};
+
 export type SubagentPersonaConfig = {
   systemPrompt?: string;
   description?: string;
@@ -35,6 +41,7 @@ export type SubagentPersonaConfig = {
   settings?: PersonaSettings;
   tools?: SubagentToolName[];
   riskLevel?: SubagentRiskLevel;
+  launchModels?: string[];
 };
 
 export type SubagentConfigMap = Partial<Record<SubagentName, SubagentPersonaConfig>>;

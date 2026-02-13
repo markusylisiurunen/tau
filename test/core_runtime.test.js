@@ -206,6 +206,7 @@ describe("session prompt composer", () => {
           systemPrompt: "research subagent prompt",
           description: "deep research helper",
           riskLevel: "read-write",
+          launchModels: ["openai/gpt-5.2:high"],
         },
       },
     };
@@ -229,6 +230,8 @@ describe("session prompt composer", () => {
     expect(result.baseSystemPrompt).toContain("### Project context");
     expect(result.baseSystemPrompt).toContain("### Available sub-agents");
     expect(result.baseSystemPrompt).toContain("`researcher`");
+    expect(result.baseSystemPrompt).toContain("launch models");
+    expect(result.baseSystemPrompt).toContain("openai/gpt-5.2:high");
     expect(result.baseSystemPrompt).toContain("<sandbox-info>");
 
     expect(result.subagentPrompts.default).toContain('<risk-level level="read-only">');

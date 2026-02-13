@@ -140,7 +140,7 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 - Current preview shapes: bash uses head/tail output plus a status line; write shows up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
 - Pruned tool results patch existing tool cards by `toolCallId`, preserve headers, replace the body with model-visible pruned content, and prefix status as `✂ pruned · <existing status>` (or `✂ pruned` when no status exists).
 
-**Subagent-only tools**: subagents run with a dedicated tool registry that always includes `emit_output` plus the tools enabled for that subagent (inherited from the main persona or explicitly overridden). Risk level is inherited by default but can be overridden per subagent, including `read-write` even when the main session is `read-only`. See `src/core/subagents/subagent_engine.ts`.
+**Subagent-only tools**: subagents run with a dedicated tool registry that always includes `emit_output` plus the tools enabled for that subagent (inherited from the main persona or explicitly overridden). Risk level is inherited by default but can be overridden per subagent, including `read-write` even when the main session is `read-only`. `spawn_agent` can optionally set launch model/reasoning via `<provider>/<model>:<effort>`, but only when the value is in the selected subagent allowlist (`launchModels` for custom subagents, `subagents.defaultLaunchModels` for `default`). See `src/core/subagents/subagent_engine.ts`.
 
 **Subagent limit**: at most 8 subagents may run concurrently.
 
@@ -155,7 +155,7 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `reasoning`: default reasoning effort level
 - `allowedReasoningLevels`: list of reasoning levels shown in the UI
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
-- `subagents`: optional map of subagent definitions. The built-in `default` subagent is implicitly enabled unless `default: false` is provided. Custom subagents must be defined as `{ systemPrompt, description?, provider+model?, reasoning?, tools?, riskLevel? }` with lowercase-dash names (max 64 chars). The `default` subagent cannot be overridden.
+- `subagents`: optional map of subagent definitions. The built-in `default` subagent is implicitly enabled unless `default: false` is provided. Custom subagents must be defined as `{ systemPrompt, description?, provider+model?, reasoning?, tools?, riskLevel?, launchModels? }` with lowercase-dash names (max 64 chars). `launchModels` values are allowlisted launch overrides in `<provider>/<model>:<effort>` format. The `default` subagent cannot be overridden.
 - `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled). risk levels still apply.
 
 On conflicts, the most specific level wins (built-ins are the base layer).
@@ -171,6 +171,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.
   - `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.
   - `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Defaults to `gold`.
+  - `subagents.defaultLaunchModels` (optional): Allowlisted `spawn_agent` launch overrides for the built-in `default` subagent (`<provider>/<model>:<effort>` entries).
 - **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys` and `sandbox` merge per field; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`). Each command runs with cwd set to the config level root (same root used to resolve `agentContextFiles`).

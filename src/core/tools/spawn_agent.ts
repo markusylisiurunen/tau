@@ -1,8 +1,9 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
+import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
 import { getSubagentDescription, resolveSubagentEffectiveSettings } from "../subagents/registry.js";
-import type { SubagentRuntimeConfig } from "../subagents/types.js";
+import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/types.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
@@ -39,6 +40,11 @@ const SPAWN_AGENT_PROMPT_DESCRIPTION = [
     "the request successfully.",
 ].join(" ");
 
+const SPAWN_AGENT_MODEL_DESCRIPTION = [
+  "Optional launch override in format <provider>/<model>:<effort>.",
+  "The value must match one of the selected subagent's configured launch models.",
+].join(" ");
+
 export const SPAWN_AGENT_TOOL: Tool = {
   name: TOOL_NAME_SPAWN_AGENT,
   description: SPAWN_AGENT_DESCRIPTION,
@@ -47,6 +53,7 @@ export const SPAWN_AGENT_TOOL: Tool = {
       name: Type.String({ description: SPAWN_AGENT_NAME_DESCRIPTION }),
       title: Type.String({ description: SPAWN_AGENT_TITLE_DESCRIPTION }),
       prompt: Type.String({ description: SPAWN_AGENT_PROMPT_DESCRIPTION }),
+      model: Type.Optional(Type.String({ description: SPAWN_AGENT_MODEL_DESCRIPTION })),
     },
     { additionalProperties: false },
   ),
@@ -56,17 +63,31 @@ const spawnArgsSchema = z.object({
   name: z.string().trim().catch(""),
   title: z.string().trim().catch(""),
   prompt: z.string().trim().catch(""),
+  model: z.string().trim().optional().catch(undefined),
 });
 
-function parseSpawnArgs(raw: unknown): { name: string; title: string; prompt: string } {
+function parseSpawnArgs(raw: unknown): {
+  name: string;
+  title: string;
+  prompt: string;
+  model?: string;
+} {
   const parsed = spawnArgsSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { name: "", title: "", prompt: "" };
+  return parsed.success ? parsed.data : { name: "", title: "", prompt: "", model: undefined };
 }
 
 function formatSpawnToolResult(args: { id: string; name: string; title: string }): string {
   return [`id: ${args.id}`, `name: ${args.name}`, `title: ${args.title}`, "status: running"].join(
     "\n",
   );
+}
+
+function formatAllowedLaunchModels(launchModels: string[]): string {
+  if (launchModels.length === 0) {
+    return "(none configured)";
+  }
+
+  return launchModels.map((entry) => `'${entry}'`).join(", ");
 }
 
 export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
@@ -78,7 +99,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       signal?: AbortSignal,
       context?: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { name, title, prompt } = parseSpawnArgs(toolCall.arguments);
+      const { name, title, prompt, model } = parseSpawnArgs(toolCall.arguments);
       const headerTarget = title || "(subagent)";
 
       const blocked = (reason: string, details?: { name?: string; title?: string }) => {
@@ -138,10 +159,45 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         });
       }
 
+      let launchModelOverride: SubagentLaunchModel | undefined;
+      if (model) {
+        const parsedLaunchModel = parseSubagentLaunchModel(model);
+        if (parsedLaunchModel.error || !parsedLaunchModel.launchModel) {
+          return blocked(`invalid model parameter: ${parsedLaunchModel.error}.`, {
+            name,
+            title,
+          });
+        }
+
+        const launchModels = personaConfig.launchModels ?? [];
+        if (launchModels.length === 0) {
+          return blocked(
+            `subagent '${name}' does not allow launch model overrides. allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
+            {
+              name,
+              title,
+            },
+          );
+        }
+
+        if (!launchModels.includes(parsedLaunchModel.launchModel.normalized)) {
+          return blocked(
+            `model '${parsedLaunchModel.launchModel.normalized}' is not allowed for subagent '${name}'. allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
+            {
+              name,
+              title,
+            },
+          );
+        }
+
+        launchModelOverride = parsedLaunchModel.launchModel;
+      }
+
       const effectiveSettings = resolveSubagentEffectiveSettings({
         persona,
         config: personaConfig,
         riskLevel: context.riskLevel ?? "read-only",
+        launchModel: launchModelOverride,
       });
       const runtimeConfig: SubagentRuntimeConfig = {
         name,

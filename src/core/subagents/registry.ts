@@ -10,6 +10,7 @@ import type { Persona, RiskLevel } from "../types.js";
 import { DEFAULT_SUBAGENT_DEFINITION } from "./default.js";
 import {
   DEFAULT_SUBAGENT_NAME,
+  type SubagentLaunchModel,
   type SubagentPersonaConfig,
   type SubagentRuntimeConfig,
   type SubagentToolName,
@@ -63,12 +64,16 @@ export function resolveSubagentEffectiveSettings(args: {
   persona: Persona;
   config: SubagentPersonaConfig;
   riskLevel: RiskLevel;
+  launchModel?: SubagentLaunchModel;
 }): SubagentEffectiveSettings {
-  const model = args.config.model ?? args.persona.model;
+  const model = args.launchModel?.model ?? args.config.model ?? args.persona.model;
   const baseSettings = args.persona.settings ?? {};
   const mergedSettings = args.config.settings
     ? { ...baseSettings, ...args.config.settings }
-    : baseSettings;
+    : { ...baseSettings };
+  if (args.launchModel) {
+    mergedSettings.reasoning = args.launchModel.reasoning;
+  }
   const tools = args.config.tools
     ? normalizeTools(args.config.tools)
     : getInheritedSubagentTools(args.persona);
@@ -106,13 +111,20 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
   if (!persona.subagents || Object.keys(persona.subagents).length === 0) {
     return undefined;
   }
-  const entries = Object.entries(persona.subagents).filter(([, cfg]) => cfg);
-  if (entries.length === 0) return undefined;
-  const subagentLines = entries
-    .map(([name, cfg]) => {
-      const description = getSubagentDescription(name, cfg) ?? "(no description)";
-      return `- \`${name}\`: ${description}`;
-    })
-    .join("\n");
+  const subagentLines: string[] = [];
+
+  for (const [name, cfg] of Object.entries(persona.subagents)) {
+    if (!cfg) continue;
+
+    const description = getSubagentDescription(name, cfg) ?? "(no description)";
+    const launchModels = cfg.launchModels ?? [];
+    const launchModelsText =
+      launchModels.length > 0
+        ? `\n  - launch models: ${launchModels.map((entry) => `\`${entry}\``).join(", ")}`
+        : "";
+    subagentLines.push(`- \`${name}\`: ${description}${launchModelsText}`);
+  }
+
+  if (subagentLines.length === 0) return undefined;
   return `\n\n### Available sub-agents\n\nYou have access to the following sub-agents:\n\n${subagentLines}`;
 }

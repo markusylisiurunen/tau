@@ -121,6 +121,79 @@ describe("custom personas", () => {
     }
   });
 
+  it("parses custom subagent launch models and applies config launch models for default", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "personas", "launch-models.md"),
+        [
+          "---",
+          "id: launch-models",
+          "provider: anthropic",
+          "model: claude-haiku-4-5",
+          "subagents:",
+          "  analyst:",
+          "    systemPrompt: analyze repository state",
+          "    launchModels:",
+          "      - openai/gpt-5.2:high",
+          "      - openai/gpt-5.2:high",
+          "---",
+          "persona with launch models",
+          "",
+        ].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContent(
+        {
+          subagents: {
+            defaultLaunchModels: ["openai/gpt-5.2:low"],
+          },
+        },
+        { deps, cwd: fx.cwd },
+      );
+      expect(errors).toEqual([]);
+
+      const customPersona = personas.find((persona) => persona.id === "launch-models");
+      expect(customPersona).toBeTruthy();
+      expect(customPersona.subagents.analyst.launchModels).toEqual(["openai/gpt-5.2:high"]);
+      expect(customPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.2:low"]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("does not mutate built-in default subagent launch models between loads", async () => {
+    const fx = setupFixture();
+
+    try {
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const withOverrides = await loadAllContent(
+        {
+          subagents: {
+            defaultLaunchModels: ["openai/gpt-5.2:low"],
+          },
+        },
+        { deps, cwd: fx.cwd },
+      );
+
+      const withOverridesPersona = withOverrides.personas.find(
+        (persona) => persona.id === "gpt-5.2-chat",
+      );
+      expect(withOverridesPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.2:low"]);
+
+      const withoutOverrides = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const withoutOverridesPersona = withoutOverrides.personas.find(
+        (persona) => persona.id === "gpt-5.2-chat",
+      );
+      expect(withoutOverridesPersona.subagents.default.launchModels).toBeUndefined();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("loads no prompts when prompt files are not present", async () => {
     const fx = setupFixture();
 

@@ -29,6 +29,7 @@ export interface ChatAppOptions {
   noAgentContextFiles?: boolean;
   config?: Config;
   sandboxEnabled: boolean;
+  caffeinated?: boolean;
   toolBackend?: ToolExecutionBackend;
   toolBackendDispose?: () => Promise<void> | void;
 }

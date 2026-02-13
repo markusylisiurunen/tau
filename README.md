@@ -244,6 +244,16 @@ example config:
 
 note: when `--sandbox` is enabled, `!` commands also run inside the container.
 
+## power management (macOS)
+
+start tau with `--caffeinated` to keep macOS awake while an assistant turn is running:
+
+```sh
+tau --caffeinated
+```
+
+tau uses `caffeinate -i` and only holds the sleep assertion during active assistant turns. it does not keep the display awake, and it does not apply to `tau rpc` mode.
+
 ## personas
 
 tau comes with several built-in personas across different models:

@@ -16,6 +16,7 @@ export const CliOptionsSchema = z.object({
   reasoningOverride: ReasoningEffortSchema.optional(),
   riskLevel: RiskLevelSchema.optional(),
   sandbox: z.boolean(),
+  caffeinated: z.boolean(),
   noAgentContextFiles: z.boolean(),
 });
 
@@ -106,6 +107,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let reasoningOverride: ReasoningEffort | undefined;
   let riskLevel: RiskLevel | undefined;
   let sandbox = false;
+  let caffeinated = false;
   let noAgentContextFiles = false;
 
   for (let i = 0; i < argv.length; i++) {
@@ -135,6 +137,11 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
 
     if (arg === "--sandbox") {
       sandbox = true;
+      continue;
+    }
+
+    if (arg === "--caffeinated") {
+      caffeinated = true;
       continue;
     }
 
@@ -199,6 +206,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     reasoningOverride,
     riskLevel,
     sandbox,
+    caffeinated,
     noAgentContextFiles,
   };
   return CliOptionsSchema.parse(options);
@@ -230,6 +238,7 @@ export function printHelp(personas: Persona[]): void {
       `  --risk, -r <level>            set initial model risk level. levels: ${riskList}.`,
       `                                if not specified, uses defaultRisk from ~/.config/tau/config.json (default: read-only).`,
       "  --sandbox                     run all tool execution inside a session docker container.",
+      "  --caffeinated                 keep macOS awake during active assistant turns in TUI mode.",
       "  --no-agent-context-files      disable AGENTS.md injection into the system prompt.",
       "",
       "subcommands:",

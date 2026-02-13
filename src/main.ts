@@ -416,6 +416,12 @@ if (cli.help) {
   process.exit(0);
 }
 
+if (isRpcSubcommand && cli.caffeinated) {
+  // eslint-disable-next-line no-console
+  console.error("--caffeinated is only supported in TUI mode.");
+  process.exit(1);
+}
+
 let checkpointPersonaId: string | undefined;
 let checkpointReasoning: ReasoningEffort | undefined;
 let checkpointRiskLevel: Checkpoint["riskLevel"] | undefined;
@@ -561,6 +567,7 @@ const app = new ChatApp({
   noAgentContextFiles: cli.noAgentContextFiles,
   config,
   sandboxEnabled: cli.sandbox,
+  caffeinated: cli.caffeinated,
   toolBackend: sandboxBackend?.backend,
   toolBackendDispose: sandboxBackend?.dispose,
 });

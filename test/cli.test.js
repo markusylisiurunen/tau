@@ -12,6 +12,16 @@ describe("cli", () => {
     expect(options.sandbox).toBe(false);
   });
 
+  it("parses --caffeinated", () => {
+    const options = parseCliArgs(["--caffeinated"], []);
+    expect(options.caffeinated).toBe(true);
+  });
+
+  it("defaults caffeinated to false", () => {
+    const options = parseCliArgs([], []);
+    expect(options.caffeinated).toBe(false);
+  });
+
   it("help output includes rpc subcommand", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -21,6 +31,7 @@ describe("cli", () => {
       expect(typeof output).toBe("string");
       expect(output).toContain("tau rpc [options]");
       expect(output).toContain("rpc                           run headless stdio RPC mode");
+      expect(output).toContain("--caffeinated");
       expect(output).toContain("in RPC mode, stdin/stdout are reserved for protocol traffic.");
     } finally {
       logSpy.mockRestore();

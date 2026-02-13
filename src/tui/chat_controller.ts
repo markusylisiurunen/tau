@@ -97,6 +97,7 @@ export interface ChatControllerOptions {
   noAgentContextFiles?: boolean;
   config?: Config;
   sandboxEnabled: boolean;
+  caffeinated?: boolean;
   toolBackend?: ToolExecutionBackend;
   toolBackendDispose?: () => Promise<void> | void;
   deps?: CoreDeps;
@@ -162,6 +163,11 @@ type SpeakRecording = {
   maxDurationTimeout?: ReturnType<typeof setTimeout>;
 };
 
+type TurnCaffeinateSession = {
+  abortController: AbortController;
+  completion: Promise<SpawnCaptureResult>;
+};
+
 const RELOAD_PLANS: Record<ReloadScope, ReloadPlan> = {
   "new-session": {
     personas: true,
@@ -193,6 +199,7 @@ const SPEAK_TEMP_FILE_TEMPLATE = "/tmp/tau-speak.XXXXXX";
 const SPEAK_MISTRAL_TRANSCRIBE_MODEL = "voxtral-mini-latest";
 const SPEAK_RECORDING_MIN_BYTES = 1024;
 const SPEAK_RECORDING_MAX_DURATION_MS = 5 * 60 * 1000;
+const CAFFEINATE_COMMAND = "/usr/bin/caffeinate";
 
 export class ChatController {
   private readonly view: ChatView;
@@ -208,6 +215,7 @@ export class ChatController {
   private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
   private readonly sandboxEnabled: boolean;
+  private readonly caffeinated: boolean;
   private readonly sandboxRootReal?: string;
   private agentCwd: string;
   private readonly includeAgentContext: boolean;
@@ -252,6 +260,8 @@ export class ChatController {
   private speakRecording?: SpeakRecording;
   private isTranscribingSpeak = false;
   private speakTransition?: Promise<void>;
+  private turnCaffeinate?: TurnCaffeinateSession;
+  private disableCaffeinateForSession = false;
 
   constructor(options: ChatControllerOptions) {
     this.view = options.view;
@@ -272,6 +282,7 @@ export class ChatController {
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
     this.sandboxEnabled = options.sandboxEnabled;
+    this.caffeinated = options.caffeinated ?? false;
     this.sandboxRootReal = this.sandboxEnabled ? this.resolveSandboxRoot(cwd) : undefined;
     this.agentCwd = resolveAgentCwd({
       cwd,
@@ -475,6 +486,7 @@ export class ChatController {
       await this.speakTransition;
     }
     await this.cancelSpeakCapture();
+    await this.stopTurnCaffeinate();
     if (!this.toolBackendDispose) return;
     await this.toolBackendDispose();
   }
@@ -3192,6 +3204,55 @@ export class ChatController {
     }
   }
 
+  private startTurnCaffeinate(): void {
+    if (!this.caffeinated || this.disableCaffeinateForSession || this.turnCaffeinate) {
+      return;
+    }
+
+    if (this.deps.env.platform() !== "darwin") {
+      this.disableCaffeinateForSession = true;
+      this.view.addSystemMessage("--caffeinated is only supported on macOS.", "warn");
+      return;
+    }
+
+    const abortController = new AbortController();
+    const completion = this.deps.spawn(CAFFEINATE_COMMAND, ["-i"], {
+      detached: true,
+      killProcessGroup: true,
+      signal: abortController.signal,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+
+    completion.catch(() => {});
+
+    this.turnCaffeinate = {
+      abortController,
+      completion,
+    };
+  }
+
+  private async stopTurnCaffeinate(): Promise<void> {
+    const session = this.turnCaffeinate;
+    if (!session) return;
+
+    this.turnCaffeinate = undefined;
+    if (!session.abortController.signal.aborted) {
+      session.abortController.abort();
+    }
+
+    try {
+      await session.completion;
+    } catch (err) {
+      if (this.disableCaffeinateForSession) {
+        return;
+      }
+      this.disableCaffeinateForSession = true;
+      const error = err as NodeJS.ErrnoException;
+      const details = error.message || "unknown error";
+      this.view.addSystemMessage(`failed to run caffeinate: ${details}`, "warn");
+    }
+  }
+
   // Assistant Turn --------------------------------------------------------------------------------
 
   private async runAssistantTurn(): Promise<void> {
@@ -3200,6 +3261,7 @@ export class ChatController {
     this.startTurnTimer();
     this.assistantState = undefined;
     this.assistantTurnInterruptRequested = false;
+    this.startTurnCaffeinate();
 
     let runResult: ConversationTurnResult = { aborted: false };
 
@@ -3209,6 +3271,7 @@ export class ChatController {
       const message = (err as Error).message || "request failed";
       this.view.addSystemMessage(message, "error");
     } finally {
+      await this.stopTurnCaffeinate();
       const reason = runResult.aborted ? "aborted" : "interrupted";
 
       this.view.finalizeToolUiPending(reason);

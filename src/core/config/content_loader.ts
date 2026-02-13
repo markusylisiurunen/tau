@@ -5,6 +5,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { personas as builtinPersonas } from "../personas.js";
 import type { PromptTemplate } from "../prompts.js";
+import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import type {
   SubagentConfigMap,
   SubagentPersonaConfig,
@@ -147,6 +148,7 @@ const SubagentSpecSchema = z
     reasoning: ReasoningEffortSchema.optional(),
     tools: z.unknown().optional(),
     riskLevel: RiskLevelSchema.optional(),
+    launchModels: z.unknown().optional(),
     systemPrompt: z.string().trim().min(1).optional(),
     description: z.string().trim().min(1).optional(),
   })
@@ -206,6 +208,15 @@ function parseSubagentTools(toolsRaw: unknown): { tools?: SubagentToolName[]; er
   }
 
   return { tools: selected };
+}
+
+function cloneSubagentPersonaConfig(config: SubagentPersonaConfig): SubagentPersonaConfig {
+  return {
+    ...config,
+    ...(config.settings ? { settings: { ...config.settings } } : {}),
+    ...(config.tools ? { tools: [...config.tools] } : {}),
+    ...(config.launchModels ? { launchModels: [...config.launchModels] } : {}),
+  };
 }
 
 function parseSubagentConfig(subagentsRaw: unknown): {
@@ -284,7 +295,14 @@ function parseSubagentConfig(subagentsRaw: unknown): {
       if (toolsResult.error) {
         return { error: `subagent ${validatedName}: ${toolsResult.error}` };
       }
+      const launchModelsResult = parseSubagentLaunchModelList(spec.data.launchModels);
+      if (launchModelsResult.error) {
+        return {
+          error: `subagent ${validatedName}: launchModels ${launchModelsResult.error}`,
+        };
+      }
       const tools = toolsResult.tools;
+      const launchModels = launchModelsResult.launchModels;
       const riskLevel = spec.data.riskLevel;
       const settings =
         spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
@@ -308,6 +326,7 @@ function parseSubagentConfig(subagentsRaw: unknown): {
         ...(settings ? { settings } : {}),
         ...(tools !== undefined ? { tools } : {}),
         ...(riskLevel ? { riskLevel } : {}),
+        ...(launchModels !== undefined ? { launchModels } : {}),
       };
 
       config[validatedName] = entry;
@@ -385,6 +404,37 @@ function mergeById<T extends { id: string }>(base: T[], overlay: T[], overlay2?:
   }
 
   return Array.from(map.values());
+}
+
+function withDefaultSubagentLaunchModels(
+  persona: Persona,
+  defaultLaunchModels: string[] | undefined,
+): Persona {
+  if (!defaultLaunchModels) {
+    return persona;
+  }
+
+  const defaultConfig = persona.subagents?.[DEFAULT_SUBAGENT_NAME];
+  if (!defaultConfig || !persona.subagents) {
+    return persona;
+  }
+
+  const clonedSubagents: SubagentConfigMap = {};
+  for (const [name, config] of Object.entries(persona.subagents)) {
+    if (!config) continue;
+    clonedSubagents[name] = cloneSubagentPersonaConfig(config);
+  }
+
+  const defaultSubagent = clonedSubagents[DEFAULT_SUBAGENT_NAME] ?? {};
+  clonedSubagents[DEFAULT_SUBAGENT_NAME] = {
+    ...defaultSubagent,
+    launchModels: [...defaultLaunchModels],
+  };
+
+  return {
+    ...persona,
+    subagents: clonedSubagents,
+  };
 }
 
 function listMarkdownFiles(dir: string, deps: ConfigDeps): MarkdownPathsResult {
@@ -638,7 +688,7 @@ function parsePersona(
 
       for (const [name, cfg] of Object.entries(basePersona.subagents)) {
         if (!cfg) continue;
-        finalSubagents[name] = { ...cfg };
+        finalSubagents[name] = cloneSubagentPersonaConfig(cfg);
       }
 
       if (Object.keys(finalSubagents).length === 0) {
@@ -646,7 +696,16 @@ function parsePersona(
       }
     }
   } else if (subagentsResult.config && Object.keys(subagentsResult.config).length > 0) {
-    finalSubagents = { ...subagentsResult.config };
+    finalSubagents = {};
+
+    for (const [name, cfg] of Object.entries(subagentsResult.config)) {
+      if (!cfg) continue;
+      finalSubagents[name] = cloneSubagentPersonaConfig(cfg);
+    }
+
+    if (Object.keys(finalSubagents).length === 0) {
+      finalSubagents = undefined;
+    }
   }
 
   if (subagentsRaw !== undefined) {
@@ -1172,12 +1231,15 @@ export async function loadAllContent(
     );
 
     // Precedence: virtual bundle < global < nearest .tau levels.
+    const defaultLaunchModels = config?.subagents?.defaultLaunchModels;
+    const personas = mergeById(
+      virtualBundle.personas,
+      userPersonasResult.personas,
+      projectPersonasResult.personas,
+    ).map((persona) => withDefaultSubagentLaunchModels(persona, defaultLaunchModels));
+
     return {
-      personas: mergeById(
-        virtualBundle.personas,
-        userPersonasResult.personas,
-        projectPersonasResult.personas,
-      ),
+      personas,
       prompts: mergeById(
         virtualBundle.prompts,
         userPromptsResult.prompts,

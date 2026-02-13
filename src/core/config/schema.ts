@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { KnownProvider } from "@mariozechner/pi-ai";
+import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { type RiskLevel, RiskLevelSchema } from "../types.js";
 import type { BashCommand } from "./bash_commands.js";
 import { parseBashCommands } from "./bash_commands.js";
@@ -25,6 +26,9 @@ export interface Config {
   defaultTheme?: string;
   bashCommands?: BashCommand[];
   agentContextFiles?: string[];
+  subagents?: {
+    defaultLaunchModels?: string[];
+  };
 }
 
 export type SandboxConfig = {
@@ -148,6 +152,12 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
   }
   errors.push(...agentResult.errors);
 
+  const subagentsResult = parseSubagentsConfig(data.subagents, sourceLabel);
+  if (subagentsResult.config) {
+    config.subagents = subagentsResult.config;
+  }
+  errors.push(...subagentsResult.errors);
+
   return { config, errors };
 }
 
@@ -263,6 +273,40 @@ function parseAgentContextFiles(
   return { paths: cleaned, errors: [] };
 }
 
+function parseSubagentsConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: Config["subagents"]; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { errors: [`${sourceLabel}: 'subagents' must be an object.`] };
+  }
+
+  const data = raw as Record<string, unknown>;
+  const config: NonNullable<Config["subagents"]> = {};
+  const errors: string[] = [];
+
+  if ("defaultLaunchModels" in data) {
+    const launchModelsResult = parseSubagentLaunchModelList(data.defaultLaunchModels);
+    if (launchModelsResult.error) {
+      errors.push(
+        `${sourceLabel}: subagents.defaultLaunchModels ${launchModelsResult.error}. expected <provider>/<model>:<effort>.`,
+      );
+    } else {
+      config.defaultLaunchModels = launchModelsResult.launchModels ?? [];
+    }
+  }
+
+  if (Object.keys(config).length === 0) {
+    return { errors };
+  }
+
+  return { config, errors };
+}
+
 function loadConfigFile(
   level: ConfigLevel,
   deps: ConfigDeps,
@@ -319,6 +363,25 @@ function mergeSandboxConfig(
   };
 }
 
+function mergeSubagentsConfig(
+  target: Config["subagents"] | undefined,
+  overlay: Config["subagents"] | undefined,
+): Config["subagents"] | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  const merged: NonNullable<Config["subagents"]> = {
+    ...(target ?? {}),
+  };
+
+  if (overlay?.defaultLaunchModels !== undefined) {
+    merged.defaultLaunchModels = [...overlay.defaultLaunchModels];
+  }
+
+  return merged;
+}
+
 function resolveAgentContextPaths(level: ConfigLevel, rawPaths: string[]): string[] {
   const root = level.levelRoot;
   return rawPaths.map((entry) => resolve(root, entry));
@@ -344,6 +407,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   const merged: Config = getVirtualConfigDefaults();
   let apiKeys: Config["apiKeys"] | undefined;
   let sandbox: SandboxConfig | undefined;
+  let subagents: Config["subagents"] | undefined;
   const bashCommands = new Map<string, BashCommand>();
   const agentContextFiles: string[] = [];
 
@@ -353,6 +417,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
     apiKeys = mergeApiKeys(apiKeys, config.apiKeys);
     sandbox = mergeSandboxConfig(sandbox, config.sandbox);
+    subagents = mergeSubagentsConfig(subagents, config.subagents);
 
     if (config.defaultPersona !== undefined) {
       merged.defaultPersona = config.defaultPersona;
@@ -391,6 +456,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (sandbox && Object.keys(sandbox).length > 0) {
     merged.sandbox = sandbox;
+  }
+
+  if (subagents && Object.keys(subagents).length > 0) {
+    merged.subagents = subagents;
   }
 
   if (bashCommands.size > 0) {

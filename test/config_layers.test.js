@@ -116,6 +116,9 @@ describe("loadConfig", () => {
           sandbox: { image: "sandbox-base" },
           bashCommands: [{ id: "check", cmd: "npm run check" }],
           agentContextFiles: ["AGENTS.md"],
+          subagents: {
+            defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
+          },
         }),
       );
 
@@ -130,6 +133,9 @@ describe("loadConfig", () => {
             { id: "test", cmd: "repo test" },
           ],
           agentContextFiles: ["docs/AGENTS.md"],
+          subagents: {
+            defaultLaunchModels: ["openai/gpt-5.2:high"],
+          },
         }),
       );
 
@@ -173,6 +179,9 @@ describe("loadConfig", () => {
         join(repo, "docs", "AGENTS.md"),
         join(nested, "AGENTS.md"),
       ]);
+      expect(config.subagents).toEqual({
+        defaultLaunchModels: ["openai/gpt-5.2:high"],
+      });
     } finally {
       fx.cleanup();
     }
@@ -246,6 +255,36 @@ describe("loadConfig", () => {
 
       const result = loadConfigWithDiagnostics(fx.repo, deps);
       expect(result.errors.length).toBeGreaterThan(0);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("validates subagents.defaultLaunchModels", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          subagents: {
+            defaultLaunchModels: ["openai/gpt-5.2", "openai/gpt-5.2:invalid"],
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const result = loadConfigWithDiagnostics(fx.repo, deps);
+      expect(result.config.subagents).toBeUndefined();
+      expect(result.errors.some((error) => error.includes("subagents.defaultLaunchModels"))).toBe(
+        true,
+      );
     } finally {
       fx.cleanup();
     }

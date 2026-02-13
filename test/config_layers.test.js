@@ -290,7 +290,7 @@ describe("loadConfig", () => {
     }
   });
 
-  it("merges async config and resolves project workspace roots by config level", () => {
+  it("merges async client config targets by key", () => {
     const fx = setupFixture();
 
     try {
@@ -311,23 +311,6 @@ describe("loadConfig", () => {
                 global: { url: "http://global", token: "global-token", timeoutMs: 5000 },
               },
             },
-            server: {
-              host: "127.0.0.1",
-              port: 7788,
-              maxSessions: 2,
-              telegram: {
-                allowedUserIds: [1],
-                allowedChatIds: [10],
-              },
-            },
-            projects: {
-              alpha: {
-                repo: "git@example.com:alpha.git",
-                workspaceRoot: "global-alpha",
-                bootstrapCommands: ["echo global"],
-                sandbox: true,
-              },
-            },
           },
         }),
       );
@@ -340,37 +323,6 @@ describe("loadConfig", () => {
               defaultTarget: "repo",
               targets: {
                 repo: { url: "http://repo", token: "repo-token" },
-              },
-            },
-            server: {
-              telegram: {
-                allowedUserIds: [2, 3],
-              },
-            },
-            projects: {
-              alpha: {
-                repo: "git@example.com:alpha.git",
-                workspaceRoot: "repo-alpha",
-                bootstrapCommands: ["echo repo"],
-              },
-              beta: {
-                repo: "git@example.com:beta.git",
-                workspaceRoot: "repo-beta",
-              },
-            },
-          },
-        }),
-      );
-
-      writeFileSync(
-        join(nested, ".tau", "config.json"),
-        JSON.stringify({
-          async: {
-            projects: {
-              alpha: {
-                repo: "git@example.com:alpha.git",
-                bootstrapCommands: [],
-                persona: "custom-persona",
               },
             },
           },
@@ -392,35 +344,13 @@ describe("loadConfig", () => {
             repo: { url: "http://repo", token: "repo-token" },
           },
         },
-        server: {
-          host: "127.0.0.1",
-          port: 7788,
-          maxSessions: 2,
-          telegram: {
-            allowedUserIds: [2, 3],
-            allowedChatIds: [10],
-          },
-        },
-        projects: {
-          alpha: {
-            repo: "git@example.com:alpha.git",
-            workspaceRoot: join(repo, "repo-alpha"),
-            bootstrapCommands: [],
-            sandbox: true,
-            persona: "custom-persona",
-          },
-          beta: {
-            repo: "git@example.com:beta.git",
-            workspaceRoot: join(repo, "repo-beta"),
-          },
-        },
       });
     } finally {
       fx.cleanup();
     }
   });
 
-  it("reports async validation errors", () => {
+  it("reports async validation errors and moved daemon fields", () => {
     const fx = setupFixture();
 
     try {
@@ -441,18 +371,10 @@ describe("loadConfig", () => {
             },
             server: {
               port: 70000,
-              maxSessions: 0,
-              telegram: {
-                allowedUserIds: [1.2],
-                allowedChatIds: [Infinity],
-                pollIntervalMs: 0,
-                requestTimeoutSeconds: 0,
-              },
             },
             projects: {
               alpha: {
-                repo: "",
-                bootstrapCommands: [],
+                repo: "owner/repo",
               },
             },
           },
@@ -470,8 +392,8 @@ describe("loadConfig", () => {
       expect(result.errors.some((error) => error.includes("async.client.defaultTarget"))).toBe(
         true,
       );
-      expect(result.errors.some((error) => error.includes("async.server.port"))).toBe(true);
-      expect(result.errors.some((error) => error.includes("async.projects.alpha.repo"))).toBe(true);
+      expect(result.errors.some((error) => error.includes("async.server was moved"))).toBe(true);
+      expect(result.errors.some((error) => error.includes("async.projects was moved"))).toBe(true);
     } finally {
       fx.cleanup();
     }

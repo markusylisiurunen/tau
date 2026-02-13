@@ -82,8 +82,6 @@ export type AsyncProjectConfig = {
 
 export type AsyncConfig = {
   client?: AsyncClientConfig;
-  server?: AsyncServerConfig;
-  projects?: Record<string, AsyncProjectConfig>;
 };
 
 type ConfigDiagnostics = {
@@ -821,17 +819,17 @@ function parseAsyncConfig(
   }
   errors.push(...clientResult.errors);
 
-  const serverResult = parseAsyncServerConfig(data.server, sourceLabel);
-  if (serverResult.config) {
-    config.server = serverResult.config;
+  if (data.server !== undefined) {
+    errors.push(
+      `${sourceLabel}: async.server was moved to daemon config file. use 'tau async daemon --config-file <path>'.`,
+    );
   }
-  errors.push(...serverResult.errors);
 
-  const projectsResult = parseAsyncProjects(data.projects, sourceLabel);
-  if (projectsResult.projects) {
-    config.projects = projectsResult.projects;
+  if (data.projects !== undefined) {
+    errors.push(
+      `${sourceLabel}: async.projects was moved to daemon config file. use 'tau async daemon --config-file <path>'.`,
+    );
   }
-  errors.push(...projectsResult.errors);
 
   if (Object.keys(config).length === 0) {
     return { errors };
@@ -1060,8 +1058,6 @@ function mergeAsyncConfig(
     ...(target ?? {}),
     ...(overlay ?? {}),
     client: mergeAsyncClientConfig(target?.client, overlay?.client),
-    server: mergeAsyncServerConfig(target?.server, overlay?.server),
-    projects: mergeAsyncProjects(target?.projects, overlay?.projects),
   };
 
   return merged;
@@ -1086,7 +1082,7 @@ function resolveAsyncProjectPaths(
   return resolvedProjects;
 }
 
-function resolveAsyncConfig(level: ConfigLevel, config: AsyncConfig): AsyncConfig {
+function resolveAsyncConfig(_level: ConfigLevel, config: AsyncConfig): AsyncConfig {
   return {
     ...config,
     ...(config.client
@@ -1106,27 +1102,6 @@ function resolveAsyncConfig(level: ConfigLevel, config: AsyncConfig): AsyncConfi
           },
         }
       : {}),
-    ...(config.server
-      ? {
-          server: {
-            ...config.server,
-            ...(config.server.telegram
-              ? {
-                  telegram: {
-                    ...config.server.telegram,
-                    ...(config.server.telegram.allowedUserIds
-                      ? { allowedUserIds: [...config.server.telegram.allowedUserIds] }
-                      : {}),
-                    ...(config.server.telegram.allowedChatIds
-                      ? { allowedChatIds: [...config.server.telegram.allowedChatIds] }
-                      : {}),
-                  },
-                }
-              : {}),
-          },
-        }
-      : {}),
-    ...(config.projects ? { projects: resolveAsyncProjectPaths(level, config.projects) } : {}),
   };
 }
 

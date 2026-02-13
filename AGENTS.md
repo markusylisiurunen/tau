@@ -20,6 +20,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly and history preparation for `/compact:*` flows (summary-only and summary + last assistant)
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface plus RPC protocol/server wiring for alternate front-ends
+- **SDK client** (`src/sdk/`): Node SDK facade that drives Tau through the same RPC subprocess protocol (`tau rpc`)
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools (local host or docker sandbox)
 - **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent) and sub-agent (emit_output plus allowed tools) registries
@@ -28,7 +29,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
 - **Tool UI registry** (`src/tui/ui/tool_ui_registry.ts`): Maps ToolUiEvent types to tool output view models
 
-**Data flow**: TUI mode: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering. RPC mode: NDJSON requests on stdin → RPC server (`src/core/modes/rpc_server.ts`) → `ChatRuntime`/`CoreSession` → NDJSON responses/events on stdout.
+**Data flow**: TUI mode: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering. RPC mode: NDJSON requests on stdin → RPC server (`src/core/modes/rpc_server.ts`) → `ChatRuntime`/`CoreSession` → NDJSON responses/events on stdout. SDK mode: Node code → `src/sdk/client.ts` → spawned `tau rpc` subprocess over stdin/stdout NDJSON.
 
 **Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Assistant and tool-result events include stable `historyEntryId` values so the UI can correlate rendered rows with session history across rewind operations. Subagent UI updates (spawned, progress, emit_output messages, finished) are delivered via `CoreSession.onSubagentEvent()` as `subagent_ui` events for background updates. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
 
@@ -36,6 +37,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
 - `docs/` - Extended user-facing docs that complement README.md (`rpc.md` documents RPC mode, protocol, and runtime behavior)
+- `src/sdk/` - SDK client modules for spawning and talking to the RPC subprocess (`tau rpc`) from Node
 - `src/core/`
   - `personas.ts` - Built-in persona definitions and system prompt blocks
   - `prompts.ts` - Prompt template types

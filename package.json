@@ -8,6 +8,9 @@
   "files": [
     "dist/"
   ],
+  "exports": {
+    "./sdk": "./dist/sdk/index.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "postbuild": "node scripts/copy-starter.js",

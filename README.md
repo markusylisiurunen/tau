@@ -92,6 +92,27 @@ RPC mode reuses the same startup config/persona/risk/sandbox loading as interact
 
 for protocol details and examples, see [docs/rpc.md](docs/rpc.md).
 
+## sdk usage (node)
+
+tau also ships a Node SDK that talks to the same RPC subprocess (`node dist/main.js rpc`) behind the scenes.
+
+```ts
+import { createTauSdkClient } from "@markusylisiurunen/tau/sdk";
+
+const client = await createTauSdkClient();
+
+const unsubscribe = client.onEvent((event) => {
+  // stream core events here
+});
+
+const snapshot = await client.snapshot();
+console.log(snapshot.sessionId, snapshot.historyLength);
+
+await client.shutdown();
+unsubscribe();
+await client.close();
+```
+
 ## install starter prompts and skills
 
 tau ships starter prompt and skill templates as markdown content in this repository. install them with:

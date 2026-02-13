@@ -1,3 +1,4 @@
+import { Api } from "grammy";
 import type { AsyncProjectConfig } from "../config/schema.js";
 import {
   type AsyncSessionManager,
@@ -26,10 +27,13 @@ type TelegramUpdate = {
   message?: TelegramMessage;
 };
 
-type TelegramApiResponse<T> = {
-  ok?: boolean;
-  result?: T;
-  description?: string;
+export type AsyncTelegramApi = {
+  getUpdates(args: {
+    offset: number;
+    timeoutSeconds: number;
+    allowedUpdates: string[];
+  }): Promise<TelegramUpdate[]>;
+  sendMessage(chatId: number, text: string): Promise<void>;
 };
 
 export type AsyncTelegramLogLevel = "info" | "warn" | "error";
@@ -49,7 +53,7 @@ export type AsyncTelegramAdapterOptions = {
   pollIntervalMs?: number;
   requestTimeoutSeconds?: number;
   sessionManager: AsyncSessionManager;
-  fetchImpl?: typeof fetch;
+  api?: AsyncTelegramApi;
   onLog?: (entry: AsyncTelegramLogEntry) => void;
 };
 
@@ -68,6 +72,7 @@ type NewCommandResolution =
 
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
+const ABORTED = Symbol("aborted");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -98,8 +103,26 @@ function describeSession(session: AsyncSessionRecord): string {
   ].join("\n");
 }
 
+function createGrammyApi(botToken: string): AsyncTelegramApi {
+  const api = new Api(botToken);
+
+  return {
+    async getUpdates(args) {
+      const updates = await api.getUpdates({
+        offset: args.offset,
+        timeout: args.timeoutSeconds,
+        allowed_updates: args.allowedUpdates as never,
+      });
+
+      return updates.map((update) => update as TelegramUpdate);
+    },
+    async sendMessage(chatId, text) {
+      await api.sendMessage(chatId, text);
+    },
+  };
+}
+
 class AsyncTelegramAdapterImpl {
-  private readonly botToken: string;
   private readonly projects: Record<string, AsyncProjectConfig>;
   private readonly defaultProjectId?: string;
   private readonly allowedUserIds?: Set<number>;
@@ -107,7 +130,7 @@ class AsyncTelegramAdapterImpl {
   private readonly pollIntervalMs: number;
   private readonly requestTimeoutSeconds: number;
   private readonly sessionManager: AsyncSessionManager;
-  private readonly fetchImpl: typeof fetch;
+  private readonly api: AsyncTelegramApi;
   private readonly onLog?: (entry: AsyncTelegramLogEntry) => void;
   private readonly abortController = new AbortController();
   private readonly activeSessionsByChat = new Map<number, string>();
@@ -120,7 +143,6 @@ class AsyncTelegramAdapterImpl {
   private closed = false;
 
   constructor(options: AsyncTelegramAdapterOptions) {
-    this.botToken = options.botToken;
     this.projects = options.projects;
     this.defaultProjectId = options.defaultProjectId;
     this.allowedUserIds =
@@ -134,7 +156,7 @@ class AsyncTelegramAdapterImpl {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
     this.sessionManager = options.sessionManager;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.api = options.api ?? createGrammyApi(options.botToken);
     this.onLog = options.onLog;
 
     this.unsubscribeSessionEvents = this.sessionManager.onEvent((event) => {
@@ -198,80 +220,52 @@ class AsyncTelegramAdapterImpl {
   }
 
   private async getUpdates(): Promise<TelegramUpdate[]> {
-    const result = await this.callTelegramApi<unknown[]>("getUpdates", {
-      offset: this.nextUpdateOffset,
-      timeout: this.requestTimeoutSeconds,
-      allowed_updates: ["message"],
-    });
+    const updates = await this.raceWithAbort(
+      this.api.getUpdates({
+        offset: this.nextUpdateOffset,
+        timeoutSeconds: this.requestTimeoutSeconds,
+        allowedUpdates: ["message"],
+      }),
+    );
 
-    if (!Array.isArray(result)) {
+    if (updates === undefined) {
       return [];
     }
 
-    return result.filter((entry): entry is TelegramUpdate => isRecord(entry));
+    return updates.filter((entry): entry is TelegramUpdate => isRecord(entry));
   }
 
-  private async callTelegramApi<T>(method: string, payload: unknown): Promise<T> {
-    const timeoutMs = Math.max((this.requestTimeoutSeconds + 5) * 1000, 1000);
-    const controller = new AbortController();
-
-    const abortFromParent = () => {
-      controller.abort();
-    };
-
-    this.abortController.signal.addEventListener("abort", abortFromParent, { once: true });
-
-    const timeout = setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
-    timeout.unref?.();
-
-    try {
-      const response = await this.fetchImpl(
-        `https://api.telegram.org/bot${this.botToken}/${encodeURIComponent(method)}`,
-        {
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        },
-      );
-
-      const text = await response.text();
-      let parsed: unknown;
-      if (text.trim()) {
-        try {
-          parsed = JSON.parse(text) as unknown;
-        } catch {
-          throw new Error(`invalid telegram response payload for ${method}`);
-        }
-      }
-
-      if (!response.ok) {
-        throw new Error(`telegram ${method} failed (${response.status})`);
-      }
-
-      if (!isRecord(parsed)) {
-        throw new Error(`invalid telegram response object for ${method}`);
-      }
-
-      const telegramPayload = parsed as TelegramApiResponse<T>;
-      if (telegramPayload.ok !== true) {
-        throw new Error(
-          telegramPayload.description
-            ? `telegram ${method} failed: ${telegramPayload.description}`
-            : `telegram ${method} failed`,
-        );
-      }
-
-      return telegramPayload.result as T;
-    } finally {
-      clearTimeout(timeout);
-      this.abortController.signal.removeEventListener("abort", abortFromParent);
+  private async raceWithAbort<T>(promise: Promise<T>): Promise<T | undefined> {
+    if (this.abortController.signal.aborted) {
+      return undefined;
     }
+
+    let abortListener: (() => void) | undefined;
+    const abortPromise = new Promise<typeof ABORTED>((resolve) => {
+      abortListener = () => resolve(ABORTED);
+      this.abortController.signal.addEventListener("abort", abortListener, { once: true });
+    });
+
+    const settled = promise.then(
+      (value) => ({ ok: true as const, value }),
+      (error) => ({ ok: false as const, error }),
+    );
+
+    const raceResult = await Promise.race([settled, abortPromise]);
+
+    if (abortListener) {
+      this.abortController.signal.removeEventListener("abort", abortListener);
+    }
+
+    if (raceResult === ABORTED) {
+      return undefined;
+    }
+
+    if (!raceResult.ok) {
+      throw raceResult.error;
+    }
+
+    return raceResult.value;
   }
 
   private async handleUpdate(update: TelegramUpdate): Promise<void> {
@@ -603,10 +597,7 @@ class AsyncTelegramAdapterImpl {
 
   private async reply(chatId: number, text: string): Promise<void> {
     try {
-      await this.callTelegramApi("sendMessage", {
-        chat_id: chatId,
-        text,
-      });
+      await this.api.sendMessage(chatId, text);
     } catch (error) {
       this.log("warn", "failed to send telegram message", {
         chatId,

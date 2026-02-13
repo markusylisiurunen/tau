@@ -1,15 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { startAsyncTelegramAdapter } from "../dist/core/async/telegram.js";
 
-function jsonResponse(payload) {
-  return new Response(JSON.stringify(payload), {
-    status: 200,
-    headers: {
-      "content-type": "application/json",
-    },
-  });
-}
-
 async function waitFor(predicate, timeoutMs = 2000) {
   const start = Date.now();
   while (!predicate()) {
@@ -20,53 +11,26 @@ async function waitFor(predicate, timeoutMs = 2000) {
   }
 }
 
-function createFetchHarness(updateBatches) {
+function createApiHarness(updateBatches) {
   const queue = [...updateBatches];
   const sendMessages = [];
-  const getUpdatesBodies = [];
 
-  const fetchMock = vi.fn(async (url, init = {}) => {
-    const method = new URL(String(url)).pathname.split("/").pop();
-
-    if (method === "getUpdates") {
-      const body = init.body ? JSON.parse(init.body) : {};
-      getUpdatesBodies.push(body);
-
+  const api = {
+    getUpdates: vi.fn(async () => {
       if (queue.length > 0) {
-        return jsonResponse({ ok: true, result: queue.shift() });
+        return queue.shift();
       }
 
-      return await new Promise((_, reject) => {
-        const signal = init.signal;
-
-        const onAbort = () => {
-          const error = new Error("aborted");
-          error.name = "AbortError";
-          reject(error);
-        };
-
-        if (signal?.aborted) {
-          onAbort();
-          return;
-        }
-
-        signal?.addEventListener("abort", onAbort, { once: true });
-      });
-    }
-
-    if (method === "sendMessage") {
-      const body = init.body ? JSON.parse(init.body) : {};
-      sendMessages.push(body);
-      return jsonResponse({ ok: true, result: { message_id: sendMessages.length } });
-    }
-
-    throw new Error(`unexpected telegram method: ${String(method)}`);
-  });
+      return await new Promise(() => {});
+    }),
+    sendMessage: vi.fn(async (chatId, text) => {
+      sendMessages.push({ chatId, text });
+    }),
+  };
 
   return {
-    fetchMock,
+    api,
     sendMessages,
-    getUpdatesBodies,
   };
 }
 
@@ -134,7 +98,7 @@ function createSessionManagerHarness(initialSessions = []) {
 
 describe("async telegram adapter", () => {
   it("routes private DM commands and ignores non-private chats", async () => {
-    const fetchHarness = createFetchHarness([
+    const apiHarness = createApiHarness([
       [
         {
           update_id: 1,
@@ -169,23 +133,23 @@ describe("async telegram adapter", () => {
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      fetchImpl: fetchHarness.fetchMock,
+      api: apiHarness.api,
       pollIntervalMs: 1,
       requestTimeoutSeconds: 1,
     });
 
     try {
-      await waitFor(() => fetchHarness.sendMessages.length === 1);
+      await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(managerHarness.manager.listSessions).toHaveBeenCalledTimes(1);
-      expect(fetchHarness.sendMessages[0].chat_id).toBe(20);
-      expect(fetchHarness.sendMessages[0].text).toContain("s1");
+      expect(apiHarness.sendMessages[0].chatId).toBe(20);
+      expect(apiHarness.sendMessages[0].text).toContain("s1");
     } finally {
       await adapter.close();
     }
   });
 
   it("enforces telegram allowlists when configured", async () => {
-    const fetchHarness = createFetchHarness([
+    const apiHarness = createApiHarness([
       [
         {
           update_id: 1,
@@ -220,7 +184,7 @@ describe("async telegram adapter", () => {
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      fetchImpl: fetchHarness.fetchMock,
+      api: apiHarness.api,
       allowedUserIds: [7],
       allowedChatIds: [100],
       pollIntervalMs: 1,
@@ -228,16 +192,16 @@ describe("async telegram adapter", () => {
     });
 
     try {
-      await waitFor(() => fetchHarness.sendMessages.length === 1);
+      await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(managerHarness.manager.listSessions).toHaveBeenCalledTimes(1);
-      expect(fetchHarness.sendMessages[0].chat_id).toBe(100);
+      expect(apiHarness.sendMessages[0].chatId).toBe(100);
     } finally {
       await adapter.close();
     }
   });
 
   it("supports /new and routes plain text to the active session", async () => {
-    const fetchHarness = createFetchHarness([
+    const apiHarness = createApiHarness([
       [
         {
           update_id: 1,
@@ -268,7 +232,7 @@ describe("async telegram adapter", () => {
       },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
-      fetchImpl: fetchHarness.fetchMock,
+      api: apiHarness.api,
       pollIntervalMs: 1,
       requestTimeoutSeconds: 1,
     });
@@ -283,10 +247,10 @@ describe("async telegram adapter", () => {
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s1", "follow up");
 
       expect(
-        fetchHarness.sendMessages.some((entry) => String(entry.text).startsWith("accepted:")),
+        apiHarness.sendMessages.some((entry) => String(entry.text).startsWith("accepted:")),
       ).toBe(true);
       expect(
-        fetchHarness.sendMessages.some((entry) => String(entry.text).startsWith("queued:")),
+        apiHarness.sendMessages.some((entry) => String(entry.text).startsWith("queued:")),
       ).toBe(true);
     } finally {
       await adapter.close();
@@ -294,7 +258,7 @@ describe("async telegram adapter", () => {
   });
 
   it("supports /use and /cancel for active sessions", async () => {
-    const fetchHarness = createFetchHarness([
+    const apiHarness = createApiHarness([
       [
         {
           update_id: 1,
@@ -329,7 +293,7 @@ describe("async telegram adapter", () => {
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      fetchImpl: fetchHarness.fetchMock,
+      api: apiHarness.api,
       pollIntervalMs: 1,
       requestTimeoutSeconds: 1,
     });
@@ -338,7 +302,7 @@ describe("async telegram adapter", () => {
       await waitFor(() => managerHarness.manager.cancelSession.mock.calls.length === 1);
       expect(managerHarness.manager.cancelSession).toHaveBeenCalledWith("s2");
       expect(
-        fetchHarness.sendMessages.some((entry) => String(entry.text).includes("canceled: s2")),
+        apiHarness.sendMessages.some((entry) => String(entry.text).includes("canceled: s2")),
       ).toBe(true);
     } finally {
       await adapter.close();
@@ -346,7 +310,7 @@ describe("async telegram adapter", () => {
   });
 
   it("maps session lifecycle events to telegram notifications", async () => {
-    const fetchHarness = createFetchHarness([
+    const apiHarness = createApiHarness([
       [
         {
           update_id: 1,
@@ -373,13 +337,13 @@ describe("async telegram adapter", () => {
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      fetchImpl: fetchHarness.fetchMock,
+      api: apiHarness.api,
       pollIntervalMs: 1,
       requestTimeoutSeconds: 1,
     });
 
     try {
-      await waitFor(() => fetchHarness.sendMessages.length >= 1);
+      await waitFor(() => apiHarness.sendMessages.length >= 1);
 
       managerHarness.manager.emit({
         type: "session-state-changed",
@@ -416,10 +380,10 @@ describe("async telegram adapter", () => {
 
       await waitFor(
         () =>
-          fetchHarness.sendMessages.some((entry) => entry.text === "started: s9") &&
-          fetchHarness.sendMessages.some((entry) => entry.text === "finished: s9") &&
-          fetchHarness.sendMessages.some((entry) => entry.text === "failed: s9") &&
-          fetchHarness.sendMessages.some((entry) => entry.text === "canceled: s9"),
+          apiHarness.sendMessages.some((entry) => entry.text === "started: s9") &&
+          apiHarness.sendMessages.some((entry) => entry.text === "finished: s9") &&
+          apiHarness.sendMessages.some((entry) => entry.text === "failed: s9") &&
+          apiHarness.sendMessages.some((entry) => entry.text === "canceled: s9"),
       );
     } finally {
       await adapter.close();

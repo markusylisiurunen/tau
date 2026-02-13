@@ -9,7 +9,10 @@
     "dist/"
   ],
   "exports": {
-    "./sdk": "./dist/sdk/index.js"
+    "./sdk": {
+      "types": "./dist/sdk/index.d.ts",
+      "default": "./dist/sdk/index.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

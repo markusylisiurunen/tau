@@ -36,7 +36,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 ## Key modules
 
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
-- `docs/` - Extended user-facing docs that complement README.md (`rpc.md` documents RPC mode, protocol, and runtime behavior)
+- `docs/` - Extended user-facing docs that complement README.md (`rpc.md` documents RPC mode/protocol, `sdk.md` documents the Node SDK API)
 - `src/sdk/` - SDK client modules for spawning and talking to the RPC subprocess (`tau rpc`) from Node
 - `src/core/`
   - `personas.ts` - Built-in persona definitions and system prompt blocks
@@ -348,4 +348,4 @@ Notes:
 
 ## Maintaining this file
 
-Keep AGENTS.md, README.md, and docs/ in sync with the codebase. After making code changes, reflect on whether documentation needs updates. When making changes that affect architecture, commands, configuration, protocols, or other documented behavior, update the relevant sections here, in README.md, and in docs/*.md as needed (for example, docs/rpc.md for RPC mode changes). This includes updates to this file itself, README.md, docs/, or any other user-facing docs. Do not add documentation for previously undocumented features or behavior unless explicitly requested.
+Keep AGENTS.md, README.md, and docs/ in sync with the codebase. After making code changes, reflect on whether documentation needs updates. When making changes that affect architecture, commands, configuration, protocols, or other documented behavior, update the relevant sections here, in README.md, and in docs/\*.md as needed (for example, docs/rpc.md for RPC mode changes). This includes updates to this file itself, README.md, docs/, or any other user-facing docs. Do not add documentation for previously undocumented features or behavior unless explicitly requested.

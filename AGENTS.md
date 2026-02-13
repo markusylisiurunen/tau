@@ -14,6 +14,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **TuiChatView** (`src/tui/chat_view.ts`): TUI adapter for rendering, editor, and tool UI
 - **CoreSession** (`src/core/session/core_session.ts`): Owns session state and emits core events for consumers
 - **SessionEngine** (`src/core/session/session_engine.ts`): Internal streaming/tool dispatch runner used by CoreSession, and host for manual session compaction
+- **ChatRuntime** (`src/core/runtime/chat_runtime.ts`): High-level runtime that composes session prompt building, turn execution, and session prompt updates
 - **ConversationTurnRuntime** (`src/core/runtime/conversation_turn_runtime.ts`): Assistant-turn runner with interruption and abort handling for core event streams
 - **Session prompt composer** (`src/core/runtime/session_prompt_composer.ts`): Composes main-session and subagent system prompts with environment and context blocks
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly and history preparation for `/compact:*` flows (summary-only and summary + last assistant)
@@ -64,6 +65,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `tools/sandbox/docker_sandbox.ts` - Docker sandbox runner
   - `subagents/` - Default subagent prompt and runner
   - `modes/` - ModeAdapter interface and RPC stub
+  - `runtime/chat_runtime.ts` - High-level runtime that coordinates session updates, turn execution, and prompt composition
   - `runtime/conversation_turn_runtime.ts` - Assistant-turn runtime with interruption and abort handling
   - `runtime/session_prompt_composer.ts` - Session prompt composition for main-session and subagent prompts
   - `runtime/deps.ts` - Core dependency injection

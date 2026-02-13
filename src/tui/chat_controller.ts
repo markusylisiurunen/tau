@@ -35,14 +35,11 @@ import {
 } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
-import {
-  type ConversationTurnResult,
-  ConversationTurnRuntime,
-} from "../core/runtime/conversation_turn_runtime.js";
+import { ChatRuntime } from "../core/runtime/chat_runtime.js";
+import type { ConversationTurnResult } from "../core/runtime/conversation_turn_runtime.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
-import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
 import { createCheckpoint } from "../core/session/checkpoint.js";
-import { CoreSession } from "../core/session/core_session.js";
+import type { CoreSession } from "../core/session/core_session.js";
 import {
   buildBashUiText,
   formatBashUserMessageText,
@@ -215,6 +212,7 @@ export class ChatController {
   private agentCwd: string;
   private readonly includeAgentContext: boolean;
 
+  private readonly runtime: ChatRuntime;
   private readonly engine: CoreSession;
   private readonly commandRegistry: CommandRegistry<CommandDispatchContext>;
   private readonly commandHandlers: CommandDispatchContext;
@@ -232,11 +230,9 @@ export class ChatController {
   private showThinking = false;
   private compactToolUi = true;
   private commandHint?: string;
-  private readonly assistantTurnRuntime: ConversationTurnRuntime;
   private assistantTurnInterruptRequested = false;
   private currentTurnAbort?: AbortController;
   private riskLevel: RiskLevel = "read-only";
-  private environmentTag = "";
   private projectContextBlock?: string;
   private projectFiles: string[] = [];
   private projectFilesCwd?: string;
@@ -244,8 +240,6 @@ export class ChatController {
   private isInFileAutocomplete = false;
   private agentsFiles: string[];
   private agentsConfigErrors: string[];
-  private baseSystemPrompt = "";
-  private subagentPrompts: Record<string, string> = {};
   private pendingRiskLevelChange?: { from: RiskLevel; to: RiskLevel };
   private pendingCwdChange?: { from: string; to: string };
   private expandedFilesInCurrentPrompt: Set<string> = new Set();
@@ -329,7 +323,6 @@ export class ChatController {
       this.riskLevel = options.initialRiskLevel;
     }
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
-    this.updateSystemPrompts(skillsContext.skillsBlock);
 
     this.toolBackend =
       options.toolBackend ??
@@ -341,16 +334,26 @@ export class ChatController {
       throw new Error("sandbox enabled but tool backend is not sandboxed.");
     }
     const toolRegistry = ToolCatalog.createRegistry(this.toolBackend);
-    this.engine = new CoreSession({
+    this.runtime = ChatRuntime.create({
       persona: this.currentPersona,
-      systemPrompt: this.baseSystemPrompt,
-      subagentPrompts: this.subagentPrompts,
       riskLevel: this.riskLevel,
       toolRegistry,
+      promptContext: {
+        cwd: this.agentCwd,
+        projectContextBlock: this.projectContextBlock,
+        sandboxEnabled: this.sandboxEnabled,
+        sandboxEnvironmentInfo: this.config.sandbox?.environmentInfo,
+        skillsBlock: skillsContext.skillsBlock,
+      },
+      environment: {
+        now: () => this.deps.clock.now(),
+        platform: () => this.deps.env.platform(),
+        nodeVersion: () => this.deps.env.nodeVersion(),
+      },
       config: this.config,
       deps: this.deps,
     });
-    this.assistantTurnRuntime = new ConversationTurnRuntime(this.engine);
+    this.engine = this.runtime.session;
     this.subagentUnsubscribe = this.engine.onSubagentEvent((event) => this.onEvent(event));
 
     this.commandRegistry = createCommandRegistry();
@@ -1028,10 +1031,10 @@ export class ChatController {
   private interruptAssistantTurn(): void {
     if (!this.isStreaming) return;
 
-    if (this.assistantTurnRuntime.isRunning) {
+    if (this.runtime.isTurnRunning) {
       if (this.assistantTurnInterruptRequested) return;
       this.assistantTurnInterruptRequested = true;
-      this.assistantTurnRuntime.interrupt();
+      this.runtime.interruptTurn();
       this.view.addSystemMessage("interrupted", "error");
       return;
     }
@@ -1920,45 +1923,27 @@ export class ChatController {
     return this.escapeXml(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
   }
 
-  private composePromptSet(skillsBlock?: string): ReturnType<typeof composeSessionPrompts> {
-    const resolvedSkillsBlock =
-      skillsBlock ?? this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock;
-    const timestamp = new Date(this.deps.clock.now()).toISOString();
-
-    return composeSessionPrompts({
-      persona: this.currentPersona,
-      riskLevel: this.riskLevel,
+  private syncRuntimePromptContext(): void {
+    this.runtime.updatePromptContext({
       cwd: this.agentCwd,
-      datetime: timestamp,
-      platform: this.deps.env.platform(),
-      nodeVersion: this.deps.env.nodeVersion(),
-      skillsBlock: resolvedSkillsBlock,
       projectContextBlock: this.projectContextBlock,
       sandboxEnabled: this.sandboxEnabled,
       sandboxEnvironmentInfo: this.config.sandbox?.environmentInfo,
     });
   }
 
-  private updateSystemPrompts(skillsBlock?: string): void {
-    const promptSet = this.composePromptSet(skillsBlock);
-    this.environmentTag = promptSet.environmentTag;
-    this.baseSystemPrompt = promptSet.baseSystemPrompt;
-    this.subagentPrompts = promptSet.subagentPrompts;
-  }
-
-  private updateSubagentPrompts(skillsBlock?: string): void {
-    const promptSet = this.composePromptSet(skillsBlock);
-    this.subagentPrompts = promptSet.subagentPrompts;
-  }
-
   private rebuildSystemPrompt(skillsBlock?: string): void {
-    this.updateSystemPrompts(skillsBlock);
-    this.engine.setPersona(this.currentPersona, this.baseSystemPrompt, this.subagentPrompts);
+    const resolvedSkillsBlock =
+      skillsBlock ?? this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock;
+    this.syncRuntimePromptContext();
+    this.runtime.setPersona(this.currentPersona, { skillsBlock: resolvedSkillsBlock });
   }
 
   private rebuildSubagentPrompts(skillsBlock?: string): void {
-    this.updateSubagentPrompts(skillsBlock);
-    this.engine.setPersona(this.currentPersona, this.baseSystemPrompt, this.subagentPrompts);
+    const resolvedSkillsBlock =
+      skillsBlock ?? this.getSkillsIndexBlockForPersona(this.currentPersona).skillsBlock;
+    this.syncRuntimePromptContext();
+    this.runtime.rebuildSubagentPrompts({ skillsBlock: resolvedSkillsBlock });
   }
 
   private applyCompactedHistoryUi(compactionMessage: string): void {
@@ -2942,11 +2927,11 @@ export class ChatController {
   private setRiskLevel(level: RiskLevel, options?: { silent?: boolean }): void {
     const previous = this.riskLevel;
     this.riskLevel = level;
-    this.engine.setRiskLevel(level);
+    this.syncRuntimePromptContext();
+    this.runtime.setRiskLevel(level);
     this.refreshStatus();
 
     if (previous !== level) {
-      this.rebuildSubagentPrompts();
       const from = this.pendingRiskLevelChange?.from ?? previous;
       if (from === level) {
         this.pendingRiskLevelChange = undefined;
@@ -3056,7 +3041,7 @@ export class ChatController {
     const messages: ReloadMessage[] = [];
 
     this.config = runtime.config;
-    this.engine.setConfig(this.config);
+    this.runtime.setConfig(this.config);
 
     if (plan.bashCommands) {
       this.bashCommands = runtime.bashCommands;
@@ -3219,7 +3204,7 @@ export class ChatController {
     let runResult: ConversationTurnResult = { aborted: false };
 
     try {
-      runResult = await this.assistantTurnRuntime.run((event) => this.onEvent(event));
+      runResult = await this.runtime.runTurn((event) => this.onEvent(event));
     } catch (err) {
       const message = (err as Error).message || "request failed";
       this.view.addSystemMessage(message, "error");

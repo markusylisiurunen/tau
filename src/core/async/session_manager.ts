@@ -226,7 +226,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       throw new AsyncSessionManagerError("busy", "session is running");
     }
 
-    await this.submitText(entry, trimmed, "user-message");
+    void this.submitText(entry, trimmed, "user-message");
     return this.toRecord(entry);
   }
 
@@ -322,14 +322,18 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
         return;
       }
 
-      const message = error instanceof Error ? error.message : String(error);
-      entry.record.error = message;
-      this.setState(entry, "failed");
-      this.log(entry, "error", "session failed", { cause: message });
+      if (entry.record.state !== "failed") {
+        const message = error instanceof Error ? error.message : String(error);
+        entry.record.error = message;
+        this.setState(entry, "failed");
+        this.log(entry, "error", "session failed", { cause: message });
+      }
+
+      await this.stopClient(entry);
     }
   }
 
-  private async submitText(entry: SessionEntry, text: string, source: string): Promise<void> {
+  private submitText(entry: SessionEntry, text: string, source: string): Promise<void> {
     if (!entry.client) {
       throw new AsyncSessionManagerError("not_ready", "session is still preparing");
     }
@@ -341,34 +345,39 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     this.setState(entry, "running");
     this.log(entry, "info", "submitting message", { source, text });
 
-    const submitPromise = entry.client.submit(text).then((result) => {
-      this.log(entry, "info", "message finished", {
-        source,
-        aborted: result.turn.aborted,
-        userHistoryEntryId: result.userHistoryEntryId,
-      });
-    });
+    const client = entry.client;
+
+    const submitPromise = (async () => {
+      try {
+        const result = await client.submit(text);
+        this.log(entry, "info", "message finished", {
+          source,
+          aborted: result.turn.aborted,
+          userHistoryEntryId: result.userHistoryEntryId,
+        });
+
+        if (!entry.cancelRequested) {
+          this.setState(entry, "waiting-input");
+        }
+      } catch (error) {
+        if (!entry.cancelRequested) {
+          const message = error instanceof Error ? error.message : String(error);
+          entry.record.error = message;
+          this.setState(entry, "failed");
+          this.log(entry, "error", "submit failed", { source, cause: message });
+          await this.stopClient(entry);
+        }
+      }
+    })();
 
     entry.activeSubmit = submitPromise;
-
-    try {
-      await submitPromise;
-      if (!entry.cancelRequested) {
-        this.setState(entry, "waiting-input");
-      }
-    } catch (error) {
-      if (!entry.cancelRequested) {
-        const message = error instanceof Error ? error.message : String(error);
-        entry.record.error = message;
-        this.setState(entry, "failed");
-        this.log(entry, "error", "submit failed", { source, cause: message });
-      }
-      throw error;
-    } finally {
+    void submitPromise.finally(() => {
       if (entry.activeSubmit === submitPromise) {
         entry.activeSubmit = undefined;
       }
-    }
+    });
+
+    return submitPromise;
   }
 
   private async closeAllSessions(): Promise<void> {

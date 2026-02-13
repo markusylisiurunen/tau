@@ -81,7 +81,7 @@ describe("async session manager", () => {
     );
   });
 
-  it("rejects sendMessage with busy when a submit is already running", async () => {
+  it("returns from sendMessage immediately and rejects concurrent submits", async () => {
     const clientHarness = createClientHarness();
     const manager = createAsyncSessionManager({
       projects: {
@@ -96,8 +96,9 @@ describe("async session manager", () => {
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
-    const sendPromise = manager.sendMessage(created.id, "first");
-    await waitFor(() => manager.getSession(created.id)?.state === "running");
+    const accepted = await manager.sendMessage(created.id, "first");
+    expect(accepted.state).toBe("running");
+    expect(clientHarness.client.submit).toHaveBeenCalledTimes(1);
 
     await expect(manager.sendMessage(created.id, "second")).rejects.toEqual(
       expect.objectContaining({
@@ -109,12 +110,11 @@ describe("async session manager", () => {
       userHistoryEntryId: "history-1",
       turn: { aborted: false },
     });
-    await sendPromise;
 
-    expect(manager.getSession(created.id)?.state).toBe("waiting-input");
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 
-  it("marks the session failed when sendMessage submit rejects", async () => {
+  it("marks the session failed and closes the client when submit rejects", async () => {
     const clientHarness = createClientHarness();
     clientHarness.client.submit = vi.fn(async () => {
       throw new Error("submit boom");
@@ -133,7 +133,10 @@ describe("async session manager", () => {
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
-    await expect(manager.sendMessage(created.id, "first")).rejects.toThrow("submit boom");
+    const accepted = await manager.sendMessage(created.id, "first");
+    expect(accepted.state).toBe("running");
+
+    await waitFor(() => manager.getSession(created.id)?.state === "failed");
 
     const failed = manager.getSession(created.id);
     expect(failed).toEqual(
@@ -143,8 +146,40 @@ describe("async session manager", () => {
       }),
     );
 
+    await waitFor(() => clientHarness.client.close.mock.calls.length === 1);
+    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
+    expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
+
     const logs = manager.getLogs(created.id) ?? [];
     expect(logs.some((entry) => entry.message === "submit failed")).toBe(true);
+  });
+
+  it("does not duplicate error logs when initial prompt submit fails", async () => {
+    const clientHarness = createClientHarness();
+    clientHarness.client.submit = vi.fn(async () => {
+      throw new Error("submit boom");
+    });
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo", prompt: "hello" });
+    await waitFor(() => manager.getSession(created.id)?.state === "failed");
+
+    const logs = manager.getLogs(created.id) ?? [];
+    expect(logs.filter((entry) => entry.message === "submit failed")).toHaveLength(1);
+    expect(logs.filter((entry) => entry.message === "session failed")).toHaveLength(0);
+    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
+    expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
   });
 
   it("does not rewrite terminal failed sessions to canceled", async () => {
@@ -166,13 +201,14 @@ describe("async session manager", () => {
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
-    await expect(manager.sendMessage(created.id, "first")).rejects.toThrow("submit boom");
+    await manager.sendMessage(created.id, "first");
+    await waitFor(() => manager.getSession(created.id)?.state === "failed");
 
     const canceled = await manager.cancelSession(created.id);
     expect(canceled.state).toBe("failed");
-    expect(clientHarness.client.interrupt).not.toHaveBeenCalled();
-    expect(clientHarness.client.shutdown).not.toHaveBeenCalled();
-    expect(clientHarness.client.close).not.toHaveBeenCalled();
+    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
+    expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
   });
 
   it("cancels a running session and shuts down the sdk client", async () => {

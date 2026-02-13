@@ -21,7 +21,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface plus RPC protocol/server wiring for alternate front-ends
 - **SDK client** (`src/sdk/`): Node SDK facade that drives Tau through the same RPC subprocess protocol (`tau rpc`)
-- **Async daemon runtime** (`src/core/async/`): Async CLI + daemon stack (`cli.ts`, `http_server.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
+- **Async daemon runtime** (`src/core/async/`): Async CLI + daemon stack (`cli.ts`, `http_protocol.ts`, `http_server.ts`, `server_config.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools (local host or docker sandbox)
 - **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent) and sub-agent (emit_output plus allowed tools) registries
@@ -45,7 +45,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `types.ts` - Core types and reasoning levels
   - `commands/registry.ts` - Slash command parsing and dispatch
   - `cli.ts` - CLI argument parsing and help text
-  - `async/` - Async daemon/client modules (`cli.ts`, `http_server.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
+  - `async/` - Async daemon/client modules (`cli.ts`, `http_protocol.ts`, `http_server.ts`, `server_config.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
   - `debug.ts` - `--debug` output
   - `config/deps.ts` - Config loader dependencies
   - `config/paths.ts` - Config level discovery

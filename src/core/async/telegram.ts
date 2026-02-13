@@ -28,11 +28,18 @@ type TelegramUpdate = {
   message?: TelegramMessage;
 };
 
+type TelegramAllowedUpdates =
+  NonNullable<Parameters<Api["getUpdates"]>[0]> extends {
+    allowed_updates?: infer T;
+  }
+    ? NonNullable<T>
+    : readonly string[];
+
 export type AsyncTelegramApi = {
   getUpdates(args: {
     offset: number;
     timeoutSeconds: number;
-    allowedUpdates: string[];
+    allowedUpdates: TelegramAllowedUpdates;
   }): Promise<TelegramUpdate[]>;
   sendMessage(chatId: number, text: string): Promise<void>;
 };
@@ -108,10 +115,10 @@ function createGrammyApi(botToken: string): AsyncTelegramApi {
       const updates = await api.getUpdates({
         offset: args.offset,
         timeout: args.timeoutSeconds,
-        allowed_updates: args.allowedUpdates as never,
+        allowed_updates: args.allowedUpdates,
       });
 
-      return updates.map((update) => update as TelegramUpdate);
+      return updates;
     },
     async sendMessage(chatId, text) {
       await api.sendMessage(chatId, text);

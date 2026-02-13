@@ -369,6 +369,7 @@ describe("loadConfig", () => {
             projects: {
               alpha: {
                 repo: "git@example.com:alpha.git",
+                bootstrapCommands: [],
                 persona: "custom-persona",
               },
             },
@@ -404,7 +405,7 @@ describe("loadConfig", () => {
           alpha: {
             repo: "git@example.com:alpha.git",
             workspaceRoot: join(repo, "repo-alpha"),
-            bootstrapCommands: ["echo repo"],
+            bootstrapCommands: [],
             sandbox: true,
             persona: "custom-persona",
           },

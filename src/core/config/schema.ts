@@ -652,15 +652,7 @@ function parseBootstrapCommands(
   if (!Array.isArray(raw)) {
     return {
       errors: [
-        `${sourceLabel}: async.projects.${projectId}.bootstrapCommands must be a non-empty string array.`,
-      ],
-    };
-  }
-
-  if (raw.length === 0) {
-    return {
-      errors: [
-        `${sourceLabel}: async.projects.${projectId}.bootstrapCommands must be a non-empty string array.`,
+        `${sourceLabel}: async.projects.${projectId}.bootstrapCommands must be a string array.`,
       ],
     };
   }
@@ -670,7 +662,7 @@ function parseBootstrapCommands(
     if (typeof entry !== "string" || !entry.trim()) {
       return {
         errors: [
-          `${sourceLabel}: async.projects.${projectId}.bootstrapCommands must be a non-empty string array.`,
+          `${sourceLabel}: async.projects.${projectId}.bootstrapCommands entries must be non-empty strings.`,
         ],
       };
     }

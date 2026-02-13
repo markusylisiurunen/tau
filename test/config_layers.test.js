@@ -290,6 +290,192 @@ describe("loadConfig", () => {
     }
   });
 
+  it("merges async config and resolves project workspace roots by config level", () => {
+    const fx = setupFixture();
+
+    try {
+      const repo = join(fx.home, "repo");
+      const nested = join(repo, "packages", "pkg1");
+      mkdirSync(nested, { recursive: true });
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+      mkdirSync(join(repo, ".tau"), { recursive: true });
+      mkdirSync(join(nested, ".tau"), { recursive: true });
+
+      writeFileSync(
+        join(fx.home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          async: {
+            client: {
+              defaultTarget: "global",
+              targets: {
+                global: { url: "http://global", token: "global-token", timeoutMs: 5000 },
+              },
+            },
+            server: {
+              host: "127.0.0.1",
+              port: 7788,
+              maxSessions: 2,
+              telegram: {
+                allowedUserIds: [1],
+                allowedChatIds: [10],
+              },
+            },
+            projects: {
+              alpha: {
+                repo: "git@example.com:alpha.git",
+                workspaceRoot: "global-alpha",
+                bootstrapCommands: ["echo global"],
+                sandbox: true,
+              },
+            },
+          },
+        }),
+      );
+
+      writeFileSync(
+        join(repo, ".tau", "config.json"),
+        JSON.stringify({
+          async: {
+            client: {
+              defaultTarget: "repo",
+              targets: {
+                repo: { url: "http://repo", token: "repo-token" },
+              },
+            },
+            server: {
+              telegram: {
+                allowedUserIds: [2, 3],
+              },
+            },
+            projects: {
+              alpha: {
+                repo: "git@example.com:alpha.git",
+                workspaceRoot: "repo-alpha",
+                bootstrapCommands: ["echo repo"],
+              },
+              beta: {
+                repo: "git@example.com:beta.git",
+                workspaceRoot: "repo-beta",
+              },
+            },
+          },
+        }),
+      );
+
+      writeFileSync(
+        join(nested, ".tau", "config.json"),
+        JSON.stringify({
+          async: {
+            projects: {
+              alpha: {
+                repo: "git@example.com:alpha.git",
+                persona: "custom-persona",
+              },
+            },
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: nested,
+        home: fx.home,
+        env: {},
+      });
+
+      const config = loadConfig(nested, deps);
+      expect(config.async).toEqual({
+        client: {
+          defaultTarget: "repo",
+          targets: {
+            global: { url: "http://global", token: "global-token", timeoutMs: 5000 },
+            repo: { url: "http://repo", token: "repo-token" },
+          },
+        },
+        server: {
+          host: "127.0.0.1",
+          port: 7788,
+          maxSessions: 2,
+          telegram: {
+            allowedUserIds: [2, 3],
+            allowedChatIds: [10],
+          },
+        },
+        projects: {
+          alpha: {
+            repo: "git@example.com:alpha.git",
+            workspaceRoot: join(repo, "repo-alpha"),
+            bootstrapCommands: ["echo repo"],
+            sandbox: true,
+            persona: "custom-persona",
+          },
+          beta: {
+            repo: "git@example.com:beta.git",
+            workspaceRoot: join(repo, "repo-beta"),
+          },
+        },
+      });
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("reports async validation errors", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          async: {
+            client: {
+              defaultTarget: 1,
+              targets: {
+                bad: {
+                  url: "",
+                  token: "",
+                  timeoutMs: 0,
+                },
+              },
+            },
+            server: {
+              port: 70000,
+              maxSessions: 0,
+              telegram: {
+                allowedUserIds: [1.2],
+                allowedChatIds: [Infinity],
+                pollIntervalMs: 0,
+                requestTimeoutSeconds: 0,
+              },
+            },
+            projects: {
+              alpha: {
+                repo: "",
+                bootstrapCommands: [],
+              },
+            },
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const result = loadConfigWithDiagnostics(fx.repo, deps);
+      expect(result.config.async).toBeUndefined();
+      expect(result.errors.some((error) => error.includes("async.client.defaultTarget"))).toBe(
+        true,
+      );
+      expect(result.errors.some((error) => error.includes("async.server.port"))).toBe(true);
+      expect(result.errors.some((error) => error.includes("async.projects.alpha.repo"))).toBe(true);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("prefers MISTRAL_API_KEY over apiKeys.mistral", () => {
     const config = { apiKeys: { mistral: "config-mistral" } };
 

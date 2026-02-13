@@ -29,6 +29,7 @@ export interface Config {
   subagents?: {
     defaultLaunchModels?: string[];
   };
+  async?: AsyncConfig;
 }
 
 export type SandboxConfig = {
@@ -37,6 +38,51 @@ export type SandboxConfig = {
   pruneAfterHours?: number;
   extraDockerArgs?: string[];
   environmentInfo?: string;
+};
+
+export type AsyncClientTargetConfig = {
+  url: string;
+  token: string;
+  timeoutMs?: number;
+};
+
+export type AsyncClientConfig = {
+  defaultTarget?: string;
+  targets?: Record<string, AsyncClientTargetConfig>;
+};
+
+export type AsyncServerTelegramConfig = {
+  botToken?: string;
+  allowedUserIds?: number[];
+  allowedChatIds?: number[];
+  defaultProjectId?: string;
+  pollIntervalMs?: number;
+  requestTimeoutSeconds?: number;
+};
+
+export type AsyncServerConfig = {
+  host?: string;
+  port?: number;
+  authToken?: string;
+  maxSessions?: number;
+  telegram?: AsyncServerTelegramConfig;
+};
+
+export type AsyncProjectConfig = {
+  repo: string;
+  ref?: string;
+  workspaceRoot?: string;
+  bootstrapCommands?: string[];
+  persona?: string;
+  riskLevel?: RiskLevel;
+  sandbox?: boolean;
+  noAgentContextFiles?: boolean;
+};
+
+export type AsyncConfig = {
+  client?: AsyncClientConfig;
+  server?: AsyncServerConfig;
+  projects?: Record<string, AsyncProjectConfig>;
 };
 
 type ConfigDiagnostics = {
@@ -157,6 +203,12 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
     config.subagents = subagentsResult.config;
   }
   errors.push(...subagentsResult.errors);
+
+  const asyncResult = parseAsyncConfig(data.async, sourceLabel);
+  if (asyncResult.config) {
+    config.async = asyncResult.config;
+  }
+  errors.push(...asyncResult.errors);
 
   return { config, errors };
 }
@@ -307,6 +359,498 @@ function parseSubagentsConfig(
   return { config, errors };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return (
+    typeof value === "number" && Number.isInteger(value) && Number.isFinite(value) && value > 0
+  );
+}
+
+function parsePositiveIntegerField(value: unknown, options?: { max?: number }): number | undefined {
+  if (!isPositiveInteger(value)) {
+    return undefined;
+  }
+
+  if (options?.max !== undefined && value > options.max) {
+    return undefined;
+  }
+
+  return value;
+}
+
+function parseAsyncIdList(
+  raw: unknown,
+  fieldPath: string,
+  sourceLabel: string,
+): { values?: number[]; errors: string[] } {
+  if (!Array.isArray(raw)) {
+    return { errors: [`${sourceLabel}: ${fieldPath} must be an array of integers.`] };
+  }
+
+  const values: number[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "number" || !Number.isFinite(entry) || !Number.isInteger(entry)) {
+      return { errors: [`${sourceLabel}: ${fieldPath} must be an array of integers.`] };
+    }
+    values.push(entry);
+  }
+
+  return { values, errors: [] };
+}
+
+function parseAsyncTelegramConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: AsyncServerTelegramConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  if (!isRecord(raw)) {
+    return { errors: [`${sourceLabel}: async.server.telegram must be an object.`] };
+  }
+
+  const data = raw as Record<string, unknown>;
+  const config: AsyncServerTelegramConfig = {};
+  const errors: string[] = [];
+
+  if (data.botToken !== undefined) {
+    if (typeof data.botToken === "string" && data.botToken.trim()) {
+      config.botToken = data.botToken.trim();
+    } else {
+      errors.push(`${sourceLabel}: async.server.telegram.botToken must be a non-empty string.`);
+    }
+  }
+
+  if (data.allowedUserIds !== undefined) {
+    const parsed = parseAsyncIdList(
+      data.allowedUserIds,
+      "async.server.telegram.allowedUserIds",
+      sourceLabel,
+    );
+    if (parsed.values) {
+      config.allowedUserIds = parsed.values;
+    }
+    errors.push(...parsed.errors);
+  }
+
+  if (data.allowedChatIds !== undefined) {
+    const parsed = parseAsyncIdList(
+      data.allowedChatIds,
+      "async.server.telegram.allowedChatIds",
+      sourceLabel,
+    );
+    if (parsed.values) {
+      config.allowedChatIds = parsed.values;
+    }
+    errors.push(...parsed.errors);
+  }
+
+  if (data.defaultProjectId !== undefined) {
+    if (typeof data.defaultProjectId === "string" && data.defaultProjectId.trim()) {
+      config.defaultProjectId = data.defaultProjectId.trim();
+    } else {
+      errors.push(
+        `${sourceLabel}: async.server.telegram.defaultProjectId must be a non-empty string.`,
+      );
+    }
+  }
+
+  if (data.pollIntervalMs !== undefined) {
+    const parsed = parsePositiveIntegerField(data.pollIntervalMs);
+    if (parsed !== undefined) {
+      config.pollIntervalMs = parsed;
+    } else {
+      errors.push(
+        `${sourceLabel}: async.server.telegram.pollIntervalMs must be a positive integer.`,
+      );
+    }
+  }
+
+  if (data.requestTimeoutSeconds !== undefined) {
+    const parsed = parsePositiveIntegerField(data.requestTimeoutSeconds);
+    if (parsed !== undefined) {
+      config.requestTimeoutSeconds = parsed;
+    } else {
+      errors.push(
+        `${sourceLabel}: async.server.telegram.requestTimeoutSeconds must be a positive integer.`,
+      );
+    }
+  }
+
+  if (Object.keys(config).length === 0) {
+    return { errors };
+  }
+
+  return { config, errors };
+}
+
+function parseAsyncServerConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: AsyncServerConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  if (!isRecord(raw)) {
+    return { errors: [`${sourceLabel}: async.server must be an object.`] };
+  }
+
+  const data = raw as Record<string, unknown>;
+  const config: AsyncServerConfig = {};
+  const errors: string[] = [];
+
+  if (data.host !== undefined) {
+    if (typeof data.host === "string" && data.host.trim()) {
+      config.host = data.host.trim();
+    } else {
+      errors.push(`${sourceLabel}: async.server.host must be a non-empty string.`);
+    }
+  }
+
+  if (data.port !== undefined) {
+    const parsed = parsePositiveIntegerField(data.port, { max: 65535 });
+    if (parsed !== undefined) {
+      config.port = parsed;
+    } else {
+      errors.push(`${sourceLabel}: async.server.port must be a positive integer <= 65535.`);
+    }
+  }
+
+  if (data.authToken !== undefined) {
+    if (typeof data.authToken === "string" && data.authToken.trim()) {
+      config.authToken = data.authToken.trim();
+    } else {
+      errors.push(`${sourceLabel}: async.server.authToken must be a non-empty string.`);
+    }
+  }
+
+  if (data.maxSessions !== undefined) {
+    const parsed = parsePositiveIntegerField(data.maxSessions);
+    if (parsed !== undefined) {
+      config.maxSessions = parsed;
+    } else {
+      errors.push(`${sourceLabel}: async.server.maxSessions must be a positive integer.`);
+    }
+  }
+
+  const telegramResult = parseAsyncTelegramConfig(data.telegram, sourceLabel);
+  if (telegramResult.config) {
+    config.telegram = telegramResult.config;
+  }
+  errors.push(...telegramResult.errors);
+
+  if (Object.keys(config).length === 0) {
+    return { errors };
+  }
+
+  return { config, errors };
+}
+
+function parseAsyncClientTarget(
+  raw: unknown,
+  sourceLabel: string,
+  key: string,
+): { config?: AsyncClientTargetConfig; errors: string[] } {
+  if (!isRecord(raw)) {
+    return { errors: [`${sourceLabel}: async.client.targets.${key} must be an object.`] };
+  }
+
+  const data = raw as Record<string, unknown>;
+  const errors: string[] = [];
+
+  if (typeof data.url !== "string" || !data.url.trim()) {
+    errors.push(`${sourceLabel}: async.client.targets.${key}.url must be a non-empty string.`);
+  }
+
+  if (typeof data.token !== "string" || !data.token.trim()) {
+    errors.push(`${sourceLabel}: async.client.targets.${key}.token must be a non-empty string.`);
+  }
+
+  const config: AsyncClientTargetConfig = {
+    url: typeof data.url === "string" ? data.url.trim() : "",
+    token: typeof data.token === "string" ? data.token.trim() : "",
+  };
+
+  if (data.timeoutMs !== undefined) {
+    const parsed = parsePositiveIntegerField(data.timeoutMs);
+    if (parsed !== undefined) {
+      config.timeoutMs = parsed;
+    } else {
+      errors.push(
+        `${sourceLabel}: async.client.targets.${key}.timeoutMs must be a positive integer.`,
+      );
+    }
+  }
+
+  if (errors.length > 0) {
+    return { errors };
+  }
+
+  return { config, errors: [] };
+}
+
+function parseAsyncClientConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: AsyncClientConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  if (!isRecord(raw)) {
+    return { errors: [`${sourceLabel}: async.client must be an object.`] };
+  }
+
+  const data = raw as Record<string, unknown>;
+  const errors: string[] = [];
+  const config: AsyncClientConfig = {};
+
+  if (data.defaultTarget !== undefined) {
+    if (typeof data.defaultTarget === "string" && data.defaultTarget.trim()) {
+      config.defaultTarget = data.defaultTarget.trim();
+    } else {
+      errors.push(`${sourceLabel}: async.client.defaultTarget must be a non-empty string.`);
+    }
+  }
+
+  if (data.targets !== undefined) {
+    if (!isRecord(data.targets)) {
+      errors.push(`${sourceLabel}: async.client.targets must be an object.`);
+    } else {
+      const targets: Record<string, AsyncClientTargetConfig> = {};
+      for (const [key, value] of Object.entries(data.targets)) {
+        if (!key.trim()) {
+          errors.push(`${sourceLabel}: async.client.targets keys must be non-empty.`);
+          continue;
+        }
+        const parsed = parseAsyncClientTarget(value, sourceLabel, key);
+        if (parsed.config) {
+          targets[key] = parsed.config;
+        }
+        errors.push(...parsed.errors);
+      }
+      if (Object.keys(targets).length > 0) {
+        config.targets = targets;
+      }
+    }
+  }
+
+  if (Object.keys(config).length === 0) {
+    return { errors };
+  }
+
+  return { config, errors };
+}
+
+function parseBootstrapCommands(
+  raw: unknown,
+  sourceLabel: string,
+  projectId: string,
+): { commands?: string[]; errors: string[] } {
+  if (!Array.isArray(raw)) {
+    return {
+      errors: [
+        `${sourceLabel}: async.projects.${projectId}.bootstrapCommands must be a non-empty string array.`,
+      ],
+    };
+  }
+
+  if (raw.length === 0) {
+    return {
+      errors: [
+        `${sourceLabel}: async.projects.${projectId}.bootstrapCommands must be a non-empty string array.`,
+      ],
+    };
+  }
+
+  const commands: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string" || !entry.trim()) {
+      return {
+        errors: [
+          `${sourceLabel}: async.projects.${projectId}.bootstrapCommands must be a non-empty string array.`,
+        ],
+      };
+    }
+    commands.push(entry);
+  }
+
+  return { commands, errors: [] };
+}
+
+function parseAsyncProject(
+  raw: unknown,
+  sourceLabel: string,
+  projectId: string,
+): { config?: AsyncProjectConfig; errors: string[] } {
+  if (!isRecord(raw)) {
+    return { errors: [`${sourceLabel}: async.projects.${projectId} must be an object.`] };
+  }
+
+  const data = raw as Record<string, unknown>;
+  const errors: string[] = [];
+
+  if (typeof data.repo !== "string" || !data.repo.trim()) {
+    errors.push(`${sourceLabel}: async.projects.${projectId}.repo must be a non-empty string.`);
+  }
+
+  const config: AsyncProjectConfig = {
+    repo: typeof data.repo === "string" ? data.repo.trim() : "",
+  };
+
+  if (data.ref !== undefined) {
+    if (typeof data.ref === "string" && data.ref.trim()) {
+      config.ref = data.ref.trim();
+    } else {
+      errors.push(`${sourceLabel}: async.projects.${projectId}.ref must be a non-empty string.`);
+    }
+  }
+
+  if (data.workspaceRoot !== undefined) {
+    if (typeof data.workspaceRoot === "string" && data.workspaceRoot.trim()) {
+      config.workspaceRoot = data.workspaceRoot.trim();
+    } else {
+      errors.push(
+        `${sourceLabel}: async.projects.${projectId}.workspaceRoot must be a non-empty string.`,
+      );
+    }
+  }
+
+  if (data.bootstrapCommands !== undefined) {
+    const parsed = parseBootstrapCommands(data.bootstrapCommands, sourceLabel, projectId);
+    if (parsed.commands) {
+      config.bootstrapCommands = parsed.commands;
+    }
+    errors.push(...parsed.errors);
+  }
+
+  if (data.persona !== undefined) {
+    if (typeof data.persona === "string" && data.persona.trim()) {
+      config.persona = data.persona.trim();
+    } else {
+      errors.push(
+        `${sourceLabel}: async.projects.${projectId}.persona must be a non-empty string.`,
+      );
+    }
+  }
+
+  if (data.riskLevel !== undefined) {
+    const parsed = RiskLevelSchema.safeParse(data.riskLevel);
+    if (parsed.success) {
+      config.riskLevel = parsed.data;
+    } else {
+      errors.push(
+        `${sourceLabel}: async.projects.${projectId}.riskLevel must be a valid risk level.`,
+      );
+    }
+  }
+
+  if (data.sandbox !== undefined) {
+    if (typeof data.sandbox === "boolean") {
+      config.sandbox = data.sandbox;
+    } else {
+      errors.push(`${sourceLabel}: async.projects.${projectId}.sandbox must be a boolean.`);
+    }
+  }
+
+  if (data.noAgentContextFiles !== undefined) {
+    if (typeof data.noAgentContextFiles === "boolean") {
+      config.noAgentContextFiles = data.noAgentContextFiles;
+    } else {
+      errors.push(
+        `${sourceLabel}: async.projects.${projectId}.noAgentContextFiles must be a boolean.`,
+      );
+    }
+  }
+
+  if (errors.length > 0) {
+    return { errors };
+  }
+
+  return { config, errors };
+}
+
+function parseAsyncProjects(
+  raw: unknown,
+  sourceLabel: string,
+): { projects?: Record<string, AsyncProjectConfig>; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  if (!isRecord(raw)) {
+    return { errors: [`${sourceLabel}: async.projects must be an object.`] };
+  }
+
+  const projects: Record<string, AsyncProjectConfig> = {};
+  const errors: string[] = [];
+
+  for (const [projectId, value] of Object.entries(raw)) {
+    if (!projectId.trim()) {
+      errors.push(`${sourceLabel}: async.projects keys must be non-empty.`);
+      continue;
+    }
+
+    const parsed = parseAsyncProject(value, sourceLabel, projectId);
+    if (parsed.config) {
+      projects[projectId] = parsed.config;
+    }
+    errors.push(...parsed.errors);
+  }
+
+  if (Object.keys(projects).length === 0) {
+    return { errors };
+  }
+
+  return { projects, errors };
+}
+
+function parseAsyncConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: AsyncConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  if (!isRecord(raw)) {
+    return { errors: [`${sourceLabel}: 'async' must be an object.`] };
+  }
+
+  const data = raw as Record<string, unknown>;
+  const config: AsyncConfig = {};
+  const errors: string[] = [];
+
+  const clientResult = parseAsyncClientConfig(data.client, sourceLabel);
+  if (clientResult.config) {
+    config.client = clientResult.config;
+  }
+  errors.push(...clientResult.errors);
+
+  const serverResult = parseAsyncServerConfig(data.server, sourceLabel);
+  if (serverResult.config) {
+    config.server = serverResult.config;
+  }
+  errors.push(...serverResult.errors);
+
+  const projectsResult = parseAsyncProjects(data.projects, sourceLabel);
+  if (projectsResult.projects) {
+    config.projects = projectsResult.projects;
+  }
+  errors.push(...projectsResult.errors);
+
+  if (Object.keys(config).length === 0) {
+    return { errors };
+  }
+
+  return { config, errors };
+}
+
 function loadConfigFile(
   level: ConfigLevel,
   deps: ConfigDeps,
@@ -382,6 +926,221 @@ function mergeSubagentsConfig(
   return merged;
 }
 
+function mergeAsyncClientTarget(
+  target: AsyncClientTargetConfig | undefined,
+  overlay: AsyncClientTargetConfig | undefined,
+): AsyncClientTargetConfig | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  return {
+    ...(target ?? {}),
+    ...(overlay ?? {}),
+  } as AsyncClientTargetConfig;
+}
+
+function mergeAsyncClientConfig(
+  target: AsyncClientConfig | undefined,
+  overlay: AsyncClientConfig | undefined,
+): AsyncClientConfig | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  const merged: AsyncClientConfig = {
+    ...(target ?? {}),
+  };
+
+  if (overlay?.defaultTarget !== undefined) {
+    merged.defaultTarget = overlay.defaultTarget;
+  }
+
+  if (target?.targets || overlay?.targets) {
+    const targets = new Map<string, AsyncClientTargetConfig>();
+
+    for (const [key, value] of Object.entries(target?.targets ?? {})) {
+      targets.set(key, { ...value });
+    }
+
+    for (const [key, value] of Object.entries(overlay?.targets ?? {})) {
+      targets.set(key, mergeAsyncClientTarget(targets.get(key), value) ?? value);
+    }
+
+    if (targets.size > 0) {
+      merged.targets = Object.fromEntries(targets.entries());
+    }
+  }
+
+  return merged;
+}
+
+function mergeAsyncServerTelegramConfig(
+  target: AsyncServerTelegramConfig | undefined,
+  overlay: AsyncServerTelegramConfig | undefined,
+): AsyncServerTelegramConfig | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  const merged: AsyncServerTelegramConfig = {
+    ...(target ?? {}),
+    ...(overlay ?? {}),
+  };
+
+  if (overlay?.allowedUserIds !== undefined) {
+    merged.allowedUserIds = [...overlay.allowedUserIds];
+  }
+
+  if (overlay?.allowedChatIds !== undefined) {
+    merged.allowedChatIds = [...overlay.allowedChatIds];
+  }
+
+  return merged;
+}
+
+function mergeAsyncServerConfig(
+  target: AsyncServerConfig | undefined,
+  overlay: AsyncServerConfig | undefined,
+): AsyncServerConfig | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  return {
+    ...(target ?? {}),
+    ...(overlay ?? {}),
+    telegram: mergeAsyncServerTelegramConfig(target?.telegram, overlay?.telegram),
+  };
+}
+
+function mergeAsyncProjectConfig(
+  target: AsyncProjectConfig | undefined,
+  overlay: AsyncProjectConfig | undefined,
+): AsyncProjectConfig | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  const merged: AsyncProjectConfig = {
+    ...(target ?? {}),
+    ...(overlay ?? {}),
+  } as AsyncProjectConfig;
+
+  if (overlay?.bootstrapCommands !== undefined) {
+    merged.bootstrapCommands = [...overlay.bootstrapCommands];
+  }
+
+  return merged;
+}
+
+function mergeAsyncProjects(
+  target: Record<string, AsyncProjectConfig> | undefined,
+  overlay: Record<string, AsyncProjectConfig> | undefined,
+): Record<string, AsyncProjectConfig> | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  const projects = new Map<string, AsyncProjectConfig>();
+
+  for (const [key, value] of Object.entries(target ?? {})) {
+    projects.set(key, { ...value });
+  }
+
+  for (const [key, value] of Object.entries(overlay ?? {})) {
+    projects.set(key, mergeAsyncProjectConfig(projects.get(key), value) ?? value);
+  }
+
+  if (projects.size === 0) {
+    return undefined;
+  }
+
+  return Object.fromEntries(projects.entries());
+}
+
+function mergeAsyncConfig(
+  target: AsyncConfig | undefined,
+  overlay: AsyncConfig | undefined,
+): AsyncConfig | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  const merged: AsyncConfig = {
+    ...(target ?? {}),
+    ...(overlay ?? {}),
+    client: mergeAsyncClientConfig(target?.client, overlay?.client),
+    server: mergeAsyncServerConfig(target?.server, overlay?.server),
+    projects: mergeAsyncProjects(target?.projects, overlay?.projects),
+  };
+
+  return merged;
+}
+
+function resolveAsyncProjectPaths(
+  level: ConfigLevel,
+  projects: Record<string, AsyncProjectConfig>,
+) {
+  const root = level.levelRoot;
+  const resolvedProjects: Record<string, AsyncProjectConfig> = {};
+
+  for (const [projectId, project] of Object.entries(projects)) {
+    resolvedProjects[projectId] = {
+      ...project,
+      ...(project.workspaceRoot !== undefined
+        ? { workspaceRoot: resolve(root, project.workspaceRoot) }
+        : {}),
+    };
+  }
+
+  return resolvedProjects;
+}
+
+function resolveAsyncConfig(level: ConfigLevel, config: AsyncConfig): AsyncConfig {
+  return {
+    ...config,
+    ...(config.client
+      ? {
+          client: {
+            ...config.client,
+            ...(config.client.targets
+              ? {
+                  targets: Object.fromEntries(
+                    Object.entries(config.client.targets).map(([key, value]) => [
+                      key,
+                      { ...value },
+                    ]),
+                  ),
+                }
+              : {}),
+          },
+        }
+      : {}),
+    ...(config.server
+      ? {
+          server: {
+            ...config.server,
+            ...(config.server.telegram
+              ? {
+                  telegram: {
+                    ...config.server.telegram,
+                    ...(config.server.telegram.allowedUserIds
+                      ? { allowedUserIds: [...config.server.telegram.allowedUserIds] }
+                      : {}),
+                    ...(config.server.telegram.allowedChatIds
+                      ? { allowedChatIds: [...config.server.telegram.allowedChatIds] }
+                      : {}),
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
+    ...(config.projects ? { projects: resolveAsyncProjectPaths(level, config.projects) } : {}),
+  };
+}
+
 function resolveAgentContextPaths(level: ConfigLevel, rawPaths: string[]): string[] {
   const root = level.levelRoot;
   return rawPaths.map((entry) => resolve(root, entry));
@@ -408,6 +1167,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let apiKeys: Config["apiKeys"] | undefined;
   let sandbox: SandboxConfig | undefined;
   let subagents: Config["subagents"] | undefined;
+  let asyncConfig: AsyncConfig | undefined;
   const bashCommands = new Map<string, BashCommand>();
   const agentContextFiles: string[] = [];
 
@@ -418,6 +1178,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     apiKeys = mergeApiKeys(apiKeys, config.apiKeys);
     sandbox = mergeSandboxConfig(sandbox, config.sandbox);
     subagents = mergeSubagentsConfig(subagents, config.subagents);
+    asyncConfig = mergeAsyncConfig(
+      asyncConfig,
+      config.async ? resolveAsyncConfig(level, config.async) : undefined,
+    );
 
     if (config.defaultPersona !== undefined) {
       merged.defaultPersona = config.defaultPersona;
@@ -460,6 +1224,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (subagents && Object.keys(subagents).length > 0) {
     merged.subagents = subagents;
+  }
+
+  if (asyncConfig && Object.keys(asyncConfig).length > 0) {
+    merged.async = asyncConfig;
   }
 
   if (bashCommands.size > 0) {

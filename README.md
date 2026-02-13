@@ -94,24 +94,31 @@ for protocol details and examples, see [docs/rpc.md](docs/rpc.md).
 
 ## sdk usage (node)
 
-tau also ships a Node SDK that talks to the same RPC subprocess (`node dist/main.js rpc`) behind the scenes.
+tau also ships a Node SDK at `@markusylisiurunen/tau/sdk` that talks to the same rpc subprocess (`tau rpc`) behind the scenes.
 
 ```ts
 import { createTauSdkClient } from "@markusylisiurunen/tau/sdk";
 
 const client = await createTauSdkClient();
-
 const unsubscribe = client.onEvent((event) => {
-  // stream core events here
+  // stream core events
 });
 
-const snapshot = await client.snapshot();
-console.log(snapshot.sessionId, snapshot.historyLength);
+try {
+  const result = await client.submit("summarize this repo");
+  console.log(result.userHistoryEntryId, result.turn.aborted);
 
-await client.shutdown();
-unsubscribe();
-await client.close();
+  const snapshot = await client.snapshot();
+  console.log(snapshot.sessionId, snapshot.historyLength);
+
+  await client.shutdown();
+} finally {
+  unsubscribe();
+  await client.close();
+}
 ```
+
+for full api details (options, methods, events, and errors), see [docs/sdk.md](docs/sdk.md).
 
 ## install starter prompts and skills
 

@@ -1,16 +1,71 @@
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
-import type {
-  RpcEventMessage,
-  RpcInitializeParams,
-  RpcReadyMessage,
-  RpcRequestId,
-  RpcSessionInterruptResult,
-  RpcSessionResetResult,
-  RpcSessionShutdownResult,
-  RpcSessionSnapshotResult,
-  RpcSessionSubmitResult,
-} from "../core/modes/rpc_protocol.js";
-import type { RiskLevel } from "../core/types.js";
+
+export type TauSdkRequestId = string | number;
+
+export type TauSdkRpcMethod =
+  | "initialize"
+  | "session.submit"
+  | "session.interrupt"
+  | "session.snapshot"
+  | "session.reset"
+  | "session.shutdown";
+
+export type TauSdkInitializeParams = {
+  client?: {
+    name?: string;
+    version?: string;
+  };
+};
+
+export type TauSdkEvent = {
+  version: 1;
+  type: "event";
+  event: {
+    version: number;
+    event: unknown;
+  };
+  requestId?: TauSdkRequestId;
+};
+
+export type TauSdkReadyMessage = {
+  version: 1;
+  type: "ready";
+  sessionId: string;
+  methods: TauSdkRpcMethod[];
+  coreEventVersion: 1;
+};
+
+export type TauSdkSessionSubmitResult = {
+  userHistoryEntryId: string;
+  turn: {
+    aborted: boolean;
+  };
+};
+
+export type TauSdkSessionInterruptResult = {
+  interrupted: boolean;
+  isTurnRunning: boolean;
+};
+
+export type TauSdkSessionSnapshotResult = {
+  sessionId: string;
+  isTurnRunning: boolean;
+  historyLength: number;
+  history: unknown[];
+  historyEntries: {
+    id: string;
+    message: unknown;
+  }[];
+};
+
+export type TauSdkSessionResetResult = {
+  previousSessionId: string;
+  sessionId: string;
+};
+
+export type TauSdkSessionShutdownResult = {
+  shutdown: true;
+};
 
 export type TauSdkSpawnFunction = (
   command: string,
@@ -22,7 +77,7 @@ export type TauSdkClientOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   persona?: string;
-  riskLevel?: RiskLevel;
+  riskLevel?: "read-only" | "read-write";
   sandbox?: boolean;
   noAgentContextFiles?: boolean;
   executable?: string;
@@ -31,7 +86,7 @@ export type TauSdkClientOptions = {
   scriptArgs?: string[];
   rpcArgs?: string[];
   connectTimeoutMs?: number;
-  initialize?: RpcInitializeParams;
+  initialize?: TauSdkInitializeParams;
   spawn?: TauSdkSpawnFunction;
 };
 
@@ -39,23 +94,22 @@ export type TauSdkSubmitOptions = {
   historyEntryId?: string;
 };
 
-export type TauSdkEvent = RpcEventMessage;
 export type TauSdkEventListener = (event: TauSdkEvent) => void;
 
 export type TauSdkClient = {
-  readonly ready: RpcReadyMessage;
-  submit(text: string, options?: TauSdkSubmitOptions): Promise<RpcSessionSubmitResult>;
-  interrupt(): Promise<RpcSessionInterruptResult>;
-  snapshot(): Promise<RpcSessionSnapshotResult>;
-  reset(): Promise<RpcSessionResetResult>;
-  shutdown(): Promise<RpcSessionShutdownResult>;
+  readonly ready: TauSdkReadyMessage;
+  submit(text: string, options?: TauSdkSubmitOptions): Promise<TauSdkSessionSubmitResult>;
+  interrupt(): Promise<TauSdkSessionInterruptResult>;
+  snapshot(): Promise<TauSdkSessionSnapshotResult>;
+  reset(): Promise<TauSdkSessionResetResult>;
+  shutdown(): Promise<TauSdkSessionShutdownResult>;
   close(): Promise<void>;
   onEvent(listener: TauSdkEventListener): () => void;
 };
 
 export type PendingRequest = {
   readonly method: string;
-  readonly requestId: RpcRequestId;
+  readonly requestId: TauSdkRequestId;
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: unknown) => void;
 };

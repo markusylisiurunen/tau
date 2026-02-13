@@ -106,10 +106,3 @@ export type TauSdkClient = {
   close(): Promise<void>;
   onEvent(listener: TauSdkEventListener): () => void;
 };
-
-export type PendingRequest = {
-  readonly method: string;
-  readonly requestId: TauSdkRequestId;
-  readonly resolve: (value: unknown) => void;
-  readonly reject: (error: unknown) => void;
-};

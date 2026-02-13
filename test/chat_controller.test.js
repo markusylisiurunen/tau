@@ -113,8 +113,45 @@ function createController(view, options = {}) {
     bashCommands: options.bashCommands ?? [],
     config: {},
     sandboxEnabled: options.sandboxEnabled ?? false,
+    caffeinated: options.caffeinated ?? false,
     toolBackend: options.toolBackend,
+    noAgentContextFiles: options.noAgentContextFiles ?? false,
+    deps: options.deps,
   });
+}
+
+function createMockDeps(spawn, platform = "darwin") {
+  return {
+    clock: {
+      now: () => Date.now(),
+    },
+    fs: {
+      readFile: () => "",
+      writeFile: () => {},
+      listDir: () => [],
+    },
+    spawn,
+    env: {
+      cwd: () => process.cwd(),
+      home: () => process.env.HOME ?? process.cwd(),
+      platform: () => platform,
+      nodeVersion: () => process.version,
+      env: () => process.env,
+    },
+  };
+}
+
+function createSpawnAbortResult() {
+  return {
+    stdout: "",
+    stderr: "",
+    output: undefined,
+    exitCode: null,
+    captureLimitExceeded: false,
+    timedOut: false,
+    aborted: true,
+    closeSignal: "SIGTERM",
+  };
 }
 
 describe("ChatController event handling", () => {
@@ -210,6 +247,85 @@ describe("ChatController interrupt handling", () => {
     expect(stub.clearToolUiTransientStateCallCount).toBe(1);
     expect(controller.queuedUserMessages).toEqual([]);
     expect(stub.editorTextUpdates.at(-1)).toBe("queued one\n\n---\n\nqueued two");
+  });
+});
+
+describe("ChatController caffeinate", () => {
+  it("starts and stops caffeinate around assistant turns when enabled", async () => {
+    const stub = createStubView();
+    const spawn = vi.fn((_cmd, _args, options = {}) => {
+      return new Promise((resolve) => {
+        options.signal?.addEventListener(
+          "abort",
+          () => {
+            resolve(createSpawnAbortResult());
+          },
+          { once: true },
+        );
+      });
+    });
+    const controller = createController(stub.view, {
+      caffeinated: true,
+      noAgentContextFiles: true,
+      deps: createMockDeps(spawn),
+    });
+    vi.spyOn(controller.runtime, "runTurn").mockResolvedValue({ aborted: false });
+
+    await controller.runAssistantTurn();
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(spawn).toHaveBeenCalledWith(
+      "/usr/bin/caffeinate",
+      ["-i"],
+      expect.objectContaining({
+        detached: true,
+        killProcessGroup: true,
+        stdio: ["ignore", "ignore", "ignore"],
+      }),
+    );
+  });
+
+  it("does not start caffeinate when disabled", async () => {
+    const stub = createStubView();
+    const spawn = vi.fn();
+    const controller = createController(stub.view, {
+      noAgentContextFiles: true,
+      deps: createMockDeps(spawn),
+    });
+    vi.spyOn(controller.runtime, "runTurn").mockResolvedValue({ aborted: false });
+
+    await controller.runAssistantTurn();
+
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("stops active caffeinate during dispose", async () => {
+    const stub = createStubView();
+    let signal;
+    const spawn = vi.fn((_cmd, _args, options = {}) => {
+      signal = options.signal;
+      return new Promise((resolve) => {
+        options.signal?.addEventListener(
+          "abort",
+          () => {
+            resolve(createSpawnAbortResult());
+          },
+          { once: true },
+        );
+      });
+    });
+    const controller = createController(stub.view, {
+      caffeinated: true,
+      noAgentContextFiles: true,
+      deps: createMockDeps(spawn),
+    });
+
+    controller.startTurnCaffeinate();
+    await controller.dispose();
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(signal.aborted).toBe(true);
+    expect(controller.turnCaffeinate).toBeUndefined();
   });
 });
 

@@ -223,6 +223,7 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
 - `--risk <level>`, `-r` - Set initial risk level (`read-only`, `read-write`)
 - `--sandbox` - Run all tool calls inside a session-specific Docker container
+- `--caffeinated` - Keep macOS awake during active assistant turns in TUI mode
 - `--no-agent-context-files` - Disable AGENTS.md injection into the system prompt
 
 These startup flags apply to both interactive TUI mode (`tau`) and headless RPC mode (`tau rpc`).

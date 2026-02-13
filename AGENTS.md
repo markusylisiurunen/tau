@@ -19,7 +19,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Session prompt composer** (`src/core/runtime/session_prompt_composer.ts`): Composes main-session and subagent system prompts with environment and context blocks
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly and history preparation for `/compact:*` flows (summary-only and summary + last assistant)
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
-- **Mode adapters** (`src/core/modes/`): ModeAdapter interface and RPC stub for alternate front-ends
+- **Mode adapters** (`src/core/modes/`): ModeAdapter interface plus RPC protocol/server wiring for alternate front-ends
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools (local host or docker sandbox)
 - **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent) and sub-agent (emit_output plus allowed tools) registries
@@ -28,7 +28,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
 - **Tool UI registry** (`src/tui/ui/tool_ui_registry.ts`): Maps ToolUiEvent types to tool output view models
 
-**Data flow**: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering.
+**Data flow**: TUI mode: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering. RPC mode: NDJSON requests on stdin → RPC server (`src/core/modes/rpc_server.ts`) → `ChatRuntime`/`CoreSession` → NDJSON responses/events on stdout.
 
 **Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Assistant and tool-result events include stable `historyEntryId` values so the UI can correlate rendered rows with session history across rewind operations. Subagent UI updates (spawned, progress, emit_output messages, finished) are delivered via `CoreSession.onSubagentEvent()` as `subagent_ui` events for background updates. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
 
@@ -64,7 +64,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `tools/execution_backend.ts` - Local and sandbox tool backends
   - `tools/sandbox/docker_sandbox.ts` - Docker sandbox runner
   - `subagents/` - Default subagent prompt and runner
-  - `modes/` - ModeAdapter interface and RPC stub
+  - `modes/` - ModeAdapter interface plus RPC protocol/server (`rpc_protocol.ts`, `rpc_server.ts`)
   - `runtime/chat_runtime.ts` - High-level runtime that coordinates session updates, turn execution, and prompt composition
   - `runtime/conversation_turn_runtime.ts` - Assistant-turn runtime with interruption and abort handling
   - `runtime/session_prompt_composer.ts` - Session prompt composition for main-session and subagent prompts
@@ -222,10 +222,13 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 - `--sandbox` - Run all tool calls inside a session-specific Docker container
 - `--no-agent-context-files` - Disable AGENTS.md injection into the system prompt
 
+These startup flags apply to both interactive TUI mode (`tau`) and headless RPC mode (`tau rpc`).
+
 The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you can inspect exactly what system prompt a given configuration produces.
 
 ## CLI subcommands
 
+- `tau rpc` - Run headless stdio RPC mode (NDJSON request/response + core event streaming)
 - `tau auth login codex` - OAuth login for ChatGPT Plus/Pro; stores `~/.config/tau/auth.json`
 - `tau auth list` - List authenticated accounts and usage windows
 - `tau auth logout codex --account <email>` - Remove stored OAuth credentials
@@ -246,6 +249,8 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `#<request>` - Memory mode for updating AGENTS.md (single-line only)
 
 Slash commands only trigger on single-line inputs. Unknown slash-prefixed text is sent as a normal prompt.
+
+RPC mode command surface is protocol-based (`initialize`, `session.submit`, `session.interrupt`, `session.snapshot`, `session.reset`, `session.shutdown`) over NDJSON stdin/stdout.
 
 **Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @<file> and @@skill:<name> mentions), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording), `Ctrl+G` (terminate selected subagent), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+Down` (cycle active subagents), `Escape` (interrupt), `Ctrl+C` (press twice to exit)
 

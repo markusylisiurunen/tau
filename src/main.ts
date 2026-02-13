@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { writeSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type {
@@ -12,13 +13,16 @@ import type {
   Persona,
   PromptTemplate,
   ReasoningEffort,
+  RiskLevel,
   Skill,
   ThemeDefinition,
 } from "./core/index.js";
 import {
   AuthStorage,
   buildVirtualBundle,
+  ChatRuntime,
   CliError,
+  createDefaultCoreDeps,
   createLocalToolExecutionBackend,
   createSandboxToolExecutionBackend,
   getAuthPath,
@@ -36,15 +40,23 @@ import {
   runListCommand,
   runLoginCommand,
   runLogoutCommand,
+  runRpcServer,
   runUsageCommand,
   ToolCatalog,
   UsageCliError,
 } from "./core/index.js";
+import { resolveAgentCwd } from "./core/utils/agent_environment.js";
+import {
+  buildProjectContextBlock,
+  buildSkillsIndexBlock,
+  findAgentsFilesInScopeDetailed,
+} from "./core/utils/context.js";
 import { ChatApp } from "./tui/index.js";
 import { detectTerminalAppearance } from "./tui/terminal_appearance.js";
 
 const cwd = process.cwd();
 const argv = process.argv.slice(2);
+const isRpcSubcommand = argv[0] === "rpc";
 
 function registerTerminalExitCleanup(): void {
   if (!process.stdout.isTTY) return;
@@ -57,7 +69,9 @@ function registerTerminalExitCleanup(): void {
   });
 }
 
-registerTerminalExitCleanup();
+if (!isRpcSubcommand) {
+  registerTerminalExitCleanup();
+}
 
 function printAuthHelp(): void {
   console.log(
@@ -91,6 +105,133 @@ async function readPipedStdin(): Promise<string | undefined> {
     data += chunk;
   }
   return data;
+}
+
+function getEnabledSkillsForPersona(persona: Persona, discoveredSkills: Skill[]): Skill[] {
+  const personaSkills = persona.skills;
+  if (personaSkills === "*") {
+    return discoveredSkills;
+  }
+
+  if (!personaSkills || personaSkills.length === 0) {
+    return [];
+  }
+
+  const byName = new Map<string, Skill>();
+  for (const skill of discoveredSkills) {
+    byName.set(skill.name.toLowerCase(), skill);
+  }
+
+  const enabled: Skill[] = [];
+  for (const name of personaSkills) {
+    const skill = byName.get(name.trim().toLowerCase());
+    if (skill) {
+      enabled.push(skill);
+    }
+  }
+
+  return enabled;
+}
+
+async function runRpcMode(options: {
+  cli: CliOptions;
+  config: Config;
+  persona: Persona;
+  riskLevel: RiskLevel;
+  skills: Skill[];
+  history?: Checkpoint["history"];
+}): Promise<void> {
+  const sandboxBackend = options.cli.sandbox
+    ? await createSandboxBackend(options.config)
+    : undefined;
+
+  try {
+    const deps = createDefaultCoreDeps();
+    const runtimeCwd = deps.env.cwd();
+    const home = deps.env.home() || process.env.HOME || homedir();
+    const includeAgentContext = !options.cli.noAgentContextFiles;
+
+    let projectContextBlock: string | undefined;
+    if (includeAgentContext) {
+      const agentsContext = findAgentsFilesInScopeDetailed(runtimeCwd, home);
+      if (agentsContext.errors.length > 0) {
+        // eslint-disable-next-line no-console
+        console.error("config warnings:");
+        for (const warning of agentsContext.errors) {
+          // eslint-disable-next-line no-console
+          console.error(`- ${warning}`);
+        }
+        // eslint-disable-next-line no-console
+        console.error("");
+      }
+
+      projectContextBlock = buildProjectContextBlock({
+        cwd: runtimeCwd,
+        home,
+        agentsFiles: agentsContext.files,
+        readFile: (path) => readFileSync(path, "utf-8"),
+      });
+    }
+
+    const runtime = ChatRuntime.create({
+      persona: options.persona,
+      riskLevel: options.riskLevel,
+      toolRegistry: ToolCatalog.createRegistry(
+        sandboxBackend?.backend ?? createLocalToolExecutionBackend(),
+      ),
+      promptContext: {
+        cwd: resolveAgentCwd({
+          cwd: runtimeCwd,
+          sandboxEnabled: options.cli.sandbox,
+          sandboxConfig: options.config.sandbox,
+        }),
+        projectContextBlock,
+        sandboxEnabled: options.cli.sandbox,
+        sandboxEnvironmentInfo: options.config.sandbox?.environmentInfo,
+        skillsBlock: buildSkillsIndexBlock(
+          getEnabledSkillsForPersona(options.persona, options.skills),
+        ),
+      },
+      environment: {
+        now: () => deps.clock.now(),
+        platform: () => deps.env.platform(),
+        nodeVersion: () => deps.env.nodeVersion(),
+      },
+      config: options.config,
+      deps,
+    });
+
+    for (const message of options.history ?? []) {
+      runtime.session.addMessage(message);
+    }
+
+    const abortController = new AbortController();
+    const requestShutdown = () => {
+      if (!abortController.signal.aborted) {
+        abortController.abort();
+      }
+    };
+
+    const onSigInt = () => requestShutdown();
+    const onSigTerm = () => requestShutdown();
+
+    process.on("SIGINT", onSigInt);
+    process.on("SIGTERM", onSigTerm);
+
+    try {
+      await runRpcServer({
+        runtime,
+        input: process.stdin,
+        output: process.stdout,
+        signal: abortController.signal,
+      });
+    } finally {
+      process.off("SIGINT", onSigInt);
+      process.off("SIGTERM", onSigTerm);
+    }
+  } finally {
+    await sandboxBackend?.dispose?.();
+  }
 }
 
 // Load built-in and user content
@@ -253,9 +394,11 @@ try {
   themes = virtualBundle.themes;
 }
 
+const cliArgv = isRpcSubcommand ? argv.slice(1) : argv;
+
 let cli: CliOptions;
 try {
-  cli = parseCliArgs(process.argv.slice(2), personas);
+  cli = parseCliArgs(cliArgv, personas);
 } catch (err) {
   if (err instanceof CliError) {
     // eslint-disable-next-line no-console
@@ -379,6 +522,26 @@ if (reasoningOverride !== undefined) {
   initialPersona.settings.reasoning = reasoningOverride;
 }
 
+const effectiveRiskLevel: RiskLevel = initialRiskLevel ?? "read-only";
+
+if (isRpcSubcommand) {
+  try {
+    await runRpcMode({
+      cli,
+      config,
+      persona: initialPersona,
+      riskLevel: effectiveRiskLevel,
+      skills,
+      history: checkpointHistory,
+    });
+    process.exit(0);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+}
+
 const initialUserMessage = await readPipedStdin();
 
 const sandboxBackend = cli.sandbox ? await createSandboxBackend(config) : undefined;
@@ -393,7 +556,7 @@ const app = new ChatApp({
   terminalAppearance,
   initialPersonaId,
   initialUserMessage,
-  initialRiskLevel,
+  initialRiskLevel: effectiveRiskLevel,
   initialHistory: checkpointHistory,
   noAgentContextFiles: cli.noAgentContextFiles,
   config,

@@ -80,6 +80,16 @@ tau usage --since 2025-01-01 --persona gpt-5.2-coder
 
 filters: `--since`, `--persona`, `--provider`, `--model`.
 
+## rpc mode (headless stdio)
+
+tau can run without the TUI via NDJSON RPC over stdin/stdout:
+
+```sh
+tau rpc --persona gpt-5.2-coder --risk read-only
+```
+
+RPC mode reuses the same startup config/persona/risk/sandbox loading as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message).
+
 ## install starter prompts and skills
 
 tau ships starter prompt and skill templates as markdown content in this repository. install them with:

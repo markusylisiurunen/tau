@@ -60,14 +60,9 @@ class TauSdkClientImpl implements TauSdkClient {
   private isExited = false;
   private fatalError?: Error;
 
-  constructor(
-    process: ReturnType<TauSdkSpawnFunction>,
-    options: {
-      connectTimeoutMs: number;
-    },
-  ) {
+  constructor(process: ReturnType<TauSdkSpawnFunction>) {
     this.process = process;
-    this.closeTimeoutMs = Math.max(options.connectTimeoutMs, DEFAULT_CLOSE_TIMEOUT_MS);
+    this.closeTimeoutMs = DEFAULT_CLOSE_TIMEOUT_MS;
 
     this.process.stdout.setEncoding("utf8");
     this.process.stderr.setEncoding("utf8");
@@ -497,9 +492,7 @@ export async function createTauSdkClient(options: TauSdkClientOptions = {}): Pro
     throw new TauProcessError("failed to spawn tau rpc process", { cause: error });
   }
 
-  const client = new TauSdkClientImpl(childProcess, {
-    connectTimeoutMs: options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
-  });
+  const client = new TauSdkClientImpl(childProcess);
 
   try {
     await client.connect(

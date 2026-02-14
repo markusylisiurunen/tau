@@ -52,7 +52,7 @@ const SPAWN_AGENT_MODEL_DESCRIPTION = [
 
 const SPAWN_AGENT_WORKING_DIRECTORY_DESCRIPTION = [
   "Optional working directory for the subagent.",
-  "When set, tools run as if Tau was started in this directory.",
+  "When set, subagent runs as if it was started in this directory.",
 ].join(" ");
 
 export const SPAWN_AGENT_TOOL: Tool = {
@@ -436,8 +436,8 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
 
           const statusParts = [
             name,
-            runtimeConfig.workingDirectory,
             modelLabel,
+            runtimeConfig.workingDirectory,
             spawnResult.id,
           ].filter(Boolean);
           const toolResult: ToolResultMessage = createToolResult(toolCall, resultText, false);

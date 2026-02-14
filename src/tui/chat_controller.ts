@@ -1158,7 +1158,7 @@ export class ChatController {
       case "reload":
         return "reload prompts, skills, themes, bash commands, and AGENTS.md";
       case "speak":
-        return "toggle microphone recording and transcribe to editor";
+        return "toggle microphone recording and transcribe to editor (macOS only)";
       case "risk":
         return "set risk level: /risk:read-only or /risk:read-write";
       case "bash":
@@ -1477,6 +1477,11 @@ export class ChatController {
   }
 
   private async startSpeakCapture(): Promise<void> {
+    if (this.deps.env.platform() !== "darwin") {
+      this.view.addSystemMessage("/speak is currently supported only on macOS.", "warn");
+      return;
+    }
+
     const apiKey = getMistralApiKey(this.config, this.deps.env.env());
     if (!apiKey) {
       this.view.addSystemMessage("set MISTRAL_API_KEY or apiKeys.mistral to use /speak", "error");
@@ -3211,7 +3216,6 @@ export class ChatController {
 
     if (this.deps.env.platform() !== "darwin") {
       this.disableCaffeinateForSession = true;
-      this.view.addSystemMessage("--caffeinated is only supported on macOS.", "warn");
       return;
     }
 

@@ -228,7 +228,7 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
 - `--risk <level>`, `-r` - Set initial risk level (`read-only`, `read-write`)
 - `--sandbox` - Run all tool calls inside a session-specific Docker container
-- `--caffeinated` - Keep macOS awake during active assistant turns in TUI mode
+- `--caffeinated` - Keep macOS awake during active assistant turns in TUI mode (currently a no-op on Linux)
 - `--no-agent-context-files` - Disable AGENTS.md injection into the system prompt
 
 These startup flags apply to both interactive TUI mode (`tau`) and headless RPC mode (`tau rpc`), except `--caffeinated` (macOS-only TUI flag, rejected in RPC mode).
@@ -248,11 +248,11 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for daemon-file `authToken` in daemon mode
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 - `PARALLEL_API_KEY` (env var) - Optional override for `apiKeys.parallel` used by `web_search`/`web_fetch`
-- `MISTRAL_API_KEY` (env var) - Optional override for `/speak` microphone transcription
+- `MISTRAL_API_KEY` (env var) - Optional override for `/speak` microphone transcription (macOS only)
 
 ## Commands
 
-- `/help`, `/new`, `/rewind`, `/cd`, `/copy:text`, `/copy:code`, `/checkpoint`, `/reload`, `/speak`
+- `/help`, `/new`, `/rewind`, `/cd`, `/copy:text`, `/copy:code`, `/checkpoint`, `/reload`, `/speak` (macOS only; warns on Linux)
 - `/compact:summary-only`, `/compact:summary-and-last` - Compact history into a single synthetic user summary message (optionally includes last assistant message verbatim when available)
 - `/prune:earliest`, `/prune:largest`, `/prune:smart` - Prune tool results and compact edit call payloads/results
 - `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`

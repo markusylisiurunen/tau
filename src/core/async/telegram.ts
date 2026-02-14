@@ -86,8 +86,7 @@ type NewCommandResolution =
 
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
-const MAX_COMMAND_PREVIEW_CHARS = 280;
-const MAX_ASSISTANT_PREVIEW_CHARS = 1000;
+const MAX_COMMAND_PREVIEW_CHARS = 128;
 const ABORTED = Symbol("aborted");
 
 const TELEGRAM_COMMANDS: TelegramBotCommand[] = [
@@ -143,10 +142,7 @@ function describeSession(
       ? [`last command: ${truncateText(details.lastCommand, MAX_COMMAND_PREVIEW_CHARS)}`]
       : []),
     ...(details.lastAssistantMessage
-      ? [
-          "last assistant message:",
-          truncateText(details.lastAssistantMessage, MAX_ASSISTANT_PREVIEW_CHARS),
-        ]
+      ? ["last assistant message:", details.lastAssistantMessage]
       : []),
   ].join("\n");
 }
@@ -707,10 +703,7 @@ class AsyncTelegramAdapterImpl {
     this.lastAssistantMessageBySession.set(event.sessionId, event.progress.text);
     this.notifySession(
       event.sessionId,
-      [
-        formatSessionHeadline(event.sessionId, "assistant message"),
-        truncateText(event.progress.text, MAX_ASSISTANT_PREVIEW_CHARS),
-      ].join("\n"),
+      [formatSessionHeadline(event.sessionId, "assistant message"), event.progress.text].join("\n"),
     );
   }
 

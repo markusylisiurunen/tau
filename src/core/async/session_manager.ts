@@ -54,6 +54,9 @@ export type AsyncSessionRecord = {
   error?: string;
 };
 
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const PUBLIC_SESSION_ID_LENGTH = 8;
+
 export class AsyncSessionManagerError extends Error {
   code: "not_found" | "busy" | "invalid_project" | "not_ready" | "invalid_state" | "max_sessions";
 
@@ -548,7 +551,12 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
   private createSessionId(): string {
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const id = randomBytes(10).toString("hex");
+      const random = randomBytes(PUBLIC_SESSION_ID_LENGTH);
+      let id = "";
+      for (const byte of random) {
+        id += BASE58_ALPHABET[byte % BASE58_ALPHABET.length] ?? "";
+      }
+
       if (!this.sessionInternalIds.has(id)) {
         return id;
       }

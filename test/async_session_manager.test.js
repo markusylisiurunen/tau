@@ -110,7 +110,7 @@ describe("async session manager", () => {
     });
 
     const created = await manager.createSession({ projectId: "demo" });
-    expect(created.id).toMatch(/^[0-9a-f]{20}$/);
+    expect(created.id).toMatch(/^[1-9A-HJ-NP-Za-km-z]{8}$/);
 
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
     expect(prepareWorkspace).toHaveBeenCalledWith(

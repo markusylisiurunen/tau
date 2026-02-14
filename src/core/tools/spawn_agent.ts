@@ -212,6 +212,7 @@ async function buildSubagentSystemPrompt(args: {
     persona: args.persona,
     riskLevel: args.riskLevel,
     cwd: args.cwd,
+    hostCwd: args.hostCwd,
     datetime: new Date().toISOString(),
     platform: process.platform,
     nodeVersion: process.version,

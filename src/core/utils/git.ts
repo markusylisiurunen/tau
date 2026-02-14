@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 
 export function getGitRoot(cwd: string): string | undefined {
   try {
@@ -18,4 +18,13 @@ export function getGitRoot(cwd: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+export function resolvePromptGitRoot(args: { cwd: string; hostCwd?: string }): string | undefined {
+  const hostCwd = args.hostCwd ?? args.cwd;
+  const hostGitRoot = getGitRoot(hostCwd);
+  if (!hostGitRoot) return undefined;
+
+  const rel = relative(hostCwd, hostGitRoot);
+  return resolve(args.cwd, rel);
 }

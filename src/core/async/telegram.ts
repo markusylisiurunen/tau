@@ -97,6 +97,7 @@ const TELEGRAM_COMMANDS: TelegramBotCommand[] = [
   { command: "list", description: "list sessions" },
   { command: "status", description: "show active session status" },
   { command: "cancel", description: "cancel active session" },
+  { command: "close", description: "close session(s)" },
   { command: "verbose", description: "stream progress updates" },
   { command: "quiet", description: "only send final assistant message" },
 ];
@@ -429,6 +430,11 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
+    if (command === "/close") {
+      await this.handleClose(chatId, args);
+      return;
+    }
+
     if (command === "/verbose") {
       await this.handleVerbosityCommand(chatId, "verbose");
       return;
@@ -441,7 +447,7 @@ class AsyncTelegramAdapterImpl {
 
     await this.reply(
       chatId,
-      "supported commands: /new, /use, /list, /status, /cancel, /verbose, /quiet",
+      "supported commands: /new, /use, /list, /status, /cancel, /close, /verbose, /quiet",
     );
   }
 
@@ -585,6 +591,55 @@ class AsyncTelegramAdapterImpl {
     }
   }
 
+  private async handleClose(chatId: number, args: string[]): Promise<void> {
+    if (args.length > 1) {
+      await this.reply(chatId, "usage: /close [<sessionId>|all]");
+      return;
+    }
+
+    const target = args[0]?.trim();
+    if (target === "all") {
+      try {
+        const closed = await this.sessionManager.closeInactiveSessions();
+        for (const session of closed) {
+          this.clearClosedSession(session.id);
+        }
+
+        if (closed.length === 0) {
+          await this.reply(chatId, "no inactive sessions to close");
+          return;
+        }
+
+        const label = closed.length === 1 ? "session" : "sessions";
+        await this.reply(
+          chatId,
+          [
+            `closed ${closed.length} inactive ${label}`,
+            closed.map((session) => session.id).join(", "),
+          ].join("\n"),
+        );
+      } catch (error) {
+        await this.reply(chatId, this.formatManagerError(error));
+      }
+
+      return;
+    }
+
+    const sessionId = target ?? this.getActiveSession(chatId)?.id;
+    if (!sessionId) {
+      await this.reply(chatId, "no active session. use /new or /use <sessionId>");
+      return;
+    }
+
+    try {
+      const closed = await this.sessionManager.closeSession(sessionId);
+      this.clearClosedSession(closed.id);
+      await this.reply(chatId, formatSessionHeadline(closed.id, "closed"));
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
+    }
+  }
+
   private async handleVerbosityCommand(chatId: number, verbosity: SessionVerbosity): Promise<void> {
     const session = this.getActiveSession(chatId);
     if (!session) {
@@ -673,6 +728,24 @@ class AsyncTelegramAdapterImpl {
     if (chats.size === 0) {
       this.chatsBySession.delete(sessionId);
     }
+  }
+
+  private clearClosedSession(sessionId: string): void {
+    for (const [chatId, activeSessionId] of this.activeSessionsByChat) {
+      if (activeSessionId === sessionId) {
+        this.activeSessionsByChat.delete(chatId);
+      }
+    }
+
+    const chatIds = Array.from(this.chatsBySession.get(sessionId) ?? []);
+    for (const chatId of chatIds) {
+      this.unlinkChatFromSession(chatId, sessionId);
+    }
+
+    this.sessionVerbosityBySession.delete(sessionId);
+    this.lastCommandBySession.delete(sessionId);
+    this.lastAssistantMessageBySession.delete(sessionId);
+    this.latestAssistantMessageByRun.delete(sessionId);
   }
 
   private getSessionVerbosity(sessionId: string): SessionVerbosity {

@@ -127,6 +127,8 @@ export type AsyncSessionManager = {
     options?: AsyncSessionSubmitOptions,
   ): Promise<AsyncSessionRecord>;
   cancelSession(sessionId: string): Promise<AsyncSessionRecord>;
+  closeSession(sessionId: string): Promise<AsyncSessionRecord>;
+  closeInactiveSessions(): Promise<AsyncSessionRecord[]>;
   close(): Promise<void>;
   onEvent(listener: (event: AsyncSessionManagerEvent) => void): () => void;
 };
@@ -285,6 +287,24 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     this.requestCancellation(entry, "cancel requested");
     await this.stopClient(entry);
     return this.toRecord(entry);
+  }
+
+  async closeSession(sessionId: string): Promise<AsyncSessionRecord> {
+    const entry = this.requireSession(sessionId);
+    return await this.closeEntry(entry, "close requested");
+  }
+
+  async closeInactiveSessions(): Promise<AsyncSessionRecord[]> {
+    const entries = Array.from(this.sessions.values()).filter((entry) =>
+      this.isInactiveState(entry.record.state),
+    );
+
+    const closed: AsyncSessionRecord[] = [];
+    for (const entry of entries) {
+      closed.push(await this.closeEntry(entry, "close requested"));
+    }
+
+    return closed;
   }
 
   async close(): Promise<void> {
@@ -456,6 +476,28 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     );
   }
 
+  private async closeEntry(entry: SessionEntry, message: string): Promise<AsyncSessionRecord> {
+    if (this.isActiveState(entry.record.state)) {
+      this.requestCancellation(entry, message);
+    } else {
+      this.log(entry, "info", message);
+    }
+
+    await this.stopClient(entry);
+
+    const pendingWork = [entry.activeSubmit, entry.initializePromise].filter(
+      (promise): promise is Promise<void> => promise !== undefined,
+    );
+
+    if (pendingWork.length > 0) {
+      await Promise.allSettled(pendingWork);
+    }
+
+    const record = this.toRecord(entry);
+    this.deleteEntry(entry.record.id);
+    return record;
+  }
+
   private requestCancellation(entry: SessionEntry, message: string): void {
     entry.cancelRequested = true;
     entry.abortController.abort();
@@ -530,6 +572,20 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       state === "running" ||
       state === "waiting-input"
     );
+  }
+
+  private isInactiveState(state: AsyncSessionState): boolean {
+    return !this.isActiveState(state);
+  }
+
+  private deleteEntry(sessionId: string): void {
+    const internalId = this.sessionInternalIds.get(sessionId);
+    if (!internalId) {
+      return;
+    }
+
+    this.sessionInternalIds.delete(sessionId);
+    this.sessions.delete(internalId);
   }
 
   private getEntryBySessionId(sessionId: string): SessionEntry | undefined {

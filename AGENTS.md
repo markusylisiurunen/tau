@@ -337,6 +337,7 @@ Publishing to npm happens automatically via GitHub Actions when a GitHub Release
 
 Before any release:
 
+- Never run a release flow unless the user explicitly asks for a release.
 - Ensure you are on `main` with a clean working tree. Unpushed commits are fine because the release flow pushes commits and tags. If either condition is not true, ask the user what to do.
 - Run verification, build, and tests:
   - `npm run check && npm run build && npm test`

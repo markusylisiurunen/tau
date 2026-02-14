@@ -70,6 +70,7 @@ import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/util
 import { getGitRoot } from "../core/utils/git.js";
 import { buildLineDiff, collapseLongUnchangedDiffRuns } from "../core/utils/line_diff.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
+import { transcribeMistralAudio } from "../core/utils/mistral_transcription.js";
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
@@ -196,7 +197,6 @@ const PRUNE_EDIT_UNCHANGED_CONTEXT_LINES = 4;
 const PRUNE_PREVIEW_MAX_TOKENS = 512;
 const PRUNE_MAX_OVERAGE_RATIO = 0.1;
 const SPEAK_TEMP_FILE_TEMPLATE = "/tmp/tau-speak.XXXXXX";
-const SPEAK_MISTRAL_TRANSCRIBE_MODEL = "voxtral-mini-latest";
 const SPEAK_RECORDING_MIN_BYTES = 1024;
 const SPEAK_RECORDING_MAX_DURATION_MS = 5 * 60 * 1000;
 const CAFFEINATE_COMMAND = "/usr/bin/caffeinate";
@@ -1669,48 +1669,13 @@ export class ChatController {
       throw new Error("missing MISTRAL_API_KEY or apiKeys.mistral");
     }
 
-    const formData = new FormData();
-    formData.append("model", SPEAK_MISTRAL_TRANSCRIBE_MODEL);
-    formData.append("file", new Blob([audio], { type: "audio/wav" }), "speech.wav");
-    formData.append("language", "en");
-
-    const response = await fetch("https://api.mistral.ai/v1/audio/transcriptions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: formData,
+    return await transcribeMistralAudio({
+      apiKey,
+      audio,
+      mimeType: "audio/wav",
+      fileName: "speech.wav",
+      language: "en",
     });
-
-    let payload: unknown;
-    const responseText = await response.text();
-    if (responseText) {
-      try {
-        payload = JSON.parse(responseText) as unknown;
-      } catch {
-        payload = undefined;
-      }
-    }
-
-    if (!response.ok) {
-      const fromObject =
-        payload && typeof payload === "object" && "message" in payload
-          ? (payload as Record<string, unknown>).message
-          : undefined;
-      const fromString = typeof fromObject === "string" ? fromObject : undefined;
-      const fallback = responseText.trim() || `HTTP ${response.status}`;
-      throw new Error(fromString || fallback);
-    }
-
-    const text =
-      payload && typeof payload === "object" && "text" in payload
-        ? (payload as Record<string, unknown>).text
-        : undefined;
-    if (typeof text !== "string") {
-      return "";
-    }
-
-    return text;
   }
 
   private async cleanupSpeakTempFile(path: string): Promise<void> {

@@ -14,7 +14,7 @@ you'll need an API key from at least one provider. set it via environment variab
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
-# or OPENAI_API_KEY, or GEMINI_API_KEY, or PARALLEL_API_KEY, or MISTRAL_API_KEY (for /speak)
+# or OPENAI_API_KEY, or GEMINI_API_KEY, or PARALLEL_API_KEY, or MISTRAL_API_KEY (for /speak and Telegram audio)
 ```
 
 or store keys in `~/.config/tau/config.json`:
@@ -35,7 +35,7 @@ for provider keys (`anthropic`, `openai`, `google`), tau checks `~/.config/tau/c
 
 `parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents and can be provided through `apiKeys.parallel` or `PARALLEL_API_KEY` (`PARALLEL_API_KEY` takes precedence).
 
-`/speak` uses `apiKeys.mistral` or `MISTRAL_API_KEY` for transcription (`MISTRAL_API_KEY` takes precedence), requires `ffmpeg` on your system, and is currently supported only on macOS.
+`/speak` and Telegram audio transcription both use `apiKeys.mistral` or `MISTRAL_API_KEY` (`MISTRAL_API_KEY` takes precedence). `/speak` also requires `ffmpeg` on your system and is currently supported only on macOS.
 
 ### OpenAI Codex subscription (ChatGPT Plus/Pro)
 

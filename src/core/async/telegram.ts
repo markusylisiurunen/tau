@@ -1,5 +1,6 @@
 import { Api } from "grammy";
 import type { AsyncProjectConfig } from "../config/schema.js";
+import { transcribeMistralAudio } from "../utils/mistral_transcription.js";
 import { isRecord } from "../utils/type_guards.js";
 import {
   type AsyncSessionManager,
@@ -22,6 +23,15 @@ type TelegramMessage = {
   chat?: TelegramChat;
   from?: TelegramUser;
   text?: string;
+  voice?: {
+    file_id?: string;
+    mime_type?: string;
+  };
+  audio?: {
+    file_id?: string;
+    mime_type?: string;
+    file_name?: string;
+  };
 };
 
 type TelegramUpdate = {
@@ -48,6 +58,7 @@ export type AsyncTelegramApi = {
     allowedUpdates: TelegramAllowedUpdates;
   }): Promise<TelegramUpdate[]>;
   sendMessage(chatId: number, text: string): Promise<void>;
+  downloadFile(fileId: string): Promise<Buffer>;
   setCommands?(commands: TelegramBotCommand[]): Promise<void>;
   setMessageReaction?(chatId: number, messageId: number): Promise<void>;
 };
@@ -69,8 +80,10 @@ export type AsyncTelegramAdapterOptions = {
   allowedChatIds?: number[];
   pollIntervalMs?: number;
   requestTimeoutSeconds?: number;
+  mistralApiKey?: string;
   sessionManager: AsyncSessionManager;
   api?: AsyncTelegramApi;
+  fetchImpl?: typeof fetch;
   onLog?: (entry: AsyncTelegramLogEntry) => void;
 };
 
@@ -86,9 +99,19 @@ type NewCommandResolution =
       error: string;
     };
 
+type TelegramAudioMessage = {
+  fileId: string;
+  mimeType: string;
+  fileName: string;
+};
+
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
 const MAX_COMMAND_PREVIEW_CHARS = 128;
+const DEFAULT_TELEGRAM_VOICE_MIME_TYPE = "audio/ogg";
+const DEFAULT_TELEGRAM_VOICE_FILE_NAME = "voice.ogg";
+const DEFAULT_TELEGRAM_AUDIO_MIME_TYPE = "audio/mpeg";
+const DEFAULT_TELEGRAM_AUDIO_FILE_NAME = "audio.mp3";
 const MESSAGE_QUEUED_REACTION_EMOJI = "👀";
 const ABORTED = Symbol("aborted");
 
@@ -177,6 +200,22 @@ function createGrammyApi(botToken: string): AsyncTelegramApi {
     async sendMessage(chatId, text) {
       await api.sendMessage(chatId, text);
     },
+    async downloadFile(fileId) {
+      const file = await api.getFile(fileId);
+      const filePath = file.file_path?.trim();
+      if (!filePath) {
+        throw new Error("telegram file path is missing");
+      }
+
+      const response = await fetch(`https://api.telegram.org/file/bot${botToken}/${filePath}`);
+      if (!response.ok) {
+        const detail = (await response.text()).trim();
+        throw new Error(detail || `telegram file download failed: HTTP ${response.status}`);
+      }
+
+      const bytes = await response.arrayBuffer();
+      return Buffer.from(bytes);
+    },
     async setCommands(commands) {
       await api.setMyCommands(commands);
     },
@@ -196,8 +235,10 @@ class AsyncTelegramAdapterImpl {
   private readonly allowedChatIds?: Set<number>;
   private readonly pollIntervalMs: number;
   private readonly requestTimeoutSeconds: number;
+  private readonly mistralApiKey?: string;
   private readonly sessionManager: AsyncSessionManager;
   private readonly api: AsyncTelegramApi;
+  private readonly fetchImpl?: typeof fetch;
   private readonly onLog?: (entry: AsyncTelegramLogEntry) => void;
   private readonly abortController = new AbortController();
   private readonly activeSessionsByChat = new Map<number, string>();
@@ -228,8 +269,10 @@ class AsyncTelegramAdapterImpl {
         : undefined;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
+    this.mistralApiKey = options.mistralApiKey?.trim() || undefined;
     this.sessionManager = options.sessionManager;
     this.api = options.api ?? createGrammyApi(options.botToken);
+    this.fetchImpl = options.fetchImpl;
     this.onLog = options.onLog;
 
     this.unsubscribeSessionEvents = this.sessionManager.onEvent((event) => {
@@ -379,16 +422,44 @@ class AsyncTelegramAdapterImpl {
     }
 
     const text = typeof message.text === "string" ? message.text.trim() : "";
-    if (!text) {
+    if (text) {
+      if (text.startsWith("/")) {
+        await this.handleCommand(chatId, text);
+        return;
+      }
+
+      await this.handleMessage(chatId, text, message.message_id);
       return;
     }
 
-    if (text.startsWith("/")) {
-      await this.handleCommand(chatId, text);
+    const audioMessage = this.parseAudioMessage(message);
+    if (!audioMessage) {
       return;
     }
 
-    await this.handleMessage(chatId, text, message.message_id);
+    await this.handleAudioMessage(chatId, audioMessage, message.message_id);
+  }
+
+  private parseAudioMessage(message: TelegramMessage): TelegramAudioMessage | undefined {
+    const voiceFileId = message.voice?.file_id?.trim();
+    if (voiceFileId) {
+      return {
+        fileId: voiceFileId,
+        mimeType: message.voice?.mime_type?.trim() || DEFAULT_TELEGRAM_VOICE_MIME_TYPE,
+        fileName: DEFAULT_TELEGRAM_VOICE_FILE_NAME,
+      };
+    }
+
+    const audioFileId = message.audio?.file_id?.trim();
+    if (!audioFileId) {
+      return undefined;
+    }
+
+    return {
+      fileId: audioFileId,
+      mimeType: message.audio?.mime_type?.trim() || DEFAULT_TELEGRAM_AUDIO_MIME_TYPE,
+      fileName: message.audio?.file_name?.trim() || DEFAULT_TELEGRAM_AUDIO_FILE_NAME,
+    };
   }
 
   private isChatAllowed(chatId: number): boolean {
@@ -674,6 +745,62 @@ class AsyncTelegramAdapterImpl {
       await this.sessionManager.sendMessage(
         session.id,
         text,
+        this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
+      );
+      await this.reactToQueuedMessage(chatId, sourceMessageId);
+      if (this.isVerboseSession(session.id)) {
+        await this.reply(chatId, this.formatMessageQueued(session.id));
+      }
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
+    }
+  }
+
+  private async handleAudioMessage(
+    chatId: number,
+    message: TelegramAudioMessage,
+    sourceMessageId?: number,
+  ): Promise<void> {
+    const session = this.getActiveSession(chatId);
+    if (!session) {
+      await this.reply(chatId, "no active session. use /new or /use <sessionId>");
+      return;
+    }
+
+    if (!this.mistralApiKey) {
+      await this.reply(
+        chatId,
+        "set MISTRAL_API_KEY or apiKeys.mistral to transcribe Telegram audio",
+      );
+      return;
+    }
+
+    let transcript = "";
+    try {
+      const audio = await this.api.downloadFile(message.fileId);
+      transcript = (
+        await transcribeMistralAudio({
+          apiKey: this.mistralApiKey,
+          audio,
+          fileName: message.fileName,
+          mimeType: message.mimeType,
+          fetchImpl: this.fetchImpl,
+        })
+      ).trim();
+    } catch (error) {
+      await this.reply(chatId, `audio transcription failed: ${this.formatManagerError(error)}`);
+      return;
+    }
+
+    if (!transcript) {
+      await this.reply(chatId, "audio transcription failed: transcription result was empty");
+      return;
+    }
+
+    try {
+      await this.sessionManager.sendMessage(
+        session.id,
+        transcript,
         this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
       );
       await this.reactToQueuedMessage(chatId, sourceMessageId);

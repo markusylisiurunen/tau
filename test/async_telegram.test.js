@@ -11,9 +11,19 @@ async function waitFor(predicate, timeoutMs = 2000) {
   }
 }
 
+function createJsonResponse(payload, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      "content-type": "application/json",
+    },
+  });
+}
+
 function createApiHarness(updateBatches) {
   const queue = [...updateBatches];
   const sendMessages = [];
+  const downloadFileCalls = [];
   const setCommandsCalls = [];
   const setMessageReactions = [];
 
@@ -28,6 +38,10 @@ function createApiHarness(updateBatches) {
     sendMessage: vi.fn(async (chatId, text) => {
       sendMessages.push({ chatId, text });
     }),
+    downloadFile: vi.fn(async (fileId) => {
+      downloadFileCalls.push(fileId);
+      return Buffer.from("telegram audio payload");
+    }),
     setCommands: vi.fn(async (commands) => {
       setCommandsCalls.push(commands);
     }),
@@ -39,6 +53,7 @@ function createApiHarness(updateBatches) {
   return {
     api,
     sendMessages,
+    downloadFileCalls,
     setCommandsCalls,
     setMessageReactions,
   };
@@ -333,6 +348,193 @@ describe("async telegram adapter", () => {
         chatId: 200,
         messageId: 502,
       });
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("transcribes voice messages and sends the transcript to the active session", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 210, type: "private" },
+            from: { id: 7 },
+            text: "/use s21",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            message_id: 902,
+            chat: { id: 210, type: "private" },
+            from: { id: 7 },
+            voice: {
+              file_id: "voice-123",
+              mime_type: "audio/ogg",
+            },
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s21",
+        projectId: "demo",
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const mistralFetch = vi.fn(async () => createJsonResponse({ text: "ship the fix" }));
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      mistralApiKey: "mistral-key",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      fetchImpl: mistralFetch,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+      expect(apiHarness.downloadFileCalls).toEqual(["voice-123"]);
+      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
+        "s21",
+        "ship the fix",
+        undefined,
+      );
+      expect(mistralFetch).toHaveBeenCalledTimes(1);
+      expect(apiHarness.setMessageReactions).toContainEqual({
+        chatId: 210,
+        messageId: 902,
+      });
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("shows an error for voice messages when mistral api key is missing", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 220, type: "private" },
+            from: { id: 7 },
+            text: "/use s22",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 220, type: "private" },
+            from: { id: 7 },
+            voice: {
+              file_id: "voice-456",
+            },
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s22",
+        projectId: "demo",
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() =>
+        apiHarness.sendMessages.some((entry) =>
+          entry.text.includes(
+            "set MISTRAL_API_KEY or apiKeys.mistral to transcribe Telegram audio",
+          ),
+        ),
+      );
+      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+      expect(apiHarness.downloadFileCalls).toEqual([]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("shows a transcription error when mistral rejects telegram audio", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 230, type: "private" },
+            from: { id: 7 },
+            text: "/use s23",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 230, type: "private" },
+            from: { id: 7 },
+            audio: {
+              file_id: "audio-789",
+              mime_type: "audio/mp3",
+              file_name: "voice-note.mp3",
+            },
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s23",
+        projectId: "demo",
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const mistralFetch = vi.fn(async () => createJsonResponse({ message: "bad audio" }, 400));
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      mistralApiKey: "mistral-key",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      fetchImpl: mistralFetch,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() =>
+        apiHarness.sendMessages.some((entry) =>
+          entry.text.includes("audio transcription failed: bad audio"),
+        ),
+      );
+      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+      expect(apiHarness.downloadFileCalls).toEqual(["audio-789"]);
     } finally {
       await adapter.close();
     }

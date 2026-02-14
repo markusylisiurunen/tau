@@ -30,7 +30,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
 - **Tool UI registry** (`src/tui/ui/tool_ui_registry.ts`): Maps ToolUiEvent types to tool output view models
 
-**Data flow**: TUI mode: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering. RPC mode: NDJSON requests on stdin → RPC server (`src/core/modes/rpc_server.ts`) → `ChatRuntime`/`CoreSession` → NDJSON responses/events on stdout. SDK mode: Node code → `src/sdk/client.ts` → spawned `tau rpc` subprocess over stdin/stdout NDJSON. Async mode: `tau async daemon` → async HTTP server (`src/core/async/http_server.ts`) + session manager (`src/core/async/session_manager.ts`) + optional Telegram long-poll adapter (`src/core/async/telegram.ts`) over `getUpdates`/`sendMessage`.
+**Data flow**: TUI mode: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering. RPC mode: NDJSON requests on stdin → RPC server (`src/core/modes/rpc_server.ts`) → `ChatRuntime`/`CoreSession` → NDJSON responses/events on stdout. SDK mode: Node code → `src/sdk/client.ts` → spawned `tau rpc` subprocess over stdin/stdout NDJSON. Async mode: `tau async daemon` → async HTTP server (`src/core/async/http_server.ts`) + session manager (`src/core/async/session_manager.ts`) + optional Telegram long-poll adapter (`src/core/async/telegram.ts`) over `getUpdates`/`getFile`/`sendMessage`.
 
 **Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Assistant and tool-result events include stable `historyEntryId` values so the UI can correlate rendered rows with session history across rewind operations. Subagent UI updates (spawned, progress, emit_output messages, finished) are delivered via `CoreSession.onSubagentEvent()` as `subagent_ui` events for background updates. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
 
@@ -166,7 +166,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 - **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `bashCommands`, `agentContextFiles`, `sandbox`, `async`). This level is only included when cwd is inside home.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
-  - `apiKeys.mistral` (optional): Mistral API key for `/speak` transcription.
+  - `apiKeys.mistral` (optional): Mistral API key for `/speak` and Telegram audio transcription.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `sandbox` (optional): Docker sandbox settings (see below).
@@ -248,7 +248,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for daemon-file `authToken` in daemon mode
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 - `PARALLEL_API_KEY` (env var) - Optional override for `apiKeys.parallel` used by `web_search`/`web_fetch`
-- `MISTRAL_API_KEY` (env var) - Optional override for `/speak` microphone transcription (macOS only)
+- `MISTRAL_API_KEY` (env var) - Optional override for `/speak` microphone and Telegram audio transcription
 
 ## Commands
 

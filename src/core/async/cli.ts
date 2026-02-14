@@ -1,5 +1,5 @@
 import type { Config } from "../config/schema.js";
-import { loadConfig } from "../config/schema.js";
+import { getMistralApiKey, loadConfig } from "../config/schema.js";
 import { startAsyncHttpServer } from "./http_server.js";
 import { AsyncDaemonConfigError, loadAsyncDaemonConfig } from "./server_config.js";
 import { createAsyncSessionManager } from "./session_manager.js";
@@ -444,6 +444,7 @@ export function printAsyncHelp(log: (line: string) => void = console.log): void 
 async function runDaemon(args: {
   configFilePath: string;
   env: NodeJS.ProcessEnv;
+  config: Config;
   stdout: (line: string) => void;
 }): Promise<void> {
   let daemonConfig: ReturnType<typeof loadAsyncDaemonConfig>;
@@ -458,6 +459,7 @@ async function runDaemon(args: {
   }
 
   const authToken = getTrimmedEnvValue("TAU_ASYNC_AUTH_TOKEN", args.env) ?? daemonConfig.authToken;
+  const mistralApiKey = getMistralApiKey(args.config, args.env);
 
   if (!authToken) {
     throw new AsyncCliError(
@@ -493,6 +495,7 @@ async function runDaemon(args: {
         allowedChatIds: telegramConfig.allowedChatIds,
         pollIntervalMs: telegramConfig.pollIntervalMs,
         requestTimeoutSeconds: telegramConfig.requestTimeoutSeconds,
+        mistralApiKey,
         sessionManager,
         onLog: (entry) => {
           args.stdout(`[telegram:${entry.level}] ${entry.message}`);
@@ -557,7 +560,7 @@ export async function runAsyncCommand(
       throw new AsyncCliError("missing --config-file <path> for daemon mode");
     }
 
-    await runDaemon({ configFilePath: parsed.configFilePath, env, stdout });
+    await runDaemon({ configFilePath: parsed.configFilePath, env, config, stdout });
     return;
   }
 

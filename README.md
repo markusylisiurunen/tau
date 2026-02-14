@@ -627,7 +627,7 @@ the prompt file name (without the `.md` extension) must match the `id`.
 
 ### skills
 
-skills are optional directories discovered at `~/.config/tau/skills/` (only when cwd is under home) and `.tau/skills/` in the cwd ancestry (up to home, or filesystem root if cwd is outside home). each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home).
+skills are optional directories discovered at `~/.config/tau/skills/` and `~/.agents/skills/` (global, only when cwd is under home), plus `.tau/skills/` and `.agents/skills/` in the cwd ancestry (up to home, or filesystem root if cwd is outside home). each skill is a directory containing `SKILL.md`. tau follows the [agent skills spec](https://agentskills.io/home). when `.tau/skills/` and `.agents/skills/` both exist at the same level, `.agents/skills/` wins on name conflicts.
 
 `SKILL.md` must start with yaml frontmatter:
 

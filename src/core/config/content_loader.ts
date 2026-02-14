@@ -1095,6 +1095,22 @@ function parseSkill(filePath: string, content: string): { skill?: Skill; error?:
   };
 }
 
+function loadSkillsFromDir(dir: string, deps: ConfigDeps): { skills: Skill[]; errors: string[] } {
+  const { entries, errors } = loadMarkdownEntries(dir, deps, listSkillFiles);
+  const skills: Skill[] = [];
+
+  for (const entry of entries) {
+    const result = parseSkill(entry.path, entry.content);
+    if (result.skill) {
+      skills.push(result.skill);
+    } else if (result.error) {
+      errors.push(result.error);
+    }
+  }
+
+  return { skills, errors };
+}
+
 export async function loadUserSkills(args?: {
   deps?: ConfigDeps;
   levels?: ConfigLevel[];
@@ -1112,16 +1128,15 @@ export async function loadUserSkills(args?: {
   if (!globalLevel) {
     return { skills: [], errors: [] };
   }
-  const { entries, errors } = loadMarkdownEntries(globalLevel.skillsDir, deps, listSkillFiles);
-  const skills: Skill[] = [];
 
-  for (const entry of entries) {
-    const result = parseSkill(entry.path, entry.content);
-    if (result.skill) {
-      skills.push(result.skill);
-    } else if (result.error) {
-      errors.push(result.error);
-    }
+  const skills: Skill[] = [];
+  const errors: string[] = [];
+  const skillDirs = [globalLevel.skillsDir, globalLevel.agentsSkillsDir];
+
+  for (const dir of skillDirs) {
+    const result = loadSkillsFromDir(dir, deps);
+    skills.push(...result.skills);
+    errors.push(...result.errors);
   }
 
   return { skills, errors };
@@ -1150,20 +1165,12 @@ export async function loadProjectSkills(args?: {
 
   // Parent-first order, closest directory wins on conflicts.
   for (const level of projectLevels) {
-    const { entries, errors: entryErrors } = loadMarkdownEntries(
-      level.skillsDir,
-      deps,
-      listSkillFiles,
-    );
-    errors.push(...entryErrors);
+    const skillDirs = [level.skillsDir, level.agentsSkillsDir];
 
-    for (const entry of entries) {
-      const result = parseSkill(entry.path, entry.content);
-      if (result.skill) {
-        skills.push(result.skill);
-      } else if (result.error) {
-        errors.push(result.error);
-      }
+    for (const dir of skillDirs) {
+      const result = loadSkillsFromDir(dir, deps);
+      skills.push(...result.skills);
+      errors.push(...result.errors);
     }
   }
 

@@ -10,6 +10,7 @@ export type ConfigLevel = {
   personasDir: string;
   promptsDir: string;
   skillsDir: string;
+  agentsSkillsDir: string;
   themesDir: string;
   scope: ConfigLevelScope;
 };
@@ -24,6 +25,7 @@ function buildLevel(levelRoot: string, configDir: string, scope: ConfigLevelScop
     personasDir: join(dir, "personas"),
     promptsDir: join(dir, "prompts"),
     skillsDir: join(dir, "skills"),
+    agentsSkillsDir: join(root, ".agents", "skills"),
     themesDir: join(dir, "themes"),
     scope,
   };
@@ -57,7 +59,8 @@ export function resolveConfigLevels(deps: ConfigDeps, options?: { cwd?: string }
 
   while (true) {
     const configDir = join(dir, ".tau");
-    if (isDirectory(deps, configDir)) {
+    const agentsSkillsDir = join(dir, ".agents", "skills");
+    if (isDirectory(deps, configDir) || isDirectory(deps, agentsSkillsDir)) {
       projectLevels.push(buildLevel(dir, configDir, "project"));
     }
 

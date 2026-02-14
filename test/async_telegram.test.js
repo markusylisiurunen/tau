@@ -683,6 +683,197 @@ describe("async telegram adapter", () => {
     }
   });
 
+  it("keeps forwarding session events after /new switches the selected session", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 465, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 465, type: "private" },
+            from: { id: 7 },
+            text: "/verbose",
+          },
+        },
+        {
+          update_id: 3,
+          message: {
+            chat: { id: 465, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.createSession.mock.calls.length === 2);
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s1",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        progress: {
+          type: "assistant-message",
+          text: "first session update",
+        },
+      });
+
+      await waitFor(() =>
+        apiHarness.sendMessages.some((entry) => entry.text.includes("(s1) assistant message")),
+      );
+
+      expect(
+        apiHarness.sendMessages.some((entry) => entry.text.includes("(s1) assistant message")),
+      ).toBe(true);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("scopes /quiet and /verbose to the selected session while multiplexing", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 466, type: "private" },
+            from: { id: 7 },
+            text: "/use s1",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 466, type: "private" },
+            from: { id: 7 },
+            text: "/verbose",
+          },
+        },
+        {
+          update_id: 3,
+          message: {
+            chat: { id: 466, type: "private" },
+            from: { id: 7 },
+            text: "/use s2",
+          },
+        },
+        {
+          update_id: 4,
+          message: {
+            chat: { id: 466, type: "private" },
+            from: { id: 7 },
+            text: "/quiet",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s1",
+        projectId: "demo",
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+      {
+        id: "s2",
+        projectId: "demo",
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length >= 4);
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s1",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        progress: {
+          type: "assistant-message",
+          text: "update from s1",
+        },
+      });
+
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s2",
+        projectId: "demo",
+        previousState: "waiting-input",
+        state: "running",
+        updatedAt: "2024-01-01T00:02:00.000Z",
+      });
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s2",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:03:00.000Z",
+        progress: {
+          type: "assistant-message",
+          text: "final from s2",
+        },
+      });
+
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s2",
+        projectId: "demo",
+        previousState: "running",
+        state: "waiting-input",
+        updatedAt: "2024-01-01T00:04:00.000Z",
+      });
+
+      await waitFor(
+        () =>
+          apiHarness.sendMessages.some((entry) => entry.text.includes("(s1) assistant message")) &&
+          apiHarness.sendMessages.some((entry) => entry.text === "final from s2"),
+      );
+
+      expect(
+        apiHarness.sendMessages.some((entry) => entry.text.includes("(s2) assistant message")),
+      ).toBe(false);
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("only sends the final assistant message in quiet mode", async () => {
     const apiHarness = createApiHarness([
       [

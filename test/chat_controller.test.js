@@ -299,6 +299,22 @@ describe("ChatController caffeinate", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it("no-ops caffeinate on Linux", async () => {
+    const stub = createStubView();
+    const spawn = vi.fn();
+    const controller = createController(stub.view, {
+      caffeinated: true,
+      noAgentContextFiles: true,
+      deps: createMockDeps(spawn, "linux"),
+    });
+    vi.spyOn(controller.runtime, "runTurn").mockResolvedValue({ aborted: false });
+
+    await controller.runAssistantTurn();
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(stub.systemMessages).toEqual([]);
+  });
+
   it("stops active caffeinate during dispose", async () => {
     const stub = createStubView();
     let signal;
@@ -403,6 +419,22 @@ describe("ChatController speak capture", () => {
 
     expect(stub.systemMessages).toContainEqual({
       text: "speech recording state change already in progress",
+      kind: "warn",
+    });
+  });
+
+  it("shows a warning and skips recording on Linux", async () => {
+    const stub = createStubView();
+    const spawn = vi.fn();
+    const controller = createController(stub.view, {
+      deps: createMockDeps(spawn, "linux"),
+    });
+
+    await controller.toggleSpeakCapture();
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(stub.systemMessages).toContainEqual({
+      text: "/speak is currently supported only on macOS.",
       kind: "warn",
     });
   });

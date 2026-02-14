@@ -239,7 +239,7 @@ export function printHelp(personas: Persona[]): void {
       `  --risk, -r <level>            set initial model risk level. levels: ${riskList}.`,
       `                                if not specified, uses defaultRisk from ~/.config/tau/config.json (default: read-only).`,
       "  --sandbox                     run all tool execution inside a session docker container.",
-      "  --caffeinated                 keep macOS awake during active assistant turns in TUI mode.",
+      "  --caffeinated                 keep macOS awake during active assistant turns in TUI mode (no-op on Linux).",
       "  --no-agent-context-files      disable AGENTS.md injection into the system prompt.",
       "",
       "subcommands:",

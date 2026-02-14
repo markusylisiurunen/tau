@@ -35,7 +35,7 @@ for provider keys (`anthropic`, `openai`, `google`), tau checks `~/.config/tau/c
 
 `parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents and can be provided through `apiKeys.parallel` or `PARALLEL_API_KEY` (`PARALLEL_API_KEY` takes precedence).
 
-`/speak` uses `apiKeys.mistral` or `MISTRAL_API_KEY` for transcription (`MISTRAL_API_KEY` takes precedence) and requires `ffmpeg` on your system.
+`/speak` uses `apiKeys.mistral` or `MISTRAL_API_KEY` for transcription (`MISTRAL_API_KEY` takes precedence), requires `ffmpeg` on your system, and is currently supported only on macOS.
 
 ### OpenAI Codex subscription (ChatGPT Plus/Pro)
 
@@ -283,7 +283,7 @@ start tau with `--caffeinated` to keep macOS awake while an assistant turn is ru
 tau --caffeinated
 ```
 
-tau uses `caffeinate -i` and only holds the sleep assertion during active assistant turns. it does not keep the display awake, and it does not apply to `tau rpc` mode.
+tau uses `caffeinate -i` and only holds the sleep assertion during active assistant turns. it does not keep the display awake, and it does not apply to `tau rpc` mode. on Linux, `--caffeinated` is accepted but currently a no-op.
 
 ## personas
 
@@ -384,7 +384,7 @@ tau supports slash commands for common actions:
 | `/copy:code`                | copy just the code blocks                                                       |
 | `/checkpoint`               | save a checkpoint file for loading later                                        |
 | `/reload`                   | reload personas, prompts, skills, themes, bash commands, and AGENTS.md          |
-| `/speak`                    | toggle microphone recording and transcribe into the editor                      |
+| `/speak`                    | toggle microphone recording and transcribe into the editor (macOS only)         |
 | `/cd`                       | change the working directory                                                    |
 | `/compact:summary-only`     | compress history into one synthetic user summary message                        |
 | `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present   |
@@ -406,7 +406,7 @@ the compact commands are manual and useful when conversations get long. they rep
 
 the prune commands drop bash tool results from the active context without summarizing and compact edit call payloads/results. all three accept an optional fraction between `0` and `1` (for example, `/prune:largest 0.4`) and default to `0.25` when omitted. `/prune:smart` also accepts optional guidance text, either after a fraction (for example, `/prune:smart 0.3 keep only repetitive output`) or by itself (for example, `/prune:smart keep build logs`).
 
-`/speak` (or `ctrl+y`) starts microphone recording. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor. recording also auto-stops after 5 minutes.
+`/speak` (or `ctrl+y`) starts microphone recording on macOS. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor. recording also auto-stops after 5 minutes. on Linux, `/speak` is currently unavailable and tau shows a warning.
 
 `/rewind` opens a picker over prior user messages in the current context. it truncates history from the selected message onward (including the selected message) and prefills the editor with that message so you can retry from there.
 

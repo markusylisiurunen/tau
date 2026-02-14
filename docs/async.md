@@ -20,6 +20,7 @@ tau async list
 tau async status <sessionId>
 tau async logs <sessionId>
 tau async send <sessionId> <text...>
+tau async interrupt <sessionId>
 tau async cancel <sessionId>
 ```
 
@@ -113,6 +114,7 @@ Base URL: `http://<host>:<port>`
 - `GET /v1/sessions/:sessionId`
 - `GET /v1/sessions/:sessionId/logs`
 - `POST /v1/sessions/:sessionId/messages`
+- `POST /v1/sessions/:sessionId/interrupt`
 - `POST /v1/sessions/:sessionId/cancel`
 
 Requests under `/v1/*` require:

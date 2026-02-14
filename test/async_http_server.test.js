@@ -38,6 +38,17 @@ function createManager() {
       createdAt: "2024-01-01T00:00:00.000Z",
       updatedAt: "2024-01-01T00:00:00.000Z",
     })),
+    interruptSession: vi.fn(async () => ({
+      session: {
+        id: "s1",
+        projectId: "demo",
+        state: "running",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+      interrupted: true,
+      isTurnRunning: true,
+    })),
     cancelSession: vi.fn(async () => ({
       id: "s1",
       projectId: "demo",
@@ -103,6 +114,31 @@ describe("async http server", () => {
 
     expect(created.status).toBe(201);
     expect(manager.createSession).toHaveBeenCalledWith({ projectId: "demo", prompt: "hello" });
+
+    const interrupted = await fetch(`${handle.baseUrl}/v1/sessions/s1/interrupt`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret",
+      },
+    });
+
+    expect(interrupted.status).toBe(200);
+    const interruptedPayload = await interrupted.json();
+    expect(interruptedPayload).toEqual({
+      ok: true,
+      data: {
+        session: {
+          id: "s1",
+          projectId: "demo",
+          state: "running",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+        interrupted: true,
+        isTurnRunning: true,
+      },
+    });
+    expect(manager.interruptSession).toHaveBeenCalledWith("s1");
   });
 
   it("returns 400 for malformed json request bodies", async () => {

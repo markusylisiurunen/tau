@@ -35,6 +35,7 @@ type SessionPathRoute =
   | { route: "session"; sessionId: string }
   | { route: "logs"; sessionId: string }
   | { route: "messages"; sessionId: string }
+  | { route: "interrupt"; sessionId: string }
   | { route: "cancel"; sessionId: string };
 
 function isAuthorized(request: IncomingMessage, authToken: string): boolean {
@@ -87,6 +88,15 @@ function parseSessionPath(pathname: string): SessionPathRoute | "invalid" | unde
       return "invalid";
     }
     return { route: "messages", sessionId };
+  }
+
+  const interruptMatch = /^\/v1\/sessions\/([^/]+)\/interrupt$/.exec(pathname);
+  if (interruptMatch) {
+    const sessionId = decodePathSegment(interruptMatch[1] ?? "");
+    if (!sessionId) {
+      return "invalid";
+    }
+    return { route: "interrupt", sessionId };
   }
 
   const cancelMatch = /^\/v1\/sessions\/([^/]+)\/cancel$/.exec(pathname);
@@ -280,6 +290,20 @@ export async function startAsyncHttpServer(
             sendOk(response, 200, { session: serializeSession(session) });
           } catch (error) {
             handleManagerError(response, error, "failed to send message");
+          }
+          return;
+        }
+
+        if (route.route === "interrupt" && method === "POST") {
+          try {
+            const interrupted = await options.sessionManager.interruptSession(route.sessionId);
+            sendOk(response, 200, {
+              session: serializeSession(interrupted.session),
+              interrupted: interrupted.interrupted,
+              isTurnRunning: interrupted.isTurnRunning,
+            });
+          } catch (error) {
+            handleManagerError(response, error, "failed to interrupt session");
           }
           return;
         }

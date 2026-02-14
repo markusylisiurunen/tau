@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { isAbsolute, posix as pathPosix, relative, resolve } from "node:path";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
@@ -12,6 +12,7 @@ import type { Persona, RiskLevel, Skill } from "../types.js";
 import { buildProjectContextBlock, buildSkillsIndexBlock } from "../utils/context.js";
 import { formatCwd } from "../utils/format.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
+import { normalizeSandboxMountPath } from "../utils/sandbox_paths.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -149,15 +150,37 @@ function resolveWorkingDirectory(args: {
   cwd: string;
   hostCwd: string;
   workingDirectory?: string;
-}): { cwd: string; hostCwd: string } {
+  sandboxEnabled: boolean;
+  sandboxMountPath?: string;
+}): { cwd: string; hostCwd: string; error?: string } {
   if (!args.workingDirectory) {
     return { cwd: args.cwd, hostCwd: args.hostCwd };
   }
 
   const cwd = resolve(args.cwd, args.workingDirectory);
   const rel = relative(args.cwd, cwd);
-  const hostCwd = resolve(args.hostCwd, rel);
-  return { cwd, hostCwd };
+
+  if (!isAbsolute(args.workingDirectory)) {
+    return { cwd, hostCwd: resolve(args.hostCwd, rel) };
+  }
+
+  if (!args.sandboxEnabled) {
+    return { cwd, hostCwd: cwd };
+  }
+
+  const mountPath = normalizeSandboxMountPath(args.sandboxMountPath);
+  const relFromMount = pathPosix.relative(mountPath, cwd);
+  if (relFromMount === ".." || relFromMount.startsWith("../")) {
+    return {
+      cwd,
+      hostCwd: args.hostCwd,
+      error:
+        `absolute workingDirectory '${cwd}' is outside sandbox mount path '${mountPath}' and ` +
+        "cannot be mapped to host prompt context.",
+    };
+  }
+
+  return { cwd, hostCwd: resolve(args.hostCwd, rel) };
 }
 
 async function buildSubagentSystemPrompt(args: {
@@ -314,11 +337,23 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       const baseCwd = context.cwd ?? process.cwd();
       const baseHostCwd = context.hostCwd ?? process.cwd();
       const baseHome = context.home ?? process.env.HOME ?? process.cwd();
-      const { cwd, hostCwd } = resolveWorkingDirectory({
+      const {
+        cwd,
+        hostCwd,
+        error: workingDirectoryError,
+      } = resolveWorkingDirectory({
         cwd: baseCwd,
         hostCwd: baseHostCwd,
         workingDirectory,
+        sandboxEnabled: context.sandboxEnabled ?? false,
+        sandboxMountPath: context.config?.sandbox?.mountPath,
       });
+      if (workingDirectoryError) {
+        return blocked(workingDirectoryError, {
+          name,
+          title,
+        });
+      }
 
       let systemPrompt: string | undefined;
       if (workingDirectory) {

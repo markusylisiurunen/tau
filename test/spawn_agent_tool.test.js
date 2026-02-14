@@ -284,17 +284,60 @@ describe("spawn_agent tool", () => {
     expect(spawned).toHaveLength(0);
   });
 
+  it("rejects absolute workingDirectory outside sandbox mount", async () => {
+    const backend = createLocalToolExecutionBackend();
+    const tool = createSpawnAgentToolDefinition(backend);
+    const { context, spawned } = createContext({
+      cwd: "/workspace/src",
+      hostCwd: "/home/user/repo/src",
+      sandboxEnabled: true,
+      config: {
+        sandbox: {
+          mountPath: "/workspace",
+        },
+      },
+    });
+
+    const result = await tool.dispatch(
+      {
+        id: "call-8",
+        name: TOOL_NAME_SPAWN_AGENT,
+        arguments: {
+          name: "researcher",
+          title: "research task",
+          prompt: "collect findings",
+          workingDirectory: "/tmp",
+        },
+      },
+      "read-only",
+      undefined,
+      context,
+    );
+
+    expect(result.kind).toBe("single");
+    expect(result.toolResult.isError).toBe(true);
+    expect(getText(result.toolResult)).toContain("is outside sandbox mount path");
+    expect(spawned).toHaveLength(0);
+  });
+
   it("rebuilds subagent prompt context for workingDirectory", async () => {
     const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-"));
     const projectRoot = join(tmpRoot, "project");
     const skillDir = join(projectRoot, ".tau", "skills", "scoped-skill");
+    const invalidSkillDir = join(projectRoot, ".tau", "skills", "bad--skill");
     const sourceDir = join(projectRoot, "src");
 
     mkdirSync(skillDir, { recursive: true });
+    mkdirSync(invalidSkillDir, { recursive: true });
     mkdirSync(sourceDir, { recursive: true });
     writeFileSync(
       join(skillDir, "SKILL.md"),
       ["---", "name: scoped-skill", "description: scoped helper", "---", "", "body"].join("\n"),
+      "utf-8",
+    );
+    writeFileSync(
+      join(invalidSkillDir, "SKILL.md"),
+      ["---", "name: bad--skill", "description: invalid helper", "---", "", "body"].join("\n"),
       "utf-8",
     );
     writeFileSync(join(projectRoot, "AGENTS.md"), "project context marker\n", "utf-8");
@@ -310,13 +353,13 @@ describe("spawn_agent tool", () => {
         includeAgentContext: true,
         persona: {
           ...base.context.persona,
-          skills: ["scoped-skill"],
+          skills: ["scoped-skill", "bad--skill"],
         },
       });
 
       const dispatched = await tool.dispatch(
         {
-          id: "call-8",
+          id: "call-9",
           name: TOOL_NAME_SPAWN_AGENT,
           arguments: {
             name: "researcher",
@@ -340,6 +383,7 @@ describe("spawn_agent tool", () => {
       expect(spawned[0].systemPrompt).toContain("project context marker");
       expect(spawned[0].systemPrompt).toContain("<available-skills>");
       expect(spawned[0].systemPrompt).toContain("<name>scoped-skill</name>");
+      expect(spawned[0].systemPrompt).not.toContain("<name>bad--skill</name>");
     } finally {
       rmSync(tmpRoot, { recursive: true, force: true });
     }

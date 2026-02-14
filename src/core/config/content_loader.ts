@@ -1,4 +1,4 @@
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, join } from "node:path";
 import type { Api, KnownProvider, Model, Tool } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { parse as parseYaml } from "yaml";
@@ -38,6 +38,7 @@ import { createDefaultConfigDeps } from "./deps.js";
 import type { ConfigLevel, ConfigLevelScope } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
+import { parseSkill } from "./skill_parser.js";
 import { buildVirtualBundle } from "./virtual_bundle.js";
 
 interface FrontMatter {
@@ -561,26 +562,6 @@ const promptFrontMatterSchema = z
   })
   .passthrough();
 
-const skillNameSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(64)
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
-
-const skillDescriptionSchema = z.string().trim().min(1).max(1024);
-
-const skillFrontMatterSchema = z
-  .object({
-    name: skillNameSchema,
-    description: skillDescriptionSchema,
-    license: z.string().trim().min(1).optional(),
-    compatibility: z.string().trim().min(1).max(500).optional(),
-    metadata: z.record(z.string(), z.string()).optional(),
-    "allowed-tools": z.string().trim().min(1).optional(),
-  })
-  .passthrough();
-
 const toolsSchema = z.union([z.string(), z.array(z.string())]).optional();
 
 const PERSONA_TOOL_DEFINITIONS = new Map([
@@ -1067,32 +1048,6 @@ export async function loadProjectThemes(args?: {
   }
 
   return { themes, errors };
-}
-
-function parseSkill(filePath: string, content: string): { skill?: Skill; error?: string } {
-  const { frontMatter } = parseMarkdownWithFrontMatter(content);
-
-  const parsedFrontMatter = skillFrontMatterSchema.safeParse(frontMatter);
-  if (!parsedFrontMatter.success) {
-    return {
-      error: `${filePath}: invalid frontmatter (name/description required, and must follow the skills spec). skipped.`,
-    };
-  }
-
-  const dirName = dirname(filePath).split(sep).pop();
-  if (dirName && parsedFrontMatter.data.name !== dirName) {
-    return {
-      error: `${filePath}: frontmatter name "${parsedFrontMatter.data.name}" must match directory name "${dirName}". skipped.`,
-    };
-  }
-
-  return {
-    skill: {
-      name: parsedFrontMatter.data.name,
-      description: parsedFrontMatter.data.description,
-      path: resolve(filePath),
-    },
-  };
 }
 
 function loadSkillsFromDir(dir: string, deps: ConfigDeps): { skills: Skill[]; errors: string[] } {

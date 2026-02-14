@@ -18,6 +18,7 @@ type TelegramUser = {
 };
 
 type TelegramMessage = {
+  message_id?: number;
   chat?: TelegramChat;
   from?: TelegramUser;
   text?: string;
@@ -48,6 +49,7 @@ export type AsyncTelegramApi = {
   }): Promise<TelegramUpdate[]>;
   sendMessage(chatId: number, text: string): Promise<void>;
   setCommands?(commands: TelegramBotCommand[]): Promise<void>;
+  setMessageReaction?(chatId: number, messageId: number): Promise<void>;
 };
 
 export type AsyncTelegramLogLevel = "info" | "warn" | "error";
@@ -87,6 +89,7 @@ type NewCommandResolution =
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
 const MAX_COMMAND_PREVIEW_CHARS = 128;
+const MESSAGE_QUEUED_REACTION_EMOJI = "👀";
 const ABORTED = Symbol("aborted");
 
 type SessionVerbosity = "verbose" | "quiet";
@@ -176,6 +179,11 @@ function createGrammyApi(botToken: string): AsyncTelegramApi {
     },
     async setCommands(commands) {
       await api.setMyCommands(commands);
+    },
+    async setMessageReaction(chatId, messageId) {
+      await api.setMessageReaction(chatId, messageId, [
+        { type: "emoji", emoji: MESSAGE_QUEUED_REACTION_EMOJI },
+      ]);
     },
   };
 }
@@ -380,7 +388,7 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    await this.handleMessage(chatId, text);
+    await this.handleMessage(chatId, text, message.message_id);
   }
 
   private isChatAllowed(chatId: number): boolean {
@@ -651,7 +659,11 @@ class AsyncTelegramAdapterImpl {
     await this.reply(chatId, formatSessionHeadline(session.id, `verbosity set to ${verbosity}`));
   }
 
-  private async handleMessage(chatId: number, text: string): Promise<void> {
+  private async handleMessage(
+    chatId: number,
+    text: string,
+    sourceMessageId?: number,
+  ): Promise<void> {
     const session = this.getActiveSession(chatId);
     if (!session) {
       await this.reply(chatId, "no active session. use /new or /use <sessionId>");
@@ -664,7 +676,10 @@ class AsyncTelegramAdapterImpl {
         text,
         this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
       );
-      await this.reply(chatId, this.formatMessageQueued(session.id));
+      await this.reactToQueuedMessage(chatId, sourceMessageId);
+      if (this.isVerboseSession(session.id)) {
+        await this.reply(chatId, this.formatMessageQueued(session.id));
+      }
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
@@ -892,6 +907,26 @@ class AsyncTelegramAdapterImpl {
 
     for (const chatId of chatIds) {
       void this.reply(chatId, text);
+    }
+  }
+
+  private async reactToQueuedMessage(chatId: number, messageId?: number): Promise<void> {
+    if (!this.api.setMessageReaction) {
+      return;
+    }
+
+    if (typeof messageId !== "number" || !Number.isInteger(messageId) || messageId <= 0) {
+      return;
+    }
+
+    try {
+      await this.api.setMessageReaction(chatId, messageId);
+    } catch (error) {
+      this.log("warn", "failed to set telegram message reaction", {
+        chatId,
+        messageId,
+        cause: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

@@ -31,11 +31,11 @@ or store keys in `~/.config/tau/config.json`:
 }
 ```
 
-environment variables take precedence over the config file.
+for provider keys (`anthropic`, `openai`, `google`), tau checks `~/.config/tau/config.json` before environment variables.
 
-`parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents and can be provided through `apiKeys.parallel` or `PARALLEL_API_KEY`.
+`parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents and can be provided through `apiKeys.parallel` or `PARALLEL_API_KEY` (`PARALLEL_API_KEY` takes precedence).
 
-`/speak` uses `apiKeys.mistral` or `MISTRAL_API_KEY` for transcription and requires `ffmpeg` on your system.
+`/speak` uses `apiKeys.mistral` or `MISTRAL_API_KEY` for transcription (`MISTRAL_API_KEY` takes precedence) and requires `ffmpeg` on your system.
 
 ### OpenAI Codex subscription (ChatGPT Plus/Pro)
 
@@ -206,7 +206,7 @@ custom themes loaded from `.tau/themes` or `~/.config/tau/themes` are single-var
 available palette tokens (theme keys):
 
 - core: `brandAccent`, `textMuted`, `textDim`, `linkText`, `thinkingText`, `codeInlineText`, `codeBlockText`
-- editor: `editorBorderNone`, `editorBorderMinimal`, `editorBorderLow`, `editorBorderMedium`, `editorBorderHigh`, `editorBorderXhigh`, `editorSubagentBorder`
+- editor: `editorBorderNone`, `editorBorderMinimal`, `editorBorderLow`, `editorBorderMedium`, `editorBorderHigh`, `editorBorderXhigh`, `editorSubagentBorder`, `editorBorderRecording`
 - status: `statusWarn`, `statusError`, `modeMemory`, `modeBash`
 - action: `actionRunning`, `actionSuccess`, `actionError`, `actionOutput`
 - diff: `diffAdd`, `diffRemove`
@@ -363,13 +363,13 @@ run `tau --help` to see all available options, or `tau --debug` to inspect loade
 
 ## memory mode
 
-prefix a single-line message with `#` to update your project's AGENTS.md file. this is useful for capturing decisions, conventions, and context as you work.
+prefix a single-line message with `#` to update AGENTS.md. this is useful for capturing decisions, conventions, and context as you work.
 
 ```
 # prefer explicit error messages with context about what operation failed
 ```
 
-tau will create or update AGENTS.md at your project root, integrating the new information into the existing structure. over time, this builds a knowledge base about your project. this file is loaded automatically in future sessions unless you pass `--no-agent-context-files`.
+tau updates the nearest `AGENTS.md` in your current directory ancestry (or creates one in the current directory if none exists). it integrates the new information into the existing structure. this file is loaded automatically in future sessions unless you pass `--no-agent-context-files`.
 
 ## commands
 
@@ -383,7 +383,7 @@ tau supports slash commands for common actions:
 | `/copy:text`                | copy the last assistant message                                                 |
 | `/copy:code`                | copy just the code blocks                                                       |
 | `/checkpoint`               | save a checkpoint file for loading later                                        |
-| `/reload`                   | reload personas, prompts, skills, and themes from disk                          |
+| `/reload`                   | reload personas, prompts, skills, themes, bash commands, and AGENTS.md          |
 | `/speak`                    | toggle microphone recording and transcribe into the editor                      |
 | `/cd`                       | change the working directory                                                    |
 | `/compact:summary-only`     | compress history into one synthetic user summary message                        |
@@ -422,9 +422,11 @@ the prune commands drop bash tool results from the active context without summar
 | `ctrl+f`    | expand @<file> and @@skill:<name> mentions |
 | `ctrl+s`    | stash input to clipboard                   |
 | `ctrl+y`    | toggle voice recording                     |
+| `ctrl+g`    | terminate selected sub-agent               |
 | `enter x2`  | retry last response on empty input         |
 | `esc x2`    | clear current prompt                       |
 | `alt+up`    | pop queued message                         |
+| `alt+down`  | cycle active sub-agents                    |
 | `esc`       | interrupt generation                       |
 | `ctrl+c`    | press twice to exit                        |
 
@@ -636,11 +638,11 @@ optional fields: `license`, `compatibility` (<=500 chars), `metadata` (string ma
 
 enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), or use `"*"` to enable all discovered skills. all built-in personas have `skills: "*"` by default. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
 
-use `/reload` to pick up changes to personas, prompts, skills, and themes without restarting.
+use `/reload` to pick up changes to personas, prompts, skills, themes, bash commands, and AGENTS.md without restarting.
 
 ## how it works
 
-tau connects your terminal to large language models, giving them tools to interact with your filesystem. when you ask the model to explore code or make changes, it decides which tools to use and executes them with your permission (based on risk level).
+tau connects your terminal to large language models, giving them tools to interact with your filesystem. when you ask the model to explore code or make changes, it decides which tools to use and executes them subject to the active risk level.
 
 the model sees your messages, any file contents you've shared, and the results of tool calls. it doesn't have ambient access to your filesystem; it only sees what you show it or what it explicitly requests through tools.
 
@@ -652,7 +654,6 @@ tool output is truncated using a `bytes / 6` token heuristic (shown as `…N tok
 
 - **bash (assistant)**: 8,192 token limit. if output exceeds this and `maxOutputTokens` is unset, output is middle-truncated to a 2,048-token gated preview. re-run with `maxOutputTokens` set to 8,192-16,384; if the user explicitly requests more, it may be set up to 65,536 (user requests are checked). bash captures the last 1MB of output.
 - **bash (user `!`)**: 65,536 token limit.
-- **read/grep**: capture the first 1MB of output, then cap to 8,192 tokens by keeping the start and truncating the tail, with a note to read smaller chunks or narrow the search.
 - **web_search/web_fetch**: large responses are middle-truncated to their token limits (8,192 / 16,384 tokens).
 
 ## creating a release

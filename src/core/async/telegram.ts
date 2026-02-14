@@ -35,6 +35,11 @@ type TelegramAllowedUpdates =
     ? NonNullable<T>
     : readonly string[];
 
+type TelegramBotCommand = {
+  command: string;
+  description: string;
+};
+
 export type AsyncTelegramApi = {
   getUpdates(args: {
     offset: number;
@@ -42,6 +47,7 @@ export type AsyncTelegramApi = {
     allowedUpdates: TelegramAllowedUpdates;
   }): Promise<TelegramUpdate[]>;
   sendMessage(chatId: number, text: string): Promise<void>;
+  setCommands?(commands: TelegramBotCommand[]): Promise<void>;
 };
 
 export type AsyncTelegramLogLevel = "info" | "warn" | "error";
@@ -72,7 +78,6 @@ export type AsyncTelegramAdapterHandle = {
 type NewCommandResolution =
   | {
       projectId: string;
-      prompt?: string;
     }
   | {
       error: string;
@@ -80,7 +85,17 @@ type NewCommandResolution =
 
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
+const MAX_COMMAND_PREVIEW_CHARS = 280;
+const MAX_ASSISTANT_PREVIEW_CHARS = 1000;
 const ABORTED = Symbol("aborted");
+
+const TELEGRAM_COMMANDS: TelegramBotCommand[] = [
+  { command: "new", description: "start a new session" },
+  { command: "use", description: "switch active session" },
+  { command: "list", description: "list sessions" },
+  { command: "status", description: "show active session status" },
+  { command: "cancel", description: "cancel active session" },
+];
 
 function splitCommandText(text: string): string[] {
   return text
@@ -98,12 +113,40 @@ function stripCommandMention(command: string): string {
   return command.slice(0, mentionIndex);
 }
 
-function describeSession(session: AsyncSessionRecord): string {
+function truncateText(text: string, maxChars: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxChars) {
+    return trimmed;
+  }
+
+  if (maxChars <= 1) {
+    return "…";
+  }
+
+  return `${trimmed.slice(0, maxChars - 1)}…`;
+}
+
+function describeSession(
+  session: AsyncSessionRecord,
+  details: {
+    lastCommand?: string;
+    lastAssistantMessage?: string;
+  } = {},
+): string {
   return [
     `session: ${session.id}`,
     `project: ${session.projectId}`,
     `state: ${session.state}`,
     ...(session.error ? [`error: ${session.error}`] : []),
+    ...(details.lastCommand
+      ? [`last command: ${truncateText(details.lastCommand, MAX_COMMAND_PREVIEW_CHARS)}`]
+      : []),
+    ...(details.lastAssistantMessage
+      ? [
+          "last assistant message:",
+          truncateText(details.lastAssistantMessage, MAX_ASSISTANT_PREVIEW_CHARS),
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -123,6 +166,9 @@ function createGrammyApi(botToken: string): AsyncTelegramApi {
     async sendMessage(chatId, text) {
       await api.sendMessage(chatId, text);
     },
+    async setCommands(commands) {
+      await api.setMyCommands(commands);
+    },
   };
 }
 
@@ -139,6 +185,8 @@ class AsyncTelegramAdapterImpl {
   private readonly abortController = new AbortController();
   private readonly activeSessionsByChat = new Map<number, string>();
   private readonly chatsBySession = new Map<string, Set<number>>();
+  private readonly lastCommandBySession = new Map<string, string>();
+  private readonly lastAssistantMessageBySession = new Map<string, string>();
 
   private readonly unsubscribeSessionEvents: () => void;
   private readonly loopPromise: Promise<void>;
@@ -167,6 +215,7 @@ class AsyncTelegramAdapterImpl {
       this.onSessionEvent(event);
     });
 
+    void this.syncCommands();
     this.loopPromise = this.runLoop();
     this.log("info", "telegram adapter started", {
       pollIntervalMs: this.pollIntervalMs,
@@ -192,6 +241,21 @@ class AsyncTelegramAdapterImpl {
 
   private log(level: AsyncTelegramLogLevel, message: string, data?: unknown): void {
     this.onLog?.({ level, message, ...(data === undefined ? {} : { data }) });
+  }
+
+  private async syncCommands(): Promise<void> {
+    if (!this.api.setCommands) {
+      return;
+    }
+
+    try {
+      await this.api.setCommands(TELEGRAM_COMMANDS);
+      this.log("info", "telegram commands synced", { count: TELEGRAM_COMMANDS.length });
+    } catch (error) {
+      this.log("warn", "failed to sync telegram commands", {
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async runLoop(): Promise<void> {
@@ -377,16 +441,26 @@ class AsyncTelegramAdapterImpl {
         return { error: "no async projects configured" };
       }
 
-      return { error: "missing project id. usage: /new <projectId> <prompt...>" };
+      return { error: "missing project id. usage: /new [projectId]" };
     };
 
-    const firstArg = args[0];
-    if (firstArg && this.projects[firstArg]) {
-      const prompt = args.slice(1).join(" ").trim();
-      return {
-        projectId: firstArg,
-        ...(prompt ? { prompt } : {}),
-      };
+    if (args.length > 1) {
+      return { error: "usage: /new [projectId]" };
+    }
+
+    if (args.length === 1) {
+      const projectId = args[0];
+      if (!projectId) {
+        return { error: "usage: /new [projectId]" };
+      }
+
+      if (!this.projects[projectId]) {
+        return {
+          error: `unknown project '${projectId}'. usage: /new [projectId]`,
+        };
+      }
+
+      return { projectId };
     }
 
     const fallback = resolveFallbackProjectId();
@@ -396,10 +470,8 @@ class AsyncTelegramAdapterImpl {
       };
     }
 
-    const prompt = args.join(" ").trim();
     return {
       projectId: fallback.projectId,
-      ...(prompt ? { prompt } : {}),
     };
   }
 
@@ -413,11 +485,10 @@ class AsyncTelegramAdapterImpl {
     try {
       const session = await this.sessionManager.createSession({
         projectId: parsed.projectId,
-        ...(parsed.prompt ? { prompt: parsed.prompt } : {}),
       });
 
       this.setActiveSession(chatId, session.id);
-      await this.reply(chatId, `accepted: ${session.id} (${session.projectId})`);
+      await this.reply(chatId, this.formatSessionPreparing(session.projectId));
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
@@ -463,7 +534,13 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    await this.reply(chatId, describeSession(session));
+    await this.reply(
+      chatId,
+      describeSession(session, {
+        lastCommand: this.lastCommandBySession.get(session.id),
+        lastAssistantMessage: this.lastAssistantMessageBySession.get(session.id),
+      }),
+    );
   }
 
   private async handleCancel(chatId: number): Promise<void> {
@@ -490,7 +567,7 @@ class AsyncTelegramAdapterImpl {
 
     try {
       await this.sessionManager.sendMessage(session.id, text);
-      await this.reply(chatId, `queued: ${session.id}`);
+      await this.reply(chatId, this.formatMessageQueued(session.id));
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
@@ -548,42 +625,109 @@ class AsyncTelegramAdapterImpl {
   }
 
   private onSessionEvent(event: AsyncSessionManagerEvent): void {
+    if (event.type === "session-progress") {
+      this.handleSessionProgress(event);
+      return;
+    }
+
     if (event.type !== "session-state-changed") {
       return;
     }
 
     if (event.state === "running") {
-      this.notifyLifecycle(event.sessionId, "started");
+      this.notifyLifecycle(event.sessionId, event.projectId, "started");
       return;
     }
 
     if (event.state === "failed") {
-      this.notifyLifecycle(event.sessionId, "failed");
+      this.notifyLifecycle(event.sessionId, event.projectId, "failed");
       return;
     }
 
     if (event.state === "canceled") {
-      this.notifyLifecycle(event.sessionId, "canceled");
+      this.notifyLifecycle(event.sessionId, event.projectId, "canceled");
+      return;
+    }
+
+    if (event.state === "waiting-input" && event.previousState === "preparing-workspace") {
+      this.notifySession(
+        event.sessionId,
+        this.formatSessionReady(event.sessionId, event.projectId),
+      );
       return;
     }
 
     if (event.state === "waiting-input" && event.previousState === "running") {
-      this.notifyLifecycle(event.sessionId, "finished");
+      this.notifyLifecycle(event.sessionId, event.projectId, "finished");
     }
+  }
+
+  private handleSessionProgress(
+    event: Extract<AsyncSessionManagerEvent, { type: "session-progress" }>,
+  ): void {
+    if (event.progress.type === "bash-command") {
+      this.lastCommandBySession.set(event.sessionId, event.progress.command);
+      this.notifySession(
+        event.sessionId,
+        [
+          "running command",
+          `session: ${event.sessionId}`,
+          `$ ${truncateText(event.progress.command, MAX_COMMAND_PREVIEW_CHARS)}`,
+        ].join("\n"),
+      );
+      return;
+    }
+
+    this.lastAssistantMessageBySession.set(event.sessionId, event.progress.text);
+    this.notifySession(
+      event.sessionId,
+      [
+        "assistant message",
+        `session: ${event.sessionId}`,
+        truncateText(event.progress.text, MAX_ASSISTANT_PREVIEW_CHARS),
+      ].join("\n"),
+    );
   }
 
   private notifyLifecycle(
     sessionId: string,
+    projectId: string,
     state: "started" | "finished" | "failed" | "canceled",
-  ) {
+  ): void {
+    const stateLabel = {
+      started: "run started",
+      finished: "run finished",
+      failed: "run failed",
+      canceled: "run canceled",
+    }[state];
+
+    this.notifySession(
+      sessionId,
+      [stateLabel, `session: ${sessionId}`, `project: ${projectId}`].join("\n"),
+    );
+  }
+
+  private notifySession(sessionId: string, text: string): void {
     const chatIds = this.chatsBySession.get(sessionId);
     if (!chatIds || chatIds.size === 0) {
       return;
     }
 
     for (const chatId of chatIds) {
-      void this.reply(chatId, `${state}: ${sessionId}`);
+      void this.reply(chatId, text);
     }
+  }
+
+  private formatSessionPreparing(projectId: string): string {
+    return ["session is being prepared", `project: ${projectId}`].join("\n");
+  }
+
+  private formatSessionReady(sessionId: string, projectId: string): string {
+    return ["session is ready", `session: ${sessionId}`, `project: ${projectId}`].join("\n");
+  }
+
+  private formatMessageQueued(sessionId: string): string {
+    return ["message queued", `session: ${sessionId}`].join("\n");
   }
 
   private formatManagerError(error: unknown): string {

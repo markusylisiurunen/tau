@@ -14,6 +14,7 @@ async function waitFor(predicate, timeoutMs = 2000) {
 function createApiHarness(updateBatches) {
   const queue = [...updateBatches];
   const sendMessages = [];
+  const setCommandsCalls = [];
 
   const api = {
     getUpdates: vi.fn(async () => {
@@ -26,11 +27,15 @@ function createApiHarness(updateBatches) {
     sendMessage: vi.fn(async (chatId, text) => {
       sendMessages.push({ chatId, text });
     }),
+    setCommands: vi.fn(async (commands) => {
+      setCommandsCalls.push(commands);
+    }),
   };
 
   return {
     api,
     sendMessages,
+    setCommandsCalls,
   };
 }
 
@@ -40,7 +45,7 @@ function createSessionManagerHarness(initialSessions = []) {
   let nextSessionId = 1;
 
   const manager = {
-    createSession: vi.fn(async ({ projectId, prompt }) => {
+    createSession: vi.fn(async ({ projectId }) => {
       const sessionId = `s${nextSessionId++}`;
       const now = "2024-01-01T00:00:00.000Z";
       const session = {
@@ -49,7 +54,6 @@ function createSessionManagerHarness(initialSessions = []) {
         state: "waiting-input",
         createdAt: now,
         updatedAt: now,
-        ...(prompt ? { error: prompt } : {}),
       };
       sessions.set(sessionId, session);
       return { ...session };
@@ -97,6 +101,33 @@ function createSessionManagerHarness(initialSessions = []) {
 }
 
 describe("async telegram adapter", () => {
+  it("advertises telegram slash commands", async () => {
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.setCommandsCalls.length === 1);
+      expect(apiHarness.setCommandsCalls[0]).toEqual([
+        { command: "new", description: "start a new session" },
+        { command: "use", description: "switch active session" },
+        { command: "list", description: "list sessions" },
+        { command: "status", description: "show active session status" },
+        { command: "cancel", description: "cancel active session" },
+      ]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("routes private DM commands and ignores non-private chats", async () => {
     const apiHarness = createApiHarness([
       [
@@ -208,7 +239,7 @@ describe("async telegram adapter", () => {
           message: {
             chat: { id: 200, type: "private" },
             from: { id: 7 },
-            text: "/new hello from telegram",
+            text: "/new",
           },
         },
         {
@@ -240,18 +271,65 @@ describe("async telegram adapter", () => {
     try {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
 
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s1",
+        projectId: "demo",
+        previousState: "preparing-workspace",
+        state: "waiting-input",
+        updatedAt: "2024-01-01T00:01:00.000Z",
+      });
+
       expect(managerHarness.manager.createSession).toHaveBeenCalledWith({
         projectId: "demo",
-        prompt: "hello from telegram",
       });
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s1", "follow up");
 
+      await waitFor(
+        () =>
+          apiHarness.sendMessages.some((entry) =>
+            String(entry.text).includes("session is being prepared"),
+          ) &&
+          apiHarness.sendMessages.some((entry) => String(entry.text).includes("session is ready")),
+      );
+
       expect(
-        apiHarness.sendMessages.some((entry) => String(entry.text).startsWith("accepted:")),
+        apiHarness.sendMessages.some((entry) => String(entry.text).includes("message queued")),
       ).toBe(true);
-      expect(
-        apiHarness.sendMessages.some((entry) => String(entry.text).startsWith("queued:")),
-      ).toBe(true);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("rejects /new commands that include prompt text", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 250, type: "private" },
+            from: { id: 7 },
+            text: "/new demo write tests",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(managerHarness.manager.createSession).not.toHaveBeenCalled();
+      expect(apiHarness.sendMessages[0].text).toContain("usage: /new [projectId]");
     } finally {
       await adapter.close();
     }
@@ -380,10 +458,80 @@ describe("async telegram adapter", () => {
 
       await waitFor(
         () =>
-          apiHarness.sendMessages.some((entry) => entry.text === "started: s9") &&
-          apiHarness.sendMessages.some((entry) => entry.text === "finished: s9") &&
-          apiHarness.sendMessages.some((entry) => entry.text === "failed: s9") &&
-          apiHarness.sendMessages.some((entry) => entry.text === "canceled: s9"),
+          apiHarness.sendMessages.some((entry) => entry.text.includes("run started")) &&
+          apiHarness.sendMessages.some((entry) => entry.text.includes("run finished")) &&
+          apiHarness.sendMessages.some((entry) => entry.text.includes("run failed")) &&
+          apiHarness.sendMessages.some((entry) => entry.text.includes("run canceled")),
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("maps session progress events to telegram notifications", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 450, type: "private" },
+            from: { id: 7 },
+            text: "/use s10",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s10",
+        projectId: "demo",
+        state: "running",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length >= 1);
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s10",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        progress: {
+          type: "bash-command",
+          command: "npm run check",
+        },
+      });
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s10",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:02:00.000Z",
+        progress: {
+          type: "assistant-message",
+          text: "build succeeded and all tests passed",
+        },
+      });
+
+      await waitFor(
+        () =>
+          apiHarness.sendMessages.some((entry) => entry.text.includes("running command")) &&
+          apiHarness.sendMessages.some((entry) => entry.text.includes("assistant message")),
       );
     } finally {
       await adapter.close();

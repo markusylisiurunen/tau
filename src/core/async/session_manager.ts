@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { createTauSdkClient } from "../../sdk/client.js";
-import type { TauSdkClient, TauSdkClientOptions } from "../../sdk/types.js";
+import type { TauSdkClient, TauSdkClientOptions, TauSdkEvent } from "../../sdk/types.js";
 import type { AsyncProjectConfig } from "../config/schema.js";
+import type { CoreEvent } from "../events/types.js";
+import { extractAssistantText } from "../utils/messages.js";
+import { isRecord } from "../utils/type_guards.js";
 import { type PrepareWorkspaceOptions, prepareWorkspace } from "./workspace.js";
 
 export type AsyncSessionState =
@@ -21,6 +24,16 @@ export type AsyncSessionLogEntry = {
   message: string;
   data?: unknown;
 };
+
+export type AsyncSessionProgress =
+  | {
+      type: "bash-command";
+      command: string;
+    }
+  | {
+      type: "assistant-message";
+      text: string;
+    };
 
 export type AsyncSessionRecord = {
   id: string;
@@ -53,6 +66,7 @@ type SessionEntry = {
   abortController: AbortController;
   cancelRequested: boolean;
   client?: TauSdkClient;
+  unsubscribeClientEvents?: () => void;
   clientClosePromise?: Promise<void>;
   activeSubmit?: Promise<void>;
   initializePromise?: Promise<void>;
@@ -77,6 +91,14 @@ export type AsyncSessionManagerEvent =
       projectId: string;
       state: AsyncSessionState;
       log: AsyncSessionLogEntry;
+    }
+  | {
+      type: "session-progress";
+      sessionId: string;
+      projectId: string;
+      state: AsyncSessionState;
+      timestamp: string;
+      progress: AsyncSessionProgress;
     };
 
 export type AsyncSessionManager = {
@@ -300,6 +322,10 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       this.touch(entry);
       this.log(entry, "info", "rpc client connected", { rpcSessionId: client.ready.sessionId });
 
+      entry.unsubscribeClientEvents = client.onEvent((event) => {
+        this.handleClientEvent(entry, event);
+      });
+
       if (prompt?.trim()) {
         await this.submitText(entry, prompt.trim(), "initial-prompt");
       }
@@ -407,6 +433,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   }
 
   private async stopClient(entry: SessionEntry): Promise<void> {
+    if (entry.unsubscribeClientEvents) {
+      entry.unsubscribeClientEvents();
+      entry.unsubscribeClientEvents = undefined;
+    }
+
     if (!entry.client) {
       return;
     }
@@ -537,6 +568,65 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
         // ignore listener errors to keep session processing stable
       }
     }
+  }
+
+  private handleClientEvent(entry: SessionEntry, sdkEvent: TauSdkEvent): void {
+    if (!entry.activeSubmit) {
+      return;
+    }
+
+    const coreEvent = this.parseCoreEvent(sdkEvent);
+    if (!coreEvent) {
+      return;
+    }
+
+    if (coreEvent.type === "tool_ui") {
+      if (coreEvent.uiEvent.type !== "bash_started") {
+        return;
+      }
+
+      this.emitProgress(entry, {
+        type: "bash-command",
+        command: coreEvent.uiEvent.command,
+      });
+      return;
+    }
+
+    if (coreEvent.type === "assistant_final") {
+      const text = extractAssistantText(coreEvent.message);
+      if (!text) {
+        return;
+      }
+
+      this.emitProgress(entry, {
+        type: "assistant-message",
+        text,
+      });
+    }
+  }
+
+  private parseCoreEvent(sdkEvent: TauSdkEvent): CoreEvent | undefined {
+    if (!isRecord(sdkEvent.event)) {
+      return undefined;
+    }
+
+    const coreEvent = sdkEvent.event.event;
+    if (!isRecord(coreEvent) || typeof coreEvent.type !== "string") {
+      return undefined;
+    }
+
+    return coreEvent as CoreEvent;
+  }
+
+  private emitProgress(entry: SessionEntry, progress: AsyncSessionProgress): void {
+    this.emit({
+      type: "session-progress",
+      sessionId: entry.record.id,
+      projectId: entry.record.projectId,
+      state: entry.record.state,
+      timestamp: this.now().toISOString(),
+      progress,
+    });
   }
 
   private toRecord(entry: SessionEntry): AsyncSessionRecord {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AsyncCliError, runAsyncCommand } from "../dist/core/async/cli.js";
+import { runAsyncCommand } from "../dist/core/async/cli.js";
 
 function createJsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -44,6 +44,35 @@ describe("async cli", () => {
     expect(stdout).toHaveBeenCalledWith(
       JSON.stringify({ ok: true, data: { session: { id: "s1" } } }, null, 2),
     );
+  });
+
+  it("uses async.client.defaultProjectId when --project is omitted", async () => {
+    const fetchMock = vi.fn(async () => createJsonResponse({ ok: true, data: { session: {} } }));
+
+    await runAsyncCommand(["ship", "it"], {
+      config: {
+        async: {
+          client: {
+            defaultTarget: "dev",
+            defaultProjectId: "tau",
+            targets: {
+              dev: {
+                url: "http://localhost:7788",
+                token: "secret",
+              },
+            },
+          },
+        },
+      },
+      fetchImpl: fetchMock,
+      stdout: () => {},
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      projectId: "tau",
+      prompt: "ship it",
+    });
   });
 
   it("maps list/status/logs/send/cancel commands to expected requests", async () => {
@@ -111,7 +140,7 @@ describe("async cli", () => {
     expect(init.headers.authorization).toBe("Bearer override");
   });
 
-  it("requires --project for create", async () => {
+  it("requires project id when --project and defaultProjectId are missing", async () => {
     await expect(
       runAsyncCommand(["do", "work"], {
         config: {
@@ -129,7 +158,9 @@ describe("async cli", () => {
         fetchImpl: vi.fn(),
         stdout: () => {},
       }),
-    ).rejects.toBeInstanceOf(AsyncCliError);
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("async.client.defaultProjectId"),
+    });
   });
 
   it("requires --config-file for daemon mode", async () => {

@@ -104,6 +104,7 @@ client command surface:
 
 ```sh
 tau async --project <id> <prompt...>
+tau async <prompt...>
 tau async -- <prompt...>
 tau async list
 tau async status <id>
@@ -111,6 +112,9 @@ tau async logs <id>
 tau async send <id> <text...>
 tau async cancel <id>
 ```
+
+project id for `tau async <prompt...>` resolves from `--project <id>` first, then
+`async.client.defaultProjectId` from config.
 
 use `tau async -- <prompt...>` when prompt text starts with a reserved command word (for example,
 `list`).
@@ -469,6 +473,7 @@ the `sandbox` field configures docker sandboxing. `sandbox.image` is required wh
 the `async` field in normal tau config is client-side only:
 
 - `async.client.defaultTarget` + `async.client.targets`: client-side URL/token target definitions for `tau async ...` commands.
+- `async.client.defaultProjectId`: default project id used by `tau async <prompt...>` when `--project` is omitted.
 
 example (`~/.config/tau/config.json` or `.tau/config.json`):
 
@@ -477,6 +482,7 @@ example (`~/.config/tau/config.json` or `.tau/config.json`):
   "async": {
     "client": {
       "defaultTarget": "local",
+      "defaultProjectId": "tau",
       "targets": {
         "local": {
           "url": "http://127.0.0.1:7788",

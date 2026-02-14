@@ -24,6 +24,7 @@ export type {
   AsyncSessionManager,
   AsyncSessionManagerEvent,
   AsyncSessionManagerOptions,
+  AsyncSessionProgress,
   AsyncSessionRecord,
   AsyncSessionState,
 } from "./session_manager.js";

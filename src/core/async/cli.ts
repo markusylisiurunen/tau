@@ -296,12 +296,16 @@ function getTrimmedEnvValue(key: string, env: NodeJS.ProcessEnv): string | undef
   return trimmed || undefined;
 }
 
-function requireProjectId(projectId: string | undefined): string {
-  if (!projectId?.trim()) {
-    throw new AsyncCliError("missing project id. use --project <id>");
+function resolveProjectId(args: ParsedAsyncArgs, config: Config): string {
+  const configured = config.async?.client?.defaultProjectId;
+  const projectId = args.projectId?.trim() || configured?.trim();
+  if (!projectId) {
+    throw new AsyncCliError(
+      "missing project id. use --project <id> or set async.client.defaultProjectId",
+    );
   }
 
-  return projectId.trim();
+  return projectId;
 }
 
 function resolveTarget(config: Config, args: ParsedAsyncArgs): ResolvedTarget {
@@ -418,6 +422,7 @@ export function printAsyncHelp(log: (line: string) => void = console.log): void 
       "usage:",
       "  tau async daemon --config-file <path>",
       "  tau async --project <id> <prompt...>",
+      "  tau async <prompt...>",
       "  tau async list",
       "  tau async status <id>",
       "  tau async logs <id>",
@@ -425,7 +430,7 @@ export function printAsyncHelp(log: (line: string) => void = console.log): void 
       "  tau async cancel <id>",
       "",
       "options:",
-      "  --project <id>        project id for session creation.",
+      "  --project <id>        project id for session creation (overrides config).",
       "  --config-file <path>  daemon config file path (daemon mode only).",
       "  --target <id>         target id from config.async.client.targets.",
       "  --url <url>           override async target base URL.",
@@ -562,7 +567,7 @@ export async function runAsyncCommand(
   const fetchImpl = options.fetchImpl ?? fetch;
 
   if (parsed.command === "create") {
-    const projectId = requireProjectId(parsed.projectId);
+    const projectId = resolveProjectId(parsed, config);
     const payload = await requestJson({
       target,
       method: "POST",

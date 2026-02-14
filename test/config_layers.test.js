@@ -307,6 +307,7 @@ describe("loadConfig", () => {
           async: {
             client: {
               defaultTarget: "global",
+              defaultProjectId: "global-project",
               targets: {
                 global: { url: "http://global", token: "global-token", timeoutMs: 5000 },
               },
@@ -321,6 +322,7 @@ describe("loadConfig", () => {
           async: {
             client: {
               defaultTarget: "repo",
+              defaultProjectId: "repo-project",
               targets: {
                 repo: { url: "http://repo", token: "repo-token" },
               },
@@ -339,6 +341,7 @@ describe("loadConfig", () => {
       expect(config.async).toEqual({
         client: {
           defaultTarget: "repo",
+          defaultProjectId: "repo-project",
           targets: {
             global: { url: "http://global", token: "global-token", timeoutMs: 5000 },
             repo: { url: "http://repo", token: "repo-token" },
@@ -361,6 +364,7 @@ describe("loadConfig", () => {
           async: {
             client: {
               defaultTarget: 1,
+              defaultProjectId: 2,
               targets: {
                 bad: {
                   url: "",
@@ -390,6 +394,9 @@ describe("loadConfig", () => {
       const result = loadConfigWithDiagnostics(fx.repo, deps);
       expect(result.config.async).toBeUndefined();
       expect(result.errors.some((error) => error.includes("async.client.defaultTarget"))).toBe(
+        true,
+      );
+      expect(result.errors.some((error) => error.includes("async.client.defaultProjectId"))).toBe(
         true,
       );
       expect(result.errors.some((error) => error.includes("async.server was moved"))).toBe(true);

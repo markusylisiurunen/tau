@@ -14,6 +14,7 @@ Client commands:
 
 ```sh
 tau async --project <projectId> <prompt...>
+tau async <prompt...>
 tau async -- <prompt...>
 tau async list
 tau async status <sessionId>
@@ -28,6 +29,11 @@ Client target options:
 - `--url <url>`: override target base URL
 - `--token <token>`: override bearer token
 
+Project id for `tau async <prompt...>` resolves in this order:
+
+- `--project <id>`
+- `async.client.defaultProjectId` from config
+
 Use `--` when prompt text starts with a reserved command word.
 
 ## client config (`~/.config/tau/config.json` or `.tau/config.json`)
@@ -39,6 +45,7 @@ Client-side async config stays in the regular tau config:
   "async": {
     "client": {
       "defaultTarget": "local",
+      "defaultProjectId": "tau",
       "targets": {
         "local": {
           "url": "http://127.0.0.1:7788",
@@ -120,7 +127,8 @@ The adapter uses long-polling and only handles private DM messages (`chat.type=p
 
 Supported DM commands:
 
-- `/new <projectId> <prompt...>`
+- `/new [projectId]`
+  - starts a new empty session (does not accept inline prompt text)
   - if `projectId` is omitted, it uses `defaultProjectId` when set
   - otherwise it auto-selects when exactly one async project exists
 - `/use <sessionId>`
@@ -128,6 +136,8 @@ Supported DM commands:
 - `/status`
 - `/cancel`
 - plain text sends to the active session
+
+The adapter registers these commands via Telegram's command list so clients can autocomplete them.
 
 Optional allowlists:
 
@@ -138,11 +148,17 @@ If provided, both must match for a DM to be processed.
 
 Lifecycle notifications are sent back to associated chats:
 
-- `accepted`
-- `started`
-- `finished`
-- `failed`
-- `canceled`
+- `session is being prepared` (after `/new`)
+- `session is ready` (when workspace + client are ready)
+- `run started`
+- `run finished`
+- `run failed`
+- `run canceled`
+
+During runs, progress notifications also include:
+
+- each bash command (`running command`)
+- the latest assistant final message (`assistant message`)
 
 ## persistence model
 
@@ -151,5 +167,6 @@ Async daemon state is in-memory only:
 - session records
 - session logs
 - Telegram chat routing (`chatId -> activeSessionId`)
+- Telegram per-session progress previews (last command + last assistant message)
 
 Restarting the daemon clears this state. Existing cloned workspaces on disk are not reused as daemon session state.

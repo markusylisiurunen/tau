@@ -49,6 +49,7 @@ export type AsyncClientTargetConfig = {
 
 export type AsyncClientConfig = {
   defaultTarget?: string;
+  defaultProjectId?: string;
   targets?: Record<string, AsyncClientTargetConfig>;
 };
 
@@ -443,6 +444,14 @@ function parseAsyncClientConfig(
     }
   }
 
+  if (data.defaultProjectId !== undefined) {
+    if (typeof data.defaultProjectId === "string" && data.defaultProjectId.trim()) {
+      config.defaultProjectId = data.defaultProjectId.trim();
+    } else {
+      errors.push(`${sourceLabel}: async.client.defaultProjectId must be a non-empty string.`);
+    }
+  }
+
   if (data.targets !== undefined) {
     if (!isRecord(data.targets)) {
       errors.push(`${sourceLabel}: async.client.targets must be an object.`);
@@ -616,6 +625,10 @@ function mergeAsyncClientConfig(
 
   if (overlay?.defaultTarget !== undefined) {
     merged.defaultTarget = overlay.defaultTarget;
+  }
+
+  if (overlay?.defaultProjectId !== undefined) {
+    merged.defaultProjectId = overlay.defaultProjectId;
   }
 
   if (target?.targets || overlay?.targets) {

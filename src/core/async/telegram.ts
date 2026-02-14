@@ -142,7 +142,7 @@ function describeSession(
     formatSessionHeadline(session.id, "status"),
     `project: ${session.projectId}`,
     `state: ${session.state}`,
-    `verbosity: ${details.verbosity ?? "verbose"}`,
+    `verbosity: ${details.verbosity ?? "quiet"}`,
     ...(session.error ? [`error: ${session.error}`] : []),
     ...(details.lastCommand
       ? [`last command: ${truncateText(details.lastCommand, MAX_COMMAND_PREVIEW_CHARS)}`]
@@ -512,7 +512,7 @@ class AsyncTelegramAdapterImpl {
       });
 
       this.setActiveSession(chatId, session.id);
-      this.sessionVerbosityBySession.set(session.id, "verbose");
+      this.sessionVerbosityBySession.set(session.id, "quiet");
       await this.reply(chatId, this.formatSessionPreparing(session.projectId));
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
@@ -666,7 +666,7 @@ class AsyncTelegramAdapterImpl {
   }
 
   private getSessionVerbosity(sessionId: string): SessionVerbosity {
-    return this.sessionVerbosityBySession.get(sessionId) ?? "verbose";
+    return this.sessionVerbosityBySession.get(sessionId) ?? "quiet";
   }
 
   private isVerboseSession(sessionId: string): boolean {

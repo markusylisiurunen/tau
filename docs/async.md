@@ -139,8 +139,8 @@ Supported DM commands:
 - `/list`
 - `/status`
 - `/cancel`
-- `/verbose` (default mode, streams run lifecycle + progress updates)
-- `/quiet` (send only the run's final assistant message, no streamed progress)
+- `/verbose` (streams run lifecycle + progress updates)
+- `/quiet` (default mode, send only the run's final assistant message, no streamed progress)
 - plain text sends to the active session
 
 The adapter registers these commands via Telegram's command list so clients can autocomplete them.
@@ -159,7 +159,7 @@ Lifecycle notifications are sent back to associated chats:
 - `run failed`
 - `run canceled`
 
-In `/verbose` mode (default), run updates also include:
+In `/verbose` mode, run updates also include:
 
 - `run started`
 - `run finished`

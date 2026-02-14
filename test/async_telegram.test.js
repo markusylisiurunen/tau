@@ -405,6 +405,14 @@ describe("async telegram adapter", () => {
             text: "/use s9",
           },
         },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 400, type: "private" },
+            from: { id: 7 },
+            text: "/verbose",
+          },
+        },
       ],
     ]);
 
@@ -428,7 +436,11 @@ describe("async telegram adapter", () => {
     });
 
     try {
-      await waitFor(() => apiHarness.sendMessages.length >= 1);
+      await waitFor(() =>
+        apiHarness.sendMessages.some((entry) =>
+          entry.text.includes("(s9) verbosity set to verbose"),
+        ),
+      );
 
       managerHarness.manager.emit({
         type: "session-state-changed",
@@ -486,6 +498,14 @@ describe("async telegram adapter", () => {
             text: "/use s10",
           },
         },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 450, type: "private" },
+            from: { id: 7 },
+            text: "/verbose",
+          },
+        },
       ],
     ]);
 
@@ -509,7 +529,11 @@ describe("async telegram adapter", () => {
     });
 
     try {
-      await waitFor(() => apiHarness.sendMessages.length >= 1);
+      await waitFor(() =>
+        apiHarness.sendMessages.some((entry) =>
+          entry.text.includes("(s10) verbosity set to verbose"),
+        ),
+      );
 
       managerHarness.manager.emit({
         type: "session-progress",

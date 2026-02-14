@@ -1177,6 +1177,41 @@ export async function loadProjectSkills(args?: {
   return { skills, errors };
 }
 
+export async function loadSkillsContent(
+  config?: Config,
+  options?: { cwd?: string; deps?: ConfigDeps; levels?: ConfigLevel[] },
+): Promise<{ skills: Skill[]; errors: string[] }> {
+  const { deps, levels } = resolveContentContext({
+    deps: options?.deps,
+    levels: options?.levels,
+    cwd: options?.cwd,
+  });
+
+  const virtualBundle = buildVirtualBundle(config ?? {}, deps);
+  const userSkillsResult = await loadUserSkills({ deps, levels });
+  const projectSkillsResult = await loadProjectSkills({ deps, levels });
+
+  const skillsByName = new Map<string, Skill>();
+  for (const skill of virtualBundle.skills) {
+    skillsByName.set(skill.name.toLowerCase(), skill);
+  }
+  for (const skill of userSkillsResult.skills) {
+    skillsByName.set(skill.name.toLowerCase(), skill);
+  }
+  for (const skill of projectSkillsResult.skills) {
+    skillsByName.set(skill.name.toLowerCase(), skill);
+  }
+
+  const skills = Array.from(skillsByName.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  );
+
+  return {
+    skills,
+    errors: [...userSkillsResult.errors, ...projectSkillsResult.errors],
+  };
+}
+
 export async function loadAllContent(
   config?: Config,
   options?: { cwd?: string; deps?: ConfigDeps; levels?: ConfigLevel[] },
@@ -1206,8 +1241,7 @@ export async function loadAllContent(
     const projectPersonasResult = await loadProjectPersonas({ basePersonasById, deps, levels });
     const userPromptsResult = await loadUserPrompts({ deps, levels });
     const projectPromptsResult = await loadProjectPrompts({ deps, levels });
-    const userSkillsResult = await loadUserSkills({ deps, levels });
-    const projectSkillsResult = await loadProjectSkills({ deps, levels });
+    const skillsResult = await loadSkillsContent(config, { deps, levels });
     const userThemesResult = await loadUserThemes({ deps, levels });
     const projectThemesResult = await loadProjectThemes({ deps, levels });
 
@@ -1216,26 +1250,12 @@ export async function loadAllContent(
       ...projectPersonasResult.errors,
       ...userPromptsResult.errors,
       ...projectPromptsResult.errors,
-      ...userSkillsResult.errors,
-      ...projectSkillsResult.errors,
+      ...skillsResult.errors,
       ...userThemesResult.errors,
       ...projectThemesResult.errors,
     ];
 
-    const skillsByName = new Map<string, Skill>();
-    for (const skill of virtualBundle.skills) {
-      skillsByName.set(skill.name.toLowerCase(), skill);
-    }
-    for (const skill of userSkillsResult.skills) {
-      skillsByName.set(skill.name.toLowerCase(), skill);
-    }
-    for (const skill of projectSkillsResult.skills) {
-      skillsByName.set(skill.name.toLowerCase(), skill);
-    }
-
-    const skills = Array.from(skillsByName.values()).sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-    );
+    const skills = skillsResult.skills;
 
     // Precedence: virtual bundle < global < nearest .tau levels.
     const defaultLaunchModels = config?.subagents?.defaultLaunchModels;

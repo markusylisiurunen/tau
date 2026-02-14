@@ -31,6 +31,11 @@ export type CoreSessionOptions = {
   toolRegistry: ToolRegistry;
   config?: Config;
   deps?: CoreDeps;
+  cwd?: string;
+  hostCwd?: string;
+  home?: string;
+  includeAgentContext?: boolean;
+  sandboxEnabled?: boolean;
 };
 
 export class CoreSession {
@@ -58,6 +63,16 @@ export class CoreSession {
 
   setConfig(config: Config): void {
     this.engine.setConfig(config);
+  }
+
+  setPromptContext(context: {
+    cwd?: string;
+    hostCwd?: string;
+    home?: string;
+    includeAgentContext?: boolean;
+    sandboxEnabled?: boolean;
+  }): void {
+    this.engine.setPromptContext(context);
   }
 
   onSubagentEvent(handler: (event: CoreSubagentUiEvent) => void): () => void {

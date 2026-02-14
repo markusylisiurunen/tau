@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { personas } from "../dist/core/personas.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
@@ -46,6 +49,11 @@ function createContext(overrides = {}) {
       default: "default prompt",
       researcher: "research prompt",
     },
+    cwd: "/repo/current",
+    hostCwd: "/repo/current",
+    home: "/repo",
+    includeAgentContext: false,
+    sandboxEnabled: false,
     subagentControlPlane: {
       spawn: ({ runtimeConfig }) => {
         spawned.push(runtimeConfig);
@@ -245,5 +253,95 @@ describe("spawn_agent tool", () => {
     expect(result.toolResult.isError).toBe(true);
     expect(getText(result.toolResult)).toContain("model parameter must be a non-empty string");
     expect(spawned).toHaveLength(0);
+  });
+
+  it("rejects an explicitly provided but empty workingDirectory parameter", async () => {
+    const backend = createLocalToolExecutionBackend();
+    const tool = createSpawnAgentToolDefinition(backend);
+    const { context, spawned } = createContext();
+
+    const result = await tool.dispatch(
+      {
+        id: "call-7",
+        name: TOOL_NAME_SPAWN_AGENT,
+        arguments: {
+          name: "researcher",
+          title: "research task",
+          prompt: "collect findings",
+          workingDirectory: "",
+        },
+      },
+      "read-only",
+      undefined,
+      context,
+    );
+
+    expect(result.kind).toBe("single");
+    expect(result.toolResult.isError).toBe(true);
+    expect(getText(result.toolResult)).toContain(
+      "workingDirectory parameter must be a non-empty string",
+    );
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("rebuilds subagent prompt context for workingDirectory", async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-"));
+    const projectRoot = join(tmpRoot, "project");
+    const skillDir = join(projectRoot, ".tau", "skills", "scoped-skill");
+    const sourceDir = join(projectRoot, "src");
+
+    mkdirSync(skillDir, { recursive: true });
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      ["---", "name: scoped-skill", "description: scoped helper", "---", "", "body"].join("\n"),
+      "utf-8",
+    );
+    writeFileSync(join(projectRoot, "AGENTS.md"), "project context marker\n", "utf-8");
+
+    try {
+      const backend = createLocalToolExecutionBackend();
+      const tool = createSpawnAgentToolDefinition(backend);
+      const base = createContext();
+      const { context, spawned } = createContext({
+        cwd: sourceDir,
+        hostCwd: sourceDir,
+        home: tmpRoot,
+        includeAgentContext: true,
+        persona: {
+          ...base.context.persona,
+          skills: ["scoped-skill"],
+        },
+      });
+
+      const dispatched = await tool.dispatch(
+        {
+          id: "call-8",
+          name: TOOL_NAME_SPAWN_AGENT,
+          arguments: {
+            name: "researcher",
+            title: "research task",
+            prompt: "collect findings",
+            workingDirectory: "..",
+          },
+        },
+        "read-only",
+        undefined,
+        context,
+      );
+
+      expect(dispatched.kind).toBe("phased");
+      const result = await dispatched.run;
+      expect(result.kind).toBe("single");
+      expect(result.toolResult.isError).toBe(false);
+      expect(spawned).toHaveLength(1);
+      expect(spawned[0].workingDirectory).toBe(projectRoot);
+      expect(spawned[0].systemPrompt).toContain(`<cwd>${projectRoot}</cwd>`);
+      expect(spawned[0].systemPrompt).toContain("project context marker");
+      expect(spawned[0].systemPrompt).toContain("<available-skills>");
+      expect(spawned[0].systemPrompt).toContain("<name>scoped-skill</name>");
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
   });
 });

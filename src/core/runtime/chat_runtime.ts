@@ -12,6 +12,9 @@ import { composeSessionPrompts, type SessionPromptComposition } from "./session_
 
 export type ChatRuntimePromptContext = {
   cwd: string;
+  hostCwd?: string;
+  home?: string;
+  includeAgentContext?: boolean;
   projectContextBlock?: string;
   sandboxEnabled: boolean;
   sandboxEnvironmentInfo?: string;
@@ -74,6 +77,11 @@ export class ChatRuntime {
       toolRegistry: options.toolRegistry,
       config: options.config,
       deps: options.deps,
+      cwd: options.promptContext.cwd,
+      hostCwd: options.promptContext.hostCwd,
+      home: options.promptContext.home,
+      includeAgentContext: options.promptContext.includeAgentContext,
+      sandboxEnabled: options.promptContext.sandboxEnabled,
     });
 
     return new ChatRuntime({
@@ -149,6 +157,13 @@ export class ChatRuntime {
       ...this.promptContext,
       ...context,
     };
+    this.sessionInstance.setPromptContext({
+      cwd: this.promptContext.cwd,
+      hostCwd: this.promptContext.hostCwd,
+      home: this.promptContext.home,
+      includeAgentContext: this.promptContext.includeAgentContext,
+      sandboxEnabled: this.promptContext.sandboxEnabled,
+    });
   }
 
   rebuildSystemPrompts(options?: { skillsBlock?: string }): void {

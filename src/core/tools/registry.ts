@@ -269,6 +269,11 @@ export type ToolDispatchContext = {
   history?: readonly Message[];
   systemPrompt?: string;
   riskLevel?: RiskLevel;
+  cwd?: string;
+  hostCwd?: string;
+  home?: string;
+  includeAgentContext?: boolean;
+  sandboxEnabled?: boolean;
   subagentPrompts?: Record<string, string>;
   toolRegistry?: ToolRegistry;
   authPath?: string;

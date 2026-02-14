@@ -1,5 +1,5 @@
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, posix as pathPosix, sep as pathSep } from "node:path";
+import { dirname, posix as pathPosix, sep as pathSep, resolve } from "node:path";
 import type { SandboxConfig } from "../config/index.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
@@ -238,6 +238,46 @@ export function createLocalToolExecutionBackend(
           resolvedPaths,
         };
       }
+    },
+  };
+}
+
+export function scopeToolExecutionBackend(
+  backend: ToolExecutionBackend,
+  workingDirectory: string,
+): ToolExecutionBackend {
+  const resolvePath = (path: string): string => resolve(workingDirectory, path);
+  const resolveCwd = (cwd?: string): string =>
+    cwd ? resolve(workingDirectory, cwd) : workingDirectory;
+
+  return {
+    kind: backend.kind,
+    runBash(command, options = {}) {
+      return backend.runBash(command, {
+        ...options,
+        cwd: resolveCwd(options.cwd),
+      });
+    },
+    readFile(path, options) {
+      return backend.readFile(resolvePath(path), options);
+    },
+    readFileBinary(path, options) {
+      return backend.readFileBinary(resolvePath(path), options);
+    },
+    writeFile(path, content) {
+      return backend.writeFile(resolvePath(path), content);
+    },
+    editFile(path, patch) {
+      return backend.editFile(resolvePath(path), patch);
+    },
+    listDir(path) {
+      return backend.listDir(resolvePath(path));
+    },
+    grep(options) {
+      return backend.grep({
+        ...options,
+        paths: options.paths.map((path) => resolvePath(path)),
+      });
     },
   };
 }

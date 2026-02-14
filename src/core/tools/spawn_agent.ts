@@ -1,10 +1,15 @@
+import { readFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
+import { loadSkillsForPromptContext } from "../config/skills_loader.js";
+import { composeSessionPrompts } from "../runtime/session_prompt_composer.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
 import { getSubagentDescription, resolveSubagentEffectiveSettings } from "../subagents/registry.js";
 import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/types.js";
-import type { RiskLevel } from "../types.js";
+import type { Persona, RiskLevel, Skill } from "../types.js";
+import { buildProjectContextBlock, buildSkillsIndexBlock } from "../utils/context.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
@@ -45,6 +50,11 @@ const SPAWN_AGENT_MODEL_DESCRIPTION = [
   "The value must match one of the selected subagent's configured launch models.",
 ].join(" ");
 
+const SPAWN_AGENT_WORKING_DIRECTORY_DESCRIPTION = [
+  "Optional working directory for the subagent.",
+  "When set, tools run as if Tau was started in this directory.",
+].join(" ");
+
 export const SPAWN_AGENT_TOOL: Tool = {
   name: TOOL_NAME_SPAWN_AGENT,
   description: SPAWN_AGENT_DESCRIPTION,
@@ -54,6 +64,9 @@ export const SPAWN_AGENT_TOOL: Tool = {
       title: Type.String({ description: SPAWN_AGENT_TITLE_DESCRIPTION }),
       prompt: Type.String({ description: SPAWN_AGENT_PROMPT_DESCRIPTION }),
       model: Type.Optional(Type.String({ description: SPAWN_AGENT_MODEL_DESCRIPTION })),
+      workingDirectory: Type.Optional(
+        Type.String({ description: SPAWN_AGENT_WORKING_DIRECTORY_DESCRIPTION }),
+      ),
     },
     { additionalProperties: false },
   ),
@@ -64,6 +77,7 @@ const spawnArgsSchema = z.object({
   title: z.string().trim().catch(""),
   prompt: z.string().trim().catch(""),
   model: z.string().trim().optional().catch(undefined),
+  workingDirectory: z.string().trim().optional().catch(undefined),
 });
 
 function parseSpawnArgs(raw: unknown): {
@@ -71,15 +85,26 @@ function parseSpawnArgs(raw: unknown): {
   title: string;
   prompt: string;
   model?: string;
+  workingDirectory?: string;
 } {
   const parsed = spawnArgsSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { name: "", title: "", prompt: "", model: undefined };
+  return parsed.success
+    ? parsed.data
+    : { name: "", title: "", prompt: "", model: undefined, workingDirectory: undefined };
 }
 
-function formatSpawnToolResult(args: { id: string; name: string; title: string }): string {
-  return [`id: ${args.id}`, `name: ${args.name}`, `title: ${args.title}`, "status: running"].join(
-    "\n",
-  );
+function formatSpawnToolResult(args: {
+  id: string;
+  name: string;
+  title: string;
+  workingDirectory?: string;
+}): string {
+  const lines = [`id: ${args.id}`, `name: ${args.name}`, `title: ${args.title}`];
+  if (args.workingDirectory) {
+    lines.push(`workingDirectory: ${args.workingDirectory}`);
+  }
+  lines.push("status: running");
+  return lines.join("\n");
 }
 
 function formatAllowedLaunchModels(launchModels: string[]): string {
@@ -88,6 +113,91 @@ function formatAllowedLaunchModels(launchModels: string[]): string {
   }
 
   return launchModels.map((entry) => `'${entry}'`).join(", ");
+}
+
+function getEnabledSkillsForPersona(persona: Persona, skills: Skill[]): Skill[] {
+  const personaSkills = persona.skills;
+
+  if (!personaSkills || personaSkills.length === 0) {
+    return [];
+  }
+
+  if (personaSkills === "*") {
+    return [...skills];
+  }
+
+  const skillsByName = new Map<string, Skill>();
+  for (const skill of skills) {
+    skillsByName.set(skill.name.toLowerCase(), skill);
+  }
+
+  const enabled: Skill[] = [];
+  for (const name of personaSkills) {
+    const trimmed = name.trim();
+    if (!trimmed) continue;
+    const skill = skillsByName.get(trimmed.toLowerCase());
+    if (skill) {
+      enabled.push(skill);
+    }
+  }
+
+  return enabled;
+}
+
+function resolveWorkingDirectory(args: {
+  cwd: string;
+  hostCwd: string;
+  workingDirectory?: string;
+}): { cwd: string; hostCwd: string } {
+  if (!args.workingDirectory) {
+    return { cwd: args.cwd, hostCwd: args.hostCwd };
+  }
+
+  const cwd = resolve(args.cwd, args.workingDirectory);
+  const rel = relative(args.cwd, cwd);
+  const hostCwd = resolve(args.hostCwd, rel);
+  return { cwd, hostCwd };
+}
+
+async function buildSubagentSystemPrompt(args: {
+  name: string;
+  persona: Persona;
+  riskLevel: RiskLevel;
+  config: ToolDispatchContext["config"];
+  cwd: string;
+  hostCwd: string;
+  home: string;
+  includeAgentContext: boolean;
+  sandboxEnabled: boolean;
+}): Promise<string | undefined> {
+  const skills = await loadSkillsForPromptContext({
+    config: args.config,
+    cwd: args.hostCwd,
+  });
+  const skillsBlock = buildSkillsIndexBlock(getEnabledSkillsForPersona(args.persona, skills));
+
+  const projectContextBlock = args.includeAgentContext
+    ? buildProjectContextBlock({
+        cwd: args.hostCwd,
+        home: args.home,
+        readFile: (path) => readFileSync(path, "utf-8"),
+      })
+    : undefined;
+
+  const composition = composeSessionPrompts({
+    persona: args.persona,
+    riskLevel: args.riskLevel,
+    cwd: args.cwd,
+    datetime: new Date().toISOString(),
+    platform: process.platform,
+    nodeVersion: process.version,
+    skillsBlock,
+    projectContextBlock,
+    sandboxEnabled: args.sandboxEnabled,
+    sandboxEnvironmentInfo: args.config?.sandbox?.environmentInfo,
+  });
+
+  return composition.subagentPrompts[args.name];
 }
 
 export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
@@ -99,7 +209,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       signal?: AbortSignal,
       context?: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { name, title, prompt, model } = parseSpawnArgs(toolCall.arguments);
+      const { name, title, prompt, model, workingDirectory } = parseSpawnArgs(toolCall.arguments);
       const headerTarget = title || "(subagent)";
 
       const blocked = (reason: string, details?: { name?: string; title?: string }) => {
@@ -151,14 +261,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         });
       }
 
-      const systemPrompt = context.subagentPrompts?.[name];
-      if (!systemPrompt) {
-        return blocked(`subagent '${name}' is missing its system prompt.`, {
-          name,
-          title,
-        });
-      }
-
       let launchModelOverride: SubagentLaunchModel | undefined;
       if (model !== undefined && !model) {
         return blocked(
@@ -168,6 +270,12 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             title,
           },
         );
+      }
+      if (workingDirectory !== undefined && !workingDirectory) {
+        return blocked("workingDirectory parameter must be a non-empty string.", {
+          name,
+          title,
+        });
       }
       if (model) {
         const parsedLaunchModel = parseSubagentLaunchModel(model);
@@ -202,6 +310,48 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         launchModelOverride = parsedLaunchModel.launchModel;
       }
 
+      const baseCwd = context.cwd ?? process.cwd();
+      const baseHostCwd = context.hostCwd ?? process.cwd();
+      const baseHome = context.home ?? process.env.HOME ?? process.cwd();
+      const { cwd, hostCwd } = resolveWorkingDirectory({
+        cwd: baseCwd,
+        hostCwd: baseHostCwd,
+        workingDirectory,
+      });
+
+      let systemPrompt: string | undefined;
+      if (workingDirectory) {
+        try {
+          systemPrompt = await buildSubagentSystemPrompt({
+            name,
+            persona,
+            riskLevel: context.riskLevel ?? "read-only",
+            config: context.config,
+            cwd,
+            hostCwd,
+            home: baseHome,
+            includeAgentContext: context.includeAgentContext !== false,
+            sandboxEnabled: context.sandboxEnabled ?? false,
+          });
+        } catch (error) {
+          return blocked(
+            `failed to build subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
+            {
+              name,
+              title,
+            },
+          );
+        }
+      } else {
+        systemPrompt = context.subagentPrompts?.[name];
+      }
+      if (!systemPrompt) {
+        return blocked(`subagent '${name}' is missing its system prompt.`, {
+          name,
+          title,
+        });
+      }
+
       const effectiveSettings = resolveSubagentEffectiveSettings({
         persona,
         config: personaConfig,
@@ -212,6 +362,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         name,
         systemPrompt,
         description: getSubagentDescription(name, personaConfig),
+        workingDirectory: cwd,
         ...effectiveSettings,
       };
 
@@ -280,9 +431,15 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             id: spawnResult.id,
             name,
             title,
+            workingDirectory: runtimeConfig.workingDirectory,
           });
 
-          const statusParts = [name, modelLabel, spawnResult.id].filter(Boolean);
+          const statusParts = [
+            name,
+            runtimeConfig.workingDirectory,
+            modelLabel,
+            spawnResult.id,
+          ].filter(Boolean);
           const toolResult: ToolResultMessage = createToolResult(toolCall, resultText, false);
           const uiText = buildSubagentUiText({
             output: prompt,

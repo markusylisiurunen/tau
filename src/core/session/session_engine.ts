@@ -44,6 +44,11 @@ export type SessionEngineOptions = {
   toolRegistry: ToolRegistry;
   config?: Config;
   deps?: CoreDeps;
+  cwd?: string;
+  hostCwd?: string;
+  home?: string;
+  includeAgentContext?: boolean;
+  sandboxEnabled?: boolean;
 };
 
 export type SessionCompactionOptions = {
@@ -82,6 +87,11 @@ export class SessionEngine {
   private readonly deps: CoreDeps;
   private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
+  private cwd: string;
+  private hostCwd: string;
+  private home: string;
+  private includeAgentContext: boolean;
+  private sandboxEnabled: boolean;
   private readonly subagentControlPlane: SubagentControlPlane;
   private readonly subagentListeners = new Set<(event: CoreSubagentUiEvent) => void>();
   private historyEntries: HistoryEntry[] = [];
@@ -95,6 +105,11 @@ export class SessionEngine {
     this.toolRegistry = options.toolRegistry;
     this.config = options.config ?? {};
     this.deps = options.deps ?? createDefaultCoreDeps();
+    this.cwd = options.cwd ?? this.deps.env.cwd();
+    this.hostCwd = options.hostCwd ?? this.deps.env.cwd();
+    this.home = options.home ?? this.deps.env.home();
+    this.includeAgentContext = options.includeAgentContext ?? true;
+    this.sandboxEnabled = options.sandboxEnabled ?? false;
     this.authPath = getAuthPath(this.deps.env.home());
     const authStorage = new AuthStorage(this.authPath);
     this.credentialResolver = createCredentialResolver({
@@ -128,6 +143,30 @@ export class SessionEngine {
 
   setConfig(config: Config): void {
     this.config = config;
+  }
+
+  setPromptContext(context: {
+    cwd?: string;
+    hostCwd?: string;
+    home?: string;
+    includeAgentContext?: boolean;
+    sandboxEnabled?: boolean;
+  }): void {
+    if (context.cwd !== undefined) {
+      this.cwd = context.cwd;
+    }
+    if (context.hostCwd !== undefined) {
+      this.hostCwd = context.hostCwd;
+    }
+    if (context.home !== undefined) {
+      this.home = context.home;
+    }
+    if (context.includeAgentContext !== undefined) {
+      this.includeAgentContext = context.includeAgentContext;
+    }
+    if (context.sandboxEnabled !== undefined) {
+      this.sandboxEnabled = context.sandboxEnabled;
+    }
   }
 
   onSubagentEvent(handler: (event: CoreSubagentUiEvent) => void): () => void {
@@ -377,6 +416,11 @@ export class SessionEngine {
         history: [...this.history],
         systemPrompt: this.systemPrompt,
         riskLevel: this.riskLevel,
+        cwd: this.cwd,
+        hostCwd: this.hostCwd,
+        home: this.home,
+        includeAgentContext: this.includeAgentContext,
+        sandboxEnabled: this.sandboxEnabled,
         subagentPrompts: this.subagentPrompts,
         toolRegistry: this.toolRegistry,
         authPath: this.authPath,

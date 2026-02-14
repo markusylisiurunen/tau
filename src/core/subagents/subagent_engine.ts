@@ -14,7 +14,10 @@ import type { Config } from "../config/index.js";
 import { type RunnerEvent, runModelSubturn, runToolCalls } from "../session/runner.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import { createLocalToolExecutionBackend } from "../tools/execution_backend.js";
+import {
+  createLocalToolExecutionBackend,
+  scopeToolExecutionBackend,
+} from "../tools/execution_backend.js";
 import type { ToolDispatchContext, ToolRegistry, ToolUiEvent } from "../tools/registry.js";
 import type { RiskLevel } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
@@ -106,7 +109,10 @@ export async function runSubagent(options: {
     throw new Error("sub-agent aborted");
   }
 
-  const backend = options.backend ?? createLocalToolExecutionBackend();
+  const baseBackend = options.backend ?? createLocalToolExecutionBackend();
+  const backend = runtimeConfig.workingDirectory
+    ? scopeToolExecutionBackend(baseBackend, runtimeConfig.workingDirectory)
+    : baseBackend;
   const allowedTools = runtimeConfig.tools;
   const toolRegistry = buildToolRegistryForAllowedTools(allowedTools, config, backend);
   const messages = options.messages ?? [];

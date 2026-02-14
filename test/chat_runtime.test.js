@@ -28,6 +28,7 @@ function createStubSession(eventGenerator) {
   const setPersonaCalls = [];
   const setRiskLevelCalls = [];
   const setConfigCalls = [];
+  const setPromptContextCalls = [];
 
   return {
     session: {
@@ -46,11 +47,15 @@ function createStubSession(eventGenerator) {
       setConfig(config) {
         setConfigCalls.push(config);
       },
+      setPromptContext(context) {
+        setPromptContextCalls.push(context);
+      },
     },
     calls: {
       setPersonaCalls,
       setRiskLevelCalls,
       setConfigCalls,
+      setPromptContextCalls,
     },
   };
 }

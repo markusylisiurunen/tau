@@ -351,6 +351,9 @@ export class ChatController {
       toolRegistry,
       promptContext: {
         cwd: this.agentCwd,
+        hostCwd: cwd,
+        home,
+        includeAgentContext: this.includeAgentContext,
         projectContextBlock: this.projectContextBlock,
         sandboxEnabled: this.sandboxEnabled,
         sandboxEnvironmentInfo: this.config.sandbox?.environmentInfo,
@@ -1908,6 +1911,9 @@ export class ChatController {
   private syncRuntimePromptContext(): void {
     this.runtime.updatePromptContext({
       cwd: this.agentCwd,
+      hostCwd: this.deps.env.cwd(),
+      home: this.deps.env.home(),
+      includeAgentContext: this.includeAgentContext,
       projectContextBlock: this.projectContextBlock,
       sandboxEnabled: this.sandboxEnabled,
       sandboxEnvironmentInfo: this.config.sandbox?.environmentInfo,

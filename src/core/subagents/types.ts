@@ -92,4 +92,5 @@ export type SubagentRuntimeConfig = {
   settings?: PersonaSettings;
   tools: SubagentToolName[];
   riskLevel: SubagentRiskLevel;
+  workingDirectory?: string;
 };

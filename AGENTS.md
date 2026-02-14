@@ -335,25 +335,27 @@ EOF
 
 Publishing to npm happens automatically via GitHub Actions when a GitHub Release is published.
 
-1. Ensure you are on `main` with a clean working tree.
-2. Run verification, build and tests:
-   - `npm run check`
-   - `npm run build`
-   - `npm test`
-3. Bump the version and create a tag:
-   - `npm version patch|minor|major` (creates a `vX.Y.Z` tag)
-4. Push the commit and tag:
-   - `git push --follow-tags`
-5. Create a GitHub Release (this triggers the publish workflow):
-   - `gh release create v$(node -p "require('./package.json').version") --generate-notes`
+Before any release:
+
+- Ensure you are on `main` with a clean working tree. Unpushed commits are fine because the release flow pushes commits and tags. If either condition is not true, ask the user what to do.
+- Run verification, build, and tests:
+  - `npm run check && npm run build && npm test`
+
+Release flows:
+
+- Patch release:
+  - `npm version patch && git push --follow-tags && gh release create v$(node -p "require('./package.json').version") --generate-notes`
+- Minor release:
+  - `npm version minor && git push --follow-tags && gh release create v$(node -p "require('./package.json').version") --generate-notes`
+- Alpha prerelease (`alpha` npm tag, not `latest`):
+  - If the current version already includes `-alpha.`, bump the prerelease number; otherwise create a new alpha preminor.
+  - `if node -p "require('./package.json').version.includes('-alpha.')"; then npm version prerelease --preid alpha; else npm version preminor --preid alpha; fi`
+  - `git push --follow-tags`
+  - `gh release create v$(node -p "require('./package.json').version") --generate-notes --prerelease`
 
 Notes:
 
 - The workflow uses the `NPM_TOKEN` GitHub secret to authenticate with npm.
-- Alpha prereleases are tagged `alpha` on npm (not `latest`). Use:
-  - If current version already has `-alpha.`, run `npm version prerelease --preid alpha`
-  - Otherwise, run `npm version preminor --preid alpha`
-  - `gh release create v$(node -p "require('./package.json').version") --generate-notes --prerelease`
 
 ## Maintaining this file
 

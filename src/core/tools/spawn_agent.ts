@@ -10,6 +10,7 @@ import { getSubagentDescription, resolveSubagentEffectiveSettings } from "../sub
 import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/types.js";
 import type { Persona, RiskLevel, Skill } from "../types.js";
 import { buildProjectContextBlock, buildSkillsIndexBlock } from "../utils/context.js";
+import { formatCwd } from "../utils/format.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
@@ -434,12 +435,12 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             workingDirectory: runtimeConfig.workingDirectory,
           });
 
-          const statusParts = [
-            name,
-            modelLabel,
-            runtimeConfig.workingDirectory,
-            spawnResult.id,
-          ].filter(Boolean);
+          const statusWorkingDirectory = runtimeConfig.workingDirectory
+            ? formatCwd(runtimeConfig.workingDirectory)
+            : undefined;
+          const statusParts = [name, modelLabel, statusWorkingDirectory, spawnResult.id].filter(
+            Boolean,
+          );
           const toolResult: ToolResultMessage = createToolResult(toolCall, resultText, false);
           const uiText = buildSubagentUiText({
             output: prompt,

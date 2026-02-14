@@ -127,6 +127,7 @@ export function describeRiskLevel(level: RiskLevel): string {
 export function buildEnvironmentTag(args: {
   datetime: string;
   cwd: string;
+  repoRoot?: string;
   riskLevel: RiskLevel;
   platform: NodeJS.Platform;
   nodeVersion: string;
@@ -134,16 +135,25 @@ export function buildEnvironmentTag(args: {
   const riskDesc = describeRiskLevel(args.riskLevel);
   const nodeVersion = args.nodeVersion;
   const platform = args.platform;
-  return [
+  const lines = [
     "<environment>",
     `  <datetime>${args.datetime}</datetime>`,
     `  <cwd>${args.cwd}</cwd>`,
+  ];
+
+  if (args.repoRoot) {
+    lines.push(`  <repo-root>${args.repoRoot}</repo-root>`);
+  }
+
+  lines.push(
     `  <risk-level level="${args.riskLevel}">${riskDesc}</risk-level>`,
     `  <node>${nodeVersion}</node>`,
     `  <platform>${platform}</platform>`,
     "  <notes>This environment tag reflects the current session environment. If the user changes risk level or cwd, you will be informed in a <system> tag at the start of the next user message.</notes>",
     "</environment>",
-  ].join("\n");
+  );
+
+  return lines.join("\n");
 }
 
 export function formatRiskLevelChangeNotice(change: { from: RiskLevel; to: RiskLevel }): string {

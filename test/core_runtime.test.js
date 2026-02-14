@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { personas } from "../dist/core/personas.js";
@@ -169,6 +171,7 @@ describe("context builder", () => {
     const tag = buildEnvironmentTag({
       datetime: "2025-01-01T00:00:00.000Z",
       cwd: "/repo",
+      repoRoot: "/repo",
       riskLevel: "read-only",
       platform: "darwin",
       nodeVersion: "v20.0.0",
@@ -176,6 +179,7 @@ describe("context builder", () => {
 
     expect(tag).toContain("<platform>darwin</platform>");
     expect(tag).toContain("<node>v20.0.0</node>");
+    expect(tag).toContain("<repo-root>/repo</repo-root>");
 
     const readFile = (path) => (path === "/repo/AGENTS.md" ? "# Agents\n" : "");
     const block = buildProjectContextBlock({
@@ -238,6 +242,44 @@ describe("session prompt composer", () => {
     expect(result.subagentPrompts.researcher).toContain("research subagent prompt");
     expect(result.subagentPrompts.researcher).toContain('<risk-level level="read-write">');
     expect(result.subagentPrompts.researcher).toContain("<sandbox-info>");
+  });
+
+  it("includes repo root in the environment tag when inside a git repo", () => {
+    const gitRootResult = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+
+    expect(gitRootResult.status).toBe(0);
+    const gitRoot = (gitRootResult.stdout ?? "").trim();
+    expect(gitRoot).not.toBe("");
+
+    const persona = {
+      id: "plain-persona",
+      label: "plain persona",
+      model: personas[0].model,
+      systemPrompt: "plain prompt",
+      settings: {},
+      source: "project",
+    };
+
+    const sandboxCwd = "/workspace/test/subdir";
+    const hostCwd = resolve(gitRoot, "src", "core");
+
+    const result = composeSessionPrompts({
+      persona,
+      sandboxEnabled: false,
+      riskLevel: "read-only",
+      cwd: sandboxCwd,
+      hostCwd,
+      datetime: "2026-01-01T00:00:00.000Z",
+      platform: "darwin",
+      nodeVersion: "v24.0.0",
+    });
+
+    const expectedRepoRoot = resolve(sandboxCwd, relative(hostCwd, gitRoot));
+    expect(result.environmentTag).toContain(`<repo-root>${expectedRepoRoot}</repo-root>`);
   });
 
   it("omits sandbox blocks and subagent prompts when not applicable", () => {

@@ -5,11 +5,13 @@ import {
   buildEnvironmentTag,
   buildSandboxInfoBlock,
 } from "../utils/context.js";
+import { resolvePromptGitRoot } from "../utils/git.js";
 
 export type ComposeSessionPromptsArgs = {
   persona: Persona;
   riskLevel: RiskLevel;
   cwd: string;
+  hostCwd?: string;
   datetime: string;
   platform: NodeJS.Platform;
   nodeVersion: string;
@@ -26,9 +28,12 @@ export type SessionPromptComposition = {
 };
 
 export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionPromptComposition {
+  const repoRoot = resolvePromptGitRoot({ cwd: args.cwd, hostCwd: args.hostCwd });
+
   const environmentTag = buildEnvironmentTag({
     riskLevel: args.riskLevel,
     cwd: args.cwd,
+    repoRoot,
     datetime: args.datetime,
     platform: args.platform,
     nodeVersion: args.nodeVersion,
@@ -63,6 +68,7 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
       const subagentEnvironmentTag = buildEnvironmentTag({
         riskLevel: config.riskLevel ?? args.riskLevel,
         cwd: args.cwd,
+        repoRoot,
         datetime: args.datetime,
         platform: args.platform,
         nodeVersion: args.nodeVersion,

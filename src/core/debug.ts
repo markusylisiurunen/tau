@@ -17,6 +17,7 @@ import {
   buildSandboxInfoBlock,
   buildSkillsIndexBlock,
 } from "./utils/context.js";
+import { resolvePromptGitRoot } from "./utils/git.js";
 
 function section(title: string): void {
   console.log(`\n${"=".repeat(60)}`);
@@ -206,9 +207,11 @@ export function printDebugInfo(args: {
     ? buildProjectContextBlock({ cwd, home, readFile: deps.fs.readFile })
     : undefined;
   const effectiveRiskLevel: RiskLevel = riskLevel ?? "read-only";
+  const repoRoot = resolvePromptGitRoot({ cwd: promptCwd, hostCwd: cwd });
   const environmentTag = buildEnvironmentTag({
     riskLevel: effectiveRiskLevel,
     cwd: promptCwd,
+    repoRoot,
     datetime: new Date(deps.clock.now()).toISOString(),
     platform: deps.env.platform(),
     nodeVersion: deps.env.nodeVersion(),

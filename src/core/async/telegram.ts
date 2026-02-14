@@ -192,6 +192,7 @@ class AsyncTelegramAdapterImpl {
   private readonly onLog?: (entry: AsyncTelegramLogEntry) => void;
   private readonly abortController = new AbortController();
   private readonly activeSessionsByChat = new Map<number, string>();
+  private readonly sessionsByChat = new Map<number, Set<string>>();
   private readonly chatsBySession = new Map<string, Set<number>>();
   private readonly sessionVerbosityBySession = new Map<string, SessionVerbosity>();
   private readonly lastCommandBySession = new Map<string, string>();
@@ -630,20 +631,8 @@ class AsyncTelegramAdapterImpl {
   }
 
   private setActiveSession(chatId: number, sessionId: string): void {
-    const currentSessionId = this.activeSessionsByChat.get(chatId);
-    if (currentSessionId && currentSessionId !== sessionId) {
-      const currentChats = this.chatsBySession.get(currentSessionId);
-      currentChats?.delete(chatId);
-      if (currentChats && currentChats.size === 0) {
-        this.chatsBySession.delete(currentSessionId);
-      }
-    }
-
     this.activeSessionsByChat.set(chatId, sessionId);
-
-    const chats = this.chatsBySession.get(sessionId) ?? new Set<number>();
-    chats.add(chatId);
-    this.chatsBySession.set(sessionId, chats);
+    this.linkChatToSession(chatId, sessionId);
   }
 
   private clearActiveSession(chatId: number): void {
@@ -653,6 +642,27 @@ class AsyncTelegramAdapterImpl {
     }
 
     this.activeSessionsByChat.delete(chatId);
+    this.unlinkChatFromSession(chatId, sessionId);
+  }
+
+  private linkChatToSession(chatId: number, sessionId: string): void {
+    const sessions = this.sessionsByChat.get(chatId) ?? new Set<string>();
+    sessions.add(sessionId);
+    this.sessionsByChat.set(chatId, sessions);
+
+    const chats = this.chatsBySession.get(sessionId) ?? new Set<number>();
+    chats.add(chatId);
+    this.chatsBySession.set(sessionId, chats);
+  }
+
+  private unlinkChatFromSession(chatId: number, sessionId: string): void {
+    const sessions = this.sessionsByChat.get(chatId);
+    if (sessions) {
+      sessions.delete(sessionId);
+      if (sessions.size === 0) {
+        this.sessionsByChat.delete(chatId);
+      }
+    }
 
     const chats = this.chatsBySession.get(sessionId);
     if (!chats) {

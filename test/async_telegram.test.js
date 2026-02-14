@@ -15,6 +15,7 @@ function createApiHarness(updateBatches) {
   const queue = [...updateBatches];
   const sendMessages = [];
   const setCommandsCalls = [];
+  const setMessageReactions = [];
 
   const api = {
     getUpdates: vi.fn(async () => {
@@ -30,12 +31,16 @@ function createApiHarness(updateBatches) {
     setCommands: vi.fn(async (commands) => {
       setCommandsCalls.push(commands);
     }),
+    setMessageReaction: vi.fn(async (chatId, messageId) => {
+      setMessageReactions.push({ chatId, messageId });
+    }),
   };
 
   return {
     api,
     sendMessages,
     setCommandsCalls,
+    setMessageReactions,
   };
 }
 
@@ -258,6 +263,7 @@ describe("async telegram adapter", () => {
         {
           update_id: 1,
           message: {
+            message_id: 501,
             chat: { id: 200, type: "private" },
             from: { id: 7 },
             text: "/new",
@@ -266,6 +272,7 @@ describe("async telegram adapter", () => {
         {
           update_id: 2,
           message: {
+            message_id: 502,
             chat: { id: 200, type: "private" },
             from: { id: 7 },
             text: "follow up",
@@ -321,7 +328,11 @@ describe("async telegram adapter", () => {
 
       expect(
         apiHarness.sendMessages.some((entry) => String(entry.text).includes("(s1) message queued")),
-      ).toBe(true);
+      ).toBe(false);
+      expect(apiHarness.setMessageReactions).toContainEqual({
+        chatId: 200,
+        messageId: 502,
+      });
     } finally {
       await adapter.close();
     }
@@ -1047,6 +1058,73 @@ describe("async telegram adapter", () => {
       expect(
         apiHarness.sendMessages.some((entry) => entry.text.includes("(s2) assistant message")),
       ).toBe(false);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("sends a queued acknowledgement in verbose mode and reacts to user messages", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 475, type: "private" },
+            from: { id: 7 },
+            text: "/use s13",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 475, type: "private" },
+            from: { id: 7 },
+            text: "/verbose",
+          },
+        },
+        {
+          update_id: 3,
+          message: {
+            message_id: 777,
+            chat: { id: 475, type: "private" },
+            from: { id: 7 },
+            text: "ship it",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s13",
+        projectId: "demo",
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s13", "ship it", undefined);
+
+      await waitFor(() =>
+        apiHarness.sendMessages.some((entry) => entry.text.includes("(s13) message queued")),
+      );
+
+      expect(apiHarness.setMessageReactions).toContainEqual({
+        chatId: 475,
+        messageId: 777,
+      });
     } finally {
       await adapter.close();
     }

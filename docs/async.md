@@ -146,6 +146,8 @@ Supported DM commands:
 - `/quiet` (for the selected session, default mode, send only the run's final assistant message)
 - plain text sends to the selected session
 
+When a plain-text message is accepted for a session, the adapter tries to add a 👀 reaction to that user message (best effort).
+
 The adapter registers these commands via Telegram's command list so clients can autocomplete them.
 
 Optional allowlists:
@@ -174,7 +176,7 @@ In `/verbose` mode, run updates also include:
 - each successful write call (`wrote file`)
 - each assistant final message for the current run (`assistant message`)
 
-In `/quiet` mode, these streamed updates are suppressed and only the run's final assistant message is sent when the run completes.
+In `/quiet` mode, these streamed updates are suppressed and only the run's final assistant message is sent when the run completes. The immediate `(sessionId) message queued` acknowledgement is also suppressed in quiet mode.
 
 ## persistence model
 

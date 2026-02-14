@@ -223,6 +223,11 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         });
       }
 
+      const modelLabel =
+        effectiveSettings.model !== persona.model
+          ? `${effectiveSettings.model.provider}/${effectiveSettings.model.id}:${effectiveSettings.settings?.reasoning ?? "none"}`
+          : undefined;
+
       return {
         kind: "phased",
         startedUiEvent: {
@@ -251,6 +256,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             runtimeConfig,
             prompt,
             title,
+            modelLabel,
             config: context.config ?? {},
             authPath: context.authPath,
             backend,
@@ -276,10 +282,11 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             title,
           });
 
+          const statusParts = [name, modelLabel, spawnResult.id].filter(Boolean);
           const toolResult: ToolResultMessage = createToolResult(toolCall, resultText, false);
           const uiText = buildSubagentUiText({
             output: prompt,
-            statusText: `${name} · ${spawnResult.id}`,
+            statusText: statusParts.join(" · "),
             maxOutputLines: 16,
             fullText: resultText,
           });

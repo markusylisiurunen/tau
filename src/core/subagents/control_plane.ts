@@ -47,6 +47,7 @@ type SubagentRecord = {
   id: string;
   name: SubagentName;
   title: string;
+  modelLabel?: string;
   runtimeConfig: SubagentRuntimeConfig;
   messages: Message[];
   status: SubagentStatus;
@@ -129,6 +130,7 @@ export class SubagentControlPlane {
     runtimeConfig: SubagentRuntimeConfig;
     prompt: string;
     title: string;
+    modelLabel?: string;
     config: Config;
     authPath?: string;
     backend: ToolExecutionBackend;
@@ -143,13 +145,15 @@ export class SubagentControlPlane {
       };
     }
 
-    const { runtimeConfig, prompt, title, config, authPath, backend, personaId } = options;
+    const { runtimeConfig, prompt, title, modelLabel, config, authPath, backend, personaId } =
+      options;
     const id = randomUUID();
 
     const record: SubagentRecord = {
       id,
       name: runtimeConfig.name,
       title,
+      modelLabel,
       runtimeConfig,
       messages: [],
       status: "running",
@@ -391,6 +395,7 @@ export class SubagentControlPlane {
       id: record.id,
       name: record.name,
       title: record.title,
+      modelLabel: record.modelLabel,
       status: record.status,
       costTotal: record.costTotal,
       turns: record.turns,

@@ -53,6 +53,7 @@ export type SubagentStateSnapshot = {
   name: SubagentName;
   title: string;
   status: SubagentStatus;
+  modelLabel?: string;
   costTotal: number;
   turns: number;
   toolCalls: number;

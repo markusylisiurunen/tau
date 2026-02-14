@@ -139,6 +139,8 @@ Supported DM commands:
 - `/list`
 - `/status`
 - `/cancel`
+- `/verbose` (default mode, streams run lifecycle + progress updates)
+- `/quiet` (send only the run's final assistant message, no streamed progress)
 - plain text sends to the active session
 
 The adapter registers these commands via Telegram's command list so clients can autocomplete them.
@@ -154,17 +156,19 @@ Lifecycle notifications are sent back to associated chats:
 
 - `session is being prepared` (after `/new`)
 - `session is ready` (when workspace + client are ready)
-- `run started`
-- `run finished`
 - `run failed`
 - `run canceled`
 
-During runs, progress notifications also include:
+In `/verbose` mode (default), run updates also include:
 
+- `run started`
+- `run finished`
 - each bash command (`bash command`)
 - each successful edit call (`edited file`)
 - each successful write call (`wrote file`)
-- the latest assistant final message (`assistant message`)
+- each assistant final message for the current run (`assistant message`)
+
+In `/quiet` mode, these streamed updates are suppressed and only the run's final assistant message is sent when the run completes.
 
 ## persistence model
 
@@ -173,6 +177,6 @@ Async daemon state is in-memory only:
 - session records
 - session logs
 - Telegram chat routing (`chatId -> activeSessionId`)
-- Telegram per-session progress previews (last command + last assistant message)
+- Telegram per-session state (verbosity mode, last command, last assistant message)
 
 Restarting the daemon clears this state. Existing cloned workspaces on disk are not reused as daemon session state.

@@ -344,10 +344,11 @@ describe("async telegram adapter", () => {
       expect(
         apiHarness.sendMessages.some((entry) => String(entry.text).includes("(s1) message queued")),
       ).toBe(false);
-      expect(apiHarness.setMessageReactions).toContainEqual({
-        chatId: 200,
-        messageId: 502,
-      });
+      await waitFor(() =>
+        apiHarness.setMessageReactions.some(
+          (entry) => entry.chatId === 200 && entry.messageId === 502,
+        ),
+      );
     } finally {
       await adapter.close();
     }
@@ -411,10 +412,11 @@ describe("async telegram adapter", () => {
         undefined,
       );
       expect(mistralFetch).toHaveBeenCalledTimes(1);
-      expect(apiHarness.setMessageReactions).toContainEqual({
-        chatId: 210,
-        messageId: 902,
-      });
+      await waitFor(() =>
+        apiHarness.setMessageReactions.some(
+          (entry) => entry.chatId === 210 && entry.messageId === 902,
+        ),
+      );
     } finally {
       await adapter.close();
     }
@@ -1322,11 +1324,11 @@ describe("async telegram adapter", () => {
       await waitFor(() =>
         apiHarness.sendMessages.some((entry) => entry.text.includes("(s13) message queued")),
       );
-
-      expect(apiHarness.setMessageReactions).toContainEqual({
-        chatId: 475,
-        messageId: 777,
-      });
+      await waitFor(() =>
+        apiHarness.setMessageReactions.some(
+          (entry) => entry.chatId === 475 && entry.messageId === 777,
+        ),
+      );
     } finally {
       await adapter.close();
     }

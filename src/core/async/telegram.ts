@@ -113,6 +113,7 @@ const DEFAULT_TELEGRAM_VOICE_FILE_NAME = "voice.ogg";
 const DEFAULT_TELEGRAM_AUDIO_MIME_TYPE = "audio/mpeg";
 const DEFAULT_TELEGRAM_AUDIO_FILE_NAME = "audio.mp3";
 const MESSAGE_QUEUED_REACTION_EMOJI = "👀";
+const MESSAGE_QUEUED_REACTION_DELAY_MS = 1000;
 const ABORTED = Symbol("aborted");
 
 type SessionVerbosity = "verbose" | "quiet";
@@ -1043,6 +1044,11 @@ class AsyncTelegramAdapterImpl {
     }
 
     if (typeof messageId !== "number" || !Number.isInteger(messageId) || messageId <= 0) {
+      return;
+    }
+
+    await this.wait(MESSAGE_QUEUED_REACTION_DELAY_MS);
+    if (this.abortController.signal.aborted) {
       return;
     }
 

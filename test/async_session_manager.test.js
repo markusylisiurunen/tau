@@ -281,6 +281,74 @@ describe("async session manager", () => {
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
   });
 
+  it("interrupts a running session without canceling it", async () => {
+    const clientHarness = createClientHarness();
+    clientHarness.client.interrupt = vi.fn(async () => {
+      clientHarness.submitDeferred.resolve({
+        userHistoryEntryId: "history-interrupt",
+        turn: { aborted: true },
+      });
+      return { interrupted: true, isTurnRunning: true };
+    });
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "run");
+    await waitFor(() => manager.getSession(created.id)?.state === "running");
+
+    const result = await manager.interruptSession(created.id);
+    expect(result.interrupted).toBe(true);
+    expect(result.session.id).toBe(created.id);
+
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(0);
+    expect(clientHarness.client.close).toHaveBeenCalledTimes(0);
+
+    const logs = manager.getLogs(created.id) ?? [];
+    expect(logs.some((entry) => entry.message === "interrupt requested")).toBe(true);
+  });
+
+  it("returns a no-op interrupt result when no run is active", async () => {
+    const clientHarness = createClientHarness();
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    const result = await manager.interruptSession(created.id);
+    expect(result).toEqual(
+      expect.objectContaining({
+        interrupted: false,
+        isTurnRunning: false,
+        session: expect.objectContaining({ id: created.id, state: "waiting-input" }),
+      }),
+    );
+
+    expect(clientHarness.client.interrupt).not.toHaveBeenCalled();
+  });
+
   it("does not rewrite terminal failed sessions to canceled", async () => {
     const clientHarness = createClientHarness();
     clientHarness.client.submit = vi.fn(async () => {

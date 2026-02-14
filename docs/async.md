@@ -138,7 +138,8 @@ Supported DM commands:
 - `/use <sessionId>`
 - `/list`
 - `/status`
-- `/cancel`
+- `/interrupt` (interrupts the active run, keeps the session available for new messages)
+- `/cancel` (cancels the selected session)
 - `/close` (closes the selected session)
 - `/close <sessionId>` (closes a specific session)
 - `/close all` (closes all inactive sessions)

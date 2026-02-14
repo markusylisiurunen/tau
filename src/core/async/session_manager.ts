@@ -116,6 +116,12 @@ export type AsyncSessionSubmitOptions = {
   additionalSystemMessage?: string;
 };
 
+export type AsyncSessionInterruptResult = {
+  session: AsyncSessionRecord;
+  interrupted: boolean;
+  isTurnRunning: boolean;
+};
+
 export type AsyncSessionManager = {
   createSession(input: { projectId: string; prompt?: string }): Promise<AsyncSessionRecord>;
   listSessions(): AsyncSessionRecord[];
@@ -126,6 +132,7 @@ export type AsyncSessionManager = {
     text: string,
     options?: AsyncSessionSubmitOptions,
   ): Promise<AsyncSessionRecord>;
+  interruptSession(sessionId: string): Promise<AsyncSessionInterruptResult>;
   cancelSession(sessionId: string): Promise<AsyncSessionRecord>;
   closeSession(sessionId: string): Promise<AsyncSessionRecord>;
   closeInactiveSessions(): Promise<AsyncSessionRecord[]>;
@@ -276,6 +283,34 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
     void this.submitText(entry, trimmed, "user-message", options?.additionalSystemMessage);
     return this.toRecord(entry);
+  }
+
+  async interruptSession(sessionId: string): Promise<AsyncSessionInterruptResult> {
+    const entry = this.requireSession(sessionId);
+
+    if (entry.record.state !== "running" || !entry.activeSubmit) {
+      return {
+        session: this.toRecord(entry),
+        interrupted: false,
+        isTurnRunning: false,
+      };
+    }
+
+    if (!entry.client) {
+      throw new AsyncSessionManagerError("not_ready", "session is still preparing");
+    }
+
+    const result = await entry.client.interrupt();
+    this.log(entry, "info", "interrupt requested", {
+      interrupted: result.interrupted,
+      isTurnRunning: result.isTurnRunning,
+    });
+
+    return {
+      session: this.toRecord(entry),
+      interrupted: result.interrupted,
+      isTurnRunning: result.isTurnRunning,
+    };
   }
 
   async cancelSession(sessionId: string): Promise<AsyncSessionRecord> {

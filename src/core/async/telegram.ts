@@ -89,12 +89,16 @@ const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
 const MAX_COMMAND_PREVIEW_CHARS = 128;
 const ABORTED = Symbol("aborted");
 
+type SessionVerbosity = "verbose" | "quiet";
+
 const TELEGRAM_COMMANDS: TelegramBotCommand[] = [
   { command: "new", description: "start a new session" },
   { command: "use", description: "switch active session" },
   { command: "list", description: "list sessions" },
   { command: "status", description: "show active session status" },
   { command: "cancel", description: "cancel active session" },
+  { command: "verbose", description: "stream progress updates" },
+  { command: "quiet", description: "only send final assistant message" },
 ];
 
 function splitCommandText(text: string): string[] {
@@ -129,6 +133,7 @@ function truncateText(text: string, maxChars: number): string {
 function describeSession(
   session: AsyncSessionRecord,
   details: {
+    verbosity?: SessionVerbosity;
     lastCommand?: string;
     lastAssistantMessage?: string;
   } = {},
@@ -137,6 +142,7 @@ function describeSession(
     formatSessionHeadline(session.id, "status"),
     `project: ${session.projectId}`,
     `state: ${session.state}`,
+    `verbosity: ${details.verbosity ?? "verbose"}`,
     ...(session.error ? [`error: ${session.error}`] : []),
     ...(details.lastCommand
       ? [`last command: ${truncateText(details.lastCommand, MAX_COMMAND_PREVIEW_CHARS)}`]
@@ -187,8 +193,10 @@ class AsyncTelegramAdapterImpl {
   private readonly abortController = new AbortController();
   private readonly activeSessionsByChat = new Map<number, string>();
   private readonly chatsBySession = new Map<string, Set<number>>();
+  private readonly sessionVerbosityBySession = new Map<string, SessionVerbosity>();
   private readonly lastCommandBySession = new Map<string, string>();
   private readonly lastAssistantMessageBySession = new Map<string, string>();
+  private readonly latestAssistantMessageByRun = new Map<string, string>();
 
   private readonly unsubscribeSessionEvents: () => void;
   private readonly loopPromise: Promise<void>;
@@ -420,7 +428,20 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    await this.reply(chatId, "supported commands: /new, /use, /list, /status, /cancel");
+    if (command === "/verbose") {
+      await this.handleVerbosityCommand(chatId, "verbose");
+      return;
+    }
+
+    if (command === "/quiet") {
+      await this.handleVerbosityCommand(chatId, "quiet");
+      return;
+    }
+
+    await this.reply(
+      chatId,
+      "supported commands: /new, /use, /list, /status, /cancel, /verbose, /quiet",
+    );
   }
 
   private resolveNewCommand(args: string[]): NewCommandResolution {
@@ -491,6 +512,7 @@ class AsyncTelegramAdapterImpl {
       });
 
       this.setActiveSession(chatId, session.id);
+      this.sessionVerbosityBySession.set(session.id, "verbose");
       await this.reply(chatId, this.formatSessionPreparing(session.projectId));
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
@@ -540,6 +562,7 @@ class AsyncTelegramAdapterImpl {
     await this.reply(
       chatId,
       describeSession(session, {
+        verbosity: this.getSessionVerbosity(session.id),
         lastCommand: this.lastCommandBySession.get(session.id),
         lastAssistantMessage: this.lastAssistantMessageBySession.get(session.id),
       }),
@@ -559,6 +582,17 @@ class AsyncTelegramAdapterImpl {
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
+  }
+
+  private async handleVerbosityCommand(chatId: number, verbosity: SessionVerbosity): Promise<void> {
+    const session = this.getActiveSession(chatId);
+    if (!session) {
+      await this.reply(chatId, "no active session. use /new or /use <sessionId>");
+      return;
+    }
+
+    this.sessionVerbosityBySession.set(session.id, verbosity);
+    await this.reply(chatId, formatSessionHeadline(session.id, `verbosity set to ${verbosity}`));
   }
 
   private async handleMessage(chatId: number, text: string): Promise<void> {
@@ -631,6 +665,14 @@ class AsyncTelegramAdapterImpl {
     }
   }
 
+  private getSessionVerbosity(sessionId: string): SessionVerbosity {
+    return this.sessionVerbosityBySession.get(sessionId) ?? "verbose";
+  }
+
+  private isVerboseSession(sessionId: string): boolean {
+    return this.getSessionVerbosity(sessionId) === "verbose";
+  }
+
   private onSessionEvent(event: AsyncSessionManagerEvent): void {
     if (event.type === "session-progress") {
       this.handleSessionProgress(event);
@@ -642,16 +684,21 @@ class AsyncTelegramAdapterImpl {
     }
 
     if (event.state === "running") {
-      this.notifyLifecycle(event.sessionId, event.projectId, "started");
+      this.latestAssistantMessageByRun.delete(event.sessionId);
+      if (this.isVerboseSession(event.sessionId)) {
+        this.notifyLifecycle(event.sessionId, event.projectId, "started");
+      }
       return;
     }
 
     if (event.state === "failed") {
+      this.latestAssistantMessageByRun.delete(event.sessionId);
       this.notifyLifecycle(event.sessionId, event.projectId, "failed");
       return;
     }
 
     if (event.state === "canceled") {
+      this.latestAssistantMessageByRun.delete(event.sessionId);
       this.notifyLifecycle(event.sessionId, event.projectId, "canceled");
       return;
     }
@@ -665,15 +712,30 @@ class AsyncTelegramAdapterImpl {
     }
 
     if (event.state === "waiting-input" && event.previousState === "running") {
-      this.notifyLifecycle(event.sessionId, event.projectId, "finished");
+      if (this.isVerboseSession(event.sessionId)) {
+        this.notifyLifecycle(event.sessionId, event.projectId, "finished");
+        return;
+      }
+
+      const message = this.latestAssistantMessageByRun.get(event.sessionId);
+      this.latestAssistantMessageByRun.delete(event.sessionId);
+      if (message) {
+        this.notifySession(event.sessionId, message);
+      }
     }
   }
 
   private handleSessionProgress(
     event: Extract<AsyncSessionManagerEvent, { type: "session-progress" }>,
   ): void {
+    const isVerbose = this.isVerboseSession(event.sessionId);
+
     if (event.progress.type === "bash-command") {
       this.lastCommandBySession.set(event.sessionId, event.progress.command);
+      if (!isVerbose) {
+        return;
+      }
+
       this.notifySession(
         event.sessionId,
         [
@@ -685,6 +747,10 @@ class AsyncTelegramAdapterImpl {
     }
 
     if (event.progress.type === "edited-file") {
+      if (!isVerbose) {
+        return;
+      }
+
       this.notifySession(
         event.sessionId,
         [formatSessionHeadline(event.sessionId, "edited file"), event.progress.path].join("\n"),
@@ -693,6 +759,10 @@ class AsyncTelegramAdapterImpl {
     }
 
     if (event.progress.type === "wrote-file") {
+      if (!isVerbose) {
+        return;
+      }
+
       this.notifySession(
         event.sessionId,
         [formatSessionHeadline(event.sessionId, "wrote file"), event.progress.path].join("\n"),
@@ -701,6 +771,12 @@ class AsyncTelegramAdapterImpl {
     }
 
     this.lastAssistantMessageBySession.set(event.sessionId, event.progress.text);
+    this.latestAssistantMessageByRun.set(event.sessionId, event.progress.text);
+
+    if (!isVerbose) {
+      return;
+    }
+
     this.notifySession(
       event.sessionId,
       [formatSessionHeadline(event.sessionId, "assistant message"), event.progress.text].join("\n"),

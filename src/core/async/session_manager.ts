@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { createTauSdkClient } from "../../sdk/client.js";
 import type { TauSdkClient, TauSdkClientOptions, TauSdkEvent } from "../../sdk/types.js";
@@ -29,6 +29,14 @@ export type AsyncSessionProgress =
   | {
       type: "bash-command";
       command: string;
+    }
+  | {
+      type: "edited-file";
+      path: string;
+    }
+  | {
+      type: "wrote-file";
+      path: string;
     }
   | {
       type: "assistant-message";
@@ -101,12 +109,20 @@ export type AsyncSessionManagerEvent =
       progress: AsyncSessionProgress;
     };
 
+export type AsyncSessionSubmitOptions = {
+  additionalSystemMessage?: string;
+};
+
 export type AsyncSessionManager = {
   createSession(input: { projectId: string; prompt?: string }): Promise<AsyncSessionRecord>;
   listSessions(): AsyncSessionRecord[];
   getSession(sessionId: string): AsyncSessionRecord | undefined;
   getLogs(sessionId: string): AsyncSessionLogEntry[] | undefined;
-  sendMessage(sessionId: string, text: string): Promise<AsyncSessionRecord>;
+  sendMessage(
+    sessionId: string,
+    text: string,
+    options?: AsyncSessionSubmitOptions,
+  ): Promise<AsyncSessionRecord>;
   cancelSession(sessionId: string): Promise<AsyncSessionRecord>;
   close(): Promise<void>;
   onEvent(listener: (event: AsyncSessionManagerEvent) => void): () => void;
@@ -116,6 +132,7 @@ export type AsyncSessionManagerOptions = {
   projects: Record<string, AsyncProjectConfig>;
   workspaceRoot?: string;
   maxSessions?: number;
+  systemMessage?: string;
   now?: () => Date;
   createClient?: (options: TauSdkClientOptions) => Promise<TauSdkClient>;
   prepareWorkspace?: (options: PrepareWorkspaceOptions) => Promise<{ workspacePath: string }>;
@@ -123,10 +140,12 @@ export type AsyncSessionManagerOptions = {
 
 class AsyncSessionManagerImpl implements AsyncSessionManager {
   private readonly sessions = new Map<string, SessionEntry>();
+  private readonly sessionInternalIds = new Map<string, string>();
   private readonly listeners = new Set<(event: AsyncSessionManagerEvent) => void>();
   private readonly projects: Record<string, AsyncProjectConfig>;
   private readonly workspaceRoot: string;
   private readonly maxSessions?: number;
+  private readonly systemMessage?: string;
   private readonly now: () => Date;
   private readonly createClient: (options: TauSdkClientOptions) => Promise<TauSdkClient>;
   private readonly prepareWorkspace: (
@@ -140,6 +159,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       options.workspaceRoot ?? resolve(process.cwd(), ".tau/async-workspaces"),
     );
     this.maxSessions = options.maxSessions;
+    this.systemMessage = options.systemMessage?.trim() || undefined;
     this.now = options.now ?? (() => new Date());
     this.createClient = options.createClient ?? createTauSdkClient;
     this.prepareWorkspace = options.prepareWorkspace ?? prepareWorkspace;
@@ -158,7 +178,8 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       throw new AsyncSessionManagerError("max_sessions", "maximum session count reached");
     }
 
-    const id = randomUUID();
+    const internalId = randomUUID();
+    const id = this.createSessionId();
     const now = this.now().toISOString();
     const entry: SessionEntry = {
       record: {
@@ -174,7 +195,8 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       cancelRequested: false,
     };
 
-    this.sessions.set(id, entry);
+    this.sessions.set(internalId, entry);
+    this.sessionInternalIds.set(id, internalId);
     this.log(entry, "info", "session queued");
     this.emit({
       type: "session-created",
@@ -197,12 +219,12 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   }
 
   getSession(sessionId: string): AsyncSessionRecord | undefined {
-    const entry = this.sessions.get(sessionId);
+    const entry = this.getEntryBySessionId(sessionId);
     return entry ? this.toRecord(entry) : undefined;
   }
 
   getLogs(sessionId: string): AsyncSessionLogEntry[] | undefined {
-    const entry = this.sessions.get(sessionId);
+    const entry = this.getEntryBySessionId(sessionId);
     if (!entry) {
       return undefined;
     }
@@ -217,7 +239,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     };
   }
 
-  async sendMessage(sessionId: string, text: string): Promise<AsyncSessionRecord> {
+  async sendMessage(
+    sessionId: string,
+    text: string,
+    options?: AsyncSessionSubmitOptions,
+  ): Promise<AsyncSessionRecord> {
     const entry = this.requireSession(sessionId);
     const trimmed = text.trim();
     if (!trimmed) {
@@ -243,7 +269,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       throw new AsyncSessionManagerError("busy", "session is running");
     }
 
-    void this.submitText(entry, trimmed, "user-message");
+    void this.submitText(entry, trimmed, "user-message", options?.additionalSystemMessage);
     return this.toRecord(entry);
   }
 
@@ -350,7 +376,12 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     }
   }
 
-  private submitText(entry: SessionEntry, text: string, source: string): Promise<void> {
+  private submitText(
+    entry: SessionEntry,
+    text: string,
+    source: string,
+    additionalSystemMessage?: string,
+  ): Promise<void> {
     if (!entry.client) {
       throw new AsyncSessionManagerError("not_ready", "session is still preparing");
     }
@@ -363,10 +394,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     this.log(entry, "info", "submitting message", { source, text });
 
     const client = entry.client;
+    const payload = this.buildSubmitPayload(text, additionalSystemMessage);
 
     const submitPromise = (async () => {
       try {
-        const result = await client.submit(text);
+        const result = await client.submit(payload);
         this.log(entry, "info", "message finished", {
           source,
           aborted: result.turn.aborted,
@@ -497,12 +529,44 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     );
   }
 
+  private getEntryBySessionId(sessionId: string): SessionEntry | undefined {
+    const internalId = this.sessionInternalIds.get(sessionId);
+    if (!internalId) {
+      return undefined;
+    }
+
+    return this.sessions.get(internalId);
+  }
+
   private requireSession(sessionId: string): SessionEntry {
-    const entry = this.sessions.get(sessionId);
+    const entry = this.getEntryBySessionId(sessionId);
     if (!entry) {
       throw new AsyncSessionManagerError("not_found", `session '${sessionId}' not found`);
     }
     return entry;
+  }
+
+  private createSessionId(): string {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const id = randomBytes(10).toString("hex");
+      if (!this.sessionInternalIds.has(id)) {
+        return id;
+      }
+    }
+
+    throw new Error("failed to allocate session id");
+  }
+
+  private buildSubmitPayload(text: string, additionalSystemMessage?: string): string {
+    const messages = [this.systemMessage, additionalSystemMessage?.trim() || undefined].filter(
+      (message): message is string => Boolean(message),
+    );
+
+    if (messages.length === 0) {
+      return text;
+    }
+
+    return [`<system>`, messages.join("\n"), `</system>`, text].join("\n");
   }
 
   private countActiveSessions(): number {
@@ -581,14 +645,28 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     }
 
     if (coreEvent.type === "tool_ui") {
-      if (coreEvent.uiEvent.type !== "bash_started") {
+      if (coreEvent.uiEvent.type === "bash_started") {
+        this.emitProgress(entry, {
+          type: "bash-command",
+          command: coreEvent.uiEvent.command,
+        });
         return;
       }
 
-      this.emitProgress(entry, {
-        type: "bash-command",
-        command: coreEvent.uiEvent.command,
-      });
+      if (coreEvent.uiEvent.type === "edit_success") {
+        this.emitProgress(entry, {
+          type: "edited-file",
+          path: coreEvent.uiEvent.path,
+        });
+        return;
+      }
+
+      if (coreEvent.uiEvent.type === "write_success") {
+        this.emitProgress(entry, {
+          type: "wrote-file",
+          path: coreEvent.uiEvent.path,
+        });
+      }
       return;
     }
 

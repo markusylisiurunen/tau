@@ -30,6 +30,8 @@ function createClientHarness() {
     return await submitDeferred.promise;
   });
 
+  let eventListener;
+
   const client = {
     ready: { sessionId: "rpc-1" },
     submit,
@@ -38,12 +40,22 @@ function createClientHarness() {
     reset: vi.fn(async () => ({ previousSessionId: "rpc-1", sessionId: "rpc-2" })),
     shutdown: vi.fn(async () => ({ shutdown: true })),
     close: vi.fn(async () => {}),
-    onEvent: vi.fn(() => () => {}),
+    onEvent: vi.fn((listener) => {
+      eventListener = listener;
+      return () => {
+        if (eventListener === listener) {
+          eventListener = undefined;
+        }
+      };
+    }),
   };
 
   return {
     client,
     submitDeferred,
+    emitEvent: (event) => {
+      eventListener?.(event);
+    },
   };
 }
 
@@ -79,6 +91,93 @@ describe("async session manager", () => {
         rpcSessionId: "rpc-1",
       }),
     );
+  });
+
+  it("creates short session ids for public use", async () => {
+    const clientHarness = createClientHarness();
+    const prepareWorkspace = vi.fn(async ({ sessionId }) => ({
+      workspacePath: `/tmp/ws/${sessionId}`,
+    }));
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace,
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    expect(created.id).toMatch(/^[0-9a-f]{20}$/);
+
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+    expect(prepareWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: created.id,
+      }),
+    );
+  });
+
+  it("prepends configured system message to submitted user text", async () => {
+    const clientHarness = createClientHarness();
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      systemMessage: "follow project conventions",
+      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "write issue about X");
+    expect(clientHarness.client.submit).toHaveBeenCalledWith(
+      "<system>\nfollow project conventions\n</system>\nwrite issue about X",
+    );
+
+    clientHarness.submitDeferred.resolve({
+      userHistoryEntryId: "history-system-msg",
+      turn: { aborted: false },
+    });
+
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+  });
+
+  it("appends additional system message for per-submit context", async () => {
+    const clientHarness = createClientHarness();
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      systemMessage: "follow project conventions",
+      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "write issue about X", {
+      additionalSystemMessage: "this message came from telegram",
+    });
+    expect(clientHarness.client.submit).toHaveBeenCalledWith(
+      "<system>\nfollow project conventions\nthis message came from telegram\n</system>\nwrite issue about X",
+    );
+
+    clientHarness.submitDeferred.resolve({
+      userHistoryEntryId: "history-system-msg-extra",
+      turn: { aborted: false },
+    });
+
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 
   it("returns from sendMessage immediately and rejects concurrent submits", async () => {
@@ -326,6 +425,149 @@ describe("async session manager", () => {
     expect(logs.some((entry) => entry.message === "interrupt failed")).toBe(true);
     expect(logs.some((entry) => entry.message === "shutdown failed")).toBe(true);
     expect(logs.some((entry) => entry.message === "close failed")).toBe(true);
+  });
+
+  it("emits progress events for bash/edit/write and assistant output", async () => {
+    const clientHarness = createClientHarness();
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const events = [];
+    manager.onEvent((event) => {
+      events.push(event);
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    const sendPromise = manager.sendMessage(created.id, "run tasks");
+    await waitFor(() => manager.getSession(created.id)?.state === "running");
+
+    clientHarness.emitEvent({
+      version: 1,
+      type: "event",
+      event: {
+        version: 1,
+        event: {
+          type: "tool_ui",
+          uiEvent: {
+            type: "bash_started",
+            toolCallId: "1",
+            command: "npm run check",
+          },
+        },
+      },
+    });
+
+    clientHarness.emitEvent({
+      version: 1,
+      type: "event",
+      event: {
+        version: 1,
+        event: {
+          type: "tool_ui",
+          uiEvent: {
+            type: "edit_success",
+            toolCallId: "2",
+            path: "src/core/async/telegram.ts",
+            oldLength: 1,
+            newLength: 2,
+            oldText: "a",
+            newText: "b",
+            uiText: { previewLines: [], fullLines: [] },
+          },
+        },
+      },
+    });
+
+    clientHarness.emitEvent({
+      version: 1,
+      type: "event",
+      event: {
+        version: 1,
+        event: {
+          type: "tool_ui",
+          uiEvent: {
+            type: "write_success",
+            toolCallId: "3",
+            path: "docs/async.md",
+            bytes: 10,
+            lines: 1,
+            content: "hello",
+            uiText: { previewLines: [], fullLines: [] },
+          },
+        },
+      },
+    });
+
+    clientHarness.emitEvent({
+      version: 1,
+      type: "event",
+      event: {
+        version: 1,
+        event: {
+          type: "assistant_final",
+          historyEntryId: "h1",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "done" }],
+          },
+        },
+      },
+    });
+
+    clientHarness.submitDeferred.resolve({
+      userHistoryEntryId: "history-progress",
+      turn: { aborted: false },
+    });
+    await sendPromise;
+
+    expect(
+      events.some(
+        (event) =>
+          event.type === "session-progress" &&
+          event.sessionId === created.id &&
+          event.progress.type === "bash-command" &&
+          event.progress.command === "npm run check",
+      ),
+    ).toBe(true);
+
+    expect(
+      events.some(
+        (event) =>
+          event.type === "session-progress" &&
+          event.sessionId === created.id &&
+          event.progress.type === "edited-file" &&
+          event.progress.path === "src/core/async/telegram.ts",
+      ),
+    ).toBe(true);
+
+    expect(
+      events.some(
+        (event) =>
+          event.type === "session-progress" &&
+          event.sessionId === created.id &&
+          event.progress.type === "wrote-file" &&
+          event.progress.path === "docs/async.md",
+      ),
+    ).toBe(true);
+
+    expect(
+      events.some(
+        (event) =>
+          event.type === "session-progress" &&
+          event.sessionId === created.id &&
+          event.progress.type === "assistant-message" &&
+          event.progress.text === "done",
+      ),
+    ).toBe(true);
   });
 
   it("emits lightweight lifecycle events", async () => {

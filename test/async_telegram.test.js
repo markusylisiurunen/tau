@@ -262,6 +262,7 @@ describe("async telegram adapter", () => {
         extra: { repo: "git@example.com:extra.git" },
       },
       defaultProjectId: "demo",
+      systemMessage: "telegram guidance",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       pollIntervalMs: 1,
@@ -283,18 +284,22 @@ describe("async telegram adapter", () => {
       expect(managerHarness.manager.createSession).toHaveBeenCalledWith({
         projectId: "demo",
       });
-      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s1", "follow up");
+      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s1", "follow up", {
+        additionalSystemMessage: "telegram guidance",
+      });
 
       await waitFor(
         () =>
           apiHarness.sendMessages.some((entry) =>
             String(entry.text).includes("session is being prepared"),
           ) &&
-          apiHarness.sendMessages.some((entry) => String(entry.text).includes("session is ready")),
+          apiHarness.sendMessages.some((entry) =>
+            String(entry.text).includes("(s1) session is ready"),
+          ),
       );
 
       expect(
-        apiHarness.sendMessages.some((entry) => String(entry.text).includes("message queued")),
+        apiHarness.sendMessages.some((entry) => String(entry.text).includes("(s1) message queued")),
       ).toBe(true);
     } finally {
       await adapter.close();
@@ -380,7 +385,7 @@ describe("async telegram adapter", () => {
       await waitFor(() => managerHarness.manager.cancelSession.mock.calls.length === 1);
       expect(managerHarness.manager.cancelSession).toHaveBeenCalledWith("s2");
       expect(
-        apiHarness.sendMessages.some((entry) => String(entry.text).includes("canceled: s2")),
+        apiHarness.sendMessages.some((entry) => String(entry.text).includes("(s2) canceled")),
       ).toBe(true);
     } finally {
       await adapter.close();
@@ -458,10 +463,10 @@ describe("async telegram adapter", () => {
 
       await waitFor(
         () =>
-          apiHarness.sendMessages.some((entry) => entry.text.includes("run started")) &&
-          apiHarness.sendMessages.some((entry) => entry.text.includes("run finished")) &&
-          apiHarness.sendMessages.some((entry) => entry.text.includes("run failed")) &&
-          apiHarness.sendMessages.some((entry) => entry.text.includes("run canceled")),
+          apiHarness.sendMessages.some((entry) => entry.text.includes("(s9) run started")) &&
+          apiHarness.sendMessages.some((entry) => entry.text.includes("(s9) run finished")) &&
+          apiHarness.sendMessages.some((entry) => entry.text.includes("(s9) run failed")) &&
+          apiHarness.sendMessages.some((entry) => entry.text.includes("(s9) run canceled")),
       );
     } finally {
       await adapter.close();
@@ -523,6 +528,30 @@ describe("async telegram adapter", () => {
         state: "running",
         timestamp: "2024-01-01T00:02:00.000Z",
         progress: {
+          type: "edited-file",
+          path: "src/core/async/telegram.ts",
+        },
+      });
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s10",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:03:00.000Z",
+        progress: {
+          type: "wrote-file",
+          path: "docs/async.md",
+        },
+      });
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s10",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:04:00.000Z",
+        progress: {
           type: "assistant-message",
           text: "build succeeded and all tests passed",
         },
@@ -530,8 +559,10 @@ describe("async telegram adapter", () => {
 
       await waitFor(
         () =>
-          apiHarness.sendMessages.some((entry) => entry.text.includes("running command")) &&
-          apiHarness.sendMessages.some((entry) => entry.text.includes("assistant message")),
+          apiHarness.sendMessages.some((entry) => entry.text.includes("(s10) bash command")) &&
+          apiHarness.sendMessages.some((entry) => entry.text.includes("(s10) edited file")) &&
+          apiHarness.sendMessages.some((entry) => entry.text.includes("(s10) wrote file")) &&
+          apiHarness.sendMessages.some((entry) => entry.text.includes("(s10) assistant message")),
       );
     } finally {
       await adapter.close();

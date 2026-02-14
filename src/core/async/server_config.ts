@@ -10,6 +10,7 @@ export type AsyncDaemonConfig = {
   authToken?: string;
   maxSessions?: number;
   workspaceRoot: string;
+  systemMessage?: string;
   telegram?: AsyncServerTelegramConfig;
   projects: Record<string, AsyncProjectConfig>;
 };
@@ -96,6 +97,14 @@ function parseTelegramConfig(
       config.defaultProjectId = data.defaultProjectId.trim();
     } else {
       errors.push(`${sourceLabel}: telegram.defaultProjectId must be a non-empty string.`);
+    }
+  }
+
+  if (data.systemMessage !== undefined) {
+    if (typeof data.systemMessage === "string" && data.systemMessage.trim()) {
+      config.systemMessage = data.systemMessage.trim();
+    } else {
+      errors.push(`${sourceLabel}: telegram.systemMessage must be a non-empty string.`);
     }
   }
 
@@ -336,6 +345,15 @@ export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig
     }
   }
 
+  let systemMessage: string | undefined;
+  if (data.systemMessage !== undefined) {
+    if (typeof data.systemMessage === "string" && data.systemMessage.trim()) {
+      systemMessage = data.systemMessage.trim();
+    } else {
+      errors.push(`${sourceLabel}: systemMessage must be a non-empty string.`);
+    }
+  }
+
   const projectsResult = parseProjects(data.projects, sourceLabel, configDir);
   const telegramResult = parseTelegramConfig(data.telegram, sourceLabel);
   errors.push(...projectsResult.errors, ...telegramResult.errors);
@@ -350,6 +368,7 @@ export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig
     authToken,
     maxSessions,
     workspaceRoot,
+    ...(systemMessage ? { systemMessage } : {}),
     ...(telegramResult.config ? { telegram: telegramResult.config } : {}),
     projects: projectsResult.projects,
   };

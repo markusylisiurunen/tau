@@ -469,6 +469,7 @@ async function runDaemon(args: {
     projects: daemonConfig.projects,
     workspaceRoot: daemonConfig.workspaceRoot,
     maxSessions: daemonConfig.maxSessions,
+    systemMessage: daemonConfig.systemMessage,
   });
 
   const handle = await startAsyncHttpServer({
@@ -487,6 +488,7 @@ async function runDaemon(args: {
         botToken: telegramConfig.botToken,
         projects: daemonConfig.projects,
         defaultProjectId: telegramConfig.defaultProjectId,
+        systemMessage: telegramConfig.systemMessage,
         allowedUserIds: telegramConfig.allowedUserIds,
         allowedChatIds: telegramConfig.allowedChatIds,
         pollIntervalMs: telegramConfig.pollIntervalMs,

@@ -58,6 +58,7 @@ export type AsyncServerTelegramConfig = {
   allowedUserIds?: number[];
   allowedChatIds?: number[];
   defaultProjectId?: string;
+  systemMessage?: string;
   pollIntervalMs?: number;
   requestTimeoutSeconds?: number;
 };

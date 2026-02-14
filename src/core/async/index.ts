@@ -27,6 +27,7 @@ export type {
   AsyncSessionProgress,
   AsyncSessionRecord,
   AsyncSessionState,
+  AsyncSessionSubmitOptions,
 } from "./session_manager.js";
 export { AsyncSessionManagerError, createAsyncSessionManager } from "./session_manager.js";
 export type {

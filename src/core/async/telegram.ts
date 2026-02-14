@@ -62,6 +62,7 @@ export type AsyncTelegramAdapterOptions = {
   botToken: string;
   projects: Record<string, AsyncProjectConfig>;
   defaultProjectId?: string;
+  systemMessage?: string;
   allowedUserIds?: number[];
   allowedChatIds?: number[];
   pollIntervalMs?: number;
@@ -134,7 +135,7 @@ function describeSession(
   } = {},
 ): string {
   return [
-    `session: ${session.id}`,
+    formatSessionHeadline(session.id, "status"),
     `project: ${session.projectId}`,
     `state: ${session.state}`,
     ...(session.error ? [`error: ${session.error}`] : []),
@@ -148,6 +149,10 @@ function describeSession(
         ]
       : []),
   ].join("\n");
+}
+
+function formatSessionHeadline(sessionId: string, label: string): string {
+  return `(${sessionId}) ${label}`;
 }
 
 function createGrammyApi(botToken: string): AsyncTelegramApi {
@@ -175,6 +180,7 @@ function createGrammyApi(botToken: string): AsyncTelegramApi {
 class AsyncTelegramAdapterImpl {
   private readonly projects: Record<string, AsyncProjectConfig>;
   private readonly defaultProjectId?: string;
+  private readonly systemMessage?: string;
   private readonly allowedUserIds?: Set<number>;
   private readonly allowedChatIds?: Set<number>;
   private readonly pollIntervalMs: number;
@@ -197,6 +203,7 @@ class AsyncTelegramAdapterImpl {
   constructor(options: AsyncTelegramAdapterOptions) {
     this.projects = options.projects;
     this.defaultProjectId = options.defaultProjectId;
+    this.systemMessage = options.systemMessage?.trim() || undefined;
     this.allowedUserIds =
       options.allowedUserIds && options.allowedUserIds.length > 0
         ? new Set(options.allowedUserIds)
@@ -508,7 +515,7 @@ class AsyncTelegramAdapterImpl {
     }
 
     this.setActiveSession(chatId, sessionId);
-    await this.reply(chatId, `using session ${session.id} (${session.state})`);
+    await this.reply(chatId, formatSessionHeadline(session.id, `using session (${session.state})`));
   }
 
   private async handleList(chatId: number): Promise<void> {
@@ -552,7 +559,7 @@ class AsyncTelegramAdapterImpl {
 
     try {
       const canceled = await this.sessionManager.cancelSession(session.id);
-      await this.reply(chatId, `canceled: ${canceled.id}`);
+      await this.reply(chatId, formatSessionHeadline(canceled.id, "canceled"));
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
@@ -566,7 +573,11 @@ class AsyncTelegramAdapterImpl {
     }
 
     try {
-      await this.sessionManager.sendMessage(session.id, text);
+      await this.sessionManager.sendMessage(
+        session.id,
+        text,
+        this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
+      );
       await this.reply(chatId, this.formatMessageQueued(session.id));
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
@@ -670,10 +681,25 @@ class AsyncTelegramAdapterImpl {
       this.notifySession(
         event.sessionId,
         [
-          "running command",
-          `session: ${event.sessionId}`,
+          formatSessionHeadline(event.sessionId, "bash command"),
           `$ ${truncateText(event.progress.command, MAX_COMMAND_PREVIEW_CHARS)}`,
         ].join("\n"),
+      );
+      return;
+    }
+
+    if (event.progress.type === "edited-file") {
+      this.notifySession(
+        event.sessionId,
+        [formatSessionHeadline(event.sessionId, "edited file"), event.progress.path].join("\n"),
+      );
+      return;
+    }
+
+    if (event.progress.type === "wrote-file") {
+      this.notifySession(
+        event.sessionId,
+        [formatSessionHeadline(event.sessionId, "wrote file"), event.progress.path].join("\n"),
       );
       return;
     }
@@ -682,8 +708,7 @@ class AsyncTelegramAdapterImpl {
     this.notifySession(
       event.sessionId,
       [
-        "assistant message",
-        `session: ${event.sessionId}`,
+        formatSessionHeadline(event.sessionId, "assistant message"),
         truncateText(event.progress.text, MAX_ASSISTANT_PREVIEW_CHARS),
       ].join("\n"),
     );
@@ -703,7 +728,7 @@ class AsyncTelegramAdapterImpl {
 
     this.notifySession(
       sessionId,
-      [stateLabel, `session: ${sessionId}`, `project: ${projectId}`].join("\n"),
+      [formatSessionHeadline(sessionId, stateLabel), `project: ${projectId}`].join("\n"),
     );
   }
 
@@ -723,11 +748,13 @@ class AsyncTelegramAdapterImpl {
   }
 
   private formatSessionReady(sessionId: string, projectId: string): string {
-    return ["session is ready", `session: ${sessionId}`, `project: ${projectId}`].join("\n");
+    return [formatSessionHeadline(sessionId, "session is ready"), `project: ${projectId}`].join(
+      "\n",
+    );
   }
 
   private formatMessageQueued(sessionId: string): string {
-    return ["message queued", `session: ${sessionId}`].join("\n");
+    return formatSessionHeadline(sessionId, "message queued");
   }
 
   private formatManagerError(error: unknown): string {

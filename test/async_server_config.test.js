@@ -32,9 +32,11 @@ describe("async daemon config", () => {
           authToken: "secret",
           maxSessions: 4,
           workspaceRoot: "workspaces",
+          systemMessage: "focus on small diffs",
           telegram: {
             botToken: "bot-token",
             defaultProjectId: "tau",
+            systemMessage: "telegram-specific notice",
           },
           projects: {
             tau: {
@@ -50,9 +52,61 @@ describe("async daemon config", () => {
       expect(config.host).toBe("0.0.0.0");
       expect(config.port).toBe(8899);
       expect(config.workspaceRoot).toBe(join(configDir, "workspaces"));
+      expect(config.systemMessage).toBe("focus on small diffs");
       expect(config.projects.tau.workspaceRoot).toBe(join(configDir, "projects", "tau"));
       expect(config.projects.tau.repo).toBe("markusylisiurunen/tau");
       expect(config.telegram?.defaultProjectId).toBe("tau");
+      expect(config.telegram?.systemMessage).toBe("telegram-specific notice");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects empty systemMessage", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          systemMessage: "   ",
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+            },
+          },
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("systemMessage");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects empty telegram.systemMessage", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          telegram: {
+            systemMessage: "",
+          },
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+            },
+          },
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("telegram.systemMessage");
     } finally {
       fx.cleanup();
     }

@@ -121,6 +121,8 @@ use `tau async -- <prompt...>` when prompt text starts with a reserved command w
 
 for daemon/api/telegram details, see [docs/async.md](docs/async.md).
 
+daemon config also supports `systemMessage`, which prepends a `<system>...</system>` block to each submitted user message.
+
 ## sdk usage (node)
 
 tau also ships a Node SDK at `@markusylisiurunen/tau/sdk` that talks to the same rpc subprocess (`tau rpc`) behind the scenes.

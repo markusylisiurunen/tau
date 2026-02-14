@@ -69,11 +69,13 @@ Daemon-side settings are loaded from a separate JSON file.
   "authToken": "replace-me",
   "maxSessions": 4,
   "workspaceRoot": "/var/lib/tau/async-workspaces",
+  "systemMessage": "follow project conventions and keep diffs minimal",
   "telegram": {
     "botToken": "123456:telegram-token",
     "allowedUserIds": [123456789],
     "allowedChatIds": [123456789],
     "defaultProjectId": "tau",
+    "systemMessage": "you are operating via Telegram, keep replies concise",
     "pollIntervalMs": 1000,
     "requestTimeoutSeconds": 30
   },
@@ -98,6 +100,8 @@ Notes:
 - Relative `workspaceRoot` values resolve from the daemon config file directory.
 - Clone uses `gh repo clone <owner/repo> <path>` (daemon host must have authenticated `gh`).
 - `TAU_ASYNC_AUTH_TOKEN` overrides daemon-file `authToken`.
+- `systemMessage` is prepended to every submitted prompt inside a `<system>...</system>` block.
+- `telegram.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same `<system>...</system>` block.
 
 ## http api
 
@@ -157,7 +161,9 @@ Lifecycle notifications are sent back to associated chats:
 
 During runs, progress notifications also include:
 
-- each bash command (`running command`)
+- each bash command (`bash command`)
+- each successful edit call (`edited file`)
+- each successful write call (`wrote file`)
 - the latest assistant final message (`assistant message`)
 
 ## persistence model

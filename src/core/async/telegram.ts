@@ -123,6 +123,7 @@ const TELEGRAM_COMMANDS: TelegramBotCommand[] = [
   { command: "use", description: "switch active session" },
   { command: "list", description: "list sessions" },
   { command: "status", description: "show active session status" },
+  { command: "interrupt", description: "interrupt active run" },
   { command: "cancel", description: "cancel active session" },
   { command: "close", description: "close session(s)" },
   { command: "verbose", description: "stream progress updates" },
@@ -505,6 +506,11 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
+    if (command === "/interrupt") {
+      await this.handleInterrupt(chatId);
+      return;
+    }
+
     if (command === "/cancel") {
       await this.handleCancel(chatId);
       return;
@@ -527,7 +533,7 @@ class AsyncTelegramAdapterImpl {
 
     await this.reply(
       chatId,
-      "supported commands: /new, /use, /list, /status, /cancel, /close, /verbose, /quiet",
+      "supported commands: /new, /use, /list, /status, /interrupt, /cancel, /close, /verbose, /quiet",
     );
   }
 
@@ -654,6 +660,26 @@ class AsyncTelegramAdapterImpl {
         lastAssistantMessage: this.lastAssistantMessageBySession.get(session.id),
       }),
     );
+  }
+
+  private async handleInterrupt(chatId: number): Promise<void> {
+    const session = this.getActiveSession(chatId);
+    if (!session) {
+      await this.reply(chatId, "no active session. use /new or /use <sessionId>");
+      return;
+    }
+
+    try {
+      const result = await this.sessionManager.interruptSession(session.id);
+      if (!result.interrupted) {
+        await this.reply(chatId, formatSessionHeadline(result.session.id, "no run in progress"));
+        return;
+      }
+
+      await this.reply(chatId, formatSessionHeadline(result.session.id, "interrupt requested"));
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
+    }
   }
 
   private async handleCancel(chatId: number): Promise<void> {

@@ -75,7 +75,7 @@ describe("async cli", () => {
     });
   });
 
-  it("maps list/status/logs/send/cancel commands to expected requests", async () => {
+  it("maps list/status/logs/send/interrupt/cancel commands to expected requests", async () => {
     const fetchMock = vi.fn(async () => createJsonResponse({ ok: true, data: {} }));
 
     const run = (argv) =>
@@ -100,6 +100,7 @@ describe("async cli", () => {
     await run(["status", "abc"]);
     await run(["logs", "abc"]);
     await run(["send", "abc", "hello", "world"]);
+    await run(["interrupt", "abc"]);
     await run(["cancel", "abc"]);
 
     expect(fetchMock.mock.calls.map((call) => [call[0], call[1].method])).toEqual([
@@ -107,6 +108,7 @@ describe("async cli", () => {
       ["http://localhost:9000/v1/sessions/abc", "GET"],
       ["http://localhost:9000/v1/sessions/abc/logs", "GET"],
       ["http://localhost:9000/v1/sessions/abc/messages", "POST"],
+      ["http://localhost:9000/v1/sessions/abc/interrupt", "POST"],
       ["http://localhost:9000/v1/sessions/abc/cancel", "POST"],
     ]);
 
@@ -160,6 +162,29 @@ describe("async cli", () => {
       }),
     ).rejects.toMatchObject({
       message: expect.stringContaining("async.client.defaultProjectId"),
+    });
+  });
+
+  it("requires session id for interrupt", async () => {
+    await expect(
+      runAsyncCommand(["interrupt"], {
+        config: {
+          async: {
+            client: {
+              targets: {
+                one: {
+                  url: "http://localhost:9000",
+                  token: "tok",
+                },
+              },
+            },
+          },
+        },
+        fetchImpl: vi.fn(),
+        stdout: () => {},
+      }),
+    ).rejects.toMatchObject({
+      message: "missing session id for interrupt",
     });
   });
 

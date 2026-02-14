@@ -12,7 +12,15 @@ export class AsyncCliError extends Error {
   }
 }
 
-type AsyncCommand = "create" | "daemon" | "list" | "status" | "logs" | "send" | "cancel";
+type AsyncCommand =
+  | "create"
+  | "daemon"
+  | "list"
+  | "status"
+  | "logs"
+  | "send"
+  | "interrupt"
+  | "cancel";
 
 type ParsedAsyncArgs = {
   help: boolean;
@@ -260,6 +268,29 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
     };
   }
 
+  if (first === "interrupt") {
+    if (positional.length === 1) {
+      throw new AsyncCliError("missing session id for interrupt");
+    }
+    if (positional.length === 2) {
+      const sessionId = positional[1]?.trim();
+      if (!sessionId) {
+        throw new AsyncCliError("missing session id for interrupt");
+      }
+      return {
+        help,
+        command: "interrupt",
+        sessionId,
+        projectId,
+        targetId,
+        url,
+        token,
+        configFilePath,
+      };
+    }
+    return toCreateArgs();
+  }
+
   if (first === "cancel") {
     if (positional.length === 1) {
       throw new AsyncCliError("missing session id for cancel");
@@ -427,6 +458,7 @@ export function printAsyncHelp(log: (line: string) => void = console.log): void 
       "  tau async status <id>",
       "  tau async logs <id>",
       "  tau async send <id> <text...>",
+      "  tau async interrupt <id>",
       "  tau async cancel <id>",
       "",
       "options:",
@@ -629,6 +661,18 @@ export async function runAsyncCommand(
       body: {
         text: parsed.text,
       },
+      fetchImpl,
+    });
+    stdout(toJsonLine(payload));
+    return;
+  }
+
+  if (parsed.command === "interrupt") {
+    const payload = await requestJson({
+      target,
+      method: "POST",
+      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId ?? "")}/interrupt`,
+      body: {},
       fetchImpl,
     });
     stdout(toJsonLine(payload));

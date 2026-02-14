@@ -349,6 +349,68 @@ describe("async session manager", () => {
     expect(logs.some((entry) => entry.message === "cancel requested")).toBe(true);
   });
 
+  it("closes a selected session and removes it from memory", async () => {
+    const clientHarness = createClientHarness();
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    const closed = await manager.closeSession(created.id);
+    expect(closed).toEqual(expect.objectContaining({ id: created.id, state: "canceled" }));
+    expect(manager.getSession(created.id)).toBeUndefined();
+    expect(manager.listSessions()).toEqual([]);
+    expect(manager.getLogs(created.id)).toBeUndefined();
+    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
+    expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes only inactive sessions in bulk", async () => {
+    const firstClientHarness = createClientHarness();
+    const secondClientHarness = createClientHarness();
+    const clients = [firstClientHarness.client, secondClientHarness.client];
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      createClient: vi.fn(async () => {
+        const next = clients.shift();
+        if (!next) {
+          throw new Error("missing client");
+        }
+        return next;
+      }),
+    });
+
+    const inactive = await manager.createSession({ projectId: "demo" });
+    const active = await manager.createSession({ projectId: "demo" });
+
+    await waitFor(() => manager.getSession(inactive.id)?.state === "waiting-input");
+    await waitFor(() => manager.getSession(active.id)?.state === "waiting-input");
+
+    const canceled = await manager.cancelSession(inactive.id);
+    expect(canceled.state).toBe("canceled");
+
+    const closed = await manager.closeInactiveSessions();
+    expect(closed).toEqual([expect.objectContaining({ id: inactive.id, state: "canceled" })]);
+    expect(manager.getSession(inactive.id)).toBeUndefined();
+    expect(manager.getSession(active.id)).toEqual(expect.objectContaining({ id: active.id }));
+  });
+
   it("closes active sessions and sdk clients during manager shutdown", async () => {
     const clientHarness = createClientHarness();
     clientHarness.client.interrupt = vi.fn(async () => {

@@ -139,6 +139,9 @@ Supported DM commands:
 - `/list`
 - `/status`
 - `/cancel`
+- `/close` (closes the selected session)
+- `/close <sessionId>` (closes a specific session)
+- `/close all` (closes all inactive sessions)
 - `/verbose` (for the selected session, streams run lifecycle + progress updates)
 - `/quiet` (for the selected session, default mode, send only the run's final assistant message)
 - plain text sends to the selected session

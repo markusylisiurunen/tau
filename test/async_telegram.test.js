@@ -81,6 +81,24 @@ function createSessionManagerHarness(initialSessions = []) {
       session.updatedAt = "2024-01-01T00:02:00.000Z";
       return { ...session };
     }),
+    closeSession: vi.fn(async (sessionId) => {
+      const session = sessions.get(sessionId);
+      if (!session) {
+        throw new Error("missing session");
+      }
+      sessions.delete(sessionId);
+      return { ...session };
+    }),
+    closeInactiveSessions: vi.fn(async () => {
+      const closed = [];
+      for (const [sessionId, session] of sessions) {
+        if (session.state === "canceled" || session.state === "failed") {
+          closed.push({ ...session });
+          sessions.delete(sessionId);
+        }
+      }
+      return closed;
+    }),
     onEvent: vi.fn((listener) => {
       listeners.add(listener);
       return () => {
@@ -122,6 +140,7 @@ describe("async telegram adapter", () => {
         { command: "list", description: "list sessions" },
         { command: "status", description: "show active session status" },
         { command: "cancel", description: "cancel active session" },
+        { command: "close", description: "close session(s)" },
         { command: "verbose", description: "stream progress updates" },
         { command: "quiet", description: "only send final assistant message" },
       ]);
@@ -388,6 +407,165 @@ describe("async telegram adapter", () => {
       expect(managerHarness.manager.cancelSession).toHaveBeenCalledWith("s2");
       expect(
         apiHarness.sendMessages.some((entry) => String(entry.text).includes("(s2) canceled")),
+      ).toBe(true);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("supports /close for the selected session", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 310, type: "private" },
+            from: { id: 7 },
+            text: "/use s2",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 310, type: "private" },
+            from: { id: 7 },
+            text: "/close",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s2",
+        projectId: "demo",
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.closeSession.mock.calls.length === 1);
+      expect(managerHarness.manager.closeSession).toHaveBeenCalledWith("s2");
+      expect(
+        apiHarness.sendMessages.some((entry) => String(entry.text).includes("(s2) closed")),
+      ).toBe(true);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("supports /close <id>", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 320, type: "private" },
+            from: { id: 7 },
+            text: "/close s3",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s3",
+        projectId: "demo",
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.closeSession.mock.calls.length === 1);
+      expect(managerHarness.manager.closeSession).toHaveBeenCalledWith("s3");
+      expect(
+        apiHarness.sendMessages.some((entry) => String(entry.text).includes("(s3) closed")),
+      ).toBe(true);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("supports /close all for inactive sessions", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 330, type: "private" },
+            from: { id: 7 },
+            text: "/close all",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s1",
+        projectId: "demo",
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+      {
+        id: "s2",
+        projectId: "demo",
+        state: "failed",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+      {
+        id: "s3",
+        projectId: "demo",
+        state: "canceled",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.closeInactiveSessions.mock.calls.length === 1);
+      expect(managerHarness.manager.closeInactiveSessions).toHaveBeenCalledTimes(1);
+      expect(
+        apiHarness.sendMessages.some(
+          (entry) =>
+            entry.text.includes("closed 2 inactive sessions") &&
+            entry.text.includes("s2") &&
+            entry.text.includes("s3"),
+        ),
       ).toBe(true);
     } finally {
       await adapter.close();

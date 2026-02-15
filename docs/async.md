@@ -215,6 +215,7 @@ Optional per-bot allowlists:
 - `allowedChatIds`
 
 If `allowedProjectIds` is omitted, the bot can access all async projects.
+Sessions are bot-scoped: each bot can only see and control sessions it created, even for the same project.
 If `allowedUserIds` and `allowedChatIds` are provided, both must match for a DM to be processed.
 
 Telegram keeps one selected session per chat for command and plain-text input routing, but it continues

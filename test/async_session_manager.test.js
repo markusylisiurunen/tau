@@ -927,24 +927,34 @@ describe("async session manager", () => {
     );
   });
 
-  it("filters session visibility and mutations by allowed projects", async () => {
+  it("filters session visibility and mutations by allowed projects and owner", async () => {
+    const ownerId = "telegram:ops";
     const sessions = [
       {
-        id: "s-demo",
+        id: "s-demo-owned",
         projectId: "demo",
+        ownerId,
         state: "waiting-input",
       },
       {
-        id: "s-docs",
+        id: "s-demo-other-owner",
+        projectId: "demo",
+        ownerId: "telegram:docs",
+        state: "waiting-input",
+      },
+      {
+        id: "s-docs-owned",
         projectId: "docs",
+        ownerId,
         state: "waiting-input",
       },
     ];
 
     const manager = {
-      createSession: vi.fn(async ({ projectId }) => ({
+      createSession: vi.fn(async ({ projectId, ownerId: createOwnerId }) => ({
         id: `created-${projectId}`,
         projectId,
+        ownerId: createOwnerId,
         state: "queued",
       })),
       listSessions: vi.fn(() => sessions.map((session) => ({ ...session }))),
@@ -956,21 +966,24 @@ describe("async session manager", () => {
       sendMessage: vi.fn(async (sessionId) => ({
         id: sessionId,
         projectId: "demo",
+        ownerId,
         state: "running",
       })),
       interruptSession: vi.fn(async (sessionId) => ({
-        session: { id: sessionId, projectId: "demo", state: "waiting-input" },
+        session: { id: sessionId, projectId: "demo", ownerId, state: "waiting-input" },
         interrupted: true,
         isTurnRunning: false,
       })),
       cancelSession: vi.fn(async (sessionId) => ({
         id: sessionId,
         projectId: "demo",
+        ownerId,
         state: "canceled",
       })),
       closeSession: vi.fn(async (sessionId) => ({
         id: sessionId,
         projectId: "demo",
+        ownerId,
         state: "canceled",
       })),
       closeInactiveSessions: vi.fn(async () => []),
@@ -980,39 +993,57 @@ describe("async session manager", () => {
 
     const scopedManager = createScopedAsyncSessionManager({
       sessionManager: manager,
+      ownerId,
       allowedProjectIds: ["demo"],
     });
 
     expect(scopedManager.listSessions()).toEqual([
-      { id: "s-demo", projectId: "demo", state: "waiting-input" },
+      { id: "s-demo-owned", projectId: "demo", ownerId, state: "waiting-input" },
     ]);
-    expect(scopedManager.getSession("s-docs")).toBeUndefined();
+    expect(scopedManager.getSession("s-demo-other-owner")).toBeUndefined();
+    expect(scopedManager.getSession("s-docs-owned")).toBeUndefined();
 
-    await expect(scopedManager.sendMessage("s-docs", "hello")).rejects.toEqual(
+    await expect(scopedManager.sendMessage("s-demo-other-owner", "hello")).rejects.toEqual(
       expect.objectContaining({
         code: "not_found",
       }),
     );
 
-    await scopedManager.sendMessage("s-demo", "hello");
-    expect(manager.sendMessage).toHaveBeenCalledWith("s-demo", "hello", undefined);
+    await scopedManager.sendMessage("s-demo-owned", "hello");
+    expect(manager.sendMessage).toHaveBeenCalledWith("s-demo-owned", "hello", undefined);
+
+    await scopedManager.createSession({ projectId: "demo" });
+    expect(manager.createSession).toHaveBeenCalledWith({
+      projectId: "demo",
+      ownerId,
+    });
   });
 
   it("closes only scoped inactive sessions for /close all behavior", async () => {
+    const ownerId = "telegram:ops";
     const sessions = [
       {
         id: "s-demo-ready",
         projectId: "demo",
+        ownerId,
         state: "waiting-input",
       },
       {
         id: "s-demo-running",
         projectId: "demo",
+        ownerId,
         state: "running",
+      },
+      {
+        id: "s-demo-other-owner",
+        projectId: "demo",
+        ownerId: "telegram:docs",
+        state: "waiting-input",
       },
       {
         id: "s-docs-ready",
         projectId: "docs",
+        ownerId,
         state: "waiting-input",
       },
     ];
@@ -1031,6 +1062,7 @@ describe("async session manager", () => {
       closeSession: vi.fn(async (sessionId) => ({
         id: sessionId,
         projectId: "demo",
+        ownerId,
         state: "canceled",
       })),
       closeInactiveSessions: vi.fn(async () => []),
@@ -1040,11 +1072,12 @@ describe("async session manager", () => {
 
     const scopedManager = createScopedAsyncSessionManager({
       sessionManager: manager,
+      ownerId,
       allowedProjectIds: ["demo"],
     });
 
     const closed = await scopedManager.closeInactiveSessions();
-    expect(closed).toEqual([{ id: "s-demo-ready", projectId: "demo", state: "canceled" }]);
+    expect(closed).toEqual([{ id: "s-demo-ready", projectId: "demo", ownerId, state: "canceled" }]);
     expect(manager.closeSession).toHaveBeenCalledTimes(1);
     expect(manager.closeSession).toHaveBeenCalledWith("s-demo-ready");
     expect(manager.closeInactiveSessions).not.toHaveBeenCalled();

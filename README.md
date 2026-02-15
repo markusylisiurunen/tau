@@ -125,7 +125,7 @@ use `tau async -- <prompt...>` when prompt text starts with a reserved command w
 
 for daemon/api/telegram details, see [docs/async.md](docs/async.md).
 
-daemon config supports one Telegram bot (`telegram.botToken`) or multiple bots (`telegram.<botId>.botToken`), with optional per-bot `allowedProjectIds` scoping.
+daemon config supports one Telegram bot (`telegram.botToken`) or multiple bots (`telegram.<botId>.botToken`), with optional per-bot `allowedProjectIds` scoping. Telegram sessions are bot-scoped (no cross-bot session sharing).
 
 daemon config also supports `systemMessage`, `cron.jobsDir`, and `cron.systemMessage` for scheduled runs, plus per-project `workingDirectory` (for monorepos) and `description` (used by Telegram `/projects`).
 

@@ -57,6 +57,11 @@ export type AsyncSessionRecord = {
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const PUBLIC_SESSION_ID_LENGTH = 8;
+const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
+
+function elapsedMs(startTime: bigint): number {
+  return Number((process.hrtime.bigint() - startTime) / NANOSECONDS_PER_MILLISECOND);
+}
 
 export class AsyncSessionManagerError extends Error {
   code: "not_found" | "busy" | "invalid_project" | "not_ready" | "invalid_state" | "max_sessions";
@@ -377,11 +382,13 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     additionalSystemMessage?: string,
   ): Promise<void> {
     try {
+      const sessionPreparationStart = process.hrtime.bigint();
       this.setState(entry, "preparing-workspace");
       this.log(entry, "info", "preparing workspace", {
         workspaceRoot: this.workspaceRoot,
       });
 
+      const workspacePreparationStart = process.hrtime.bigint();
       const workspace = await this.prepareWorkspace({
         sessionId: entry.record.id,
         projectId: entry.record.projectId,
@@ -397,6 +404,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
           );
         },
       });
+      const workspacePreparationDurationMs = elapsedMs(workspacePreparationStart);
 
       if (entry.cancelRequested) {
         this.setState(entry, "canceled");
@@ -408,8 +416,10 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       this.log(entry, "info", "workspace ready", {
         workspacePath: workspace.workspacePath,
         sessionCwd: workspace.sessionCwd,
+        durationMs: workspacePreparationDurationMs,
       });
 
+      const clientConnectStart = process.hrtime.bigint();
       const client = await this.createClient({
         cwd: workspace.sessionCwd,
         ...(entry.project.persona ? { persona: entry.project.persona } : {}),
@@ -419,6 +429,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
           ? { noAgentContextFiles: entry.project.noAgentContextFiles }
           : {}),
       });
+      const clientConnectDurationMs = elapsedMs(clientConnectStart);
 
       if (entry.cancelRequested) {
         entry.client = client;
@@ -430,10 +441,17 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       entry.client = client;
       entry.record.rpcSessionId = client.ready.sessionId;
       this.touch(entry);
-      this.log(entry, "info", "rpc client connected", { rpcSessionId: client.ready.sessionId });
+      this.log(entry, "info", "rpc client connected", {
+        rpcSessionId: client.ready.sessionId,
+        durationMs: clientConnectDurationMs,
+      });
 
       entry.unsubscribeClientEvents = client.onEvent((event) => {
         this.handleClientEvent(entry, event);
+      });
+
+      this.log(entry, "info", "session preparation complete", {
+        durationMs: elapsedMs(sessionPreparationStart),
       });
 
       if (prompt?.trim()) {

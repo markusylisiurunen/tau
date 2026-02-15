@@ -642,10 +642,6 @@ export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig
     projectsResult.projects,
   );
 
-  if (data.cronJobsDir !== undefined) {
-    errors.push(`${sourceLabel}: cronJobsDir has moved to cron.jobsDir.`);
-  }
-
   errors.push(
     ...projectsResult.errors,
     ...telegramResult.errors,

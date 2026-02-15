@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildBashUiText,
   formatBashToolResultText,
   getBashOutputPolicy,
   prepareBashOutput,
@@ -67,5 +68,26 @@ describe("bash output policy", () => {
     const truncationInfo = await prepareBashOutput(output, false, policy, backend);
 
     expect(truncationInfo.model.truncated).toBe(false);
+  });
+
+  it("shows working directory after exit status", () => {
+    const uiText = buildBashUiText({
+      truncationInfo: {
+        output: "",
+        model: {
+          truncated: false,
+          totalLines: 0,
+          outputLines: 0,
+          totalBytes: 0,
+          outputBytes: 0,
+        },
+        captureTruncated: false,
+      },
+      exitCode: 0,
+      workingDirectory: "/tmp/tau",
+      durationMs: 12,
+    });
+
+    expect(uiText.statusLine).toBe("exit 0 · /tmp/tau · 12ms · no output");
   });
 });

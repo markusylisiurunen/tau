@@ -1,5 +1,5 @@
-import { mkdir, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, rm, stat } from "node:fs/promises";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { AsyncProjectConfig } from "../config/schema.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
 
@@ -22,6 +22,7 @@ export type PrepareWorkspaceOptions = {
 
 export type PreparedWorkspace = {
   workspacePath: string;
+  sessionCwd: string;
 };
 
 function log(
@@ -71,6 +72,11 @@ async function runShellCommand(args: {
   };
 }
 
+function isInsideWorkspace(workspacePath: string, sessionCwd: string): boolean {
+  const relPath = relative(workspacePath, sessionCwd);
+  return relPath === "" || (!relPath.startsWith(`..${sep}`) && relPath !== "..");
+}
+
 export async function prepareWorkspace(
   options: PrepareWorkspaceOptions,
 ): Promise<PreparedWorkspace> {
@@ -117,11 +123,41 @@ export async function prepareWorkspace(
     }
   }
 
+  let sessionCwd = workspacePath;
+  if (options.project.workingDirectory) {
+    const configuredPath = options.project.workingDirectory;
+    const resolvedPath = resolve(workspacePath, configuredPath);
+
+    if (!isInsideWorkspace(workspacePath, resolvedPath)) {
+      log(options.onLog, "error", "project working directory escapes workspace", {
+        workingDirectory: configuredPath,
+        sessionCwd: resolvedPath,
+      });
+      throw new Error("project workingDirectory must resolve inside the repository workspace");
+    }
+
+    const stats = await stat(resolvedPath).catch(() => {
+      throw new Error(
+        `project workingDirectory does not exist in cloned repository: ${configuredPath}`,
+      );
+    });
+
+    if (!stats.isDirectory()) {
+      throw new Error(`project workingDirectory is not a directory: ${configuredPath}`);
+    }
+
+    sessionCwd = resolvedPath;
+    log(options.onLog, "info", "using project working directory", {
+      workingDirectory: configuredPath,
+      sessionCwd,
+    });
+  }
+
   for (const command of options.project.bootstrapCommands ?? []) {
-    log(options.onLog, "info", "running bootstrap command", { command });
+    log(options.onLog, "info", "running bootstrap command", { command, cwd: sessionCwd });
     const bootstrapResult = await runShellCommand({
       command,
-      cwd: workspacePath,
+      cwd: sessionCwd,
       signal: options.signal,
     });
 
@@ -143,5 +179,5 @@ export async function prepareWorkspace(
     }
   }
 
-  return { workspacePath };
+  return { workspacePath, sessionCwd };
 }

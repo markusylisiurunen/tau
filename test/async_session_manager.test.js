@@ -72,7 +72,7 @@ describe("async session manager", () => {
       },
       prepareWorkspace: vi.fn(async () => {
         await workspaceDeferred.promise;
-        return { workspacePath: "/tmp/ws/demo" };
+        return { workspacePath: "/tmp/ws/demo", sessionCwd: "/tmp/ws/demo" };
       }),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -93,10 +93,38 @@ describe("async session manager", () => {
     );
   });
 
+  it("starts sdk client from the prepared session cwd", async () => {
+    const clientHarness = createClientHarness();
+    const createClient = vi.fn(async () => clientHarness.client);
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo/packages/core",
+      })),
+      createClient,
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    expect(createClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/tmp/ws/demo/packages/core",
+      }),
+    );
+  });
+
   it("creates short session ids for public use", async () => {
     const clientHarness = createClientHarness();
     const prepareWorkspace = vi.fn(async ({ sessionId }) => ({
       workspacePath: `/tmp/ws/${sessionId}`,
+      sessionCwd: `/tmp/ws/${sessionId}`,
     }));
 
     const manager = createAsyncSessionManager({
@@ -129,7 +157,10 @@ describe("async session manager", () => {
         },
       },
       systemMessage: "follow project conventions",
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -158,7 +189,10 @@ describe("async session manager", () => {
         },
       },
       systemMessage: "follow project conventions",
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -188,7 +222,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -225,7 +262,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -266,7 +306,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -297,7 +340,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -330,7 +376,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -361,7 +410,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -394,7 +446,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -426,7 +481,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -454,7 +512,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => {
         const next = clients.shift();
         if (!next) {
@@ -495,7 +556,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -535,7 +599,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -565,7 +632,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 
@@ -713,7 +783,10 @@ describe("async session manager", () => {
           repo: "git@example.com:demo.git",
         },
       },
-      prepareWorkspace: vi.fn(async () => ({ workspacePath: "/tmp/ws/demo" })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
 

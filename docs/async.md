@@ -85,6 +85,8 @@ Daemon-side settings are loaded from a separate JSON file.
       "repo": "markusylisiurunen/tau",
       "ref": "main",
       "workspaceRoot": "projects/tau",
+      "workingDirectory": "packages/core",
+      "description": "core runtime workspace",
       "bootstrapCommands": ["npm ci", "npm run build"],
       "persona": "gpt-5.2-coder",
       "riskLevel": "read-only",
@@ -99,6 +101,10 @@ Notes:
 
 - `projects.<id>.repo` must be GitHub `owner/repo` format.
 - Relative `workspaceRoot` values resolve from the daemon config file directory.
+- `projects.<id>.workingDirectory` must be a relative path inside the cloned repository.
+- Tau starts each async session from `workingDirectory` when configured, otherwise from the repo root.
+- `bootstrapCommands` run from the same session working directory.
+- `projects.<id>.description` is optional metadata used by Telegram `/projects` output.
 - Clone uses `gh repo clone <owner/repo> <path>` (daemon host must have authenticated `gh`).
 - `TAU_ASYNC_AUTH_TOKEN` overrides daemon-file `authToken`.
 - `systemMessage` is prepended to every submitted prompt inside a `<system>...</system>` block.
@@ -137,6 +143,8 @@ Supported DM commands:
   - starts a new empty session (does not accept inline prompt text)
   - if `projectId` is omitted, it uses `defaultProjectId` when set
   - otherwise it auto-selects when exactly one async project exists
+  - use `/projects` to discover available `projectId` values
+- `/projects` (lists configured async projects with optional descriptions)
 - `/use <sessionId>`
 - `/list`
 - `/status`

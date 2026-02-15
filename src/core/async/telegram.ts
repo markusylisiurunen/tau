@@ -120,6 +120,7 @@ type SessionVerbosity = "verbose" | "quiet";
 
 const TELEGRAM_COMMANDS: TelegramBotCommand[] = [
   { command: "new", description: "start a new session" },
+  { command: "projects", description: "list configured projects" },
   { command: "use", description: "switch active session" },
   { command: "list", description: "list sessions" },
   { command: "status", description: "show active session status" },
@@ -491,6 +492,11 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
+    if (command === "/projects") {
+      await this.handleProjects(chatId);
+      return;
+    }
+
     if (command === "/use") {
       await this.handleUse(chatId, args);
       return;
@@ -533,7 +539,7 @@ class AsyncTelegramAdapterImpl {
 
     await this.reply(
       chatId,
-      "supported commands: /new, /use, /list, /status, /interrupt, /cancel, /close, /verbose, /quiet",
+      "supported commands: /new, /projects, /use, /list, /status, /interrupt, /cancel, /close, /verbose, /quiet",
     );
   }
 
@@ -558,7 +564,9 @@ class AsyncTelegramAdapterImpl {
         return { error: "no async projects configured" };
       }
 
-      return { error: "missing project id. usage: /new [projectId]" };
+      return {
+        error: "missing project id. usage: /new [projectId]. use /projects to list options",
+      };
     };
 
     if (args.length > 1) {
@@ -573,7 +581,7 @@ class AsyncTelegramAdapterImpl {
 
       if (!this.projects[projectId]) {
         return {
-          error: `unknown project '${projectId}'. usage: /new [projectId]`,
+          error: `unknown project '${projectId}'. usage: /new [projectId]. use /projects to list options`,
         };
       }
 
@@ -590,6 +598,27 @@ class AsyncTelegramAdapterImpl {
     return {
       projectId: fallback.projectId,
     };
+  }
+
+  private async handleProjects(chatId: number): Promise<void> {
+    const entries = Object.entries(this.projects).sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
+
+    if (entries.length === 0) {
+      await this.reply(chatId, "no async projects configured");
+      return;
+    }
+
+    const lines = entries.map(([projectId, project]) => {
+      if (!project.description) {
+        return projectId;
+      }
+
+      return `${projectId}: ${project.description}`;
+    });
+
+    await this.reply(chatId, [`projects:`, ...lines].join("\n"));
   }
 
   private async handleNew(chatId: number, args: string[]): Promise<void> {

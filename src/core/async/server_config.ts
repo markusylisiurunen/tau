@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import type { AsyncProjectConfig, AsyncServerTelegramConfig } from "../config/schema.js";
 
 type RiskLevel = "read-only" | "read-write";
@@ -184,6 +184,31 @@ function parseProject(
       errors.push(
         `${sourceLabel}: projects.${projectId}.workspaceRoot must be a non-empty string.`,
       );
+    }
+  }
+
+  if (data.workingDirectory !== undefined) {
+    if (typeof data.workingDirectory === "string" && data.workingDirectory.trim()) {
+      const workingDirectory = data.workingDirectory.trim();
+      if (isAbsolute(workingDirectory)) {
+        errors.push(
+          `${sourceLabel}: projects.${projectId}.workingDirectory must be a relative path.`,
+        );
+      } else {
+        config.workingDirectory = workingDirectory;
+      }
+    } else {
+      errors.push(
+        `${sourceLabel}: projects.${projectId}.workingDirectory must be a non-empty string.`,
+      );
+    }
+  }
+
+  if (data.description !== undefined) {
+    if (typeof data.description === "string" && data.description.trim()) {
+      config.description = data.description.trim();
+    } else {
+      errors.push(`${sourceLabel}: projects.${projectId}.description must be a non-empty string.`);
     }
   }
 

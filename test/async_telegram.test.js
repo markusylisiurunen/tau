@@ -172,6 +172,7 @@ describe("async telegram adapter", () => {
       await waitFor(() => apiHarness.setCommandsCalls.length === 1);
       expect(apiHarness.setCommandsCalls[0]).toEqual([
         { command: "new", description: "start a new session" },
+        { command: "projects", description: "list configured projects" },
         { command: "use", description: "switch active session" },
         { command: "list", description: "list sessions" },
         { command: "status", description: "show active session status" },
@@ -232,6 +233,47 @@ describe("async telegram adapter", () => {
       expect(managerHarness.manager.listSessions).toHaveBeenCalledTimes(1);
       expect(apiHarness.sendMessages[0].chatId).toBe(20);
       expect(apiHarness.sendMessages[0].text).toContain("s1");
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("lists configured projects with /projects", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 20, type: "private" },
+            from: { id: 5 },
+            text: "/projects",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: {
+        demo: { repo: "git@example.com:demo.git", description: "demo project" },
+        api: { repo: "git@example.com:demo.git" },
+      },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(apiHarness.sendMessages[0]).toEqual(
+        expect.objectContaining({
+          chatId: 20,
+          text: "projects:\napi\ndemo: demo project",
+        }),
+      );
     } finally {
       await adapter.close();
     }

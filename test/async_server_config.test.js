@@ -42,6 +42,8 @@ describe("async daemon config", () => {
             tau: {
               repo: "markusylisiurunen/tau",
               workspaceRoot: "projects/tau",
+              workingDirectory: "packages/core",
+              description: "core workspace",
               ref: "main",
             },
           },
@@ -54,6 +56,8 @@ describe("async daemon config", () => {
       expect(config.workspaceRoot).toBe(join(configDir, "workspaces"));
       expect(config.systemMessage).toBe("focus on small diffs");
       expect(config.projects.tau.workspaceRoot).toBe(join(configDir, "projects", "tau"));
+      expect(config.projects.tau.workingDirectory).toBe("packages/core");
+      expect(config.projects.tau.description).toBe("core workspace");
       expect(config.projects.tau.repo).toBe("markusylisiurunen/tau");
       expect(config.telegram?.defaultProjectId).toBe("tau");
       expect(config.telegram?.systemMessage).toBe("telegram-specific notice");
@@ -130,6 +134,32 @@ describe("async daemon config", () => {
 
       expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
       expect(() => loadAsyncDaemonConfig(configPath)).toThrow("owner/repo");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects absolute projects.<id>.workingDirectory values", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+              workingDirectory: "/tmp/repo",
+            },
+          },
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(
+        "workingDirectory must be a relative path",
+      );
     } finally {
       fx.cleanup();
     }

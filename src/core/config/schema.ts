@@ -75,6 +75,8 @@ export type AsyncProjectConfig = {
   repo: string;
   ref?: string;
   workspaceRoot?: string;
+  workingDirectory?: string;
+  description?: string;
   bootstrapCommands?: string[];
   persona?: string;
   riskLevel?: RiskLevel;

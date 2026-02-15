@@ -147,7 +147,10 @@ export type AsyncSessionManagerOptions = {
   systemMessage?: string;
   now?: () => Date;
   createClient?: (options: TauSdkClientOptions) => Promise<TauSdkClient>;
-  prepareWorkspace?: (options: PrepareWorkspaceOptions) => Promise<{ workspacePath: string }>;
+  prepareWorkspace?: (options: PrepareWorkspaceOptions) => Promise<{
+    workspacePath: string;
+    sessionCwd: string;
+  }>;
 };
 
 class AsyncSessionManagerImpl implements AsyncSessionManager {
@@ -162,7 +165,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   private readonly createClient: (options: TauSdkClientOptions) => Promise<TauSdkClient>;
   private readonly prepareWorkspace: (
     options: PrepareWorkspaceOptions,
-  ) => Promise<{ workspacePath: string }>;
+  ) => Promise<{ workspacePath: string; sessionCwd: string }>;
   private closePromise?: Promise<void>;
 
   constructor(options: AsyncSessionManagerOptions) {
@@ -382,10 +385,13 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
       entry.record.workspacePath = workspace.workspacePath;
       this.touch(entry);
-      this.log(entry, "info", "workspace ready", { workspacePath: workspace.workspacePath });
+      this.log(entry, "info", "workspace ready", {
+        workspacePath: workspace.workspacePath,
+        sessionCwd: workspace.sessionCwd,
+      });
 
       const client = await this.createClient({
-        cwd: workspace.workspacePath,
+        cwd: workspace.sessionCwd,
         ...(entry.project.persona ? { persona: entry.project.persona } : {}),
         ...(entry.project.riskLevel ? { riskLevel: entry.project.riskLevel } : {}),
         ...(entry.project.sandbox !== undefined ? { sandbox: entry.project.sandbox } : {}),

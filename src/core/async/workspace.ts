@@ -25,6 +25,12 @@ export type PreparedWorkspace = {
   sessionCwd: string;
 };
 
+const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
+
+function elapsedMs(startTime: bigint): number {
+  return Number((process.hrtime.bigint() - startTime) / NANOSECONDS_PER_MILLISECOND);
+}
+
 function log(
   onLog: ((entry: WorkspaceLogEntry) => void) | undefined,
   level: WorkspaceLogLevel,
@@ -77,9 +83,34 @@ function isInsideWorkspace(workspacePath: string, sessionCwd: string): boolean {
   return relPath === "" || (!relPath.startsWith(`..${sep}`) && relPath !== "..");
 }
 
+function buildCloneCommandArgs(args: {
+  repo: string;
+  workspacePath: string;
+  ref?: string;
+  shallow: boolean;
+}): string[] {
+  const gitCloneArgs: string[] = [];
+
+  if (args.shallow) {
+    gitCloneArgs.push("--depth=1");
+    if (args.ref) {
+      gitCloneArgs.push("--single-branch", "--branch", args.ref);
+    }
+  }
+
+  return [
+    "repo",
+    "clone",
+    args.repo,
+    args.workspacePath,
+    ...(gitCloneArgs.length > 0 ? ["--", ...gitCloneArgs] : []),
+  ];
+}
+
 export async function prepareWorkspace(
   options: PrepareWorkspaceOptions,
 ): Promise<PreparedWorkspace> {
+  const workspaceStart = process.hrtime.bigint();
   const workspacePath = join(resolve(options.workspaceRoot), options.projectId, options.sessionId);
 
   await rm(workspacePath, { recursive: true, force: true });
@@ -90,11 +121,36 @@ export async function prepareWorkspace(
     workspacePath,
   });
 
-  const cloneResult = await runCommand({
+  const cloneStart = process.hrtime.bigint();
+  let cloneMode: "shallow" | "full" = "shallow";
+  let cloneResult = await runCommand({
     command: "gh",
-    commandArgs: ["repo", "clone", options.project.repo, workspacePath],
+    commandArgs: buildCloneCommandArgs({
+      repo: options.project.repo,
+      workspacePath,
+      ref: options.project.ref,
+      shallow: true,
+    }),
     signal: options.signal,
   });
+
+  if (cloneResult.exitCode !== 0) {
+    log(options.onLog, "info", "shallow clone failed, retrying full clone", {
+      exitCode: cloneResult.exitCode,
+      output: cloneResult.output,
+    });
+
+    cloneMode = "full";
+    cloneResult = await runCommand({
+      command: "gh",
+      commandArgs: buildCloneCommandArgs({
+        repo: options.project.repo,
+        workspacePath,
+        shallow: false,
+      }),
+      signal: options.signal,
+    });
+  }
 
   if (cloneResult.exitCode !== 0) {
     log(options.onLog, "error", "gh repo clone failed", { output: cloneResult.output });
@@ -105,7 +161,14 @@ export async function prepareWorkspace(
     log(options.onLog, "info", "gh repo clone output", { output: cloneResult.output });
   }
 
+  log(options.onLog, "info", "repository clone complete", {
+    mode: cloneMode,
+    durationMs: elapsedMs(cloneStart),
+    ...(options.project.ref ? { ref: options.project.ref } : {}),
+  });
+
   if (options.project.ref) {
+    const checkoutStart = process.hrtime.bigint();
     log(options.onLog, "info", "checking out ref", { ref: options.project.ref });
     const checkoutResult = await runCommand({
       command: "git",
@@ -121,6 +184,11 @@ export async function prepareWorkspace(
     if (checkoutResult.output.trim()) {
       log(options.onLog, "info", "git checkout output", { output: checkoutResult.output });
     }
+
+    log(options.onLog, "info", "ref checkout complete", {
+      ref: options.project.ref,
+      durationMs: elapsedMs(checkoutStart),
+    });
   }
 
   let sessionCwd = workspacePath;
@@ -154,6 +222,7 @@ export async function prepareWorkspace(
   }
 
   for (const command of options.project.bootstrapCommands ?? []) {
+    const bootstrapStart = process.hrtime.bigint();
     log(options.onLog, "info", "running bootstrap command", { command, cwd: sessionCwd });
     const bootstrapResult = await runShellCommand({
       command,
@@ -172,12 +241,24 @@ export async function prepareWorkspace(
       log(options.onLog, "error", "bootstrap command failed", {
         command,
         output: bootstrapResult.output,
+        durationMs: elapsedMs(bootstrapStart),
       });
       throw new Error(
         `bootstrap command failed with exit code ${bootstrapResult.exitCode ?? "unknown"}`,
       );
     }
+
+    log(options.onLog, "info", "bootstrap command complete", {
+      command,
+      durationMs: elapsedMs(bootstrapStart),
+    });
   }
+
+  log(options.onLog, "info", "workspace prepared", {
+    workspacePath,
+    sessionCwd,
+    durationMs: elapsedMs(workspaceStart),
+  });
 
   return { workspacePath, sessionCwd };
 }

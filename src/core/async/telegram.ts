@@ -34,9 +34,26 @@ type TelegramMessage = {
   };
 };
 
+type TelegramInlineKeyboardButton = {
+  text: string;
+  callback_data: string;
+};
+
+type TelegramInlineKeyboardMarkup = {
+  inline_keyboard: TelegramInlineKeyboardButton[][];
+};
+
+type TelegramCallbackQuery = {
+  id?: string;
+  from?: TelegramUser;
+  data?: string;
+  message?: TelegramMessage;
+};
+
 type TelegramUpdate = {
   update_id?: number;
   message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
 };
 
 type TelegramAllowedUpdates =
@@ -57,10 +74,17 @@ export type AsyncTelegramApi = {
     timeoutSeconds: number;
     allowedUpdates: TelegramAllowedUpdates;
   }): Promise<TelegramUpdate[]>;
-  sendMessage(chatId: number, text: string): Promise<void>;
+  sendMessage(
+    chatId: number,
+    text: string,
+    options?: {
+      replyMarkup?: TelegramInlineKeyboardMarkup;
+    },
+  ): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
   setCommands?(commands: TelegramBotCommand[]): Promise<void>;
   setMessageReaction?(chatId: number, messageId: number): Promise<void>;
+  answerCallbackQuery?(callbackQueryId: string, text?: string): Promise<void>;
 };
 
 export type AsyncTelegramLogLevel = "info" | "warn" | "error";
@@ -115,14 +139,20 @@ const DEFAULT_TELEGRAM_AUDIO_FILE_NAME = "audio.mp3";
 const MESSAGE_QUEUED_REACTION_EMOJI = "👀";
 const MESSAGE_QUEUED_REACTION_DELAY_MS = 1000;
 const ABORTED = Symbol("aborted");
+const CALLBACK_ACTION_PREFIX = "tau:action:";
+const CALLBACK_USE_PREFIX = "tau:use:";
+const MAX_SESSION_PREVIEW_CHARS = 64;
+
+type QuickAction = "new" | "sessions" | "status" | "interrupt" | "cancel" | "quiet" | "verbose";
 
 type SessionVerbosity = "verbose" | "quiet";
 
 const TELEGRAM_COMMANDS: TelegramBotCommand[] = [
+  { command: "help", description: "show supported commands" },
   { command: "new", description: "start a new session" },
   { command: "projects", description: "list configured projects" },
   { command: "use", description: "switch active session" },
-  { command: "list", description: "list sessions" },
+  { command: "sessions", description: "list sessions" },
   { command: "status", description: "show active session status" },
   { command: "interrupt", description: "interrupt active run" },
   { command: "cancel", description: "cancel active session" },
@@ -200,8 +230,10 @@ function createGrammyApi(botToken: string): AsyncTelegramApi {
 
       return updates;
     },
-    async sendMessage(chatId, text) {
-      await api.sendMessage(chatId, text);
+    async sendMessage(chatId, text, options) {
+      await api.sendMessage(chatId, text, {
+        ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
+      });
     },
     async downloadFile(fileId) {
       const file = await api.getFile(fileId);
@@ -226,6 +258,11 @@ function createGrammyApi(botToken: string): AsyncTelegramApi {
       await api.setMessageReaction(chatId, messageId, [
         { type: "emoji", emoji: MESSAGE_QUEUED_REACTION_EMOJI },
       ]);
+    },
+    async answerCallbackQuery(callbackQueryId, text) {
+      await api.answerCallbackQuery(callbackQueryId, {
+        ...(text ? { text } : {}),
+      });
     },
   };
 }
@@ -359,7 +396,7 @@ class AsyncTelegramAdapterImpl {
       this.api.getUpdates({
         offset: this.nextUpdateOffset,
         timeoutSeconds: this.requestTimeoutSeconds,
-        allowedUpdates: ["message"],
+        allowedUpdates: ["message", "callback_query"],
       }),
     );
 
@@ -405,42 +442,72 @@ class AsyncTelegramAdapterImpl {
 
   private async handleUpdate(update: TelegramUpdate): Promise<void> {
     const message = update.message;
-    if (!message) {
+    if (message) {
+      const chat = message.chat;
+      if (!chat || chat.type !== "private") {
+        return;
+      }
+
+      const chatId = chat.id;
+      if (!this.isChatAllowed(chatId)) {
+        return;
+      }
+
+      const userId = message.from?.id;
+      if (!this.isUserAllowed(userId)) {
+        return;
+      }
+
+      const text = typeof message.text === "string" ? message.text.trim() : "";
+      if (text) {
+        if (text.startsWith("/")) {
+          await this.handleCommand(chatId, text);
+          return;
+        }
+
+        await this.handleMessage(chatId, text, message.message_id);
+        return;
+      }
+
+      const audioMessage = this.parseAudioMessage(message);
+      if (!audioMessage) {
+        return;
+      }
+
+      await this.handleAudioMessage(chatId, audioMessage, message.message_id);
       return;
     }
 
-    const chat = message.chat;
+    const callbackQuery = update.callback_query;
+    if (!callbackQuery) {
+      return;
+    }
+
+    const chat = callbackQuery.message?.chat;
     if (!chat || chat.type !== "private") {
+      await this.answerCallbackQuery(callbackQuery.id);
       return;
     }
 
     const chatId = chat.id;
     if (!this.isChatAllowed(chatId)) {
+      await this.answerCallbackQuery(callbackQuery.id);
       return;
     }
 
-    const userId = message.from?.id;
-    if (!this.isUserAllowed(userId)) {
+    if (!this.isUserAllowed(callbackQuery.from?.id)) {
+      await this.answerCallbackQuery(callbackQuery.id);
       return;
     }
 
-    const text = typeof message.text === "string" ? message.text.trim() : "";
-    if (text) {
-      if (text.startsWith("/")) {
-        await this.handleCommand(chatId, text);
-        return;
-      }
-
-      await this.handleMessage(chatId, text, message.message_id);
+    const callbackData = callbackQuery.data?.trim();
+    if (!callbackData) {
+      await this.answerCallbackQuery(callbackQuery.id);
       return;
     }
 
-    const audioMessage = this.parseAudioMessage(message);
-    if (!audioMessage) {
-      return;
-    }
-
-    await this.handleAudioMessage(chatId, audioMessage, message.message_id);
+    const callbackHandled = await this.handleCallback(chatId, callbackData);
+    await this.answerCallbackQuery(callbackQuery.id, callbackHandled ? "done" : undefined);
   }
 
   private parseAudioMessage(message: TelegramMessage): TelegramAudioMessage | undefined {
@@ -487,6 +554,11 @@ class AsyncTelegramAdapterImpl {
     const command = stripCommandMention(parts[0] ?? "");
     const args = parts.slice(1);
 
+    if (command === "/help") {
+      await this.handleHelp(chatId);
+      return;
+    }
+
     if (command === "/new") {
       await this.handleNew(chatId, args);
       return;
@@ -502,8 +574,8 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    if (command === "/list") {
-      await this.handleList(chatId);
+    if (command === "/sessions") {
+      await this.handleSessions(chatId);
       return;
     }
 
@@ -537,10 +609,84 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    await this.reply(
-      chatId,
-      "supported commands: /new, /projects, /use, /list, /status, /interrupt, /cancel, /close, /verbose, /quiet",
-    );
+    await this.reply(chatId, "unsupported command. use /help");
+  }
+
+  private async handleCallback(chatId: number, callbackData: string): Promise<boolean> {
+    if (callbackData.startsWith(CALLBACK_USE_PREFIX)) {
+      const sessionId = callbackData.slice(CALLBACK_USE_PREFIX.length).trim();
+      if (!sessionId) {
+        return false;
+      }
+
+      await this.handleUse(chatId, [sessionId]);
+      return true;
+    }
+
+    if (!callbackData.startsWith(CALLBACK_ACTION_PREFIX)) {
+      return false;
+    }
+
+    const action = callbackData.slice(CALLBACK_ACTION_PREFIX.length) as QuickAction;
+    if (action === "new") {
+      await this.handleNew(chatId, []);
+      return true;
+    }
+
+    if (action === "sessions") {
+      await this.handleSessions(chatId);
+      return true;
+    }
+
+    if (action === "status") {
+      await this.handleStatus(chatId);
+      return true;
+    }
+
+    if (action === "interrupt") {
+      await this.handleInterrupt(chatId);
+      return true;
+    }
+
+    if (action === "cancel") {
+      await this.handleCancel(chatId);
+      return true;
+    }
+
+    if (action === "quiet") {
+      await this.handleVerbosityCommand(chatId, "quiet");
+      return true;
+    }
+
+    if (action === "verbose") {
+      await this.handleVerbosityCommand(chatId, "verbose");
+      return true;
+    }
+
+    return false;
+  }
+
+  private async handleHelp(chatId: number): Promise<void> {
+    const lines = [
+      "commands:",
+      "/help",
+      "/new [projectId]",
+      "/projects",
+      "/sessions",
+      "/use <sessionId|prefix|index>",
+      "/status",
+      "/interrupt",
+      "/cancel",
+      "/close [<sessionId>|all]",
+      "/verbose",
+      "/quiet",
+      "",
+      "tip: use /sessions and tap a session button to switch quickly",
+    ];
+
+    await this.reply(chatId, lines.join("\n"), {
+      replyMarkup: this.buildQuickActionsKeyboard(),
+    });
   }
 
   private resolveNewCommand(args: string[]): NewCommandResolution {
@@ -642,42 +788,163 @@ class AsyncTelegramAdapterImpl {
   }
 
   private async handleUse(chatId: number, args: string[]): Promise<void> {
-    const sessionId = args[0]?.trim();
-    if (!sessionId) {
-      await this.reply(chatId, "usage: /use <sessionId>");
+    const selector = args[0]?.trim();
+    if (!selector) {
+      await this.reply(chatId, "usage: /use <sessionId|prefix|index>");
       return;
     }
 
-    const session = this.sessionManager.getSession(sessionId);
-    if (!session) {
-      await this.reply(chatId, `session '${sessionId}' not found`);
+    const sessions = this.sessionManager.listSessions();
+    const selectedSession = this.resolveSessionSelector(selector, sessions);
+    if ("error" in selectedSession) {
+      await this.reply(chatId, selectedSession.error);
       return;
     }
 
-    this.setActiveSession(chatId, sessionId);
-    await this.reply(chatId, formatSessionHeadline(session.id, `using session (${session.state})`));
+    this.setActiveSession(chatId, selectedSession.session.id);
+    await this.reply(
+      chatId,
+      formatSessionHeadline(
+        selectedSession.session.id,
+        `using session (${selectedSession.session.state})`,
+      ),
+    );
   }
 
-  private async handleList(chatId: number): Promise<void> {
+  private resolveSessionSelector(
+    selector: string,
+    sessions: AsyncSessionRecord[],
+  ): { session: AsyncSessionRecord } | { error: string } {
+    const exactSession = this.sessionManager.getSession(selector);
+    if (exactSession) {
+      return { session: exactSession };
+    }
+
+    if (/^\d+$/.test(selector)) {
+      const index = Number.parseInt(selector, 10);
+      if (index <= 0 || index > sessions.length) {
+        return {
+          error:
+            sessions.length === 0
+              ? "no sessions"
+              : `session index '${selector}' is out of range (1-${sessions.length})`,
+        };
+      }
+
+      const indexedSession = sessions[index - 1];
+      if (!indexedSession) {
+        return { error: "session index lookup failed" };
+      }
+
+      return { session: indexedSession };
+    }
+
+    const prefixMatches = sessions.filter((session) => session.id.startsWith(selector));
+    if (prefixMatches.length === 1) {
+      const [prefixMatch] = prefixMatches;
+      if (!prefixMatch) {
+        return { error: "session prefix lookup failed" };
+      }
+
+      return { session: prefixMatch };
+    }
+
+    if (prefixMatches.length > 1) {
+      return {
+        error: `session prefix '${selector}' is ambiguous: ${prefixMatches.map((session) => session.id).join(", ")}`,
+      };
+    }
+
+    return { error: `session '${selector}' not found` };
+  }
+
+  private async handleSessions(chatId: number): Promise<void> {
     const sessions = this.sessionManager.listSessions();
+    const lines = this.formatSessions(chatId, sessions);
+
+    await this.reply(chatId, lines.join("\n"), {
+      replyMarkup: this.buildSessionsKeyboard(chatId, sessions),
+    });
+  }
+
+  private formatSessions(chatId: number, sessions: AsyncSessionRecord[]): string[] {
     if (sessions.length === 0) {
-      await this.reply(chatId, "no sessions");
-      return;
+      return ["no sessions"];
     }
 
     const activeSessionId = this.activeSessionsByChat.get(chatId);
-    const lines = sessions.map((session) => {
-      const marker = session.id === activeSessionId ? "* " : "";
-      return `${marker}${session.id} ${session.projectId} ${session.state}`;
-    });
+    return [
+      "sessions:",
+      ...sessions.map((session, index) => {
+        const marker = session.id === activeSessionId ? "*" : "-";
+        const preview = this.formatSessionPreview(session.id);
+        return `${index + 1}. ${marker} ${session.id} ${session.projectId} ${session.state}${preview ? ` · ${preview}` : ""}`;
+      }),
+    ];
+  }
 
-    await this.reply(chatId, lines.join("\n"));
+  private formatSessionPreview(sessionId: string): string | undefined {
+    const previews: string[] = [];
+
+    const lastCommand = this.lastCommandBySession.get(sessionId);
+    if (lastCommand) {
+      previews.push(`$ ${truncateText(lastCommand, MAX_SESSION_PREVIEW_CHARS)}`);
+    }
+
+    const lastAssistantMessage = this.lastAssistantMessageBySession.get(sessionId);
+    if (lastAssistantMessage) {
+      previews.push(truncateText(lastAssistantMessage, MAX_SESSION_PREVIEW_CHARS));
+    }
+
+    if (previews.length === 0) {
+      return undefined;
+    }
+
+    return previews.join(" | ");
+  }
+
+  private buildSessionsKeyboard(
+    chatId: number,
+    sessions: AsyncSessionRecord[],
+  ): TelegramInlineKeyboardMarkup {
+    const activeSessionId = this.activeSessionsByChat.get(chatId);
+    const inlineKeyboard: TelegramInlineKeyboardButton[][] = sessions.map((session, index) => [
+      {
+        text: `${index + 1}. ${session.id}${session.id === activeSessionId ? " *" : ""}`,
+        callback_data: `${CALLBACK_USE_PREFIX}${session.id}`,
+      },
+    ]);
+
+    inlineKeyboard.push(...this.buildQuickActionsKeyboard().inline_keyboard);
+    return {
+      inline_keyboard: inlineKeyboard,
+    };
+  }
+
+  private buildQuickActionsKeyboard(): TelegramInlineKeyboardMarkup {
+    return {
+      inline_keyboard: [
+        [
+          { text: "/new", callback_data: `${CALLBACK_ACTION_PREFIX}new` },
+          { text: "/sessions", callback_data: `${CALLBACK_ACTION_PREFIX}sessions` },
+          { text: "/status", callback_data: `${CALLBACK_ACTION_PREFIX}status` },
+        ],
+        [
+          { text: "/interrupt", callback_data: `${CALLBACK_ACTION_PREFIX}interrupt` },
+          { text: "/cancel", callback_data: `${CALLBACK_ACTION_PREFIX}cancel` },
+        ],
+        [
+          { text: "/quiet", callback_data: `${CALLBACK_ACTION_PREFIX}quiet` },
+          { text: "/verbose", callback_data: `${CALLBACK_ACTION_PREFIX}verbose` },
+        ],
+      ],
+    };
   }
 
   private async handleStatus(chatId: number): Promise<void> {
     const session = this.getActiveSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /use <sessionId>");
+      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -688,13 +955,16 @@ class AsyncTelegramAdapterImpl {
         lastCommand: this.lastCommandBySession.get(session.id),
         lastAssistantMessage: this.lastAssistantMessageBySession.get(session.id),
       }),
+      {
+        replyMarkup: this.buildQuickActionsKeyboard(),
+      },
     );
   }
 
   private async handleInterrupt(chatId: number): Promise<void> {
     const session = this.getActiveSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /use <sessionId>");
+      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -714,7 +984,7 @@ class AsyncTelegramAdapterImpl {
   private async handleCancel(chatId: number): Promise<void> {
     const session = this.getActiveSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /use <sessionId>");
+      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -761,7 +1031,7 @@ class AsyncTelegramAdapterImpl {
 
     const sessionId = target ?? this.getActiveSession(chatId)?.id;
     if (!sessionId) {
-      await this.reply(chatId, "no active session. use /new or /use <sessionId>");
+      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -777,7 +1047,7 @@ class AsyncTelegramAdapterImpl {
   private async handleVerbosityCommand(chatId: number, verbosity: SessionVerbosity): Promise<void> {
     const session = this.getActiveSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /use <sessionId>");
+      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -790,9 +1060,9 @@ class AsyncTelegramAdapterImpl {
     text: string,
     sourceMessageId?: number,
   ): Promise<void> {
-    const session = this.getActiveSession(chatId);
+    const session = this.getActiveOrSingleSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /use <sessionId>");
+      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -818,7 +1088,7 @@ class AsyncTelegramAdapterImpl {
   ): Promise<void> {
     const session = this.getActiveSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /use <sessionId>");
+      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -880,6 +1150,26 @@ class AsyncTelegramAdapterImpl {
     }
 
     return session;
+  }
+
+  private getActiveOrSingleSession(chatId: number): AsyncSessionRecord | undefined {
+    const activeSession = this.getActiveSession(chatId);
+    if (activeSession) {
+      return activeSession;
+    }
+
+    const sessions = this.sessionManager.listSessions();
+    if (sessions.length !== 1) {
+      return undefined;
+    }
+
+    const [singleSession] = sessions;
+    if (!singleSession) {
+      return undefined;
+    }
+
+    this.setActiveSession(chatId, singleSession.id);
+    return singleSession;
   }
 
   private setActiveSession(chatId: number, sessionId: string): void {
@@ -1117,6 +1407,26 @@ class AsyncTelegramAdapterImpl {
     }
   }
 
+  private async answerCallbackQuery(callbackQueryId?: string, text?: string): Promise<void> {
+    if (!this.api.answerCallbackQuery) {
+      return;
+    }
+
+    const trimmedCallbackQueryId = callbackQueryId?.trim();
+    if (!trimmedCallbackQueryId) {
+      return;
+    }
+
+    try {
+      await this.api.answerCallbackQuery(trimmedCallbackQueryId, text);
+    } catch (error) {
+      this.log("warn", "failed to answer telegram callback query", {
+        callbackQueryId: trimmedCallbackQueryId,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private formatSessionPreparing(projectId: string): string {
     return ["session is being prepared", `project: ${projectId}`].join("\n");
   }
@@ -1139,9 +1449,15 @@ class AsyncTelegramAdapterImpl {
     return error instanceof Error ? error.message : String(error);
   }
 
-  private async reply(chatId: number, text: string): Promise<void> {
+  private async reply(
+    chatId: number,
+    text: string,
+    options?: {
+      replyMarkup?: TelegramInlineKeyboardMarkup;
+    },
+  ): Promise<void> {
     try {
-      await this.api.sendMessage(chatId, text);
+      await this.api.sendMessage(chatId, text, options);
     } catch (error) {
       this.log("warn", "failed to send telegram message", {
         chatId,

@@ -501,10 +501,15 @@ describe("async session manager", () => {
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
   });
 
-  it("closes only inactive sessions in bulk", async () => {
+  it("closes all sessions that are not running a turn", async () => {
     const firstClientHarness = createClientHarness();
     const secondClientHarness = createClientHarness();
-    const clients = [firstClientHarness.client, secondClientHarness.client];
+    const thirdClientHarness = createClientHarness();
+    const clients = [
+      firstClientHarness.client,
+      secondClientHarness.client,
+      thirdClientHarness.client,
+    ];
 
     const manager = createAsyncSessionManager({
       projects: {
@@ -525,19 +530,34 @@ describe("async session manager", () => {
       }),
     });
 
-    const inactive = await manager.createSession({ projectId: "demo" });
-    const active = await manager.createSession({ projectId: "demo" });
+    const waitingInput = await manager.createSession({ projectId: "demo" });
+    const canceled = await manager.createSession({ projectId: "demo" });
+    const running = await manager.createSession({ projectId: "demo" });
 
-    await waitFor(() => manager.getSession(inactive.id)?.state === "waiting-input");
-    await waitFor(() => manager.getSession(active.id)?.state === "waiting-input");
+    await waitFor(() => manager.getSession(waitingInput.id)?.state === "waiting-input");
+    await waitFor(() => manager.getSession(canceled.id)?.state === "waiting-input");
+    await waitFor(() => manager.getSession(running.id)?.state === "waiting-input");
 
-    const canceled = await manager.cancelSession(inactive.id);
-    expect(canceled.state).toBe("canceled");
+    await manager.cancelSession(canceled.id);
+
+    const runningSubmit = manager.sendMessage(running.id, "run");
+    await waitFor(() => manager.getSession(running.id)?.state === "running");
 
     const closed = await manager.closeInactiveSessions();
-    expect(closed).toEqual([expect.objectContaining({ id: inactive.id, state: "canceled" })]);
-    expect(manager.getSession(inactive.id)).toBeUndefined();
-    expect(manager.getSession(active.id)).toEqual(expect.objectContaining({ id: active.id }));
+    expect(closed).toEqual([
+      expect.objectContaining({ id: waitingInput.id }),
+      expect.objectContaining({ id: canceled.id }),
+    ]);
+    expect(manager.getSession(waitingInput.id)).toBeUndefined();
+    expect(manager.getSession(canceled.id)).toBeUndefined();
+    expect(manager.getSession(running.id)).toEqual(expect.objectContaining({ id: running.id }));
+
+    thirdClientHarness.submitDeferred.resolve({
+      userHistoryEntryId: "history-running",
+      turn: { aborted: false },
+    });
+    await runningSubmit;
+    await manager.closeSession(running.id);
   });
 
   it("closes active sessions and sdk clients during manager shutdown", async () => {

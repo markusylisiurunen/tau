@@ -128,7 +128,7 @@ function createSessionManagerHarness(initialSessions = []) {
     closeInactiveSessions: vi.fn(async () => {
       const closed = [];
       for (const [sessionId, session] of sessions) {
-        if (session.state === "canceled" || session.state === "failed") {
+        if (session.state !== "running") {
           closed.push({ ...session });
           sessions.delete(sessionId);
         }
@@ -848,7 +848,7 @@ describe("async telegram adapter", () => {
     }
   });
 
-  it("supports /close all for inactive sessions", async () => {
+  it("supports /close all for sessions without active runs", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -873,12 +873,19 @@ describe("async telegram adapter", () => {
       {
         id: "s2",
         projectId: "demo",
-        state: "failed",
+        state: "running",
         createdAt: "2024-01-01T00:00:00.000Z",
         updatedAt: "2024-01-01T00:00:00.000Z",
       },
       {
         id: "s3",
+        projectId: "demo",
+        state: "failed",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+      {
+        id: "s4",
         projectId: "demo",
         state: "canceled",
         createdAt: "2024-01-01T00:00:00.000Z",
@@ -901,9 +908,11 @@ describe("async telegram adapter", () => {
       expect(
         apiHarness.sendMessages.some(
           (entry) =>
-            entry.text.includes("closed 2 inactive sessions") &&
-            entry.text.includes("s2") &&
-            entry.text.includes("s3"),
+            entry.text.includes("closed 3 sessions") &&
+            entry.text.includes("s1") &&
+            entry.text.includes("s3") &&
+            entry.text.includes("s4") &&
+            !entry.text.includes("s2"),
         ),
       ).toBe(true);
     } finally {

@@ -46,6 +46,7 @@ export type AsyncSessionProgress =
 export type AsyncSessionRecord = {
   id: string;
   projectId: string;
+  ownerId?: string;
   state: AsyncSessionState;
   createdAt: string;
   updatedAt: string;
@@ -125,6 +126,7 @@ export type AsyncSessionInterruptResult = {
 export type AsyncSessionManager = {
   createSession(input: {
     projectId: string;
+    ownerId?: string;
     prompt?: string;
     additionalSystemMessage?: string;
   }): Promise<AsyncSessionRecord>;
@@ -186,6 +188,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
   async createSession(input: {
     projectId: string;
+    ownerId?: string;
     prompt?: string;
     additionalSystemMessage?: string;
   }): Promise<AsyncSessionRecord> {
@@ -208,6 +211,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       record: {
         id,
         projectId: input.projectId,
+        ...(input.ownerId ? { ownerId: input.ownerId } : {}),
         state: "queued",
         createdAt: now,
         updatedAt: now,
@@ -835,6 +839,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
 type AsyncScopedSessionManagerOptions = {
   sessionManager: AsyncSessionManager;
+  ownerId: string;
   allowedProjectIds: Set<string>;
 };
 
@@ -846,15 +851,18 @@ const CLOSEABLE_STATES_WITH_CLOSE_ALL: Set<AsyncSessionState> = new Set([
 
 class ScopedAsyncSessionManager implements AsyncSessionManager {
   private readonly sessionManager: AsyncSessionManager;
+  private readonly ownerId: string;
   private readonly allowedProjectIds: Set<string>;
 
   constructor(options: AsyncScopedSessionManagerOptions) {
     this.sessionManager = options.sessionManager;
+    this.ownerId = options.ownerId;
     this.allowedProjectIds = options.allowedProjectIds;
   }
 
   async createSession(input: {
     projectId: string;
+    ownerId?: string;
     prompt?: string;
     additionalSystemMessage?: string;
   }): Promise<AsyncSessionRecord> {
@@ -865,18 +873,23 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
       );
     }
 
-    return await this.sessionManager.createSession(input);
+    return await this.sessionManager.createSession({
+      projectId: input.projectId,
+      ownerId: this.ownerId,
+      ...(input.prompt ? { prompt: input.prompt } : {}),
+      ...(input.additionalSystemMessage
+        ? { additionalSystemMessage: input.additionalSystemMessage }
+        : {}),
+    });
   }
 
   listSessions(): AsyncSessionRecord[] {
-    return this.sessionManager
-      .listSessions()
-      .filter((session) => this.allowedProjectIds.has(session.projectId));
+    return this.sessionManager.listSessions().filter((session) => this.isVisibleSession(session));
   }
 
   getSession(sessionId: string): AsyncSessionRecord | undefined {
     const session = this.sessionManager.getSession(sessionId);
-    if (!session || !this.allowedProjectIds.has(session.projectId)) {
+    if (!session || !this.isVisibleSession(session)) {
       return undefined;
     }
 
@@ -885,7 +898,7 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
 
   getLogs(sessionId: string): AsyncSessionLogEntry[] | undefined {
     const session = this.sessionManager.getSession(sessionId);
-    if (!session || !this.allowedProjectIds.has(session.projectId)) {
+    if (!session || !this.isVisibleSession(session)) {
       return undefined;
     }
 
@@ -936,13 +949,14 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
   onEvent(listener: (event: AsyncSessionManagerEvent) => void): () => void {
     return this.sessionManager.onEvent((event) => {
       if (event.type === "session-created") {
-        if (this.allowedProjectIds.has(event.session.projectId)) {
+        if (this.isVisibleSession(event.session)) {
           listener(event);
         }
         return;
       }
 
-      if (this.allowedProjectIds.has(event.projectId)) {
+      const session = this.sessionManager.getSession(event.sessionId);
+      if (session && this.isVisibleSession(session)) {
         listener(event);
       }
     });
@@ -950,11 +964,15 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
 
   private requireSession(sessionId: string): AsyncSessionRecord {
     const session = this.sessionManager.getSession(sessionId);
-    if (!session || !this.allowedProjectIds.has(session.projectId)) {
+    if (!session || !this.isVisibleSession(session)) {
       throw new AsyncSessionManagerError("not_found", `session '${sessionId}' not found`);
     }
 
     return session;
+  }
+
+  private isVisibleSession(session: AsyncSessionRecord): boolean {
+    return this.allowedProjectIds.has(session.projectId) && session.ownerId === this.ownerId;
   }
 }
 
@@ -966,10 +984,12 @@ export function createAsyncSessionManager(
 
 export function createScopedAsyncSessionManager(options: {
   sessionManager: AsyncSessionManager;
+  ownerId: string;
   allowedProjectIds: string[];
 }): AsyncSessionManager {
   return new ScopedAsyncSessionManager({
     sessionManager: options.sessionManager,
+    ownerId: options.ownerId,
     allowedProjectIds: new Set(options.allowedProjectIds),
   });
 }

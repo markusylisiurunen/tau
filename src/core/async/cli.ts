@@ -626,6 +626,7 @@ async function runDaemon(args: {
 
       const scopedSessionManager = createScopedAsyncSessionManager({
         sessionManager,
+        ownerId: `telegram:${botId}`,
         allowedProjectIds,
       });
 

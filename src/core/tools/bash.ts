@@ -1,8 +1,10 @@
+import { resolve } from "node:path";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import stripAnsi from "strip-ansi";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
+import { formatCwd } from "../utils/format.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { bytesToTokens, formatTokenEstimate } from "../utils/token.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
@@ -15,6 +17,7 @@ import {
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
+  ToolDispatchContext,
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
   ToolUiEvent,
@@ -274,6 +277,7 @@ export function buildBashUiText(args: {
   truncationInfo: BashTruncationInfo;
   exitCode: number | null;
   durationMs?: number;
+  workingDirectory?: string;
   previewLines?: { head?: number; tail?: number };
   fullText?: string;
 }): ToolUiText {
@@ -294,6 +298,9 @@ export function buildBashUiText(args: {
   const hasOutput = outputBytes > 0;
 
   const exitSummary = exitCode === null ? "exit ?" : `exit ${exitCode}`;
+  const workingDirectoryLabel = args.workingDirectory
+    ? formatCwd(args.workingDirectory)
+    : undefined;
   const durationLabel = formatDurationMs(durationMs);
   const lineLabel = hasOutput ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "no output";
   const bytesLabel = hasOutput ? formatBytes(outputBytes) : undefined;
@@ -302,7 +309,11 @@ export function buildBashUiText(args: {
   if (model.truncated || captureTruncated) {
     summaryParts.push(TRUNCATION_MARKER);
   }
-  summaryParts.push(exitSummary, durationLabel, lineLabel);
+  summaryParts.push(exitSummary);
+  if (workingDirectoryLabel) {
+    summaryParts.push(workingDirectoryLabel);
+  }
+  summaryParts.push(durationLabel, lineLabel);
   if (tokenLabel && bytesLabel) {
     summaryParts.push(tokenLabel, bytesLabel);
   }
@@ -316,6 +327,14 @@ export function buildBashUiText(args: {
     statusLine: summaryLine,
     fullLines,
   };
+}
+
+function resolveBashWorkingDirectory(args: {
+  contextCwd?: string;
+  workingDirectory?: string;
+}): string {
+  const baseCwd = args.contextCwd ?? process.cwd();
+  return args.workingDirectory ? resolve(baseCwd, args.workingDirectory) : baseCwd;
 }
 
 function getMissingArgsMessage(command: string, safetyLevel: BashSafetyLevel | undefined): string {
@@ -373,6 +392,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
       toolCall: ToolCall,
       riskLevel: RiskLevel,
       signal?: AbortSignal,
+      context?: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const {
         command,
@@ -416,6 +436,11 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
         );
       }
 
+      const effectiveWorkingDirectory = resolveBashWorkingDirectory({
+        contextCwd: context?.cwd,
+        workingDirectory,
+      });
+
       // All acceptance checks passed; return two-phase result
       return {
         kind: "phased",
@@ -435,7 +460,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
             } = await backend.runBash(command, {
               signal,
               timeoutMs: timeout ?? BASH_DEFAULT_TIMEOUT_MS,
-              cwd: workingDirectory,
+              cwd: effectiveWorkingDirectory,
             });
             const durationMs = Math.max(0, Date.now() - startedAt);
 
@@ -456,6 +481,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               truncationInfo,
               exitCode,
               durationMs,
+              workingDirectory: effectiveWorkingDirectory,
               fullText: toolText,
             });
 

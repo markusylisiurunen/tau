@@ -3287,13 +3287,16 @@ export class ChatController {
     this.refreshStatus();
 
     try {
+      const effectiveWorkingDirectory = opts?.cwd
+        ? resolve(this.agentCwd, opts.cwd)
+        : this.agentCwd;
       const startedAt = Date.now();
       const {
         output,
         exitCode,
         truncated: captureTruncated,
       } = await this.toolBackend.runBash(command, {
-        cwd: opts?.cwd,
+        cwd: effectiveWorkingDirectory,
         signal: abortController.signal,
       });
       const durationMs = Math.max(0, Date.now() - startedAt);
@@ -3309,6 +3312,7 @@ export class ChatController {
         truncationInfo,
         exitCode,
         durationMs,
+        workingDirectory: effectiveWorkingDirectory,
         previewLines: { head: 12, tail: 12 },
         fullText: userMessageText,
       });

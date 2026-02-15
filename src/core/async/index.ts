@@ -1,6 +1,15 @@
 export type { RunAsyncCommandOptions } from "./cli.js";
 export { AsyncCliError, printAsyncHelp, runAsyncCommand } from "./cli.js";
 export type {
+  AsyncCronJobConfig,
+  AsyncCronLogEntry,
+  AsyncCronLogLevel,
+  AsyncCronSchedulerHandle,
+  AsyncCronSchedulerOptions,
+  ParsedCronSchedule,
+} from "./cron.js";
+export { matchesCronSchedule, parseCronSchedule, startAsyncCronScheduler } from "./cron.js";
+export type {
   AsyncHttpCreateSessionRequest,
   AsyncHttpErrorResponse,
   AsyncHttpSendMessageRequest,

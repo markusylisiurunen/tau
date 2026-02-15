@@ -15,6 +15,21 @@ function setupFixture() {
   };
 }
 
+function writeCronJobFile(cronJobsDir, args) {
+  const lines = [
+    "---",
+    `id: ${args.id}`,
+    `projectId: ${args.projectId}`,
+    `schedule: "${args.schedule}"`,
+    ...(args.enabled === undefined ? [] : [`enabled: ${args.enabled ? "true" : "false"}`]),
+    "---",
+    args.prompt,
+    "",
+  ];
+
+  writeFileSync(join(cronJobsDir, `${args.id}.md`), lines.join("\n"));
+}
+
 describe("async daemon config", () => {
   it("loads valid daemon config and resolves workspace roots relative to config file", () => {
     const fx = setupFixture();
@@ -23,6 +38,15 @@ describe("async daemon config", () => {
       const configDir = join(fx.root, "config");
       mkdirSync(configDir, { recursive: true });
       const configPath = join(configDir, "daemon.json");
+
+      const cronJobsDir = join(configDir, "cron-jobs");
+      mkdirSync(cronJobsDir, { recursive: true });
+      writeCronJobFile(cronJobsDir, {
+        id: "docs-drift-nightly",
+        projectId: "tau",
+        schedule: "0 2 * * *",
+        prompt: "check for documentation drift",
+      });
 
       writeFileSync(
         configPath,
@@ -33,6 +57,7 @@ describe("async daemon config", () => {
           maxSessions: 4,
           workspaceRoot: "workspaces",
           systemMessage: "focus on small diffs",
+          cronJobsDir: "cron-jobs",
           telegram: {
             botToken: "bot-token",
             defaultProjectId: "tau",
@@ -61,6 +86,13 @@ describe("async daemon config", () => {
       expect(config.projects.tau.repo).toBe("markusylisiurunen/tau");
       expect(config.telegram?.defaultProjectId).toBe("tau");
       expect(config.telegram?.systemMessage).toBe("telegram-specific notice");
+      expect(config.cronJobs).toEqual({
+        "docs-drift-nightly": {
+          projectId: "tau",
+          schedule: "0 2 * * *",
+          prompt: "check for documentation drift",
+        },
+      });
     } finally {
       fx.cleanup();
     }
@@ -159,6 +191,130 @@ describe("async daemon config", () => {
       expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
       expect(() => loadAsyncDaemonConfig(configPath)).toThrow(
         "workingDirectory must be a relative path",
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects legacy cronJobs config", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+            },
+          },
+          cronJobs: {
+            nightly: {
+              projectId: "tau",
+              schedule: "0 2 * * *",
+              prompt: "check docs drift",
+            },
+          },
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(
+        "cronJobs was replaced by cronJobsDir",
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects missing cronJobsDir", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+            },
+          },
+          cronJobsDir: "cron-jobs",
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("cronJobsDir does not exist");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects cron jobs with invalid schedule expressions", () => {
+    const fx = setupFixture();
+
+    try {
+      const cronJobsDir = join(fx.root, "cron-jobs");
+      mkdirSync(cronJobsDir, { recursive: true });
+      writeCronJobFile(cronJobsDir, {
+        id: "nightly",
+        projectId: "tau",
+        schedule: "bad expression",
+        prompt: "check docs drift",
+      });
+
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+            },
+          },
+          cronJobsDir: "cron-jobs",
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("frontmatter schedule is invalid");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects cron jobs that reference unknown projects", () => {
+    const fx = setupFixture();
+
+    try {
+      const cronJobsDir = join(fx.root, "cron-jobs");
+      mkdirSync(cronJobsDir, { recursive: true });
+      writeCronJobFile(cronJobsDir, {
+        id: "nightly",
+        projectId: "missing",
+        schedule: "0 2 * * *",
+        prompt: "check docs drift",
+      });
+
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+            },
+          },
+          cronJobsDir: "cron-jobs",
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(
+        "frontmatter projectId refers to an unknown project",
       );
     } finally {
       fx.cleanup();

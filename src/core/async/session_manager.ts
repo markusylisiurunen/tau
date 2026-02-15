@@ -123,7 +123,11 @@ export type AsyncSessionInterruptResult = {
 };
 
 export type AsyncSessionManager = {
-  createSession(input: { projectId: string; prompt?: string }): Promise<AsyncSessionRecord>;
+  createSession(input: {
+    projectId: string;
+    prompt?: string;
+    additionalSystemMessage?: string;
+  }): Promise<AsyncSessionRecord>;
   listSessions(): AsyncSessionRecord[];
   getSession(sessionId: string): AsyncSessionRecord | undefined;
   getLogs(sessionId: string): AsyncSessionLogEntry[] | undefined;
@@ -180,7 +184,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     this.prepareWorkspace = options.prepareWorkspace ?? prepareWorkspace;
   }
 
-  async createSession(input: { projectId: string; prompt?: string }): Promise<AsyncSessionRecord> {
+  async createSession(input: {
+    projectId: string;
+    prompt?: string;
+    additionalSystemMessage?: string;
+  }): Promise<AsyncSessionRecord> {
     const project = this.projects[input.projectId];
     if (!project) {
       throw new AsyncSessionManagerError(
@@ -219,7 +227,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     });
 
     let initializePromise: Promise<void>;
-    initializePromise = this.initializeSession(entry, input.prompt).finally(() => {
+    initializePromise = this.initializeSession(
+      entry,
+      input.prompt,
+      input.additionalSystemMessage,
+    ).finally(() => {
       if (entry.initializePromise === initializePromise) {
         entry.initializePromise = undefined;
       }
@@ -355,7 +367,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     await this.closePromise;
   }
 
-  private async initializeSession(entry: SessionEntry, prompt?: string): Promise<void> {
+  private async initializeSession(
+    entry: SessionEntry,
+    prompt?: string,
+    additionalSystemMessage?: string,
+  ): Promise<void> {
     try {
       this.setState(entry, "preparing-workspace");
       this.log(entry, "info", "preparing workspace", {
@@ -417,7 +433,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       });
 
       if (prompt?.trim()) {
-        await this.submitText(entry, prompt.trim(), "initial-prompt");
+        await this.submitText(entry, prompt.trim(), "initial-prompt", additionalSystemMessage);
       }
 
       if (!entry.cancelRequested && entry.record.state !== "failed") {

@@ -1,6 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
+  type AsyncCronRunRecord,
+  type AsyncCronScheduler,
+  AsyncCronSchedulerError,
+} from "./cron.js";
+import {
   AsyncHttpBodyParseError,
   AsyncHttpBodyTooLargeError,
   type AsyncHttpCreateSessionRequest,
@@ -22,6 +27,7 @@ export type AsyncHttpServerOptions = {
   port: number;
   authToken: string;
   sessionManager: AsyncSessionManager;
+  cronScheduler?: AsyncCronScheduler;
 };
 
 export type AsyncHttpServerHandle = {
@@ -37,6 +43,11 @@ type SessionPathRoute =
   | { route: "messages"; sessionId: string }
   | { route: "interrupt"; sessionId: string }
   | { route: "cancel"; sessionId: string };
+
+type CronPathRoute =
+  | { route: "cron-jobs" }
+  | { route: "cron-runs" }
+  | { route: "cron-run"; jobId: string };
 
 function isAuthorized(request: IncomingMessage, authToken: string): boolean {
   const header = request.headers.authorization;
@@ -106,6 +117,28 @@ function parseSessionPath(pathname: string): SessionPathRoute | "invalid" | unde
       return "invalid";
     }
     return { route: "cancel", sessionId };
+  }
+
+  return undefined;
+}
+
+function parseCronPath(pathname: string): CronPathRoute | "invalid" | undefined {
+  if (pathname === "/v1/cron/jobs") {
+    return { route: "cron-jobs" };
+  }
+
+  if (pathname === "/v1/cron/runs") {
+    return { route: "cron-runs" };
+  }
+
+  const manualRunMatch = /^\/v1\/cron\/jobs\/([^/]+)\/run$/.exec(pathname);
+  if (manualRunMatch) {
+    const jobId = decodePathSegment(manualRunMatch[1] ?? "");
+    if (!jobId) {
+      return "invalid";
+    }
+
+    return { route: "cron-run", jobId };
   }
 
   return undefined;
@@ -195,6 +228,27 @@ function serializeSession(session: AsyncSessionRecord): AsyncSessionRecord {
   return { ...session };
 }
 
+function serializeCronRun(run: AsyncCronRunRecord): AsyncCronRunRecord {
+  return { ...run };
+}
+
+function parsePositiveLimit(raw: string | null): number | undefined {
+  if (raw === null) {
+    return undefined;
+  }
+
+  if (!/^\d+$/.test(raw)) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
 export async function startAsyncHttpServer(
   options: AsyncHttpServerOptions,
 ): Promise<AsyncHttpServerHandle> {
@@ -212,6 +266,62 @@ export async function startAsyncHttpServer(
         if (url.pathname.startsWith("/v1/") && !isAuthorized(request, options.authToken)) {
           response.setHeader("www-authenticate", 'Bearer realm="tau-async"');
           sendError(response, 401, "unauthorized");
+          return;
+        }
+
+        const cronRoute = parseCronPath(url.pathname);
+        if (cronRoute === "invalid") {
+          sendError(response, 400, "invalid cron job id");
+          return;
+        }
+
+        if (cronRoute) {
+          const cronScheduler = options.cronScheduler;
+          if (!cronScheduler) {
+            sendError(response, 404, "cron scheduler not enabled");
+            return;
+          }
+
+          if (cronRoute.route === "cron-jobs" && method === "GET") {
+            sendOk(response, 200, { jobs: cronScheduler.listJobs() });
+            return;
+          }
+
+          if (cronRoute.route === "cron-runs" && method === "GET") {
+            const limitRaw = url.searchParams.get("limit");
+            const limit = parsePositiveLimit(limitRaw);
+            if (limitRaw !== null && limit === undefined) {
+              sendError(response, 400, "invalid limit query parameter");
+              return;
+            }
+
+            const jobId = url.searchParams.get("jobId")?.trim() || undefined;
+            const runs = cronScheduler
+              .listRuns({
+                ...(jobId ? { jobId } : {}),
+                ...(limit ? { limit } : {}),
+              })
+              .map(serializeCronRun);
+            sendOk(response, 200, { runs });
+            return;
+          }
+
+          if (cronRoute.route === "cron-run" && method === "POST") {
+            try {
+              const run = await cronScheduler.triggerJobNow(cronRoute.jobId);
+              sendOk(response, 200, { run: serializeCronRun(run) });
+            } catch (error) {
+              if (error instanceof AsyncCronSchedulerError && error.code === "not_found") {
+                sendError(response, 404, "cron job not found");
+                return;
+              }
+
+              sendError(response, 500, "failed to trigger cron job");
+            }
+            return;
+          }
+
+          sendError(response, 405, "method not allowed");
           return;
         }
 

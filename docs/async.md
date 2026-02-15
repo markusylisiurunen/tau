@@ -22,6 +22,9 @@ tau async logs <sessionId>
 tau async send <sessionId> <text...>
 tau async interrupt <sessionId>
 tau async cancel <sessionId>
+tau async cron list
+tau async cron runs [jobId]
+tau async cron run <jobId>
 ```
 
 Client target options:
@@ -71,6 +74,9 @@ Daemon-side settings are loaded from a separate JSON file.
   "maxSessions": 4,
   "workspaceRoot": "/var/lib/tau/async-workspaces",
   "systemMessage": "follow project conventions and keep diffs minimal",
+  "cron": {
+    "systemMessage": "you are running from a scheduled cron job, prioritize deterministic output"
+  },
   "telegram": {
     "botToken": "123456:telegram-token",
     "allowedUserIds": [123456789],
@@ -127,6 +133,7 @@ Notes:
 - optional frontmatter `enabled: false` disables a cron job file without deleting it.
 - `schedule` uses 5-field cron syntax (`minute hour day-of-month month day-of-week`) in daemon local time.
 - cron jobs create a new async session and submit the markdown body as the initial message when the schedule matches.
+- `cron.systemMessage` is appended after `systemMessage` for cron-originated runs only, within the same `<system>...</system>` block.
 - `TAU_ASYNC_AUTH_TOKEN` overrides daemon-file `authToken`.
 - `systemMessage` is prepended to every submitted prompt inside a `<system>...</system>` block.
 - `telegram.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same `<system>...</system>` block.
@@ -143,6 +150,9 @@ Base URL: `http://<host>:<port>`
 - `POST /v1/sessions/:sessionId/messages`
 - `POST /v1/sessions/:sessionId/interrupt`
 - `POST /v1/sessions/:sessionId/cancel`
+- `GET /v1/cron/jobs`
+- `GET /v1/cron/runs?jobId=<id>&limit=<n>`
+- `POST /v1/cron/jobs/:jobId/run`
 
 Requests under `/v1/*` require:
 

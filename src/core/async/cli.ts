@@ -21,7 +21,10 @@ type AsyncCommand =
   | "logs"
   | "send"
   | "interrupt"
-  | "cancel";
+  | "cancel"
+  | "cron-list"
+  | "cron-runs"
+  | "cron-run";
 
 type ParsedAsyncArgs = {
   help: boolean;
@@ -29,6 +32,7 @@ type ParsedAsyncArgs = {
   prompt?: string;
   sessionId?: string;
   text?: string;
+  cronJobId?: string;
   projectId?: string;
   targetId?: string;
   url?: string;
@@ -315,6 +319,73 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
     return toCreateArgs();
   }
 
+  if (first === "cron") {
+    const subcommand = positional[1]?.trim();
+
+    if (!subcommand) {
+      throw new AsyncCliError(
+        "missing cron subcommand. use: cron list | cron runs [jobId] | cron run <jobId>",
+      );
+    }
+
+    if (subcommand === "list") {
+      if (positional.length !== 2) {
+        throw new AsyncCliError("usage: tau async cron list");
+      }
+
+      return {
+        help,
+        command: "cron-list",
+        projectId,
+        targetId,
+        url,
+        token,
+        configFilePath,
+      };
+    }
+
+    if (subcommand === "runs") {
+      if (positional.length > 3) {
+        throw new AsyncCliError("usage: tau async cron runs [jobId]");
+      }
+
+      return {
+        help,
+        command: "cron-runs",
+        ...(positional.length === 3 ? { cronJobId: positional[2]?.trim() } : {}),
+        projectId,
+        targetId,
+        url,
+        token,
+        configFilePath,
+      };
+    }
+
+    if (subcommand === "run") {
+      const cronJobId = positional[2]?.trim();
+      if (!cronJobId) {
+        throw new AsyncCliError("missing cron job id for run");
+      }
+
+      if (positional.length !== 3) {
+        throw new AsyncCliError("usage: tau async cron run <jobId>");
+      }
+
+      return {
+        help,
+        command: "cron-run",
+        cronJobId,
+        projectId,
+        targetId,
+        url,
+        token,
+        configFilePath,
+      };
+    }
+
+    throw new AsyncCliError(`unknown cron subcommand '${subcommand}'`);
+  }
+
   return toCreateArgs();
 }
 
@@ -461,6 +532,9 @@ export function printAsyncHelp(log: (line: string) => void = console.log): void 
       "  tau async send <id> <text...>",
       "  tau async interrupt <id>",
       "  tau async cancel <id>",
+      "  tau async cron list",
+      "  tau async cron runs [jobId]",
+      "  tau async cron run <jobId>",
       "",
       "options:",
       "  --project <id>        project id for session creation (overrides config).",
@@ -507,19 +581,34 @@ async function runDaemon(args: {
     systemMessage: daemonConfig.systemMessage,
   });
 
-  const handle = await startAsyncHttpServer({
-    host: daemonConfig.host,
-    port: daemonConfig.port,
-    authToken,
-    sessionManager,
-  });
-
   const telegramConfig = daemonConfig.telegram;
   const cronJobs = daemonConfig.cronJobs;
+  let handle: Awaited<ReturnType<typeof startAsyncHttpServer>> | undefined;
   let telegramHandle: { close(): Promise<void> } | undefined;
-  let cronHandle: { close(): Promise<void> } | undefined;
+  let cronHandle: ReturnType<typeof startAsyncCronScheduler> | undefined;
 
   try {
+    if (cronJobs !== undefined) {
+      cronHandle = startAsyncCronScheduler({
+        jobs: cronJobs,
+        sessionManager,
+        additionalSystemMessage: daemonConfig.cron?.systemMessage,
+        onLog: (entry) => {
+          args.stdout(`[cron:${entry.level}] ${entry.message}`);
+        },
+      });
+
+      args.stdout("tau async cron scheduler enabled");
+    }
+
+    handle = await startAsyncHttpServer({
+      host: daemonConfig.host,
+      port: daemonConfig.port,
+      authToken,
+      sessionManager,
+      ...(cronHandle ? { cronScheduler: cronHandle } : {}),
+    });
+
     if (telegramConfig?.botToken) {
       telegramHandle = await startAsyncTelegramAdapter({
         botToken: telegramConfig.botToken,
@@ -539,21 +628,9 @@ async function runDaemon(args: {
 
       args.stdout("tau async telegram adapter enabled");
     }
-
-    if (cronJobs && Object.keys(cronJobs).length > 0) {
-      cronHandle = startAsyncCronScheduler({
-        jobs: cronJobs,
-        sessionManager,
-        onLog: (entry) => {
-          args.stdout(`[cron:${entry.level}] ${entry.message}`);
-        },
-      });
-
-      args.stdout("tau async cron scheduler enabled");
-    }
   } catch (error) {
     await Promise.allSettled([
-      handle.close(),
+      ...(handle ? [handle.close()] : []),
       ...(telegramHandle ? [telegramHandle.close()] : []),
       ...(cronHandle ? [cronHandle.close()] : []),
       sessionManager.close(),
@@ -561,6 +638,10 @@ async function runDaemon(args: {
     throw new AsyncCliError(
       `failed to start async adapters: ${error instanceof Error ? error.message : String(error)}`,
     );
+  }
+
+  if (!handle) {
+    throw new AsyncCliError("failed to start async http server");
   }
 
   args.stdout(`tau async daemon listening on ${handle.baseUrl}`);
@@ -705,6 +786,41 @@ export async function runAsyncCommand(
       target,
       method: "POST",
       path: `/v1/sessions/${encodeURIComponent(parsed.sessionId ?? "")}/cancel`,
+      body: {},
+      fetchImpl,
+    });
+    stdout(toJsonLine(payload));
+    return;
+  }
+
+  if (parsed.command === "cron-list") {
+    const payload = await requestJson({
+      target,
+      method: "GET",
+      path: "/v1/cron/jobs",
+      fetchImpl,
+    });
+    stdout(toJsonLine(payload));
+    return;
+  }
+
+  if (parsed.command === "cron-runs") {
+    const query = parsed.cronJobId ? `?jobId=${encodeURIComponent(parsed.cronJobId)}` : "";
+    const payload = await requestJson({
+      target,
+      method: "GET",
+      path: `/v1/cron/runs${query}`,
+      fetchImpl,
+    });
+    stdout(toJsonLine(payload));
+    return;
+  }
+
+  if (parsed.command === "cron-run") {
+    const payload = await requestJson({
+      target,
+      method: "POST",
+      path: `/v1/cron/jobs/${encodeURIComponent(parsed.cronJobId ?? "")}/run`,
       body: {},
       fetchImpl,
     });

@@ -112,6 +112,9 @@ tau async logs <id>
 tau async send <id> <text...>
 tau async interrupt <id>
 tau async cancel <id>
+tau async cron list
+tau async cron runs [jobId]
+tau async cron run <jobId>
 ```
 
 project id for `tau async <prompt...>` resolves from `--project <id>` first, then
@@ -122,7 +125,7 @@ use `tau async -- <prompt...>` when prompt text starts with a reserved command w
 
 for daemon/api/telegram details, see [docs/async.md](docs/async.md).
 
-daemon config also supports `systemMessage`, `cronJobsDir` for scheduled runs, plus per-project `workingDirectory` (for monorepos) and `description` (used by Telegram `/projects`).
+daemon config also supports `systemMessage`, `cronJobsDir`, and `cron.systemMessage` for scheduled runs, plus per-project `workingDirectory` (for monorepos) and `description` (used by Telegram `/projects`).
 
 ## sdk usage (node)
 
@@ -505,7 +508,7 @@ daemon-side async settings are in a separate config file passed to:
 tau async daemon --config-file <path>
 ```
 
-see [docs/async.md](docs/async.md) for daemon config schema (`host`, `port`, `authToken`, `telegram`, `projects`, `cronJobsDir`, `workspaceRoot`, `projects.<id>.workingDirectory`, `projects.<id>.description`) and GitHub repo requirements (`owner/repo`, cloned via `gh repo clone`).
+see [docs/async.md](docs/async.md) for daemon config schema (`host`, `port`, `authToken`, `telegram`, `cron`, `projects`, `cronJobsDir`, `workspaceRoot`, `projects.<id>.workingDirectory`, `projects.<id>.description`) and GitHub repo requirements (`owner/repo`, cloned via `gh repo clone`).
 
 ### project bash commands
 

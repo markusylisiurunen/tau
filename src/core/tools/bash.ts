@@ -481,7 +481,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               truncationInfo,
               exitCode,
               durationMs,
-              workingDirectory: effectiveWorkingDirectory,
+              workingDirectory: workingDirectory ? effectiveWorkingDirectory : undefined,
               fullText: toolText,
             });
 

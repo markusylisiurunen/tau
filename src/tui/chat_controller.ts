@@ -3312,7 +3312,6 @@ export class ChatController {
         truncationInfo,
         exitCode,
         durationMs,
-        workingDirectory: effectiveWorkingDirectory,
         previewLines: { head: 12, tail: 12 },
         fullText: userMessageText,
       });

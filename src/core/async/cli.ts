@@ -1,5 +1,6 @@
 import type { Config } from "../config/schema.js";
 import { getMistralApiKey, loadConfig } from "../config/schema.js";
+import { startAsyncCronScheduler } from "./cron.js";
 import { startAsyncHttpServer } from "./http_server.js";
 import { AsyncDaemonConfigError, loadAsyncDaemonConfig } from "./server_config.js";
 import { createAsyncSessionManager } from "./session_manager.js";
@@ -514,7 +515,9 @@ async function runDaemon(args: {
   });
 
   const telegramConfig = daemonConfig.telegram;
+  const cronJobs = daemonConfig.cronJobs;
   let telegramHandle: { close(): Promise<void> } | undefined;
+  let cronHandle: { close(): Promise<void> } | undefined;
 
   try {
     if (telegramConfig?.botToken) {
@@ -536,10 +539,27 @@ async function runDaemon(args: {
 
       args.stdout("tau async telegram adapter enabled");
     }
+
+    if (cronJobs && Object.keys(cronJobs).length > 0) {
+      cronHandle = startAsyncCronScheduler({
+        jobs: cronJobs,
+        sessionManager,
+        onLog: (entry) => {
+          args.stdout(`[cron:${entry.level}] ${entry.message}`);
+        },
+      });
+
+      args.stdout("tau async cron scheduler enabled");
+    }
   } catch (error) {
-    await Promise.allSettled([handle.close(), sessionManager.close()]);
+    await Promise.allSettled([
+      handle.close(),
+      ...(telegramHandle ? [telegramHandle.close()] : []),
+      ...(cronHandle ? [cronHandle.close()] : []),
+      sessionManager.close(),
+    ]);
     throw new AsyncCliError(
-      `failed to start telegram adapter: ${error instanceof Error ? error.message : String(error)}`,
+      `failed to start async adapters: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -560,6 +580,7 @@ async function runDaemon(args: {
       void Promise.allSettled([
         handle.close(),
         ...(telegramHandle ? [telegramHandle.close()] : []),
+        ...(cronHandle ? [cronHandle.close()] : []),
         sessionManager.close(),
       ]).then(() => {
         resolvePromise();

@@ -1,6 +1,9 @@
-import { readFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { parse as parseYaml } from "yaml";
 import type { AsyncProjectConfig, AsyncServerTelegramConfig } from "../config/schema.js";
+import type { AsyncCronJobConfig } from "./cron.js";
+import { parseCronSchedule } from "./cron.js";
 
 type RiskLevel = "read-only" | "read-write";
 
@@ -13,6 +16,7 @@ export type AsyncDaemonConfig = {
   systemMessage?: string;
   telegram?: AsyncServerTelegramConfig;
   projects: Record<string, AsyncProjectConfig>;
+  cronJobs?: Record<string, AsyncCronJobConfig>;
 };
 
 export class AsyncDaemonConfigError extends Error {
@@ -22,6 +26,10 @@ export class AsyncDaemonConfigError extends Error {
   }
 }
 
+type FrontMatter = {
+  [key: string]: unknown;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -30,6 +38,46 @@ function isPositiveInteger(value: unknown): value is number {
   return (
     typeof value === "number" && Number.isInteger(value) && Number.isFinite(value) && value > 0
   );
+}
+
+function parseMarkdownWithFrontMatter(content: string): { frontMatter: FrontMatter; body: string } {
+  const lines = content.split("\n");
+
+  if (lines[0]?.trim() !== "---") {
+    return { frontMatter: {}, body: content.trim() };
+  }
+
+  let endIndex = -1;
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i]?.trim() === "---") {
+      endIndex = i;
+      break;
+    }
+  }
+
+  if (endIndex === -1) {
+    return { frontMatter: {}, body: content.trim() };
+  }
+
+  const frontMatterLines = lines.slice(1, endIndex);
+  const bodyLines = lines.slice(endIndex + 1);
+
+  return {
+    frontMatter: parseYamlFrontMatter(frontMatterLines.join("\n")),
+    body: bodyLines.join("\n").trim(),
+  };
+}
+
+function parseYamlFrontMatter(yamlText: string): FrontMatter {
+  try {
+    const parsed = parseYaml(yamlText) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed as FrontMatter;
+  } catch {
+    return {};
+  }
 }
 
 function parseAsyncIdList(
@@ -304,6 +352,166 @@ function parseProjects(
   return { projects, errors };
 }
 
+function parseCronJobMarkdownFile(
+  filePath: string,
+  projects: Record<string, AsyncProjectConfig>,
+  sourceLabel: string,
+): { id?: string; job?: AsyncCronJobConfig; errors: string[] } {
+  let content: string;
+  try {
+    content = readFileSync(filePath, "utf8");
+  } catch (error) {
+    return {
+      errors: [
+        `${sourceLabel}: failed to read cron job file '${filePath}': ${error instanceof Error ? error.message : String(error)}`,
+      ],
+    };
+  }
+
+  const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
+  const fileId = basename(filePath, ".md").trim();
+  const errors: string[] = [];
+
+  const enabledRaw = frontMatter.enabled;
+  if (enabledRaw !== undefined && typeof enabledRaw !== "boolean") {
+    errors.push(`${sourceLabel}: ${filePath}: frontmatter enabled must be a boolean when set.`);
+    return { errors };
+  }
+
+  if (enabledRaw === false) {
+    return { errors: [] };
+  }
+
+  const idRaw = frontMatter.id;
+  const id = typeof idRaw === "string" ? idRaw.trim() : "";
+  if (!id) {
+    errors.push(`${sourceLabel}: ${filePath}: frontmatter id must be a non-empty string.`);
+    return { errors };
+  }
+
+  if (id !== fileId) {
+    errors.push(
+      `${sourceLabel}: ${filePath}: frontmatter id "${id}" must match file name "${fileId}".`,
+    );
+  }
+
+  const projectIdRaw = frontMatter.projectId;
+  const projectId = typeof projectIdRaw === "string" ? projectIdRaw.trim() : "";
+  if (!projectId) {
+    errors.push(`${sourceLabel}: ${filePath}: frontmatter projectId must be a non-empty string.`);
+  } else if (!projects[projectId]) {
+    errors.push(`${sourceLabel}: ${filePath}: frontmatter projectId refers to an unknown project.`);
+  }
+
+  const scheduleRaw = frontMatter.schedule;
+  const schedule = typeof scheduleRaw === "string" ? scheduleRaw.trim() : "";
+  if (!schedule) {
+    errors.push(`${sourceLabel}: ${filePath}: frontmatter schedule must be a non-empty string.`);
+  } else {
+    try {
+      parseCronSchedule(schedule);
+    } catch (error) {
+      errors.push(
+        `${sourceLabel}: ${filePath}: frontmatter schedule is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  const prompt = body.trim();
+  if (!prompt) {
+    errors.push(`${sourceLabel}: ${filePath}: cron job prompt body must be non-empty.`);
+  }
+
+  if (errors.length > 0) {
+    return { errors };
+  }
+
+  return {
+    id,
+    job: {
+      projectId,
+      schedule,
+      prompt,
+    },
+    errors: [],
+  };
+}
+
+function parseCronJobsDir(
+  raw: unknown,
+  sourceLabel: string,
+  configDir: string,
+  projects: Record<string, AsyncProjectConfig>,
+): { cronJobs: Record<string, AsyncCronJobConfig>; errors: string[] } {
+  if (raw === undefined) {
+    return { cronJobs: {}, errors: [] };
+  }
+
+  if (typeof raw !== "string" || !raw.trim()) {
+    return {
+      cronJobs: {},
+      errors: [`${sourceLabel}: cronJobsDir must be a non-empty string when set.`],
+    };
+  }
+
+  const cronJobsDir = resolve(configDir, raw.trim());
+
+  let directoryStat: ReturnType<typeof statSync>;
+  try {
+    directoryStat = statSync(cronJobsDir);
+  } catch (error) {
+    return {
+      cronJobs: {},
+      errors: [
+        `${sourceLabel}: cronJobsDir does not exist: ${cronJobsDir} (${error instanceof Error ? error.message : String(error)})`,
+      ],
+    };
+  }
+
+  if (!directoryStat.isDirectory()) {
+    return {
+      cronJobs: {},
+      errors: [`${sourceLabel}: cronJobsDir is not a directory: ${cronJobsDir}`],
+    };
+  }
+
+  let fileNames: string[];
+  try {
+    fileNames = readdirSync(cronJobsDir)
+      .filter((name) => name.toLowerCase().endsWith(".md"))
+      .sort();
+  } catch (error) {
+    return {
+      cronJobs: {},
+      errors: [
+        `${sourceLabel}: failed to read cronJobsDir '${cronJobsDir}': ${error instanceof Error ? error.message : String(error)}`,
+      ],
+    };
+  }
+
+  const errors: string[] = [];
+  const cronJobs: Record<string, AsyncCronJobConfig> = {};
+
+  for (const fileName of fileNames) {
+    const filePath = join(cronJobsDir, fileName);
+    const parsed = parseCronJobMarkdownFile(filePath, projects, sourceLabel);
+    errors.push(...parsed.errors);
+
+    if (!parsed.id || !parsed.job) {
+      continue;
+    }
+
+    if (cronJobs[parsed.id]) {
+      errors.push(`${sourceLabel}: duplicate cron job id '${parsed.id}'.`);
+      continue;
+    }
+
+    cronJobs[parsed.id] = parsed.job;
+  }
+
+  return { cronJobs, errors };
+}
+
 export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig {
   const resolvedPath = resolve(configFilePath);
   const sourceLabel = `async daemon config (${resolvedPath})`;
@@ -379,9 +587,21 @@ export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig
     }
   }
 
+  if (data.cronJobs !== undefined) {
+    errors.push(
+      `${sourceLabel}: cronJobs was replaced by cronJobsDir markdown files and is no longer supported.`,
+    );
+  }
+
   const projectsResult = parseProjects(data.projects, sourceLabel, configDir);
   const telegramResult = parseTelegramConfig(data.telegram, sourceLabel);
-  errors.push(...projectsResult.errors, ...telegramResult.errors);
+  const cronJobsResult = parseCronJobsDir(
+    data.cronJobsDir,
+    sourceLabel,
+    configDir,
+    projectsResult.projects,
+  );
+  errors.push(...projectsResult.errors, ...telegramResult.errors, ...cronJobsResult.errors);
 
   if (errors.length > 0) {
     throw new AsyncDaemonConfigError(errors.join("\n"));
@@ -395,6 +615,9 @@ export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig
     workspaceRoot,
     ...(systemMessage ? { systemMessage } : {}),
     ...(telegramResult.config ? { telegram: telegramResult.config } : {}),
+    ...(Object.keys(cronJobsResult.cronJobs).length > 0
+      ? { cronJobs: cronJobsResult.cronJobs }
+      : {}),
     projects: projectsResult.projects,
   };
 }

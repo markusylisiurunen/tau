@@ -93,8 +93,23 @@ Daemon-side settings are loaded from a separate JSON file.
       "sandbox": false,
       "noAgentContextFiles": false
     }
-  }
+  },
+  "cronJobsDir": "cron-jobs"
 }
+```
+
+Cron jobs are loaded from markdown files under `cronJobsDir`.
+
+Example `cron-jobs/docs-drift-nightly.md`:
+
+```md
+---
+id: docs-drift-nightly
+projectId: tau
+schedule: "0 2 * * *"
+---
+
+check for documentation drift and fix/update mismatches
 ```
 
 Notes:
@@ -106,6 +121,12 @@ Notes:
 - `bootstrapCommands` run from the same session working directory.
 - `projects.<id>.description` is optional metadata used by Telegram `/projects` output.
 - Clone uses `gh repo clone <owner/repo> <path>` (daemon host must have authenticated `gh`).
+- `cronJobsDir` is optional and points to a directory of `*.md` cron job files.
+- each cron job markdown file requires frontmatter fields `id`, `projectId`, and `schedule`; the markdown body is used as the prompt.
+- frontmatter `id` must match the markdown file name.
+- optional frontmatter `enabled: false` disables a cron job file without deleting it.
+- `schedule` uses 5-field cron syntax (`minute hour day-of-month month day-of-week`) in daemon local time.
+- cron jobs create a new async session and submit the markdown body as the initial message when the schedule matches.
 - `TAU_ASYNC_AUTH_TOKEN` overrides daemon-file `authToken`.
 - `systemMessage` is prepended to every submitted prompt inside a `<system>...</system>` block.
 - `telegram.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same `<system>...</system>` block.

@@ -333,8 +333,8 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   }
 
   async closeInactiveSessions(): Promise<AsyncSessionRecord[]> {
-    const entries = Array.from(this.sessions.values()).filter((entry) =>
-      this.isInactiveState(entry.record.state),
+    const entries = Array.from(this.sessions.values()).filter(
+      (entry) => !this.isTurnRunning(entry),
     );
 
     const closed: AsyncSessionRecord[] = [];
@@ -615,8 +615,8 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     );
   }
 
-  private isInactiveState(state: AsyncSessionState): boolean {
-    return !this.isActiveState(state);
+  private isTurnRunning(entry: SessionEntry): boolean {
+    return entry.record.state === "running" || entry.activeSubmit !== undefined;
   }
 
   private deleteEntry(sessionId: string): void {

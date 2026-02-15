@@ -741,17 +741,16 @@ class AsyncTelegramAdapterImpl {
         }
 
         if (closed.length === 0) {
-          await this.reply(chatId, "no inactive sessions to close");
+          await this.reply(chatId, "no sessions to close");
           return;
         }
 
         const label = closed.length === 1 ? "session" : "sessions";
         await this.reply(
           chatId,
-          [
-            `closed ${closed.length} inactive ${label}`,
-            closed.map((session) => session.id).join(", "),
-          ].join("\n"),
+          [`closed ${closed.length} ${label}`, closed.map((session) => session.id).join(", ")].join(
+            "\n",
+          ),
         );
       } catch (error) {
         await this.reply(chatId, this.formatManagerError(error));

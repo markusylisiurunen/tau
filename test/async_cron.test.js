@@ -13,6 +13,14 @@ describe("async cron", () => {
     expect(matchesCronSchedule(schedule, new Date(2026, 0, 15, 2, 1, 0))).toBe(false);
   });
 
+  it("treats star-based day fields as wildcard for day matching semantics", () => {
+    const schedule = parseCronSchedule("0 0 */2 * 0");
+
+    expect(matchesCronSchedule(schedule, new Date(2026, 0, 4, 0, 0, 0))).toBe(false);
+    expect(matchesCronSchedule(schedule, new Date(2026, 0, 5, 0, 0, 0))).toBe(false);
+    expect(matchesCronSchedule(schedule, new Date(2026, 0, 11, 0, 0, 0))).toBe(true);
+  });
+
   it("starts scheduled sessions at matching minute boundaries", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 0, 15, 1, 0, 30));

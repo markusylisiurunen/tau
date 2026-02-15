@@ -152,7 +152,7 @@ Supported DM commands:
 - `/cancel` (cancels the selected session)
 - `/close` (closes the selected session)
 - `/close <sessionId>` (closes a specific session)
-- `/close all` (closes all sessions that are not actively running a turn)
+- `/close all` (closes sessions in `waiting-input`, `failed`, or `canceled`)
 - `/verbose` (for the selected session, streams run lifecycle + progress updates)
 - `/quiet` (for the selected session, default mode, send only the run's final assistant message)
 - plain text sends to the selected session

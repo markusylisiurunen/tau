@@ -333,8 +333,8 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   }
 
   async closeInactiveSessions(): Promise<AsyncSessionRecord[]> {
-    const entries = Array.from(this.sessions.values()).filter(
-      (entry) => !this.isTurnRunning(entry),
+    const entries = Array.from(this.sessions.values()).filter((entry) =>
+      this.isCloseableWithCloseAll(entry.record.state),
     );
 
     const closed: AsyncSessionRecord[] = [];
@@ -615,8 +615,8 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     );
   }
 
-  private isTurnRunning(entry: SessionEntry): boolean {
-    return entry.record.state === "running" || entry.activeSubmit !== undefined;
+  private isCloseableWithCloseAll(state: AsyncSessionState): boolean {
+    return state === "waiting-input" || state === "failed" || state === "canceled";
   }
 
   private deleteEntry(sessionId: string): void {

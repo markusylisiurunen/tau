@@ -128,7 +128,11 @@ function createSessionManagerHarness(initialSessions = []) {
     closeInactiveSessions: vi.fn(async () => {
       const closed = [];
       for (const [sessionId, session] of sessions) {
-        if (session.state !== "running") {
+        if (
+          session.state === "waiting-input" ||
+          session.state === "failed" ||
+          session.state === "canceled"
+        ) {
           closed.push({ ...session });
           sessions.delete(sessionId);
         }
@@ -848,7 +852,7 @@ describe("async telegram adapter", () => {
     }
   });
 
-  it("supports /close all for sessions without active runs", async () => {
+  it("supports /close all for waiting-input, failed, and canceled sessions", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -891,6 +895,20 @@ describe("async telegram adapter", () => {
         createdAt: "2024-01-01T00:00:00.000Z",
         updatedAt: "2024-01-01T00:00:00.000Z",
       },
+      {
+        id: "s5",
+        projectId: "demo",
+        state: "queued",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+      {
+        id: "s6",
+        projectId: "demo",
+        state: "preparing-workspace",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
     ]);
 
     const adapter = await startAsyncTelegramAdapter({
@@ -912,7 +930,9 @@ describe("async telegram adapter", () => {
             entry.text.includes("s1") &&
             entry.text.includes("s3") &&
             entry.text.includes("s4") &&
-            !entry.text.includes("s2"),
+            !entry.text.includes("s2") &&
+            !entry.text.includes("s5") &&
+            !entry.text.includes("s6"),
         ),
       ).toBe(true);
     } finally {

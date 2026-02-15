@@ -501,14 +501,43 @@ describe("async session manager", () => {
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
   });
 
-  it("closes all sessions that are not running a turn", async () => {
-    const firstClientHarness = createClientHarness();
-    const secondClientHarness = createClientHarness();
-    const thirdClientHarness = createClientHarness();
+  it("does not close queued or preparing sessions in bulk", async () => {
+    const workspaceDeferred = deferred();
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => {
+        await workspaceDeferred.promise;
+        return {
+          workspacePath: "/tmp/ws/demo",
+          sessionCwd: "/tmp/ws/demo",
+        };
+      }),
+      createClient: vi.fn(async () => createClientHarness().client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    expect(["queued", "preparing-workspace"]).toContain(manager.getSession(created.id)?.state);
+
+    const closed = await manager.closeInactiveSessions();
+    expect(closed).toEqual([]);
+    expect(manager.getSession(created.id)).toEqual(expect.objectContaining({ id: created.id }));
+  });
+
+  it("closes waiting-input, failed, and canceled sessions in bulk", async () => {
+    const waitingInputClientHarness = createClientHarness();
+    const canceledClientHarness = createClientHarness();
+    const failedClientHarness = createClientHarness();
+    const runningClientHarness = createClientHarness();
     const clients = [
-      firstClientHarness.client,
-      secondClientHarness.client,
-      thirdClientHarness.client,
+      waitingInputClientHarness.client,
+      canceledClientHarness.client,
+      failedClientHarness.client,
+      runningClientHarness.client,
     ];
 
     const manager = createAsyncSessionManager({
@@ -532,31 +561,40 @@ describe("async session manager", () => {
 
     const waitingInput = await manager.createSession({ projectId: "demo" });
     const canceled = await manager.createSession({ projectId: "demo" });
+    const failed = await manager.createSession({ projectId: "demo" });
     const running = await manager.createSession({ projectId: "demo" });
 
     await waitFor(() => manager.getSession(waitingInput.id)?.state === "waiting-input");
     await waitFor(() => manager.getSession(canceled.id)?.state === "waiting-input");
+    await waitFor(() => manager.getSession(failed.id)?.state === "waiting-input");
     await waitFor(() => manager.getSession(running.id)?.state === "waiting-input");
 
     await manager.cancelSession(canceled.id);
 
-    const runningSubmit = manager.sendMessage(running.id, "run");
+    await manager.sendMessage(failed.id, "fail");
+    await waitFor(() => manager.getSession(failed.id)?.state === "running");
+    failedClientHarness.submitDeferred.reject(new Error("submit boom"));
+    await waitFor(() => manager.getSession(failed.id)?.state === "failed");
+
+    await manager.sendMessage(running.id, "run");
     await waitFor(() => manager.getSession(running.id)?.state === "running");
 
     const closed = await manager.closeInactiveSessions();
     expect(closed).toEqual([
       expect.objectContaining({ id: waitingInput.id }),
       expect.objectContaining({ id: canceled.id }),
+      expect.objectContaining({ id: failed.id }),
     ]);
     expect(manager.getSession(waitingInput.id)).toBeUndefined();
     expect(manager.getSession(canceled.id)).toBeUndefined();
+    expect(manager.getSession(failed.id)).toBeUndefined();
     expect(manager.getSession(running.id)).toEqual(expect.objectContaining({ id: running.id }));
 
-    thirdClientHarness.submitDeferred.resolve({
+    runningClientHarness.submitDeferred.resolve({
       userHistoryEntryId: "history-running",
       turn: { aborted: false },
     });
-    await runningSubmit;
+    await waitFor(() => manager.getSession(running.id)?.state === "waiting-input");
     await manager.closeSession(running.id);
   });
 

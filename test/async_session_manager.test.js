@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AsyncSessionManagerError,
   createAsyncSessionManager,
+  createScopedAsyncSessionManager,
 } from "../dist/core/async/session_manager.js";
 
 function deferred() {
@@ -924,5 +925,128 @@ describe("async session manager", () => {
     await expect(manager.sendMessage("missing", "hi")).rejects.toBeInstanceOf(
       AsyncSessionManagerError,
     );
+  });
+
+  it("filters session visibility and mutations by allowed projects", async () => {
+    const sessions = [
+      {
+        id: "s-demo",
+        projectId: "demo",
+        state: "waiting-input",
+      },
+      {
+        id: "s-docs",
+        projectId: "docs",
+        state: "waiting-input",
+      },
+    ];
+
+    const manager = {
+      createSession: vi.fn(async ({ projectId }) => ({
+        id: `created-${projectId}`,
+        projectId,
+        state: "queued",
+      })),
+      listSessions: vi.fn(() => sessions.map((session) => ({ ...session }))),
+      getSession: vi.fn((sessionId) => {
+        const session = sessions.find((entry) => entry.id === sessionId);
+        return session ? { ...session } : undefined;
+      }),
+      getLogs: vi.fn(() => []),
+      sendMessage: vi.fn(async (sessionId) => ({
+        id: sessionId,
+        projectId: "demo",
+        state: "running",
+      })),
+      interruptSession: vi.fn(async (sessionId) => ({
+        session: { id: sessionId, projectId: "demo", state: "waiting-input" },
+        interrupted: true,
+        isTurnRunning: false,
+      })),
+      cancelSession: vi.fn(async (sessionId) => ({
+        id: sessionId,
+        projectId: "demo",
+        state: "canceled",
+      })),
+      closeSession: vi.fn(async (sessionId) => ({
+        id: sessionId,
+        projectId: "demo",
+        state: "canceled",
+      })),
+      closeInactiveSessions: vi.fn(async () => []),
+      close: vi.fn(async () => {}),
+      onEvent: vi.fn(() => () => {}),
+    };
+
+    const scopedManager = createScopedAsyncSessionManager({
+      sessionManager: manager,
+      allowedProjectIds: ["demo"],
+    });
+
+    expect(scopedManager.listSessions()).toEqual([
+      { id: "s-demo", projectId: "demo", state: "waiting-input" },
+    ]);
+    expect(scopedManager.getSession("s-docs")).toBeUndefined();
+
+    await expect(scopedManager.sendMessage("s-docs", "hello")).rejects.toEqual(
+      expect.objectContaining({
+        code: "not_found",
+      }),
+    );
+
+    await scopedManager.sendMessage("s-demo", "hello");
+    expect(manager.sendMessage).toHaveBeenCalledWith("s-demo", "hello", undefined);
+  });
+
+  it("closes only scoped inactive sessions for /close all behavior", async () => {
+    const sessions = [
+      {
+        id: "s-demo-ready",
+        projectId: "demo",
+        state: "waiting-input",
+      },
+      {
+        id: "s-demo-running",
+        projectId: "demo",
+        state: "running",
+      },
+      {
+        id: "s-docs-ready",
+        projectId: "docs",
+        state: "waiting-input",
+      },
+    ];
+
+    const manager = {
+      createSession: vi.fn(),
+      listSessions: vi.fn(() => sessions.map((session) => ({ ...session }))),
+      getSession: vi.fn((sessionId) => {
+        const session = sessions.find((entry) => entry.id === sessionId);
+        return session ? { ...session } : undefined;
+      }),
+      getLogs: vi.fn(),
+      sendMessage: vi.fn(),
+      interruptSession: vi.fn(),
+      cancelSession: vi.fn(),
+      closeSession: vi.fn(async (sessionId) => ({
+        id: sessionId,
+        projectId: "demo",
+        state: "canceled",
+      })),
+      closeInactiveSessions: vi.fn(async () => []),
+      close: vi.fn(async () => {}),
+      onEvent: vi.fn(() => () => {}),
+    };
+
+    const scopedManager = createScopedAsyncSessionManager({
+      sessionManager: manager,
+      allowedProjectIds: ["demo"],
+    });
+
+    const closed = await scopedManager.closeInactiveSessions();
+    expect(closed).toEqual([{ id: "s-demo-ready", projectId: "demo", state: "canceled" }]);
+    expect(manager.closeSession).toHaveBeenCalledTimes(1);
+    expect(manager.closeSession).toHaveBeenCalledWith("s-demo-ready");
+    expect(manager.closeInactiveSessions).not.toHaveBeenCalled();
   });
 });

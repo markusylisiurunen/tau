@@ -833,8 +833,143 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   }
 }
 
+type AsyncScopedSessionManagerOptions = {
+  sessionManager: AsyncSessionManager;
+  allowedProjectIds: Set<string>;
+};
+
+const CLOSEABLE_STATES_WITH_CLOSE_ALL: Set<AsyncSessionState> = new Set([
+  "waiting-input",
+  "failed",
+  "canceled",
+]);
+
+class ScopedAsyncSessionManager implements AsyncSessionManager {
+  private readonly sessionManager: AsyncSessionManager;
+  private readonly allowedProjectIds: Set<string>;
+
+  constructor(options: AsyncScopedSessionManagerOptions) {
+    this.sessionManager = options.sessionManager;
+    this.allowedProjectIds = options.allowedProjectIds;
+  }
+
+  async createSession(input: {
+    projectId: string;
+    prompt?: string;
+    additionalSystemMessage?: string;
+  }): Promise<AsyncSessionRecord> {
+    if (!this.allowedProjectIds.has(input.projectId)) {
+      throw new AsyncSessionManagerError(
+        "invalid_project",
+        `unknown async project '${input.projectId}'`,
+      );
+    }
+
+    return await this.sessionManager.createSession(input);
+  }
+
+  listSessions(): AsyncSessionRecord[] {
+    return this.sessionManager
+      .listSessions()
+      .filter((session) => this.allowedProjectIds.has(session.projectId));
+  }
+
+  getSession(sessionId: string): AsyncSessionRecord | undefined {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session || !this.allowedProjectIds.has(session.projectId)) {
+      return undefined;
+    }
+
+    return session;
+  }
+
+  getLogs(sessionId: string): AsyncSessionLogEntry[] | undefined {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session || !this.allowedProjectIds.has(session.projectId)) {
+      return undefined;
+    }
+
+    return this.sessionManager.getLogs(sessionId);
+  }
+
+  async sendMessage(
+    sessionId: string,
+    text: string,
+    options?: AsyncSessionSubmitOptions,
+  ): Promise<AsyncSessionRecord> {
+    this.requireSession(sessionId);
+    return await this.sessionManager.sendMessage(sessionId, text, options);
+  }
+
+  async interruptSession(sessionId: string): Promise<AsyncSessionInterruptResult> {
+    this.requireSession(sessionId);
+    return await this.sessionManager.interruptSession(sessionId);
+  }
+
+  async cancelSession(sessionId: string): Promise<AsyncSessionRecord> {
+    this.requireSession(sessionId);
+    return await this.sessionManager.cancelSession(sessionId);
+  }
+
+  async closeSession(sessionId: string): Promise<AsyncSessionRecord> {
+    this.requireSession(sessionId);
+    return await this.sessionManager.closeSession(sessionId);
+  }
+
+  async closeInactiveSessions(): Promise<AsyncSessionRecord[]> {
+    const closeableSessions = this.listSessions().filter((session) =>
+      CLOSEABLE_STATES_WITH_CLOSE_ALL.has(session.state),
+    );
+
+    const closed: AsyncSessionRecord[] = [];
+    for (const session of closeableSessions) {
+      closed.push(await this.sessionManager.closeSession(session.id));
+    }
+
+    return closed;
+  }
+
+  async close(): Promise<void> {
+    return;
+  }
+
+  onEvent(listener: (event: AsyncSessionManagerEvent) => void): () => void {
+    return this.sessionManager.onEvent((event) => {
+      if (event.type === "session-created") {
+        if (this.allowedProjectIds.has(event.session.projectId)) {
+          listener(event);
+        }
+        return;
+      }
+
+      if (this.allowedProjectIds.has(event.projectId)) {
+        listener(event);
+      }
+    });
+  }
+
+  private requireSession(sessionId: string): AsyncSessionRecord {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session || !this.allowedProjectIds.has(session.projectId)) {
+      throw new AsyncSessionManagerError("not_found", `session '${sessionId}' not found`);
+    }
+
+    return session;
+  }
+}
+
 export function createAsyncSessionManager(
   options: AsyncSessionManagerOptions,
 ): AsyncSessionManager {
   return new AsyncSessionManagerImpl(options);
+}
+
+export function createScopedAsyncSessionManager(options: {
+  sessionManager: AsyncSessionManager;
+  allowedProjectIds: string[];
+}): AsyncSessionManager {
+  return new ScopedAsyncSessionManager({
+    sessionManager: options.sessionManager,
+    allowedProjectIds: new Set(options.allowedProjectIds),
+  });
 }

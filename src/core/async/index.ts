@@ -50,7 +50,11 @@ export type {
   AsyncSessionState,
   AsyncSessionSubmitOptions,
 } from "./session_manager.js";
-export { AsyncSessionManagerError, createAsyncSessionManager } from "./session_manager.js";
+export {
+  AsyncSessionManagerError,
+  createAsyncSessionManager,
+  createScopedAsyncSessionManager,
+} from "./session_manager.js";
 export type {
   AsyncTelegramAdapterHandle,
   AsyncTelegramAdapterOptions,

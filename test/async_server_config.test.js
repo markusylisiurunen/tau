@@ -87,8 +87,8 @@ describe("async daemon config", () => {
       expect(config.projects.tau.workingDirectory).toBe("packages/core");
       expect(config.projects.tau.description).toBe("core workspace");
       expect(config.projects.tau.repo).toBe("markusylisiurunen/tau");
-      expect(config.telegram?.defaultProjectId).toBe("tau");
-      expect(config.telegram?.systemMessage).toBe("telegram-specific notice");
+      expect(config.telegram?.default?.defaultProjectId).toBe("tau");
+      expect(config.telegram?.default?.systemMessage).toBe("telegram-specific notice");
       expect(config.cron?.systemMessage).toBe("this prompt is running from a scheduled cron job");
       expect(config.cronJobs).toEqual({
         "docs-drift-nightly": {
@@ -147,6 +147,118 @@ describe("async daemon config", () => {
 
       expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
       expect(() => loadAsyncDaemonConfig(configPath)).toThrow("telegram.systemMessage");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("loads named telegram bots and keeps per-bot project allowlists", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          telegram: {
+            ops: {
+              botToken: "ops-token",
+              allowedProjectIds: ["tau"],
+              defaultProjectId: "tau",
+            },
+            docs: {
+              botToken: "docs-token",
+              allowedProjectIds: ["docs"],
+              systemMessage: "docs only",
+            },
+          },
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+            },
+            docs: {
+              repo: "markusylisiurunen/docs",
+            },
+          },
+        }),
+      );
+
+      const config = loadAsyncDaemonConfig(configPath);
+      expect(config.telegram).toEqual({
+        ops: {
+          botToken: "ops-token",
+          allowedProjectIds: ["tau"],
+          defaultProjectId: "tau",
+        },
+        docs: {
+          botToken: "docs-token",
+          allowedProjectIds: ["docs"],
+          systemMessage: "docs only",
+        },
+      });
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects unknown telegram allowedProjectIds", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          telegram: {
+            ops: {
+              botToken: "ops-token",
+              allowedProjectIds: ["missing"],
+            },
+          },
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+            },
+          },
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("allowedProjectIds");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects defaultProjectId outside allowedProjectIds", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          telegram: {
+            ops: {
+              botToken: "ops-token",
+              allowedProjectIds: ["tau"],
+              defaultProjectId: "docs",
+            },
+          },
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+            },
+            docs: {
+              repo: "markusylisiurunen/docs",
+            },
+          },
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("defaultProjectId");
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("allowedProjectIds");
     } finally {
       fx.cleanup();
     }

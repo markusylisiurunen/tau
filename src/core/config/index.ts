@@ -12,6 +12,7 @@ export type {
   AsyncConfig,
   AsyncProjectConfig,
   AsyncServerConfig,
+  AsyncServerTelegramBotConfig,
   AsyncServerTelegramConfig,
   Config,
   SandboxConfig,

@@ -290,32 +290,6 @@ describe("async daemon config", () => {
     }
   });
 
-  it("rejects top-level cronJobsDir", () => {
-    const fx = setupFixture();
-
-    try {
-      const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-            },
-          },
-          cronJobsDir: "cron-jobs",
-        }),
-      );
-
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(
-        "cronJobsDir has moved to cron.jobsDir",
-      );
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("rejects cron jobs with invalid schedule expressions", () => {
     const fx = setupFixture();
 

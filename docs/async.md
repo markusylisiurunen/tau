@@ -139,14 +139,18 @@ The adapter uses long-polling and only handles private DM messages (`chat.type=p
 
 Supported DM commands:
 
+- `/help` (shows command usage and examples)
 - `/new [projectId]`
   - starts a new empty session (does not accept inline prompt text)
   - if `projectId` is omitted, it uses `defaultProjectId` when set
   - otherwise it auto-selects when exactly one async project exists
   - use `/projects` to discover available `projectId` values
 - `/projects` (lists configured async projects with optional descriptions)
-- `/use <sessionId>`
-- `/list`
+- `/use <sessionId|prefix|index>`
+  - accepts exact IDs, unique session ID prefixes, and 1-based indexes from `/sessions`
+- `/sessions` (lists sessions with active marker, state, project, and recent previews)
+  - includes inline session picker buttons
+  - includes quick-action buttons (`/new`, `/sessions`, `/status`, `/interrupt`, `/cancel`, `/quiet`, `/verbose`)
 - `/status`
 - `/interrupt` (interrupts the active run, keeps the session available for new messages)
 - `/cancel` (cancels the selected session)
@@ -155,7 +159,7 @@ Supported DM commands:
 - `/close all` (closes sessions in `waiting-input`, `failed`, or `canceled`)
 - `/verbose` (for the selected session, streams run lifecycle + progress updates)
 - `/quiet` (for the selected session, default mode, send only the run's final assistant message)
-- plain text sends to the selected session
+- plain text sends to the selected session (if no active session is selected and exactly one session exists, it is auto-selected)
 - Telegram `voice` and `audio` messages are downloaded, transcribed with Mistral, and then sent to the selected session
 
 Telegram audio transcription requires `MISTRAL_API_KEY` (or `apiKeys.mistral` in regular tau config).

@@ -226,7 +226,7 @@ function parseCronField(
 
   return {
     values,
-    isWildcard: field === "*",
+    isWildcard: field.startsWith("*"),
   };
 }
 
@@ -278,16 +278,8 @@ function resolveDayMatch(schedule: ParsedCronSchedule, date: Date): boolean {
   const domMatches = schedule.dayOfMonth.values.has(date.getDate());
   const dowMatches = schedule.dayOfWeek.values.has(date.getDay());
 
-  if (schedule.dayOfMonth.isWildcard && schedule.dayOfWeek.isWildcard) {
-    return true;
-  }
-
-  if (schedule.dayOfMonth.isWildcard) {
-    return dowMatches;
-  }
-
-  if (schedule.dayOfWeek.isWildcard) {
-    return domMatches;
+  if (schedule.dayOfMonth.isWildcard || schedule.dayOfWeek.isWildcard) {
+    return domMatches && dowMatches;
   }
 
   return domMatches || dowMatches;

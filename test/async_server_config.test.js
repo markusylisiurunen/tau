@@ -57,8 +57,8 @@ describe("async daemon config", () => {
           maxSessions: 4,
           workspaceRoot: "workspaces",
           systemMessage: "focus on small diffs",
-          cronJobsDir: "cron-jobs",
           cron: {
+            jobsDir: "cron-jobs",
             systemMessage: "this prompt is running from a scheduled cron job",
           },
           telegram: {
@@ -251,7 +251,9 @@ describe("async daemon config", () => {
               repo: "markusylisiurunen/tau",
             },
           },
-          cronJobsDir: "cron-jobs",
+          cron: {
+            jobsDir: "cron-jobs",
+          },
         }),
       );
 
@@ -262,7 +264,33 @@ describe("async daemon config", () => {
     }
   });
 
-  it("rejects missing cronJobsDir", () => {
+  it("rejects missing cron.jobsDir", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+            },
+          },
+          cron: {
+            jobsDir: "cron-jobs",
+          },
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("cron.jobsDir does not exist");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects top-level cronJobsDir", () => {
     const fx = setupFixture();
 
     try {
@@ -280,7 +308,9 @@ describe("async daemon config", () => {
       );
 
       expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("cronJobsDir does not exist");
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(
+        "cronJobsDir has moved to cron.jobsDir",
+      );
     } finally {
       fx.cleanup();
     }
@@ -308,7 +338,9 @@ describe("async daemon config", () => {
               repo: "markusylisiurunen/tau",
             },
           },
-          cronJobsDir: "cron-jobs",
+          cron: {
+            jobsDir: "cron-jobs",
+          },
         }),
       );
 
@@ -341,7 +373,9 @@ describe("async daemon config", () => {
               repo: "markusylisiurunen/tau",
             },
           },
-          cronJobsDir: "cron-jobs",
+          cron: {
+            jobsDir: "cron-jobs",
+          },
         }),
       );
 

@@ -75,7 +75,8 @@ Daemon-side settings are loaded from a separate JSON file.
   "workspaceRoot": "/var/lib/tau/async-workspaces",
   "systemMessage": "follow project conventions and keep diffs minimal",
   "cron": {
-    "systemMessage": "you are running from a scheduled cron job, prioritize deterministic output"
+    "systemMessage": "you are running from a scheduled cron job, prioritize deterministic output",
+    "jobsDir": "cron-jobs"
   },
   "telegram": {
     "botToken": "123456:telegram-token",
@@ -99,12 +100,11 @@ Daemon-side settings are loaded from a separate JSON file.
       "sandbox": false,
       "noAgentContextFiles": false
     }
-  },
-  "cronJobsDir": "cron-jobs"
+  }
 }
 ```
 
-Cron jobs are loaded from markdown files under `cronJobsDir`.
+Cron jobs are loaded from markdown files under `cron.jobsDir`.
 
 Example `cron-jobs/docs-drift-nightly.md`:
 
@@ -127,7 +127,7 @@ Notes:
 - `bootstrapCommands` run from the same session working directory.
 - `projects.<id>.description` is optional metadata used by Telegram `/projects` output.
 - Clone uses `gh repo clone <owner/repo> <path>` (daemon host must have authenticated `gh`).
-- `cronJobsDir` is optional and points to a directory of `*.md` cron job files.
+- `cron.jobsDir` is optional and points to a directory of `*.md` cron job files.
 - each cron job markdown file requires frontmatter fields `id`, `projectId`, and `schedule`; the markdown body is used as the prompt.
 - frontmatter `id` must match the markdown file name.
 - optional frontmatter `enabled: false` disables a cron job file without deleting it.

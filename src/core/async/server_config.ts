@@ -9,6 +9,7 @@ type RiskLevel = "read-only" | "read-write";
 
 export type AsyncDaemonCronConfig = {
   systemMessage?: string;
+  jobsDir?: string;
 };
 
 export type AsyncDaemonConfig = {
@@ -205,6 +206,14 @@ function parseCronConfig(
       config.systemMessage = data.systemMessage.trim();
     } else {
       errors.push(`${sourceLabel}: cron.systemMessage must be a non-empty string.`);
+    }
+  }
+
+  if (data.jobsDir !== undefined) {
+    if (typeof data.jobsDir === "string" && data.jobsDir.trim()) {
+      config.jobsDir = data.jobsDir.trim();
+    } else {
+      errors.push(`${sourceLabel}: cron.jobsDir must be a non-empty string.`);
     }
   }
 
@@ -474,7 +483,7 @@ function parseCronJobMarkdownFile(
 }
 
 function parseCronJobsDir(
-  raw: unknown,
+  jobsDir: string | undefined,
   sourceLabel: string,
   configDir: string,
   projects: Record<string, AsyncProjectConfig>,
@@ -483,19 +492,11 @@ function parseCronJobsDir(
   cronJobs: Record<string, AsyncCronJobConfig>;
   errors: string[];
 } {
-  if (raw === undefined) {
+  if (jobsDir === undefined) {
     return { configured: false, cronJobs: {}, errors: [] };
   }
 
-  if (typeof raw !== "string" || !raw.trim()) {
-    return {
-      configured: true,
-      cronJobs: {},
-      errors: [`${sourceLabel}: cronJobsDir must be a non-empty string when set.`],
-    };
-  }
-
-  const cronJobsDir = resolve(configDir, raw.trim());
+  const cronJobsDir = resolve(configDir, jobsDir);
 
   let directoryStat: ReturnType<typeof statSync>;
   try {
@@ -505,7 +506,7 @@ function parseCronJobsDir(
       configured: true,
       cronJobs: {},
       errors: [
-        `${sourceLabel}: cronJobsDir does not exist: ${cronJobsDir} (${error instanceof Error ? error.message : String(error)})`,
+        `${sourceLabel}: cron.jobsDir does not exist: ${cronJobsDir} (${error instanceof Error ? error.message : String(error)})`,
       ],
     };
   }
@@ -514,7 +515,7 @@ function parseCronJobsDir(
     return {
       configured: true,
       cronJobs: {},
-      errors: [`${sourceLabel}: cronJobsDir is not a directory: ${cronJobsDir}`],
+      errors: [`${sourceLabel}: cron.jobsDir is not a directory: ${cronJobsDir}`],
     };
   }
 
@@ -528,7 +529,7 @@ function parseCronJobsDir(
       configured: true,
       cronJobs: {},
       errors: [
-        `${sourceLabel}: failed to read cronJobsDir '${cronJobsDir}': ${error instanceof Error ? error.message : String(error)}`,
+        `${sourceLabel}: failed to read cron.jobsDir '${cronJobsDir}': ${error instanceof Error ? error.message : String(error)}`,
       ],
     };
   }
@@ -635,11 +636,16 @@ export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig
   const telegramResult = parseTelegramConfig(data.telegram, sourceLabel);
   const cronResult = parseCronConfig(data.cron, sourceLabel);
   const cronJobsResult = parseCronJobsDir(
-    data.cronJobsDir,
+    cronResult.config?.jobsDir,
     sourceLabel,
     configDir,
     projectsResult.projects,
   );
+
+  if (data.cronJobsDir !== undefined) {
+    errors.push(`${sourceLabel}: cronJobsDir has moved to cron.jobsDir.`);
+  }
+
   errors.push(
     ...projectsResult.errors,
     ...telegramResult.errors,

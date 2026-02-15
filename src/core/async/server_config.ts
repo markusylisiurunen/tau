@@ -1,7 +1,11 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
-import type { AsyncProjectConfig, AsyncServerTelegramConfig } from "../config/schema.js";
+import type {
+  AsyncProjectConfig,
+  AsyncServerTelegramBotConfig,
+  AsyncServerTelegramConfig,
+} from "../config/schema.js";
 import type { AsyncCronJobConfig } from "./cron.js";
 import { parseCronSchedule } from "./cron.js";
 
@@ -106,32 +110,93 @@ function parseAsyncIdList(
   return { values, errors: [] };
 }
 
-function parseTelegramConfig(
+function parseAsyncStringList(
   raw: unknown,
+  fieldPath: string,
   sourceLabel: string,
-): { config?: AsyncServerTelegramConfig; errors: string[] } {
-  if (raw === undefined) {
-    return { errors: [] };
+): { values?: string[]; errors: string[] } {
+  if (!Array.isArray(raw)) {
+    return { errors: [`${sourceLabel}: ${fieldPath} must be an array of non-empty strings.`] };
   }
 
+  const values: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string" || !entry.trim()) {
+      return { errors: [`${sourceLabel}: ${fieldPath} must be an array of non-empty strings.`] };
+    }
+    values.push(entry.trim());
+  }
+
+  return { values, errors: [] };
+}
+
+const TELEGRAM_DEFAULT_BOT_ID = "default";
+const TELEGRAM_BOT_CONFIG_KEYS = new Set([
+  "botToken",
+  "allowedProjectIds",
+  "allowedUserIds",
+  "allowedChatIds",
+  "defaultProjectId",
+  "systemMessage",
+  "pollIntervalMs",
+  "requestTimeoutSeconds",
+]);
+
+function parseTelegramBotConfig(
+  raw: unknown,
+  fieldPath: string,
+  sourceLabel: string,
+  knownProjectIds: Set<string>,
+): { config?: AsyncServerTelegramBotConfig; errors: string[] } {
   if (!isRecord(raw)) {
-    return { errors: [`${sourceLabel}: telegram must be an object.`] };
+    return { errors: [`${sourceLabel}: ${fieldPath} must be an object.`] };
   }
 
   const data = raw as Record<string, unknown>;
-  const config: AsyncServerTelegramConfig = {};
+  const config: AsyncServerTelegramBotConfig = {};
   const errors: string[] = [];
 
   if (data.botToken !== undefined) {
     if (typeof data.botToken === "string" && data.botToken.trim()) {
       config.botToken = data.botToken.trim();
     } else {
-      errors.push(`${sourceLabel}: telegram.botToken must be a non-empty string.`);
+      errors.push(`${sourceLabel}: ${fieldPath}.botToken must be a non-empty string.`);
     }
   }
 
+  if (data.allowedProjectIds !== undefined) {
+    const parsed = parseAsyncStringList(
+      data.allowedProjectIds,
+      `${fieldPath}.allowedProjectIds`,
+      sourceLabel,
+    );
+
+    if (parsed.values) {
+      if (parsed.values.length === 0) {
+        errors.push(`${sourceLabel}: ${fieldPath}.allowedProjectIds must not be empty.`);
+      } else {
+        const missingProjectIds = parsed.values.filter(
+          (projectId) => !knownProjectIds.has(projectId),
+        );
+        if (missingProjectIds.length > 0) {
+          errors.push(
+            `${sourceLabel}: ${fieldPath}.allowedProjectIds contains unknown project ids: ${missingProjectIds.join(", ")}`,
+          );
+        } else {
+          config.allowedProjectIds = parsed.values;
+        }
+      }
+    }
+
+    errors.push(...parsed.errors);
+  }
+
   if (data.allowedUserIds !== undefined) {
-    const parsed = parseAsyncIdList(data.allowedUserIds, "telegram.allowedUserIds", sourceLabel);
+    const parsed = parseAsyncIdList(
+      data.allowedUserIds,
+      `${fieldPath}.allowedUserIds`,
+      sourceLabel,
+    );
     if (parsed.values) {
       config.allowedUserIds = parsed.values;
     }
@@ -139,7 +204,11 @@ function parseTelegramConfig(
   }
 
   if (data.allowedChatIds !== undefined) {
-    const parsed = parseAsyncIdList(data.allowedChatIds, "telegram.allowedChatIds", sourceLabel);
+    const parsed = parseAsyncIdList(
+      data.allowedChatIds,
+      `${fieldPath}.allowedChatIds`,
+      sourceLabel,
+    );
     if (parsed.values) {
       config.allowedChatIds = parsed.values;
     }
@@ -150,7 +219,7 @@ function parseTelegramConfig(
     if (typeof data.defaultProjectId === "string" && data.defaultProjectId.trim()) {
       config.defaultProjectId = data.defaultProjectId.trim();
     } else {
-      errors.push(`${sourceLabel}: telegram.defaultProjectId must be a non-empty string.`);
+      errors.push(`${sourceLabel}: ${fieldPath}.defaultProjectId must be a non-empty string.`);
     }
   }
 
@@ -158,7 +227,7 @@ function parseTelegramConfig(
     if (typeof data.systemMessage === "string" && data.systemMessage.trim()) {
       config.systemMessage = data.systemMessage.trim();
     } else {
-      errors.push(`${sourceLabel}: telegram.systemMessage must be a non-empty string.`);
+      errors.push(`${sourceLabel}: ${fieldPath}.systemMessage must be a non-empty string.`);
     }
   }
 
@@ -166,7 +235,7 @@ function parseTelegramConfig(
     if (isPositiveInteger(data.pollIntervalMs)) {
       config.pollIntervalMs = data.pollIntervalMs;
     } else {
-      errors.push(`${sourceLabel}: telegram.pollIntervalMs must be a positive integer.`);
+      errors.push(`${sourceLabel}: ${fieldPath}.pollIntervalMs must be a positive integer.`);
     }
   }
 
@@ -174,7 +243,85 @@ function parseTelegramConfig(
     if (isPositiveInteger(data.requestTimeoutSeconds)) {
       config.requestTimeoutSeconds = data.requestTimeoutSeconds;
     } else {
-      errors.push(`${sourceLabel}: telegram.requestTimeoutSeconds must be a positive integer.`);
+      errors.push(`${sourceLabel}: ${fieldPath}.requestTimeoutSeconds must be a positive integer.`);
+    }
+  }
+
+  if (config.defaultProjectId && !knownProjectIds.has(config.defaultProjectId)) {
+    errors.push(
+      `${sourceLabel}: ${fieldPath}.defaultProjectId '${config.defaultProjectId}' is not configured`,
+    );
+  }
+
+  if (
+    config.defaultProjectId &&
+    config.allowedProjectIds &&
+    !config.allowedProjectIds.includes(config.defaultProjectId)
+  ) {
+    errors.push(
+      `${sourceLabel}: ${fieldPath}.defaultProjectId must be included in ${fieldPath}.allowedProjectIds`,
+    );
+  }
+
+  if (Object.keys(config).length === 0) {
+    return { errors };
+  }
+
+  return { config, errors };
+}
+
+function parseTelegramConfig(
+  raw: unknown,
+  sourceLabel: string,
+  knownProjectIds: Set<string>,
+): { config?: AsyncServerTelegramConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  if (!isRecord(raw)) {
+    return { errors: [`${sourceLabel}: telegram must be an object.`] };
+  }
+
+  const data = raw as Record<string, unknown>;
+  const entries = Object.entries(data);
+  const hasLegacyKeys = entries.some(([key]) => TELEGRAM_BOT_CONFIG_KEYS.has(key));
+  const hasNamedBots = entries.some(([key]) => !TELEGRAM_BOT_CONFIG_KEYS.has(key));
+
+  if (hasLegacyKeys && hasNamedBots) {
+    return {
+      errors: [
+        `${sourceLabel}: telegram must be either a single bot config object or a map of bot ids to bot config objects.`,
+      ],
+    };
+  }
+
+  const config: AsyncServerTelegramConfig = {};
+  const errors: string[] = [];
+
+  if (hasLegacyKeys || entries.length === 0) {
+    const parsed = parseTelegramBotConfig(data, "telegram", sourceLabel, knownProjectIds);
+    if (parsed.config) {
+      config[TELEGRAM_DEFAULT_BOT_ID] = parsed.config;
+    }
+    errors.push(...parsed.errors);
+  } else {
+    for (const [botId, botRaw] of entries) {
+      if (!botId.trim()) {
+        errors.push(`${sourceLabel}: telegram bot id must be a non-empty string.`);
+        continue;
+      }
+
+      const parsed = parseTelegramBotConfig(
+        botRaw,
+        `telegram.${botId}`,
+        sourceLabel,
+        knownProjectIds,
+      );
+      if (parsed.config) {
+        config[botId] = parsed.config;
+      }
+      errors.push(...parsed.errors);
     }
   }
 
@@ -633,7 +780,11 @@ export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig
   }
 
   const projectsResult = parseProjects(data.projects, sourceLabel, configDir);
-  const telegramResult = parseTelegramConfig(data.telegram, sourceLabel);
+  const telegramResult = parseTelegramConfig(
+    data.telegram,
+    sourceLabel,
+    new Set(Object.keys(projectsResult.projects)),
+  );
   const cronResult = parseCronConfig(data.cron, sourceLabel);
   const cronJobsResult = parseCronJobsDir(
     cronResult.config?.jobsDir,

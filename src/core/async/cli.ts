@@ -3,7 +3,7 @@ import { getMistralApiKey, loadConfig } from "../config/schema.js";
 import { startAsyncCronScheduler } from "./cron.js";
 import { startAsyncHttpServer } from "./http_server.js";
 import { AsyncDaemonConfigError, loadAsyncDaemonConfig } from "./server_config.js";
-import { createAsyncSessionManager } from "./session_manager.js";
+import { createAsyncSessionManager, createScopedAsyncSessionManager } from "./session_manager.js";
 import { startAsyncTelegramAdapter } from "./telegram.js";
 
 export class AsyncCliError extends Error {
@@ -581,10 +581,10 @@ async function runDaemon(args: {
     systemMessage: daemonConfig.systemMessage,
   });
 
-  const telegramConfig = daemonConfig.telegram;
+  const telegramConfigs = daemonConfig.telegram ? Object.entries(daemonConfig.telegram) : [];
   const cronJobs = daemonConfig.cronJobs;
   let handle: Awaited<ReturnType<typeof startAsyncHttpServer>> | undefined;
-  let telegramHandle: { close(): Promise<void> } | undefined;
+  const telegramHandles: { id: string; handle: { close(): Promise<void> } }[] = [];
   let cronHandle: ReturnType<typeof startAsyncCronScheduler> | undefined;
 
   try {
@@ -609,10 +609,29 @@ async function runDaemon(args: {
       ...(cronHandle ? { cronScheduler: cronHandle } : {}),
     });
 
-    if (telegramConfig?.botToken) {
-      telegramHandle = await startAsyncTelegramAdapter({
+    for (const [botId, telegramConfig] of telegramConfigs) {
+      if (!telegramConfig?.botToken) {
+        continue;
+      }
+
+      const allowedProjectIds =
+        telegramConfig.allowedProjectIds ?? Object.keys(daemonConfig.projects);
+      const scopedProjects: typeof daemonConfig.projects = {};
+      for (const projectId of allowedProjectIds) {
+        const project = daemonConfig.projects[projectId];
+        if (project) {
+          scopedProjects[projectId] = project;
+        }
+      }
+
+      const scopedSessionManager = createScopedAsyncSessionManager({
+        sessionManager,
+        allowedProjectIds,
+      });
+
+      const adapterHandle = await startAsyncTelegramAdapter({
         botToken: telegramConfig.botToken,
-        projects: daemonConfig.projects,
+        projects: scopedProjects,
         defaultProjectId: telegramConfig.defaultProjectId,
         systemMessage: telegramConfig.systemMessage,
         allowedUserIds: telegramConfig.allowedUserIds,
@@ -620,18 +639,19 @@ async function runDaemon(args: {
         pollIntervalMs: telegramConfig.pollIntervalMs,
         requestTimeoutSeconds: telegramConfig.requestTimeoutSeconds,
         mistralApiKey,
-        sessionManager,
+        sessionManager: scopedSessionManager,
         onLog: (entry) => {
-          args.stdout(`[telegram:${entry.level}] ${entry.message}`);
+          args.stdout(`[telegram:${botId}:${entry.level}] ${entry.message}`);
         },
       });
 
-      args.stdout("tau async telegram adapter enabled");
+      telegramHandles.push({ id: botId, handle: adapterHandle });
+      args.stdout(`tau async telegram adapter enabled (${botId})`);
     }
   } catch (error) {
     await Promise.allSettled([
       ...(handle ? [handle.close()] : []),
-      ...(telegramHandle ? [telegramHandle.close()] : []),
+      ...telegramHandles.map((telegramHandle) => telegramHandle.handle.close()),
       ...(cronHandle ? [cronHandle.close()] : []),
       sessionManager.close(),
     ]);
@@ -660,7 +680,7 @@ async function runDaemon(args: {
 
       void Promise.allSettled([
         handle.close(),
-        ...(telegramHandle ? [telegramHandle.close()] : []),
+        ...telegramHandles.map((telegramHandle) => telegramHandle.handle.close()),
         ...(cronHandle ? [cronHandle.close()] : []),
         sessionManager.close(),
       ]).then(() => {

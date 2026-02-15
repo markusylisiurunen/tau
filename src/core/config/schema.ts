@@ -53,8 +53,9 @@ export type AsyncClientConfig = {
   targets?: Record<string, AsyncClientTargetConfig>;
 };
 
-export type AsyncServerTelegramConfig = {
+export type AsyncServerTelegramBotConfig = {
   botToken?: string;
+  allowedProjectIds?: string[];
   allowedUserIds?: number[];
   allowedChatIds?: number[];
   defaultProjectId?: string;
@@ -62,6 +63,8 @@ export type AsyncServerTelegramConfig = {
   pollIntervalMs?: number;
   requestTimeoutSeconds?: number;
 };
+
+export type AsyncServerTelegramConfig = Record<string, AsyncServerTelegramBotConfig>;
 
 export type AsyncServerConfig = {
   host?: string;

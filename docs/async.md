@@ -79,13 +79,16 @@ Daemon-side settings are loaded from a separate JSON file.
     "jobsDir": "cron-jobs"
   },
   "telegram": {
-    "botToken": "123456:telegram-token",
-    "allowedUserIds": [123456789],
-    "allowedChatIds": [123456789],
-    "defaultProjectId": "tau",
-    "systemMessage": "you are operating via Telegram, keep replies concise",
-    "pollIntervalMs": 1000,
-    "requestTimeoutSeconds": 30
+    "ops": {
+      "botToken": "123456:telegram-token",
+      "allowedProjectIds": ["tau"],
+      "allowedUserIds": [123456789],
+      "allowedChatIds": [123456789],
+      "defaultProjectId": "tau",
+      "systemMessage": "you are operating via Telegram, keep replies concise",
+      "pollIntervalMs": 1000,
+      "requestTimeoutSeconds": 30
+    }
   },
   "projects": {
     "tau": {
@@ -136,7 +139,8 @@ Notes:
 - `cron.systemMessage` is appended after `systemMessage` for cron-originated runs only, within the same `<system>...</system>` block.
 - `TAU_ASYNC_AUTH_TOKEN` overrides daemon-file `authToken`.
 - `systemMessage` is prepended to every submitted prompt inside a `<system>...</system>` block.
-- `telegram.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same `<system>...</system>` block.
+- `telegram.<botId>.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same `<system>...</system>` block.
+- legacy single-bot config is still supported with `telegram.botToken` (or other bot fields directly under `telegram`). It is normalized as bot id `default`.
 
 ## http api
 
@@ -164,7 +168,12 @@ Bearer tokens are checked with constant-time comparison. Missing/invalid tokens 
 
 ## telegram dm adapter
 
-Enable Telegram by setting `telegram.botToken` in daemon config and running the daemon.
+Enable Telegram by setting at least one bot token in daemon config and running the daemon.
+
+Use either format:
+
+- single bot (legacy): `telegram.botToken`
+- multiple bots: `telegram.<botId>.botToken`
 
 The adapter uses long-polling and only handles private DM messages (`chat.type=private`).
 
@@ -199,12 +208,14 @@ When a plain-text or audio message is accepted for a session, the adapter tries 
 
 The adapter registers these commands via Telegram's command list so clients can autocomplete them.
 
-Optional allowlists:
+Optional per-bot allowlists:
 
+- `allowedProjectIds` (limits the projects and sessions visible to that bot)
 - `allowedUserIds`
 - `allowedChatIds`
 
-If provided, both must match for a DM to be processed.
+If `allowedProjectIds` is omitted, the bot can access all async projects.
+If `allowedUserIds` and `allowedChatIds` are provided, both must match for a DM to be processed.
 
 Telegram keeps one selected session per chat for command and plain-text input routing, but it continues
 streaming events for every session that has been selected in that chat.

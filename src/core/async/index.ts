@@ -2,13 +2,24 @@ export type { RunAsyncCommandOptions } from "./cli.js";
 export { AsyncCliError, printAsyncHelp, runAsyncCommand } from "./cli.js";
 export type {
   AsyncCronJobConfig,
+  AsyncCronJobRecord,
+  AsyncCronListRunsOptions,
   AsyncCronLogEntry,
   AsyncCronLogLevel,
+  AsyncCronRunRecord,
+  AsyncCronRunStatus,
+  AsyncCronRunTrigger,
+  AsyncCronScheduler,
   AsyncCronSchedulerHandle,
   AsyncCronSchedulerOptions,
   ParsedCronSchedule,
 } from "./cron.js";
-export { matchesCronSchedule, parseCronSchedule, startAsyncCronScheduler } from "./cron.js";
+export {
+  AsyncCronSchedulerError,
+  matchesCronSchedule,
+  parseCronSchedule,
+  startAsyncCronScheduler,
+} from "./cron.js";
 export type {
   AsyncHttpCreateSessionRequest,
   AsyncHttpErrorResponse,
@@ -25,7 +36,7 @@ export {
 } from "./http_protocol.js";
 export type { AsyncHttpServerHandle, AsyncHttpServerOptions } from "./http_server.js";
 export { startAsyncHttpServer } from "./http_server.js";
-export type { AsyncDaemonConfig } from "./server_config.js";
+export type { AsyncDaemonConfig, AsyncDaemonCronConfig } from "./server_config.js";
 export { AsyncDaemonConfigError, loadAsyncDaemonConfig } from "./server_config.js";
 export type {
   AsyncSessionInterruptResult,

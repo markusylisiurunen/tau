@@ -214,6 +214,40 @@ describe("async session manager", () => {
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 
+  it("applies additional system message to initial prompt submissions", async () => {
+    const clientHarness = createClientHarness();
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      systemMessage: "follow project conventions",
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({
+      projectId: "demo",
+      prompt: "check docs drift",
+      additionalSystemMessage: "this prompt came from cron",
+    });
+
+    clientHarness.submitDeferred.resolve({
+      userHistoryEntryId: "history-system-msg-initial",
+      turn: { aborted: false },
+    });
+
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    expect(clientHarness.client.submit).toHaveBeenCalledWith(
+      "<system>\nfollow project conventions\nthis prompt came from cron\n</system>\ncheck docs drift",
+    );
+  });
+
   it("returns from sendMessage immediately and rejects concurrent submits", async () => {
     const clientHarness = createClientHarness();
     const manager = createAsyncSessionManager({

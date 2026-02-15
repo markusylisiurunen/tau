@@ -1,8 +1,9 @@
-import type { AsyncSessionManager } from "./session_manager.js";
+import type { AsyncSessionManager, AsyncSessionRecord } from "./session_manager.js";
 
 const SECONDS_PER_MINUTE = 60;
 const MILLISECONDS_PER_SECOND = 1000;
 const MILLISECONDS_PER_MINUTE = SECONDS_PER_MINUTE * MILLISECONDS_PER_SECOND;
+const DEFAULT_RUN_HISTORY_LIMIT = 200;
 
 type ParsedCronField = {
   values: Set<number>;
@@ -24,6 +25,32 @@ export type AsyncCronJobConfig = {
   prompt: string;
 };
 
+export type AsyncCronJobRecord = {
+  id: string;
+  projectId: string;
+  schedule: string;
+  prompt: string;
+};
+
+export type AsyncCronRunTrigger = "scheduled" | "manual";
+
+export type AsyncCronRunStatus = "session-created" | "failed";
+
+export type AsyncCronRunRecord = {
+  id: string;
+  jobId: string;
+  projectId: string;
+  schedule: string;
+  trigger: AsyncCronRunTrigger;
+  triggeredAt: string;
+  scheduledFor?: string;
+  status: AsyncCronRunStatus;
+  sessionId?: string;
+  sessionState?: AsyncSessionRecord["state"];
+  error?: string;
+  errorCode?: string;
+};
+
 export type AsyncCronLogLevel = "info" | "warn" | "error";
 
 export type AsyncCronLogEntry = {
@@ -36,14 +63,36 @@ export type AsyncCronLogEntry = {
 export type AsyncCronSchedulerOptions = {
   jobs: Record<string, AsyncCronJobConfig>;
   sessionManager: Pick<AsyncSessionManager, "createSession">;
+  additionalSystemMessage?: string;
   pollIntervalMs?: number;
+  maxRunHistory?: number;
   now?: () => Date;
   onLog?: (entry: AsyncCronLogEntry) => void;
 };
 
-export type AsyncCronSchedulerHandle = {
-  close(): Promise<void>;
+export type AsyncCronListRunsOptions = {
+  jobId?: string;
+  limit?: number;
 };
+
+export type AsyncCronScheduler = {
+  close(): Promise<void>;
+  listJobs(): AsyncCronJobRecord[];
+  listRuns(options?: AsyncCronListRunsOptions): AsyncCronRunRecord[];
+  triggerJobNow(jobId: string): Promise<AsyncCronRunRecord>;
+};
+
+export type AsyncCronSchedulerHandle = AsyncCronScheduler;
+
+export class AsyncCronSchedulerError extends Error {
+  code: "not_found";
+
+  constructor(code: "not_found", message: string) {
+    super(message);
+    this.name = "AsyncCronSchedulerError";
+    this.code = code;
+  }
+}
 
 type CompiledCronJob = {
   id: string;
@@ -273,14 +322,28 @@ function readErrorCode(error: unknown): string | undefined {
   return typeof record.code === "string" ? record.code : undefined;
 }
 
-class AsyncCronScheduler implements AsyncCronSchedulerHandle {
+type RunJobTriggerContext =
+  | {
+      trigger: "manual";
+    }
+  | {
+      trigger: "scheduled";
+      scheduledFor: string;
+    };
+
+class AsyncCronSchedulerImpl implements AsyncCronScheduler {
   private readonly jobs: CompiledCronJob[];
+  private readonly jobsById: Map<string, CompiledCronJob>;
   private readonly sessionManager: Pick<AsyncSessionManager, "createSession">;
+  private readonly additionalSystemMessage?: string;
   private readonly pollIntervalMs: number;
+  private readonly maxRunHistory: number;
   private readonly now: () => Date;
   private readonly onLog?: (entry: AsyncCronLogEntry) => void;
+  private readonly runHistory: AsyncCronRunRecord[] = [];
   private timer?: NodeJS.Timeout;
   private lastCheckedMinute?: number;
+  private runSequence = 0;
   private closed = false;
 
   constructor(options: AsyncCronSchedulerOptions) {
@@ -290,13 +353,20 @@ class AsyncCronScheduler implements AsyncCronSchedulerHandle {
       schedule: parseCronSchedule(config.schedule),
     }));
 
+    this.jobsById = new Map(this.jobs.map((job) => [job.id, job]));
     this.sessionManager = options.sessionManager;
+    this.additionalSystemMessage = options.additionalSystemMessage?.trim() || undefined;
     this.pollIntervalMs = options.pollIntervalMs ?? MILLISECONDS_PER_SECOND;
+    this.maxRunHistory = options.maxRunHistory ?? DEFAULT_RUN_HISTORY_LIMIT;
     this.now = options.now ?? (() => new Date());
     this.onLog = options.onLog;
 
     if (!Number.isInteger(this.pollIntervalMs) || this.pollIntervalMs <= 0) {
       throw new Error("cron scheduler pollIntervalMs must be a positive integer");
+    }
+
+    if (!Number.isInteger(this.maxRunHistory) || this.maxRunHistory <= 0) {
+      throw new Error("cron scheduler maxRunHistory must be a positive integer");
     }
 
     this.tick();
@@ -308,6 +378,51 @@ class AsyncCronScheduler implements AsyncCronSchedulerHandle {
     this.timer.unref?.();
 
     this.log("info", "cron scheduler started", { jobCount: this.jobs.length });
+  }
+
+  listJobs(): AsyncCronJobRecord[] {
+    return this.jobs.map((job) => ({
+      id: job.id,
+      projectId: job.config.projectId,
+      schedule: job.config.schedule,
+      prompt: job.config.prompt,
+    }));
+  }
+
+  listRuns(options?: AsyncCronListRunsOptions): AsyncCronRunRecord[] {
+    const jobId = options?.jobId?.trim();
+    const limit = options?.limit;
+    const filtered = [...this.runHistory]
+      .reverse()
+      .filter((run) => (jobId ? run.jobId === jobId : true));
+
+    if (limit === undefined) {
+      return filtered.map((run) => ({ ...run }));
+    }
+
+    if (!Number.isInteger(limit) || limit <= 0) {
+      return [];
+    }
+
+    return filtered.slice(0, limit).map((run) => ({ ...run }));
+  }
+
+  async triggerJobNow(jobId: string): Promise<AsyncCronRunRecord> {
+    const normalizedJobId = jobId.trim();
+    const job = this.jobsById.get(normalizedJobId);
+
+    if (!job) {
+      throw new AsyncCronSchedulerError("not_found", `cron job '${normalizedJobId}' not found`);
+    }
+
+    this.log("info", "cron job triggered", {
+      jobId: job.id,
+      projectId: job.config.projectId,
+      schedule: job.config.schedule,
+      trigger: "manual",
+    });
+
+    return await this.runJob(job, { trigger: "manual" });
   }
 
   async close(): Promise<void> {
@@ -359,40 +474,98 @@ class AsyncCronScheduler implements AsyncCronSchedulerHandle {
           jobId: job.id,
           projectId: job.config.projectId,
           schedule: job.config.schedule,
+          trigger: "scheduled",
           scheduledFor: slotDate.toISOString(),
         });
 
-        void this.runJob(job);
+        void this.runJob(job, {
+          trigger: "scheduled",
+          scheduledFor: slotDate.toISOString(),
+        });
       }
     }
 
     this.lastCheckedMinute = currentMinute;
   }
 
-  private async runJob(job: CompiledCronJob): Promise<void> {
+  private async runJob(
+    job: CompiledCronJob,
+    trigger: RunJobTriggerContext,
+  ): Promise<AsyncCronRunRecord> {
+    const triggeredAt = this.now().toISOString();
+    const runId = `${triggeredAt}:${this.runSequence}`;
+    this.runSequence += 1;
+
     try {
       const session = await this.sessionManager.createSession({
         projectId: job.config.projectId,
         prompt: job.config.prompt,
+        ...(this.additionalSystemMessage
+          ? { additionalSystemMessage: this.additionalSystemMessage }
+          : {}),
       });
 
+      const run: AsyncCronRunRecord = {
+        id: runId,
+        jobId: job.id,
+        projectId: job.config.projectId,
+        schedule: job.config.schedule,
+        trigger: trigger.trigger,
+        triggeredAt,
+        ...(trigger.trigger === "scheduled" ? { scheduledFor: trigger.scheduledFor } : {}),
+        status: "session-created",
+        sessionId: session.id,
+        sessionState: session.state,
+      };
+
+      this.pushRun(run);
       this.log("info", "cron job session created", {
         jobId: job.id,
         sessionId: session.id,
         projectId: job.config.projectId,
         state: session.state,
+        trigger: trigger.trigger,
       });
+
+      return { ...run };
     } catch (error) {
       const cause = error instanceof Error ? error.message : String(error);
       const code = readErrorCode(error);
 
+      const run: AsyncCronRunRecord = {
+        id: runId,
+        jobId: job.id,
+        projectId: job.config.projectId,
+        schedule: job.config.schedule,
+        trigger: trigger.trigger,
+        triggeredAt,
+        ...(trigger.trigger === "scheduled" ? { scheduledFor: trigger.scheduledFor } : {}),
+        status: "failed",
+        error: cause,
+        ...(code ? { errorCode: code } : {}),
+      };
+
+      this.pushRun(run);
       this.log("error", "cron job failed to create session", {
         jobId: job.id,
         projectId: job.config.projectId,
+        trigger: trigger.trigger,
         ...(code ? { code } : {}),
         cause,
       });
+
+      return { ...run };
     }
+  }
+
+  private pushRun(run: AsyncCronRunRecord): void {
+    this.runHistory.push(run);
+
+    if (this.runHistory.length <= this.maxRunHistory) {
+      return;
+    }
+
+    this.runHistory.splice(0, this.runHistory.length - this.maxRunHistory);
   }
 
   private log(level: AsyncCronLogLevel, message: string, data?: unknown): void {
@@ -405,8 +578,6 @@ class AsyncCronScheduler implements AsyncCronSchedulerHandle {
   }
 }
 
-export function startAsyncCronScheduler(
-  options: AsyncCronSchedulerOptions,
-): AsyncCronSchedulerHandle {
-  return new AsyncCronScheduler(options);
+export function startAsyncCronScheduler(options: AsyncCronSchedulerOptions): AsyncCronScheduler {
+  return new AsyncCronSchedulerImpl(options);
 }

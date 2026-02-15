@@ -7,6 +7,10 @@ import { parseCronSchedule } from "./cron.js";
 
 type RiskLevel = "read-only" | "read-write";
 
+export type AsyncDaemonCronConfig = {
+  systemMessage?: string;
+};
+
 export type AsyncDaemonConfig = {
   host: string;
   port: number;
@@ -15,6 +19,7 @@ export type AsyncDaemonConfig = {
   workspaceRoot: string;
   systemMessage?: string;
   telegram?: AsyncServerTelegramConfig;
+  cron?: AsyncDaemonCronConfig;
   projects: Record<string, AsyncProjectConfig>;
   cronJobs?: Record<string, AsyncCronJobConfig>;
 };
@@ -169,6 +174,37 @@ function parseTelegramConfig(
       config.requestTimeoutSeconds = data.requestTimeoutSeconds;
     } else {
       errors.push(`${sourceLabel}: telegram.requestTimeoutSeconds must be a positive integer.`);
+    }
+  }
+
+  if (Object.keys(config).length === 0) {
+    return { errors };
+  }
+
+  return { config, errors };
+}
+
+function parseCronConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: AsyncDaemonCronConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  if (!isRecord(raw)) {
+    return { errors: [`${sourceLabel}: cron must be an object.`] };
+  }
+
+  const data = raw as Record<string, unknown>;
+  const config: AsyncDaemonCronConfig = {};
+  const errors: string[] = [];
+
+  if (data.systemMessage !== undefined) {
+    if (typeof data.systemMessage === "string" && data.systemMessage.trim()) {
+      config.systemMessage = data.systemMessage.trim();
+    } else {
+      errors.push(`${sourceLabel}: cron.systemMessage must be a non-empty string.`);
     }
   }
 
@@ -442,13 +478,18 @@ function parseCronJobsDir(
   sourceLabel: string,
   configDir: string,
   projects: Record<string, AsyncProjectConfig>,
-): { cronJobs: Record<string, AsyncCronJobConfig>; errors: string[] } {
+): {
+  configured: boolean;
+  cronJobs: Record<string, AsyncCronJobConfig>;
+  errors: string[];
+} {
   if (raw === undefined) {
-    return { cronJobs: {}, errors: [] };
+    return { configured: false, cronJobs: {}, errors: [] };
   }
 
   if (typeof raw !== "string" || !raw.trim()) {
     return {
+      configured: true,
       cronJobs: {},
       errors: [`${sourceLabel}: cronJobsDir must be a non-empty string when set.`],
     };
@@ -461,6 +502,7 @@ function parseCronJobsDir(
     directoryStat = statSync(cronJobsDir);
   } catch (error) {
     return {
+      configured: true,
       cronJobs: {},
       errors: [
         `${sourceLabel}: cronJobsDir does not exist: ${cronJobsDir} (${error instanceof Error ? error.message : String(error)})`,
@@ -470,6 +512,7 @@ function parseCronJobsDir(
 
   if (!directoryStat.isDirectory()) {
     return {
+      configured: true,
       cronJobs: {},
       errors: [`${sourceLabel}: cronJobsDir is not a directory: ${cronJobsDir}`],
     };
@@ -482,6 +525,7 @@ function parseCronJobsDir(
       .sort();
   } catch (error) {
     return {
+      configured: true,
       cronJobs: {},
       errors: [
         `${sourceLabel}: failed to read cronJobsDir '${cronJobsDir}': ${error instanceof Error ? error.message : String(error)}`,
@@ -509,7 +553,7 @@ function parseCronJobsDir(
     cronJobs[parsed.id] = parsed.job;
   }
 
-  return { cronJobs, errors };
+  return { configured: true, cronJobs, errors };
 }
 
 export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig {
@@ -587,21 +631,21 @@ export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig
     }
   }
 
-  if (data.cronJobs !== undefined) {
-    errors.push(
-      `${sourceLabel}: cronJobs was replaced by cronJobsDir markdown files and is no longer supported.`,
-    );
-  }
-
   const projectsResult = parseProjects(data.projects, sourceLabel, configDir);
   const telegramResult = parseTelegramConfig(data.telegram, sourceLabel);
+  const cronResult = parseCronConfig(data.cron, sourceLabel);
   const cronJobsResult = parseCronJobsDir(
     data.cronJobsDir,
     sourceLabel,
     configDir,
     projectsResult.projects,
   );
-  errors.push(...projectsResult.errors, ...telegramResult.errors, ...cronJobsResult.errors);
+  errors.push(
+    ...projectsResult.errors,
+    ...telegramResult.errors,
+    ...cronResult.errors,
+    ...cronJobsResult.errors,
+  );
 
   if (errors.length > 0) {
     throw new AsyncDaemonConfigError(errors.join("\n"));
@@ -615,9 +659,8 @@ export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig
     workspaceRoot,
     ...(systemMessage ? { systemMessage } : {}),
     ...(telegramResult.config ? { telegram: telegramResult.config } : {}),
-    ...(Object.keys(cronJobsResult.cronJobs).length > 0
-      ? { cronJobs: cronJobsResult.cronJobs }
-      : {}),
+    ...(cronResult.config ? { cron: cronResult.config } : {}),
+    ...(cronJobsResult.configured ? { cronJobs: cronJobsResult.cronJobs } : {}),
     projects: projectsResult.projects,
   };
 }

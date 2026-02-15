@@ -58,6 +58,9 @@ describe("async daemon config", () => {
           workspaceRoot: "workspaces",
           systemMessage: "focus on small diffs",
           cronJobsDir: "cron-jobs",
+          cron: {
+            systemMessage: "this prompt is running from a scheduled cron job",
+          },
           telegram: {
             botToken: "bot-token",
             defaultProjectId: "tau",
@@ -86,6 +89,7 @@ describe("async daemon config", () => {
       expect(config.projects.tau.repo).toBe("markusylisiurunen/tau");
       expect(config.telegram?.defaultProjectId).toBe("tau");
       expect(config.telegram?.systemMessage).toBe("telegram-specific notice");
+      expect(config.cron?.systemMessage).toBe("this prompt is running from a scheduled cron job");
       expect(config.cronJobs).toEqual({
         "docs-drift-nightly": {
           projectId: "tau",
@@ -148,6 +152,32 @@ describe("async daemon config", () => {
     }
   });
 
+  it("rejects empty cron.systemMessage", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          cron: {
+            systemMessage: "",
+          },
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+            },
+          },
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("cron.systemMessage");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("rejects repos outside owner/repo format", () => {
     const fx = setupFixture();
 
@@ -197,10 +227,21 @@ describe("async daemon config", () => {
     }
   });
 
-  it("rejects legacy cronJobs config", () => {
+  it("skips disabled cron job markdown files", () => {
     const fx = setupFixture();
 
     try {
+      const cronJobsDir = join(fx.root, "cron-jobs");
+      mkdirSync(cronJobsDir, { recursive: true });
+
+      writeCronJobFile(cronJobsDir, {
+        id: "nightly",
+        projectId: "tau",
+        schedule: "0 2 * * *",
+        prompt: "check docs drift",
+        enabled: false,
+      });
+
       const configPath = join(fx.root, "daemon.json");
       writeFileSync(
         configPath,
@@ -210,20 +251,12 @@ describe("async daemon config", () => {
               repo: "markusylisiurunen/tau",
             },
           },
-          cronJobs: {
-            nightly: {
-              projectId: "tau",
-              schedule: "0 2 * * *",
-              prompt: "check docs drift",
-            },
-          },
+          cronJobsDir: "cron-jobs",
         }),
       );
 
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(
-        "cronJobs was replaced by cronJobsDir",
-      );
+      const config = loadAsyncDaemonConfig(configPath);
+      expect(config.cronJobs).toEqual({});
     } finally {
       fx.cleanup();
     }

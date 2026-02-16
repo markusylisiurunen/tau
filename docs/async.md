@@ -203,7 +203,7 @@ Supported DM commands:
 - `/quiet` (for the selected session, default mode, send only the run's final assistant message)
 - plain text sends to the selected session (if no active session is selected and exactly one session exists, it is auto-selected)
 - Telegram `voice` and `audio` messages are downloaded, transcribed with Mistral, and then sent to the selected session
-- attachments (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`) are queued per session and prepended to the next text/voice turn as local temp paths with mime, size, and caption metadata
+- attachments (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`) are downloaded to local temp files immediately, queued per session, and prepended to the next text/voice turn as local temp paths with mime, size, and caption metadata
   - attachment-only messages do not trigger a turn
   - captions are non-triggering and are preserved in the attachment metadata block
   - unsupported attachments and over-limit attachments are skipped with an immediate Telegram warning

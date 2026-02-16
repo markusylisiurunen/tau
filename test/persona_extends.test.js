@@ -74,6 +74,7 @@ describe("custom personas", () => {
 
       expect(clone.model.provider).toBe("anthropic");
       expect(clone.systemPrompt).toBe(base.systemPrompt);
+      expect(clone.skills).toEqual(base.skills);
 
       expect(clone.tools.map((t) => t.name)).toEqual(base.tools.map((t) => t.name));
 
@@ -116,6 +117,71 @@ describe("custom personas", () => {
 
       expect(personas.map((p) => p.id)).toEqual(["gpt-5.2-chat"]);
       expect(personas[0].source).toBe("user");
+      expect(personas[0].skills).toBe("*");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("allows disabling skills for custom personas with an empty list", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "personas", "no-skills.md"),
+        [
+          "---",
+          "id: no-skills",
+          "provider: anthropic",
+          "model: claude-haiku-4-5",
+          "skills: []",
+          "---",
+          "custom prompt",
+          "",
+        ].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      const persona = personas.find((p) => p.id === "no-skills");
+      expect(persona).toBeTruthy();
+      expect(persona.skills).toEqual([]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("supports selecting a subset of skills for custom personas", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "personas", "subset-skills.md"),
+        [
+          "---",
+          "id: subset-skills",
+          "provider: anthropic",
+          "model: claude-haiku-4-5",
+          "skills:",
+          "  - alpha",
+          "  - beta",
+          "---",
+          "custom prompt",
+          "",
+        ].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      const persona = personas.find((p) => p.id === "subset-skills");
+      expect(persona).toBeTruthy();
+      expect(persona.skills).toEqual(["alpha", "beta"]);
     } finally {
       fx.cleanup();
     }

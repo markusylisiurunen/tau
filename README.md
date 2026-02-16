@@ -577,7 +577,7 @@ optional frontmatter fields:
 - `extends`: inherit optional fields from a built-in persona id (for example `gpt-5.2-coder`). `provider` and `model` are still required. if the markdown body is empty, the base persona's system prompt is used.
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
-- `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills
+- `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.
 - `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `tools`, `riskLevel`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
   ```yaml
   subagents:
@@ -642,7 +642,7 @@ skills are optional directories discovered at `~/.config/tau/skills/` and `~/.ag
 
 optional fields: `license`, `compatibility` (<=500 chars), `metadata` (string map), `allowed-tools` (validated, currently ignored by tau).
 
-enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), or use `"*"` to enable all discovered skills. all built-in personas have `skills: "*"` by default. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
+enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), use `"*"` to enable all discovered skills, or set `skills: []` to disable skills completely. built-in personas and custom personas with omitted `skills` default to `skills: "*"`. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
 
 use `/reload` to pick up changes to personas, prompts, skills, themes, bash commands, and AGENTS.md without restarting.
 

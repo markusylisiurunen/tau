@@ -54,6 +54,5 @@ describe("cli", () => {
     expect(result.stderr).toContain("\n\n");
     expect(result.stdout).toContain("usage:");
     expect(result.stdout).toContain("tau async daemon");
-    expect(result.stdout).toContain("tau async cancel <id>");
   });
 });

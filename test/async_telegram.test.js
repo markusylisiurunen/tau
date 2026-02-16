@@ -117,15 +117,6 @@ function createSessionManagerHarness(initialSessions = []) {
         isTurnRunning: false,
       };
     }),
-    cancelSession: vi.fn(async (sessionId) => {
-      const session = sessions.get(sessionId);
-      if (!session) {
-        throw new Error("missing session");
-      }
-      session.state = "canceled";
-      session.updatedAt = "2024-01-01T00:02:00.000Z";
-      return { ...session };
-    }),
     closeSession: vi.fn(async (sessionId) => {
       const session = sessions.get(sessionId);
       if (!session) {
@@ -137,11 +128,7 @@ function createSessionManagerHarness(initialSessions = []) {
     closeInactiveSessions: vi.fn(async () => {
       const closed = [];
       for (const [sessionId, session] of sessions) {
-        if (
-          session.state === "waiting-input" ||
-          session.state === "failed" ||
-          session.state === "canceled"
-        ) {
+        if (session.state === "waiting-input" || session.state === "failed") {
           closed.push({ ...session });
           sessions.delete(sessionId);
         }
@@ -1196,7 +1183,7 @@ describe("async telegram adapter", () => {
     }
   });
 
-  it("treats /cancel as unsupported", async () => {
+  it("treats unknown slash commands as unsupported", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -1212,7 +1199,7 @@ describe("async telegram adapter", () => {
           message: {
             chat: { id: 300, type: "private" },
             from: { id: 7 },
-            text: "/cancel",
+            text: "/bogus",
           },
         },
       ],
@@ -1239,7 +1226,6 @@ describe("async telegram adapter", () => {
 
     try {
       await waitFor(() => apiHarness.sendMessages.length >= 2);
-      expect(managerHarness.manager.cancelSession).not.toHaveBeenCalled();
       expect(
         apiHarness.sendMessages.some((entry) =>
           String(entry.text).includes("unsupported command. use /help"),
@@ -1250,7 +1236,7 @@ describe("async telegram adapter", () => {
     }
   });
 
-  it("supports /interrupt for active sessions without canceling", async () => {
+  it("supports /interrupt for active sessions", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -1309,7 +1295,6 @@ describe("async telegram adapter", () => {
       ).toBe(true);
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s2", "continue", undefined);
-      expect(managerHarness.manager.cancelSession).not.toHaveBeenCalled();
     } finally {
       await adapter.close();
     }
@@ -1411,7 +1396,7 @@ describe("async telegram adapter", () => {
     }
   });
 
-  it("supports /close all for waiting-input, failed, and canceled sessions", async () => {
+  it("supports /close all for waiting-input and failed sessions", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -1448,13 +1433,6 @@ describe("async telegram adapter", () => {
         updatedAt: "2024-01-01T00:00:00.000Z",
       },
       {
-        id: "s4",
-        projectId: "demo",
-        state: "canceled",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-      {
         id: "s5",
         projectId: "demo",
         state: "queued",
@@ -1485,10 +1463,9 @@ describe("async telegram adapter", () => {
       expect(
         apiHarness.sendMessages.some(
           (entry) =>
-            entry.text.includes("closed 3 sessions") &&
+            entry.text.includes("closed 2 sessions") &&
             entry.text.includes("s1") &&
             entry.text.includes("s3") &&
-            entry.text.includes("s4") &&
             !entry.text.includes("s2") &&
             !entry.text.includes("s5") &&
             !entry.text.includes("s6"),
@@ -1571,21 +1548,11 @@ describe("async telegram adapter", () => {
         state: "failed",
         updatedAt: "2024-01-01T00:03:00.000Z",
       });
-      managerHarness.manager.emit({
-        type: "session-state-changed",
-        sessionId: "s9",
-        projectId: "demo",
-        previousState: "failed",
-        state: "canceled",
-        updatedAt: "2024-01-01T00:04:00.000Z",
-      });
-
       await waitFor(
         () =>
           apiHarness.sendMessages.some((entry) => entry.text.includes("(s9) run started")) &&
           apiHarness.sendMessages.some((entry) => entry.text.includes("(s9) run finished")) &&
-          apiHarness.sendMessages.some((entry) => entry.text.includes("(s9) run failed")) &&
-          apiHarness.sendMessages.some((entry) => entry.text.includes("(s9) run canceled")),
+          apiHarness.sendMessages.some((entry) => entry.text.includes("(s9) run failed")),
       );
     } finally {
       await adapter.close();

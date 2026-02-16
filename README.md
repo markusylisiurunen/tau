@@ -111,7 +111,6 @@ tau async status <id>
 tau async logs <id>
 tau async send <id> <text...>
 tau async interrupt <id>
-tau async cancel <id>
 tau async cron list
 tau async cron runs [jobId]
 tau async cron run <jobId>

@@ -22,7 +22,6 @@ type AsyncCommand =
   | "logs"
   | "send"
   | "interrupt"
-  | "cancel"
   | "cron-list"
   | "cron-runs"
   | "cron-run";
@@ -297,29 +296,6 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
     return toCreateArgs();
   }
 
-  if (first === "cancel") {
-    if (positional.length === 1) {
-      throw new AsyncCliError("missing session id for cancel");
-    }
-    if (positional.length === 2) {
-      const sessionId = positional[1]?.trim();
-      if (!sessionId) {
-        throw new AsyncCliError("missing session id for cancel");
-      }
-      return {
-        help,
-        command: "cancel",
-        sessionId,
-        projectId,
-        targetId,
-        url,
-        token,
-        configFilePath,
-      };
-    }
-    return toCreateArgs();
-  }
-
   if (first === "cron") {
     const subcommand = positional[1]?.trim();
 
@@ -565,7 +541,6 @@ export function printAsyncHelp(log: (line: string) => void = console.log): void 
       "  tau async logs <id>",
       "  tau async send <id> <text...>",
       "  tau async interrupt <id>",
-      "  tau async cancel <id>",
       "  tau async cron list",
       "  tau async cron runs [jobId]",
       "  tau async cron run <jobId>",
@@ -837,18 +812,6 @@ export async function runAsyncCommand(
       target,
       method: "POST",
       path: `/v1/sessions/${encodeURIComponent(parsed.sessionId ?? "")}/interrupt`,
-      body: {},
-      fetchImpl,
-    });
-    stdout(toJsonLine(payload));
-    return;
-  }
-
-  if (parsed.command === "cancel") {
-    const payload = await requestJson({
-      target,
-      method: "POST",
-      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId ?? "")}/cancel`,
       body: {},
       fetchImpl,
     });

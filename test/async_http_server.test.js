@@ -49,13 +49,6 @@ function createManager() {
       interrupted: true,
       isTurnRunning: true,
     })),
-    cancelSession: vi.fn(async () => ({
-      id: "s1",
-      projectId: "demo",
-      state: "canceled",
-      createdAt: "2024-01-01T00:00:00.000Z",
-      updatedAt: "2024-01-01T00:00:00.000Z",
-    })),
     onEvent: vi.fn(() => () => {}),
   };
 }

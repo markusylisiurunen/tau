@@ -626,8 +626,12 @@ function parsePersona(
   }
 
   let skills: string[] | "*" | undefined;
-  if (skillsRaw === undefined && basePersona?.skills !== undefined) {
-    skills = Array.isArray(basePersona.skills) ? [...basePersona.skills] : basePersona.skills;
+  if (skillsRaw === undefined) {
+    if (basePersona?.skills !== undefined) {
+      skills = Array.isArray(basePersona.skills) ? [...basePersona.skills] : basePersona.skills;
+    } else {
+      skills = "*";
+    }
   } else {
     const skillsParsed = skillsSchema.safeParse(skillsRaw);
 
@@ -638,10 +642,9 @@ function parsePersona(
         skills = "*";
       } else if (typeof val === "string") {
         const trimmed = val.trim();
-        skills = trimmed ? [trimmed] : undefined;
+        skills = trimmed ? [trimmed] : [];
       } else if (Array.isArray(val)) {
-        const trimmed = val.map((s) => s.trim()).filter(Boolean);
-        skills = trimmed.length > 0 ? trimmed : undefined;
+        skills = val.map((s) => s.trim()).filter(Boolean);
       }
     } else if (skillsRaw !== undefined) {
       if (Array.isArray(skillsRaw)) {
@@ -734,7 +737,7 @@ function parsePersona(
     ...(finalDescription && { description: finalDescription }),
     ...(finalAllowedReasoningLevels ? { allowedReasoningLevels: finalAllowedReasoningLevels } : {}),
     ...(finalSubagents && { subagents: finalSubagents }),
-    ...(skills && { skills }),
+    ...(skills !== undefined ? { skills } : {}),
     source,
   };
 

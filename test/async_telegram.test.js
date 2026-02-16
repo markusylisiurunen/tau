@@ -1,5 +1,7 @@
 import { existsSync } from "node:fs";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { startAsyncTelegramAdapter } from "../dist/core/async/telegram.js";
 
@@ -193,6 +195,29 @@ describe("async telegram adapter", () => {
         { command: "verbose", description: "stream progress updates" },
         { command: "quiet", description: "only send final assistant message" },
       ]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("sweeps stale telegram attachment temp dirs when the adapter starts", async () => {
+    const staleDir = await mkdtemp(join(tmpdir(), "tau-telegram-attachments-"));
+    await writeFile(join(staleDir, "stale.txt"), "orphan");
+
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => !existsSync(staleDir));
     } finally {
       await adapter.close();
     }

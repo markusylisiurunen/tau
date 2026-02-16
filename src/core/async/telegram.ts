@@ -201,6 +201,8 @@ const SUPPORTED_TEXT_ATTACHMENT_EXTENSIONS = new Set([
   ".yml",
 ]);
 
+const SUPPORTED_IMAGE_ATTACHMENT_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif"]);
+
 const SUPPORTED_TEXT_ATTACHMENT_MIME_TYPES = new Set([
   "text/plain",
   "text/markdown",
@@ -228,6 +230,21 @@ const MIME_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/png": ".png",
   "image/webp": ".webp",
   "image/gif": ".gif",
+};
+
+const MIME_TYPE_BY_EXTENSION: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".json": "application/json",
+  ".csv": "text/csv",
+  ".yaml": "text/yaml",
+  ".yml": "text/yaml",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
 };
 
 async function sweepStaleTelegramAttachmentTempDirs(): Promise<void> {
@@ -374,6 +391,15 @@ function sanitizeAttachmentFileName(fileName: string, fallback: string): string 
   return normalized;
 }
 
+function inferMimeTypeFromFileName(fileName: string): string | undefined {
+  const extension = extname(fileName.trim()).toLowerCase();
+  if (!extension) {
+    return undefined;
+  }
+
+  return MIME_TYPE_BY_EXTENSION[extension];
+}
+
 function isSupportedDocumentAttachment(mimeType: string, fileName: string): boolean {
   const normalizedMimeType = mimeType.trim().toLowerCase();
   if (normalizedMimeType.startsWith("image/")) {
@@ -389,7 +415,15 @@ function isSupportedDocumentAttachment(mimeType: string, fileName: string): bool
   }
 
   const extension = extname(fileName.trim()).toLowerCase();
-  return SUPPORTED_TEXT_ATTACHMENT_EXTENSIONS.has(extension);
+  if (SUPPORTED_TEXT_ATTACHMENT_EXTENSIONS.has(extension)) {
+    return true;
+  }
+
+  if (extension === ".pdf") {
+    return true;
+  }
+
+  return SUPPORTED_IMAGE_ATTACHMENT_EXTENSIONS.has(extension);
 }
 
 function describeAttachmentLimitBytes(sizeBytes: number): string {
@@ -792,15 +826,24 @@ class AsyncTelegramAdapterImpl {
 
     const documentFileId = message.document?.file_id?.trim();
     if (documentFileId) {
-      const mimeType =
-        message.document?.mime_type?.trim().toLowerCase() || DEFAULT_TELEGRAM_DOCUMENT_MIME_TYPE;
-      const inferredExtension = inferExtensionFromMimeType(mimeType) ?? "";
+      const rawMimeType = message.document?.mime_type?.trim().toLowerCase();
+      const mimeTypeForExtension =
+        rawMimeType && rawMimeType !== DEFAULT_TELEGRAM_DOCUMENT_MIME_TYPE
+          ? rawMimeType
+          : undefined;
+      const inferredExtension = inferExtensionFromMimeType(mimeTypeForExtension ?? "") ?? "";
       const fallbackFileName = `attachment${inferredExtension}`;
       const rawFileName = message.document?.file_name?.trim() || fallbackFileName;
       let fileName = sanitizeAttachmentFileName(rawFileName, fallbackFileName || "attachment");
       if (!extname(fileName) && inferredExtension) {
         fileName = `${fileName}${inferredExtension}`;
       }
+
+      const mimeType =
+        mimeTypeForExtension ??
+        inferMimeTypeFromFileName(fileName) ??
+        rawMimeType ??
+        DEFAULT_TELEGRAM_DOCUMENT_MIME_TYPE;
 
       if (!isSupportedDocumentAttachment(mimeType, fileName)) {
         await this.reply(

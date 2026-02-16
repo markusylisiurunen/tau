@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { Api } from "grammy";
@@ -229,6 +229,26 @@ const MIME_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/webp": ".webp",
   "image/gif": ".gif",
 };
+
+async function sweepStaleTelegramAttachmentTempDirs(): Promise<void> {
+  const systemTmpDir = tmpdir();
+
+  try {
+    const entries = await readdir(systemTmpDir, { withFileTypes: true, encoding: "utf8" });
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith(TELEGRAM_ATTACHMENT_TEMP_DIR_PREFIX)) {
+        continue;
+      }
+
+      try {
+        await rm(join(systemTmpDir, entry.name), { recursive: true, force: true });
+      } catch {}
+    }
+  } catch {
+    return;
+  }
+}
 
 type QuickAction = "new" | "sessions" | "status" | "interrupt" | "close" | "quiet" | "verbose";
 
@@ -1992,6 +2012,7 @@ class AsyncTelegramAdapterImpl {
 export async function startAsyncTelegramAdapter(
   options: AsyncTelegramAdapterOptions,
 ): Promise<AsyncTelegramAdapterHandle> {
+  await sweepStaleTelegramAttachmentTempDirs();
   const adapter = new AsyncTelegramAdapterImpl(options);
 
   return {

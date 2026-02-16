@@ -5,6 +5,7 @@ import { startAsyncHttpServer } from "./http_server.js";
 import { AsyncDaemonConfigError, loadAsyncDaemonConfig } from "./server_config.js";
 import { createAsyncSessionManager, createScopedAsyncSessionManager } from "./session_manager.js";
 import { startAsyncTelegramAdapter } from "./telegram.js";
+import { cleanupWorkspaceRootsOnStartup } from "./workspace.js";
 
 export class AsyncCliError extends Error {
   constructor(message: string) {
@@ -399,6 +400,39 @@ function getTrimmedEnvValue(key: string, env: NodeJS.ProcessEnv): string | undef
   return trimmed || undefined;
 }
 
+function collectDaemonWorkspaceRoots(
+  daemonConfig: ReturnType<typeof loadAsyncDaemonConfig>,
+): string[] {
+  const roots = new Set<string>([daemonConfig.workspaceRoot]);
+
+  for (const project of Object.values(daemonConfig.projects)) {
+    if (project.workspaceRoot) {
+      roots.add(project.workspaceRoot);
+    }
+  }
+
+  return Array.from(roots);
+}
+
+function logStartupCleanupSummary(args: {
+  stdout: (line: string) => void;
+  results: Awaited<ReturnType<typeof cleanupWorkspaceRootsOnStartup>>;
+}): void {
+  for (const result of args.results) {
+    if (result.deletedEntries > 0) {
+      args.stdout(
+        `[daemon:info] startup workspace cleanup removed ${result.deletedEntries} entries under ${result.workspaceRoot}`,
+      );
+    }
+
+    for (const failure of result.failures) {
+      args.stdout(
+        `[daemon:warn] startup workspace cleanup failed for ${failure.path}: ${failure.cause}`,
+      );
+    }
+  }
+}
+
 function resolveProjectId(args: ParsedAsyncArgs, config: Config): string {
   const configured = config.async?.client?.defaultProjectId;
   const projectId = args.projectId?.trim() || configured?.trim();
@@ -579,6 +613,14 @@ async function runDaemon(args: {
     workspaceRoot: daemonConfig.workspaceRoot,
     maxSessions: daemonConfig.maxSessions,
     systemMessage: daemonConfig.systemMessage,
+  });
+
+  const startupCleanupResults = await cleanupWorkspaceRootsOnStartup(
+    collectDaemonWorkspaceRoots(daemonConfig),
+  );
+  logStartupCleanupSummary({
+    stdout: args.stdout,
+    results: startupCleanupResults,
   });
 
   const telegramConfigs = daemonConfig.telegram ? Object.entries(daemonConfig.telegram) : [];

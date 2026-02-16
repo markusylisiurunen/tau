@@ -1,4 +1,4 @@
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { AsyncProjectConfig } from "../config/schema.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
@@ -25,6 +25,17 @@ export type PreparedWorkspace = {
   sessionCwd: string;
 };
 
+export type WorkspaceCleanupFailure = {
+  path: string;
+  cause: string;
+};
+
+export type WorkspaceRootCleanupResult = {
+  workspaceRoot: string;
+  deletedEntries: number;
+  failures: WorkspaceCleanupFailure[];
+};
+
 const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
 
 function elapsedMs(startTime: bigint): number {
@@ -38,6 +49,19 @@ function log(
   data?: unknown,
 ): void {
   onLog?.({ level, message, ...(data === undefined ? {} : { data }) });
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+function formatErrorCause(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function runCommand(args: {
@@ -83,11 +107,76 @@ function isInsideWorkspace(workspacePath: string, sessionCwd: string): boolean {
   return relPath === "" || (!relPath.startsWith(`..${sep}`) && relPath !== "..");
 }
 
+export function resolveWorkspacePath(options: {
+  workspaceRoot: string;
+  projectId: string;
+  sessionId: string;
+}): string {
+  return join(resolve(options.workspaceRoot), options.projectId, options.sessionId);
+}
+
+export async function cleanupWorkspacePath(workspacePath: string): Promise<void> {
+  await rm(workspacePath, { recursive: true, force: true });
+}
+
+export async function cleanupWorkspaceRootsOnStartup(
+  workspaceRoots: string[],
+): Promise<WorkspaceRootCleanupResult[]> {
+  const uniqueWorkspaceRoots = Array.from(
+    new Set(workspaceRoots.map((workspaceRoot) => resolve(workspaceRoot))),
+  );
+
+  const results: WorkspaceRootCleanupResult[] = [];
+
+  for (const workspaceRoot of uniqueWorkspaceRoots) {
+    const result: WorkspaceRootCleanupResult = {
+      workspaceRoot,
+      deletedEntries: 0,
+      failures: [],
+    };
+
+    const entries = await readdir(workspaceRoot).catch((error) => {
+      if (getErrorCode(error) === "ENOENT") {
+        return undefined;
+      }
+
+      result.failures.push({
+        path: workspaceRoot,
+        cause: formatErrorCause(error),
+      });
+      return undefined;
+    });
+
+    if (entries) {
+      for (const entry of entries) {
+        const entryPath = join(workspaceRoot, entry);
+        try {
+          await cleanupWorkspacePath(entryPath);
+          result.deletedEntries += 1;
+        } catch (error) {
+          result.failures.push({
+            path: entryPath,
+            cause: formatErrorCause(error),
+          });
+        }
+      }
+    }
+
+    results.push(result);
+  }
+
+  return results;
+}
+
 export async function prepareWorkspace(
   options: PrepareWorkspaceOptions,
 ): Promise<PreparedWorkspace> {
   const workspaceStart = process.hrtime.bigint();
-  const workspacePath = join(resolve(options.workspaceRoot), options.projectId, options.sessionId);
+  const workspacePath = resolveWorkspacePath({
+    workspaceRoot: options.workspaceRoot,
+    projectId: options.projectId,
+    sessionId: options.sessionId,
+  });
 
   await rm(workspacePath, { recursive: true, force: true });
   await mkdir(dirname(workspacePath), { recursive: true });

@@ -131,6 +131,8 @@ Notes:
 - `projects.<id>.ref` is optional, but recommended (for example `"main"`) when every session should start from the same branch.
 - `projects.<id>.description` is optional metadata used by Telegram `/projects` output.
 - Clone uses `gh repo clone <owner/repo> <path>` (daemon host must have authenticated `gh`).
+- On daemon startup, Tau removes existing entries under all configured workspace roots (`workspaceRoot` plus any `projects.<id>.workspaceRoot` overrides) before starting adapters.
+- Canceling a session schedules best-effort workspace deletion in the background (failures are logged as warnings and do not fail cancel requests).
 - `cron.jobsDir` is optional and points to a directory of `*.md` cron job files.
 - each cron job markdown file requires frontmatter fields `id`, `projectId`, and `schedule`; the markdown body is used as the prompt.
 - frontmatter `id` must match the markdown file name.

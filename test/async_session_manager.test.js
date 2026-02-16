@@ -507,6 +507,128 @@ describe("async session manager", () => {
     expect(logs.some((entry) => entry.message === "cancel requested")).toBe(true);
   });
 
+  it("schedules workspace cleanup in the background when canceled", async () => {
+    const clientHarness = createClientHarness();
+    const cleanupDeferred = deferred();
+    const cleanupWorkspacePath = vi.fn(async () => {
+      await cleanupDeferred.promise;
+    });
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
+      createClient: vi.fn(async () => clientHarness.client),
+      cleanupWorkspacePath,
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    const canceled = await Promise.race([
+      manager.cancelSession(created.id),
+      new Promise((resolve) => setTimeout(() => resolve("timeout"), 200)),
+    ]);
+
+    expect(canceled).not.toBe("timeout");
+    expect(cleanupWorkspacePath).toHaveBeenCalledTimes(1);
+    expect(cleanupWorkspacePath).toHaveBeenCalledWith("/tmp/ws/demo");
+
+    cleanupDeferred.resolve();
+    await waitFor(() => {
+      const logs = manager.getLogs(created.id) ?? [];
+      return logs.some((entry) => entry.message === "workspace cleanup complete");
+    });
+  });
+
+  it("logs workspace cleanup failures without failing cancel", async () => {
+    const clientHarness = createClientHarness();
+    const cleanupWorkspacePath = vi.fn(async () => {
+      throw new Error("rm boom");
+    });
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
+      createClient: vi.fn(async () => clientHarness.client),
+      cleanupWorkspacePath,
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    const canceled = await manager.cancelSession(created.id);
+    expect(canceled.state).toBe("canceled");
+
+    await waitFor(() => {
+      const logs = manager.getLogs(created.id) ?? [];
+      return logs.some((entry) => entry.message === "workspace cleanup failed");
+    });
+
+    const cleanupFailureLog = (manager.getLogs(created.id) ?? []).find(
+      (entry) => entry.message === "workspace cleanup failed",
+    );
+    expect(cleanupFailureLog).toEqual(
+      expect.objectContaining({
+        level: "warn",
+        data: expect.objectContaining({
+          workspacePath: "/tmp/ws/demo",
+          cause: "rm boom",
+        }),
+      }),
+    );
+  });
+
+  it("falls back to computed workspace path when canceled during preparation", async () => {
+    const workspaceDeferred = deferred();
+    const clientHarness = createClientHarness();
+    const cleanupWorkspacePath = vi.fn(async () => {});
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+          workspaceRoot: "/tmp/project-root",
+        },
+      },
+      workspaceRoot: "/tmp/global-root",
+      prepareWorkspace: vi.fn(async ({ sessionId, projectId, workspaceRoot }) => {
+        await workspaceDeferred.promise;
+        return {
+          workspacePath: `${workspaceRoot}/${projectId}/${sessionId}`,
+          sessionCwd: `${workspaceRoot}/${projectId}/${sessionId}`,
+        };
+      }),
+      createClient: vi.fn(async () => clientHarness.client),
+      cleanupWorkspacePath,
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "preparing-workspace");
+
+    const canceled = await manager.cancelSession(created.id);
+    expect(canceled.state).toBe("canceled");
+
+    workspaceDeferred.resolve();
+
+    await waitFor(() => cleanupWorkspacePath.mock.calls.length === 1);
+    expect(cleanupWorkspacePath).toHaveBeenCalledWith(`/tmp/project-root/demo/${created.id}`);
+    expect(manager.getSession(created.id)?.workspacePath).toBeUndefined();
+  });
+
   it("closes a selected session and removes it from memory", async () => {
     const clientHarness = createClientHarness();
 

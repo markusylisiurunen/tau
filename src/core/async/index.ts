@@ -65,7 +65,14 @@ export { startAsyncTelegramAdapter } from "./telegram.js";
 export type {
   PreparedWorkspace,
   PrepareWorkspaceOptions,
+  WorkspaceCleanupFailure,
   WorkspaceLogEntry,
   WorkspaceLogLevel,
+  WorkspaceRootCleanupResult,
 } from "./workspace.js";
-export { prepareWorkspace } from "./workspace.js";
+export {
+  cleanupWorkspacePath,
+  cleanupWorkspaceRootsOnStartup,
+  prepareWorkspace,
+  resolveWorkspacePath,
+} from "./workspace.js";

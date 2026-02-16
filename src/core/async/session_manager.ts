@@ -6,7 +6,12 @@ import type { AsyncProjectConfig } from "../config/schema.js";
 import type { CoreEvent } from "../events/types.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { isRecord } from "../utils/type_guards.js";
-import { type PrepareWorkspaceOptions, prepareWorkspace } from "./workspace.js";
+import {
+  cleanupWorkspacePath as cleanupWorkspacePathOnDisk,
+  type PrepareWorkspaceOptions,
+  prepareWorkspace,
+  resolveWorkspacePath,
+} from "./workspace.js";
 
 export type AsyncSessionState =
   | "queued"
@@ -87,6 +92,7 @@ type SessionEntry = {
   clientClosePromise?: Promise<void>;
   activeSubmit?: Promise<void>;
   initializePromise?: Promise<void>;
+  workspaceCleanupPromise?: Promise<void>;
 };
 
 export type AsyncSessionManagerEvent =
@@ -162,6 +168,7 @@ export type AsyncSessionManagerOptions = {
     workspacePath: string;
     sessionCwd: string;
   }>;
+  cleanupWorkspacePath?: (workspacePath: string) => Promise<void>;
 };
 
 class AsyncSessionManagerImpl implements AsyncSessionManager {
@@ -177,6 +184,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   private readonly prepareWorkspace: (
     options: PrepareWorkspaceOptions,
   ) => Promise<{ workspacePath: string; sessionCwd: string }>;
+  private readonly cleanupWorkspacePath: (workspacePath: string) => Promise<void>;
   private closePromise?: Promise<void>;
 
   constructor(options: AsyncSessionManagerOptions) {
@@ -189,6 +197,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     this.now = options.now ?? (() => new Date());
     this.createClient = options.createClient ?? createTauSdkClient;
     this.prepareWorkspace = options.prepareWorkspace ?? prepareWorkspace;
+    this.cleanupWorkspacePath = options.cleanupWorkspacePath ?? cleanupWorkspacePathOnDisk;
   }
 
   async createSession(input: {
@@ -340,11 +349,13 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   async cancelSession(sessionId: string): Promise<AsyncSessionRecord> {
     const entry = this.requireSession(sessionId);
     if (entry.record.state === "canceled" || entry.record.state === "failed") {
+      this.scheduleWorkspaceCleanup(entry, "cancel requested");
       return this.toRecord(entry);
     }
 
     this.requestCancellation(entry, "cancel requested");
     await this.stopClient(entry);
+    this.scheduleWorkspaceCleanup(entry, "cancel requested");
     return this.toRecord(entry);
   }
 
@@ -575,6 +586,55 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     const record = this.toRecord(entry);
     this.deleteEntry(entry.record.id);
     return record;
+  }
+
+  private scheduleWorkspaceCleanup(entry: SessionEntry, reason: string): void {
+    if (entry.workspaceCleanupPromise) {
+      return;
+    }
+
+    this.log(entry, "info", "workspace cleanup scheduled", { reason });
+
+    let cleanupPromise: Promise<void>;
+    cleanupPromise = (async () => {
+      const pendingWork = [entry.activeSubmit, entry.initializePromise].filter(
+        (promise): promise is Promise<void> => promise !== undefined,
+      );
+
+      if (pendingWork.length > 0) {
+        await Promise.allSettled(pendingWork);
+      }
+
+      const workspacePath = this.resolveWorkspacePathForCleanup(entry);
+
+      try {
+        await this.cleanupWorkspacePath(workspacePath);
+        this.log(entry, "info", "workspace cleanup complete", { workspacePath });
+      } catch (error) {
+        this.log(entry, "warn", "workspace cleanup failed", {
+          workspacePath,
+          cause: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })().finally(() => {
+      if (entry.workspaceCleanupPromise === cleanupPromise) {
+        entry.workspaceCleanupPromise = undefined;
+      }
+    });
+
+    entry.workspaceCleanupPromise = cleanupPromise;
+  }
+
+  private resolveWorkspacePathForCleanup(entry: SessionEntry): string {
+    if (entry.record.workspacePath) {
+      return entry.record.workspacePath;
+    }
+
+    return resolveWorkspacePath({
+      workspaceRoot: entry.project.workspaceRoot ?? this.workspaceRoot,
+      projectId: entry.record.projectId,
+      sessionId: entry.record.id,
+    });
   }
 
   private requestCancellation(entry: SessionEntry, message: string): void {

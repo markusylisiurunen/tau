@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, extname, join } from "node:path";
 import { Api } from "grammy";
 import type { AsyncProjectConfig } from "../config/schema.js";
 import { transcribeMistralAudio } from "../utils/mistral_transcription.js";
@@ -23,6 +26,19 @@ type TelegramMessage = {
   chat?: TelegramChat;
   from?: TelegramUser;
   text?: string;
+  caption?: string;
+  photo?: {
+    file_id?: string;
+    file_size?: number;
+    width?: number;
+    height?: number;
+  }[];
+  document?: {
+    file_id?: string;
+    file_name?: string;
+    mime_type?: string;
+    file_size?: number;
+  };
   voice?: {
     file_id?: string;
     mime_type?: string;
@@ -129,6 +145,33 @@ type TelegramAudioMessage = {
   fileName: string;
 };
 
+type TelegramPendingAttachment = {
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  declaredSizeBytes?: number;
+  caption?: string;
+  materialized?: {
+    path: string;
+    sizeBytes: number;
+  };
+};
+
+type TelegramAttachmentDescriptor = {
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes?: number;
+  caption?: string;
+};
+
+type TelegramMaterializedAttachment = {
+  path: string;
+  mimeType: string;
+  sizeBytes: number;
+  caption?: string;
+};
+
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
 const MAX_COMMAND_PREVIEW_CHARS = 128;
@@ -136,12 +179,56 @@ const DEFAULT_TELEGRAM_VOICE_MIME_TYPE = "audio/ogg";
 const DEFAULT_TELEGRAM_VOICE_FILE_NAME = "voice.ogg";
 const DEFAULT_TELEGRAM_AUDIO_MIME_TYPE = "audio/mpeg";
 const DEFAULT_TELEGRAM_AUDIO_FILE_NAME = "audio.mp3";
+const DEFAULT_TELEGRAM_PHOTO_MIME_TYPE = "image/jpeg";
+const DEFAULT_TELEGRAM_DOCUMENT_MIME_TYPE = "application/octet-stream";
 const MESSAGE_QUEUED_REACTION_EMOJI = "👀";
 const MESSAGE_QUEUED_REACTION_DELAY_MS = 1000;
 const ABORTED = Symbol("aborted");
 const CALLBACK_ACTION_PREFIX = "tau:action:";
 const CALLBACK_USE_PREFIX = "tau:use:";
 const MAX_SESSION_PREVIEW_CHARS = 64;
+const MAX_TELEGRAM_ATTACHMENTS_PER_TURN = 10;
+const MAX_TELEGRAM_ATTACHMENT_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
+const TELEGRAM_ATTACHMENT_TEMP_DIR_PREFIX = "tau-telegram-attachments-";
+
+const SUPPORTED_TEXT_ATTACHMENT_EXTENSIONS = new Set([
+  ".txt",
+  ".md",
+  ".json",
+  ".csv",
+  ".yaml",
+  ".yml",
+]);
+
+const SUPPORTED_TEXT_ATTACHMENT_MIME_TYPES = new Set([
+  "text/plain",
+  "text/markdown",
+  "application/json",
+  "text/csv",
+  "application/csv",
+  "text/yaml",
+  "application/yaml",
+  "application/x-yaml",
+  "text/x-yaml",
+]);
+
+const MIME_EXTENSION_BY_TYPE: Record<string, string> = {
+  "application/pdf": ".pdf",
+  "application/json": ".json",
+  "text/markdown": ".md",
+  "text/csv": ".csv",
+  "application/csv": ".csv",
+  "text/plain": ".txt",
+  "text/yaml": ".yaml",
+  "application/yaml": ".yaml",
+  "application/x-yaml": ".yaml",
+  "text/x-yaml": ".yaml",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+  "image/gif": ".gif",
+};
 
 type QuickAction = "new" | "sessions" | "status" | "interrupt" | "close" | "quiet" | "verbose";
 
@@ -187,6 +274,125 @@ function truncateText(text: string, maxChars: number): string {
   }
 
   return `${trimmed.slice(0, maxChars - 1)}…`;
+}
+
+function normalizeSizeBytes(value: number | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  const rounded = Math.floor(value);
+  if (rounded <= 0) {
+    return undefined;
+  }
+
+  return rounded;
+}
+
+function selectLargestPhotoVariant(
+  variants: TelegramMessage["photo"],
+): { fileId: string; sizeBytes?: number } | undefined {
+  if (!variants || variants.length === 0) {
+    return undefined;
+  }
+
+  let selected: NonNullable<TelegramMessage["photo"]>[number] | undefined;
+  let selectedScore = -1;
+
+  for (const variant of variants) {
+    const fileId = variant.file_id?.trim();
+    if (!fileId) {
+      continue;
+    }
+
+    const fileSize = normalizeSizeBytes(variant.file_size);
+    const width = normalizeSizeBytes(variant.width) ?? 0;
+    const height = normalizeSizeBytes(variant.height) ?? 0;
+    const resolutionScore = width * height;
+    const sizeScore = fileSize ?? 0;
+    const score = Math.max(sizeScore, resolutionScore);
+
+    if (!selected || score >= selectedScore) {
+      selected = variant;
+      selectedScore = score;
+    }
+  }
+
+  const selectedFileId = selected?.file_id?.trim();
+  if (!selectedFileId) {
+    return undefined;
+  }
+
+  return {
+    fileId: selectedFileId,
+    sizeBytes: normalizeSizeBytes(selected?.file_size),
+  };
+}
+
+function inferExtensionFromMimeType(mimeType: string): string | undefined {
+  const trimmed = mimeType.trim().toLowerCase();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return MIME_EXTENSION_BY_TYPE[trimmed];
+}
+
+function sanitizeAttachmentFileName(fileName: string, fallback: string): string {
+  const trimmed = basename(fileName.trim());
+  const normalized = trimmed
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+/, "")
+    .replace(/[-.]+$/, "");
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  return normalized;
+}
+
+function isSupportedDocumentAttachment(mimeType: string, fileName: string): boolean {
+  const normalizedMimeType = mimeType.trim().toLowerCase();
+  if (normalizedMimeType.startsWith("image/")) {
+    return true;
+  }
+
+  if (normalizedMimeType === "application/pdf") {
+    return true;
+  }
+
+  if (SUPPORTED_TEXT_ATTACHMENT_MIME_TYPES.has(normalizedMimeType)) {
+    return true;
+  }
+
+  const extension = extname(fileName.trim()).toLowerCase();
+  return SUPPORTED_TEXT_ATTACHMENT_EXTENSIONS.has(extension);
+}
+
+function describeAttachmentLimitBytes(sizeBytes: number): string {
+  const megabytes = sizeBytes / (1024 * 1024);
+  if (Number.isInteger(megabytes)) {
+    return `${megabytes} MB`;
+  }
+
+  return `${megabytes.toFixed(1)} MB`;
+}
+
+function describeAttachment(fileName: string, mimeType: string): string {
+  const trimmedFileName = fileName.trim();
+  const trimmedMimeType = mimeType.trim();
+  if (trimmedFileName) {
+    return `'${trimmedFileName}'`;
+  }
+
+  if (trimmedMimeType) {
+    return `'${trimmedMimeType}'`;
+  }
+
+  return "attachment";
 }
 
 function describeSession(
@@ -287,6 +493,8 @@ class AsyncTelegramAdapterImpl {
   private readonly lastCommandBySession = new Map<string, string>();
   private readonly lastAssistantMessageBySession = new Map<string, string>();
   private readonly latestAssistantMessageByRun = new Map<string, string>();
+  private readonly pendingAttachmentsBySession = new Map<string, TelegramPendingAttachment[]>();
+  private readonly attachmentTempDirsBySession = new Map<string, Set<string>>();
 
   private readonly unsubscribeSessionEvents: () => void;
   private readonly loopPromise: Promise<void>;
@@ -334,6 +542,11 @@ class AsyncTelegramAdapterImpl {
     this.closed = true;
     this.abortController.abort();
     this.unsubscribeSessionEvents();
+
+    for (const sessionId of Array.from(this.attachmentTempDirsBySession.keys())) {
+      await this.cleanupSessionAttachmentTempDirs(sessionId);
+    }
+    this.pendingAttachmentsBySession.clear();
 
     try {
       await this.loopPromise;
@@ -458,8 +671,14 @@ class AsyncTelegramAdapterImpl {
       }
 
       const text = typeof message.text === "string" ? message.text.trim() : "";
+      const isCommand = text.startsWith("/");
+
+      if (!isCommand) {
+        await this.queueMessageAttachments(chatId, message);
+      }
+
       if (text) {
-        if (text.startsWith("/")) {
+        if (isCommand) {
           await this.handleCommand(chatId, text);
           return;
         }
@@ -529,6 +748,296 @@ class AsyncTelegramAdapterImpl {
       mimeType: message.audio?.mime_type?.trim() || DEFAULT_TELEGRAM_AUDIO_MIME_TYPE,
       fileName: message.audio?.file_name?.trim() || DEFAULT_TELEGRAM_AUDIO_FILE_NAME,
     };
+  }
+
+  private async queueMessageAttachments(chatId: number, message: TelegramMessage): Promise<void> {
+    const caption = typeof message.caption === "string" ? message.caption.trim() : "";
+    const attachmentCaption = caption || undefined;
+    const parsedAttachments: TelegramAttachmentDescriptor[] = [];
+
+    const photo = selectLargestPhotoVariant(message.photo);
+    if (photo) {
+      const extension = inferExtensionFromMimeType(DEFAULT_TELEGRAM_PHOTO_MIME_TYPE) ?? ".jpg";
+      const fileName = sanitizeAttachmentFileName(`photo${extension}`, `photo${extension}`);
+      parsedAttachments.push({
+        fileId: photo.fileId,
+        fileName,
+        mimeType: DEFAULT_TELEGRAM_PHOTO_MIME_TYPE,
+        sizeBytes: photo.sizeBytes,
+        caption: attachmentCaption,
+      });
+    }
+
+    const documentFileId = message.document?.file_id?.trim();
+    if (documentFileId) {
+      const mimeType =
+        message.document?.mime_type?.trim().toLowerCase() || DEFAULT_TELEGRAM_DOCUMENT_MIME_TYPE;
+      const inferredExtension = inferExtensionFromMimeType(mimeType) ?? "";
+      const fallbackFileName = `attachment${inferredExtension}`;
+      const rawFileName = message.document?.file_name?.trim() || fallbackFileName;
+      let fileName = sanitizeAttachmentFileName(rawFileName, fallbackFileName || "attachment");
+      if (!extname(fileName) && inferredExtension) {
+        fileName = `${fileName}${inferredExtension}`;
+      }
+
+      if (!isSupportedDocumentAttachment(mimeType, fileName)) {
+        await this.reply(
+          chatId,
+          `skipped attachment ${describeAttachment(fileName, mimeType)}: unsupported file type`,
+        );
+      } else {
+        parsedAttachments.push({
+          fileId: documentFileId,
+          fileName,
+          mimeType,
+          sizeBytes: normalizeSizeBytes(message.document?.file_size),
+          caption: attachmentCaption,
+        });
+      }
+    }
+
+    if (parsedAttachments.length === 0) {
+      return;
+    }
+
+    const session = this.getActiveOrSingleSession(chatId);
+    if (!session) {
+      await this.reply(chatId, "no active session. use /new or /sessions");
+      return;
+    }
+
+    const pending = this.pendingAttachmentsBySession.get(session.id) ?? [];
+    let declaredTotalSizeBytes = pending.reduce((total, attachment) => {
+      return total + (attachment.materialized?.sizeBytes ?? attachment.declaredSizeBytes ?? 0);
+    }, 0);
+
+    for (const attachment of parsedAttachments) {
+      const attachmentLabel = describeAttachment(attachment.fileName, attachment.mimeType);
+      if (pending.length >= MAX_TELEGRAM_ATTACHMENTS_PER_TURN) {
+        await this.reply(
+          chatId,
+          `skipped attachment ${attachmentLabel}: exceeds attachment limit (${MAX_TELEGRAM_ATTACHMENTS_PER_TURN} files per turn)`,
+        );
+        continue;
+      }
+
+      if (
+        typeof attachment.sizeBytes === "number" &&
+        attachment.sizeBytes > MAX_TELEGRAM_ATTACHMENT_FILE_BYTES
+      ) {
+        await this.reply(
+          chatId,
+          `skipped attachment ${attachmentLabel}: exceeds per-file limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_FILE_BYTES)})`,
+        );
+        continue;
+      }
+
+      if (
+        typeof attachment.sizeBytes === "number" &&
+        declaredTotalSizeBytes + attachment.sizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES
+      ) {
+        await this.reply(
+          chatId,
+          `skipped attachment ${attachmentLabel}: exceeds per-turn total limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES)})`,
+        );
+        continue;
+      }
+
+      pending.push({
+        fileId: attachment.fileId,
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        declaredSizeBytes: attachment.sizeBytes,
+        caption: attachment.caption,
+      });
+
+      if (typeof attachment.sizeBytes === "number") {
+        declaredTotalSizeBytes += attachment.sizeBytes;
+      }
+    }
+
+    if (pending.length > 0) {
+      this.pendingAttachmentsBySession.set(session.id, pending);
+    }
+  }
+
+  private async buildMessageTextWithAttachments(
+    sessionId: string,
+    text: string,
+    chatId: number,
+  ): Promise<string> {
+    const attachments = await this.materializePendingAttachments(sessionId, chatId);
+    if (attachments.length === 0) {
+      return text;
+    }
+
+    return [this.formatAttachmentBlock(attachments), text].join("\n\n");
+  }
+
+  private formatAttachmentBlock(attachments: TelegramMaterializedAttachment[]): string {
+    const lines = ["attachments:"];
+    for (const attachment of attachments) {
+      lines.push(`- path: ${attachment.path}`);
+      lines.push(`  mime: ${attachment.mimeType}`);
+      lines.push(`  size_bytes: ${attachment.sizeBytes}`);
+      if (attachment.caption) {
+        lines.push(`  caption: ${JSON.stringify(attachment.caption)}`);
+      }
+    }
+
+    return lines.join("\n");
+  }
+
+  private async materializePendingAttachments(
+    sessionId: string,
+    chatId: number,
+  ): Promise<TelegramMaterializedAttachment[]> {
+    const pending = this.pendingAttachmentsBySession.get(sessionId);
+    if (!pending || pending.length === 0) {
+      return [];
+    }
+
+    let turnTempDirPath: string | undefined;
+    let totalSizeBytes = 0;
+    const nextPending: TelegramPendingAttachment[] = [];
+    const readyAttachments: TelegramMaterializedAttachment[] = [];
+
+    for (const [index, attachment] of pending.entries()) {
+      const attachmentLabel = describeAttachment(attachment.fileName, attachment.mimeType);
+
+      const alreadyMaterialized = attachment.materialized;
+      if (alreadyMaterialized) {
+        if (alreadyMaterialized.sizeBytes > MAX_TELEGRAM_ATTACHMENT_FILE_BYTES) {
+          await this.reply(
+            chatId,
+            `skipped attachment ${attachmentLabel}: exceeds per-file limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_FILE_BYTES)})`,
+          );
+          continue;
+        }
+
+        if (totalSizeBytes + alreadyMaterialized.sizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES) {
+          await this.reply(
+            chatId,
+            `skipped attachment ${attachmentLabel}: exceeds per-turn total limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES)})`,
+          );
+          continue;
+        }
+
+        totalSizeBytes += alreadyMaterialized.sizeBytes;
+        nextPending.push(attachment);
+        readyAttachments.push({
+          path: alreadyMaterialized.path,
+          mimeType: attachment.mimeType,
+          sizeBytes: alreadyMaterialized.sizeBytes,
+          caption: attachment.caption,
+        });
+        continue;
+      }
+
+      let fileBuffer: Buffer;
+      try {
+        fileBuffer = await this.api.downloadFile(attachment.fileId);
+      } catch (error) {
+        await this.reply(
+          chatId,
+          `failed to download attachment ${attachmentLabel}: ${this.formatManagerError(error)}`,
+        );
+        continue;
+      }
+
+      const fileSizeBytes = fileBuffer.byteLength;
+      if (fileSizeBytes > MAX_TELEGRAM_ATTACHMENT_FILE_BYTES) {
+        await this.reply(
+          chatId,
+          `skipped attachment ${attachmentLabel}: exceeds per-file limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_FILE_BYTES)})`,
+        );
+        continue;
+      }
+
+      if (totalSizeBytes + fileSizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES) {
+        await this.reply(
+          chatId,
+          `skipped attachment ${attachmentLabel}: exceeds per-turn total limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES)})`,
+        );
+        continue;
+      }
+
+      if (!turnTempDirPath) {
+        turnTempDirPath = await this.createAttachmentTempDir(sessionId);
+      }
+
+      const indexedFileName = `${String(index + 1).padStart(2, "0")}-${attachment.fileName}`;
+      const filePath = join(turnTempDirPath, indexedFileName);
+
+      try {
+        await writeFile(filePath, fileBuffer);
+      } catch (error) {
+        await this.reply(
+          chatId,
+          `failed to materialize attachment ${attachmentLabel}: ${this.formatManagerError(error)}`,
+        );
+        continue;
+      }
+
+      const materializedAttachment: TelegramPendingAttachment = {
+        ...attachment,
+        materialized: {
+          path: filePath,
+          sizeBytes: fileSizeBytes,
+        },
+      };
+
+      totalSizeBytes += fileSizeBytes;
+      nextPending.push(materializedAttachment);
+      readyAttachments.push({
+        path: filePath,
+        mimeType: attachment.mimeType,
+        sizeBytes: fileSizeBytes,
+        caption: attachment.caption,
+      });
+    }
+
+    if (nextPending.length === 0) {
+      this.pendingAttachmentsBySession.delete(sessionId);
+    } else {
+      this.pendingAttachmentsBySession.set(sessionId, nextPending);
+    }
+
+    return readyAttachments;
+  }
+
+  private async createAttachmentTempDir(sessionId: string): Promise<string> {
+    const directoryPath = await mkdtemp(join(tmpdir(), TELEGRAM_ATTACHMENT_TEMP_DIR_PREFIX));
+    const directories = this.attachmentTempDirsBySession.get(sessionId) ?? new Set<string>();
+    directories.add(directoryPath);
+    this.attachmentTempDirsBySession.set(sessionId, directories);
+    return directoryPath;
+  }
+
+  private clearSessionAttachments(sessionId: string): void {
+    this.pendingAttachmentsBySession.delete(sessionId);
+    void this.cleanupSessionAttachmentTempDirs(sessionId);
+  }
+
+  private async cleanupSessionAttachmentTempDirs(sessionId: string): Promise<void> {
+    const directories = this.attachmentTempDirsBySession.get(sessionId);
+    if (!directories || directories.size === 0) {
+      return;
+    }
+
+    this.attachmentTempDirsBySession.delete(sessionId);
+
+    for (const directoryPath of directories) {
+      try {
+        await rm(directoryPath, { recursive: true, force: true });
+      } catch (error) {
+        this.log("warn", "failed to clean up telegram attachment temp directory", {
+          sessionId,
+          directoryPath,
+          cause: this.formatManagerError(error),
+        });
+      }
+    }
   }
 
   private isChatAllowed(chatId: number): boolean {
@@ -1045,11 +1554,17 @@ class AsyncTelegramAdapterImpl {
     }
 
     try {
-      await this.sessionManager.sendMessage(
+      const textWithAttachments = await this.buildMessageTextWithAttachments(
         session.id,
         text,
+        chatId,
+      );
+      await this.sessionManager.sendMessage(
+        session.id,
+        textWithAttachments,
         this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
       );
+      this.pendingAttachmentsBySession.delete(session.id);
       await this.reactToQueuedMessage(chatId, sourceMessageId);
       if (this.isVerboseSession(session.id)) {
         await this.reply(chatId, this.formatMessageQueued(session.id));
@@ -1064,7 +1579,7 @@ class AsyncTelegramAdapterImpl {
     message: TelegramAudioMessage,
     sourceMessageId?: number,
   ): Promise<void> {
-    const session = this.getActiveSession(chatId);
+    const session = this.getActiveOrSingleSession(chatId);
     if (!session) {
       await this.reply(chatId, "no active session. use /new or /sessions");
       return;
@@ -1101,11 +1616,17 @@ class AsyncTelegramAdapterImpl {
     }
 
     try {
-      await this.sessionManager.sendMessage(
+      const textWithAttachments = await this.buildMessageTextWithAttachments(
         session.id,
         transcript,
+        chatId,
+      );
+      await this.sessionManager.sendMessage(
+        session.id,
+        textWithAttachments,
         this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
       );
+      this.pendingAttachmentsBySession.delete(session.id);
       await this.reactToQueuedMessage(chatId, sourceMessageId);
       if (this.isVerboseSession(session.id)) {
         await this.reply(chatId, this.formatMessageQueued(session.id));
@@ -1124,6 +1645,7 @@ class AsyncTelegramAdapterImpl {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) {
       this.clearActiveSession(chatId);
+      this.clearSessionAttachments(sessionId);
       return undefined;
     }
 
@@ -1211,6 +1733,7 @@ class AsyncTelegramAdapterImpl {
     this.lastCommandBySession.delete(sessionId);
     this.lastAssistantMessageBySession.delete(sessionId);
     this.latestAssistantMessageByRun.delete(sessionId);
+    this.clearSessionAttachments(sessionId);
   }
 
   private getSessionVerbosity(sessionId: string): SessionVerbosity {
@@ -1247,6 +1770,7 @@ class AsyncTelegramAdapterImpl {
 
     if (event.state === "canceled") {
       this.latestAssistantMessageByRun.delete(event.sessionId);
+      this.clearSessionAttachments(event.sessionId);
       this.notifyLifecycle(event.sessionId, event.projectId, "canceled");
       return;
     }

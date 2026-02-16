@@ -46,6 +46,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `commands/registry.ts` - Slash command parsing and dispatch
   - `cli.ts` - CLI argument parsing and help text
   - `async/` - Async daemon/client modules (`cli.ts`, `cron.ts`, `http_protocol.ts`, `http_server.ts`, `server_config.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
+    - `telegram.ts` handles DM commands, voice/audio transcription, and attachment queueing for text/voice-triggered turns
   - `debug.ts` - `--debug` output
   - `config/deps.ts` - Config loader dependencies
   - `config/paths.ts` - Config level discovery

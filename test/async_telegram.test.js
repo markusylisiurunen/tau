@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import { startAsyncTelegramAdapter } from "../dist/core/async/telegram.js";
 
@@ -599,6 +601,294 @@ describe("async telegram adapter", () => {
       await waitFor(() =>
         apiHarness.setMessageReactions.some(
           (entry) => entry.chatId === 200 && entry.messageId === 502,
+        ),
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("queues attachment-only messages and prepends them to the next text turn", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 205, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 205, type: "private" },
+            from: { id: 7 },
+            caption: "release notes",
+            document: {
+              file_id: "doc-205",
+              file_name: "notes.pdf",
+              mime_type: "application/pdf",
+              file_size: 256,
+            },
+          },
+        },
+        {
+          update_id: 3,
+          message: {
+            message_id: 503,
+            chat: { id: 205, type: "private" },
+            from: { id: 7 },
+            text: "follow up",
+          },
+        },
+      ],
+    ]);
+
+    apiHarness.api.downloadFile.mockImplementation(async (fileId) => {
+      apiHarness.downloadFileCalls.push(fileId);
+      return Buffer.from("pdf-bytes");
+    });
+
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      defaultProjectId: "demo",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+
+      const sendMessageCall = managerHarness.manager.sendMessage.mock.calls[0];
+      expect(sendMessageCall[0]).toBe("s1");
+      expect(sendMessageCall[2]).toBe(undefined);
+      expect(sendMessageCall[1]).toContain("attachments:");
+      expect(sendMessageCall[1]).toContain("mime: application/pdf");
+      expect(sendMessageCall[1]).toContain("size_bytes: 9");
+      expect(sendMessageCall[1]).toContain('caption: "release notes"');
+      expect(sendMessageCall[1]).toContain("\n\nfollow up");
+
+      const attachmentPathMatch = /- path: (.+)/.exec(sendMessageCall[1]);
+      expect(attachmentPathMatch).toBeTruthy();
+      const attachmentPath = attachmentPathMatch?.[1] ?? "";
+      expect(attachmentPath.startsWith(tmpdir())).toBe(true);
+      expect(existsSync(attachmentPath)).toBe(true);
+      expect(apiHarness.downloadFileCalls).toEqual(["doc-205"]);
+      await waitFor(() =>
+        apiHarness.setMessageReactions.some(
+          (entry) => entry.chatId === 205 && entry.messageId === 503,
+        ),
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("skips unsupported document attachments with an immediate warning", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 206, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 206, type: "private" },
+            from: { id: 7 },
+            document: {
+              file_id: "doc-unsupported",
+              file_name: "payload.exe",
+              mime_type: "application/octet-stream",
+              file_size: 123,
+            },
+          },
+        },
+        {
+          update_id: 3,
+          message: {
+            chat: { id: 206, type: "private" },
+            from: { id: 7 },
+            text: "continue",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      defaultProjectId: "demo",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+
+      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s1", "continue", undefined);
+      expect(
+        apiHarness.sendMessages.some((entry) =>
+          String(entry.text).includes("unsupported file type"),
+        ),
+      ).toBe(true);
+      expect(apiHarness.downloadFileCalls).toEqual([]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("skips oversized attachments with an immediate warning", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 207, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 207, type: "private" },
+            from: { id: 7 },
+            document: {
+              file_id: "doc-big",
+              file_name: "large.pdf",
+              mime_type: "application/pdf",
+              file_size: 21 * 1024 * 1024,
+            },
+          },
+        },
+        {
+          update_id: 3,
+          message: {
+            chat: { id: 207, type: "private" },
+            from: { id: 7 },
+            text: "continue",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      defaultProjectId: "demo",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+
+      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s1", "continue", undefined);
+      expect(
+        apiHarness.sendMessages.some((entry) => String(entry.text).includes("per-file limit")),
+      ).toBe(true);
+      expect(apiHarness.downloadFileCalls).toEqual([]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("prepends queued attachments to voice-triggered turns", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 211, type: "private" },
+            from: { id: 7 },
+            text: "/use s31",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            message_id: 903,
+            chat: { id: 211, type: "private" },
+            from: { id: 7 },
+            caption: "dataset",
+            voice: {
+              file_id: "voice-31",
+              mime_type: "audio/ogg",
+            },
+            document: {
+              file_id: "doc-31",
+              file_name: "data.json",
+              mime_type: "application/json",
+              file_size: 64,
+            },
+          },
+        },
+      ],
+    ]);
+
+    apiHarness.api.downloadFile.mockImplementation(async (fileId) => {
+      apiHarness.downloadFileCalls.push(fileId);
+      if (fileId === "voice-31") {
+        return Buffer.from("voice-bytes");
+      }
+      return Buffer.from('{"ok":true}');
+    });
+
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s31",
+        projectId: "demo",
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const mistralFetch = vi.fn(async () => createJsonResponse({ text: "transcribed voice" }));
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      mistralApiKey: "mistral-key",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      fetchImpl: mistralFetch,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+
+      const sendMessageCall = managerHarness.manager.sendMessage.mock.calls[0];
+      expect(sendMessageCall[0]).toBe("s31");
+      expect(sendMessageCall[1]).toContain("attachments:");
+      expect(sendMessageCall[1]).toContain("mime: application/json");
+      expect(sendMessageCall[1]).toContain('caption: "dataset"');
+      expect(sendMessageCall[1]).toContain("\n\ntranscribed voice");
+      expect(apiHarness.downloadFileCalls).toEqual(["voice-31", "doc-31"]);
+      await waitFor(() =>
+        apiHarness.setMessageReactions.some(
+          (entry) => entry.chatId === 211 && entry.messageId === 903,
         ),
       );
     } finally {

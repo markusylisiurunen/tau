@@ -510,7 +510,7 @@ daemon-side async settings are in a separate config file passed to:
 tau async daemon --config-file <path>
 ```
 
-see [docs/async.md](docs/async.md) for daemon config schema (`host`, `port`, `authToken`, `telegram` (single bot object or map by bot id), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `projects.<id>.ref`, `projects.<id>.workingDirectory`, `projects.<id>.description`) and GitHub repo requirements (`owner/repo`, cloned via `gh repo clone` with shallow-first fallback to full clone).
+see [docs/async.md](docs/async.md) for daemon config schema (`host`, `port`, `authToken`, `telegram` (single bot object or map by bot id), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `projects.<id>.ref`, `projects.<id>.workingDirectory`, `projects.<id>.description`) and GitHub repo requirements (`owner/repo`, cloned via `gh repo clone`).
 
 ### project bash commands
 

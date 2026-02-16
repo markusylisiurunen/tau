@@ -83,30 +83,6 @@ function isInsideWorkspace(workspacePath: string, sessionCwd: string): boolean {
   return relPath === "" || (!relPath.startsWith(`..${sep}`) && relPath !== "..");
 }
 
-function buildCloneCommandArgs(args: {
-  repo: string;
-  workspacePath: string;
-  ref?: string;
-  shallow: boolean;
-}): string[] {
-  const gitCloneArgs: string[] = [];
-
-  if (args.shallow) {
-    gitCloneArgs.push("--depth=1", "--no-single-branch");
-    if (args.ref) {
-      gitCloneArgs.push("--branch", args.ref);
-    }
-  }
-
-  return [
-    "repo",
-    "clone",
-    args.repo,
-    args.workspacePath,
-    ...(gitCloneArgs.length > 0 ? ["--", ...gitCloneArgs] : []),
-  ];
-}
-
 export async function prepareWorkspace(
   options: PrepareWorkspaceOptions,
 ): Promise<PreparedWorkspace> {
@@ -122,35 +98,11 @@ export async function prepareWorkspace(
   });
 
   const cloneStart = process.hrtime.bigint();
-  let cloneMode: "shallow" | "full" = "shallow";
-  let cloneResult = await runCommand({
+  const cloneResult = await runCommand({
     command: "gh",
-    commandArgs: buildCloneCommandArgs({
-      repo: options.project.repo,
-      workspacePath,
-      ref: options.project.ref,
-      shallow: true,
-    }),
+    commandArgs: ["repo", "clone", options.project.repo, workspacePath],
     signal: options.signal,
   });
-
-  if (cloneResult.exitCode !== 0) {
-    log(options.onLog, "info", "shallow clone failed, retrying full clone", {
-      exitCode: cloneResult.exitCode,
-      output: cloneResult.output,
-    });
-
-    cloneMode = "full";
-    cloneResult = await runCommand({
-      command: "gh",
-      commandArgs: buildCloneCommandArgs({
-        repo: options.project.repo,
-        workspacePath,
-        shallow: false,
-      }),
-      signal: options.signal,
-    });
-  }
 
   if (cloneResult.exitCode !== 0) {
     log(options.onLog, "error", "gh repo clone failed", { output: cloneResult.output });
@@ -162,7 +114,6 @@ export async function prepareWorkspace(
   }
 
   log(options.onLog, "info", "repository clone complete", {
-    mode: cloneMode,
     durationMs: elapsedMs(cloneStart),
     ...(options.project.ref ? { ref: options.project.ref } : {}),
   });

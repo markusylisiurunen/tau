@@ -5,8 +5,10 @@ import {
   createRpcEventMessage,
   createRpcReadyMessage,
   createRpcSuccessResponse,
+  parseRpcOutgoingLine,
   parseRpcRequestLine,
   RPC_ERROR_CODES,
+  RPC_METHODS,
   RPC_PROTOCOL_VERSION,
   validateRpcParams,
 } from "../dist/core/modes/rpc_protocol.js";
@@ -68,6 +70,143 @@ describe("rpc_protocol", () => {
       ok: false,
       id: 3,
       error: expect.objectContaining({ code: RPC_ERROR_CODES.invalidParams }),
+    });
+  });
+
+  it("parses valid outgoing server messages", () => {
+    const ready = parseRpcOutgoingLine(
+      JSON.stringify({
+        version: RPC_PROTOCOL_VERSION,
+        type: "ready",
+        sessionId: "session-1",
+        methods: [...RPC_METHODS],
+        coreEventVersion: CORE_EVENT_VERSION,
+      }),
+    );
+    expect(ready).toEqual({
+      ok: true,
+      message: {
+        version: RPC_PROTOCOL_VERSION,
+        type: "ready",
+        sessionId: "session-1",
+        methods: [...RPC_METHODS],
+        coreEventVersion: CORE_EVENT_VERSION,
+      },
+    });
+
+    const event = parseRpcOutgoingLine(
+      JSON.stringify({
+        version: RPC_PROTOCOL_VERSION,
+        type: "event",
+        requestId: "req-1",
+        event: {
+          version: CORE_EVENT_VERSION,
+          event: { type: "notice", severity: "info", text: "hello" },
+        },
+      }),
+    );
+    expect(event).toEqual({
+      ok: true,
+      message: {
+        version: RPC_PROTOCOL_VERSION,
+        type: "event",
+        requestId: "req-1",
+        event: {
+          version: CORE_EVENT_VERSION,
+          event: { type: "notice", severity: "info", text: "hello" },
+        },
+      },
+    });
+
+    const successResponse = parseRpcOutgoingLine(
+      JSON.stringify({
+        version: RPC_PROTOCOL_VERSION,
+        type: "response",
+        id: 7,
+        ok: true,
+        result: { shutdown: true },
+      }),
+    );
+    expect(successResponse).toEqual({
+      ok: true,
+      message: {
+        version: RPC_PROTOCOL_VERSION,
+        type: "response",
+        id: 7,
+        ok: true,
+        result: { shutdown: true },
+      },
+    });
+
+    const errorResponse = parseRpcOutgoingLine(
+      JSON.stringify({
+        version: RPC_PROTOCOL_VERSION,
+        type: "response",
+        id: "req-2",
+        ok: false,
+        error: {
+          code: RPC_ERROR_CODES.busy,
+          message: "a session turn is already running",
+        },
+      }),
+    );
+    expect(errorResponse).toEqual({
+      ok: true,
+      message: {
+        version: RPC_PROTOCOL_VERSION,
+        type: "response",
+        id: "req-2",
+        ok: false,
+        error: {
+          code: RPC_ERROR_CODES.busy,
+          message: "a session turn is already running",
+        },
+      },
+    });
+  });
+
+  it("returns structured parse errors for malformed outgoing messages", () => {
+    const malformed = parseRpcOutgoingLine("{bad-json}");
+    expect(malformed).toEqual({
+      ok: false,
+      messageType: null,
+      id: null,
+      error: expect.objectContaining({ code: RPC_ERROR_CODES.parseError }),
+    });
+
+    const badVersion = parseRpcOutgoingLine(
+      JSON.stringify({
+        version: 99,
+        type: "ready",
+        sessionId: "session-1",
+        methods: [...RPC_METHODS],
+        coreEventVersion: CORE_EVENT_VERSION,
+      }),
+    );
+    expect(badVersion).toEqual({
+      ok: false,
+      messageType: null,
+      id: null,
+      error: expect.objectContaining({
+        code: RPC_ERROR_CODES.invalidRequest,
+        message: "unsupported rpc version: 99",
+      }),
+    });
+
+    const malformedResponse = parseRpcOutgoingLine(
+      JSON.stringify({
+        version: RPC_PROTOCOL_VERSION,
+        type: "response",
+        id: "req-9",
+        ok: false,
+        error: { code: "not-a-code", message: 123 },
+      }),
+    );
+    expect(malformedResponse).toEqual({
+      ok: false,
+      messageType: "response",
+      id: "req-9",
+      error: expect.objectContaining({ code: RPC_ERROR_CODES.invalidRequest }),
     });
   });
 

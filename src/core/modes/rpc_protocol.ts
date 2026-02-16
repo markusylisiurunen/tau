@@ -154,6 +154,20 @@ export type RpcReadyMessage = {
 
 export type RpcOutgoingMessage = RpcResponseMessage | RpcEventMessage | RpcReadyMessage;
 
+export type RpcOutgoingParseFailure = {
+  ok: false;
+  messageType: RpcOutgoingMessage["type"] | null;
+  id: RpcRequestId | null;
+  error: RpcError;
+};
+
+export type RpcOutgoingParseSuccess = {
+  ok: true;
+  message: RpcOutgoingMessage;
+};
+
+export type RpcOutgoingParseResult = RpcOutgoingParseFailure | RpcOutgoingParseSuccess;
+
 export type RpcParseFailure = {
   ok: false;
   id: RpcRequestId | null;
@@ -335,6 +349,70 @@ export function parseRpcRequestLine(line: string): RpcParseResult {
   };
 }
 
+export function parseRpcOutgoingLine(line: string): RpcOutgoingParseResult {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return outgoingParseFailure(
+      null,
+      null,
+      RPC_ERROR_CODES.invalidRequest,
+      "rpc line cannot be empty",
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (error) {
+    return outgoingParseFailure(
+      null,
+      null,
+      RPC_ERROR_CODES.parseError,
+      "failed to parse JSON rpc line",
+      {
+        cause: error instanceof Error ? error.message : String(error),
+      },
+    );
+  }
+
+  if (!isRecord(parsed)) {
+    return outgoingParseFailure(
+      null,
+      null,
+      RPC_ERROR_CODES.invalidRequest,
+      "rpc payload must be a JSON object",
+    );
+  }
+
+  if (parsed.version !== RPC_PROTOCOL_VERSION) {
+    return outgoingParseFailure(
+      null,
+      null,
+      RPC_ERROR_CODES.invalidRequest,
+      `unsupported rpc version: ${String(parsed.version)}`,
+    );
+  }
+
+  if (parsed.type === "ready") {
+    return parseRpcReadyMessage(parsed);
+  }
+
+  if (parsed.type === "event") {
+    return parseRpcEventMessage(parsed);
+  }
+
+  if (parsed.type === "response") {
+    return parseRpcResponseMessage(parsed);
+  }
+
+  return outgoingParseFailure(
+    null,
+    null,
+    RPC_ERROR_CODES.invalidRequest,
+    `unsupported rpc message type: ${String(parsed.type)}`,
+  );
+}
+
 export function validateRpcParams(
   method: "initialize",
   params: unknown,
@@ -457,11 +535,263 @@ function validateNoParams(
   return { ok: true, value: EMPTY_OBJECT };
 }
 
+function parseRpcReadyMessage(payload: Record<string, unknown>): RpcOutgoingParseResult {
+  if (typeof payload.sessionId !== "string") {
+    return outgoingParseFailure(
+      "ready",
+      null,
+      RPC_ERROR_CODES.invalidRequest,
+      "ready.sessionId must be a string",
+    );
+  }
+
+  if (!Array.isArray(payload.methods) || !payload.methods.every((method) => isRpcMethod(method))) {
+    return outgoingParseFailure(
+      "ready",
+      null,
+      RPC_ERROR_CODES.invalidRequest,
+      "ready.methods must contain supported rpc methods",
+    );
+  }
+
+  if (payload.coreEventVersion !== CORE_EVENT_VERSION) {
+    return outgoingParseFailure(
+      "ready",
+      null,
+      RPC_ERROR_CODES.invalidRequest,
+      `unsupported core event version: ${String(payload.coreEventVersion)}`,
+    );
+  }
+
+  return {
+    ok: true,
+    message: {
+      version: RPC_PROTOCOL_VERSION,
+      type: "ready",
+      sessionId: payload.sessionId,
+      methods: [...payload.methods],
+      coreEventVersion: CORE_EVENT_VERSION,
+    },
+  };
+}
+
+function parseRpcEventMessage(payload: Record<string, unknown>): RpcOutgoingParseResult {
+  const event = parseCoreEventEnvelope(payload.event);
+  if (!event.ok) {
+    return outgoingParseFailure(
+      "event",
+      null,
+      event.error.code,
+      event.error.message,
+      event.error.data,
+    );
+  }
+
+  if (payload.requestId !== undefined) {
+    const requestId = parseRequestId(payload.requestId);
+    if (!requestId.ok) {
+      return outgoingParseFailure(
+        "event",
+        null,
+        RPC_ERROR_CODES.invalidRequest,
+        "event.requestId must be a string or number when provided",
+      );
+    }
+
+    return {
+      ok: true,
+      message: {
+        version: RPC_PROTOCOL_VERSION,
+        type: "event",
+        event: event.envelope,
+        requestId: requestId.id,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    message: {
+      version: RPC_PROTOCOL_VERSION,
+      type: "event",
+      event: event.envelope,
+    },
+  };
+}
+
+function parseRpcResponseMessage(payload: Record<string, unknown>): RpcOutgoingParseResult {
+  const responseId = parseNullableRequestId(payload.id);
+  const requestId = responseId.ok ? responseId.id : null;
+  if (!responseId.ok) {
+    return outgoingParseFailure(
+      "response",
+      null,
+      RPC_ERROR_CODES.invalidRequest,
+      "response.id must be a string or number",
+    );
+  }
+
+  if (payload.ok === true) {
+    const correlatedId = parseRequestId(payload.id);
+    if (!correlatedId.ok) {
+      return outgoingParseFailure(
+        "response",
+        requestId,
+        RPC_ERROR_CODES.invalidRequest,
+        "successful response.id must be a string or number",
+      );
+    }
+
+    if (!("result" in payload)) {
+      return outgoingParseFailure(
+        "response",
+        correlatedId.id,
+        RPC_ERROR_CODES.invalidRequest,
+        "successful response must include result",
+      );
+    }
+
+    return {
+      ok: true,
+      message: {
+        version: RPC_PROTOCOL_VERSION,
+        type: "response",
+        id: correlatedId.id,
+        ok: true,
+        result: payload.result as RpcResultByMethod[RpcMethod],
+      },
+    };
+  }
+
+  if (payload.ok === false) {
+    if (!isRecord(payload.error)) {
+      return outgoingParseFailure(
+        "response",
+        requestId,
+        RPC_ERROR_CODES.invalidRequest,
+        "error response.error must be an object",
+      );
+    }
+
+    const code = payload.error.code;
+    const message = payload.error.message;
+    if (!isRpcErrorCode(code) || typeof message !== "string") {
+      return outgoingParseFailure(
+        "response",
+        requestId,
+        RPC_ERROR_CODES.invalidRequest,
+        "error response.error must include a valid code and string message",
+      );
+    }
+
+    return {
+      ok: true,
+      message: {
+        version: RPC_PROTOCOL_VERSION,
+        type: "response",
+        id: requestId,
+        ok: false,
+        error: {
+          code,
+          message,
+          ...("data" in payload.error ? { data: payload.error.data } : {}),
+        },
+      },
+    };
+  }
+
+  return outgoingParseFailure(
+    "response",
+    requestId,
+    RPC_ERROR_CODES.invalidRequest,
+    "response.ok must be true or false",
+  );
+}
+
+function parseCoreEventEnvelope(
+  value: unknown,
+): { ok: true; envelope: CoreEventEnvelope } | { ok: false; error: RpcError } {
+  if (!isRecord(value)) {
+    return {
+      ok: false,
+      error: createRpcError(
+        RPC_ERROR_CODES.invalidRequest,
+        "event.event must be a core event envelope",
+      ),
+    };
+  }
+
+  if (value.version !== CORE_EVENT_VERSION) {
+    return {
+      ok: false,
+      error: createRpcError(
+        RPC_ERROR_CODES.invalidRequest,
+        `unsupported core event version: ${String(value.version)}`,
+      ),
+    };
+  }
+
+  if (!isRecord(value.event) || typeof value.event.type !== "string") {
+    return {
+      ok: false,
+      error: createRpcError(
+        RPC_ERROR_CODES.invalidRequest,
+        "event.event.event must be a core event object with a string type",
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    envelope: {
+      version: CORE_EVENT_VERSION,
+      event: value.event as CoreEventEnvelope["event"],
+    },
+  };
+}
+
 function parseRequestId(value: unknown): { ok: true; id: RpcRequestId } | { ok: false } {
   if (typeof value === "string" || typeof value === "number") {
     return { ok: true, id: value };
   }
+
   return { ok: false };
+}
+
+function parseNullableRequestId(
+  value: unknown,
+): { ok: true; id: RpcRequestId | null } | { ok: false } {
+  if (value === null) {
+    return { ok: true, id: null };
+  }
+
+  const parsed = parseRequestId(value);
+  if (!parsed.ok) {
+    return { ok: false };
+  }
+
+  return { ok: true, id: parsed.id };
+}
+
+function outgoingParseFailure(
+  messageType: RpcOutgoingMessage["type"] | null,
+  id: RpcRequestId | null,
+  code: RpcErrorCode,
+  message: string,
+  data?: unknown,
+): RpcOutgoingParseFailure {
+  return {
+    ok: false,
+    messageType,
+    id,
+    error: createRpcError(code, message, data),
+  };
+}
+
+function isRpcErrorCode(value: unknown): value is RpcErrorCode {
+  return (
+    typeof value === "string" && Object.values(RPC_ERROR_CODES).includes(value as RpcErrorCode)
+  );
 }
 
 function invalidParams(message: string): RpcParamsValidationResult<never> {

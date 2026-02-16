@@ -300,6 +300,60 @@ describe("sdk_client", () => {
     await client.close();
   });
 
+  it("rejects malformed rpc responses via shared outgoing parser", async () => {
+    const child = new FakeChildProcess();
+    const { client } = await createConnectedClient(child);
+
+    child.on("request", (request) => {
+      if (request.method === "session.submit") {
+        child.send({
+          version: RPC_PROTOCOL_VERSION,
+          type: "response",
+          id: request.id,
+          ok: false,
+          error: {
+            code: "busy",
+          },
+        });
+      }
+
+      if (request.method === "session.interrupt") {
+        child.send(
+          createSuccessResponse(request.id, {
+            interrupted: false,
+            isTurnRunning: false,
+          }),
+        );
+      }
+    });
+
+    await expect(client.submit("hello")).rejects.toMatchObject({
+      name: "TauTransportError",
+      message: "received malformed rpc response",
+    });
+
+    await expect(client.interrupt()).resolves.toEqual({
+      interrupted: false,
+      isTurnRunning: false,
+    });
+
+    await client.close();
+  });
+
+  it("fails transport when outgoing rpc payload is malformed", async () => {
+    const child = new FakeChildProcess();
+    const { client } = await createConnectedClient(child);
+
+    child.sendRaw("[]");
+
+    await expect(client.snapshot()).rejects.toMatchObject({
+      name: "TauTransportError",
+      message: "received invalid rpc payload from tau process: rpc payload must be a JSON object",
+    });
+
+    await client.close();
+  });
+
   it("rejects pending requests when rpc subprocess exits", async () => {
     const child = new FakeChildProcess();
     const { client } = await createConnectedClient(child);

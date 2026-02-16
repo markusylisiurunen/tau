@@ -96,7 +96,8 @@ Daemon-side settings are loaded from a separate JSON file.
       "workspaceRoot": "projects/tau",
       "workingDirectory": "packages/core",
       "description": "core runtime workspace",
-      "bootstrapCommands": ["npm ci", "npm run build"],
+      "bootstrapCommands": ["npm ci"],
+      "backgroundBootstrapCommands": ["npm run build"],
       "persona": "gpt-5.2-coder",
       "riskLevel": "read-only",
       "sandbox": false,
@@ -126,7 +127,9 @@ Notes:
 - Relative `workspaceRoot` values resolve from the daemon config file directory.
 - `projects.<id>.workingDirectory` must be a relative path inside the cloned repository.
 - Tau starts each async session from `workingDirectory` when configured, otherwise from the repo root.
-- `bootstrapCommands` run from the same session working directory.
+- `bootstrapCommands` run from the same session working directory and block readiness.
+- `backgroundBootstrapCommands` run from the same session working directory after the session is ready and do not block readiness.
+- failing `backgroundBootstrapCommands` are logged as warnings, but the session remains available.
 - `projects.<id>.ref` is optional, but recommended (for example `"main"`) when every session should start from the same branch.
 - `projects.<id>.description` is optional metadata used by Telegram `/projects` output.
 - Clone uses `gh repo clone <owner/repo> <path>` (daemon host must have authenticated `gh`).

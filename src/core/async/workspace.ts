@@ -102,6 +102,63 @@ async function runShellCommand(args: {
   };
 }
 
+export type BootstrapCommandMode = "sync" | "background";
+
+export type RunBootstrapCommandsOptions = {
+  commands: string[];
+  cwd: string;
+  signal?: AbortSignal;
+  onLog?: (entry: WorkspaceLogEntry) => void;
+  mode?: BootstrapCommandMode;
+};
+
+function getBootstrapModeLabel(mode: BootstrapCommandMode): string {
+  return mode === "background" ? "background bootstrap command" : "bootstrap command";
+}
+
+function getBootstrapOutputLabel(mode: BootstrapCommandMode): string {
+  return mode === "background" ? "background bootstrap output" : "bootstrap output";
+}
+
+export async function runBootstrapCommands(options: RunBootstrapCommandsOptions): Promise<void> {
+  const mode = options.mode ?? "sync";
+  const commandLabel = getBootstrapModeLabel(mode);
+  const outputLabel = getBootstrapOutputLabel(mode);
+
+  for (const command of options.commands) {
+    const bootstrapStart = process.hrtime.bigint();
+    log(options.onLog, "info", `running ${commandLabel}`, { command, cwd: options.cwd });
+    const bootstrapResult = await runShellCommand({
+      command,
+      cwd: options.cwd,
+      signal: options.signal,
+    });
+
+    if (bootstrapResult.output.trim()) {
+      log(options.onLog, "info", outputLabel, {
+        command,
+        output: bootstrapResult.output,
+      });
+    }
+
+    if (bootstrapResult.exitCode !== 0) {
+      log(options.onLog, "error", `${commandLabel} failed`, {
+        command,
+        output: bootstrapResult.output,
+        durationMs: elapsedMs(bootstrapStart),
+      });
+      throw new Error(
+        `${commandLabel} failed with exit code ${bootstrapResult.exitCode ?? "unknown"}`,
+      );
+    }
+
+    log(options.onLog, "info", `${commandLabel} complete`, {
+      command,
+      durationMs: elapsedMs(bootstrapStart),
+    });
+  }
+}
+
 function isInsideWorkspace(workspacePath: string, sessionCwd: string): boolean {
   const relPath = relative(workspacePath, sessionCwd);
   return relPath === "" || (!relPath.startsWith(`..${sep}`) && relPath !== "..");
@@ -261,38 +318,13 @@ export async function prepareWorkspace(
     });
   }
 
-  for (const command of options.project.bootstrapCommands ?? []) {
-    const bootstrapStart = process.hrtime.bigint();
-    log(options.onLog, "info", "running bootstrap command", { command, cwd: sessionCwd });
-    const bootstrapResult = await runShellCommand({
-      command,
-      cwd: sessionCwd,
-      signal: options.signal,
-    });
-
-    if (bootstrapResult.output.trim()) {
-      log(options.onLog, "info", "bootstrap output", {
-        command,
-        output: bootstrapResult.output,
-      });
-    }
-
-    if (bootstrapResult.exitCode !== 0) {
-      log(options.onLog, "error", "bootstrap command failed", {
-        command,
-        output: bootstrapResult.output,
-        durationMs: elapsedMs(bootstrapStart),
-      });
-      throw new Error(
-        `bootstrap command failed with exit code ${bootstrapResult.exitCode ?? "unknown"}`,
-      );
-    }
-
-    log(options.onLog, "info", "bootstrap command complete", {
-      command,
-      durationMs: elapsedMs(bootstrapStart),
-    });
-  }
+  await runBootstrapCommands({
+    commands: options.project.bootstrapCommands ?? [],
+    cwd: sessionCwd,
+    signal: options.signal,
+    onLog: options.onLog,
+    mode: "sync",
+  });
 
   log(options.onLog, "info", "workspace prepared", {
     workspacePath,

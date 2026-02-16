@@ -81,6 +81,7 @@ export type AsyncProjectConfig = {
   workingDirectory?: string;
   description?: string;
   bootstrapCommands?: string[];
+  backgroundBootstrapCommands?: string[];
   persona?: string;
   riskLevel?: RiskLevel;
   sandbox?: boolean;

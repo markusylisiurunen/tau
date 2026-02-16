@@ -143,7 +143,7 @@ const CALLBACK_ACTION_PREFIX = "tau:action:";
 const CALLBACK_USE_PREFIX = "tau:use:";
 const MAX_SESSION_PREVIEW_CHARS = 64;
 
-type QuickAction = "new" | "sessions" | "status" | "interrupt" | "cancel" | "quiet" | "verbose";
+type QuickAction = "new" | "sessions" | "status" | "interrupt" | "close" | "quiet" | "verbose";
 
 type SessionVerbosity = "verbose" | "quiet";
 
@@ -155,7 +155,6 @@ const TELEGRAM_COMMANDS: TelegramBotCommand[] = [
   { command: "sessions", description: "list sessions" },
   { command: "status", description: "show active session status" },
   { command: "interrupt", description: "interrupt active run" },
-  { command: "cancel", description: "cancel active session" },
   { command: "close", description: "close session(s)" },
   { command: "verbose", description: "stream progress updates" },
   { command: "quiet", description: "only send final assistant message" },
@@ -589,11 +588,6 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    if (command === "/cancel") {
-      await this.handleCancel(chatId);
-      return;
-    }
-
     if (command === "/close") {
       await this.handleClose(chatId, args);
       return;
@@ -648,8 +642,8 @@ class AsyncTelegramAdapterImpl {
       return true;
     }
 
-    if (action === "cancel") {
-      await this.handleCancel(chatId);
+    if (action === "close") {
+      await this.handleClose(chatId, []);
       return true;
     }
 
@@ -676,7 +670,6 @@ class AsyncTelegramAdapterImpl {
       "/use <sessionId|prefix|index>",
       "/status",
       "/interrupt",
-      "/cancel",
       "/close [<sessionId>|all]",
       "/verbose",
       "/quiet",
@@ -931,7 +924,7 @@ class AsyncTelegramAdapterImpl {
         ],
         [
           { text: "/interrupt", callback_data: `${CALLBACK_ACTION_PREFIX}interrupt` },
-          { text: "/cancel", callback_data: `${CALLBACK_ACTION_PREFIX}cancel` },
+          { text: "/close", callback_data: `${CALLBACK_ACTION_PREFIX}close` },
         ],
         [
           { text: "/quiet", callback_data: `${CALLBACK_ACTION_PREFIX}quiet` },
@@ -976,21 +969,6 @@ class AsyncTelegramAdapterImpl {
       }
 
       await this.reply(chatId, formatSessionHeadline(result.session.id, "interrupt requested"));
-    } catch (error) {
-      await this.reply(chatId, this.formatManagerError(error));
-    }
-  }
-
-  private async handleCancel(chatId: number): Promise<void> {
-    const session = this.getActiveSession(chatId);
-    if (!session) {
-      await this.reply(chatId, "no active session. use /new or /sessions");
-      return;
-    }
-
-    try {
-      const canceled = await this.sessionManager.cancelSession(session.id);
-      await this.reply(chatId, formatSessionHeadline(canceled.id, "canceled"));
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }

@@ -127,7 +127,7 @@ for daemon/api/telegram details, see [docs/async.md](docs/async.md).
 
 daemon config supports one Telegram bot (`telegram.botToken`) or multiple bots (`telegram.<botId>.botToken`), with optional per-bot `allowedProjectIds` scoping. Telegram sessions are bot-scoped (no cross-bot session sharing).
 
-daemon config also supports `systemMessage`, `cron.jobsDir`, and `cron.systemMessage` for scheduled runs, plus per-project `workingDirectory` (for monorepos) and `description` (used by Telegram `/projects`). on startup, the daemon wipes existing entries under configured async workspace roots. `tau async cancel <id>` also triggers best-effort background workspace cleanup.
+daemon config also supports `systemMessage`, `cron.jobsDir`, and `cron.systemMessage` for scheduled runs, plus per-project `workingDirectory` (for monorepos) and `description` (used by Telegram `/projects`). on startup, the daemon wipes existing entries under configured async workspace roots. Telegram `/close` deletes session workspaces from disk when closing sessions.
 
 ## sdk usage (node)
 

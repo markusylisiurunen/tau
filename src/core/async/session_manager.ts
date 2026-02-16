@@ -574,14 +574,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     }
 
     await this.stopClient(entry);
-
-    const pendingWork = [entry.activeSubmit, entry.initializePromise].filter(
-      (promise): promise is Promise<void> => promise !== undefined,
-    );
-
-    if (pendingWork.length > 0) {
-      await Promise.allSettled(pendingWork);
-    }
+    await this.runWorkspaceCleanup(entry);
 
     const record = this.toRecord(entry);
     this.deleteEntry(entry.record.id);
@@ -594,6 +587,14 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     }
 
     this.log(entry, "info", "workspace cleanup scheduled", { reason });
+    void this.runWorkspaceCleanup(entry);
+  }
+
+  private async runWorkspaceCleanup(entry: SessionEntry): Promise<void> {
+    if (entry.workspaceCleanupPromise) {
+      await entry.workspaceCleanupPromise;
+      return;
+    }
 
     let cleanupPromise: Promise<void>;
     cleanupPromise = (async () => {
@@ -623,6 +624,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     });
 
     entry.workspaceCleanupPromise = cleanupPromise;
+    await cleanupPromise;
   }
 
   private resolveWorkspacePathForCleanup(entry: SessionEntry): string {

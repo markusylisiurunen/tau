@@ -80,7 +80,7 @@ tau usage --since 2025-01-01 --persona gpt-5.2-coder
 
 filters: `--since`, `--persona`, `--provider`, `--model`.
 
-## rpc mode (headless stdio)
+## RPC mode (headless stdio)
 
 tau can run without the TUI via NDJSON RPC over stdin/stdout:
 
@@ -92,7 +92,7 @@ RPC mode reuses the same startup config/persona/risk/sandbox loading as interact
 
 for protocol details and examples, see [docs/rpc.md](docs/rpc.md).
 
-## async daemon (http + telegram)
+## async daemon (HTTP + Telegram)
 
 tau also supports an async daemon for queued/background sessions:
 
@@ -122,17 +122,17 @@ project id for `tau async <prompt...>` resolves from `--project <id>` first, the
 use `tau async -- <prompt...>` when prompt text starts with a reserved command word (for example,
 `list`).
 
-for daemon/api/telegram details, see [docs/async.md](docs/async.md).
+for daemon/API/Telegram details, see [docs/async.md](docs/async.md).
 
 daemon config supports one Telegram bot (`telegram.botToken`) or multiple bots (`telegram.<botId>.botToken`), with optional per-bot `allowedProjectIds` scoping. Telegram sessions are bot-scoped (no cross-bot session sharing).
 
-Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). Attachment-only messages do not trigger turns, attachments are downloaded to local temp files immediately, and queued attachments are prepended to the next text/voice turn as local temp file metadata.
+Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). attachment-only messages do not trigger turns, attachments are downloaded to local temp files immediately, and queued attachments are prepended to the next text/voice turn as local temp file metadata.
 
-daemon config also supports `systemMessage`, `cron.jobsDir`, and `cron.systemMessage` for scheduled runs, plus per-project `workingDirectory` (for monorepos) and `description` (used by Telegram `/projects`). on startup, the daemon wipes existing entries under configured async workspace roots. on Telegram adapter startup, Tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Telegram `/close` deletes session workspaces from disk when closing sessions.
+daemon config also supports `systemMessage`, `cron.jobsDir`, and `cron.systemMessage` for scheduled runs, plus per-project `workingDirectory` (for monorepos) and `description` (used by Telegram `/projects`). on startup, the daemon wipes existing entries under configured async workspace roots. on Telegram adapter startup, tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Telegram `/close` deletes session workspaces from disk when closing sessions.
 
-## sdk usage (node)
+## SDK usage (Node)
 
-tau also ships a Node SDK at `@markusylisiurunen/tau/sdk` that talks to the same rpc subprocess (`tau rpc`) behind the scenes.
+tau also ships a Node SDK at `@markusylisiurunen/tau/sdk` that talks to the same RPC subprocess (`tau rpc`) behind the scenes.
 
 ```ts
 import { createTauSdkClient } from "@markusylisiurunen/tau/sdk";
@@ -156,7 +156,7 @@ try {
 }
 ```
 
-for full api details (options, methods, events, and errors), see [docs/sdk.md](docs/sdk.md).
+for full API details (options, methods, events, and errors), see [docs/sdk.md](docs/sdk.md).
 
 ## install starter prompts and skills
 
@@ -176,7 +176,7 @@ use `--prompt <id>` or `--skill <name>` to install only one item (for targeted u
 
 - **model trust**: the bash tool relies on the model honestly declaring whether a command is a read or write. there's no runtime validation that the command actually matches the declared intent. a model could declare `safetyLevel="read"` while running `rm -rf /`.
 - **no command analysis**: the system doesn't inspect command content. it trusts the declared safety level without verifying what the command actually does.
-- **full system access (by default)**: without sandboxing, the model can access any file on your system that your user account can read or write, not just the current working directory. use `--sandbox` to run tool calls inside a docker container with the project mounted.
+- **full system access (by default)**: without sandboxing, the model can access any file on your system that your user account can read or write, not just the current working directory. use `--sandbox` to run tool calls inside a Docker container with the project mounted.
 - **no tty / non-interactive tools**: tool commands run with stdin ignored and no TTY. anything that prompts for input or opens an editor can hang or fail (for example `sudo`, `ssh` password prompts, `git` credential prompts). tau also forces git into non-interactive mode (no prompt/editor/pager, batch-mode ssh).
 - **user bypasses**: the `!` prefix executes shell commands directly and completely bypasses risk level checks. this is intentional for direct use, but means risk levels only constrain the model, not the user. when `--sandbox` is enabled, these commands still run inside the sandbox.
 
@@ -258,11 +258,11 @@ the default is read-only because it lets the model investigate your code and ans
 
 ## sandboxing
 
-when started with `--sandbox`, tau runs all tool calls inside a session-scoped docker container. the project root (git root or cwd) is mounted into the container, and the working directory matches your current subdirectory. only `/workspace` is bound to the host; absolute paths outside `/workspace` refer to the container filesystem.
+when started with `--sandbox`, tau runs all tool calls inside a session-scoped Docker container. the project root (git root or cwd) is mounted into the container, and the working directory matches your current subdirectory. only `/workspace` is bound to the host; absolute paths outside `/workspace` refer to the container filesystem.
 
 requirements:
 
-- docker must be available on the host
+- Docker must be available on the host
 - config must include `sandbox.image`
 - sandboxing is only enabled at startup with `--sandbox` (no runtime toggle)
 
@@ -479,7 +479,7 @@ the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launc
 
 if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinThemes` is set to `true`, tau will not load built-in themes. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 
-the `sandbox` field configures docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `72`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
+the `sandbox` field configures Docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `72`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
 
 the `async` field in normal tau config is client-side only:
 
@@ -665,7 +665,7 @@ tool output is truncated using a `bytes / 6` token heuristic (shown as `…N tok
 
 ## creating a release
 
-publishing to npm happens automatically via github actions when a github release is published.
+publishing to npm happens automatically via GitHub Actions when a GitHub release is published.
 
 release steps:
 
@@ -689,7 +689,7 @@ npm version patch
 git push --follow-tags
 ```
 
-- create a github release (this triggers the publish workflow):
+- create a GitHub release (this triggers the publish workflow):
 
 ```sh
 gh release create v$(node -p "require('./package.json').version") --generate-notes

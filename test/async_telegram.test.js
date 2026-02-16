@@ -755,6 +755,76 @@ describe("async telegram adapter", () => {
     }
   });
 
+  it("accepts pdf attachments when Telegram omits mime type", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 216, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 216, type: "private" },
+            from: { id: 7 },
+            document: {
+              file_id: "doc-missing-mime",
+              file_name: "manual.pdf",
+              file_size: 12,
+            },
+          },
+        },
+        {
+          update_id: 3,
+          message: {
+            chat: { id: 216, type: "private" },
+            from: { id: 7 },
+            text: "continue",
+          },
+        },
+      ],
+    ]);
+
+    apiHarness.api.downloadFile.mockImplementation(async (fileId) => {
+      apiHarness.downloadFileCalls.push(fileId);
+      return Buffer.from("%PDF-1.7");
+    });
+
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      defaultProjectId: "demo",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+
+      const sendMessageCall = managerHarness.manager.sendMessage.mock.calls[0];
+      expect(sendMessageCall[0]).toBe("s1");
+      expect(sendMessageCall[1]).toContain("attachments:");
+      expect(sendMessageCall[1]).toContain("mime: application/pdf");
+      expect(sendMessageCall[1]).toContain("\n\ncontinue");
+      expect(apiHarness.downloadFileCalls).toEqual(["doc-missing-mime"]);
+      expect(
+        apiHarness.sendMessages.some((entry) =>
+          String(entry.text).includes("unsupported file type"),
+        ),
+      ).toBe(false);
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("skips unsupported document attachments with an immediate warning", async () => {
     const apiHarness = createApiHarness([
       [

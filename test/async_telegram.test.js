@@ -187,7 +187,6 @@ describe("async telegram adapter", () => {
         { command: "sessions", description: "list sessions" },
         { command: "status", description: "show active session status" },
         { command: "interrupt", description: "interrupt active run" },
-        { command: "cancel", description: "cancel active session" },
         { command: "close", description: "close session(s)" },
         { command: "verbose", description: "stream progress updates" },
         { command: "quiet", description: "only send final assistant message" },
@@ -294,7 +293,7 @@ describe("async telegram adapter", () => {
             ],
             [
               { text: "/interrupt", callback_data: "tau:action:interrupt" },
-              { text: "/cancel", callback_data: "tau:action:cancel" },
+              { text: "/close", callback_data: "tau:action:close" },
             ],
             [
               { text: "/quiet", callback_data: "tau:action:quiet" },
@@ -829,7 +828,7 @@ describe("async telegram adapter", () => {
     }
   });
 
-  it("supports /use and /cancel for active sessions", async () => {
+  it("treats /cancel as unsupported", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -871,10 +870,12 @@ describe("async telegram adapter", () => {
     });
 
     try {
-      await waitFor(() => managerHarness.manager.cancelSession.mock.calls.length === 1);
-      expect(managerHarness.manager.cancelSession).toHaveBeenCalledWith("s2");
+      await waitFor(() => apiHarness.sendMessages.length >= 2);
+      expect(managerHarness.manager.cancelSession).not.toHaveBeenCalled();
       expect(
-        apiHarness.sendMessages.some((entry) => String(entry.text).includes("(s2) canceled")),
+        apiHarness.sendMessages.some((entry) =>
+          String(entry.text).includes("unsupported command. use /help"),
+        ),
       ).toBe(true);
     } finally {
       await adapter.close();

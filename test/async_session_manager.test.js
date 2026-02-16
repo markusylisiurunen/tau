@@ -629,8 +629,9 @@ describe("async session manager", () => {
     expect(manager.getSession(created.id)?.workspacePath).toBeUndefined();
   });
 
-  it("closes a selected session and removes it from memory", async () => {
+  it("closes a selected session, removes it from memory, and deletes workspace", async () => {
     const clientHarness = createClientHarness();
+    const cleanupWorkspacePath = vi.fn(async () => {});
 
     const manager = createAsyncSessionManager({
       projects: {
@@ -643,6 +644,7 @@ describe("async session manager", () => {
         sessionCwd: "/tmp/ws/demo",
       })),
       createClient: vi.fn(async () => clientHarness.client),
+      cleanupWorkspacePath,
     });
 
     const created = await manager.createSession({ projectId: "demo" });
@@ -656,6 +658,8 @@ describe("async session manager", () => {
     expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
+    expect(cleanupWorkspacePath).toHaveBeenCalledTimes(1);
+    expect(cleanupWorkspacePath).toHaveBeenCalledWith("/tmp/ws/demo");
   });
 
   it("does not close queued or preparing sessions in bulk", async () => {

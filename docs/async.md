@@ -193,13 +193,12 @@ Supported DM commands:
   - accepts exact IDs, unique session ID prefixes, and 1-based indexes from `/sessions`
 - `/sessions` (lists sessions with active marker, state, project, and recent previews)
   - includes inline session picker buttons
-  - includes quick-action buttons (`/new`, `/sessions`, `/status`, `/interrupt`, `/cancel`, `/quiet`, `/verbose`)
+  - includes quick-action buttons (`/new`, `/sessions`, `/status`, `/interrupt`, `/close`, `/quiet`, `/verbose`)
 - `/status`
 - `/interrupt` (interrupts the active run, keeps the session available for new messages)
-- `/cancel` (cancels the selected session)
-- `/close` (closes the selected session)
-- `/close <sessionId>` (closes a specific session)
-- `/close all` (closes sessions in `waiting-input`, `failed`, or `canceled`)
+- `/close` (closes the selected session and deletes its workspace from disk)
+- `/close <sessionId>` (closes a specific session and deletes its workspace from disk)
+- `/close all` (closes sessions in `waiting-input`, `failed`, or `canceled`, and deletes their workspaces)
 - `/verbose` (for the selected session, streams run lifecycle + progress updates)
 - `/quiet` (for the selected session, default mode, send only the run's final assistant message)
 - plain text sends to the selected session (if no active session is selected and exactly one session exists, it is auto-selected)

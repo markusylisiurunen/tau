@@ -77,7 +77,7 @@ describe("async workspace", () => {
         result.workspacePath,
         "--",
         "--depth=1",
-        "--single-branch",
+        "--no-single-branch",
         "--branch",
         "main",
       ],
@@ -150,7 +150,7 @@ describe("async workspace", () => {
       result.workspacePath,
       "--",
       "--depth=1",
-      "--single-branch",
+      "--no-single-branch",
       "--branch",
       "main",
     ]);

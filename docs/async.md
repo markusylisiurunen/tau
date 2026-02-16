@@ -130,7 +130,7 @@ Notes:
 - `bootstrapCommands` run from the same session working directory.
 - `projects.<id>.ref` is optional, but recommended (for example `"main"`) when every session should start from the same branch.
 - `projects.<id>.description` is optional metadata used by Telegram `/projects` output.
-- Clone uses `gh repo clone <owner/repo> <path>` (daemon host must have authenticated `gh`). Tau first attempts a shallow clone (`--depth=1`, plus `--single-branch --branch <ref>` when `ref` is set), then retries with a full clone if the shallow attempt fails.
+- Clone uses `gh repo clone <owner/repo> <path>` (daemon host must have authenticated `gh`). Tau first attempts a shallow clone (`--depth=1 --no-single-branch`, plus `--branch <ref>` when `ref` is set), then retries with a full clone if the shallow attempt fails.
 - `cron.jobsDir` is optional and points to a directory of `*.md` cron job files.
 - each cron job markdown file requires frontmatter fields `id`, `projectId`, and `schedule`; the markdown body is used as the prompt.
 - frontmatter `id` must match the markdown file name.

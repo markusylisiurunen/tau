@@ -92,9 +92,9 @@ function buildCloneCommandArgs(args: {
   const gitCloneArgs: string[] = [];
 
   if (args.shallow) {
-    gitCloneArgs.push("--depth=1");
+    gitCloneArgs.push("--depth=1", "--no-single-branch");
     if (args.ref) {
-      gitCloneArgs.push("--single-branch", "--branch", args.ref);
+      gitCloneArgs.push("--branch", args.ref);
     }
   }
 

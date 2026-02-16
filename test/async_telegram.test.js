@@ -690,6 +690,59 @@ describe("async telegram adapter", () => {
     }
   });
 
+  it("materializes attachments immediately without waiting for a turn trigger", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 215, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 215, type: "private" },
+            from: { id: 7 },
+            document: {
+              file_id: "doc-immediate",
+              file_name: "payload.md",
+              mime_type: "text/markdown",
+              file_size: 12,
+            },
+          },
+        },
+      ],
+    ]);
+
+    apiHarness.api.downloadFile.mockImplementation(async (fileId) => {
+      apiHarness.downloadFileCalls.push(fileId);
+      return Buffer.from("# queued");
+    });
+
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAsyncTelegramAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      defaultProjectId: "demo",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.downloadFileCalls.length === 1);
+      expect(apiHarness.downloadFileCalls).toEqual(["doc-immediate"]);
+      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("skips unsupported document attachments with an immediate warning", async () => {
     const apiHarness = createApiHarness([
       [
@@ -885,7 +938,7 @@ describe("async telegram adapter", () => {
       expect(sendMessageCall[1]).toContain("mime: application/json");
       expect(sendMessageCall[1]).toContain('caption: "dataset"');
       expect(sendMessageCall[1]).toContain("\n\ntranscribed voice");
-      expect(apiHarness.downloadFileCalls).toEqual(["voice-31", "doc-31"]);
+      expect(apiHarness.downloadFileCalls).toEqual(["doc-31", "voice-31"]);
       await waitFor(() =>
         apiHarness.setMessageReactions.some(
           (entry) => entry.chatId === 211 && entry.messageId === 903,

@@ -494,6 +494,7 @@ class AsyncTelegramAdapterImpl {
   private readonly lastAssistantMessageBySession = new Map<string, string>();
   private readonly latestAssistantMessageByRun = new Map<string, string>();
   private readonly pendingAttachmentsBySession = new Map<string, TelegramPendingAttachment[]>();
+  private readonly pendingAttachmentTempDirBySession = new Map<string, string>();
   private readonly attachmentTempDirsBySession = new Map<string, Set<string>>();
 
   private readonly unsubscribeSessionEvents: () => void;
@@ -547,6 +548,7 @@ class AsyncTelegramAdapterImpl {
       await this.cleanupSessionAttachmentTempDirs(sessionId);
     }
     this.pendingAttachmentsBySession.clear();
+    this.pendingAttachmentTempDirBySession.clear();
 
     try {
       await this.loopPromise;
@@ -807,7 +809,7 @@ class AsyncTelegramAdapterImpl {
     }
 
     const pending = this.pendingAttachmentsBySession.get(session.id) ?? [];
-    let declaredTotalSizeBytes = pending.reduce((total, attachment) => {
+    let totalSizeBytes = pending.reduce((total, attachment) => {
       return total + (attachment.materialized?.sizeBytes ?? attachment.declaredSizeBytes ?? 0);
     }, 0);
 
@@ -834,11 +836,53 @@ class AsyncTelegramAdapterImpl {
 
       if (
         typeof attachment.sizeBytes === "number" &&
-        declaredTotalSizeBytes + attachment.sizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES
+        totalSizeBytes + attachment.sizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES
       ) {
         await this.reply(
           chatId,
           `skipped attachment ${attachmentLabel}: exceeds per-turn total limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES)})`,
+        );
+        continue;
+      }
+
+      let bytes: Buffer;
+      try {
+        bytes = await this.api.downloadFile(attachment.fileId);
+      } catch (error) {
+        await this.reply(
+          chatId,
+          `failed to download attachment ${attachmentLabel}: ${this.formatManagerError(error)}`,
+        );
+        continue;
+      }
+
+      const sizeBytes = bytes.byteLength;
+      if (sizeBytes > MAX_TELEGRAM_ATTACHMENT_FILE_BYTES) {
+        await this.reply(
+          chatId,
+          `skipped attachment ${attachmentLabel}: exceeds per-file limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_FILE_BYTES)})`,
+        );
+        continue;
+      }
+
+      if (totalSizeBytes + sizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES) {
+        await this.reply(
+          chatId,
+          `skipped attachment ${attachmentLabel}: exceeds per-turn total limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES)})`,
+        );
+        continue;
+      }
+
+      const tempDirPath = await this.getOrCreatePendingAttachmentTempDir(session.id);
+      const indexedFileName = `${String(pending.length + 1).padStart(2, "0")}-${attachment.fileName}`;
+      const filePath = join(tempDirPath, indexedFileName);
+
+      try {
+        await writeFile(filePath, bytes);
+      } catch (error) {
+        await this.reply(
+          chatId,
+          `failed to materialize attachment ${attachmentLabel}: ${this.formatManagerError(error)}`,
         );
         continue;
       }
@@ -849,11 +893,13 @@ class AsyncTelegramAdapterImpl {
         mimeType: attachment.mimeType,
         declaredSizeBytes: attachment.sizeBytes,
         caption: attachment.caption,
+        materialized: {
+          path: filePath,
+          sizeBytes,
+        },
       });
 
-      if (typeof attachment.sizeBytes === "number") {
-        declaredTotalSizeBytes += attachment.sizeBytes;
-      }
+      totalSizeBytes += sizeBytes;
     }
 
     if (pending.length > 0) {
@@ -897,56 +943,22 @@ class AsyncTelegramAdapterImpl {
       return [];
     }
 
-    let turnTempDirPath: string | undefined;
     let totalSizeBytes = 0;
     const nextPending: TelegramPendingAttachment[] = [];
     const readyAttachments: TelegramMaterializedAttachment[] = [];
 
-    for (const [index, attachment] of pending.entries()) {
+    for (const attachment of pending) {
       const attachmentLabel = describeAttachment(attachment.fileName, attachment.mimeType);
-
-      const alreadyMaterialized = attachment.materialized;
-      if (alreadyMaterialized) {
-        if (alreadyMaterialized.sizeBytes > MAX_TELEGRAM_ATTACHMENT_FILE_BYTES) {
-          await this.reply(
-            chatId,
-            `skipped attachment ${attachmentLabel}: exceeds per-file limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_FILE_BYTES)})`,
-          );
-          continue;
-        }
-
-        if (totalSizeBytes + alreadyMaterialized.sizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES) {
-          await this.reply(
-            chatId,
-            `skipped attachment ${attachmentLabel}: exceeds per-turn total limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES)})`,
-          );
-          continue;
-        }
-
-        totalSizeBytes += alreadyMaterialized.sizeBytes;
-        nextPending.push(attachment);
-        readyAttachments.push({
-          path: alreadyMaterialized.path,
-          mimeType: attachment.mimeType,
-          sizeBytes: alreadyMaterialized.sizeBytes,
-          caption: attachment.caption,
-        });
-        continue;
-      }
-
-      let fileBuffer: Buffer;
-      try {
-        fileBuffer = await this.api.downloadFile(attachment.fileId);
-      } catch (error) {
+      const materialized = attachment.materialized;
+      if (!materialized) {
         await this.reply(
           chatId,
-          `failed to download attachment ${attachmentLabel}: ${this.formatManagerError(error)}`,
+          `skipped attachment ${attachmentLabel}: local temp file is missing`,
         );
         continue;
       }
 
-      const fileSizeBytes = fileBuffer.byteLength;
-      if (fileSizeBytes > MAX_TELEGRAM_ATTACHMENT_FILE_BYTES) {
+      if (materialized.sizeBytes > MAX_TELEGRAM_ATTACHMENT_FILE_BYTES) {
         await this.reply(
           chatId,
           `skipped attachment ${attachmentLabel}: exceeds per-file limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_FILE_BYTES)})`,
@@ -954,7 +966,7 @@ class AsyncTelegramAdapterImpl {
         continue;
       }
 
-      if (totalSizeBytes + fileSizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES) {
+      if (totalSizeBytes + materialized.sizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES) {
         await this.reply(
           chatId,
           `skipped attachment ${attachmentLabel}: exceeds per-turn total limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES)})`,
@@ -962,37 +974,12 @@ class AsyncTelegramAdapterImpl {
         continue;
       }
 
-      if (!turnTempDirPath) {
-        turnTempDirPath = await this.createAttachmentTempDir(sessionId);
-      }
-
-      const indexedFileName = `${String(index + 1).padStart(2, "0")}-${attachment.fileName}`;
-      const filePath = join(turnTempDirPath, indexedFileName);
-
-      try {
-        await writeFile(filePath, fileBuffer);
-      } catch (error) {
-        await this.reply(
-          chatId,
-          `failed to materialize attachment ${attachmentLabel}: ${this.formatManagerError(error)}`,
-        );
-        continue;
-      }
-
-      const materializedAttachment: TelegramPendingAttachment = {
-        ...attachment,
-        materialized: {
-          path: filePath,
-          sizeBytes: fileSizeBytes,
-        },
-      };
-
-      totalSizeBytes += fileSizeBytes;
-      nextPending.push(materializedAttachment);
+      totalSizeBytes += materialized.sizeBytes;
+      nextPending.push(attachment);
       readyAttachments.push({
-        path: filePath,
+        path: materialized.path,
         mimeType: attachment.mimeType,
-        sizeBytes: fileSizeBytes,
+        sizeBytes: materialized.sizeBytes,
         caption: attachment.caption,
       });
     }
@@ -1006,16 +993,28 @@ class AsyncTelegramAdapterImpl {
     return readyAttachments;
   }
 
-  private async createAttachmentTempDir(sessionId: string): Promise<string> {
+  private async getOrCreatePendingAttachmentTempDir(sessionId: string): Promise<string> {
+    const existingPath = this.pendingAttachmentTempDirBySession.get(sessionId);
+    if (existingPath) {
+      return existingPath;
+    }
+
     const directoryPath = await mkdtemp(join(tmpdir(), TELEGRAM_ATTACHMENT_TEMP_DIR_PREFIX));
+    this.pendingAttachmentTempDirBySession.set(sessionId, directoryPath);
+
     const directories = this.attachmentTempDirsBySession.get(sessionId) ?? new Set<string>();
     directories.add(directoryPath);
     this.attachmentTempDirsBySession.set(sessionId, directories);
     return directoryPath;
   }
 
-  private clearSessionAttachments(sessionId: string): void {
+  private resetPendingAttachmentQueue(sessionId: string): void {
     this.pendingAttachmentsBySession.delete(sessionId);
+    this.pendingAttachmentTempDirBySession.delete(sessionId);
+  }
+
+  private clearSessionAttachments(sessionId: string): void {
+    this.resetPendingAttachmentQueue(sessionId);
     void this.cleanupSessionAttachmentTempDirs(sessionId);
   }
 
@@ -1564,7 +1563,7 @@ class AsyncTelegramAdapterImpl {
         textWithAttachments,
         this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
       );
-      this.pendingAttachmentsBySession.delete(session.id);
+      this.resetPendingAttachmentQueue(session.id);
       await this.reactToQueuedMessage(chatId, sourceMessageId);
       if (this.isVerboseSession(session.id)) {
         await this.reply(chatId, this.formatMessageQueued(session.id));
@@ -1626,7 +1625,7 @@ class AsyncTelegramAdapterImpl {
         textWithAttachments,
         this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
       );
-      this.pendingAttachmentsBySession.delete(session.id);
+      this.resetPendingAttachmentQueue(session.id);
       await this.reactToQueuedMessage(chatId, sourceMessageId);
       if (this.isVerboseSession(session.id)) {
         await this.reply(chatId, this.formatMessageQueued(session.id));

@@ -127,7 +127,7 @@ for daemon/api/telegram details, see [docs/async.md](docs/async.md).
 
 daemon config supports one Telegram bot (`telegram.botToken`) or multiple bots (`telegram.<botId>.botToken`), with optional per-bot `allowedProjectIds` scoping. Telegram sessions are bot-scoped (no cross-bot session sharing).
 
-Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). Attachment-only messages do not trigger turns, queued attachments are prepended to the next text/voice turn as local temp file metadata.
+Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). Attachment-only messages do not trigger turns, attachments are downloaded to local temp files immediately, and queued attachments are prepended to the next text/voice turn as local temp file metadata.
 
 daemon config also supports `systemMessage`, `cron.jobsDir`, and `cron.systemMessage` for scheduled runs, plus per-project `workingDirectory` (for monorepos) and `description` (used by Telegram `/projects`). on startup, the daemon wipes existing entries under configured async workspace roots. Telegram `/close` deletes session workspaces from disk when closing sessions.
 

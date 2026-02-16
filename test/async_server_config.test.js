@@ -73,6 +73,8 @@ describe("async daemon config", () => {
               workingDirectory: "packages/core",
               description: "core workspace",
               ref: "main",
+              bootstrapCommands: ["npm ci"],
+              backgroundBootstrapCommands: ["npm run build"],
             },
           },
         }),
@@ -87,6 +89,8 @@ describe("async daemon config", () => {
       expect(config.projects.tau.workingDirectory).toBe("packages/core");
       expect(config.projects.tau.description).toBe("core workspace");
       expect(config.projects.tau.repo).toBe("markusylisiurunen/tau");
+      expect(config.projects.tau.bootstrapCommands).toEqual(["npm ci"]);
+      expect(config.projects.tau.backgroundBootstrapCommands).toEqual(["npm run build"]);
       expect(config.telegram?.default?.defaultProjectId).toBe("tau");
       expect(config.telegram?.default?.systemMessage).toBe("telegram-specific notice");
       expect(config.cron?.systemMessage).toBe("this prompt is running from a scheduled cron job");
@@ -334,6 +338,30 @@ describe("async daemon config", () => {
       expect(() => loadAsyncDaemonConfig(configPath)).toThrow(
         "workingDirectory must be a relative path",
       );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects invalid backgroundBootstrapCommands values", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+              backgroundBootstrapCommands: ["npm run build", "   "],
+            },
+          },
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("backgroundBootstrapCommands");
     } finally {
       fx.cleanup();
     }

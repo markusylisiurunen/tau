@@ -10,7 +10,9 @@ import {
   cleanupWorkspacePath as cleanupWorkspacePathOnDisk,
   type PrepareWorkspaceOptions,
   prepareWorkspace,
+  type RunBootstrapCommandsOptions,
   resolveWorkspacePath,
+  runBootstrapCommands,
 } from "./workspace.js";
 
 export type AsyncSessionState =
@@ -91,6 +93,7 @@ type SessionEntry = {
   clientClosePromise?: Promise<void>;
   activeSubmit?: Promise<void>;
   initializePromise?: Promise<void>;
+  backgroundBootstrapPromise?: Promise<void>;
   workspaceCleanupPromise?: Promise<void>;
 };
 
@@ -166,6 +169,7 @@ export type AsyncSessionManagerOptions = {
     workspacePath: string;
     sessionCwd: string;
   }>;
+  runBootstrapCommands?: (options: RunBootstrapCommandsOptions) => Promise<void>;
   cleanupWorkspacePath?: (workspacePath: string) => Promise<void>;
 };
 
@@ -182,6 +186,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   private readonly prepareWorkspace: (
     options: PrepareWorkspaceOptions,
   ) => Promise<{ workspacePath: string; sessionCwd: string }>;
+  private readonly runBootstrapCommands: (options: RunBootstrapCommandsOptions) => Promise<void>;
   private readonly cleanupWorkspacePath: (workspacePath: string) => Promise<void>;
   private closePromise?: Promise<void>;
 
@@ -195,6 +200,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     this.now = options.now ?? (() => new Date());
     this.createClient = options.createClient ?? createTauSdkClient;
     this.prepareWorkspace = options.prepareWorkspace ?? prepareWorkspace;
+    this.runBootstrapCommands = options.runBootstrapCommands ?? runBootstrapCommands;
     this.cleanupWorkspacePath = options.cleanupWorkspacePath ?? cleanupWorkspacePathOnDisk;
   }
 
@@ -448,6 +454,8 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
         durationMs: elapsedMs(sessionPreparationStart),
       });
 
+      this.startBackgroundBootstrap(entry, workspace.sessionCwd);
+
       if (prompt?.trim()) {
         await this.submitText(entry, prompt.trim(), "initial-prompt", additionalSystemMessage);
       }
@@ -469,6 +477,46 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
       await this.stopClient(entry);
     }
+  }
+
+  private startBackgroundBootstrap(entry: SessionEntry, sessionCwd: string): void {
+    const commands = entry.project.backgroundBootstrapCommands;
+    if (!commands || commands.length === 0 || entry.backgroundBootstrapPromise) {
+      return;
+    }
+
+    let backgroundBootstrapPromise: Promise<void>;
+    backgroundBootstrapPromise = this.runBootstrapCommands({
+      commands,
+      cwd: sessionCwd,
+      signal: entry.abortController.signal,
+      mode: "background",
+      onLog: (workspaceLog) => {
+        this.log(
+          entry,
+          workspaceLog.level === "error" ? "error" : "info",
+          workspaceLog.message,
+          workspaceLog.data,
+        );
+      },
+    })
+      .catch((error) => {
+        if (entry.cancelRequested) {
+          this.log(entry, "info", "background bootstrap cancelled");
+          return;
+        }
+
+        this.log(entry, "warn", "background bootstrap failed", {
+          cause: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        if (entry.backgroundBootstrapPromise === backgroundBootstrapPromise) {
+          entry.backgroundBootstrapPromise = undefined;
+        }
+      });
+
+    entry.backgroundBootstrapPromise = backgroundBootstrapPromise;
   }
 
   private submitText(
@@ -537,9 +585,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       entries.map(async (entry) => {
         await this.stopClient(entry);
 
-        const pendingWork = [entry.activeSubmit, entry.initializePromise].filter(
-          (promise): promise is Promise<void> => promise !== undefined,
-        );
+        const pendingWork = [
+          entry.activeSubmit,
+          entry.initializePromise,
+          entry.backgroundBootstrapPromise,
+        ].filter((promise): promise is Promise<void> => promise !== undefined);
 
         if (pendingWork.length > 0) {
           await Promise.allSettled(pendingWork);
@@ -571,9 +621,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
     let cleanupPromise: Promise<void>;
     cleanupPromise = (async () => {
-      const pendingWork = [entry.activeSubmit, entry.initializePromise].filter(
-        (promise): promise is Promise<void> => promise !== undefined,
-      );
+      const pendingWork = [
+        entry.activeSubmit,
+        entry.initializePromise,
+        entry.backgroundBootstrapPromise,
+      ].filter((promise): promise is Promise<void> => promise !== undefined);
 
       if (pendingWork.length > 0) {
         await Promise.allSettled(pendingWork);

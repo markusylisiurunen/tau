@@ -121,6 +121,76 @@ describe("async session manager", () => {
     );
   });
 
+  it("starts background bootstrap commands without blocking readiness", async () => {
+    const clientHarness = createClientHarness();
+    const backgroundDeferred = deferred();
+    const runBootstrapCommands = vi.fn(async () => {
+      await backgroundDeferred.promise;
+    });
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+          backgroundBootstrapCommands: ["npm run build"],
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo/packages/core",
+      })),
+      createClient: vi.fn(async () => clientHarness.client),
+      runBootstrapCommands,
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    expect(runBootstrapCommands).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commands: ["npm run build"],
+        cwd: "/tmp/ws/demo/packages/core",
+        mode: "background",
+      }),
+    );
+
+    backgroundDeferred.resolve();
+    await manager.closeSession(created.id);
+  });
+
+  it("keeps the session usable when background bootstrap fails", async () => {
+    const clientHarness = createClientHarness();
+    const runBootstrapCommands = vi.fn(async () => {
+      throw new Error("background boom");
+    });
+
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+          backgroundBootstrapCommands: ["npm run build"],
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
+      createClient: vi.fn(async () => clientHarness.client),
+      runBootstrapCommands,
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+    await waitFor(() => {
+      const logs = manager.getLogs(created.id) ?? [];
+      return logs.some((entry) => entry.message === "background bootstrap failed");
+    });
+
+    expect(runBootstrapCommands).toHaveBeenCalledTimes(1);
+    expect(manager.getSession(created.id)?.state).toBe("waiting-input");
+    await manager.closeSession(created.id);
+  });
+
   it("creates short session ids for public use", async () => {
     const clientHarness = createClientHarness();
     const prepareWorkspace = vi.fn(async ({ sessionId }) => ({

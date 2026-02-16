@@ -474,6 +474,31 @@ function parseProject(
     }
   }
 
+  if (data.backgroundBootstrapCommands !== undefined) {
+    if (
+      !Array.isArray(data.backgroundBootstrapCommands) ||
+      data.backgroundBootstrapCommands.length === 0
+    ) {
+      errors.push(
+        `${sourceLabel}: projects.${projectId}.backgroundBootstrapCommands must be a non-empty string array.`,
+      );
+    } else {
+      const commands: string[] = [];
+      for (const command of data.backgroundBootstrapCommands) {
+        if (typeof command !== "string" || !command.trim()) {
+          errors.push(
+            `${sourceLabel}: projects.${projectId}.backgroundBootstrapCommands must be a non-empty string array.`,
+          );
+          break;
+        }
+        commands.push(command);
+      }
+      if (commands.length > 0) {
+        config.backgroundBootstrapCommands = commands;
+      }
+    }
+  }
+
   if (data.persona !== undefined) {
     if (typeof data.persona === "string" && data.persona.trim()) {
       config.persona = data.persona.trim();

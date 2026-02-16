@@ -64,6 +64,7 @@ import {
   buildSkillsIndexBlock,
   findAgentsFilesInScopeDetailed,
   formatCwdChangeNotice,
+  formatProjectContextChangeNotice,
   formatRiskLevelChangeNotice,
 } from "../core/utils/context.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
@@ -250,6 +251,7 @@ export class ChatController {
   private agentsConfigErrors: string[];
   private pendingRiskLevelChange?: { from: RiskLevel; to: RiskLevel };
   private pendingCwdChange?: { from: string; to: string };
+  private pendingProjectContextChange?: { from?: string; to?: string };
   private expandedFilesInCurrentPrompt: Set<string> = new Set();
   private expandedSkillsInCurrentPrompt: Set<string> = new Set();
   private assistantState?: AssistantState;
@@ -956,6 +958,7 @@ export class ChatController {
 
     const nextCwd = this.deps.env.cwd();
     const previousAgentCwd = this.agentCwd;
+    const previousProjectContextBlock = this.projectContextBlock;
     this.agentCwd =
       this.sandboxEnabled && this.sandboxRootReal
         ? resolveSandboxPath({
@@ -969,6 +972,7 @@ export class ChatController {
             sandboxConfig: this.config.sandbox,
           });
     this.refreshProjectContext(nextCwd);
+    this.updatePendingProjectContextChange(previousProjectContextBlock, this.projectContextBlock);
     this.projectFiles = [];
     this.refreshProjectFilesInBackground();
     this.expandedFilesInCurrentPrompt.clear();
@@ -1041,6 +1045,20 @@ export class ChatController {
       agentsFiles: this.agentsFiles,
       readFile: this.deps.fs.readFile,
     });
+  }
+
+  private updatePendingProjectContextChange(previous?: string, next?: string): void {
+    if (previous === next) {
+      return;
+    }
+
+    const from = this.pendingProjectContextChange?.from ?? previous;
+    if (from === next) {
+      this.pendingProjectContextChange = undefined;
+      return;
+    }
+
+    this.pendingProjectContextChange = { from, to: next };
   }
 
   private interruptAssistantTurn(): void {
@@ -1407,8 +1425,16 @@ export class ChatController {
     if (this.pendingCwdChange) {
       notices.push(formatCwdChangeNotice(this.pendingCwdChange));
     }
+    if (this.pendingProjectContextChange) {
+      notices.push(
+        formatProjectContextChangeNotice({
+          projectContextBlock: this.pendingProjectContextChange.to,
+        }),
+      );
+    }
     this.pendingRiskLevelChange = undefined;
     this.pendingCwdChange = undefined;
+    this.pendingProjectContextChange = undefined;
 
     const systemNotice = notices.length > 0 ? notices.join("\n") : undefined;
     const baseTextForModel = opts?.textForModel ?? text;

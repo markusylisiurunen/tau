@@ -11,5 +11,6 @@ export {
   buildSkillsIndexBlock,
   describeRiskLevel,
   formatCwdChangeNotice,
+  formatProjectContextChangeNotice,
   formatRiskLevelChangeNotice,
 } from "./context_builder.js";

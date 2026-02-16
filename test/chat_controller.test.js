@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { personas } from "../dist/core/personas.js";
 import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../dist/core/tools/tool_names.js";
@@ -135,6 +139,27 @@ function createMockDeps(spawn, platform = "darwin") {
       cwd: () => process.cwd(),
       home: () => process.env.HOME ?? process.cwd(),
       platform: () => platform,
+      nodeVersion: () => process.version,
+      env: () => process.env,
+    },
+  };
+}
+
+function createProjectContextDeps(home) {
+  return {
+    clock: {
+      now: () => Date.now(),
+    },
+    fs: {
+      readFile: (path) => readFileSync(path, "utf8"),
+      writeFile: () => {},
+      listDir: () => [],
+    },
+    spawn: vi.fn(),
+    env: {
+      cwd: () => process.cwd(),
+      home: () => home,
+      platform: () => process.platform,
       nodeVersion: () => process.version,
       env: () => process.env,
     },
@@ -622,6 +647,130 @@ describe("ChatController risk level changes", () => {
     await controller.onUserInput("hello");
 
     expect(userMessages[0]).toContain("<system>Risk level changed by user");
+  });
+});
+
+describe("ChatController /cd project context notices", () => {
+  it("injects updated project context into the next user message after /cd", async () => {
+    const originalCwd = process.cwd();
+    const home = await mkdtemp(join(tmpdir(), "tau-cd-context-"));
+    const dirA = join(home, "dir-a");
+    const dirB = join(home, "dir-b");
+    await mkdir(dirA, { recursive: true });
+    await mkdir(dirB, { recursive: true });
+    await writeFile(join(dirA, "AGENTS.md"), "# A\n\ncontext from dir-a\n");
+    await writeFile(join(dirB, "AGENTS.md"), "# B\n\ncontext from dir-b\n");
+
+    let controller;
+    try {
+      process.chdir(dirA);
+
+      const stub = createStubView();
+      controller = createController(stub.view, {
+        deps: createProjectContextDeps(home),
+      });
+      const userMessages = [];
+      controller.engine.addUserText = (text) => {
+        userMessages.push(text);
+        return "user-1";
+      };
+      controller.runAssistantTurn = async () => {};
+
+      await controller.onUserInput(`/cd ${dirB}`);
+      await controller.onUserInput("hello");
+
+      expect(userMessages[0]).toContain("Project context changed by user after '/cd'.");
+      expect(userMessages[0]).toContain("<project-context-update>");
+      expect(userMessages[0]).toContain(`<file path="${join(dirB, "AGENTS.md")}">`);
+      expect(userMessages[0]).toContain("context from dir-b");
+      expect(userMessages[0]).not.toContain("context from dir-a");
+    } finally {
+      await controller?.dispose();
+      process.chdir(originalCwd);
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not inject project-context notice when AGENTS context is unchanged", async () => {
+    const originalCwd = process.cwd();
+    const home = await mkdtemp(join(tmpdir(), "tau-cd-context-"));
+    const dirA = join(home, "dir-a");
+    const dirB = join(home, "dir-b");
+    await mkdir(dirA, { recursive: true });
+    await mkdir(dirB, { recursive: true });
+    await writeFile(join(home, "AGENTS.md"), "# shared\n\nshared context\n");
+
+    let controller;
+    try {
+      process.chdir(dirA);
+
+      const stub = createStubView();
+      controller = createController(stub.view, {
+        deps: createProjectContextDeps(home),
+      });
+      const userMessages = [];
+      controller.engine.addUserText = (text) => {
+        userMessages.push(text);
+        return "user-1";
+      };
+      controller.runAssistantTurn = async () => {};
+
+      await controller.onUserInput(`/cd ${dirB}`);
+      await controller.onUserInput("hello");
+
+      expect(userMessages[0]).toContain("Working directory changed by user");
+      expect(userMessages[0]).not.toContain("Project context changed by user after '/cd'.");
+      expect(userMessages[0]).not.toContain("<project-context-update>");
+    } finally {
+      await controller?.dispose();
+      process.chdir(originalCwd);
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("collapses multiple /cd updates to the latest pending project context", async () => {
+    const originalCwd = process.cwd();
+    const home = await mkdtemp(join(tmpdir(), "tau-cd-context-"));
+    const dirA = join(home, "dir-a");
+    const dirB = join(home, "dir-b");
+    const dirC = join(home, "dir-c");
+    await mkdir(dirA, { recursive: true });
+    await mkdir(dirB, { recursive: true });
+    await mkdir(dirC, { recursive: true });
+    await writeFile(join(dirA, "AGENTS.md"), "# A\n\ncontext from dir-a\n");
+    await writeFile(join(dirB, "AGENTS.md"), "# B\n\ncontext from dir-b\n");
+    await writeFile(join(dirC, "AGENTS.md"), "# C\n\ncontext from dir-c\n");
+
+    let controller;
+    try {
+      process.chdir(dirA);
+
+      const stub = createStubView();
+      controller = createController(stub.view, {
+        deps: createProjectContextDeps(home),
+      });
+      const userMessages = [];
+      controller.engine.addUserText = (text) => {
+        userMessages.push(text);
+        return "user-1";
+      };
+      controller.runAssistantTurn = async () => {};
+
+      await controller.onUserInput(`/cd ${dirB}`);
+      await controller.onUserInput(`/cd ${dirC}`);
+      await controller.onUserInput("hello");
+
+      const projectNoticeMatches =
+        userMessages[0].match(/Project context changed by user after '\/cd'\./g) ?? [];
+      expect(projectNoticeMatches).toHaveLength(1);
+      expect(userMessages[0]).toContain(`<file path="${join(dirC, "AGENTS.md")}">`);
+      expect(userMessages[0]).toContain("context from dir-c");
+      expect(userMessages[0]).not.toContain("context from dir-b");
+    } finally {
+      await controller?.dispose();
+      process.chdir(originalCwd);
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
 

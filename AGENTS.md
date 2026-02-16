@@ -246,7 +246,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau usage` - Summarize usage logs from `~/.config/tau/logs/`
 - `tau install [--global] [--force] [--prompt <id> | --skill <name>]` - Install starter prompts and skills (or one selected item)
 - `tau async daemon --config-file <path>` - Run async daemon HTTP API (plus optional Telegram DM adapter)
-- `tau async --project <id> <prompt...> | <prompt...> | -- <prompt...> | list | status <id> | logs <id> | send <id> <text...> | interrupt <id> | cancel <id> | cron list | cron runs [jobId] | cron run <jobId>` - Async client commands (`<prompt...>` uses `async.client.defaultProjectId` when set). `cancel` triggers best-effort background workspace cleanup.
+- `tau async --project <id> <prompt...> | <prompt...> | -- <prompt...> | list | status <id> | logs <id> | send <id> <text...> | interrupt <id> | cron list | cron runs [jobId] | cron run <jobId>` - Async client commands (`<prompt...>` uses `async.client.defaultProjectId` when set).
 - `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for daemon-file `authToken` in daemon mode
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 - `PARALLEL_API_KEY` (env var) - Optional override for `apiKeys.parallel` used by `web_search`/`web_fetch`

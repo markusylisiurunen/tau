@@ -359,7 +359,7 @@ describe("async session manager", () => {
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
   });
 
-  it("interrupts a running session without canceling it", async () => {
+  it("interrupts a running session without closing it", async () => {
     const clientHarness = createClientHarness();
     clientHarness.client.interrupt = vi.fn(async () => {
       clientHarness.submitDeferred.resolve({
@@ -433,7 +433,7 @@ describe("async session manager", () => {
     expect(clientHarness.client.interrupt).not.toHaveBeenCalled();
   });
 
-  it("does not rewrite terminal failed sessions to canceled", async () => {
+  it("closes terminal failed sessions", async () => {
     const clientHarness = createClientHarness();
     clientHarness.client.submit = vi.fn(async () => {
       throw new Error("submit boom");
@@ -458,14 +458,15 @@ describe("async session manager", () => {
     await manager.sendMessage(created.id, "first");
     await waitFor(() => manager.getSession(created.id)?.state === "failed");
 
-    const canceled = await manager.cancelSession(created.id);
-    expect(canceled.state).toBe("failed");
+    const closed = await manager.closeSession(created.id);
+    expect(closed.state).toBe("failed");
+    expect(manager.getSession(created.id)).toBeUndefined();
     expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
   });
 
-  it("cancels a running session and shuts down the sdk client", async () => {
+  it("closes a running session and shuts down the sdk client", async () => {
     const clientHarness = createClientHarness();
     clientHarness.client.interrupt = vi.fn(async () => {
       clientHarness.submitDeferred.resolve({
@@ -494,105 +495,18 @@ describe("async session manager", () => {
     const runningSubmit = manager.sendMessage(created.id, "run");
     await waitFor(() => manager.getSession(created.id)?.state === "running");
 
-    const canceled = await manager.cancelSession(created.id);
-    expect(canceled.state).toBe("canceled");
+    const closed = await manager.closeSession(created.id);
+    expect(closed.id).toBe(created.id);
 
     await runningSubmit;
 
+    expect(manager.getSession(created.id)).toBeUndefined();
     expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
-
-    const logs = manager.getLogs(created.id);
-    expect(logs.some((entry) => entry.message === "cancel requested")).toBe(true);
   });
 
-  it("schedules workspace cleanup in the background when canceled", async () => {
-    const clientHarness = createClientHarness();
-    const cleanupDeferred = deferred();
-    const cleanupWorkspacePath = vi.fn(async () => {
-      await cleanupDeferred.promise;
-    });
-
-    const manager = createAsyncSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-      cleanupWorkspacePath,
-    });
-
-    const created = await manager.createSession({ projectId: "demo" });
-    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
-
-    const canceled = await Promise.race([
-      manager.cancelSession(created.id),
-      new Promise((resolve) => setTimeout(() => resolve("timeout"), 200)),
-    ]);
-
-    expect(canceled).not.toBe("timeout");
-    expect(cleanupWorkspacePath).toHaveBeenCalledTimes(1);
-    expect(cleanupWorkspacePath).toHaveBeenCalledWith("/tmp/ws/demo");
-
-    cleanupDeferred.resolve();
-    await waitFor(() => {
-      const logs = manager.getLogs(created.id) ?? [];
-      return logs.some((entry) => entry.message === "workspace cleanup complete");
-    });
-  });
-
-  it("logs workspace cleanup failures without failing cancel", async () => {
-    const clientHarness = createClientHarness();
-    const cleanupWorkspacePath = vi.fn(async () => {
-      throw new Error("rm boom");
-    });
-
-    const manager = createAsyncSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-      cleanupWorkspacePath,
-    });
-
-    const created = await manager.createSession({ projectId: "demo" });
-    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
-
-    const canceled = await manager.cancelSession(created.id);
-    expect(canceled.state).toBe("canceled");
-
-    await waitFor(() => {
-      const logs = manager.getLogs(created.id) ?? [];
-      return logs.some((entry) => entry.message === "workspace cleanup failed");
-    });
-
-    const cleanupFailureLog = (manager.getLogs(created.id) ?? []).find(
-      (entry) => entry.message === "workspace cleanup failed",
-    );
-    expect(cleanupFailureLog).toEqual(
-      expect.objectContaining({
-        level: "warn",
-        data: expect.objectContaining({
-          workspacePath: "/tmp/ws/demo",
-          cause: "rm boom",
-        }),
-      }),
-    );
-  });
-
-  it("falls back to computed workspace path when canceled during preparation", async () => {
+  it("falls back to computed workspace path when closed during preparation", async () => {
     const workspaceDeferred = deferred();
     const clientHarness = createClientHarness();
     const cleanupWorkspacePath = vi.fn(async () => {});
@@ -619,14 +533,13 @@ describe("async session manager", () => {
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "preparing-workspace");
 
-    const canceled = await manager.cancelSession(created.id);
-    expect(canceled.state).toBe("canceled");
-
+    const closedPromise = manager.closeSession(created.id);
     workspaceDeferred.resolve();
+    await closedPromise;
 
     await waitFor(() => cleanupWorkspacePath.mock.calls.length === 1);
     expect(cleanupWorkspacePath).toHaveBeenCalledWith(`/tmp/project-root/demo/${created.id}`);
-    expect(manager.getSession(created.id)?.workspacePath).toBeUndefined();
+    expect(manager.getSession(created.id)).toBeUndefined();
   });
 
   it("closes a selected session, removes it from memory, and deletes workspace", async () => {
@@ -651,7 +564,7 @@ describe("async session manager", () => {
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
     const closed = await manager.closeSession(created.id);
-    expect(closed).toEqual(expect.objectContaining({ id: created.id, state: "canceled" }));
+    expect(closed).toEqual(expect.objectContaining({ id: created.id, state: "waiting-input" }));
     expect(manager.getSession(created.id)).toBeUndefined();
     expect(manager.listSessions()).toEqual([]);
     expect(manager.getLogs(created.id)).toBeUndefined();
@@ -689,14 +602,12 @@ describe("async session manager", () => {
     expect(manager.getSession(created.id)).toEqual(expect.objectContaining({ id: created.id }));
   });
 
-  it("closes waiting-input, failed, and canceled sessions in bulk", async () => {
+  it("closes waiting-input and failed sessions in bulk", async () => {
     const waitingInputClientHarness = createClientHarness();
-    const canceledClientHarness = createClientHarness();
     const failedClientHarness = createClientHarness();
     const runningClientHarness = createClientHarness();
     const clients = [
       waitingInputClientHarness.client,
-      canceledClientHarness.client,
       failedClientHarness.client,
       runningClientHarness.client,
     ];
@@ -721,16 +632,12 @@ describe("async session manager", () => {
     });
 
     const waitingInput = await manager.createSession({ projectId: "demo" });
-    const canceled = await manager.createSession({ projectId: "demo" });
     const failed = await manager.createSession({ projectId: "demo" });
     const running = await manager.createSession({ projectId: "demo" });
 
     await waitFor(() => manager.getSession(waitingInput.id)?.state === "waiting-input");
-    await waitFor(() => manager.getSession(canceled.id)?.state === "waiting-input");
     await waitFor(() => manager.getSession(failed.id)?.state === "waiting-input");
     await waitFor(() => manager.getSession(running.id)?.state === "waiting-input");
-
-    await manager.cancelSession(canceled.id);
 
     await manager.sendMessage(failed.id, "fail");
     await waitFor(() => manager.getSession(failed.id)?.state === "running");
@@ -743,11 +650,9 @@ describe("async session manager", () => {
     const closed = await manager.closeInactiveSessions();
     expect(closed).toEqual([
       expect.objectContaining({ id: waitingInput.id }),
-      expect.objectContaining({ id: canceled.id }),
       expect.objectContaining({ id: failed.id }),
     ]);
     expect(manager.getSession(waitingInput.id)).toBeUndefined();
-    expect(manager.getSession(canceled.id)).toBeUndefined();
     expect(manager.getSession(failed.id)).toBeUndefined();
     expect(manager.getSession(running.id)).toEqual(expect.objectContaining({ id: running.id }));
 
@@ -791,7 +696,7 @@ describe("async session manager", () => {
     await manager.close();
     await runningSubmit;
 
-    expect(manager.getSession(created.id)?.state).toBe("canceled");
+    expect(manager.getSession(created.id)?.state).toBe("running");
     expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
@@ -832,7 +737,7 @@ describe("async session manager", () => {
       [undefined, undefined, undefined],
     );
 
-    expect(manager.getSession(created.id)?.state).toBe("canceled");
+    expect(manager.getSession(created.id)?.state).toBe("waiting-input");
     expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
@@ -1100,17 +1005,11 @@ describe("async session manager", () => {
         interrupted: true,
         isTurnRunning: false,
       })),
-      cancelSession: vi.fn(async (sessionId) => ({
-        id: sessionId,
-        projectId: "demo",
-        ownerId,
-        state: "canceled",
-      })),
       closeSession: vi.fn(async (sessionId) => ({
         id: sessionId,
         projectId: "demo",
         ownerId,
-        state: "canceled",
+        state: "waiting-input",
       })),
       closeInactiveSessions: vi.fn(async () => []),
       close: vi.fn(async () => {}),
@@ -1184,12 +1083,11 @@ describe("async session manager", () => {
       getLogs: vi.fn(),
       sendMessage: vi.fn(),
       interruptSession: vi.fn(),
-      cancelSession: vi.fn(),
       closeSession: vi.fn(async (sessionId) => ({
         id: sessionId,
         projectId: "demo",
         ownerId,
-        state: "canceled",
+        state: "waiting-input",
       })),
       closeInactiveSessions: vi.fn(async () => []),
       close: vi.fn(async () => {}),
@@ -1203,7 +1101,9 @@ describe("async session manager", () => {
     });
 
     const closed = await scopedManager.closeInactiveSessions();
-    expect(closed).toEqual([{ id: "s-demo-ready", projectId: "demo", ownerId, state: "canceled" }]);
+    expect(closed).toEqual([
+      { id: "s-demo-ready", projectId: "demo", ownerId, state: "waiting-input" },
+    ]);
     expect(manager.closeSession).toHaveBeenCalledTimes(1);
     expect(manager.closeSession).toHaveBeenCalledWith("s-demo-ready");
     expect(manager.closeInactiveSessions).not.toHaveBeenCalled();

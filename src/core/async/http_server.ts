@@ -41,8 +41,7 @@ type SessionPathRoute =
   | { route: "session"; sessionId: string }
   | { route: "logs"; sessionId: string }
   | { route: "messages"; sessionId: string }
-  | { route: "interrupt"; sessionId: string }
-  | { route: "cancel"; sessionId: string };
+  | { route: "interrupt"; sessionId: string };
 
 type CronPathRoute =
   | { route: "cron-jobs" }
@@ -108,15 +107,6 @@ function parseSessionPath(pathname: string): SessionPathRoute | "invalid" | unde
       return "invalid";
     }
     return { route: "interrupt", sessionId };
-  }
-
-  const cancelMatch = /^\/v1\/sessions\/([^/]+)\/cancel$/.exec(pathname);
-  if (cancelMatch) {
-    const sessionId = decodePathSegment(cancelMatch[1] ?? "");
-    if (!sessionId) {
-      return "invalid";
-    }
-    return { route: "cancel", sessionId };
   }
 
   return undefined;
@@ -414,16 +404,6 @@ export async function startAsyncHttpServer(
             });
           } catch (error) {
             handleManagerError(response, error, "failed to interrupt session");
-          }
-          return;
-        }
-
-        if (route.route === "cancel" && method === "POST") {
-          try {
-            const session = await options.sessionManager.cancelSession(route.sessionId);
-            sendOk(response, 200, { session: serializeSession(session) });
-          } catch (error) {
-            handleManagerError(response, error, "failed to cancel session");
           }
           return;
         }

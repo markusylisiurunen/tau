@@ -18,8 +18,7 @@ export type AsyncSessionState =
   | "preparing-workspace"
   | "running"
   | "waiting-input"
-  | "failed"
-  | "canceled";
+  | "failed";
 
 export type AsyncSessionLogLevel = "info" | "warn" | "error";
 
@@ -150,7 +149,6 @@ export type AsyncSessionManager = {
     options?: AsyncSessionSubmitOptions,
   ): Promise<AsyncSessionRecord>;
   interruptSession(sessionId: string): Promise<AsyncSessionInterruptResult>;
-  cancelSession(sessionId: string): Promise<AsyncSessionRecord>;
   closeSession(sessionId: string): Promise<AsyncSessionRecord>;
   closeInactiveSessions(): Promise<AsyncSessionRecord[]>;
   close(): Promise<void>;
@@ -299,7 +297,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       throw new AsyncSessionManagerError("busy", "session is running");
     }
 
-    if (entry.record.state === "failed" || entry.record.state === "canceled") {
+    if (entry.record.state === "failed") {
       throw new AsyncSessionManagerError(
         "invalid_state",
         `cannot submit messages when session is ${entry.record.state}`,
@@ -344,19 +342,6 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       interrupted: result.interrupted,
       isTurnRunning: result.isTurnRunning,
     };
-  }
-
-  async cancelSession(sessionId: string): Promise<AsyncSessionRecord> {
-    const entry = this.requireSession(sessionId);
-    if (entry.record.state === "canceled" || entry.record.state === "failed") {
-      this.scheduleWorkspaceCleanup(entry, "cancel requested");
-      return this.toRecord(entry);
-    }
-
-    this.requestCancellation(entry, "cancel requested");
-    await this.stopClient(entry);
-    this.scheduleWorkspaceCleanup(entry, "cancel requested");
-    return this.toRecord(entry);
   }
 
   async closeSession(sessionId: string): Promise<AsyncSessionRecord> {
@@ -418,7 +403,6 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       const workspacePreparationDurationMs = elapsedMs(workspacePreparationStart);
 
       if (entry.cancelRequested) {
-        this.setState(entry, "canceled");
         return;
       }
 
@@ -445,7 +429,6 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       if (entry.cancelRequested) {
         entry.client = client;
         await this.stopClient(entry);
-        this.setState(entry, "canceled");
         return;
       }
 
@@ -474,7 +457,6 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       }
     } catch (error) {
       if (entry.cancelRequested) {
-        this.setState(entry, "canceled");
         return;
       }
 
@@ -581,15 +563,6 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     return record;
   }
 
-  private scheduleWorkspaceCleanup(entry: SessionEntry, reason: string): void {
-    if (entry.workspaceCleanupPromise) {
-      return;
-    }
-
-    this.log(entry, "info", "workspace cleanup scheduled", { reason });
-    void this.runWorkspaceCleanup(entry);
-  }
-
   private async runWorkspaceCleanup(entry: SessionEntry): Promise<void> {
     if (entry.workspaceCleanupPromise) {
       await entry.workspaceCleanupPromise;
@@ -642,11 +615,6 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   private requestCancellation(entry: SessionEntry, message: string): void {
     entry.cancelRequested = true;
     entry.abortController.abort();
-
-    if (this.isActiveState(entry.record.state)) {
-      this.setState(entry, "canceled");
-    }
-
     this.log(entry, "info", message);
   }
 
@@ -716,7 +684,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   }
 
   private isCloseableWithCloseAll(state: AsyncSessionState): boolean {
-    return state === "waiting-input" || state === "failed" || state === "canceled";
+    return state === "waiting-input" || state === "failed";
   }
 
   private deleteEntry(sessionId: string): void {
@@ -926,7 +894,6 @@ type AsyncScopedSessionManagerOptions = {
 const CLOSEABLE_STATES_WITH_CLOSE_ALL: Set<AsyncSessionState> = new Set([
   "waiting-input",
   "failed",
-  "canceled",
 ]);
 
 class ScopedAsyncSessionManager implements AsyncSessionManager {
@@ -997,11 +964,6 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
   async interruptSession(sessionId: string): Promise<AsyncSessionInterruptResult> {
     this.requireSession(sessionId);
     return await this.sessionManager.interruptSession(sessionId);
-  }
-
-  async cancelSession(sessionId: string): Promise<AsyncSessionRecord> {
-    this.requireSession(sessionId);
-    return await this.sessionManager.cancelSession(sessionId);
   }
 
   async closeSession(sessionId: string): Promise<AsyncSessionRecord> {

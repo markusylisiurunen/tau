@@ -21,7 +21,6 @@ tau async status <sessionId>
 tau async logs <sessionId>
 tau async send <sessionId> <text...>
 tau async interrupt <sessionId>
-tau async cancel <sessionId>
 tau async cron list
 tau async cron runs [jobId]
 tau async cron run <jobId>
@@ -133,7 +132,6 @@ Notes:
 - Clone uses `gh repo clone <owner/repo> <path>` (daemon host must have authenticated `gh`).
 - On daemon startup, Tau removes existing entries under all configured workspace roots (`workspaceRoot` plus any `projects.<id>.workspaceRoot` overrides) before starting adapters.
 - On Telegram adapter startup, Tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory.
-- Canceling a session schedules best-effort workspace deletion in the background (failures are logged as warnings and do not fail cancel requests).
 - `cron.jobsDir` is optional and points to a directory of `*.md` cron job files.
 - each cron job markdown file requires frontmatter fields `id`, `projectId`, and `schedule`; the markdown body is used as the prompt.
 - frontmatter `id` must match the markdown file name.
@@ -157,7 +155,6 @@ Base URL: `http://<host>:<port>`
 - `GET /v1/sessions/:sessionId/logs`
 - `POST /v1/sessions/:sessionId/messages`
 - `POST /v1/sessions/:sessionId/interrupt`
-- `POST /v1/sessions/:sessionId/cancel`
 - `GET /v1/cron/jobs`
 - `GET /v1/cron/runs?jobId=<id>&limit=<n>`
 - `POST /v1/cron/jobs/:jobId/run`
@@ -199,7 +196,7 @@ Supported DM commands:
 - `/interrupt` (interrupts the active run, keeps the session available for new messages)
 - `/close` (closes the selected session and deletes its workspace from disk)
 - `/close <sessionId>` (closes a specific session and deletes its workspace from disk)
-- `/close all` (closes sessions in `waiting-input`, `failed`, or `canceled`, and deletes their workspaces)
+- `/close all` (closes sessions in `waiting-input` or `failed`, and deletes their workspaces)
 - `/verbose` (for the selected session, streams run lifecycle + progress updates)
 - `/quiet` (for the selected session, default mode, send only the run's final assistant message)
 - plain text sends to the selected session (if no active session is selected and exactly one session exists, it is auto-selected)
@@ -234,7 +231,6 @@ Lifecycle notifications are sent back to associated chats:
 - `session is being prepared` (after `/new`)
 - `session is ready` (when workspace + client are ready)
 - `run failed`
-- `run canceled`
 
 In `/verbose` mode, run updates also include:
 

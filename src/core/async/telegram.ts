@@ -1787,13 +1787,6 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    if (event.state === "canceled") {
-      this.latestAssistantMessageByRun.delete(event.sessionId);
-      this.clearSessionAttachments(event.sessionId);
-      this.notifyLifecycle(event.sessionId, event.projectId, "canceled");
-      return;
-    }
-
     if (event.state === "waiting-input" && event.previousState === "preparing-workspace") {
       this.notifySession(
         event.sessionId,
@@ -1877,13 +1870,12 @@ class AsyncTelegramAdapterImpl {
   private notifyLifecycle(
     sessionId: string,
     projectId: string,
-    state: "started" | "finished" | "failed" | "canceled",
+    state: "started" | "finished" | "failed",
   ): void {
     const stateLabel = {
       started: "run started",
       finished: "run finished",
       failed: "run failed",
-      canceled: "run canceled",
     }[state];
 
     this.notifySession(

@@ -1,16 +1,8 @@
-export type TauRpcErrorCode =
-  | "parse_error"
-  | "invalid_request"
-  | "method_not_found"
-  | "invalid_params"
-  | "busy"
-  | "internal_error";
+import type { RpcError, RpcErrorCode, RpcRequestId } from "../core/modes/rpc_protocol.js";
 
-export type TauRpcError = {
-  code: TauRpcErrorCode;
-  message: string;
-  data?: unknown;
-};
+export type TauRpcErrorCode = RpcErrorCode;
+
+export type TauRpcError = RpcError;
 
 export class TauSdkError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -21,10 +13,10 @@ export class TauSdkError extends Error {
 
 export class TauRpcResponseError extends TauSdkError {
   readonly code: TauRpcErrorCode;
-  readonly requestId: string | number;
+  readonly requestId: RpcRequestId;
   readonly data?: unknown;
 
-  constructor(options: { requestId: string | number; error: TauRpcError }) {
+  constructor(options: { requestId: RpcRequestId; error: TauRpcError }) {
     super(options.error.message);
     this.name = "TauRpcResponseError";
     this.code = options.error.code;

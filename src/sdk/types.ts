@@ -1,71 +1,32 @@
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
+import type {
+  RpcEventMessage,
+  RpcInitializeParams,
+  RpcMethod,
+  RpcReadyMessage,
+  RpcRequestId,
+  RpcResultByMethod,
+} from "../core/modes/rpc_protocol.js";
 
-export type TauSdkRequestId = string | number;
+export type TauSdkRequestId = RpcRequestId;
 
-export type TauSdkRpcMethod =
-  | "initialize"
-  | "session.submit"
-  | "session.interrupt"
-  | "session.snapshot"
-  | "session.reset"
-  | "session.shutdown";
+export type TauSdkRpcMethod = RpcMethod;
 
-export type TauSdkInitializeParams = {
-  client?: {
-    name?: string;
-    version?: string;
-  };
-};
+export type TauSdkInitializeParams = RpcInitializeParams;
 
-export type TauSdkEvent = {
-  version: 1;
-  type: "event";
-  event: {
-    version: number;
-    event: unknown;
-  };
-  requestId?: TauSdkRequestId;
-};
+export type TauSdkEvent = RpcEventMessage;
 
-export type TauSdkReadyMessage = {
-  version: 1;
-  type: "ready";
-  sessionId: string;
-  methods: TauSdkRpcMethod[];
-  coreEventVersion: 1;
-};
+export type TauSdkReadyMessage = RpcReadyMessage;
 
-export type TauSdkSessionSubmitResult = {
-  userHistoryEntryId: string;
-  turn: {
-    aborted: boolean;
-  };
-};
+export type TauSdkSessionSubmitResult = RpcResultByMethod["session.submit"];
 
-export type TauSdkSessionInterruptResult = {
-  interrupted: boolean;
-  isTurnRunning: boolean;
-};
+export type TauSdkSessionInterruptResult = RpcResultByMethod["session.interrupt"];
 
-export type TauSdkSessionSnapshotResult = {
-  sessionId: string;
-  isTurnRunning: boolean;
-  historyLength: number;
-  history: unknown[];
-  historyEntries: {
-    id: string;
-    message: unknown;
-  }[];
-};
+export type TauSdkSessionSnapshotResult = RpcResultByMethod["session.snapshot"];
 
-export type TauSdkSessionResetResult = {
-  previousSessionId: string;
-  sessionId: string;
-};
+export type TauSdkSessionResetResult = RpcResultByMethod["session.reset"];
 
-export type TauSdkSessionShutdownResult = {
-  shutdown: true;
-};
+export type TauSdkSessionShutdownResult = RpcResultByMethod["session.shutdown"];
 
 export type TauSdkSpawnFunction = (
   command: string,

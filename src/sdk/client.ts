@@ -1,20 +1,22 @@
 import { spawn as spawnProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  parseRpcOutgoingLine,
   RPC_ERROR_CODES,
   RPC_PROTOCOL_VERSION,
   type RpcInitializeParams,
   type RpcMethod,
+  type RpcOutgoingParseFailure,
   type RpcParamsByMethod,
   type RpcReadyMessage,
   type RpcRequestId,
+  type RpcResponseMessage,
   type RpcResultByMethod,
 } from "../core/modes/rpc_protocol.js";
 import { TauProcessError, TauRpcResponseError, TauTransportError } from "./errors.js";
 import type {
   TauSdkClient,
   TauSdkClientOptions,
-  TauSdkEvent,
   TauSdkEventListener,
   TauSdkSpawnFunction,
   TauSdkSubmitOptions,
@@ -324,65 +326,25 @@ class TauSdkClientImpl implements TauSdkClient {
   }
 
   private handleRpcLine(line: string): void {
-    let message: unknown;
-    try {
-      message = JSON.parse(line);
-    } catch (error) {
-      this.failTransport(
-        new TauTransportError("received malformed JSON from tau rpc process", { cause: error }),
-      );
+    const parsed = parseRpcOutgoingLine(line);
+    if (!parsed.ok) {
+      this.handleOutgoingParseFailure(parsed);
       return;
     }
 
-    if (!isRecord(message)) {
-      this.failTransport(new TauTransportError("received non-object rpc payload from tau process"));
-      return;
-    }
-
-    if (message.version !== RPC_PROTOCOL_VERSION) {
-      this.failTransport(
-        new TauTransportError(
-          `received unsupported rpc version from tau process: ${String(message.version)}`,
-        ),
-      );
-      return;
-    }
-
+    const message = parsed.message;
     if (message.type === "ready") {
-      if (typeof message.sessionId !== "string") {
-        this.failTransport(
-          new TauTransportError("received invalid ready payload from tau process"),
-        );
-        return;
-      }
-
-      if (!Array.isArray(message.methods)) {
-        this.failTransport(
-          new TauTransportError("received invalid ready payload from tau process"),
-        );
-        return;
-      }
-
       if (!this.readyValue) {
-        const readyMessage = message as RpcReadyMessage;
-        this.readyValue = readyMessage;
-        this.readyDeferred.resolve(readyMessage);
+        this.readyValue = message;
+        this.readyDeferred.resolve(message);
       }
       return;
     }
 
     if (message.type === "event") {
-      if (!isRecord(message.event)) {
-        this.failTransport(
-          new TauTransportError("received invalid event payload from tau process"),
-        );
-        return;
-      }
-
-      const event = message as TauSdkEvent;
       for (const listener of [...this.eventListeners]) {
         try {
-          listener(event);
+          listener(message);
         } catch {
           // ignore listener errors so transport handling can continue
         }
@@ -390,60 +352,76 @@ class TauSdkClientImpl implements TauSdkClient {
       return;
     }
 
-    if (message.type === "response") {
-      this.handleResponse(message);
+    this.handleResponse(message);
+  }
+
+  private handleOutgoingParseFailure(failure: RpcOutgoingParseFailure): void {
+    if (failure.messageType === "response" && failure.id !== null) {
+      const pending = this.pendingRequests.get(failure.id);
+      if (pending) {
+        this.pendingRequests.delete(failure.id);
+        pending.reject(new TauTransportError("received malformed rpc response"));
+        return;
+      }
+    }
+
+    if (failure.error.code === RPC_ERROR_CODES.parseError) {
+      this.failTransport(new TauTransportError("received malformed JSON from tau rpc process"));
       return;
     }
 
-    this.failTransport(
-      new TauTransportError(`received unsupported rpc message type: ${String(message.type)}`),
-    );
-  }
-
-  private handleResponse(message: Record<string, unknown>): void {
-    const requestId = parseRequestId(message.id);
-    if (!requestId.ok) {
+    if (
+      failure.messageType === "response" &&
+      failure.error.message === "response.id must be a string or number"
+    ) {
       this.failTransport(new TauTransportError("received response without a valid request id"));
       return;
     }
 
-    if (requestId.id === null) {
-      this.failTransport(new TauTransportError("received uncorrelated rpc error response"));
+    if (
+      failure.error.message.startsWith("unsupported rpc version:") ||
+      failure.error.message.startsWith("unsupported rpc message type:")
+    ) {
+      this.failTransport(
+        new TauTransportError(`received ${failure.error.message} from tau process`),
+      );
       return;
     }
 
-    const pending = this.pendingRequests.get(requestId.id);
-    if (!pending) {
-      return;
-    }
+    this.failTransport(
+      new TauTransportError(
+        `received invalid rpc payload from tau process: ${failure.error.message}`,
+      ),
+    );
+  }
 
-    this.pendingRequests.delete(requestId.id);
+  private handleResponse(message: RpcResponseMessage): void {
+    if (message.ok) {
+      const pending = this.pendingRequests.get(message.id);
+      if (!pending) {
+        return;
+      }
 
-    if (message.ok === true) {
+      this.pendingRequests.delete(message.id);
       pending.resolve(message.result);
       return;
     }
 
-    if (!isRecord(message.error)) {
-      pending.reject(new TauTransportError("received malformed rpc error response"));
+    if (message.id === null) {
+      this.failTransport(new TauTransportError("received uncorrelated rpc error response"));
       return;
     }
 
-    const code = message.error.code;
-    const rpcMessage = message.error.message;
-    if (!isRpcErrorCode(code) || typeof rpcMessage !== "string") {
-      pending.reject(new TauTransportError("received malformed rpc error response"));
+    const pending = this.pendingRequests.get(message.id);
+    if (!pending) {
       return;
     }
 
+    this.pendingRequests.delete(message.id);
     pending.reject(
       new TauRpcResponseError({
-        requestId: requestId.id,
-        error: {
-          code,
-          message: rpcMessage,
-          ...("data" in message.error ? { data: message.error.data } : {}),
-        },
+        requestId: message.id,
+        error: message.error,
       }),
     );
   }
@@ -548,22 +526,4 @@ function delay(timeoutMs: number): Promise<void> {
     const timeout = setTimeout(resolve, timeoutMs);
     timeout.unref?.();
   });
-}
-
-function parseRequestId(value: unknown): { ok: true; id: RpcRequestId | null } | { ok: false } {
-  if (value === null || typeof value === "string" || typeof value === "number") {
-    return { ok: true, id: value };
-  }
-
-  return { ok: false };
-}
-
-function isRpcErrorCode(
-  value: unknown,
-): value is (typeof RPC_ERROR_CODES)[keyof typeof RPC_ERROR_CODES] {
-  return typeof value === "string" && (Object.values(RPC_ERROR_CODES) as string[]).includes(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

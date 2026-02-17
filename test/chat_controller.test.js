@@ -230,13 +230,13 @@ describe("ChatController interrupt handling", () => {
     const stopSpeakCaptureSpy = vi
       .spyOn(controller, "stopSpeakCapture")
       .mockImplementation(async () => {});
-    const interruptAssistantTurnSpy = vi.spyOn(controller, "interruptAssistantTurn");
+    const interruptActiveTaskSpy = vi.spyOn(controller, "interruptActiveTask");
 
     controller.onInterrupt();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(stopSpeakCaptureSpy).toHaveBeenCalledTimes(1);
-    expect(interruptAssistantTurnSpy).not.toHaveBeenCalled();
+    expect(interruptActiveTaskSpy).not.toHaveBeenCalled();
   });
 
   it("interrupts the active assistant turn task once", async () => {

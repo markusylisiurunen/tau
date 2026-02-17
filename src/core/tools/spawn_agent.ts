@@ -159,6 +159,7 @@ async function buildSubagentSystemPrompt(args: {
   persona: Persona;
   riskLevel: RiskLevel;
   config: ToolDispatchContext["config"];
+  cwd: string;
   hostCwd: string;
   home: string;
   includeAgentContext: boolean;
@@ -183,7 +184,10 @@ async function buildSubagentSystemPrompt(args: {
   const composition = composeSessionPrompts({
     persona: args.persona,
     riskLevel: args.riskLevel,
-    cwd: bootstrap.promptContext.cwd,
+    // Sandbox path invariant: once workingDirectory is resolved, keep that exact sandbox path as
+    // the model-visible cwd. Re-deriving cwd from hostCwd can collapse to mount root when host
+    // cwd is outside a git repo, which breaks subagent path context.
+    cwd: args.cwd,
     hostCwd: bootstrap.promptContext.hostCwd,
     datetime: new Date().toISOString(),
     platform: process.platform,
@@ -336,6 +340,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             persona,
             riskLevel: context.riskLevel ?? "read-only",
             config: context.config,
+            cwd,
             hostCwd,
             home: baseHome,
             includeAgentContext: context.includeAgentContext !== false,

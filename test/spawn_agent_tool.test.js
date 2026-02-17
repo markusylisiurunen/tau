@@ -440,4 +440,53 @@ describe("spawn_agent tool", () => {
       rmSync(tmpRoot, { recursive: true, force: true });
     }
   });
+
+  it("keeps the resolved sandbox workingDirectory in subagent prompt context", async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-sandbox-"));
+    const sourceDir = join(tmpRoot, "plain-dir", "src");
+    mkdirSync(sourceDir, { recursive: true });
+
+    try {
+      const backend = createLocalToolExecutionBackend();
+      const tool = createSpawnAgentToolDefinition(backend);
+      const { context, spawned } = createContext({
+        cwd: "/workspace/src",
+        hostCwd: sourceDir,
+        home: tmpRoot,
+        sandboxEnabled: true,
+        config: {
+          sandbox: {
+            mountPath: "/workspace",
+          },
+        },
+      });
+
+      const dispatched = await tool.dispatch(
+        {
+          id: "call-10",
+          name: TOOL_NAME_SPAWN_AGENT,
+          arguments: {
+            name: "researcher",
+            title: "research task",
+            prompt: "collect findings",
+            workingDirectory: ".",
+          },
+        },
+        "read-only",
+        undefined,
+        context,
+      );
+
+      expect(dispatched.kind).toBe("phased");
+      const result = await dispatched.run;
+      expect(result.kind).toBe("single");
+      expect(result.toolResult.isError).toBe(false);
+      expect(spawned).toHaveLength(1);
+      expect(spawned[0].workingDirectory).toBe("/workspace/src");
+      expect(spawned[0].systemPrompt).toContain("<cwd>/workspace/src</cwd>");
+      expect(spawned[0].systemPrompt).not.toContain("<cwd>/workspace</cwd>");
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
 });

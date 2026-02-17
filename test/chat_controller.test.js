@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { resolveRuntimePromptBootstrap } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
 import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../dist/core/tools/tool_names.js";
 import { ChatController } from "../dist/tui/chat_controller.js";
@@ -111,11 +112,12 @@ function createStubView() {
 function createController(view, options = {}) {
   return new ChatController({
     view,
-    personas,
+    personas: options.personas ?? personas,
     prompts: options.prompts ?? [],
     skills: options.skills ?? [],
     bashCommands: options.bashCommands ?? [],
-    config: {},
+    initialPersonaId: options.initialPersonaId,
+    config: options.config ?? {},
     sandboxEnabled: options.sandboxEnabled ?? false,
     caffeinated: options.caffeinated ?? false,
     toolBackend: options.toolBackend,
@@ -671,6 +673,78 @@ describe("ChatController risk level changes", () => {
     await controller.onUserInput("hello");
 
     expect(userMessages[0]).toContain("<system>Risk level changed by user");
+  });
+});
+
+describe("ChatController startup bootstrap", () => {
+  it("matches RPC prompt bootstrap context for identical inputs", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tau-bootstrap-home-"));
+    const repo = join(home, "repo");
+    await mkdir(repo, { recursive: true });
+    await writeFile(join(repo, "AGENTS.md"), "# repo\n\nshared project context\n");
+
+    const persona = {
+      id: "bootstrap-persona",
+      label: "bootstrap persona",
+      model: personas[0].model,
+      systemPrompt: "persona prompt",
+      settings: {},
+      source: "project",
+      skills: ["alpha", "missing"],
+    };
+    const discoveredSkills = [
+      {
+        name: "alpha",
+        description: "alpha skill",
+        path: join(repo, "skills", "alpha", "SKILL.md"),
+      },
+    ];
+
+    const deps = {
+      clock: {
+        now: () => Date.now(),
+      },
+      fs: {
+        readFile: (path) => readFileSync(path, "utf8"),
+        writeFile: () => {},
+        listDir: () => [],
+      },
+      spawn: vi.fn(),
+      env: {
+        cwd: () => repo,
+        home: () => home,
+        platform: () => process.platform,
+        nodeVersion: () => process.version,
+        env: () => process.env,
+      },
+    };
+
+    const expected = resolveRuntimePromptBootstrap({
+      persona,
+      discoveredSkills,
+      cwd: repo,
+      home,
+      includeAgentContext: true,
+      sandboxEnabled: false,
+      readFile: (path) => readFileSync(path, "utf8"),
+    });
+
+    const stub = createStubView();
+    const controller = createController(stub.view, {
+      personas: [persona],
+      initialPersonaId: persona.id,
+      skills: discoveredSkills,
+      deps,
+    });
+
+    try {
+      expect(controller.runtime.promptContext).toEqual(expected.promptContext);
+      expect(controller.runtime.promptContext.skillsBlock).toContain("<name>alpha</name>");
+      expect(controller.runtime.promptContext.skillsBlock).not.toContain("missing");
+    } finally {
+      await controller.dispose();
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
 

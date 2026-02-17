@@ -154,6 +154,35 @@ function resolveWorkingDirectory(args: {
   return { cwd, hostCwd: resolve(args.hostCwd, rel) };
 }
 
+function resolveSandboxHostRoot(args: {
+  cwd: string;
+  hostCwd: string;
+  sandboxEnabled: boolean;
+  sandboxMountPath?: string;
+}): string | undefined {
+  if (!args.sandboxEnabled) {
+    return undefined;
+  }
+
+  const mountPath = normalizeSandboxMountPath(args.sandboxMountPath);
+  const relFromMount = pathPosix.relative(mountPath, args.cwd);
+  if (relFromMount === ".." || relFromMount.startsWith("../")) {
+    return undefined;
+  }
+
+  const depth = relFromMount
+    .split(pathPosix.sep)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0).length;
+
+  let root = resolve(args.hostCwd);
+  for (let i = 0; i < depth; i++) {
+    root = resolve(root, "..");
+  }
+
+  return root;
+}
+
 async function buildSubagentSystemPrompt(args: {
   name: string;
   persona: Persona;
@@ -164,6 +193,7 @@ async function buildSubagentSystemPrompt(args: {
   home: string;
   includeAgentContext: boolean;
   sandboxEnabled: boolean;
+  sandboxHostRoot?: string;
 }): Promise<string | undefined> {
   const skills = await loadSkillsForPromptContext({
     config: args.config,
@@ -177,6 +207,7 @@ async function buildSubagentSystemPrompt(args: {
     includeAgentContext: args.includeAgentContext,
     sandboxEnabled: args.sandboxEnabled,
     sandboxConfig: args.config?.sandbox,
+    sandboxHostRoot: args.sandboxHostRoot,
     sandboxEnvironmentInfo: args.config?.sandbox?.environmentInfo,
     readFile: (path) => readFileSync(path, "utf-8"),
   });
@@ -332,6 +363,13 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         });
       }
 
+      const sandboxHostRoot = resolveSandboxHostRoot({
+        cwd,
+        hostCwd,
+        sandboxEnabled: context.sandboxEnabled ?? false,
+        sandboxMountPath: context.config?.sandbox?.mountPath,
+      });
+
       let systemPrompt: string | undefined;
       if (workingDirectory) {
         try {
@@ -345,6 +383,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             home: baseHome,
             includeAgentContext: context.includeAgentContext !== false,
             sandboxEnabled: context.sandboxEnabled ?? false,
+            sandboxHostRoot,
           });
         } catch (error) {
           return blocked(

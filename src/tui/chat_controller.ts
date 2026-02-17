@@ -323,6 +323,7 @@ export class ChatController {
       includeAgentContext: this.includeAgentContext,
       sandboxEnabled: this.sandboxEnabled,
       sandboxConfig: this.config.sandbox,
+      sandboxHostRoot: this.sandboxRootReal,
       sandboxEnvironmentInfo: this.config.sandbox?.environmentInfo,
       readFile: this.deps.fs.readFile,
     });
@@ -864,6 +865,10 @@ export class ChatController {
     const resolved = resolvePersonaSkillsForPromptContext({
       persona,
       discoveredSkills: this.skills,
+      cwd: this.deps.env.cwd(),
+      sandboxEnabled: this.sandboxEnabled,
+      sandboxConfig: this.config.sandbox,
+      sandboxHostRoot: this.sandboxRootReal,
     });
     return { skillsBlock: resolved.skillsBlock, unknown: resolved.unknown };
   }
@@ -996,6 +1001,9 @@ export class ChatController {
       cwd,
       home: this.deps.env.home(),
       includeAgentContext: this.includeAgentContext,
+      sandboxEnabled: this.sandboxEnabled,
+      sandboxConfig: this.config.sandbox,
+      sandboxHostRoot: this.sandboxRootReal,
       readFile: this.deps.fs.readFile,
     });
 

@@ -489,4 +489,80 @@ describe("spawn_agent tool", () => {
       rmSync(tmpRoot, { recursive: true, force: true });
     }
   });
+
+  it("limits sandbox prompt AGENTS and skills to mounted host root", async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-sandbox-scope-"));
+    const hostRoot = join(tmpRoot, "mounted-root");
+    const hostSourceDir = join(hostRoot, "src");
+
+    mkdirSync(hostSourceDir, { recursive: true });
+    mkdirSync(join(hostRoot, ".tau", "skills", "in-scope"), { recursive: true });
+    mkdirSync(join(tmpRoot, ".tau", "skills", "out-of-scope"), { recursive: true });
+    writeFileSync(join(hostRoot, "AGENTS.md"), "mounted agents\n", "utf-8");
+    writeFileSync(join(tmpRoot, "AGENTS.md"), "outside agents\n", "utf-8");
+    writeFileSync(
+      join(hostRoot, ".tau", "skills", "in-scope", "SKILL.md"),
+      ["---", "name: in-scope", "description: mounted skill", "---", "", "body"].join("\n"),
+      "utf-8",
+    );
+    writeFileSync(
+      join(tmpRoot, ".tau", "skills", "out-of-scope", "SKILL.md"),
+      ["---", "name: out-of-scope", "description: outside skill", "---", "", "body"].join("\n"),
+      "utf-8",
+    );
+
+    try {
+      const backend = createLocalToolExecutionBackend();
+      const tool = createSpawnAgentToolDefinition(backend);
+      const base = createContext();
+      const { context, spawned } = createContext({
+        cwd: "/workspace/src",
+        hostCwd: hostSourceDir,
+        home: tmpRoot,
+        includeAgentContext: true,
+        sandboxEnabled: true,
+        config: {
+          sandbox: {
+            mountPath: "/workspace",
+          },
+        },
+        persona: {
+          ...base.context.persona,
+          skills: ["in-scope", "out-of-scope"],
+        },
+      });
+
+      const dispatched = await tool.dispatch(
+        {
+          id: "call-11",
+          name: TOOL_NAME_SPAWN_AGENT,
+          arguments: {
+            name: "researcher",
+            title: "research task",
+            prompt: "collect findings",
+            workingDirectory: ".",
+          },
+        },
+        "read-only",
+        undefined,
+        context,
+      );
+
+      expect(dispatched.kind).toBe("phased");
+      const result = await dispatched.run;
+      expect(result.kind).toBe("single");
+      expect(result.toolResult.isError).toBe(false);
+      expect(spawned).toHaveLength(1);
+      expect(spawned[0].systemPrompt).toContain('<file path="/workspace/AGENTS.md">');
+      expect(spawned[0].systemPrompt).toContain("mounted agents");
+      expect(spawned[0].systemPrompt).not.toContain("outside agents");
+      expect(spawned[0].systemPrompt).toContain("<name>in-scope</name>");
+      expect(spawned[0].systemPrompt).toContain(
+        "<location>/workspace/.tau/skills/in-scope/SKILL.md</location>",
+      );
+      expect(spawned[0].systemPrompt).not.toContain("<name>out-of-scope</name>");
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
 });

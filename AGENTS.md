@@ -332,7 +332,7 @@ EOF
 ## Security
 
 - Risk levels gate model tools only; `!` commands bypass checks (but still use the sandbox when enabled)
-- In sandbox mode, model-visible paths must stay within `sandbox.mountPath`. For `spawn_agent` working-directory rebuilds, treat the resolved sandbox path as authoritative and never re-derive cwd from host paths.
+- In sandbox mode, model-visible paths must stay within `sandbox.mountPath`. For `spawn_agent` working-directory rebuilds, treat the resolved sandbox path as authoritative and never re-derive cwd from host paths. For prompt-injected AGENTS/skill files, include only host files under the mounted host root and rewrite prompt paths to sandbox paths.
 - Bash sanitizes environment, blocks `*_KEY`, `*_SECRET`, `*_TOKEN`, `*_PASSWORD` patterns
 - Process groups terminated on abort to prevent orphaned processes
 

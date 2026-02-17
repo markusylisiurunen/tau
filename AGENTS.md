@@ -17,6 +17,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **ChatRuntime** (`src/core/runtime/chat_runtime.ts`): High-level runtime that composes session prompt building, turn execution, and session prompt updates
 - **ConversationTurnRuntime** (`src/core/runtime/conversation_turn_runtime.ts`): Assistant-turn runner with interruption and abort handling for core event streams
 - **Session prompt composer** (`src/core/runtime/session_prompt_composer.ts`): Composes main-session and subagent system prompts with environment and context blocks
+- **Runtime bootstrap resolver** (`src/core/runtime/runtime_bootstrap.ts`): Shared startup resolver for prompt context, AGENTS context, and persona skill filtering used by TUI/RPC/subagent working-directory prompt rebuilds
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly and history preparation for `/compact:*` flows (summary-only and summary + last assistant)
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface plus RPC protocol/server wiring for alternate front-ends
@@ -74,6 +75,7 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `runtime/chat_runtime.ts` - High-level runtime that coordinates session updates, turn execution, and prompt composition
   - `runtime/conversation_turn_runtime.ts` - Assistant-turn runtime with interruption and abort handling
   - `runtime/session_prompt_composer.ts` - Session prompt composition for main-session and subagent prompts
+  - `runtime/runtime_bootstrap.ts` - Shared prompt-context bootstrap resolution for TUI, RPC, and subagent working-directory prompt rebuilds
   - `runtime/deps.ts` - Core dependency injection
   - `utils/context_builder.ts` - System prompt assembly
   - `utils/agents_files.ts` - AGENTS.md discovery

@@ -2,7 +2,6 @@ import { spawn as spawnProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   parseRpcOutgoingLine,
-  RPC_ERROR_CODES,
   RPC_PROTOCOL_VERSION,
   type RpcInitializeParams,
   type RpcMethod,
@@ -361,27 +360,21 @@ class TauSdkClientImpl implements TauSdkClient {
       if (pending) {
         this.pendingRequests.delete(failure.id);
         pending.reject(new TauTransportError("received malformed rpc response"));
-        return;
       }
+      return;
     }
 
-    if (failure.error.code === RPC_ERROR_CODES.parseError) {
+    if (failure.reason === "parse_error") {
       this.failTransport(new TauTransportError("received malformed JSON from tau rpc process"));
       return;
     }
 
-    if (
-      failure.messageType === "response" &&
-      failure.error.message === "response.id must be a string or number"
-    ) {
+    if (failure.reason === "response_invalid_id") {
       this.failTransport(new TauTransportError("received response without a valid request id"));
       return;
     }
 
-    if (
-      failure.error.message.startsWith("unsupported rpc version:") ||
-      failure.error.message.startsWith("unsupported rpc message type:")
-    ) {
+    if (failure.reason === "unsupported_version" || failure.reason === "unsupported_message_type") {
       this.failTransport(
         new TauTransportError(`received ${failure.error.message} from tau process`),
       );

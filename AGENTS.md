@@ -271,7 +271,7 @@ RPC mode command surface is protocol-based (`initialize`, `session.submit`, `ses
 ## Development
 
 - `npm run check` - Format (Biome) + typecheck
-- `npm run build` - Compile to dist/
+- `npm run build` - Compile to dist/ (TypeScript emits `.d.ts` files, then `postbuild` removes every declaration outside `dist/sdk/` via `find dist -name '*.d.ts' ! -path 'dist/sdk/*' -delete`)
 - `npm test` - Build + run UI tests
 
 **Search examples**

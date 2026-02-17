@@ -170,6 +170,10 @@ type TurnCaffeinateSession = {
   completion: Promise<SpawnCaptureResult>;
 };
 
+type BusyTask = {
+  requestInterrupt: () => boolean;
+};
+
 const RELOAD_PLANS: Record<ReloadScope, ReloadPlan> = {
   "new-session": {
     personas: true,
@@ -239,8 +243,7 @@ export class ChatController {
   private showThinking = false;
   private compactToolUi = true;
   private commandHint?: string;
-  private assistantTurnInterruptRequested = false;
-  private currentTurnAbort?: AbortController;
+  private activeBusyTask?: BusyTask;
   private riskLevel: RiskLevel = "read-only";
   private projectContextBlock?: string;
   private projectFiles: string[] = [];
@@ -1061,19 +1064,36 @@ export class ChatController {
     this.pendingProjectContextChange = { from, to: next };
   }
 
+  private createAbortBusyTask(): { busyTask: BusyTask; signal: AbortSignal } {
+    const abortController = new AbortController();
+    return {
+      signal: abortController.signal,
+      busyTask: {
+        requestInterrupt: () => {
+          if (abortController.signal.aborted) {
+            return false;
+          }
+          abortController.abort();
+          return true;
+        },
+      },
+    };
+  }
+
+  private beginBusyTask(task: BusyTask): void {
+    this.activeBusyTask = task;
+  }
+
+  private endBusyTask(task: BusyTask): void {
+    if (this.activeBusyTask === task) {
+      this.activeBusyTask = undefined;
+    }
+  }
+
   private interruptAssistantTurn(): void {
     if (!this.isStreaming) return;
-
-    if (this.runtime.isTurnRunning) {
-      if (this.assistantTurnInterruptRequested) return;
-      this.assistantTurnInterruptRequested = true;
-      this.runtime.interruptTurn();
-      this.view.addSystemMessage("interrupted", "error");
-      return;
-    }
-
-    if (this.currentTurnAbort?.signal.aborted) return;
-    this.currentTurnAbort?.abort();
+    if (!this.activeBusyTask) return;
+    if (!this.activeBusyTask.requestInterrupt()) return;
     this.view.addSystemMessage("interrupted", "error");
   }
 
@@ -1992,11 +2012,14 @@ export class ChatController {
     this.view.addSystemMessage("summarizing session...", "success");
     this.isStreaming = true;
     this.view.startWorkingIcon();
+    const { busyTask, signal } = this.createAbortBusyTask();
+    this.beginBusyTask(busyTask);
 
     try {
       const result = await this.engine.compact({
         mode: "only-summary",
         guidance,
+        signal,
       });
       this.applyCompactedHistoryUi(result.compactionMessage);
 
@@ -2005,12 +2028,19 @@ export class ChatController {
         "success",
       );
     } catch (err) {
-      this.handleCompactionError(err);
+      if (!signal.aborted) {
+        this.handleCompactionError(err);
+      }
     } finally {
+      this.endBusyTask(busyTask);
       this.view.stopWorkingIcon();
       this.isStreaming = false;
       this.view.requestRender();
-      void this.drainQueuedUserMessages();
+      if (signal.aborted) {
+        this.dequeueQueuedUserMessagesIntoEditor();
+      } else {
+        void this.drainQueuedUserMessages();
+      }
     }
   }
 
@@ -2018,11 +2048,14 @@ export class ChatController {
     this.view.addSystemMessage("summarizing session...", "success");
     this.isStreaming = true;
     this.view.startWorkingIcon();
+    const { busyTask, signal } = this.createAbortBusyTask();
+    this.beginBusyTask(busyTask);
 
     try {
       const result = await this.engine.compact({
         mode: "with-last-assistant",
         guidance,
+        signal,
       });
       this.applyCompactedHistoryUi(result.compactionMessage);
 
@@ -2031,12 +2064,19 @@ export class ChatController {
         : "session compacted. previous context has been summarized.";
       this.view.addSystemMessage(successText, "success");
     } catch (err) {
-      this.handleCompactionError(err);
+      if (!signal.aborted) {
+        this.handleCompactionError(err);
+      }
     } finally {
+      this.endBusyTask(busyTask);
       this.view.stopWorkingIcon();
       this.isStreaming = false;
       this.view.requestRender();
-      void this.drainQueuedUserMessages();
+      if (signal.aborted) {
+        this.dequeueQueuedUserMessagesIntoEditor();
+      } else {
+        void this.drainQueuedUserMessages();
+      }
     }
   }
 
@@ -2229,6 +2269,8 @@ export class ChatController {
     this.view.addSystemMessage("sampling prune candidates...", "success");
     this.isStreaming = true;
     this.view.startWorkingIcon();
+    const { busyTask, signal } = this.createAbortBusyTask();
+    this.beginBusyTask(busyTask);
 
     try {
       const prompt = this.buildSmartPrunePrompt({
@@ -2236,7 +2278,7 @@ export class ChatController {
         targetTokens,
         guidance: parsed.guidance,
       });
-      const selection = await this.requestSmartPruneSelection(prompt);
+      const selection = await this.requestSmartPruneSelection(prompt, signal);
       if (selection.length === 0) {
         const summary = getEditSummary();
         if (this.hasAnyPrunedEditChanges(summary)) {
@@ -2277,12 +2319,19 @@ export class ChatController {
         "success",
       );
     } catch (err) {
-      this.view.addSystemMessage(`prune failed: ${(err as Error).message}`, "error");
+      if (!signal.aborted) {
+        this.view.addSystemMessage(`prune failed: ${(err as Error).message}`, "error");
+      }
     } finally {
+      this.endBusyTask(busyTask);
       this.view.stopWorkingIcon();
       this.isStreaming = false;
       this.view.requestRender();
-      void this.drainQueuedUserMessages();
+      if (signal.aborted) {
+        this.dequeueQueuedUserMessagesIntoEditor();
+      } else {
+        void this.drainQueuedUserMessages();
+      }
     }
   }
 
@@ -2827,7 +2876,10 @@ export class ChatController {
     return selected;
   }
 
-  private async requestSmartPruneSelection(prompt: string): Promise<string[]> {
+  private async requestSmartPruneSelection(
+    prompt: string,
+    signal?: AbortSignal,
+  ): Promise<string[]> {
     let apiKey: string | undefined;
     try {
       apiKey = await this.credentialResolver.getApiKey(
@@ -2868,6 +2920,7 @@ export class ChatController {
       {
         ...(reasoning ? { reasoning } : {}),
         sessionId: `tau-prune-${randomUUID()}`,
+        ...(signal ? { signal } : {}),
         ...(apiKey && { apiKey }),
       },
     );
@@ -3264,10 +3317,24 @@ export class ChatController {
     this.view.startWorkingIcon();
     this.startTurnTimer();
     this.assistantState = undefined;
-    this.assistantTurnInterruptRequested = false;
     this.startTurnCaffeinate();
 
     let runResult: ConversationTurnResult = { aborted: false };
+    let interruptRequested = false;
+    const busyTask: BusyTask = {
+      requestInterrupt: () => {
+        if (interruptRequested) {
+          return false;
+        }
+        const interrupted = this.runtime.interruptTurn();
+        if (!interrupted) {
+          return false;
+        }
+        interruptRequested = true;
+        return true;
+      },
+    };
+    this.beginBusyTask(busyTask);
 
     try {
       runResult = await this.runtime.runTurn((event) => this.onEvent(event));
@@ -3275,6 +3342,7 @@ export class ChatController {
       const message = (err as Error).message || "request failed";
       this.view.addSystemMessage(message, "error");
     } finally {
+      this.endBusyTask(busyTask);
       await this.stopTurnCaffeinate();
       const reason = runResult.aborted ? "aborted" : "interrupted";
 
@@ -3283,7 +3351,6 @@ export class ChatController {
       this.view.stopWorkingIcon();
       this.stopTurnTimer();
       this.isStreaming = false;
-      this.assistantTurnInterruptRequested = false;
       this.view.clearToolUiTransientState();
       this.pendingIdleNotification = true;
       this.view.requestRender();
@@ -3302,8 +3369,8 @@ export class ChatController {
     opts?: { cwd?: string; addToContext?: boolean; labelOverride?: string },
   ): Promise<boolean> {
     this.isStreaming = true;
-    const abortController = new AbortController();
-    this.currentTurnAbort = abortController;
+    const { busyTask, signal } = this.createAbortBusyTask();
+    this.beginBusyTask(busyTask);
     let wasAborted = false;
     this.startTurnTimer();
     const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -3326,7 +3393,7 @@ export class ChatController {
         truncated: captureTruncated,
       } = await this.toolBackend.runBash(command, {
         cwd: effectiveWorkingDirectory,
-        signal: abortController.signal,
+        signal,
       });
       const durationMs = Math.max(0, Date.now() - startedAt);
       const truncationInfo = await prepareBashOutput(
@@ -3373,11 +3440,9 @@ export class ChatController {
       });
       this.refreshStatus();
     } finally {
-      wasAborted = abortController.signal.aborted;
+      wasAborted = signal.aborted;
+      this.endBusyTask(busyTask);
       this.isStreaming = false;
-      if (this.currentTurnAbort === abortController) {
-        this.currentTurnAbort = undefined;
-      }
       this.stopTurnTimer();
       this.view.requestRender();
       if (wasAborted) {

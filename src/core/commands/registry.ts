@@ -217,7 +217,7 @@ export class CommandRegistry<Ctx = unknown> {
       ["ctrl+y", "toggle voice recording"],
       ["enter x2", "retry last response"],
       ["esc x2", "clear current prompt"],
-      ["esc", "interrupt assistant"],
+      ["esc", "interrupt active task"],
     ];
 
     const commandPad = Math.max(...commandEntries.map(([cmd]) => cmd.length));

@@ -1,7 +1,6 @@
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
-import { Api } from "grammy";
 import type { AsyncProjectConfig } from "../config/schema.js";
 import { transcribeMistralAudio } from "../utils/mistral_transcription.js";
 import { isRecord } from "../utils/type_guards.js";
@@ -72,12 +71,7 @@ type TelegramUpdate = {
   callback_query?: TelegramCallbackQuery;
 };
 
-type TelegramAllowedUpdates =
-  NonNullable<Parameters<Api["getUpdates"]>[0]> extends {
-    allowed_updates?: infer T;
-  }
-    ? NonNullable<T>
-    : readonly string[];
+type TelegramAllowedUpdates = readonly string[];
 
 type TelegramBotCommand = {
   command: string;
@@ -476,12 +470,48 @@ function formatSessionHeadline(sessionId: string, label: string): string {
   return `(${sessionId}) ${label}`;
 }
 
-function createGrammyApi(botToken: string): AsyncTelegramApi {
-  const api = new Api(botToken);
+function createTelegramApi(botToken: string): AsyncTelegramApi {
+  const apiUrl = `https://api.telegram.org/bot${botToken}`;
+
+  async function callTelegramMethod<T>(
+    method: string,
+    payload: Record<string, unknown>,
+  ): Promise<T> {
+    const response = await fetch(`${apiUrl}/${method}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const detail = (await response.text()).trim();
+      throw new Error(detail || `telegram ${method} failed: HTTP ${response.status}`);
+    }
+
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error(`telegram ${method} returned invalid JSON`);
+    }
+
+    if (!isRecord(data)) {
+      throw new Error(`telegram ${method} returned an invalid response payload`);
+    }
+
+    if (data.ok !== true) {
+      const detail = typeof data.description === "string" ? data.description.trim() : "";
+      throw new Error(detail || `telegram ${method} request failed`);
+    }
+
+    return data.result as T;
+  }
 
   return {
     async getUpdates(args) {
-      const updates = await api.getUpdates({
+      const updates = await callTelegramMethod<TelegramUpdate[]>("getUpdates", {
         offset: args.offset,
         timeout: args.timeoutSeconds,
         allowed_updates: args.allowedUpdates,
@@ -490,12 +520,16 @@ function createGrammyApi(botToken: string): AsyncTelegramApi {
       return updates;
     },
     async sendMessage(chatId, text, options) {
-      await api.sendMessage(chatId, text, {
+      await callTelegramMethod("sendMessage", {
+        chat_id: chatId,
+        text,
         ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
       });
     },
     async downloadFile(fileId) {
-      const file = await api.getFile(fileId);
+      const file = await callTelegramMethod<{ file_path?: string }>("getFile", {
+        file_id: fileId,
+      });
       const filePath = file.file_path?.trim();
       if (!filePath) {
         throw new Error("telegram file path is missing");
@@ -511,15 +545,20 @@ function createGrammyApi(botToken: string): AsyncTelegramApi {
       return Buffer.from(bytes);
     },
     async setCommands(commands) {
-      await api.setMyCommands(commands);
+      await callTelegramMethod("setMyCommands", {
+        commands,
+      });
     },
     async setMessageReaction(chatId, messageId) {
-      await api.setMessageReaction(chatId, messageId, [
-        { type: "emoji", emoji: MESSAGE_QUEUED_REACTION_EMOJI },
-      ]);
+      await callTelegramMethod("setMessageReaction", {
+        chat_id: chatId,
+        message_id: messageId,
+        reaction: [{ type: "emoji", emoji: MESSAGE_QUEUED_REACTION_EMOJI }],
+      });
     },
     async answerCallbackQuery(callbackQueryId, text) {
-      await api.answerCallbackQuery(callbackQueryId, {
+      await callTelegramMethod("answerCallbackQuery", {
+        callback_query_id: callbackQueryId,
         ...(text ? { text } : {}),
       });
     },
@@ -573,7 +612,7 @@ class AsyncTelegramAdapterImpl {
     this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
     this.mistralApiKey = options.mistralApiKey?.trim() || undefined;
     this.sessionManager = options.sessionManager;
-    this.api = options.api ?? createGrammyApi(options.botToken);
+    this.api = options.api ?? createTelegramApi(options.botToken);
     this.fetchImpl = options.fetchImpl;
     this.onLog = options.onLog;
 

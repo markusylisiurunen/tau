@@ -411,10 +411,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         });
       }
 
-      const modelLabel =
-        effectiveSettings.model !== persona.model
-          ? `${effectiveSettings.model.provider}/${effectiveSettings.model.id}:${effectiveSettings.settings?.reasoning ?? "none"}`
-          : undefined;
+      const modelLabel = launchModelOverride?.normalized;
 
       return {
         kind: "phased",

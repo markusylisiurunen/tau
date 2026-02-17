@@ -92,10 +92,62 @@ describe("spawn_agent tool", () => {
     const result = await dispatched.run;
     expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(false);
+    expect(result.uiEvent.type).toBe("spawn_agent_finished");
+    expect(result.uiEvent.uiText.statusLine).toContain("openai/gpt-5.2:high");
     expect(spawned).toHaveLength(1);
     expect(spawned[0].model.provider).toBe(openai.provider);
     expect(spawned[0].model.id).toBe(openai.id);
     expect(spawned[0].settings.reasoning).toBe("high");
+  });
+
+  it("shows the launch model override in status when it matches the persona model", async () => {
+    const backend = createLocalToolExecutionBackend();
+    const tool = createSpawnAgentToolDefinition(backend);
+    const { openai } = createModels();
+    const { context } = createContext({
+      persona: {
+        id: "test-persona",
+        label: "test persona",
+        model: openai,
+        systemPrompt: "main",
+        settings: { reasoning: "low" },
+        source: "project",
+        subagents: {
+          researcher: {
+            systemPrompt: "research",
+            model: openai,
+            settings: { reasoning: "medium" },
+            launchModels: ["openai/gpt-5.2:high"],
+          },
+        },
+      },
+      subagentPrompts: {
+        researcher: "research prompt",
+      },
+    });
+
+    const dispatched = await tool.dispatch(
+      {
+        id: "call-1b",
+        name: TOOL_NAME_SPAWN_AGENT,
+        arguments: {
+          name: "researcher",
+          title: "research task",
+          prompt: "collect findings",
+          model: "openai/gpt-5.2:high",
+        },
+      },
+      "read-only",
+      undefined,
+      context,
+    );
+
+    expect(dispatched.kind).toBe("phased");
+    const result = await dispatched.run;
+    expect(result.kind).toBe("single");
+    expect(result.toolResult.isError).toBe(false);
+    expect(result.uiEvent.type).toBe("spawn_agent_finished");
+    expect(result.uiEvent.uiText.statusLine).toContain("openai/gpt-5.2:high");
   });
 
   it("blocks launch model overrides when no allowlist exists", async () => {

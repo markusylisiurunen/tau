@@ -681,7 +681,7 @@ describe("ChatController /cd project context notices", () => {
 
       expect(userMessages[0]).toContain("Project context changed by user after '/cd'.");
       expect(userMessages[0]).toContain("<project-context-update>");
-      expect(userMessages[0]).toContain(`<file path="${join(dirB, "AGENTS.md")}">`);
+      expect(userMessages[0]).toContain("dir-b/AGENTS.md");
       expect(userMessages[0]).toContain("context from dir-b");
       expect(userMessages[0]).not.toContain("context from dir-a");
     } finally {
@@ -763,9 +763,50 @@ describe("ChatController /cd project context notices", () => {
       const projectNoticeMatches =
         userMessages[0].match(/Project context changed by user after '\/cd'\./g) ?? [];
       expect(projectNoticeMatches).toHaveLength(1);
-      expect(userMessages[0]).toContain(`<file path="${join(dirC, "AGENTS.md")}">`);
+      expect(userMessages[0]).toContain("dir-c/AGENTS.md");
       expect(userMessages[0]).toContain("context from dir-c");
       expect(userMessages[0]).not.toContain("context from dir-b");
+    } finally {
+      await controller?.dispose();
+      process.chdir(originalCwd);
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("clears pending risk/cwd/project notices on /new", async () => {
+    const originalCwd = process.cwd();
+    const home = await mkdtemp(join(tmpdir(), "tau-cd-context-"));
+    const dirA = join(home, "dir-a");
+    const dirB = join(home, "dir-b");
+    await mkdir(dirA, { recursive: true });
+    await mkdir(dirB, { recursive: true });
+    await writeFile(join(dirA, "AGENTS.md"), "# A\n\ncontext from dir-a\n");
+    await writeFile(join(dirB, "AGENTS.md"), "# B\n\ncontext from dir-b\n");
+
+    let controller;
+    try {
+      process.chdir(dirA);
+
+      const stub = createStubView();
+      controller = createController(stub.view, {
+        deps: createProjectContextDeps(home),
+      });
+      const userMessages = [];
+      controller.engine.addUserText = (text) => {
+        userMessages.push(text);
+        return "user-1";
+      };
+      controller.runAssistantTurn = async () => {};
+
+      await controller.onUserInput("/risk:read-write");
+      await controller.onUserInput(`/cd ${dirB}`);
+      await controller.onUserInput("/new");
+      await controller.onUserInput("hello");
+
+      expect(userMessages[0]).not.toContain("Risk level changed by user");
+      expect(userMessages[0]).not.toContain("Working directory changed by user");
+      expect(userMessages[0]).not.toContain("Project context changed by user after '/cd'.");
+      expect(userMessages[0]).toBe("hello");
     } finally {
       await controller?.dispose();
       process.chdir(originalCwd);

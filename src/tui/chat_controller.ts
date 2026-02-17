@@ -1914,6 +1914,9 @@ export class ChatController {
     this.isBashMode = false;
     this.isBashIncognito = false;
     this.isMemoryMode = false;
+    this.pendingRiskLevelChange = undefined;
+    this.pendingCwdChange = undefined;
+    this.pendingProjectContextChange = undefined;
 
     try {
       const report = await this.refreshReloadableContent("new-session");

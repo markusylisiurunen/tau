@@ -434,7 +434,7 @@ the prune commands drop bash tool results from the active context without summar
 | `esc x2`    | clear current prompt                       |
 | `alt+up`    | pop queued message                         |
 | `alt+down`  | cycle active sub-agents                    |
-| `esc`       | interrupt generation                       |
+| `esc`       | interrupt active task                      |
 | `ctrl+c`    | press twice to exit                        |
 
 ## configuration

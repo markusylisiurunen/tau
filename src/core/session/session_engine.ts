@@ -54,6 +54,7 @@ export type SessionEngineOptions = {
 export type SessionCompactionOptions = {
   mode: SessionCompactionMode;
   guidance?: string;
+  signal?: AbortSignal;
 };
 
 export type SessionCompactionResult = {
@@ -273,7 +274,12 @@ export class SessionEngine {
           },
         ],
       },
-      { reasoning: "high", sessionId: `tau-summary-${randomUUID()}`, ...(apiKey && { apiKey }) },
+      {
+        reasoning: "high",
+        sessionId: `tau-summary-${randomUUID()}`,
+        ...(options.signal ? { signal: options.signal } : {}),
+        ...(apiKey && { apiKey }),
+      },
     );
 
     const final = await stream.result();

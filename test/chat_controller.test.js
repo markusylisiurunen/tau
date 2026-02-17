@@ -239,22 +239,46 @@ describe("ChatController interrupt handling", () => {
     expect(interruptAssistantTurnSpy).not.toHaveBeenCalled();
   });
 
-  it("interrupts the conversation turn runtime when an assistant turn is running", () => {
+  it("interrupts the active assistant turn task once", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    let resolveTurn;
+    const turnGate = new Promise((resolve) => {
+      resolveTurn = resolve;
+    });
+    const runSpy = vi.spyOn(controller.runtime, "runTurn").mockImplementation(async () => {
+      await turnGate;
+      return { aborted: true };
+    });
+    const interruptSpy = vi
+      .spyOn(controller.runtime, "interruptTurn")
+      .mockImplementation(() => true);
+
+    const turnPromise = controller.runAssistantTurn();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    controller.onInterrupt();
+    controller.onInterrupt();
+
+    resolveTurn();
+    await turnPromise;
+
+    expect(runSpy).toHaveBeenCalledTimes(1);
+    expect(interruptSpy).toHaveBeenCalledTimes(1);
+    expect(stub.systemMessages).toContainEqual({ text: "interrupted", kind: "error" });
+    expect(stub.systemMessages.filter((m) => m.text === "interrupted")).toHaveLength(1);
+  });
+
+  it("does not show interrupted when there is no cancellable active task", () => {
     const stub = createStubView();
     const controller = createController(stub.view);
 
     controller.isStreaming = true;
-    const isRunningSpy = vi.spyOn(controller.runtime, "isTurnRunning", "get").mockReturnValue(true);
-    const interruptSpy = vi.spyOn(controller.runtime, "interruptTurn");
 
     controller.onInterrupt();
-    controller.onInterrupt();
 
-    expect(interruptSpy).toHaveBeenCalledTimes(1);
-    expect(stub.systemMessages).toContainEqual({ text: "interrupted", kind: "error" });
-    expect(stub.systemMessages.filter((m) => m.text === "interrupted")).toHaveLength(1);
-
-    isRunningSpy.mockRestore();
+    expect(stub.systemMessages).toEqual([]);
   });
 
   it("keeps interrupted turn cleanup parity with runtime-driven aborts", async () => {
@@ -812,6 +836,81 @@ describe("ChatController /cd project context notices", () => {
       process.chdir(originalCwd);
       await rm(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("ChatController maintenance interrupt handling", () => {
+  it("aborts compaction without showing a failure message", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    let compactStarted;
+    const compactStartedPromise = new Promise((resolve) => {
+      compactStarted = resolve;
+    });
+
+    vi.spyOn(controller.engine, "compact").mockImplementation(async ({ signal }) => {
+      compactStarted();
+      await new Promise((resolve) => {
+        if (signal?.aborted) {
+          resolve();
+          return;
+        }
+        signal?.addEventListener("abort", resolve, { once: true });
+      });
+      throw new Error("Request was aborted");
+    });
+
+    const compactPromise = controller.onUserInput("/compact:summary-only");
+    await compactStartedPromise;
+
+    controller.onInterrupt();
+    await compactPromise;
+
+    expect(stub.systemMessages).toContainEqual({ text: "interrupted", kind: "error" });
+    expect(stub.systemMessages.some((entry) => entry.text.startsWith("compact failed:"))).toBe(
+      false,
+    );
+  });
+
+  it("aborts smart prune sampling without showing a failure message", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.engine.addMessage({
+      role: "toolResult",
+      toolCallId: "bash-call-abort",
+      toolName: TOOL_NAME_BASH,
+      content: [{ type: "text", text: "bash output" }],
+      isError: false,
+      timestamp: 1,
+    });
+
+    let pruneStarted;
+    const pruneStartedPromise = new Promise((resolve) => {
+      pruneStarted = resolve;
+    });
+
+    controller.requestSmartPruneSelection = async (_prompt, signal) => {
+      pruneStarted();
+      await new Promise((resolve) => {
+        if (signal?.aborted) {
+          resolve();
+          return;
+        }
+        signal?.addEventListener("abort", resolve, { once: true });
+      });
+      throw new Error("Request was aborted");
+    };
+
+    const prunePromise = controller.onUserInput("/prune:smart 1");
+    await pruneStartedPromise;
+
+    controller.onInterrupt();
+    await prunePromise;
+
+    expect(stub.systemMessages).toContainEqual({ text: "interrupted", kind: "error" });
+    expect(stub.systemMessages.some((entry) => entry.text.startsWith("prune failed:"))).toBe(false);
   });
 });
 

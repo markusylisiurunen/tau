@@ -1,10 +1,8 @@
 import type { Config } from "../config/schema.js";
 import { getMistralApiKey, loadConfig } from "../config/schema.js";
-import { startAsyncCronScheduler } from "./cron.js";
-import { startAsyncHttpServer } from "./http_server.js";
+import { AsyncDaemonRuntimeError, startAsyncDaemonRuntime } from "./daemon_runtime.js";
 import { AsyncDaemonConfigError, loadAsyncDaemonConfig } from "./server_config.js";
-import { createAsyncSessionManager, createScopedAsyncSessionManager } from "./session_manager.js";
-import { startAsyncTelegramAdapter } from "./telegram.js";
+import { createAsyncSessionManager } from "./session_manager.js";
 import { cleanupWorkspaceRootsOnStartup } from "./workspace.js";
 
 export class AsyncCliError extends Error {
@@ -598,91 +596,25 @@ async function runDaemon(args: {
     results: startupCleanupResults,
   });
 
-  const telegramConfigs = daemonConfig.telegram ? Object.entries(daemonConfig.telegram) : [];
-  const cronJobs = daemonConfig.cronJobs;
-  let handle: Awaited<ReturnType<typeof startAsyncHttpServer>> | undefined;
-  const telegramHandles: { id: string; handle: { close(): Promise<void> } }[] = [];
-  let cronHandle: ReturnType<typeof startAsyncCronScheduler> | undefined;
+  let runtime: Awaited<ReturnType<typeof startAsyncDaemonRuntime>>;
 
   try {
-    if (cronJobs !== undefined) {
-      cronHandle = startAsyncCronScheduler({
-        jobs: cronJobs,
-        sessionManager,
-        additionalSystemMessage: daemonConfig.cron?.systemMessage,
-        onLog: (entry) => {
-          args.stdout(`[cron:${entry.level}] ${entry.message}`);
-        },
-      });
-
-      args.stdout("tau async cron scheduler enabled");
-    }
-
-    handle = await startAsyncHttpServer({
-      host: daemonConfig.host,
-      port: daemonConfig.port,
+    runtime = await startAsyncDaemonRuntime({
+      daemonConfig,
       authToken,
+      mistralApiKey,
       sessionManager,
-      ...(cronHandle ? { cronScheduler: cronHandle } : {}),
+      onLog: args.stdout,
     });
-
-    for (const [botId, telegramConfig] of telegramConfigs) {
-      if (!telegramConfig?.botToken) {
-        continue;
-      }
-
-      const allowedProjectIds =
-        telegramConfig.allowedProjectIds ?? Object.keys(daemonConfig.projects);
-      const scopedProjects: typeof daemonConfig.projects = {};
-      for (const projectId of allowedProjectIds) {
-        const project = daemonConfig.projects[projectId];
-        if (project) {
-          scopedProjects[projectId] = project;
-        }
-      }
-
-      const scopedSessionManager = createScopedAsyncSessionManager({
-        sessionManager,
-        ownerId: `telegram:${botId}`,
-        allowedProjectIds,
-      });
-
-      const adapterHandle = await startAsyncTelegramAdapter({
-        botToken: telegramConfig.botToken,
-        projects: scopedProjects,
-        defaultProjectId: telegramConfig.defaultProjectId,
-        systemMessage: telegramConfig.systemMessage,
-        allowedUserIds: telegramConfig.allowedUserIds,
-        allowedChatIds: telegramConfig.allowedChatIds,
-        pollIntervalMs: telegramConfig.pollIntervalMs,
-        requestTimeoutSeconds: telegramConfig.requestTimeoutSeconds,
-        mistralApiKey,
-        sessionManager: scopedSessionManager,
-        onLog: (entry) => {
-          args.stdout(`[telegram:${botId}:${entry.level}] ${entry.message}`);
-        },
-      });
-
-      telegramHandles.push({ id: botId, handle: adapterHandle });
-      args.stdout(`tau async telegram adapter enabled (${botId})`);
-    }
   } catch (error) {
-    await Promise.allSettled([
-      ...(handle ? [handle.close()] : []),
-      ...telegramHandles.map((telegramHandle) => telegramHandle.handle.close()),
-      ...(cronHandle ? [cronHandle.close()] : []),
-      sessionManager.close(),
-    ]);
-    throw new AsyncCliError(
-      `failed to start async adapters: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    if (error instanceof AsyncDaemonRuntimeError) {
+      throw new AsyncCliError(error.message);
+    }
+
+    throw error;
   }
 
-  if (!handle) {
-    throw new AsyncCliError("failed to start async http server");
-  }
-
-  args.stdout(`tau async daemon listening on ${handle.baseUrl}`);
+  args.stdout(`tau async daemon listening on ${runtime.baseUrl}`);
 
   await new Promise<void>((resolvePromise) => {
     let shuttingDown = false;
@@ -696,12 +628,7 @@ async function runDaemon(args: {
       process.off("SIGINT", onSignal);
       process.off("SIGTERM", onSignal);
 
-      void Promise.allSettled([
-        handle.close(),
-        ...telegramHandles.map((telegramHandle) => telegramHandle.handle.close()),
-        ...(cronHandle ? [cronHandle.close()] : []),
-        sessionManager.close(),
-      ]).then(() => {
+      void runtime.close().then(() => {
         resolvePromise();
       });
     };

@@ -38,6 +38,11 @@ import type { PromptTemplate } from "../core/prompts.js";
 import { ChatRuntime } from "../core/runtime/chat_runtime.js";
 import type { ConversationTurnResult } from "../core/runtime/conversation_turn_runtime.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
+import {
+  resolvePersonaSkillsForPromptContext,
+  resolveProjectContextForPromptContext,
+  resolveRuntimePromptBootstrap,
+} from "../core/runtime/runtime_bootstrap.js";
 import { createCheckpoint } from "../core/session/checkpoint.js";
 import type { CoreSession } from "../core/session/core_session.js";
 import {
@@ -60,9 +65,6 @@ import {
 import { resolveAgentCwd, resolveSandboxPath } from "../core/utils/agent_environment.js";
 import { findAgentsFilesFromCwdToHome } from "../core/utils/agents_files.js";
 import {
-  buildProjectContextBlock,
-  buildSkillsIndexBlock,
-  findAgentsFilesInScopeDetailed,
   formatCwdChangeNotice,
   formatProjectContextChangeNotice,
   formatRiskLevelChangeNotice,
@@ -289,11 +291,6 @@ export class ChatController {
     this.sandboxEnabled = options.sandboxEnabled;
     this.caffeinated = options.caffeinated ?? false;
     this.sandboxRootReal = this.sandboxEnabled ? this.resolveSandboxRoot(cwd) : undefined;
-    this.agentCwd = resolveAgentCwd({
-      cwd,
-      sandboxEnabled: this.sandboxEnabled,
-      sandboxConfig: this.config.sandbox,
-    });
     this.activeThemeId = this.config.defaultTheme;
     this.authPath = getAuthPath(this.deps.env.home());
     const authStorage = new AuthStorage(this.authPath);
@@ -306,27 +303,6 @@ export class ChatController {
     this.toolBackendDispose = options.toolBackendDispose;
 
     this.includeAgentContext = !options.noAgentContextFiles;
-    if (this.includeAgentContext) {
-      const res = findAgentsFilesInScopeDetailed(cwd, home);
-      this.agentsFiles = res.files;
-      this.agentsConfigErrors = res.errors;
-    } else {
-      this.agentsFiles = [];
-      this.agentsConfigErrors = [];
-    }
-
-    this.projectContextBlock = this.includeAgentContext
-      ? buildProjectContextBlock({
-          cwd,
-          home,
-          agentsFiles: this.agentsFiles,
-          readFile: this.deps.fs.readFile,
-        })
-      : undefined;
-
-    this.projectFiles = [];
-    this.refreshProjectFilesInBackground();
-
     this.currentPersona =
       (options.initialPersonaId &&
         this.personas.find(
@@ -338,7 +314,27 @@ export class ChatController {
     if (options.initialRiskLevel) {
       this.riskLevel = options.initialRiskLevel;
     }
-    const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
+
+    const startupBootstrap = resolveRuntimePromptBootstrap({
+      persona: this.currentPersona,
+      discoveredSkills: this.skills,
+      cwd,
+      home,
+      includeAgentContext: this.includeAgentContext,
+      sandboxEnabled: this.sandboxEnabled,
+      sandboxConfig: this.config.sandbox,
+      sandboxEnvironmentInfo: this.config.sandbox?.environmentInfo,
+      readFile: this.deps.fs.readFile,
+    });
+
+    this.agentCwd = startupBootstrap.promptContext.cwd;
+    this.agentsFiles = startupBootstrap.agentsFiles;
+    this.agentsConfigErrors = startupBootstrap.warnings;
+    this.projectContextBlock = startupBootstrap.promptContext.projectContextBlock;
+    const skillsBlock = startupBootstrap.promptContext.skillsBlock;
+
+    this.projectFiles = [];
+    this.refreshProjectFilesInBackground();
 
     this.toolBackend =
       options.toolBackend ??
@@ -355,14 +351,8 @@ export class ChatController {
       riskLevel: this.riskLevel,
       toolRegistry,
       promptContext: {
-        cwd: this.agentCwd,
-        hostCwd: cwd,
-        home,
-        includeAgentContext: this.includeAgentContext,
-        projectContextBlock: this.projectContextBlock,
-        sandboxEnabled: this.sandboxEnabled,
-        sandboxEnvironmentInfo: this.config.sandbox?.environmentInfo,
-        skillsBlock: skillsContext.skillsBlock,
+        ...startupBootstrap.promptContext,
+        skillsBlock,
       },
       environment: {
         now: () => this.deps.clock.now(),
@@ -860,38 +850,6 @@ export class ChatController {
     this.switchPersona(next.id);
   }
 
-  private getEnabledSkillsForPersona(persona: Persona): { skills: Skill[]; unknown: string[] } {
-    const personaSkills = persona.skills;
-    if (personaSkills === "*") {
-      return { skills: this.skills, unknown: [] };
-    }
-
-    if (!personaSkills || personaSkills.length === 0) {
-      return { skills: [], unknown: [] };
-    }
-
-    const skillsByName = new Map<string, Skill>();
-    for (const skill of this.skills) {
-      skillsByName.set(skill.name.toLowerCase(), skill);
-    }
-
-    const enabled: Skill[] = [];
-    const unknown: string[] = [];
-
-    for (const name of personaSkills) {
-      const trimmed = name.trim();
-      if (!trimmed) continue;
-      const skill = skillsByName.get(trimmed.toLowerCase());
-      if (skill) {
-        enabled.push(skill);
-      } else {
-        unknown.push(trimmed);
-      }
-    }
-
-    return { skills: enabled, unknown };
-  }
-
   private getVisibleSubagentsForPersona(persona: Persona): string[] {
     if (!persona.subagents) return [];
     return Object.entries(persona.subagents)
@@ -903,8 +861,11 @@ export class ChatController {
     skillsBlock?: string;
     unknown: string[];
   } {
-    const { skills, unknown } = this.getEnabledSkillsForPersona(persona);
-    return { skillsBlock: buildSkillsIndexBlock(skills), unknown };
+    const resolved = resolvePersonaSkillsForPromptContext({
+      persona,
+      discoveredSkills: this.skills,
+    });
+    return { skillsBlock: resolved.skillsBlock, unknown: resolved.unknown };
   }
 
   // User Actions ----------------------------------------------------------------------------------
@@ -1031,23 +992,16 @@ export class ChatController {
   }
 
   private refreshProjectContext(cwd: string): void {
-    if (!this.includeAgentContext) {
-      this.agentsFiles = [];
-      this.agentsConfigErrors = [];
-      this.projectContextBlock = undefined;
-      return;
-    }
-
-    const home = this.deps.env.home();
-    const res = findAgentsFilesInScopeDetailed(cwd, home);
-    this.agentsFiles = res.files;
-    this.agentsConfigErrors = res.errors;
-    this.projectContextBlock = buildProjectContextBlock({
+    const projectContext = resolveProjectContextForPromptContext({
       cwd,
-      home,
-      agentsFiles: this.agentsFiles,
+      home: this.deps.env.home(),
+      includeAgentContext: this.includeAgentContext,
       readFile: this.deps.fs.readFile,
     });
+
+    this.agentsFiles = projectContext.agentsFiles;
+    this.agentsConfigErrors = projectContext.warnings;
+    this.projectContextBlock = projectContext.projectContextBlock;
   }
 
   private updatePendingProjectContextChange(previous?: string, next?: string): void {

@@ -38,6 +38,7 @@ import {
   printHelp,
   printInstallHelp,
   printUsageHelp,
+  resolveRuntimePromptBootstrap,
   runAsyncCommand,
   runInstallCommand,
   runListCommand,
@@ -49,12 +50,6 @@ import {
   UsageCliError,
 } from "./core/index.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
-import { resolveAgentCwd } from "./core/utils/agent_environment.js";
-import {
-  buildProjectContextBlock,
-  buildSkillsIndexBlock,
-  findAgentsFilesInScopeDetailed,
-} from "./core/utils/context.js";
 import { ChatApp } from "./tui/index.js";
 import { detectTerminalAppearance } from "./tui/terminal_appearance.js";
 
@@ -118,32 +113,6 @@ async function readPipedStdin(): Promise<string | undefined> {
   return data;
 }
 
-function getEnabledSkillsForPersona(persona: Persona, discoveredSkills: Skill[]): Skill[] {
-  const personaSkills = persona.skills;
-  if (personaSkills === "*") {
-    return discoveredSkills;
-  }
-
-  if (!personaSkills || personaSkills.length === 0) {
-    return [];
-  }
-
-  const byName = new Map<string, Skill>();
-  for (const skill of discoveredSkills) {
-    byName.set(skill.name.toLowerCase(), skill);
-  }
-
-  const enabled: Skill[] = [];
-  for (const name of personaSkills) {
-    const skill = byName.get(name.trim().toLowerCase());
-    if (skill) {
-      enabled.push(skill);
-    }
-  }
-
-  return enabled;
-}
-
 async function runRpcMode(options: {
   cli: CliOptions;
   config: Config;
@@ -160,28 +129,27 @@ async function runRpcMode(options: {
     const deps = createDefaultCoreDeps();
     const runtimeCwd = deps.env.cwd();
     const home = deps.env.home() || process.env.HOME || homedir();
-    const includeAgentContext = !options.cli.noAgentContextFiles;
+    const bootstrap = resolveRuntimePromptBootstrap({
+      persona: options.persona,
+      discoveredSkills: options.skills,
+      cwd: runtimeCwd,
+      home,
+      includeAgentContext: !options.cli.noAgentContextFiles,
+      sandboxEnabled: options.cli.sandbox,
+      sandboxConfig: options.config.sandbox,
+      sandboxEnvironmentInfo: options.config.sandbox?.environmentInfo,
+      readFile: (path) => readFileSync(path, "utf-8"),
+    });
 
-    let projectContextBlock: string | undefined;
-    if (includeAgentContext) {
-      const agentsContext = findAgentsFilesInScopeDetailed(runtimeCwd, home);
-      if (agentsContext.errors.length > 0) {
+    if (bootstrap.warnings.length > 0) {
+      // eslint-disable-next-line no-console
+      console.error("config warnings:");
+      for (const warning of bootstrap.warnings) {
         // eslint-disable-next-line no-console
-        console.error("config warnings:");
-        for (const warning of agentsContext.errors) {
-          // eslint-disable-next-line no-console
-          console.error(`- ${warning}`);
-        }
-        // eslint-disable-next-line no-console
-        console.error("");
+        console.error(`- ${warning}`);
       }
-
-      projectContextBlock = buildProjectContextBlock({
-        cwd: runtimeCwd,
-        home,
-        agentsFiles: agentsContext.files,
-        readFile: (path) => readFileSync(path, "utf-8"),
-      });
+      // eslint-disable-next-line no-console
+      console.error("");
     }
 
     const runtime = ChatRuntime.create({
@@ -190,22 +158,7 @@ async function runRpcMode(options: {
       toolRegistry: ToolCatalog.createRegistry(
         sandboxBackend?.backend ?? createLocalToolExecutionBackend(),
       ),
-      promptContext: {
-        cwd: resolveAgentCwd({
-          cwd: runtimeCwd,
-          sandboxEnabled: options.cli.sandbox,
-          sandboxConfig: options.config.sandbox,
-        }),
-        hostCwd: runtimeCwd,
-        home,
-        includeAgentContext,
-        projectContextBlock,
-        sandboxEnabled: options.cli.sandbox,
-        sandboxEnvironmentInfo: options.config.sandbox?.environmentInfo,
-        skillsBlock: buildSkillsIndexBlock(
-          getEnabledSkillsForPersona(options.persona, options.skills),
-        ),
-      },
+      promptContext: bootstrap.promptContext,
       environment: {
         now: () => deps.clock.now(),
         platform: () => deps.env.platform(),

@@ -1,7 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { relative, resolve } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
+import { resolveRuntimePromptBootstrap } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
 import { CoreSession } from "../dist/core/session/core_session.js";
@@ -191,6 +194,65 @@ describe("context builder", () => {
 
     expect(block).toContain('<file path="/repo/AGENTS.md">');
     expect(block).toContain("# Agents");
+  });
+});
+
+describe("runtime prompt bootstrap", () => {
+  it("builds canonical prompt context from skills and AGENTS data", () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-runtime-bootstrap-home-"));
+    const repo = join(home, "repo");
+
+    try {
+      mkdirSync(repo, { recursive: true });
+      writeFileSync(join(repo, "AGENTS.md"), "# repo agents\n", "utf-8");
+      mkdirSync(join(repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(repo, ".tau", "config.json"),
+        JSON.stringify({ agentContextFiles: [123] }),
+        "utf-8",
+      );
+
+      const persona = {
+        id: "test-persona",
+        label: "test persona",
+        model: personas[0].model,
+        systemPrompt: "test prompt",
+        settings: {},
+        source: "project",
+        skills: ["alpha", "missing"],
+      };
+
+      const resolved = resolveRuntimePromptBootstrap({
+        persona,
+        discoveredSkills: [
+          {
+            name: "alpha",
+            description: "alpha skill",
+            path: join(repo, "skills", "alpha", "SKILL.md"),
+          },
+        ],
+        cwd: repo,
+        home,
+        includeAgentContext: true,
+        sandboxEnabled: false,
+        readFile: (path) => {
+          return path === join(repo, "AGENTS.md") ? "# repo agents\n" : "";
+        },
+      });
+
+      expect(resolved.promptContext.cwd).toBe(repo);
+      expect(resolved.promptContext.hostCwd).toBe(repo);
+      expect(resolved.promptContext.includeAgentContext).toBe(true);
+      expect(resolved.promptContext.projectContextBlock).toContain('<file path="');
+      expect(resolved.promptContext.projectContextBlock).toContain("AGENTS.md");
+      expect(resolved.promptContext.skillsBlock).toContain("<name>alpha</name>");
+      expect(resolved.promptContext.skillsBlock).not.toContain("missing");
+      expect(resolved.unknownSkills).toEqual(["missing"]);
+      expect(resolved.agentsFiles).toEqual([join(repo, "AGENTS.md")]);
+      expect(resolved.warnings.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

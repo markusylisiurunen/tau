@@ -169,6 +169,7 @@ describe("rpc_protocol", () => {
     const malformed = parseRpcOutgoingLine("{bad-json}");
     expect(malformed).toEqual({
       ok: false,
+      reason: "parse_error",
       messageType: null,
       id: null,
       error: expect.objectContaining({ code: RPC_ERROR_CODES.parseError }),
@@ -185,6 +186,7 @@ describe("rpc_protocol", () => {
     );
     expect(badVersion).toEqual({
       ok: false,
+      reason: "unsupported_version",
       messageType: null,
       id: null,
       error: expect.objectContaining({
@@ -204,6 +206,7 @@ describe("rpc_protocol", () => {
     );
     expect(malformedResponse).toEqual({
       ok: false,
+      reason: "invalid_payload",
       messageType: "response",
       id: "req-9",
       error: expect.objectContaining({ code: RPC_ERROR_CODES.invalidRequest }),

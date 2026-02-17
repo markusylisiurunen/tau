@@ -154,8 +154,17 @@ export type RpcReadyMessage = {
 
 export type RpcOutgoingMessage = RpcResponseMessage | RpcEventMessage | RpcReadyMessage;
 
+export type RpcOutgoingParseFailureReason =
+  | "invalid_payload"
+  | "empty_line"
+  | "parse_error"
+  | "unsupported_version"
+  | "unsupported_message_type"
+  | "response_invalid_id";
+
 export type RpcOutgoingParseFailure = {
   ok: false;
+  reason: RpcOutgoingParseFailureReason;
   messageType: RpcOutgoingMessage["type"] | null;
   id: RpcRequestId | null;
   error: RpcError;
@@ -357,6 +366,8 @@ export function parseRpcOutgoingLine(line: string): RpcOutgoingParseResult {
       null,
       RPC_ERROR_CODES.invalidRequest,
       "rpc line cannot be empty",
+      undefined,
+      "empty_line",
     );
   }
 
@@ -372,6 +383,7 @@ export function parseRpcOutgoingLine(line: string): RpcOutgoingParseResult {
       {
         cause: error instanceof Error ? error.message : String(error),
       },
+      "parse_error",
     );
   }
 
@@ -390,6 +402,8 @@ export function parseRpcOutgoingLine(line: string): RpcOutgoingParseResult {
       null,
       RPC_ERROR_CODES.invalidRequest,
       `unsupported rpc version: ${String(parsed.version)}`,
+      undefined,
+      "unsupported_version",
     );
   }
 
@@ -410,6 +424,8 @@ export function parseRpcOutgoingLine(line: string): RpcOutgoingParseResult {
     null,
     RPC_ERROR_CODES.invalidRequest,
     `unsupported rpc message type: ${String(parsed.type)}`,
+    undefined,
+    "unsupported_message_type",
   );
 }
 
@@ -628,6 +644,8 @@ function parseRpcResponseMessage(payload: Record<string, unknown>): RpcOutgoingP
       null,
       RPC_ERROR_CODES.invalidRequest,
       "response.id must be a string or number",
+      undefined,
+      "response_invalid_id",
     );
   }
 
@@ -639,6 +657,8 @@ function parseRpcResponseMessage(payload: Record<string, unknown>): RpcOutgoingP
         requestId,
         RPC_ERROR_CODES.invalidRequest,
         "successful response.id must be a string or number",
+        undefined,
+        "response_invalid_id",
       );
     }
 
@@ -779,9 +799,11 @@ function outgoingParseFailure(
   code: RpcErrorCode,
   message: string,
   data?: unknown,
+  reason: RpcOutgoingParseFailureReason = "invalid_payload",
 ): RpcOutgoingParseFailure {
   return {
     ok: false,
+    reason,
     messageType,
     id,
     error: createRpcError(code, message, data),

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { CORE_EVENT_VERSION } from "../dist/core/events/types.js";
@@ -162,6 +163,25 @@ async function createConnectedClient(child, options = {}) {
 }
 
 describe("sdk_client", () => {
+  it("keeps published sdk declarations free of core type imports", () => {
+    const indexDeclaration = readFileSync(
+      new URL("../dist/sdk/index.d.ts", import.meta.url),
+      "utf8",
+    );
+    const typesDeclaration = readFileSync(
+      new URL("../dist/sdk/types.d.ts", import.meta.url),
+      "utf8",
+    );
+    const errorsDeclaration = readFileSync(
+      new URL("../dist/sdk/errors.d.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(indexDeclaration).not.toContain("../core/");
+    expect(typesDeclaration).not.toContain("../core/");
+    expect(errorsDeclaration).not.toContain("../core/");
+  });
+
   it("spawns rpc process, correlates responses by request id, and streams events", async () => {
     const child = new FakeChildProcess();
     const submitRequests = [];
@@ -335,6 +355,45 @@ describe("sdk_client", () => {
     await expect(client.interrupt()).resolves.toEqual({
       interrupted: false,
       isTurnRunning: false,
+    });
+
+    await client.close();
+  });
+
+  it("ignores malformed rpc responses with no matching pending request", async () => {
+    const child = new FakeChildProcess();
+    const { client } = await createConnectedClient(child);
+
+    child.send({
+      version: RPC_PROTOCOL_VERSION,
+      type: "response",
+      id: 999,
+      ok: false,
+      error: {
+        code: "busy",
+      },
+    });
+
+    child.on("request", (request) => {
+      if (request.method === "session.snapshot") {
+        child.send(
+          createSuccessResponse(request.id, {
+            sessionId: "session-1",
+            isTurnRunning: false,
+            historyLength: 0,
+            history: [],
+            historyEntries: [],
+          }),
+        );
+      }
+    });
+
+    await expect(client.snapshot()).resolves.toEqual({
+      sessionId: "session-1",
+      isTurnRunning: false,
+      historyLength: 0,
+      history: [],
+      historyEntries: [],
     });
 
     await client.close();

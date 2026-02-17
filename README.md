@@ -258,7 +258,7 @@ the default is read-only because it lets the model investigate your code and ans
 
 ## sandboxing
 
-when started with `--sandbox`, tau runs all tool calls inside a session-scoped Docker container. the project root (git root or cwd) is mounted into the container, and the working directory matches your current subdirectory. only `/workspace` is bound to the host; absolute paths outside `/workspace` refer to the container filesystem.
+when started with `--sandbox`, tau runs all tool calls inside a session-scoped Docker container. the project root (git root or cwd) is mounted into the container, and the working directory matches your current subdirectory. only `/workspace` is bound to the host; absolute paths outside `/workspace` refer to the container filesystem. prompt-injected AGENTS and skills entries are restricted to files under that mounted host root, and their paths are rewritten to sandbox paths.
 
 requirements:
 
@@ -364,7 +364,7 @@ you can also include additional `AGENTS.md` files via config (when that config i
 { "agentContextFiles": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
+paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored). in sandbox mode, AGENTS entries outside the mounted host root are excluded, and included file paths are shown as sandbox paths in the prompt.
 
 run `tau --help` to see all available options, or `tau --debug` to inspect loaded personas, prompts, skills, and the full system prompt for debugging configuration issues.
 
@@ -643,7 +643,7 @@ skills are optional directories discovered at `~/.config/tau/skills/` and `~/.ag
 
 optional fields: `license`, `compatibility` (<=500 chars), `metadata` (string map), `allowed-tools` (validated, currently ignored by tau).
 
-enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), use `"*"` to enable all discovered skills, or set `skills: []` to disable skills completely. built-in personas and custom personas with omitted `skills` default to `skills: "*"`. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and absolute file path.
+enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), use `"*"` to enable all discovered skills, or set `skills: []` to disable skills completely. built-in personas and custom personas with omitted `skills` default to `skills: "*"`. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and file path. in sandbox mode, skills outside the mounted host root are excluded and included paths are rewritten to sandbox paths.
 
 use `/reload` to pick up changes to personas, prompts, skills, themes, bash commands, and AGENTS.md without restarting.
 

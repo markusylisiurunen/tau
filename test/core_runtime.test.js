@@ -254,6 +254,75 @@ describe("runtime prompt bootstrap", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it("scopes AGENTS and skills to the sandbox mount and rewrites prompt paths", () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-runtime-bootstrap-sandbox-home-"));
+    const repo = join(home, "repo");
+    const repoAgents = join(repo, "AGENTS.md");
+    const homeAgents = join(home, "AGENTS.md");
+
+    try {
+      mkdirSync(join(repo, ".tau", "skills", "in-scope"), { recursive: true });
+      mkdirSync(join(home, ".config", "tau", "skills", "out-of-scope"), {
+        recursive: true,
+      });
+      writeFileSync(repoAgents, "# repo agents\nrepo only\n", "utf-8");
+      writeFileSync(homeAgents, "# home agents\nhome only\n", "utf-8");
+
+      const persona = {
+        id: "test-persona",
+        label: "test persona",
+        model: personas[0].model,
+        systemPrompt: "test prompt",
+        settings: {},
+        source: "project",
+        skills: ["in-scope", "out-of-scope"],
+      };
+
+      const resolved = resolveRuntimePromptBootstrap({
+        persona,
+        discoveredSkills: [
+          {
+            name: "in-scope",
+            description: "project skill",
+            path: join(repo, ".tau", "skills", "in-scope", "SKILL.md"),
+          },
+          {
+            name: "out-of-scope",
+            description: "home skill",
+            path: join(home, ".config", "tau", "skills", "out-of-scope", "SKILL.md"),
+          },
+        ],
+        cwd: repo,
+        home,
+        includeAgentContext: true,
+        sandboxEnabled: true,
+        sandboxConfig: {
+          mountPath: "/workspace",
+        },
+        readFile: (path) => {
+          if (path === repoAgents) return "# repo agents\nrepo only\n";
+          if (path === homeAgents) return "# home agents\nhome only\n";
+          return "";
+        },
+      });
+
+      expect(resolved.promptContext.cwd).toBe("/workspace");
+      expect(resolved.promptContext.projectContextBlock).toContain(
+        '<file path="/workspace/AGENTS.md">',
+      );
+      expect(resolved.promptContext.projectContextBlock).toContain("repo only");
+      expect(resolved.promptContext.projectContextBlock).not.toContain("home only");
+      expect(resolved.promptContext.skillsBlock).toContain(
+        "<location>/workspace/.tau/skills/in-scope/SKILL.md</location>",
+      );
+      expect(resolved.promptContext.skillsBlock).not.toContain("out-of-scope");
+      expect(resolved.unknownSkills).toEqual(["out-of-scope"]);
+      expect(resolved.agentsFiles).toEqual([repoAgents]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("session prompt composer", () => {

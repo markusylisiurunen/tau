@@ -91,6 +91,7 @@ export function buildProjectContextBlock(args: {
   home: string;
   agentsFiles?: string[];
   readFile: (path: string) => string;
+  pathForPrompt?: (path: string) => string;
 }): string | undefined {
   const agentsFiles = args.agentsFiles ?? findAgentsFilesInScope(args.cwd, args.home);
   if (agentsFiles.length === 0) return undefined;
@@ -105,7 +106,8 @@ export function buildProjectContextBlock(args: {
     } catch {
       continue;
     }
-    lines.push(`<file path="${escapeXml(filePath)}">`);
+    const promptPath = args.pathForPrompt?.(filePath) ?? filePath;
+    lines.push(`<file path="${escapeXml(promptPath)}">`);
     lines.push(content.trimEnd());
     lines.push("</file>");
     lines.push("");

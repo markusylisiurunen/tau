@@ -20,6 +20,8 @@ export {
   parseCronSchedule,
   startAsyncCronScheduler,
 } from "./cron.js";
+export type { AsyncDaemonRuntimeHandle, StartAsyncDaemonRuntimeOptions } from "./daemon_runtime.js";
+export { AsyncDaemonRuntimeError, startAsyncDaemonRuntime } from "./daemon_runtime.js";
 export type {
   AsyncHttpCreateSessionRequest,
   AsyncHttpErrorResponse,

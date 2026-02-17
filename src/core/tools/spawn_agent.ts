@@ -4,12 +4,12 @@ import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import { loadSkillsForPromptContext } from "../config/skills_loader.js";
+import { resolveRuntimePromptBootstrap } from "../runtime/runtime_bootstrap.js";
 import { composeSessionPrompts } from "../runtime/session_prompt_composer.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
 import { getSubagentDescription, resolveSubagentEffectiveSettings } from "../subagents/registry.js";
 import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/types.js";
-import type { Persona, RiskLevel, Skill } from "../types.js";
-import { buildProjectContextBlock, buildSkillsIndexBlock } from "../utils/context.js";
+import type { Persona, RiskLevel } from "../types.js";
 import { formatCwd } from "../utils/format.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { normalizeSandboxMountPath } from "../utils/sandbox_paths.js";
@@ -117,35 +117,6 @@ function formatAllowedLaunchModels(launchModels: string[]): string {
   return launchModels.map((entry) => `'${entry}'`).join(", ");
 }
 
-function getEnabledSkillsForPersona(persona: Persona, skills: Skill[]): Skill[] {
-  const personaSkills = persona.skills;
-
-  if (!personaSkills || personaSkills.length === 0) {
-    return [];
-  }
-
-  if (personaSkills === "*") {
-    return [...skills];
-  }
-
-  const skillsByName = new Map<string, Skill>();
-  for (const skill of skills) {
-    skillsByName.set(skill.name.toLowerCase(), skill);
-  }
-
-  const enabled: Skill[] = [];
-  for (const name of personaSkills) {
-    const trimmed = name.trim();
-    if (!trimmed) continue;
-    const skill = skillsByName.get(trimmed.toLowerCase());
-    if (skill) {
-      enabled.push(skill);
-    }
-  }
-
-  return enabled;
-}
-
 function resolveWorkingDirectory(args: {
   cwd: string;
   hostCwd: string;
@@ -188,7 +159,6 @@ async function buildSubagentSystemPrompt(args: {
   persona: Persona;
   riskLevel: RiskLevel;
   config: ToolDispatchContext["config"];
-  cwd: string;
   hostCwd: string;
   home: string;
   includeAgentContext: boolean;
@@ -198,28 +168,30 @@ async function buildSubagentSystemPrompt(args: {
     config: args.config,
     cwd: args.hostCwd,
   });
-  const skillsBlock = buildSkillsIndexBlock(getEnabledSkillsForPersona(args.persona, skills));
-
-  const projectContextBlock = args.includeAgentContext
-    ? buildProjectContextBlock({
-        cwd: args.hostCwd,
-        home: args.home,
-        readFile: (path) => readFileSync(path, "utf-8"),
-      })
-    : undefined;
+  const bootstrap = resolveRuntimePromptBootstrap({
+    persona: args.persona,
+    discoveredSkills: skills,
+    cwd: args.hostCwd,
+    home: args.home,
+    includeAgentContext: args.includeAgentContext,
+    sandboxEnabled: args.sandboxEnabled,
+    sandboxConfig: args.config?.sandbox,
+    sandboxEnvironmentInfo: args.config?.sandbox?.environmentInfo,
+    readFile: (path) => readFileSync(path, "utf-8"),
+  });
 
   const composition = composeSessionPrompts({
     persona: args.persona,
     riskLevel: args.riskLevel,
-    cwd: args.cwd,
-    hostCwd: args.hostCwd,
+    cwd: bootstrap.promptContext.cwd,
+    hostCwd: bootstrap.promptContext.hostCwd,
     datetime: new Date().toISOString(),
     platform: process.platform,
     nodeVersion: process.version,
-    skillsBlock,
-    projectContextBlock,
-    sandboxEnabled: args.sandboxEnabled,
-    sandboxEnvironmentInfo: args.config?.sandbox?.environmentInfo,
+    skillsBlock: bootstrap.promptContext.skillsBlock,
+    projectContextBlock: bootstrap.promptContext.projectContextBlock,
+    sandboxEnabled: bootstrap.promptContext.sandboxEnabled,
+    sandboxEnvironmentInfo: bootstrap.promptContext.sandboxEnvironmentInfo,
   });
 
   return composition.subagentPrompts[args.name];
@@ -364,7 +336,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             persona,
             riskLevel: context.riskLevel ?? "read-only",
             config: context.config,
-            cwd,
             hostCwd,
             home: baseHome,
             includeAgentContext: context.includeAgentContext !== false,

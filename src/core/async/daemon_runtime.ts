@@ -168,16 +168,6 @@ export async function startAsyncDaemonRuntime(
     );
   }
 
-  if (!httpServer) {
-    await closeRuntimeResources({
-      telegramAdapters,
-      cronScheduler,
-      sessionManager: options.sessionManager,
-    });
-
-    throw new AsyncDaemonRuntimeError("failed to start async http server");
-  }
-
   return new AsyncDaemonRuntime({
     httpServer,
     telegramAdapters,

@@ -196,7 +196,7 @@ describe("async daemon runtime", () => {
     expect(sessionManager.close).toHaveBeenCalledTimes(1);
   });
 
-  it("cleans up resources when http server handle is missing", async () => {
+  it("rolls back started resources when http server startup fails", async () => {
     const cronHandle = {
       close: vi.fn(async () => {}),
     };
@@ -221,7 +221,9 @@ describe("async daemon runtime", () => {
         sessionManager,
         deps: {
           startCronScheduler: vi.fn(() => cronHandle),
-          startHttpServer: vi.fn(async () => undefined),
+          startHttpServer: vi.fn(async () => {
+            throw new Error("http failed");
+          }),
         },
       });
     } catch (error) {
@@ -230,7 +232,7 @@ describe("async daemon runtime", () => {
 
     expect(thrownError).toBeInstanceOf(AsyncDaemonRuntimeError);
     expect(thrownError).toMatchObject({
-      message: "failed to start async http server",
+      message: "failed to start async adapters: http failed",
     });
 
     expect(cronHandle.close).toHaveBeenCalledTimes(1);

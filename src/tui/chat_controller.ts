@@ -511,7 +511,7 @@ export class ChatController {
       return;
     }
 
-    this.interruptAssistantTurn();
+    this.interruptActiveTask();
   }
 
   public onEvent(event: CoreEvent): void {
@@ -1090,7 +1090,7 @@ export class ChatController {
     }
   }
 
-  private interruptAssistantTurn(): void {
+  private interruptActiveTask(): void {
     if (!this.isStreaming) return;
     if (!this.activeBusyTask) return;
     if (!this.activeBusyTask.requestInterrupt()) return;

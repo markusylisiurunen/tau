@@ -48,6 +48,8 @@ export class RpcServer {
   private readonly send: (line: string) => void;
   private unsubscribeSubagent?: () => void;
   private activeSubmit?: Promise<void>;
+  private mutationQueue: Promise<void> = Promise.resolve();
+  private pendingSessionMutations = 0;
   private initialized = false;
   private rpcShutdown = false;
   private closed = false;
@@ -82,13 +84,7 @@ export class RpcServer {
     const request = parsed.request;
 
     if (this.rpcShutdown && request.method !== "initialize") {
-      this.sendMessage(
-        createRpcErrorResponse(
-          request.id,
-          RPC_ERROR_CODES.invalidRequest,
-          "rpc server is shut down",
-        ),
-      );
+      this.sendServerShutdownError(request.id);
       return;
     }
 
@@ -168,31 +164,49 @@ export class RpcServer {
   private async handleSubmit(
     request: Extract<RpcRequestMessage, { method: "session.submit" }>,
   ): Promise<void> {
-    if (this.activeSubmit || this.runtime.isTurnRunning) {
-      this.sendMessage(
-        createRpcErrorResponse(
-          request.id,
-          RPC_ERROR_CODES.busy,
-          "a session turn is already running",
-        ),
-      );
+    if (this.pendingSessionMutations > 0) {
+      this.sendSubmitBusy(request.id);
       return;
     }
 
-    const addOptions = request.params.historyEntryId
-      ? { historyEntryId: request.params.historyEntryId }
-      : undefined;
-    const userHistoryEntryId = this.runtime.session.addUserText(request.params.text, addOptions);
+    const startedSubmit = await this.enqueueMutation(() => {
+      if (this.rpcShutdown) {
+        this.sendServerShutdownError(request.id);
+        return undefined;
+      }
 
-    const submitPromise = this.executeSubmit(request.id, userHistoryEntryId);
-    this.activeSubmit = submitPromise;
+      if (this.pendingSessionMutations > 0 || this.activeSubmit || this.runtime.isTurnRunning) {
+        this.sendSubmitBusy(request.id);
+        return undefined;
+      }
+
+      const addOptions = request.params.historyEntryId
+        ? { historyEntryId: request.params.historyEntryId }
+        : undefined;
+      const userHistoryEntryId = this.runtime.session.addUserText(request.params.text, addOptions);
+
+      const submitPromise = this.executeSubmit(request.id, userHistoryEntryId);
+      this.activeSubmit = submitPromise;
+
+      return {
+        submitPromise,
+      };
+    });
+
+    if (!startedSubmit) {
+      return;
+    }
+
+    const { submitPromise } = startedSubmit;
 
     try {
       await submitPromise;
     } finally {
-      if (this.activeSubmit === submitPromise) {
-        this.activeSubmit = undefined;
-      }
+      await this.enqueueMutation(() => {
+        if (this.activeSubmit === submitPromise) {
+          this.activeSubmit = undefined;
+        }
+      });
     }
   }
 
@@ -255,50 +269,100 @@ export class RpcServer {
   private async handleReset(
     request: Extract<RpcRequestMessage, { method: "session.reset" }>,
   ): Promise<void> {
-    if (this.activeSubmit || this.runtime.isTurnRunning) {
-      this.runtime.interruptTurn();
-      if (this.activeSubmit) {
-        try {
-          await this.activeSubmit;
-        } catch {
-          // ignore submit failure while resetting
-        }
+    await this.runSessionMutation(async () => {
+      if (this.rpcShutdown) {
+        this.sendServerShutdownError(request.id);
+        return;
       }
-    }
 
-    const previousSessionId = this.runtime.session.sessionId;
-    this.runtime.session.reset();
+      await this.interruptAndWaitForActiveSubmit();
 
-    const result: RpcResultByMethod["session.reset"] = {
-      previousSessionId,
-      sessionId: this.runtime.session.sessionId,
-    };
+      const previousSessionId = this.runtime.session.sessionId;
+      this.runtime.session.reset();
 
-    this.sendMessage(createRpcSuccessResponse(request.id, result));
+      const result: RpcResultByMethod["session.reset"] = {
+        previousSessionId,
+        sessionId: this.runtime.session.sessionId,
+      };
+
+      this.sendMessage(createRpcSuccessResponse(request.id, result));
+    });
   }
 
   private async handleShutdown(
     request: Extract<RpcRequestMessage, { method: "session.shutdown" }>,
   ): Promise<void> {
-    if (this.activeSubmit || this.runtime.isTurnRunning) {
-      this.runtime.interruptTurn();
-      if (this.activeSubmit) {
-        try {
-          await this.activeSubmit;
-        } catch {
-          // ignore submit failure while shutting down
-        }
+    await this.runSessionMutation(async () => {
+      if (this.rpcShutdown) {
+        const result: RpcResultByMethod["session.shutdown"] = {
+          shutdown: true,
+        };
+        this.sendMessage(createRpcSuccessResponse(request.id, result));
+        return;
       }
+
+      await this.interruptAndWaitForActiveSubmit();
+
+      this.rpcShutdown = true;
+      this.unsubscribeSubagentListener();
+
+      const result: RpcResultByMethod["session.shutdown"] = {
+        shutdown: true,
+      };
+
+      this.sendMessage(createRpcSuccessResponse(request.id, result));
+    });
+  }
+
+  private sendServerShutdownError(id: RpcRequestId): void {
+    this.sendMessage(
+      createRpcErrorResponse(id, RPC_ERROR_CODES.invalidRequest, "rpc server is shut down"),
+    );
+  }
+
+  private sendSubmitBusy(id: RpcRequestId): void {
+    const message =
+      this.pendingSessionMutations > 0
+        ? "a mutating session request is in progress"
+        : "a session turn is already running";
+
+    this.sendMessage(createRpcErrorResponse(id, RPC_ERROR_CODES.busy, message));
+  }
+
+  private enqueueMutation<T>(handler: () => Promise<T> | T): Promise<T> {
+    const run = this.mutationQueue.then(handler);
+    this.mutationQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async runSessionMutation<T>(handler: () => Promise<T>): Promise<T> {
+    this.pendingSessionMutations += 1;
+    try {
+      return await this.enqueueMutation(handler);
+    } finally {
+      this.pendingSessionMutations -= 1;
+    }
+  }
+
+  private async interruptAndWaitForActiveSubmit(): Promise<void> {
+    if (!this.activeSubmit && !this.runtime.isTurnRunning) {
+      return;
     }
 
-    this.rpcShutdown = true;
-    this.unsubscribeSubagentListener();
+    this.runtime.interruptTurn();
 
-    const result: RpcResultByMethod["session.shutdown"] = {
-      shutdown: true,
-    };
+    if (!this.activeSubmit) {
+      return;
+    }
 
-    this.sendMessage(createRpcSuccessResponse(request.id, result));
+    try {
+      await this.activeSubmit;
+    } catch {
+      // ignore submit failure while finishing active mutation
+    }
   }
 
   private unsubscribeSubagentListener(): void {

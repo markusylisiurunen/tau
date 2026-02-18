@@ -19,6 +19,7 @@ function createHarness(options = {}) {
   const subagentHandlers = new Set();
   const historyEntries = [];
   let sessionId = "session-1";
+  let nextSessionId = 2;
   let running = false;
   let nextId = 1;
   let releaseTurn;
@@ -48,7 +49,7 @@ function createHarness(options = {}) {
       },
       reset() {
         historyEntries.length = 0;
-        sessionId = "session-2";
+        sessionId = `session-${nextSessionId++}`;
       },
       get history() {
         return historyEntries.map((entry) => entry.message);
@@ -208,6 +209,7 @@ describe("rpc_server", () => {
       request("submit", "session.submit", { text: "interrupt me" }),
     );
     await Promise.resolve();
+    await Promise.resolve();
 
     await harness.server.handleLine(request("interrupt", "session.interrupt", {}));
     await runningSubmit;
@@ -283,6 +285,191 @@ describe("rpc_server", () => {
         message: "rpc server is shut down",
       },
     });
+  });
+
+  it("serializes concurrent reset requests in arrival order", async () => {
+    const harness = createHarness();
+
+    await Promise.all([
+      harness.server.handleLine(request("reset-1", "session.reset", {})),
+      harness.server.handleLine(request("reset-2", "session.reset", {})),
+    ]);
+
+    const resetOne = harness.lines.find(
+      (line) => line.type === "response" && line.id === "reset-1",
+    );
+    expect(resetOne).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          previousSessionId: "session-1",
+          sessionId: "session-2",
+        },
+      }),
+    );
+
+    const resetTwo = harness.lines.find(
+      (line) => line.type === "response" && line.id === "reset-2",
+    );
+    expect(resetTwo).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          previousSessionId: "session-2",
+          sessionId: "session-3",
+        },
+      }),
+    );
+  });
+
+  it("serializes reset and shutdown interleavings", async () => {
+    const resetThenShutdown = createHarness();
+
+    await Promise.all([
+      resetThenShutdown.server.handleLine(request("reset", "session.reset", {})),
+      resetThenShutdown.server.handleLine(request("shutdown", "session.shutdown", {})),
+    ]);
+
+    const resetThenShutdownReset = resetThenShutdown.lines.find(
+      (line) => line.type === "response" && line.id === "reset",
+    );
+    expect(resetThenShutdownReset).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          previousSessionId: "session-1",
+          sessionId: "session-2",
+        },
+      }),
+    );
+
+    const resetThenShutdownShutdown = resetThenShutdown.lines.find(
+      (line) => line.type === "response" && line.id === "shutdown",
+    );
+    expect(resetThenShutdownShutdown).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          shutdown: true,
+        },
+      }),
+    );
+
+    const resetThenShutdownResetIndex = resetThenShutdown.lines.findIndex(
+      (line) => line.type === "response" && line.id === "reset",
+    );
+    const resetThenShutdownShutdownIndex = resetThenShutdown.lines.findIndex(
+      (line) => line.type === "response" && line.id === "shutdown",
+    );
+    expect(resetThenShutdownResetIndex).toBeLessThan(resetThenShutdownShutdownIndex);
+
+    const shutdownThenReset = createHarness();
+
+    await Promise.all([
+      shutdownThenReset.server.handleLine(request("shutdown", "session.shutdown", {})),
+      shutdownThenReset.server.handleLine(request("reset", "session.reset", {})),
+    ]);
+
+    const shutdownThenResetShutdown = shutdownThenReset.lines.find(
+      (line) => line.type === "response" && line.id === "shutdown",
+    );
+    expect(shutdownThenResetShutdown).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          shutdown: true,
+        },
+      }),
+    );
+
+    const shutdownThenResetReset = shutdownThenReset.lines.find(
+      (line) => line.type === "response" && line.id === "reset",
+    );
+    expect(shutdownThenResetReset).toEqual({
+      version: RPC_PROTOCOL_VERSION,
+      type: "response",
+      id: "reset",
+      ok: false,
+      error: {
+        code: RPC_ERROR_CODES.invalidRequest,
+        message: "rpc server is shut down",
+      },
+    });
+  });
+
+  it("returns busy for submit when a mutating request is in progress", async () => {
+    const harness = createHarness();
+
+    await Promise.all([
+      harness.server.handleLine(request("reset", "session.reset", {})),
+      harness.server.handleLine(request("submit", "session.submit", { text: "after reset" })),
+    ]);
+
+    const submitBusy = harness.lines.find(
+      (line) => line.type === "response" && line.id === "submit",
+    );
+    expect(submitBusy).toEqual({
+      version: RPC_PROTOCOL_VERSION,
+      type: "response",
+      id: "submit",
+      ok: false,
+      error: {
+        code: RPC_ERROR_CODES.busy,
+        message: "a mutating session request is in progress",
+      },
+    });
+  });
+
+  it("returns success for interrupt while shutdown is in flight", async () => {
+    const harness = createHarness();
+
+    const submitPromise = harness.server.handleLine(
+      request("submit", "session.submit", { text: "interrupt me while shutting down" }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const shutdownPromise = harness.server.handleLine(request("shutdown", "session.shutdown", {}));
+    const interruptPromise = harness.server.handleLine(
+      request("interrupt", "session.interrupt", {}),
+    );
+
+    await Promise.all([submitPromise, shutdownPromise, interruptPromise]);
+
+    const shutdown = harness.lines.find(
+      (line) => line.type === "response" && line.id === "shutdown",
+    );
+    expect(shutdown).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          shutdown: true,
+        },
+      }),
+    );
+
+    const interrupt = harness.lines.find(
+      (line) => line.type === "response" && line.id === "interrupt",
+    );
+    expect(interrupt).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          interrupted: expect.any(Boolean),
+          isTurnRunning: expect.any(Boolean),
+        },
+      }),
+    );
+
+    const submit = harness.lines.find((line) => line.type === "response" && line.id === "submit");
+    expect(submit).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          turn: { aborted: true },
+        }),
+      }),
+    );
   });
 
   it("runRpcServer processes lines concurrently and emits ndjson responses", async () => {

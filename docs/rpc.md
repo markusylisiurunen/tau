@@ -180,10 +180,12 @@ params: `{}` (or omitted)
 
 behavior:
 
+- participates in a server-side mutation queue with `session.shutdown`
 - interrupts any running turn
 - waits for in-flight submit handling to settle
 - clears history and creates a new session id
 
+concurrent reset calls are processed in arrival order (ordered transitions, not collapse).
 response includes both previous and new session ids.
 
 #### session.shutdown
@@ -192,11 +194,13 @@ params: `{}` (or omitted)
 
 behavior:
 
+- participates in a server-side mutation queue with `session.reset`
 - interrupts any running turn
 - waits for in-flight submit handling to settle
 - stops forwarding subagent events
 - marks rpc server as shut down
 
+concurrent shutdown calls are idempotent (`{ "shutdown": true }`).
 after shutdown, non-`initialize` requests return `invalid_request` (`"rpc server is shut down"`).
 
 ## events
@@ -249,17 +253,20 @@ error codes:
 - `invalid_request`: malformed envelope, bad version/type/id, or shut down server
 - `method_not_found`: unsupported method
 - `invalid_params`: params failed method validation
-- `busy`: overlapping `session.submit`
+- `busy`: overlapping `session.submit` or submit rejected while a mutating request is in progress
 - `internal_error`: unexpected runtime failure
 
 for lines that cannot produce a valid request id (for example malformed json), `id` is `null`.
 
 ## concurrency and ordering
 
-`runRpcServer` handles incoming lines concurrently. this means:
+`runRpcServer` handles incoming lines concurrently with explicit serialization for mutating
+transitions. this means:
 
 - multiple requests can be accepted before earlier ones complete
+- `session.reset` and `session.shutdown` run through a shared mutation queue (arrival order)
 - only one `session.submit` can run at once (`busy` otherwise)
-- responses/events from different request ids may interleave
+- `session.submit` is rejected with `busy` while a queued/running reset or shutdown mutation exists
+- responses/events from different request ids may still interleave
 
 clients should route by `id` and `requestId`, not by arrival order alone.

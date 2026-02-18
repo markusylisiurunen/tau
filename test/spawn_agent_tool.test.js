@@ -372,6 +372,50 @@ describe("spawn_agent tool", () => {
     expect(spawned).toHaveLength(0);
   });
 
+  it("rejects relative workingDirectory that escapes sandbox mount", async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-sandbox-escape-"));
+    const hostSourceDir = join(tmpRoot, "mounted-root", "src");
+    mkdirSync(hostSourceDir, { recursive: true });
+
+    try {
+      const backend = createLocalToolExecutionBackend();
+      const tool = createSpawnAgentToolDefinition(backend);
+      const { context, spawned } = createContext({
+        cwd: "/workspace",
+        hostCwd: hostSourceDir,
+        sandboxEnabled: true,
+        config: {
+          sandbox: {
+            mountPath: "/workspace",
+          },
+        },
+      });
+
+      const result = await tool.dispatch(
+        {
+          id: "call-8b",
+          name: TOOL_NAME_SPAWN_AGENT,
+          arguments: {
+            name: "researcher",
+            title: "research task",
+            prompt: "collect findings",
+            workingDirectory: "..",
+          },
+        },
+        "read-only",
+        undefined,
+        context,
+      );
+
+      expect(result.kind).toBe("single");
+      expect(result.toolResult.isError).toBe(true);
+      expect(getText(result.toolResult)).toContain("is outside sandbox mount path");
+      expect(spawned).toHaveLength(0);
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rebuilds subagent prompt context for workingDirectory", async () => {
     const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-"));
     const projectRoot = join(tmpRoot, "project");

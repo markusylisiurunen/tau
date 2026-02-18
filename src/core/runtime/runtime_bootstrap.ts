@@ -1,64 +1,13 @@
-import { realpathSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
 import type { SandboxConfig } from "../config/index.js";
 import type { Persona, Skill } from "../types.js";
 import { resolveAgentCwd } from "../utils/agent_environment.js";
 import { findAgentsFilesInScopeDetailed } from "../utils/agents_files.js";
 import { buildProjectContextBlock, buildSkillsIndexBlock } from "../utils/context_builder.js";
-import { getGitRoot } from "../utils/git.js";
 import {
-  normalizeSandboxMountPath,
-  resolveSandboxPathForHostPath,
-} from "../utils/sandbox_paths.js";
+  resolveSandboxPromptPath,
+  resolveSandboxPromptPathScope,
+} from "../utils/sandbox_prompt_paths.js";
 import type { ChatRuntimePromptContext } from "./chat_runtime.js";
-
-type SandboxPromptPathScope = {
-  rootReal: string;
-  mountPath: string;
-};
-
-function resolvePathRealish(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolve(path);
-  }
-}
-
-function isPathWithinRoot(path: string, root: string): boolean {
-  const rel = relative(root, path);
-  return rel === "" || rel === "." || !(rel === ".." || rel.startsWith(`..${sep}`));
-}
-
-function resolveSandboxPromptPathScope(args: {
-  cwd: string;
-  sandboxEnabled?: boolean;
-  sandboxConfig?: SandboxConfig;
-  sandboxHostRoot?: string;
-}): SandboxPromptPathScope | undefined {
-  if (!args.sandboxEnabled) {
-    return undefined;
-  }
-
-  const root = args.sandboxHostRoot ?? getGitRoot(args.cwd) ?? args.cwd;
-  return {
-    rootReal: resolvePathRealish(root),
-    mountPath: normalizeSandboxMountPath(args.sandboxConfig?.mountPath),
-  };
-}
-
-function resolveSandboxPromptPath(path: string, scope: SandboxPromptPathScope): string | undefined {
-  const hostPath = resolvePathRealish(path);
-  if (!isPathWithinRoot(hostPath, scope.rootReal)) {
-    return undefined;
-  }
-
-  return resolveSandboxPathForHostPath({
-    hostPath,
-    rootReal: scope.rootReal,
-    mountPath: scope.mountPath,
-  });
-}
 
 export type ResolvedPersonaSkills = {
   skills: Skill[];

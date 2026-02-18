@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { isAbsolute, posix as pathPosix, relative, resolve } from "node:path";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
@@ -12,7 +11,10 @@ import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/ty
 import type { Persona, RiskLevel } from "../types.js";
 import { formatCwd } from "../utils/format.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { normalizeSandboxMountPath } from "../utils/sandbox_paths.js";
+import {
+  resolveSandboxHostRoot,
+  resolveSandboxMappedWorkingDirectory,
+} from "../utils/sandbox_prompt_paths.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -115,72 +117,6 @@ function formatAllowedLaunchModels(launchModels: string[]): string {
   }
 
   return launchModels.map((entry) => `'${entry}'`).join(", ");
-}
-
-function resolveWorkingDirectory(args: {
-  cwd: string;
-  hostCwd: string;
-  workingDirectory?: string;
-  sandboxEnabled: boolean;
-  sandboxMountPath?: string;
-}): { cwd: string; hostCwd: string; error?: string } {
-  if (!args.workingDirectory) {
-    return { cwd: args.cwd, hostCwd: args.hostCwd };
-  }
-
-  const cwd = resolve(args.cwd, args.workingDirectory);
-  const rel = relative(args.cwd, cwd);
-
-  if (!isAbsolute(args.workingDirectory)) {
-    return { cwd, hostCwd: resolve(args.hostCwd, rel) };
-  }
-
-  if (!args.sandboxEnabled) {
-    return { cwd, hostCwd: cwd };
-  }
-
-  const mountPath = normalizeSandboxMountPath(args.sandboxMountPath);
-  const relFromMount = pathPosix.relative(mountPath, cwd);
-  if (relFromMount === ".." || relFromMount.startsWith("../")) {
-    return {
-      cwd,
-      hostCwd: args.hostCwd,
-      error:
-        `absolute workingDirectory '${cwd}' is outside sandbox mount path '${mountPath}' and ` +
-        "cannot be mapped to host prompt context.",
-    };
-  }
-
-  return { cwd, hostCwd: resolve(args.hostCwd, rel) };
-}
-
-function resolveSandboxHostRoot(args: {
-  cwd: string;
-  hostCwd: string;
-  sandboxEnabled: boolean;
-  sandboxMountPath?: string;
-}): string | undefined {
-  if (!args.sandboxEnabled) {
-    return undefined;
-  }
-
-  const mountPath = normalizeSandboxMountPath(args.sandboxMountPath);
-  const relFromMount = pathPosix.relative(mountPath, args.cwd);
-  if (relFromMount === ".." || relFromMount.startsWith("../")) {
-    return undefined;
-  }
-
-  const depth = relFromMount
-    .split(pathPosix.sep)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0).length;
-
-  let root = resolve(args.hostCwd);
-  for (let i = 0; i < depth; i++) {
-    root = resolve(root, "..");
-  }
-
-  return root;
 }
 
 async function buildSubagentSystemPrompt(args: {
@@ -345,16 +281,24 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       const baseCwd = context.cwd ?? process.cwd();
       const baseHostCwd = context.hostCwd ?? process.cwd();
       const baseHome = context.home ?? process.env.HOME ?? process.cwd();
+      const sandboxEnabled = context.sandboxEnabled ?? false;
+      const sandboxMountPath = context.config?.sandbox?.mountPath;
+      const sandboxHostRoot = resolveSandboxHostRoot({
+        cwd: baseCwd,
+        hostCwd: baseHostCwd,
+        sandboxEnabled,
+        sandboxMountPath,
+      });
       const {
         cwd,
         hostCwd,
         error: workingDirectoryError,
-      } = resolveWorkingDirectory({
+      } = resolveSandboxMappedWorkingDirectory({
         cwd: baseCwd,
         hostCwd: baseHostCwd,
         workingDirectory,
-        sandboxEnabled: context.sandboxEnabled ?? false,
-        sandboxMountPath: context.config?.sandbox?.mountPath,
+        sandboxEnabled,
+        sandboxMountPath,
       });
       if (workingDirectoryError) {
         return blocked(workingDirectoryError, {
@@ -362,13 +306,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           title,
         });
       }
-
-      const sandboxHostRoot = resolveSandboxHostRoot({
-        cwd,
-        hostCwd,
-        sandboxEnabled: context.sandboxEnabled ?? false,
-        sandboxMountPath: context.config?.sandbox?.mountPath,
-      });
 
       let systemPrompt: string | undefined;
       if (workingDirectory) {
@@ -382,7 +319,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             hostCwd,
             home: baseHome,
             includeAgentContext: context.includeAgentContext !== false,
-            sandboxEnabled: context.sandboxEnabled ?? false,
+            sandboxEnabled,
             sandboxHostRoot,
           });
         } catch (error) {

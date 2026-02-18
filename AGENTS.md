@@ -10,7 +10,8 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 ## Architecture
 
 - **ChatApp** (`src/tui/app.ts`): Thin wiring between the controller and TUI view adapter
-- **ChatController** (`src/tui/chat_controller.ts`): Orchestrates session state, commands, and core events; delegates assistant turn execution and prompt composition to core runtime helpers
+- **ChatController** (`src/tui/chat_controller.ts`): Composition/wiring layer for TUI session state, commands, and core events; delegates assistant turns and prompt composition to core runtime helpers plus focused controller modules
+- **Chat controller modules** (`src/tui/chat_controller/`): Focused controller helpers for interrupt lifecycle, queued message draining, and maintenance commands (`/compact`, `/prune`)
 - **TuiChatView** (`src/tui/chat_view.ts`): TUI adapter for rendering, editor, and tool UI
 - **CoreSession** (`src/core/session/core_session.ts`): Owns session state and emits core events for consumers
 - **SessionEngine** (`src/core/session/session_engine.ts`): Internal streaming/tool dispatch runner used by CoreSession, and host for manual session compaction
@@ -93,7 +94,8 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
   - `utils/messages.ts` - Message helpers
 - `src/tui/`
   - `app.ts` - ChatApp wiring
-  - `chat_controller.ts` - UI-agnostic controller for session orchestration
+  - `chat_controller.ts` - UI-agnostic controller composition/wiring
+  - `chat_controller/` - Focused controller modules (`interrupt_lifecycle.ts`, `queued_user_messages.ts`, `session_maintenance_service.ts`)
   - `chat_view.ts` - TUI view adapter used by ChatApp
   - `tool_ui_router.ts` - Tool UI event sequencing and routing
   - `terminal.ts` - Terminal adapter

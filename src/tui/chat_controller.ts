@@ -7,7 +7,6 @@ import type {
   AssistantMessage,
   KnownProvider,
   Message,
-  ToolCall,
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
 import { formatCodexAuthError } from "../core/auth/auth_messages.js";
@@ -54,7 +53,6 @@ import {
 import { ToolCatalog } from "../core/tools/catalog.js";
 import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
 import { createLocalToolExecutionBackend } from "../core/tools/execution_backend.js";
-import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../core/tools/tool_names.js";
 import {
   type Persona,
   REASONING_LEVELS,
@@ -71,15 +69,18 @@ import {
 } from "../core/utils/context.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { getGitRoot } from "../core/utils/git.js";
-import { buildLineDiff, collapseLongUnchangedDiffRuns } from "../core/utils/line_diff.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
 import { transcribeMistralAudio } from "../core/utils/mistral_transcription.js";
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
-import { bytesToTokens, formatTokenEstimate, tokensToBytes } from "../core/utils/token.js";
-import { truncateToBytesFromStart } from "../core/utils/truncate.js";
 import { APP_VERSION } from "../core/version.js";
+import { type BusyTask, InterruptLifecycle } from "./chat_controller/interrupt_lifecycle.js";
+import { QueuedUserMessages } from "./chat_controller/queued_user_messages.js";
+import {
+  type MaintenanceTaskOutcome,
+  SessionMaintenanceService,
+} from "./chat_controller/session_maintenance_service.js";
 import type { ChatInputMode, ChatView, ChatViewInputHandlers } from "./chat_view.js";
 import { copyTextToClipboard } from "./clipboard.js";
 import { DOUBLE_PRESS_WINDOW_MS } from "./constants.js";
@@ -112,25 +113,6 @@ type AssistantState = {
   historyEntryId: string;
   inserted: boolean;
   model: AssistantMessageModel;
-};
-
-type ToolResultPruneCandidate = {
-  index: number;
-  toolResult: ToolResultMessage;
-  bytes: number;
-  tokens: number;
-  order: number;
-};
-
-type EditPruneCallDiff = {
-  oldText: string;
-  newText: string;
-};
-
-type EditPruneSummary = {
-  callsPruned: number;
-  resultsPruned: number;
-  bytesRemoved: number;
 };
 
 type ReloadScope = "new-session" | "reload-command";
@@ -172,10 +154,6 @@ type TurnCaffeinateSession = {
   completion: Promise<SpawnCaptureResult>;
 };
 
-type BusyTask = {
-  requestInterrupt: () => boolean;
-};
-
 const RELOAD_PLANS: Record<ReloadScope, ReloadPlan> = {
   "new-session": {
     personas: true,
@@ -196,13 +174,6 @@ const RELOAD_PLANS: Record<ReloadScope, ReloadPlan> = {
 };
 
 const ALLOWED_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
-const DEFAULT_PRUNE_FRACTION = 0.25;
-const PRUNED_TOOL_RESULT_PREFIX = "[tool result pruned]";
-const PRUNED_EDIT_RESULT_PREFIX = "[tool result pruned] edit diff";
-const PRUNED_EDIT_ARGUMENT_MARKER = "[content pruned]";
-const PRUNE_EDIT_UNCHANGED_CONTEXT_LINES = 4;
-const PRUNE_PREVIEW_MAX_TOKENS = 512;
-const PRUNE_MAX_OVERAGE_RATIO = 0.1;
 const SPEAK_TEMP_FILE_TEMPLATE = "/tmp/tau-speak.XXXXXX";
 const SPEAK_RECORDING_MIN_BYTES = 1024;
 const SPEAK_RECORDING_MAX_DURATION_MS = 5 * 60 * 1000;
@@ -237,15 +208,15 @@ export class ChatController {
   private subagentUnsubscribe?: () => void;
   private isStreaming = false;
   private queuedUserMessages: string[];
-  private isDrainingQueuedUserMessages = false;
-  private pendingIdleNotification = false;
+  private readonly queuedMessageBuffer: QueuedUserMessages;
+  private readonly interruptLifecycle: InterruptLifecycle;
+  private readonly maintenanceService: SessionMaintenanceService;
   private isBashMode = false;
   private isBashIncognito = false;
   private isMemoryMode = false;
   private showThinking = false;
   private compactToolUi = true;
   private commandHint?: string;
-  private activeBusyTask?: BusyTask;
   private riskLevel: RiskLevel = "read-only";
   private projectContextBlock?: string;
   private projectFiles: string[] = [];
@@ -300,6 +271,8 @@ export class ChatController {
     });
     this.compactToolUi = true;
     this.queuedUserMessages = options.queuedUserMessages ?? [];
+    this.queuedMessageBuffer = new QueuedUserMessages(this.queuedUserMessages);
+    this.interruptLifecycle = new InterruptLifecycle();
     this.toolBackendDispose = options.toolBackendDispose;
 
     this.includeAgentContext = !options.noAgentContextFiles;
@@ -365,6 +338,16 @@ export class ChatController {
     });
     this.engine = this.runtime.session;
     this.subagentUnsubscribe = this.engine.onSubagentEvent((event) => this.onEvent(event));
+
+    this.maintenanceService = new SessionMaintenanceService({
+      engine: this.engine,
+      view: this.view,
+      runStreamingTask: (task) => this.runMaintenanceStreamingTask(task),
+      applyCompactedHistoryUi: (compactionMessage) =>
+        this.applyCompactedHistoryUi(compactionMessage),
+      requestSmartPruneSelection: (prompt, signal) =>
+        this.requestSmartPruneSelection(prompt, signal),
+    });
 
     this.commandRegistry = createCommandRegistry();
     this.commandHandlers = {
@@ -1027,36 +1010,48 @@ export class ChatController {
   }
 
   private createAbortBusyTask(): { busyTask: BusyTask; signal: AbortSignal } {
-    const abortController = new AbortController();
-    return {
-      signal: abortController.signal,
-      busyTask: {
-        requestInterrupt: () => {
-          if (abortController.signal.aborted) {
-            return false;
-          }
-          abortController.abort();
-          return true;
-        },
-      },
-    };
+    return this.interruptLifecycle.createAbortBusyTask();
   }
 
   private beginBusyTask(task: BusyTask): void {
-    this.activeBusyTask = task;
+    this.interruptLifecycle.beginBusyTask(task);
   }
 
   private endBusyTask(task: BusyTask): void {
-    if (this.activeBusyTask === task) {
-      this.activeBusyTask = undefined;
-    }
+    this.interruptLifecycle.endBusyTask(task);
   }
 
   private interruptActiveTask(): void {
-    if (!this.isStreaming) return;
-    if (!this.activeBusyTask) return;
-    if (!this.activeBusyTask.requestInterrupt()) return;
+    if (!this.interruptLifecycle.interruptActiveTask(this.isStreaming)) {
+      return;
+    }
     this.view.addSystemMessage("interrupted", "error");
+  }
+
+  private async runMaintenanceStreamingTask<T>(
+    task: (signal: AbortSignal) => Promise<T>,
+  ): Promise<MaintenanceTaskOutcome<T>> {
+    this.isStreaming = true;
+    this.view.startWorkingIcon();
+    const { busyTask, signal } = this.createAbortBusyTask();
+    this.beginBusyTask(busyTask);
+
+    try {
+      const value = await task(signal);
+      return { aborted: signal.aborted, value };
+    } catch (error) {
+      return { aborted: signal.aborted, error };
+    } finally {
+      this.endBusyTask(busyTask);
+      this.view.stopWorkingIcon();
+      this.isStreaming = false;
+      this.view.requestRender();
+      if (signal.aborted) {
+        this.dequeueQueuedUserMessagesIntoEditor();
+      } else {
+        void this.drainQueuedUserMessages();
+      }
+    }
   }
 
   // Input Handling --------------------------------------------------------------------------------
@@ -1208,32 +1203,21 @@ export class ChatController {
   }
 
   private queueUserMessage(text: string): void {
-    this.queuedUserMessages.push(text);
-    this.view.requestRender();
+    this.queuedMessageBuffer.enqueue(text, () => this.view.requestRender());
   }
 
   private popQueuedUserMessageIntoEditor(): void {
-    if (this.view.getEditorText() !== "") return;
-
-    const last = this.queuedUserMessages.pop();
-    if (!last) return;
-
-    this.view.setEditorText(last);
+    this.queuedMessageBuffer.popIntoEditor({
+      getEditorText: () => this.view.getEditorText(),
+      setEditorText: (text) => this.view.setEditorText(text),
+    });
   }
 
   private dequeueQueuedUserMessagesIntoEditor(): void {
-    if (this.queuedUserMessages.length === 0) return;
-
-    const editorText = this.view.getEditorText();
-    const parts: string[] = [];
-
-    if (editorText !== "") {
-      parts.push(editorText);
-    }
-
-    parts.push(...this.queuedUserMessages);
-    this.queuedUserMessages.length = 0;
-    this.view.setEditorText(parts.join("\n\n---\n\n"));
+    this.queuedMessageBuffer.dequeueIntoEditor({
+      getEditorText: () => this.view.getEditorText(),
+      setEditorText: (text) => this.view.setEditorText(text),
+    });
   }
 
   private cycleSubagentSelection(): void {
@@ -1292,29 +1276,13 @@ export class ChatController {
   }
 
   private async drainQueuedUserMessages(): Promise<void> {
-    if (this.isDrainingQueuedUserMessages) return;
-    this.isDrainingQueuedUserMessages = true;
-
-    try {
-      while (!this.isStreaming && this.queuedUserMessages.length > 0) {
-        const next = this.queuedUserMessages.shift();
-        if (!next) return;
-
-        this.view.requestRender();
-        await this.onUserInput(next);
-      }
-    } finally {
-      this.isDrainingQueuedUserMessages = false;
-
-      if (
-        this.pendingIdleNotification &&
-        !this.isStreaming &&
-        this.queuedUserMessages.length === 0
-      ) {
-        this.pendingIdleNotification = false;
-        this.view.sendTerminalNotification(this.buildIdleNotificationTitle());
-      }
-    }
+    await this.queuedMessageBuffer.drain({
+      isStreaming: () => this.isStreaming,
+      onUserInput: (text) => this.onUserInput(text),
+      requestRender: () => this.view.requestRender(),
+      sendTerminalNotification: (title) => this.view.sendTerminalNotification(title),
+      buildIdleNotificationTitle: () => this.buildIdleNotificationTitle(),
+    });
   }
 
   private async handleSubmit(text: string): Promise<void> {
@@ -1911,14 +1879,6 @@ export class ChatController {
     this.refreshStatus();
   }
 
-  private escapeXml(text: string): string {
-    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-
-  private escapeXmlAttribute(text: string): string {
-    return this.escapeXml(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-  }
-
   private syncRuntimePromptContext(): void {
     this.runtime.updatePromptContext({
       cwd: this.agentCwd,
@@ -1961,881 +1921,20 @@ export class ChatController {
     this.refreshStatus();
   }
 
-  private handleCompactionError(err: unknown): void {
-    const message = (err as Error).message || "compaction failed";
-    if (message === "no conversation to compact.") {
-      this.view.addSystemMessage(message, "warn");
-      return;
-    }
-    this.view.addSystemMessage(`compact failed: ${message}`, "error");
-  }
-
   private async compactSessionSummaryOnly(guidance?: string): Promise<void> {
-    this.view.addSystemMessage("summarizing session...", "success");
-    this.isStreaming = true;
-    this.view.startWorkingIcon();
-    const { busyTask, signal } = this.createAbortBusyTask();
-    this.beginBusyTask(busyTask);
-
-    try {
-      const result = await this.engine.compact({
-        mode: "only-summary",
-        guidance,
-        signal,
-      });
-      this.applyCompactedHistoryUi(result.compactionMessage);
-
-      this.view.addSystemMessage(
-        "session compacted. previous context has been summarized.",
-        "success",
-      );
-    } catch (err) {
-      if (!signal.aborted) {
-        this.handleCompactionError(err);
-      }
-    } finally {
-      this.endBusyTask(busyTask);
-      this.view.stopWorkingIcon();
-      this.isStreaming = false;
-      this.view.requestRender();
-      if (signal.aborted) {
-        this.dequeueQueuedUserMessagesIntoEditor();
-      } else {
-        void this.drainQueuedUserMessages();
-      }
-    }
+    await this.maintenanceService.compactSummaryOnly(guidance);
   }
 
   private async compactSessionSummaryAndLast(guidance?: string): Promise<void> {
-    this.view.addSystemMessage("summarizing session...", "success");
-    this.isStreaming = true;
-    this.view.startWorkingIcon();
-    const { busyTask, signal } = this.createAbortBusyTask();
-    this.beginBusyTask(busyTask);
-
-    try {
-      const result = await this.engine.compact({
-        mode: "with-last-assistant",
-        guidance,
-        signal,
-      });
-      this.applyCompactedHistoryUi(result.compactionMessage);
-
-      const successText = result.includedLastAssistant
-        ? "session compacted. previous context and last assistant message have been included."
-        : "session compacted. previous context has been summarized.";
-      this.view.addSystemMessage(successText, "success");
-    } catch (err) {
-      if (!signal.aborted) {
-        this.handleCompactionError(err);
-      }
-    } finally {
-      this.endBusyTask(busyTask);
-      this.view.stopWorkingIcon();
-      this.isStreaming = false;
-      this.view.requestRender();
-      if (signal.aborted) {
-        this.dequeueQueuedUserMessagesIntoEditor();
-      } else {
-        void this.drainQueuedUserMessages();
-      }
-    }
+    await this.maintenanceService.compactSummaryAndLast(guidance);
   }
 
   private pruneToolResults(strategy: "earliest" | "largest", extra?: string): void {
-    const fraction = this.parsePruneFraction(extra);
-    if (fraction === null) {
-      this.view.addSystemMessage("invalid prune fraction. use a number between 0 and 1.", "error");
-      return;
-    }
-
-    if (fraction === 0) {
-      this.view.addSystemMessage("prune fraction is 0, nothing to prune.", "warn");
-      return;
-    }
-
-    const history = this.engine.history;
-    if (history.length === 0) {
-      this.view.addSystemMessage("no conversation to prune.", "warn");
-      return;
-    }
-
-    const editSummary = this.pruneEditToolHistory(history);
-
-    const candidates: ToolResultPruneCandidate[] = [];
-    let totalTokens = 0;
-
-    for (let index = 0; index < history.length; index++) {
-      const message = history[index];
-      if (message?.role !== "toolResult") continue;
-      const toolResult = message as ToolResultMessage;
-      if (toolResult.toolName !== TOOL_NAME_BASH) {
-        continue;
-      }
-      const info = this.getToolResultContentInfo(toolResult);
-      if (info.firstText?.startsWith(PRUNED_TOOL_RESULT_PREFIX)) {
-        continue;
-      }
-      if (info.hasImage) {
-        continue;
-      }
-      const tokens = bytesToTokens(info.bytes);
-      candidates.push({
-        index,
-        toolResult,
-        bytes: info.bytes,
-        tokens,
-        order: candidates.length,
-      });
-      totalTokens += tokens;
-    }
-
-    if (candidates.length === 0 || totalTokens === 0) {
-      if (this.hasAnyPrunedEditChanges(editSummary)) {
-        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
-      } else {
-        this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
-      }
-      return;
-    }
-
-    const targetTokens = Math.ceil(totalTokens * fraction);
-    if (targetTokens <= 0) {
-      if (this.hasAnyPrunedEditChanges(editSummary)) {
-        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
-      } else {
-        this.view.addSystemMessage("prune fraction is too small to remove anything.", "warn");
-      }
-      return;
-    }
-
-    const ordered =
-      strategy === "largest"
-        ? [...candidates].sort(
-            (a, b) => b.tokens - a.tokens || b.bytes - a.bytes || a.order - b.order,
-          )
-        : candidates;
-
-    const toPrune: ToolResultPruneCandidate[] = [];
-    let prunedTokens = 0;
-    let prunedBytes = 0;
-
-    for (const candidate of ordered) {
-      if (prunedTokens >= targetTokens) break;
-      toPrune.push(candidate);
-      prunedTokens += candidate.tokens;
-      prunedBytes += candidate.bytes;
-    }
-
-    if (toPrune.length === 0) {
-      if (this.hasAnyPrunedEditChanges(editSummary)) {
-        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
-      } else {
-        this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
-      }
-      return;
-    }
-
-    for (const candidate of toPrune) {
-      const noticeText = this.buildPrunedToolResultNotice(candidate.toolResult, candidate.bytes);
-      const prunedResult: ToolResultMessage = {
-        ...candidate.toolResult,
-        content: [{ type: "text", text: noticeText }],
-      };
-      this.engine.replaceMessage(candidate.index, prunedResult);
-      this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, noticeText);
-    }
-
-    this.view.addSystemMessage(
-      this.buildPruneSummaryMessage(editSummary, toPrune.length, prunedBytes),
-      "success",
-    );
+    this.maintenanceService.pruneToolResults(strategy, extra);
   }
 
   private async pruneToolResultsSmart(extra?: string): Promise<void> {
-    const parsed = this.parsePruneFractionAndGuidance(extra);
-    if (parsed.fraction === null) {
-      this.view.addSystemMessage("invalid prune fraction. use a number between 0 and 1.", "error");
-      return;
-    }
-
-    const fraction = parsed.fraction;
-    if (fraction === 0) {
-      this.view.addSystemMessage("prune fraction is 0, nothing to prune.", "warn");
-      return;
-    }
-
-    const history = this.engine.history;
-    if (history.length === 0) {
-      this.view.addSystemMessage("no conversation to prune.", "warn");
-      return;
-    }
-
-    let editSummary: EditPruneSummary | undefined;
-    const getEditSummary = (): EditPruneSummary => {
-      if (!editSummary) {
-        editSummary = this.pruneEditToolHistory(history);
-      }
-      return editSummary;
-    };
-
-    const candidates: ToolResultPruneCandidate[] = [];
-    let totalTokens = 0;
-
-    for (let index = 0; index < history.length; index++) {
-      const message = history[index];
-      if (message?.role !== "toolResult") continue;
-      const toolResult = message as ToolResultMessage;
-      if (toolResult.toolName !== TOOL_NAME_BASH) {
-        continue;
-      }
-      const details = this.getToolResultContentDetails(toolResult);
-      if (details.firstText?.startsWith(PRUNED_TOOL_RESULT_PREFIX)) {
-        continue;
-      }
-      if (details.hasImage) {
-        continue;
-      }
-      const tokens = bytesToTokens(details.bytes);
-      candidates.push({
-        index,
-        toolResult,
-        bytes: details.bytes,
-        tokens,
-        order: candidates.length,
-      });
-      totalTokens += tokens;
-    }
-
-    if (candidates.length === 0 || totalTokens === 0) {
-      const summary = getEditSummary();
-      if (this.hasAnyPrunedEditChanges(summary)) {
-        this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
-      } else {
-        this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
-      }
-      return;
-    }
-
-    const targetTokens = Math.ceil(totalTokens * fraction);
-    if (targetTokens <= 0) {
-      const summary = getEditSummary();
-      if (this.hasAnyPrunedEditChanges(summary)) {
-        this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
-      } else {
-        this.view.addSystemMessage("prune fraction is too small to remove anything.", "warn");
-      }
-      return;
-    }
-
-    this.view.addSystemMessage("sampling prune candidates...", "success");
-    this.isStreaming = true;
-    this.view.startWorkingIcon();
-    const { busyTask, signal } = this.createAbortBusyTask();
-    this.beginBusyTask(busyTask);
-
-    try {
-      const prompt = this.buildSmartPrunePrompt({
-        history,
-        targetTokens,
-        guidance: parsed.guidance,
-      });
-      const selection = await this.requestSmartPruneSelection(prompt, signal);
-      if (selection.length === 0) {
-        const summary = getEditSummary();
-        if (this.hasAnyPrunedEditChanges(summary)) {
-          this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
-        } else {
-          this.view.addSystemMessage("model returned no prune candidates.", "warn");
-        }
-        return;
-      }
-
-      const toPrune = this.selectSmartPruneCandidates(selection, candidates, targetTokens);
-
-      if (toPrune.length === 0) {
-        const summary = getEditSummary();
-        if (this.hasAnyPrunedEditChanges(summary)) {
-          this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
-        } else {
-          this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
-        }
-        return;
-      }
-
-      const summary = getEditSummary();
-      let prunedBytes = 0;
-      for (const candidate of toPrune) {
-        prunedBytes += candidate.bytes;
-        const noticeText = this.buildPrunedToolResultNotice(candidate.toolResult, candidate.bytes);
-        const prunedResult: ToolResultMessage = {
-          ...candidate.toolResult,
-          content: [{ type: "text", text: noticeText }],
-        };
-        this.engine.replaceMessage(candidate.index, prunedResult);
-        this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, noticeText);
-      }
-
-      this.view.addSystemMessage(
-        this.buildPruneSummaryMessage(summary, toPrune.length, prunedBytes),
-        "success",
-      );
-    } catch (err) {
-      if (!signal.aborted) {
-        this.view.addSystemMessage(`prune failed: ${(err as Error).message}`, "error");
-      }
-    } finally {
-      this.endBusyTask(busyTask);
-      this.view.stopWorkingIcon();
-      this.isStreaming = false;
-      this.view.requestRender();
-      if (signal.aborted) {
-        this.dequeueQueuedUserMessagesIntoEditor();
-      } else {
-        void this.drainQueuedUserMessages();
-      }
-    }
-  }
-
-  private parsePruneFraction(extra?: string): number | null {
-    if (!extra) {
-      return DEFAULT_PRUNE_FRACTION;
-    }
-    const parsed = Number(extra);
-    if (!Number.isFinite(parsed)) {
-      return null;
-    }
-    if (parsed < 0 || parsed > 1) {
-      return null;
-    }
-    return parsed;
-  }
-
-  private parsePruneFractionAndGuidance(extra?: string): {
-    fraction: number | null;
-    guidance?: string;
-  } {
-    if (!extra) {
-      return { fraction: DEFAULT_PRUNE_FRACTION };
-    }
-
-    const trimmed = extra.trim();
-    if (!trimmed) {
-      return { fraction: DEFAULT_PRUNE_FRACTION };
-    }
-
-    const [firstToken, ...rest] = trimmed.split(/\s+/);
-    const parsed = Number(firstToken);
-    if (Number.isFinite(parsed)) {
-      if (parsed < 0 || parsed > 1) {
-        return { fraction: null };
-      }
-      const guidance = rest.join(" ").trim();
-      return guidance ? { fraction: parsed, guidance } : { fraction: parsed };
-    }
-
-    return { fraction: DEFAULT_PRUNE_FRACTION, guidance: trimmed };
-  }
-
-  private hasAnyPrunedEditChanges(summary: EditPruneSummary): boolean {
-    return summary.callsPruned > 0 || summary.resultsPruned > 0;
-  }
-
-  private buildPruneSummaryMessage(
-    editSummary: EditPruneSummary,
-    bashResultsPruned: number = 0,
-    bashBytesPruned: number = 0,
-  ): string {
-    const editSummaryText = this.formatPrunedEditSummary(editSummary);
-
-    if (bashResultsPruned <= 0) {
-      if (!editSummaryText) {
-        return "no bash tool results or edit tool calls to prune.";
-      }
-      return `pruned ${editSummaryText}.`;
-    }
-
-    const bashLabel = formatTokenEstimate(bashBytesPruned);
-    const bashNoun = bashResultsPruned === 1 ? "result" : "results";
-    if (!editSummaryText) {
-      return `pruned ${bashResultsPruned} bash tool ${bashNoun} (${bashLabel}).`;
-    }
-
-    return `pruned ${bashResultsPruned} bash tool ${bashNoun} (${bashLabel}) and ${editSummaryText}.`;
-  }
-
-  private formatPrunedEditSummary(summary: EditPruneSummary): string {
-    if (!this.hasAnyPrunedEditChanges(summary)) {
-      return "";
-    }
-
-    const parts: string[] = [];
-    if (summary.callsPruned > 0) {
-      const noun = summary.callsPruned === 1 ? "call" : "calls";
-      parts.push(`${summary.callsPruned} edit tool ${noun}`);
-    }
-    if (summary.resultsPruned > 0) {
-      const noun = summary.resultsPruned === 1 ? "result" : "results";
-      parts.push(`${summary.resultsPruned} edit tool ${noun}`);
-    }
-
-    const tokenEstimate = formatTokenEstimate(summary.bytesRemoved);
-    return `${parts.join(" and ")} (${tokenEstimate})`;
-  }
-
-  private pruneEditToolHistory(history: readonly Message[]): EditPruneSummary {
-    const summary: EditPruneSummary = {
-      callsPruned: 0,
-      resultsPruned: 0,
-      bytesRemoved: 0,
-    };
-    const editCallsById = new Map<string, EditPruneCallDiff>();
-
-    for (let index = 0; index < history.length; index++) {
-      const message = history[index];
-      if (message?.role !== "assistant") {
-        continue;
-      }
-
-      const assistant = message as AssistantMessage;
-      let changed = false;
-      const nextContent = assistant.content.map((block) => {
-        if (typeof block === "string" || block.type !== "toolCall") {
-          return block;
-        }
-
-        const toolCall = block as ToolCall;
-        if (toolCall.name !== TOOL_NAME_EDIT) {
-          return block;
-        }
-
-        const args = this.getToolCallArgumentsObject(toolCall.arguments);
-        if (!args) {
-          return block;
-        }
-
-        const oldText = typeof args.oldText === "string" ? args.oldText : undefined;
-        const newText = typeof args.newText === "string" ? args.newText : undefined;
-        if (oldText === undefined || newText === undefined) {
-          return block;
-        }
-
-        if (oldText === PRUNED_EDIT_ARGUMENT_MARKER && newText === PRUNED_EDIT_ARGUMENT_MARKER) {
-          return block;
-        }
-
-        changed = true;
-        summary.callsPruned += 1;
-        const oldBytes = Buffer.byteLength(oldText, "utf8");
-        const newBytes = Buffer.byteLength(newText, "utf8");
-        const markerBytes = Buffer.byteLength(PRUNED_EDIT_ARGUMENT_MARKER, "utf8") * 2;
-        summary.bytesRemoved += Math.max(0, oldBytes + newBytes - markerBytes);
-        editCallsById.set(toolCall.id, { oldText, newText });
-
-        return {
-          ...toolCall,
-          arguments: {
-            ...args,
-            oldText: PRUNED_EDIT_ARGUMENT_MARKER,
-            newText: PRUNED_EDIT_ARGUMENT_MARKER,
-          },
-        };
-      });
-
-      if (changed) {
-        this.engine.replaceMessage(index, { ...assistant, content: nextContent });
-      }
-    }
-
-    if (editCallsById.size === 0) {
-      return summary;
-    }
-
-    for (let index = 0; index < history.length; index++) {
-      const message = history[index];
-      if (message?.role !== "toolResult") {
-        continue;
-      }
-
-      const toolResult = message as ToolResultMessage;
-      if (toolResult.toolName !== TOOL_NAME_EDIT) {
-        continue;
-      }
-      if (toolResult.isError) {
-        continue;
-      }
-
-      const callDiff = editCallsById.get(toolResult.toolCallId);
-      if (!callDiff) {
-        continue;
-      }
-
-      const info = this.getToolResultContentInfo(toolResult);
-      if (info.firstText?.startsWith(PRUNED_EDIT_RESULT_PREFIX)) {
-        continue;
-      }
-
-      const prunedText = this.buildPrunedEditToolResult(callDiff);
-      const prunedResult: ToolResultMessage = {
-        ...toolResult,
-        content: [{ type: "text", text: prunedText }],
-      };
-      this.engine.replaceMessage(index, prunedResult);
-      this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, prunedText);
-      summary.resultsPruned += 1;
-    }
-
-    return summary;
-  }
-
-  private getToolCallArgumentsObject(argumentsValue: unknown): Record<string, unknown> | undefined {
-    if (argumentsValue && typeof argumentsValue === "object" && !Array.isArray(argumentsValue)) {
-      return argumentsValue as Record<string, unknown>;
-    }
-
-    if (typeof argumentsValue !== "string") {
-      return undefined;
-    }
-
-    try {
-      const parsed = JSON.parse(argumentsValue);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return undefined;
-      }
-      return parsed as Record<string, unknown>;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private buildPrunedEditToolResult(diff: EditPruneCallDiff): string {
-    const diffText = this.buildPrunedEditDiff(diff.oldText, diff.newText);
-    return `${PRUNED_EDIT_RESULT_PREFIX}\n${diffText}`;
-  }
-
-  private buildPrunedEditDiff(oldText: string, newText: string): string {
-    const diff = buildLineDiff(oldText, newText);
-    if (diff.added === 0 && diff.removed === 0) {
-      return "(no textual changes)";
-    }
-
-    const collapsed = collapseLongUnchangedDiffRuns({
-      diffLines: diff.lines,
-      maxUnchangedLines: PRUNE_EDIT_UNCHANGED_CONTEXT_LINES,
-    });
-
-    return collapsed.length > 0 ? collapsed.join("\n") : "(no textual changes)";
-  }
-
-  private buildPrunedToolResultNotice(toolResult: ToolResultMessage, bytes: number): string {
-    const tokenEstimate = formatTokenEstimate(bytes);
-    return `${PRUNED_TOOL_RESULT_PREFIX} ${toolResult.toolName} output removed (${tokenEstimate}). re-run the command if needed.`;
-  }
-
-  private emitToolResultPrunedUiEvent(toolCallId: string, content: string): void {
-    this.view.handleToolUiEvent({
-      type: "tool_pruned",
-      toolCallId,
-      content,
-    });
-  }
-
-  private getToolResultContentInfo(toolResult: ToolResultMessage): {
-    bytes: number;
-    hasImage: boolean;
-    firstText?: string;
-  } {
-    if (typeof toolResult.content === "string") {
-      const text = toolResult.content;
-      return { bytes: Buffer.byteLength(text, "utf8"), hasImage: false, firstText: text };
-    }
-
-    let bytes = 0;
-    let hasImage = false;
-    let firstText: string | undefined;
-
-    if (!Array.isArray(toolResult.content)) {
-      return { bytes, hasImage, firstText };
-    }
-
-    for (const block of toolResult.content) {
-      if (typeof block === "string") {
-        if (firstText === undefined) {
-          firstText = block;
-        }
-        bytes += Buffer.byteLength(block, "utf8");
-        continue;
-      }
-
-      if (block.type === "text") {
-        const text = block.text ?? "";
-        if (firstText === undefined) {
-          firstText = text;
-        }
-        bytes += Buffer.byteLength(text, "utf8");
-        continue;
-      }
-
-      if (block.type === "image") {
-        hasImage = true;
-      }
-    }
-
-    return { bytes, hasImage, firstText };
-  }
-
-  private getToolResultContentDetails(toolResult: ToolResultMessage): {
-    text: string;
-    bytes: number;
-    hasImage: boolean;
-    firstText?: string;
-  } {
-    if (typeof toolResult.content === "string") {
-      const text = (toolResult.content as string).trimEnd();
-      return {
-        text,
-        bytes: Buffer.byteLength(text, "utf8"),
-        hasImage: false,
-        firstText: toolResult.content as string,
-      };
-    }
-
-    const parts: string[] = [];
-    let hasImage = false;
-    let firstText: string | undefined;
-
-    if (!Array.isArray(toolResult.content)) {
-      return { text: "", bytes: 0, hasImage, firstText };
-    }
-
-    for (const block of toolResult.content) {
-      if (typeof block === "string") {
-        if (firstText === undefined) {
-          firstText = block;
-        }
-        parts.push(block);
-        continue;
-      }
-
-      if (block.type === "text") {
-        const text = block.text ?? "";
-        if (firstText === undefined) {
-          firstText = text;
-        }
-        parts.push(text);
-        continue;
-      }
-
-      if (block.type === "image") {
-        hasImage = true;
-      }
-    }
-
-    const text = parts.join("\n").trimEnd();
-    return {
-      text,
-      bytes: Buffer.byteLength(text, "utf8"),
-      hasImage,
-      firstText,
-    };
-  }
-
-  private buildSmartPrunePrompt(args: {
-    history: readonly Message[];
-    targetTokens: number;
-    guidance?: string;
-  }): string {
-    const lines: string[] = [];
-    lines.push(`Target pruning token budget: ${args.targetTokens}`);
-    lines.push(
-      [
-        "The budget is the total tokens to prune.",
-        "It is better to slightly exceed it than to be significantly below it.",
-      ].join(" "),
-    );
-    lines.push(
-      'Return only JSON: {"prune":[...]} with tool_call_id values from the conversation history.',
-    );
-    lines.push("Only include tool_call_id values for bash tool results.");
-    if (args.guidance?.trim()) {
-      lines.push(`Guidance (prioritize this): ${args.guidance.trim()}`);
-    } else {
-      lines.push("Guidance: (none provided, use your best judgment)");
-    }
-    lines.push("");
-    lines.push("Conversation history:");
-    lines.push("<conversation>");
-    lines.push(...this.formatPruneConversationHistory(args.history));
-    lines.push("</conversation>");
-    return lines.join("\n");
-  }
-
-  private formatPruneConversationHistory(history: readonly Message[]): string[] {
-    const lines: string[] = [];
-
-    for (const message of history) {
-      if (message.role === "user") {
-        lines.push("<user>");
-        this.appendPruneContentLines(lines, message.content);
-        lines.push("</user>");
-        lines.push("");
-        continue;
-      }
-
-      if (message.role === "assistant") {
-        lines.push("<assistant>");
-        const assistant = message as AssistantMessage;
-        for (const block of assistant.content) {
-          if (typeof block === "string") {
-            this.appendPruneText(lines, block);
-            continue;
-          }
-
-          if (block.type === "text") {
-            this.appendPruneText(lines, block.text ?? "");
-            continue;
-          }
-
-          if (block.type === "toolCall") {
-            const toolCall = block as ToolCall;
-            lines.push(this.buildPruneToolCallTag(toolCall));
-          }
-        }
-        lines.push("</assistant>");
-        lines.push("");
-        continue;
-      }
-
-      if (message.role === "toolResult") {
-        const toolResult = message as ToolResultMessage;
-        lines.push(...this.buildPruneToolResultLines(toolResult));
-        lines.push("");
-      }
-    }
-
-    if (lines[lines.length - 1] === "") {
-      lines.pop();
-    }
-
-    return lines;
-  }
-
-  private appendPruneContentLines(lines: string[], content: Message["content"]): void {
-    if (typeof content === "string") {
-      this.appendPruneText(lines, content);
-      return;
-    }
-
-    if (!Array.isArray(content)) {
-      return;
-    }
-
-    for (const block of content) {
-      if (typeof block === "string") {
-        this.appendPruneText(lines, block);
-      } else if (block.type === "text") {
-        this.appendPruneText(lines, block.text ?? "");
-      }
-    }
-  }
-
-  private appendPruneText(lines: string[], text: string): void {
-    const escaped = this.escapeXml(text);
-    const parts = escaped.split(/\r?\n/);
-    for (const part of parts) {
-      lines.push(part);
-    }
-  }
-
-  private buildPruneToolCallTag(toolCall: ToolCall): string {
-    const name = this.escapeXmlAttribute(toolCall.name);
-    const id = this.escapeXmlAttribute(toolCall.id);
-    const argsValue =
-      typeof toolCall.arguments === "string"
-        ? toolCall.arguments
-        : JSON.stringify(toolCall.arguments ?? {});
-    const args = this.escapeXmlAttribute(argsValue);
-    return `<tool-call name="${name}" id="${id}" args="${args}" />`;
-  }
-
-  private buildPruneToolResultLines(toolResult: ToolResultMessage): string[] {
-    const lines: string[] = [];
-    const name = this.escapeXmlAttribute(toolResult.toolName);
-    const toolCallId = this.escapeXmlAttribute(toolResult.toolCallId);
-    const details = this.getToolResultContentDetails(toolResult);
-
-    if (details.hasImage) {
-      lines.push(`<tool-result name="${name}" tool_call_id="${toolCallId}">`);
-      lines.push("<preview>[image omitted]</preview>");
-      lines.push("</tool-result>");
-      return lines;
-    }
-
-    const preview = this.buildPruneToolResultPreview(details.text);
-    lines.push(
-      `<tool-result name="${name}" tool_call_id="${toolCallId}" total_tokens="${preview.totalTokens}">`,
-    );
-    lines.push(`<preview max_tokens="${PRUNE_PREVIEW_MAX_TOKENS}">`);
-    lines.push(...preview.lines);
-    lines.push("</preview>");
-    lines.push("</tool-result>");
-    return lines;
-  }
-
-  private buildPruneToolResultPreview(text: string): {
-    lines: string[];
-    totalTokens: number;
-  } {
-    const normalized = text.trimEnd();
-    const totalBytes = Buffer.byteLength(normalized, "utf8");
-    const totalTokens = bytesToTokens(totalBytes);
-
-    if (totalTokens <= PRUNE_PREVIEW_MAX_TOKENS) {
-      const escaped = this.escapeXml(normalized);
-      const lines = escaped ? escaped.split(/\r?\n/) : [""];
-      return { lines, totalTokens };
-    }
-
-    const head = truncateToBytesFromStart(normalized, tokensToBytes(PRUNE_PREVIEW_MAX_TOKENS));
-    const remainingTokens = Math.max(0, totalTokens - PRUNE_PREVIEW_MAX_TOKENS);
-    const suffix = `…${remainingTokens} more tokens…`;
-    const previewText =
-      head.endsWith("\n") || head === "" ? `${head}${suffix}` : `${head}\n${suffix}`;
-    const escaped = this.escapeXml(previewText);
-    const lines = escaped ? escaped.split(/\r?\n/) : [""];
-    return { lines, totalTokens };
-  }
-
-  private selectSmartPruneCandidates(
-    ids: string[],
-    candidates: ToolResultPruneCandidate[],
-    targetTokens: number,
-  ): ToolResultPruneCandidate[] {
-    const candidatesById = new Map<string, ToolResultPruneCandidate>();
-    for (const candidate of candidates) {
-      candidatesById.set(candidate.toolResult.toolCallId, candidate);
-    }
-
-    const selected: ToolResultPruneCandidate[] = [];
-    const seen = new Set<string>();
-    let tokens = 0;
-
-    const maxTokens = Math.ceil(targetTokens * (1 + PRUNE_MAX_OVERAGE_RATIO));
-
-    for (const id of ids) {
-      if (seen.has(id)) continue;
-      const candidate = candidatesById.get(id);
-      if (!candidate) continue;
-      if (tokens + candidate.tokens > maxTokens) continue;
-      selected.push(candidate);
-      seen.add(id);
-      tokens += candidate.tokens;
-      if (tokens >= targetTokens) {
-        break;
-      }
-    }
-
-    return selected;
+    await this.maintenanceService.pruneToolResultsSmart(extra);
   }
 
   private async requestSmartPruneSelection(
@@ -3314,7 +2413,7 @@ export class ChatController {
       this.stopTurnTimer();
       this.isStreaming = false;
       this.view.clearToolUiTransientState();
-      this.pendingIdleNotification = true;
+      this.queuedMessageBuffer.markPendingIdleNotification();
       this.view.requestRender();
       if (runResult.aborted) {
         this.dequeueQueuedUserMessagesIntoEditor();

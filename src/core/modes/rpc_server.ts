@@ -175,7 +175,7 @@ export class RpcServer {
         return undefined;
       }
 
-      if (this.pendingSessionMutations > 0 || this.activeSubmit || this.runtime.isTurnRunning) {
+      if (this.activeSubmit || this.runtime.isTurnRunning) {
         this.sendSubmitBusy(request.id);
         return undefined;
       }

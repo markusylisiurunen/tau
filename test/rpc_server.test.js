@@ -397,6 +397,37 @@ describe("rpc_server", () => {
     });
   });
 
+  it("allows submit to start when it arrives before a mutating request", async () => {
+    const harness = createHarness();
+
+    await Promise.all([
+      harness.server.handleLine(request("submit", "session.submit", { text: "before reset" })),
+      harness.server.handleLine(request("reset", "session.reset", {})),
+    ]);
+
+    const submit = harness.lines.find((line) => line.type === "response" && line.id === "submit");
+    expect(submit).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          userHistoryEntryId: "history-1",
+          turn: { aborted: true },
+        },
+      }),
+    );
+
+    const reset = harness.lines.find((line) => line.type === "response" && line.id === "reset");
+    expect(reset).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          previousSessionId: "session-1",
+          sessionId: "session-2",
+        },
+      }),
+    );
+  });
+
   it("returns busy for submit when a mutating request is in progress", async () => {
     const harness = createHarness();
 

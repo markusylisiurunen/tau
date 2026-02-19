@@ -169,6 +169,73 @@ describe("core session rewind APIs", () => {
   });
 });
 
+describe("core session model notices", () => {
+  function getUserText(session, index) {
+    const message = session.history[index];
+    if (message?.role !== "user") {
+      return "";
+    }
+
+    const textBlock = message.content.find((block) => block.type === "text");
+    return textBlock?.text ?? "";
+  }
+
+  it("prepends configured model notice to user messages", () => {
+    const backend = createLocalToolExecutionBackend();
+    const toolRegistry = ToolCatalog.createRegistry(backend);
+    const persona = personas.find((entry) => entry.model.provider === "openai");
+    expect(persona).toBeDefined();
+
+    const session = new CoreSession({
+      persona,
+      systemPrompt: "system",
+      subagentPrompts: {},
+      riskLevel: "read-only",
+      toolRegistry,
+      config: {
+        modelSystemNotices: {
+          [`${persona.model.provider}/${persona.model.id}`]: "always use tau tools",
+        },
+      },
+    });
+
+    session.addUserText("hello");
+
+    expect(getUserText(session, 0)).toBe("<system>always use tau tools</system>\n\nhello");
+    expect(session.listRewindCandidates().map((candidate) => candidate.text)).toEqual(["hello"]);
+  });
+
+  it("switches notice based on current persona model", () => {
+    const backend = createLocalToolExecutionBackend();
+    const toolRegistry = ToolCatalog.createRegistry(backend);
+    const openaiPersona = personas.find((entry) => entry.model.provider === "openai");
+    const anthropicPersona = personas.find((entry) => entry.model.provider === "anthropic");
+    expect(openaiPersona).toBeDefined();
+    expect(anthropicPersona).toBeDefined();
+
+    const session = new CoreSession({
+      persona: openaiPersona,
+      systemPrompt: "system",
+      subagentPrompts: {},
+      riskLevel: "read-only",
+      toolRegistry,
+      config: {
+        modelSystemNotices: {
+          [`${openaiPersona.model.provider}/${openaiPersona.model.id}`]: "openai notice",
+          [`${anthropicPersona.model.provider}/${anthropicPersona.model.id}`]: "anthropic notice",
+        },
+      },
+    });
+
+    session.addUserText("message one");
+    session.setPersona(anthropicPersona, "system two", {});
+    session.addUserText("message two");
+
+    expect(getUserText(session, 0)).toBe("<system>openai notice</system>\n\nmessage one");
+    expect(getUserText(session, 1)).toBe("<system>anthropic notice</system>\n\nmessage two");
+  });
+});
+
 describe("context builder", () => {
   it("renders environment and project context blocks", () => {
     const tag = buildEnvironmentTag({

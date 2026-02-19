@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
-import type { KnownProvider } from "@mariozechner/pi-ai";
+import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { type RiskLevel, RiskLevelSchema } from "../types.js";
+import { normalizeModelNoticeKey, parseModelNoticeKey } from "../utils/model_notices.js";
 import { isRecord } from "../utils/type_guards.js";
 import type { BashCommand } from "./bash_commands.js";
 import { parseBashCommands } from "./bash_commands.js";
@@ -30,6 +31,7 @@ export interface Config {
   subagents?: {
     defaultLaunchModels?: string[];
   };
+  modelSystemNotices?: Record<string, string>;
   async?: AsyncConfig;
 }
 
@@ -211,6 +213,12 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
   }
   errors.push(...subagentsResult.errors);
 
+  const modelSystemNoticesResult = parseModelSystemNotices(data.modelSystemNotices, sourceLabel);
+  if (modelSystemNoticesResult.notices) {
+    config.modelSystemNotices = modelSystemNoticesResult.notices;
+  }
+  errors.push(...modelSystemNoticesResult.errors);
+
   const asyncResult = parseAsyncConfig(data.async, sourceLabel);
   if (asyncResult.config) {
     config.async = asyncResult.config;
@@ -364,6 +372,73 @@ function parseSubagentsConfig(
   }
 
   return { config, errors };
+}
+
+function parseModelNoticeTarget(rawKey: string): { normalizedKey?: string; error?: string } {
+  const parsedKey = parseModelNoticeKey(rawKey);
+  if (!parsedKey) {
+    return { error: "must use keys in format '<provider>/<model>'" };
+  }
+
+  const provider = parsedKey.provider as KnownProvider;
+  if (!getProviders().includes(provider)) {
+    return { error: `unknown provider '${parsedKey.provider}'` };
+  }
+
+  const model = getModels(provider).find(
+    (candidate) => candidate.id.toLowerCase() === parsedKey.modelId.toLowerCase(),
+  );
+  if (!model) {
+    return {
+      error: `unknown model '${parsedKey.provider}/${parsedKey.modelId}'`,
+    };
+  }
+
+  return {
+    normalizedKey: normalizeModelNoticeKey(provider, model.id),
+  };
+}
+
+function parseModelSystemNotices(
+  raw: unknown,
+  sourceLabel: string,
+): { notices?: Record<string, string>; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { errors: [`${sourceLabel}: 'modelSystemNotices' must be an object.`] };
+  }
+
+  const data = raw as Record<string, unknown>;
+  const notices: Record<string, string> = {};
+  const errors: string[] = [];
+
+  for (const [rawKey, rawValue] of Object.entries(data)) {
+    const parsedKey = parseModelNoticeTarget(rawKey);
+    if (parsedKey.error || !parsedKey.normalizedKey) {
+      errors.push(
+        `${sourceLabel}: modelSystemNotices.${rawKey} ${parsedKey.error ?? "is invalid"}.`,
+      );
+      continue;
+    }
+
+    if (typeof rawValue !== "string" || !rawValue.trim()) {
+      errors.push(
+        `${sourceLabel}: modelSystemNotices.${rawKey} must be a non-empty string notice.`,
+      );
+      continue;
+    }
+
+    notices[parsedKey.normalizedKey] = rawValue.trim();
+  }
+
+  if (Object.keys(notices).length === 0) {
+    return { errors };
+  }
+
+  return { notices, errors };
 }
 
 function isPositiveInteger(value: unknown): value is number {
@@ -604,6 +679,20 @@ function mergeSubagentsConfig(
   return merged;
 }
 
+function mergeModelSystemNotices(
+  target: Config["modelSystemNotices"] | undefined,
+  overlay: Config["modelSystemNotices"] | undefined,
+): Config["modelSystemNotices"] | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  return {
+    ...(target ?? {}),
+    ...(overlay ?? {}),
+  };
+}
+
 function mergeAsyncClientTarget(
   target: AsyncClientTargetConfig | undefined,
   overlay: AsyncClientTargetConfig | undefined,
@@ -723,6 +812,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let apiKeys: Config["apiKeys"] | undefined;
   let sandbox: SandboxConfig | undefined;
   let subagents: Config["subagents"] | undefined;
+  let modelSystemNotices: Config["modelSystemNotices"] | undefined;
   let asyncConfig: AsyncConfig | undefined;
   const bashCommands = new Map<string, BashCommand>();
   const agentContextFiles: string[] = [];
@@ -734,6 +824,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     apiKeys = mergeApiKeys(apiKeys, config.apiKeys);
     sandbox = mergeSandboxConfig(sandbox, config.sandbox);
     subagents = mergeSubagentsConfig(subagents, config.subagents);
+    modelSystemNotices = mergeModelSystemNotices(modelSystemNotices, config.modelSystemNotices);
     asyncConfig = mergeAsyncConfig(
       asyncConfig,
       config.async ? resolveAsyncConfig(level, config.async) : undefined,
@@ -780,6 +871,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (subagents && Object.keys(subagents).length > 0) {
     merged.subagents = subagents;
+  }
+
+  if (modelSystemNotices && Object.keys(modelSystemNotices).length > 0) {
+    merged.modelSystemNotices = modelSystemNotices;
   }
 
   if (asyncConfig && Object.keys(asyncConfig).length > 0) {

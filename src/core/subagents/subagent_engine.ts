@@ -24,6 +24,7 @@ import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import { extractAssistantText } from "../utils/messages.js";
+import { prependModelNotice, resolveModelNotice } from "../utils/model_notices.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import {
@@ -116,9 +117,13 @@ export async function runSubagent(options: {
   const allowedTools = runtimeConfig.tools;
   const toolRegistry = buildToolRegistryForAllowedTools(allowedTools, config, backend);
   const messages = options.messages ?? [];
+  const promptWithModelNotice = prependModelNotice(
+    prompt,
+    resolveModelNotice(config, runtimeConfig.model),
+  );
   messages.push({
     role: "user",
-    content: [{ type: "text", text: prompt }],
+    content: [{ type: "text", text: promptWithModelNotice }],
     timestamp: Date.now(),
   });
 

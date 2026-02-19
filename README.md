@@ -300,7 +300,7 @@ tau comes with several built-in personas across different models:
 - **GPT-5.2** (OpenAI): chat and coder variants
 - **GPT-5.3-Codex** (OpenAI): coder-only variant for ChatGPT Plus/Pro subscriptions (`gpt-5.3-codex-chatgpt`)
 - **GPT-5.2-Codex** (OpenAI API): coder-only variant for direct API access (`gpt-5.2-codex-api`)
-- **Gemini 3 Pro** and **Gemini 3 Flash** (Google): chat variants only
+- **Gemini 3.1 Pro** and **Gemini 3 Flash** (Google): chat variants only
 
 chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.
 

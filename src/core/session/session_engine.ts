@@ -22,6 +22,7 @@ import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import { extractAssistantText } from "../utils/messages.js";
+import { prependModelNotice, resolveModelNotice } from "../utils/model_notices.js";
 import { streamModel } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
@@ -181,10 +182,15 @@ export class SessionEngine {
   }
 
   addUserText(textForModel: string, options?: { historyEntryId?: string }): string {
+    const textWithModelNotice = prependModelNotice(
+      textForModel,
+      resolveModelNotice(this.config, this.persona.model),
+    );
+
     return this.addMessage(
       {
         role: "user",
-        content: [{ type: "text", text: textForModel }],
+        content: [{ type: "text", text: textWithModelNotice }],
         timestamp: this.deps.clock.now(),
       },
       options,

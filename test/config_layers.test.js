@@ -119,6 +119,10 @@ describe("loadConfig", () => {
           subagents: {
             defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
           },
+          modelSystemNotices: {
+            "openai/gpt-5.2": "global codex notice",
+            "anthropic/claude-sonnet-4-5": "global anthropic notice",
+          },
         }),
       );
 
@@ -135,6 +139,9 @@ describe("loadConfig", () => {
           agentContextFiles: ["docs/AGENTS.md"],
           subagents: {
             defaultLaunchModels: ["openai/gpt-5.2:high"],
+          },
+          modelSystemNotices: {
+            "openai/gpt-5.2": "repo codex notice",
           },
         }),
       );
@@ -181,6 +188,10 @@ describe("loadConfig", () => {
       ]);
       expect(config.subagents).toEqual({
         defaultLaunchModels: ["openai/gpt-5.2:high"],
+      });
+      expect(config.modelSystemNotices).toEqual({
+        "openai/gpt-5.2": "repo codex notice",
+        "anthropic/claude-sonnet-4-5": "global anthropic notice",
       });
     } finally {
       fx.cleanup();
@@ -285,6 +296,39 @@ describe("loadConfig", () => {
       expect(result.errors.some((error) => error.includes("subagents.defaultLaunchModels"))).toBe(
         true,
       );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("validates modelSystemNotices keys and values", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          modelSystemNotices: {
+            "openai/gpt-5.2": "always use tau tools",
+            "openai/does-not-exist": "unknown model",
+            "not-a-model-key": "bad key",
+            "anthropic/claude-sonnet-4-5": "   ",
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const result = loadConfigWithDiagnostics(fx.repo, deps);
+      expect(result.config.modelSystemNotices).toEqual({
+        "openai/gpt-5.2": "always use tau tools",
+      });
+      expect(result.errors.some((error) => error.includes("modelSystemNotices"))).toBe(true);
     } finally {
       fx.cleanup();
     }

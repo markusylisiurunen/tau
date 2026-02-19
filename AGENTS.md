@@ -167,7 +167,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `bashCommands`, `agentContextFiles`, `sandbox`, `async`). This level is only included when cwd is inside home.
+- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `bashCommands`, `agentContextFiles`, `sandbox`, `subagents`, `modelSystemNotices`, `async`). This level is only included when cwd is inside home.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
   - `apiKeys.mistral` (optional): Mistral API key for `/speak` and Telegram audio transcription.
   - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Overridden by `--persona` flag.
@@ -177,10 +177,11 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.
   - `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Defaults to `gold`.
   - `subagents.defaultLaunchModels` (optional): Allowlisted `spawn_agent` launch overrides for the built-in `default` subagent (`<provider>/<model>:<effort>` entries).
+  - `modelSystemNotices` (optional): Map of `<provider>/<model>` to notice text. Tau prepends the notice as a `<system>` block before each user message sent to that model (main session and subagents).
   - `async.client` (optional): Async client config (`defaultTarget`, `defaultProjectId`, `targets.<id>.url`, `targets.<id>.token`, `targets.<id>.timeoutMs`).
   - daemon-side async settings are loaded from a separate JSON file passed via `tau async daemon --config-file <path>` (`host`, `port`, `authToken`, `maxSessions`, `telegram` (single bot object or map by bot id, with optional `allowedProjectIds`; sessions are bot-scoped), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `systemMessage`, and project fields like `workingDirectory`, `description`, `bootstrapCommands`, and `backgroundBootstrapCommands`). On daemon startup, Tau removes existing entries under configured async workspace roots (`workspaceRoot` plus any per-project overrides) before adapters start, and the Telegram adapter prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Assume zero or one async daemon process per host; concurrent daemons are unsupported.
 
-- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `sandbox`, and `async.client` merge per field; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
+- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `sandbox`, `modelSystemNotices`, and `async.client` merge per field; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`). Each command runs with cwd set to the config level root (same root used to resolve `agentContextFiles`).
 

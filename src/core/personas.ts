@@ -223,10 +223,10 @@ const PERSONA_SPECS: PersonaSpec[] = [
     settings: { reasoning: "medium" },
   },
   {
-    id: "gemini-3-pro",
-    description: "Gemini 3 Pro",
-    model: getModel("google", "gemini-3-pro-preview"),
-    allowedReasoningLevels: ["low", "high"],
+    id: "gemini-3.1-pro",
+    description: "Gemini 3.1 Pro",
+    model: getModel("google", "gemini-3.1-pro-preview"),
+    allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "low" },
   },
   {

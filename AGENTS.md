@@ -151,7 +151,7 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 
 ## Personas and subagents
 
-**Built-in**: 8 personas total: Claude Opus 4.6 (chat, coder), GPT-5.2 (chat, coder), GPT-5.3-Codex ChatGPT (coder), GPT-5.2-Codex API (coder), Gemini 3 Pro (chat), Gemini 3 Flash (chat). Built-in personas include the **default** subagent (general-purpose, trigger: explicit) unless it is explicitly disabled. Built-in personas have `skills: "*"` to enable all discovered skills by default. See trigger sensitivity below for how subagent and skill activation is controlled.
+**Built-in**: 8 personas total: Claude Opus 4.6 (chat, coder), GPT-5.2 (chat, coder), GPT-5.3-Codex ChatGPT (coder), GPT-5.2-Codex API (coder), Gemini 3.1 Pro (chat), Gemini 3 Flash (chat). Built-in personas include the **default** subagent (general-purpose, trigger: explicit) unless it is explicitly disabled. Built-in personas have `skills: "*"` to enable all discovered skills by default. See trigger sensitivity below for how subagent and skill activation is controlled.
 
 Personas can be defined at user level (`~/.config/tau/personas/*.md`) and project level (`.tau/personas/*.md`). Both use YAML frontmatter with required fields `id`, `provider`, `model` and optional fields. The persona file name (without `.md`) must match the `id`.
 

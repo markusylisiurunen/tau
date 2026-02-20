@@ -375,11 +375,7 @@ export class RpcServer {
 
   private resolveEventRequestId(event: CoreEvent): RpcRequestId | undefined {
     if (event.type === "subagent_ui") {
-      const originHistoryEntryId = event.originHistoryEntryId;
-      if (originHistoryEntryId) {
-        return this.submitRequestByUserHistoryEntryId.get(originHistoryEntryId);
-      }
-      return this.activeSubmitRequestId;
+      return this.submitRequestByUserHistoryEntryId.get(event.originHistoryEntryId);
     }
 
     return this.activeSubmitRequestId;

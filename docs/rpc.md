@@ -227,7 +227,7 @@ notes:
 
 - events tied to `session.submit` include `requestId`.
 - `subagent_ui` events include stable `requestId` correlation to the submit that spawned the subagent run, even when the update arrives during a later submit.
-- subagent core events may also include `originHistoryEntryId` for explicit origin correlation.
+- `subagent_ui` core events include `originHistoryEntryId` for explicit origin correlation.
 - core event payloads follow `src/core/events/types.ts`.
 
 ## errors

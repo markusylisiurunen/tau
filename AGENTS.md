@@ -7,6 +7,17 @@ Terminal-based AI chat client with tool execution, streaming responses, and risk
 - **Supported**: macOS and Linux.
 - **Unsupported**: Windows (do not add Windows support).
 
+## Canonical change policy
+
+Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer explicit, canonical code over compatibility scaffolding at every opportunity. Do not preserve backward compatibility at the cost of clarity; prefer the canonical contract, even when that requires a breaking change.
+
+- New fields/options/attributes should be required by default when call sites can provide them. Only make new properties optional when absence is a real domain state.
+- Do not add fallback branches, migration paths, aliases, legacy shapes, or compatibility shims unless the user explicitly asks for them. If explicitness and a fallback both work, choose explicitness.
+- When changing a contract, update all call sites to the new canonical shape instead of supporting both old and new forms.
+- Keep types tight and explicit so invalid states are unrepresentable.
+- If a required field cannot be produced, fail fast at the boundary instead of silently omitting it.
+- When optional is intentional, document the absent-case behavior and consumer fallback in code and tests.
+
 ## Architecture
 
 - **ChatApp** (`src/tui/app.ts`): Thin wiring between the controller and TUI view adapter
@@ -306,8 +317,6 @@ If you need dependency details (rare), check `references/repos/` first and treat
 **Theme tokens**: Always use semantic palette tokens for UI colors. Do not reuse unrelated tokens for new UI states; add a dedicated token when introducing a new semantic state.
 
 **Formatting**: Do not hand-format code (no manual import sorting or line wrapping). Run `npm run check` and let Biome handle formatting.
-
-**Compatibility**: Tau is pre-v1 and the goal is to have a clean implementation before v1. Do not introduce backwards compatibility layers or legacy support unless the user explicitly asks. Prefer the tightest practical types, require explicit fields when call sites can always provide them instead of using optional properties by default.
 
 **Commit style**: Short, imperative, lowercase subject lines (no prefixes). When explicitly working a GitHub issue with a single commit (no PR), include a closing keyword line (for example, `fixes #123`) in the commit body. If opening a PR, put the closing keyword in the PR body instead of the commit body.
 

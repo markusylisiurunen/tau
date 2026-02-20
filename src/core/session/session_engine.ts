@@ -366,13 +366,11 @@ export class SessionEngine {
 
   private emitSubagentEvent(event: SubagentUiEvent): void {
     const subagentId = this.getSubagentEventId(event);
-    const originHistoryEntryId = subagentId
-      ? this.subagentControlPlane.getOriginHistoryEntryId(subagentId)
-      : undefined;
+    const originHistoryEntryId = this.subagentControlPlane.getOriginHistoryEntryId(subagentId);
     const coreEvent: CoreSubagentUiEvent = {
       type: "subagent_ui",
       event,
-      ...(originHistoryEntryId ? { originHistoryEntryId } : {}),
+      originHistoryEntryId,
     };
     this.emitEvent(coreEvent);
   }
@@ -395,7 +393,7 @@ export class SessionEngine {
     }
   }
 
-  private getCurrentTurnUserHistoryEntryId(): string | undefined {
+  private getCurrentTurnUserHistoryEntryId(): string {
     for (let i = this.historyEntries.length - 1; i >= 0; i -= 1) {
       const entry = this.historyEntries[i];
       if (entry?.message.role === "user") {
@@ -403,7 +401,7 @@ export class SessionEngine {
       }
     }
 
-    return undefined;
+    throw new Error("cannot process turn without a user history entry");
   }
 
   private getStreamingSettings(persona: Persona): TauStreamOptions {

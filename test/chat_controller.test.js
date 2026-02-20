@@ -116,6 +116,7 @@ function createController(view, options = {}) {
     prompts: options.prompts ?? [],
     skills: options.skills ?? [],
     bashCommands: options.bashCommands ?? [],
+    queuedUserMessages: options.queuedUserMessages ?? [],
     initialPersonaId: options.initialPersonaId,
     config: options.config ?? {},
     sandboxEnabled: options.sandboxEnabled ?? false,
@@ -285,9 +286,8 @@ describe("ChatController interrupt handling", () => {
 
   it("keeps interrupted turn cleanup parity with runtime-driven aborts", async () => {
     const stub = createStubView();
-    const controller = createController(stub.view);
-
-    controller.queuedUserMessages.push("queued one", "queued two");
+    const queuedUserMessages = ["queued one", "queued two"];
+    const controller = createController(stub.view, { queuedUserMessages });
 
     const runSpy = vi.spyOn(controller.runtime, "runTurn").mockResolvedValue({ aborted: true });
 
@@ -296,7 +296,7 @@ describe("ChatController interrupt handling", () => {
     expect(runSpy).toHaveBeenCalledTimes(1);
     expect(stub.finalizeToolUiPendingCalls).toEqual(["aborted"]);
     expect(stub.clearToolUiTransientStateCallCount).toBe(1);
-    expect(controller.queuedUserMessages).toEqual([]);
+    expect(queuedUserMessages).toEqual([]);
     expect(stub.editorTextUpdates.at(-1)).toBe("queued one\n\n---\n\nqueued two");
   });
 });
@@ -399,18 +399,18 @@ describe("ChatController caffeinate", () => {
 describe("ChatController queued message draining", () => {
   it("drains queued user messages in order", async () => {
     const stub = createStubView();
-    const controller = createController(stub.view);
+    const queuedUserMessages = ["first", "second"];
+    const controller = createController(stub.view, { queuedUserMessages });
 
     const calls = [];
     controller.onUserInput = async (text) => {
       calls.push(text);
     };
 
-    controller.queuedUserMessages.push("first", "second");
     await controller.drainQueuedUserMessages();
 
     expect(calls).toEqual(["first", "second"]);
-    expect(controller.queuedUserMessages.length).toBe(0);
+    expect(queuedUserMessages.length).toBe(0);
   });
 });
 
@@ -985,6 +985,32 @@ describe("ChatController maintenance interrupt handling", () => {
 
     expect(stub.systemMessages).toContainEqual({ text: "interrupted", kind: "error" });
     expect(stub.systemMessages.some((entry) => entry.text.startsWith("prune failed:"))).toBe(false);
+  });
+
+  it("reports maintenance failures before draining queued user input", async () => {
+    const stub = createStubView();
+    const queuedUserMessages = ["next message"];
+    const controller = createController(stub.view, { queuedUserMessages });
+    const events = [];
+
+    const addSystemMessage = stub.view.addSystemMessage;
+    stub.view.addSystemMessage = (text, kind) => {
+      events.push(`message:${text}`);
+      addSystemMessage(text, kind);
+    };
+    controller.onUserInput = async (text) => {
+      events.push(`drain:${text}`);
+    };
+
+    vi.spyOn(controller.engine, "compact").mockRejectedValue(new Error("boom"));
+
+    await controller.compactSessionSummaryOnly();
+
+    const failureIndex = events.indexOf("message:compact failed: boom");
+    const drainIndex = events.indexOf("drain:next message");
+    expect(failureIndex).toBeGreaterThanOrEqual(0);
+    expect(drainIndex).toBeGreaterThanOrEqual(0);
+    expect(failureIndex).toBeLessThan(drainIndex);
   });
 });
 

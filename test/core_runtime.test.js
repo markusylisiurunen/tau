@@ -260,6 +260,8 @@ describe("runtime prompt bootstrap", () => {
     const repo = join(home, "repo");
     const repoAgents = join(repo, "AGENTS.md");
     const homeAgents = join(home, "AGENTS.md");
+    const inScopeSkillPath = join(repo, ".tau", "skills", "in-scope", "SKILL.md");
+    const outOfScopeSkillPath = join(home, ".config", "tau", "skills", "out-of-scope", "SKILL.md");
 
     try {
       mkdirSync(join(repo, ".tau", "skills", "in-scope"), { recursive: true });
@@ -268,6 +270,16 @@ describe("runtime prompt bootstrap", () => {
       });
       writeFileSync(repoAgents, "# repo agents\nrepo only\n", "utf-8");
       writeFileSync(homeAgents, "# home agents\nhome only\n", "utf-8");
+      writeFileSync(
+        inScopeSkillPath,
+        "---\nname: in-scope\ndescription: project skill\n---\n",
+        "utf-8",
+      );
+      writeFileSync(
+        outOfScopeSkillPath,
+        "---\nname: out-of-scope\ndescription: home skill\n---\n",
+        "utf-8",
+      );
 
       const persona = {
         id: "test-persona",
@@ -285,12 +297,12 @@ describe("runtime prompt bootstrap", () => {
           {
             name: "in-scope",
             description: "project skill",
-            path: join(repo, ".tau", "skills", "in-scope", "SKILL.md"),
+            path: inScopeSkillPath,
           },
           {
             name: "out-of-scope",
             description: "home skill",
-            path: join(home, ".config", "tau", "skills", "out-of-scope", "SKILL.md"),
+            path: outOfScopeSkillPath,
           },
         ],
         cwd: repo,

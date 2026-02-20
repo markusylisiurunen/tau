@@ -126,4 +126,34 @@ describe("SessionMaintenanceService", () => {
     expect(viewMessages.at(-1)).toEqual({ text: "prune failed: sampling failed", kind: "error" });
     expect(toolUiEvents).toEqual([]);
   });
+
+  it("handles malformed assistant entries while building smart prune prompts", async () => {
+    const history = [
+      {
+        role: "assistant",
+        content: null,
+        timestamp: 1,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "bash-call-1",
+        toolName: TOOL_NAME_BASH,
+        content: [{ type: "text", text: "bash output" }],
+        isError: false,
+        timestamp: 2,
+      },
+    ];
+
+    const { service, viewMessages } = createService({
+      history,
+      requestSmartPruneSelection: async () => [],
+    });
+
+    await expect(service.pruneToolResultsSmart()).resolves.toBeUndefined();
+
+    expect(viewMessages.at(-1)).toEqual({
+      text: "model returned no prune candidates.",
+      kind: "warn",
+    });
+  });
 });

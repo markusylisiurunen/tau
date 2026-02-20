@@ -205,7 +205,7 @@ export class ChatController {
   private readonly toolBackend: ToolExecutionBackend;
   private readonly toolBackendDispose?: () => Promise<void> | void;
   private readonly deps: CoreDeps;
-  private subagentUnsubscribe?: () => void;
+  private eventUnsubscribe?: () => void;
   private isStreaming = false;
   private readonly queuedMessageBuffer: QueuedUserMessages;
   private readonly interruptLifecycle: InterruptLifecycle;
@@ -336,7 +336,7 @@ export class ChatController {
       deps: this.deps,
     });
     this.engine = this.runtime.session;
-    this.subagentUnsubscribe = this.engine.onSubagentEvent((event) => this.onEvent(event));
+    this.eventUnsubscribe = this.engine.onEvent((event) => this.onEvent(event));
 
     this.maintenanceService = new SessionMaintenanceService({
       engine: this.engine,
@@ -462,7 +462,7 @@ export class ChatController {
   }
 
   async dispose(): Promise<void> {
-    this.subagentUnsubscribe?.();
+    this.eventUnsubscribe?.();
     if (this.speakTransition) {
       await this.speakTransition;
     }
@@ -2406,7 +2406,7 @@ export class ChatController {
     this.beginBusyTask(busyTask);
 
     try {
-      runResult = await this.runtime.runTurn((event) => this.onEvent(event));
+      runResult = await this.runtime.runTurn(() => {});
     } catch (err) {
       const message = (err as Error).message || "request failed";
       this.view.addSystemMessage(message, "error");

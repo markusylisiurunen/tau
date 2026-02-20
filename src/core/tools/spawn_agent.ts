@@ -394,6 +394,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             prompt,
             title,
             modelLabel,
+            originHistoryEntryId: context.turnUserHistoryEntryId,
             config: context.config ?? {},
             authPath: context.authPath,
             backend,

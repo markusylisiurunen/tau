@@ -120,6 +120,7 @@ export function createPlaybackHarness(options = {}) {
     engine.events = async function* (signal) {
       for (const event of events) {
         if (signal?.aborted) return;
+        controller.onEvent(event);
         yield event;
       }
     };

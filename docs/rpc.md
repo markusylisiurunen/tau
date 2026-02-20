@@ -197,7 +197,7 @@ behavior:
 - participates in a server-side mutation queue with `session.reset`
 - interrupts any running turn
 - waits for in-flight submit handling to settle
-- stops forwarding subagent events
+- stops forwarding streamed core events
 - marks rpc server as shut down
 
 concurrent shutdown calls are idempotent (`{ "shutdown": true }`).
@@ -226,7 +226,8 @@ events are wrapped core events:
 notes:
 
 - events tied to `session.submit` include `requestId`.
-- subagent ui events are forwarded too, usually without `requestId`.
+- `subagent_ui` events include stable `requestId` correlation to the submit that spawned the subagent run, even when the update arrives during a later submit.
+- subagent core events may also include `originHistoryEntryId` for explicit origin correlation.
 - core event payloads follow `src/core/events/types.ts`.
 
 ## errors

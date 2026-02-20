@@ -36,6 +36,7 @@ export type CoreToolUiEvent = {
 export type CoreSubagentUiEvent = {
   type: "subagent_ui";
   event: SubagentUiEvent;
+  originHistoryEntryId?: string;
 };
 
 export type CoreToolResultEvent = {

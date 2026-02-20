@@ -87,17 +87,16 @@ export function parseSubagentLaunchModelList(raw: unknown): {
     return {};
   }
 
-  const values = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : undefined;
-  if (!values) {
-    return { error: "must be a string or list of strings" };
+  if (!Array.isArray(raw)) {
+    return { error: "must be a list of strings" };
   }
 
   const normalized: string[] = [];
   const seen = new Set<string>();
 
-  for (const entry of values) {
+  for (const entry of raw) {
     if (typeof entry !== "string") {
-      return { error: "must be a string or list of strings" };
+      return { error: "must be a list of strings" };
     }
 
     const parsed = parseSubagentLaunchModel(entry);

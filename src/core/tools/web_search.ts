@@ -79,40 +79,28 @@ export const WEB_SEARCH_TOOL: Tool = {
 };
 
 const webSearchArgsSchema = z.object({
-  objective: z.string().trim().catch(""),
-  searchQueries: z
-    .array(z.string().trim())
-    .transform((queries) => queries.filter(Boolean))
-    .optional()
-    .catch(undefined),
-  maxResults: z.number().int().min(1).max(50).optional().catch(undefined),
-  maxCharsPerResult: z.number().int().min(200).max(50_000).optional().catch(undefined),
-  includeDomains: z
-    .array(z.string().trim())
-    .transform((domains) => domains.filter(Boolean))
-    .optional()
-    .catch(undefined),
-  excludeDomains: z
-    .array(z.string().trim())
-    .transform((domains) => domains.filter(Boolean))
-    .optional()
-    .catch(undefined),
+  objective: z.string().trim().min(1),
+  searchQueries: z.array(z.string().trim().min(1)).min(1).optional(),
+  maxResults: z.number().int().min(1).max(50).optional(),
+  maxCharsPerResult: z.number().int().min(200).max(50_000).optional(),
+  includeDomains: z.array(z.string().trim().min(1)).min(1).optional(),
+  excludeDomains: z.array(z.string().trim().min(1)).min(1).optional(),
 });
 
 type WebSearchArgs = z.infer<typeof webSearchArgsSchema>;
 
 const searchResultSchema = z
   .object({
-    url: z.string().catch(""),
-    title: z.string().nullable().optional().catch(undefined),
-    publish_date: z.string().nullable().optional().catch(undefined),
-    excerpts: z.array(z.string()).nullable().optional().catch(undefined),
+    url: z.string().min(1),
+    title: z.string().nullable().optional(),
+    publish_date: z.string().nullable().optional(),
+    excerpts: z.array(z.string()).nullable().optional(),
   })
   .passthrough();
 
 const parallelSearchResponseSchema = z
   .object({
-    results: z.array(searchResultSchema).catch([]),
+    results: z.array(searchResultSchema),
     warnings: z.unknown().optional(),
     usage: z.unknown().optional(),
   })
@@ -122,26 +110,12 @@ type ParallelSearchResponse = z.infer<typeof parallelSearchResponseSchema>;
 
 type SearchResult = ParallelSearchResponse["results"][number];
 
-function parseArgs(raw: unknown): WebSearchArgs {
+function parseArgs(raw: unknown): { ok: true; data: WebSearchArgs } | { ok: false; error: string } {
   const parsed = webSearchArgsSchema.safeParse(raw);
   if (!parsed.success) {
-    return { objective: "" };
+    return { ok: false, error: formatZodError(parsed.error) };
   }
-
-  const args = parsed.data;
-  const objective = args.objective.trim();
-  const searchQueries = args.searchQueries?.map((q) => q.trim()).filter(Boolean);
-  const includeDomains = args.includeDomains?.map((d) => d.trim()).filter(Boolean);
-  const excludeDomains = args.excludeDomains?.map((d) => d.trim()).filter(Boolean);
-
-  return {
-    objective,
-    ...(searchQueries && searchQueries.length > 0 && { searchQueries }),
-    ...(args.maxResults !== undefined && { maxResults: args.maxResults }),
-    ...(args.maxCharsPerResult !== undefined && { maxCharsPerResult: args.maxCharsPerResult }),
-    ...(includeDomains && includeDomains.length > 0 && { includeDomains }),
-    ...(excludeDomains && excludeDomains.length > 0 && { excludeDomains }),
-  };
+  return { ok: true, data: parsed.data };
 }
 
 function estimateParallelSearchCostUsd(
@@ -207,24 +181,27 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
       _riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const args = parseArgs(toolCall.arguments);
-      const headerTarget = args.objective || "(missing objective)";
+      const parsedArgs = parseArgs(toolCall.arguments);
+      const objective = parsedArgs.ok ? parsedArgs.data.objective : "";
+      const headerTarget = objective || "(invalid arguments)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "web_search_finished",
           toolCallId: toolCall.id,
-          objective: args.objective || "(missing objective)",
+          objective: objective || "(invalid objective)",
           headerTarget,
           status: "error",
         };
         return { kind: "single", toolResult, uiEvent };
       };
 
-      if (!args.objective) {
-        return blocked("missing required parameter 'objective'.");
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
+
+      const args = parsedArgs.data;
 
       const apiKey = getParallelApiKey(config);
       if (!apiKey) {

@@ -190,7 +190,7 @@ type PersonaSpec = {
   model: Persona["model"];
   allowedReasoningLevels: NonNullable<Persona["allowedReasoningLevels"]>;
   settings: Persona["settings"];
-  skills?: string[] | "*";
+  skills: string[] | "*";
 };
 
 const PERSONA_SPECS: PersonaSpec[] = [
@@ -200,6 +200,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("anthropic", "claude-opus-4-6"),
     allowedReasoningLevels: ["low", "high", "xhigh"],
     settings: { reasoning: "high" },
+    skills: "*",
   },
   {
     id: "gpt-5.2",
@@ -207,6 +208,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("openai", "gpt-5.2"),
     allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
+    skills: "*",
   },
   {
     id: "gpt-5.3-codex-chatgpt",
@@ -214,6 +216,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("openai-codex", "gpt-5.3-codex"),
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
+    skills: "*",
   },
   {
     id: "gpt-5.2-codex-api",
@@ -221,6 +224,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("openai", "gpt-5.2-codex"),
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
+    skills: "*",
   },
   {
     id: "gemini-3.1-pro",
@@ -228,6 +232,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("google", "gemini-3.1-pro-preview"),
     allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "low" },
+    skills: "*",
   },
   {
     id: "gemini-3-flash",
@@ -235,6 +240,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
     model: getModel("google", "gemini-3-flash-preview"),
     allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "medium" },
+    skills: "*",
   },
 ];
 
@@ -260,7 +266,7 @@ const SUBAGENT_TOOLS: NonNullable<Persona["tools"]> = [
 
 function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   const config = VARIANT_CONFIG[variant];
-  const skills = spec.skills ?? "*";
+  const skills = spec.skills;
   const settings = structuredClone(spec.settings);
   const subagents: SubagentConfigMap = {
     [DEFAULT_SUBAGENT_NAME]: {},

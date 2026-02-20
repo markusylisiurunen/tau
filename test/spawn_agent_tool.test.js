@@ -31,6 +31,7 @@ function createContext(overrides = {}) {
       model: anthropic,
       systemPrompt: "main",
       settings: { reasoning: "low" },
+      skills: "*",
       source: "project",
       subagents: {
         default: {
@@ -52,8 +53,12 @@ function createContext(overrides = {}) {
     cwd: "/repo/current",
     hostCwd: "/repo/current",
     home: "/repo",
+    config: {},
+    toolRegistry: { schemas: [] },
+    authPath: "/tmp/auth.json",
     includeAgentContext: false,
     sandboxEnabled: false,
+    turnUserHistoryEntryId: "history-1",
     subagentControlPlane: {
       spawn: ({ runtimeConfig }) => {
         spawned.push(runtimeConfig);
@@ -303,7 +308,7 @@ describe("spawn_agent tool", () => {
 
     expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
-    expect(getText(result.toolResult)).toContain("model parameter must be a non-empty string");
+    expect(getText(result.toolResult)).toContain("invalid arguments: model:");
     expect(spawned).toHaveLength(0);
   });
 
@@ -330,9 +335,7 @@ describe("spawn_agent tool", () => {
 
     expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
-    expect(getText(result.toolResult)).toContain(
-      "workingDirectory parameter must be a non-empty string",
-    );
+    expect(getText(result.toolResult)).toContain("invalid arguments: workingDirectory:");
     expect(spawned).toHaveLength(0);
   });
 

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { SubagentResult } from "../subagents/control_plane.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
+import { formatZodError } from "../utils/zod.js";
 import type {
   ToolDefinition,
   ToolDispatchContext,
@@ -33,12 +34,17 @@ export const TERMINATE_AGENT_TOOL: Tool = {
 };
 
 const terminateArgsSchema = z.object({
-  id: z.string().trim().catch(""),
+  id: z.string().trim().min(1),
 });
 
-function parseTerminateArgs(raw: unknown): { id: string } {
+function parseTerminateArgs(
+  raw: unknown,
+): { ok: true; data: { id: string } } | { ok: false; error: string } {
   const parsed = terminateArgsSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { id: "" };
+  if (!parsed.success) {
+    return { ok: false, error: formatZodError(parsed.error) };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 function formatTerminateResult(result: SubagentResult): string {
@@ -83,11 +89,12 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
     async dispatch(
       toolCall: ToolCall,
       _riskLevel: RiskLevel,
-      signal?: AbortSignal,
-      context?: ToolDispatchContext,
+      signal: AbortSignal,
+      context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { id } = parseTerminateArgs(toolCall.arguments);
-      const headerTarget = id || "(subagent)";
+      const parsedArgs = parseTerminateArgs(toolCall.arguments);
+      const id = parsedArgs.ok ? parsedArgs.data.id : "";
+      const headerTarget = id || "(invalid arguments)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -101,11 +108,11 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
         return { kind: "single", toolResult, uiEvent };
       };
 
-      if (!id) {
-        return blocked("missing 'id' parameter. provide a subagent id to terminate.");
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
 
-      const controlPlane = context?.subagentControlPlane;
+      const controlPlane = context.subagentControlPlane;
       if (!controlPlane) {
         return blocked("subagent control plane is not available.");
       }

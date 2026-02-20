@@ -62,7 +62,6 @@ describe("async daemon runtime", () => {
           "bot-one": {
             botToken: "token-1",
           },
-          "bot-two": {},
         },
       }),
       authToken: "secret",

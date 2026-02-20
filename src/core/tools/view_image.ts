@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
 import { formatBytes } from "../utils/truncate.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
 import { TOOL_NAME_VIEW_IMAGE } from "./tool_names.js";
@@ -38,12 +39,17 @@ export const VIEW_IMAGE_TOOL: Tool = {
 };
 
 const viewImageArgsSchema = z.object({
-  path: z.string().trim().catch(""),
+  path: z.string().trim().min(1),
 });
 
-function parseViewImageArgs(raw: unknown): { path: string } {
+function parseViewImageArgs(
+  raw: unknown,
+): { ok: true; data: { path: string } } | { ok: false; error: string } {
   const parsed = viewImageArgsSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { path: "" };
+  if (!parsed.success) {
+    return { ok: false, error: formatZodError(parsed.error) };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 type SupportedImageType = (typeof SUPPORTED_IMAGE_TYPES)[number];
@@ -223,23 +229,24 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
   return {
     schema: VIEW_IMAGE_TOOL,
     async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
-      const { path } = parseViewImageArgs(toolCall.arguments);
-      const headerTarget = path || "(missing path)";
+      const parsedArgs = parseViewImageArgs(toolCall.arguments);
+      const path = parsedArgs.ok ? parsedArgs.data.path : "";
+      const headerTarget = path || "(invalid arguments)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "view_image_blocked",
           toolCallId: toolCall.id,
-          path: path || "(missing path)",
+          path: path || "(invalid path)",
           headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
       };
 
-      if (!path) {
-        return blocked("missing 'path' parameter.");
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
 
       try {

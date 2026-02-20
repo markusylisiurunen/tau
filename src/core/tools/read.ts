@@ -10,6 +10,7 @@ import {
   truncateForTokens,
   truncateToBytesFromStart,
 } from "../utils/truncate.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -45,18 +46,26 @@ export const READ_TOOL: Tool = {
 };
 
 const readArgsSchema = z.object({
-  path: z.string().trim().catch(""),
+  path: z.string().trim().min(1),
   startLine: z.number().int().positive().optional(),
   endLine: z.number().int().positive().optional(),
 });
 
-function parseReadArgs(raw: unknown): {
-  path: string;
-  startLine?: number;
-  endLine?: number;
-} {
+function parseReadArgs(raw: unknown):
+  | {
+      ok: true;
+      data: {
+        path: string;
+        startLine?: number;
+        endLine?: number;
+      };
+    }
+  | { ok: false; error: string } {
   const parsed = readArgsSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { path: "" };
+  if (!parsed.success) {
+    return { ok: false, error: formatZodError(parsed.error) };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 function formatRange(startLine: number, endLine: number | undefined): string {
@@ -127,32 +136,27 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
   return {
     schema: READ_TOOL,
     async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
-      const { path, startLine, endLine } = parseReadArgs(toolCall.arguments);
-      const headerTarget = path || "(missing path)";
+      const parsedArgs = parseReadArgs(toolCall.arguments);
+      const path = parsedArgs.ok ? parsedArgs.data.path : "";
+      const headerTarget = path || "(invalid arguments)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "read_blocked",
           toolCallId: toolCall.id,
-          path: path || "(missing path)",
+          path: path || "(invalid path)",
           headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
       };
 
-      if (!path) {
-        return blocked("missing 'path' parameter.");
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
 
-      if (startLine !== undefined && startLine < 1) {
-        return blocked("startLine must be >= 1.");
-      }
-
-      if (endLine !== undefined && endLine < 1) {
-        return blocked("endLine must be >= 1.");
-      }
+      const { startLine, endLine } = parsedArgs.data;
 
       if (startLine !== undefined && endLine !== undefined && endLine < startLine) {
         return blocked("endLine must be >= startLine.");

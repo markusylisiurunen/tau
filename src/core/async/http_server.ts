@@ -75,7 +75,12 @@ function decodePathSegment(value: string): string | undefined {
 function parseSessionPath(pathname: string): SessionPathRoute | "invalid" | undefined {
   const sessionMatch = /^\/v1\/sessions\/([^/]+)$/.exec(pathname);
   if (sessionMatch) {
-    const sessionId = decodePathSegment(sessionMatch[1] ?? "");
+    const segment = sessionMatch[1];
+    if (segment === undefined) {
+      return "invalid";
+    }
+
+    const sessionId = decodePathSegment(segment);
     if (!sessionId) {
       return "invalid";
     }
@@ -84,7 +89,12 @@ function parseSessionPath(pathname: string): SessionPathRoute | "invalid" | unde
 
   const logsMatch = /^\/v1\/sessions\/([^/]+)\/logs$/.exec(pathname);
   if (logsMatch) {
-    const sessionId = decodePathSegment(logsMatch[1] ?? "");
+    const segment = logsMatch[1];
+    if (segment === undefined) {
+      return "invalid";
+    }
+
+    const sessionId = decodePathSegment(segment);
     if (!sessionId) {
       return "invalid";
     }
@@ -93,7 +103,12 @@ function parseSessionPath(pathname: string): SessionPathRoute | "invalid" | unde
 
   const messagesMatch = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(pathname);
   if (messagesMatch) {
-    const sessionId = decodePathSegment(messagesMatch[1] ?? "");
+    const segment = messagesMatch[1];
+    if (segment === undefined) {
+      return "invalid";
+    }
+
+    const sessionId = decodePathSegment(segment);
     if (!sessionId) {
       return "invalid";
     }
@@ -102,7 +117,12 @@ function parseSessionPath(pathname: string): SessionPathRoute | "invalid" | unde
 
   const interruptMatch = /^\/v1\/sessions\/([^/]+)\/interrupt$/.exec(pathname);
   if (interruptMatch) {
-    const sessionId = decodePathSegment(interruptMatch[1] ?? "");
+    const segment = interruptMatch[1];
+    if (segment === undefined) {
+      return "invalid";
+    }
+
+    const sessionId = decodePathSegment(segment);
     if (!sessionId) {
       return "invalid";
     }
@@ -123,7 +143,12 @@ function parseCronPath(pathname: string): CronPathRoute | "invalid" | undefined 
 
   const manualRunMatch = /^\/v1\/cron\/jobs\/([^/]+)\/run$/.exec(pathname);
   if (manualRunMatch) {
-    const jobId = decodePathSegment(manualRunMatch[1] ?? "");
+    const segment = manualRunMatch[1];
+    if (segment === undefined) {
+      return "invalid";
+    }
+
+    const jobId = decodePathSegment(segment);
     if (!jobId) {
       return "invalid";
     }
@@ -245,8 +270,18 @@ export async function startAsyncHttpServer(
   const server = createServer((request, response) => {
     void (async () => {
       try {
-        const method = request.method ?? "GET";
-        const url = new URL(request.url ?? "/", `http://${options.host}:${options.port}`);
+        if (typeof request.method !== "string") {
+          sendError(response, 400, "invalid request method");
+          return;
+        }
+
+        if (typeof request.url !== "string") {
+          sendError(response, 400, "invalid request url");
+          return;
+        }
+
+        const method = request.method;
+        const url = new URL(request.url, `http://${options.host}:${options.port}`);
 
         if (url.pathname === "/healthz") {
           sendOk(response, 200, { status: "ok" });

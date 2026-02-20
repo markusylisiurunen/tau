@@ -127,7 +127,7 @@ describe("SessionMaintenanceService", () => {
     expect(toolUiEvents).toEqual([]);
   });
 
-  it("handles malformed assistant entries while building smart prune prompts", async () => {
+  it("fails smart prune when assistant history is malformed", async () => {
     const history = [
       {
         role: "assistant",
@@ -152,8 +152,8 @@ describe("SessionMaintenanceService", () => {
     await expect(service.pruneToolResultsSmart()).resolves.toBeUndefined();
 
     expect(viewMessages.at(-1)).toEqual({
-      text: "model returned no prune candidates.",
-      kind: "warn",
+      text: "prune failed: invalid assistant message content while building smart prune prompt",
+      kind: "error",
     });
   });
 });

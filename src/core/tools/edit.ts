@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { buildLineDiff } from "../utils/line_diff.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -42,14 +43,21 @@ export const EDIT_TOOL: Tool = {
 };
 
 const editArgsSchema = z.object({
-  path: z.string().trim().catch(""),
-  oldText: z.string().catch(""),
-  newText: z.string().catch(""),
+  path: z.string().trim().min(1),
+  oldText: z.string().min(1),
+  newText: z.string(),
 });
 
-function parseEditArgs(raw: unknown): { path: string; oldText: string; newText: string } {
+function parseEditArgs(
+  raw: unknown,
+):
+  | { ok: true; data: { path: string; oldText: string; newText: string } }
+  | { ok: false; error: string } {
   const parsed = editArgsSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { path: "", oldText: "", newText: "" };
+  if (!parsed.success) {
+    return { ok: false, error: formatZodError(parsed.error) };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 function countOccurrences(content: string, search: string): number {
@@ -115,33 +123,32 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
   return {
     schema: EDIT_TOOL,
     async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
-      const { path, oldText, newText } = parseEditArgs(toolCall.arguments);
-      const headerTarget = path || "(missing path)";
+      const parsedArgs = parseEditArgs(toolCall.arguments);
+      const path = parsedArgs.ok ? parsedArgs.data.path : "";
+      const headerTarget = path || "(invalid arguments)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "edit_blocked",
           toolCallId: toolCall.id,
-          path: path || "(missing path)",
+          path: path || "(invalid path)",
           headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
       };
 
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
+      }
+
+      const { oldText, newText } = parsedArgs.data;
+
       if (riskLevel !== "read-write") {
         return blocked(
           `requires risk level 'read-write', but current level is '${riskLevel}'. ask the user to run /risk:read-write.`,
         );
-      }
-
-      if (!path) {
-        return blocked("missing 'path' parameter. provide the file path to edit.");
-      }
-
-      if (!oldText) {
-        return blocked("missing 'oldText' parameter. provide the exact text to find and replace.");
       }
 
       let content: string;

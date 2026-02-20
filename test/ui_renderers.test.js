@@ -18,7 +18,7 @@ function makeUiText(previewText, statusLine, fullText = "") {
 
 test("renderBashRunning (compact) shows command and running status", () => {
   const theme = createTagTheme();
-  const component = renderBashRunning(theme, "ls -la", true);
+  const component = renderBashRunning(theme, "ls -la", true, "ls -la");
   const text = renderText(component, 80);
   expect(text).toContain("<actionRunning>⏵</actionRunning>");
   expect(text).toContain("<brandAccent>ls -la</brandAccent>");
@@ -28,7 +28,7 @@ test("renderBashRunning (compact) shows command and running status", () => {
 test("renderBashExecution (expanded) includes output and exit code", () => {
   const theme = createTagTheme();
   const uiText = makeUiText("    output line", "    (exit 1)", "output line\n\n(exit 1)");
-  const component = renderBashExecution(theme, "echo hi", 1, uiText, false);
+  const component = renderBashExecution(theme, "echo hi", 1, uiText, false, "echo hi");
   const text = renderText(component, 100);
   expect(text).toContain("<actionError><bold>$ echo hi</bold></actionError>");
   expect(text).toContain("<actionOutput>output line");
@@ -42,6 +42,7 @@ test("renderWriteSuccess (compact) shows preview lines", () => {
     "notes.txt",
     makeUiText("first\nsecond", "2 lines", "first\nsecond"),
     true,
+    "notes.txt",
   );
   const text = renderText(component, 80);
   expect(text).toContain("<actionSuccess>✓</actionSuccess>");
@@ -61,6 +62,7 @@ test("renderEditSuccess (expanded) highlights diffs", () => {
       "replaced 3 -> 3 chars (same size)\n\n- old\n+ new",
     ),
     false,
+    "notes.txt",
   );
   const text = renderText(component, 100);
   expect(text).toContain("<actionOutput>");

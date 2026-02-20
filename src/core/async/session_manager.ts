@@ -771,7 +771,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       const random = randomBytes(PUBLIC_SESSION_ID_LENGTH);
       let id = "";
       for (const byte of random) {
-        id += BASE58_ALPHABET[byte % BASE58_ALPHABET.length] ?? "";
+        const character = BASE58_ALPHABET[byte % BASE58_ALPHABET.length];
+        if (character === undefined) {
+          throw new Error("failed to allocate session id");
+        }
+        id += character;
       }
 
       if (!this.sessionInternalIds.has(id)) {
@@ -975,10 +979,10 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
     return await this.sessionManager.createSession({
       projectId: input.projectId,
       ownerId: this.ownerId,
-      ...(input.prompt ? { prompt: input.prompt } : {}),
-      ...(input.additionalSystemMessage
-        ? { additionalSystemMessage: input.additionalSystemMessage }
-        : {}),
+      ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+      ...(input.additionalSystemMessage === undefined
+        ? {}
+        : { additionalSystemMessage: input.additionalSystemMessage }),
     });
   }
 

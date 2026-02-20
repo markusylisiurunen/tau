@@ -120,10 +120,6 @@ function isKnownProvider(value: string): value is KnownProvider {
   return getProviders().includes(value as KnownProvider);
 }
 
-interface PartialSubagentConfig {
-  [name: string]: SubagentPersonaConfig;
-}
-
 const SubagentNameSchema = z
   .string()
   .trim()
@@ -165,7 +161,7 @@ const SubagentSpecSchema = z
     }
   });
 
-const subagentToolsSchema = z.union([z.string(), z.array(z.string())]).optional();
+const subagentToolsSchema = z.array(z.string()).optional();
 
 const SUBAGENT_TOOL_NAME_SET = new Set<SubagentToolName>(SUBAGENT_TOOL_NAMES);
 
@@ -176,15 +172,18 @@ function parseSubagentTools(toolsRaw: unknown): { tools?: SubagentToolName[]; er
 
   const parsed = subagentToolsSchema.safeParse(toolsRaw);
   if (!parsed.success) {
-    return { error: "tools must be a string or list of strings" };
+    return { error: "tools must be a list of strings" };
   }
 
   if (parsed.data === undefined) {
     return {};
   }
 
-  const rawList = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
-  const cleaned = rawList.map((tool) => tool.trim().toLowerCase()).filter(Boolean);
+  const cleaned = parsed.data.map((tool) => tool.trim().toLowerCase());
+  if (cleaned.some((name) => !name)) {
+    return { error: "tools entries must be non-empty strings" };
+  }
+
   if (cleaned.length === 0) {
     return { tools: [] };
   }
@@ -221,7 +220,7 @@ function cloneSubagentPersonaConfig(config: SubagentPersonaConfig): SubagentPers
 }
 
 function parseSubagentConfig(subagentsRaw: unknown): {
-  config?: PartialSubagentConfig;
+  config?: SubagentConfigMap;
   defaultDisabled?: boolean;
   error?: string;
 } {
@@ -229,114 +228,101 @@ function parseSubagentConfig(subagentsRaw: unknown): {
     return {};
   }
 
-  const config: PartialSubagentConfig = {};
+  if (!subagentsRaw || typeof subagentsRaw !== "object" || Array.isArray(subagentsRaw)) {
+    return { error: "subagents must be an object" };
+  }
+
+  const config: SubagentConfigMap = {};
   let defaultDisabled = false;
 
-  // Handle list of subagent names
-  if (Array.isArray(subagentsRaw)) {
-    for (const nameRaw of subagentsRaw) {
-      const nameResult = parseSubagentName(nameRaw);
-      if ("error" in nameResult) {
-        return { error: nameResult.error };
-      }
-
-      const name = nameResult.name;
-      if (name !== DEFAULT_SUBAGENT_NAME) {
-        return {
-          error: `subagent ${name}: custom subagents require an object with systemPrompt`,
-        };
-      }
-
-      config[name] = {};
-    }
-    return { config, defaultDisabled };
-  }
-
-  // Handle object with per-subagent config
   const configParsed = z.record(z.string(), z.unknown()).safeParse(subagentsRaw);
-  if (configParsed.success) {
-    for (const [name, specRaw] of Object.entries(configParsed.data)) {
-      const nameResult = parseSubagentName(name);
-      if ("error" in nameResult) {
-        return { error: nameResult.error };
-      }
-
-      const validatedName = nameResult.name;
-
-      if (validatedName === DEFAULT_SUBAGENT_NAME) {
-        if (specRaw === false) {
-          defaultDisabled = true;
-          continue;
-        }
-        return {
-          error: `subagent ${validatedName}: default subagent does not accept overrides (use default: false to disable)`,
-        };
-      }
-
-      if (!specRaw || typeof specRaw !== "object") {
-        return {
-          error: `subagent ${validatedName}: systemPrompt is required for custom subagents`,
-        };
-      }
-
-      const spec = SubagentSpecSchema.safeParse(specRaw);
-      if (!spec.success) {
-        return { error: `subagent ${validatedName}: ${formatZodError(spec.error)}` };
-      }
-
-      if (!spec.data.systemPrompt) {
-        return {
-          error: `subagent ${validatedName}: systemPrompt is required for custom subagents`,
-        };
-      }
-
-      const provider = spec.data.provider;
-      const model = spec.data.model;
-      const toolsResult = parseSubagentTools(spec.data.tools);
-      if (toolsResult.error) {
-        return { error: `subagent ${validatedName}: ${toolsResult.error}` };
-      }
-      const launchModelsResult = parseSubagentLaunchModelList(spec.data.launchModels);
-      if (launchModelsResult.error) {
-        return {
-          error: `subagent ${validatedName}: launchModels ${launchModelsResult.error}`,
-        };
-      }
-      const tools = toolsResult.tools;
-      const launchModels = launchModelsResult.launchModels;
-      const riskLevel = spec.data.riskLevel;
-      const settings =
-        spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
-          ? { reasoning: spec.data.reasoning }
-          : undefined;
-
-      let modelObj: Model<Api> | undefined;
-      if (provider && model) {
-        modelObj = resolveModel(provider, model);
-        if (!modelObj) {
-          return {
-            error: `subagent ${validatedName}: failed to resolve model "${provider}:${model}"`,
-          };
-        }
-      }
-
-      const entry: SubagentPersonaConfig = {
-        systemPrompt: spec.data.systemPrompt,
-        ...(spec.data.description ? { description: spec.data.description } : {}),
-        ...(modelObj ? { model: modelObj } : {}),
-        ...(settings ? { settings } : {}),
-        ...(tools !== undefined ? { tools } : {}),
-        ...(riskLevel ? { riskLevel } : {}),
-        ...(launchModels !== undefined ? { launchModels } : {}),
-      };
-
-      config[validatedName] = entry;
-    }
-
-    return { config, defaultDisabled };
+  if (!configParsed.success) {
+    return { error: "subagents must be an object" };
   }
 
-  return { error: "subagents must be a list or object" };
+  for (const [name, specRaw] of Object.entries(configParsed.data)) {
+    const nameResult = parseSubagentName(name);
+    if ("error" in nameResult) {
+      return { error: nameResult.error };
+    }
+
+    const validatedName = nameResult.name;
+
+    if (validatedName === DEFAULT_SUBAGENT_NAME) {
+      if (specRaw === false) {
+        defaultDisabled = true;
+        continue;
+      }
+      return {
+        error: `subagent ${validatedName}: default subagent does not accept overrides (use default: false to disable)`,
+      };
+    }
+
+    if (!specRaw || typeof specRaw !== "object") {
+      return {
+        error: `subagent ${validatedName}: systemPrompt is required for custom subagents`,
+      };
+    }
+
+    const spec = SubagentSpecSchema.safeParse(specRaw);
+    if (!spec.success) {
+      return { error: `subagent ${validatedName}: ${formatZodError(spec.error)}` };
+    }
+
+    if (!spec.data.systemPrompt) {
+      return {
+        error: `subagent ${validatedName}: systemPrompt is required for custom subagents`,
+      };
+    }
+
+    if (spec.data.launchModels !== undefined && !Array.isArray(spec.data.launchModels)) {
+      return { error: `subagent ${validatedName}: launchModels must be a list of strings` };
+    }
+
+    const provider = spec.data.provider;
+    const model = spec.data.model;
+    const toolsResult = parseSubagentTools(spec.data.tools);
+    if (toolsResult.error) {
+      return { error: `subagent ${validatedName}: ${toolsResult.error}` };
+    }
+    const launchModelsResult = parseSubagentLaunchModelList(spec.data.launchModels);
+    if (launchModelsResult.error) {
+      return {
+        error: `subagent ${validatedName}: launchModels ${launchModelsResult.error}`,
+      };
+    }
+    const tools = toolsResult.tools;
+    const launchModels = launchModelsResult.launchModels;
+    const riskLevel = spec.data.riskLevel;
+    const settings =
+      spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
+        ? { reasoning: spec.data.reasoning }
+        : undefined;
+
+    let modelObj: Model<Api> | undefined;
+    if (provider && model) {
+      modelObj = resolveModel(provider, model);
+      if (!modelObj) {
+        return {
+          error: `subagent ${validatedName}: failed to resolve model "${provider}:${model}"`,
+        };
+      }
+    }
+
+    const entry: SubagentPersonaConfig = {
+      systemPrompt: spec.data.systemPrompt,
+      ...(spec.data.description ? { description: spec.data.description } : {}),
+      ...(modelObj ? { model: modelObj } : {}),
+      ...(settings ? { settings } : {}),
+      ...(tools !== undefined ? { tools } : {}),
+      ...(riskLevel ? { riskLevel } : {}),
+      ...(launchModels !== undefined ? { launchModels } : {}),
+    };
+
+    config[validatedName] = entry;
+  }
+
+  return { config, defaultDisabled };
 }
 
 function parsePersonaTools(toolsRaw: unknown): { tools?: Tool[]; error?: string } {
@@ -346,15 +332,18 @@ function parsePersonaTools(toolsRaw: unknown): { tools?: Tool[]; error?: string 
 
   const parsed = toolsSchema.safeParse(toolsRaw);
   if (!parsed.success) {
-    return { error: "tools must be a string or list of strings" };
+    return { error: "tools must be a list of strings" };
   }
 
   if (parsed.data === undefined) {
     return {};
   }
 
-  const rawList = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
-  const cleaned = rawList.map((tool) => tool.trim().toLowerCase()).filter(Boolean);
+  const cleaned = parsed.data.map((tool) => tool.trim().toLowerCase());
+  if (cleaned.some((name) => !name)) {
+    return { error: "tools entries must be non-empty strings" };
+  }
+
   if (cleaned.length === 0) {
     return { tools: [] };
   }
@@ -422,7 +411,6 @@ function withDefaultSubagentLaunchModels(
 
   const clonedSubagents: SubagentConfigMap = {};
   for (const [name, config] of Object.entries(persona.subagents)) {
-    if (!config) continue;
     clonedSubagents[name] = cloneSubagentPersonaConfig(config);
   }
 
@@ -552,7 +540,7 @@ const personaFrontMatterSchema = z
   })
   .passthrough();
 
-const skillsSchema = z.union([z.literal("*"), z.string(), z.array(z.string())]).optional();
+const skillsSchema = z.union([z.literal("*"), z.array(z.string())]);
 
 const promptFrontMatterSchema = z
   .object({
@@ -562,7 +550,7 @@ const promptFrontMatterSchema = z
   })
   .passthrough();
 
-const toolsSchema = z.union([z.string(), z.array(z.string())]).optional();
+const toolsSchema = z.array(z.string()).optional();
 
 const PERSONA_TOOL_DEFINITIONS = new Map([
   [TOOL_NAME_BASH, BASH_TOOL],
@@ -625,32 +613,28 @@ function parsePersona(
     settings.reasoning = reasoning;
   }
 
-  let skills: string[] | "*" | undefined;
+  let skills: Persona["skills"];
   if (skillsRaw === undefined) {
-    if (basePersona?.skills !== undefined) {
-      skills = Array.isArray(basePersona.skills) ? [...basePersona.skills] : basePersona.skills;
-    } else {
-      skills = "*";
-    }
+    skills = basePersona
+      ? Array.isArray(basePersona.skills)
+        ? [...basePersona.skills]
+        : basePersona.skills
+      : "*";
   } else {
     const skillsParsed = skillsSchema.safeParse(skillsRaw);
 
-    if (skillsParsed.success) {
-      const val = skillsParsed.data;
+    if (!skillsParsed.success) {
+      return { error: `${file}: skills must be "*" or a list of strings. skipped.` };
+    }
 
-      if (val === "*") {
-        skills = "*";
-      } else if (typeof val === "string") {
-        const trimmed = val.trim();
-        skills = trimmed ? [trimmed] : [];
-      } else if (Array.isArray(val)) {
-        skills = val.map((s) => s.trim()).filter(Boolean);
+    if (skillsParsed.data === "*") {
+      skills = "*";
+    } else {
+      const cleaned = skillsParsed.data.map((skill) => skill.trim());
+      if (cleaned.some((skill) => !skill)) {
+        return { error: `${file}: skills entries must be non-empty strings. skipped.` };
       }
-    } else if (skillsRaw !== undefined) {
-      if (Array.isArray(skillsRaw)) {
-        return { error: `${file}: skills must contain only strings. skipped.` };
-      }
-      return { error: `${file}: skills must be a string, "*", or list of strings. skipped.` };
+      skills = cleaned;
     }
   }
 
@@ -671,7 +655,6 @@ function parsePersona(
       finalSubagents = {};
 
       for (const [name, cfg] of Object.entries(basePersona.subagents)) {
-        if (!cfg) continue;
         finalSubagents[name] = cloneSubagentPersonaConfig(cfg);
       }
 
@@ -683,7 +666,6 @@ function parsePersona(
     finalSubagents = {};
 
     for (const [name, cfg] of Object.entries(subagentsResult.config)) {
-      if (!cfg) continue;
       finalSubagents[name] = cloneSubagentPersonaConfig(cfg);
     }
 
@@ -737,7 +719,7 @@ function parsePersona(
     ...(finalDescription && { description: finalDescription }),
     ...(finalAllowedReasoningLevels ? { allowedReasoningLevels: finalAllowedReasoningLevels } : {}),
     ...(finalSubagents && { subagents: finalSubagents }),
-    ...(skills !== undefined ? { skills } : {}),
+    skills,
     source,
   };
 

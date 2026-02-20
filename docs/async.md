@@ -145,7 +145,6 @@ Notes:
 - `TAU_ASYNC_AUTH_TOKEN` overrides daemon-file `authToken`.
 - `systemMessage` is prepended to every submitted prompt inside a `<system>...</system>` block.
 - `telegram.<botId>.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same `<system>...</system>` block.
-- legacy single-bot config is still supported with `telegram.botToken` (or other bot fields directly under `telegram`). It is normalized as bot id `default`.
 
 ## http api
 
@@ -172,12 +171,7 @@ Bearer tokens are checked with constant-time comparison. Missing/invalid tokens 
 
 ## telegram dm adapter
 
-Enable Telegram by setting at least one bot token in daemon config and running the daemon.
-
-Use either format:
-
-- single bot (legacy): `telegram.botToken`
-- multiple bots: `telegram.<botId>.botToken`
+Enable Telegram by setting at least one bot token in daemon config (`telegram.<botId>.botToken`) and running the daemon.
 
 The adapter uses long-polling and only handles private DM messages (`chat.type=private`).
 

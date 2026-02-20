@@ -10,6 +10,7 @@ import {
   WRITE_UI_PREVIEW_LINES,
 } from "../utils/tool_preview.js";
 import { formatBytes } from "../utils/truncate.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -41,13 +42,18 @@ export const WRITE_TOOL: Tool = {
 };
 
 const writeArgsSchema = z.object({
-  path: z.string().trim().catch(""),
-  content: z.string().catch(""),
+  path: z.string().trim().min(1),
+  content: z.string(),
 });
 
-function parseWriteArgs(raw: unknown): { path: string; content: string } {
+function parseWriteArgs(
+  raw: unknown,
+): { ok: true; data: { path: string; content: string } } | { ok: false; error: string } {
   const parsed = writeArgsSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { path: "", content: "" };
+  if (!parsed.success) {
+    return { ok: false, error: formatZodError(parsed.error) };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 function buildWriteUiText(args: {
@@ -90,29 +96,32 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
   return {
     schema: WRITE_TOOL,
     async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
-      const { path, content } = parseWriteArgs(toolCall.arguments);
-      const headerTarget = path || "(missing path)";
+      const parsedArgs = parseWriteArgs(toolCall.arguments);
+      const path = parsedArgs.ok ? parsedArgs.data.path : "";
+      const headerTarget = path || "(invalid arguments)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "write_blocked",
           toolCallId: toolCall.id,
-          path: path || "(missing path)",
+          path: path || "(invalid path)",
           headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
       };
 
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
+      }
+
+      const { content } = parsedArgs.data;
+
       if (riskLevel !== "read-write") {
         return blocked(
           `requires risk level 'read-write', but current level is '${riskLevel}'. ask the user to run /risk:read-write.`,
         );
-      }
-
-      if (!path) {
-        return blocked("missing 'path' parameter. provide the file path to write to.");
       }
 
       try {

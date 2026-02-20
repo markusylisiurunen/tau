@@ -452,11 +452,7 @@ if (cli.personaId) {
     reasoningOverride = checkpointReasoning;
   }
 } else if (config.defaultPersona) {
-  const parsed = parsePersonaString(config.defaultPersona, personas);
-  initialPersonaId = parsed.personaId;
-  if (reasoningOverride === undefined) {
-    reasoningOverride = parsed.reasoning;
-  }
+  initialPersonaId = personas.find((persona) => persona.id === config.defaultPersona)?.id;
 }
 
 const initialRiskLevel = cli.riskLevel ?? checkpointRiskLevel ?? config.defaultRisk;

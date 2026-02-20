@@ -156,9 +156,7 @@ function installPrompts(args: {
 
   let files = allFiles;
   if (selectedPromptId) {
-    const selected = allFiles.find(
-      (fileName) => fileName.slice(0, -3).toLowerCase() === selectedPromptId.toLowerCase(),
-    );
+    const selected = allFiles.find((fileName) => fileName.slice(0, -3) === selectedPromptId);
 
     if (!selected) {
       const available = allFiles.map((fileName) => fileName.slice(0, -3)).join(", ") || "(none)";
@@ -228,9 +226,7 @@ function installSkills(args: {
 
   let entries = allEntries;
   if (selectedSkillName) {
-    const selected = allEntries.find(
-      (entry) => entry.name.toLowerCase() === selectedSkillName.toLowerCase(),
-    );
+    const selected = allEntries.find((entry) => entry.name === selectedSkillName);
 
     if (!selected) {
       const available = allEntries.map((entry) => entry.name).join(", ") || "(none)";

@@ -144,7 +144,7 @@ export type RunToolCallsOptions = {
   enabledTools: Tool[];
   riskLevel: RiskLevel;
   signal: AbortSignal;
-  dispatchContext?: ToolDispatchContext;
+  dispatchContext: ToolDispatchContext;
   toolErrorMessages?: {
     notEnabled?: (toolCall: ToolCall) => string;
     unsupported?: (toolCall: ToolCall) => string;

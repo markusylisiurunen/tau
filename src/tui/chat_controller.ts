@@ -619,10 +619,8 @@ export class ChatController {
     }
     const parts: string[] = [];
     for (const block of message.content) {
-      if (typeof block === "string") {
-        parts.push(block);
-      } else if (block.type === "text") {
-        parts.push(block.text ?? "");
+      if (block.type === "text") {
+        parts.push(block.text);
       }
     }
     return parts.join("\n").trim();
@@ -835,9 +833,7 @@ export class ChatController {
 
   private getVisibleSubagentsForPersona(persona: Persona): string[] {
     if (!persona.subagents) return [];
-    return Object.entries(persona.subagents)
-      .filter(([, config]) => config !== undefined)
-      .map(([name]) => name);
+    return Object.keys(persona.subagents);
   }
 
   private getSkillsIndexBlockForPersona(persona: Persona): {
@@ -2052,10 +2048,19 @@ export class ChatController {
       return null;
     }
 
-    return prune
-      .filter((value): value is string => typeof value === "string")
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
+    const ids: string[] = [];
+    for (const value of prune) {
+      if (typeof value !== "string") {
+        return null;
+      }
+      const id = value.trim();
+      if (id.length === 0) {
+        return null;
+      }
+      ids.push(id);
+    }
+
+    return ids;
   }
 
   private formatRiskLevelNotice(level: RiskLevel): string {
@@ -2443,11 +2448,13 @@ export class ChatController {
     let wasAborted = false;
     this.startTurnTimer();
     const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const headerTarget = command.split(/\r?\n/)[0] ?? command;
 
     this.view.handleToolUiEvent({
       type: "bash_started",
       toolCallId,
       command,
+      headerTarget,
     });
     this.refreshStatus();
 
@@ -2485,6 +2492,7 @@ export class ChatController {
         type: "bash_execution",
         toolCallId,
         command,
+        headerTarget,
         exitCode,
         truncationInfo,
         uiText,
@@ -2505,6 +2513,7 @@ export class ChatController {
         type: "bash_blocked",
         toolCallId,
         command,
+        headerTarget,
         reason: message,
       });
       this.refreshStatus();

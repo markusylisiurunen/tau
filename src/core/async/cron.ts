@@ -161,13 +161,10 @@ function parseCronField(
       throw new Error(`invalid ${options.fieldName}: too many '/' in '${segment}'`);
     }
 
-    const base = slashParts[0] ?? "";
+    const base = slashParts[0]!;
     const step =
       slashParts.length === 2
-        ? parsePositiveInteger(
-            slashParts[1] ?? "",
-            `${options.fieldName} step in segment '${segment}'`,
-          )
+        ? parsePositiveInteger(slashParts[1]!, `${options.fieldName} step in segment '${segment}'`)
         : 1;
 
     let start: number;
@@ -183,13 +180,13 @@ function parseCronField(
       }
 
       const parsedStart = validateBounds(
-        parseInteger(rangeParts[0] ?? "", `${options.fieldName} range start`),
+        parseInteger(rangeParts[0]!, `${options.fieldName} range start`),
         options.min,
         options.max,
         options.fieldName,
       );
       const parsedEnd = validateBounds(
-        parseInteger(rangeParts[1] ?? "", `${options.fieldName} range end`),
+        parseInteger(rangeParts[1]!, `${options.fieldName} range end`),
         options.min,
         options.max,
         options.fieldName,
@@ -245,27 +242,27 @@ export function parseCronSchedule(expression: string): ParsedCronSchedule {
 
   return {
     expression: trimmed,
-    minute: parseCronField(parts[0] ?? "", {
+    minute: parseCronField(parts[0]!, {
       fieldName: "minute",
       min: 0,
       max: 59,
     }),
-    hour: parseCronField(parts[1] ?? "", {
+    hour: parseCronField(parts[1]!, {
       fieldName: "hour",
       min: 0,
       max: 23,
     }),
-    dayOfMonth: parseCronField(parts[2] ?? "", {
+    dayOfMonth: parseCronField(parts[2]!, {
       fieldName: "day-of-month",
       min: 1,
       max: 31,
     }),
-    month: parseCronField(parts[3] ?? "", {
+    month: parseCronField(parts[3]!, {
       fieldName: "month",
       min: 1,
       max: 12,
     }),
-    dayOfWeek: parseCronField(parts[4] ?? "", {
+    dayOfWeek: parseCronField(parts[4]!, {
       fieldName: "day-of-week",
       min: 0,
       max: 7,

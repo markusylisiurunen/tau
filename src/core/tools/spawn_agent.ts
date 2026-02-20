@@ -15,6 +15,7 @@ import {
   resolveSandboxHostRoot,
   resolveSandboxMappedWorkingDirectory,
 } from "../utils/sandbox_prompt_paths.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -77,24 +78,30 @@ export const SPAWN_AGENT_TOOL: Tool = {
 };
 
 const spawnArgsSchema = z.object({
-  name: z.string().trim().catch(""),
-  title: z.string().trim().catch(""),
-  prompt: z.string().trim().catch(""),
-  model: z.string().trim().optional().catch(undefined),
-  workingDirectory: z.string().trim().optional().catch(undefined),
+  name: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  prompt: z.string().trim().min(1),
+  model: z.string().trim().min(1).optional(),
+  workingDirectory: z.string().trim().min(1).optional(),
 });
 
-function parseSpawnArgs(raw: unknown): {
-  name: string;
-  title: string;
-  prompt: string;
-  model?: string;
-  workingDirectory?: string;
-} {
+function parseSpawnArgs(raw: unknown):
+  | {
+      ok: true;
+      data: {
+        name: string;
+        title: string;
+        prompt: string;
+        model?: string;
+        workingDirectory?: string;
+      };
+    }
+  | { ok: false; error: string } {
   const parsed = spawnArgsSchema.safeParse(raw);
-  return parsed.success
-    ? parsed.data
-    : { name: "", title: "", prompt: "", model: undefined, workingDirectory: undefined };
+  if (!parsed.success) {
+    return { ok: false, error: formatZodError(parsed.error) };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 function formatSpawnToolResult(args: {
@@ -173,12 +180,14 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
     schema: SPAWN_AGENT_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      _riskLevel: RiskLevel,
-      signal?: AbortSignal,
-      context?: ToolDispatchContext,
+      riskLevel: RiskLevel,
+      signal: AbortSignal,
+      context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { name, title, prompt, model, workingDirectory } = parseSpawnArgs(toolCall.arguments);
-      const headerTarget = title || "(subagent)";
+      const parsedArgs = parseSpawnArgs(toolCall.arguments);
+      const name = parsedArgs.ok ? parsedArgs.data.name : "";
+      const title = parsedArgs.ok ? parsedArgs.data.title : "";
+      const headerTarget = title || "(invalid arguments)";
 
       const blocked = (reason: string, details?: { name?: string; title?: string }) => {
         const toolResult = createToolError(toolCall, reason);
@@ -193,35 +202,21 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         return { kind: "single", toolResult, uiEvent } satisfies ToolDispatchResult;
       };
 
-      if (!name || !title || !prompt) {
-        const missing = [
-          !name ? "name" : undefined,
-          !title ? "title" : undefined,
-          !prompt ? "prompt" : undefined,
-        ]
-          .filter(Boolean)
-          .join(", ");
-        return blocked(`missing required parameter(s): ${missing}.`, {
-          title: title || "(subagent)",
-        });
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
 
-      if (!context?.persona?.subagents || Object.keys(context.persona.subagents).length === 0) {
+      const { prompt, model, workingDirectory } = parsedArgs.data;
+
+      const persona = context.persona;
+      if (!persona?.subagents || Object.keys(persona.subagents).length === 0) {
         return blocked("spawn_agent tool is not enabled for the current persona.", {
           name,
           title,
         });
       }
 
-      const persona = context?.persona;
-      if (!persona) {
-        return blocked("spawn_agent tool is not enabled for the current persona.", {
-          name,
-          title,
-        });
-      }
-
-      const personaConfig = persona.subagents?.[name];
+      const personaConfig = persona.subagents[name];
       if (!personaConfig) {
         return blocked(`subagent '${name}' is not enabled for the current persona.`, {
           name,
@@ -229,22 +224,9 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         });
       }
 
+      const config = context.config;
+
       let launchModelOverride: SubagentLaunchModel | undefined;
-      if (model !== undefined && !model) {
-        return blocked(
-          "model parameter must be a non-empty string in format <provider>/<model>:<effort>.",
-          {
-            name,
-            title,
-          },
-        );
-      }
-      if (workingDirectory !== undefined && !workingDirectory) {
-        return blocked("workingDirectory parameter must be a non-empty string.", {
-          name,
-          title,
-        });
-      }
       if (model) {
         const parsedLaunchModel = parseSubagentLaunchModel(model);
         if (parsedLaunchModel.error || !parsedLaunchModel.launchModel) {
@@ -282,7 +264,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       const baseHostCwd = context.hostCwd ?? process.cwd();
       const baseHome = context.home ?? process.env.HOME ?? process.cwd();
       const sandboxEnabled = context.sandboxEnabled ?? false;
-      const sandboxMountPath = context.config?.sandbox?.mountPath;
+      const sandboxMountPath = config.sandbox?.mountPath;
       const sandboxHostRoot = resolveSandboxHostRoot({
         cwd: baseCwd,
         hostCwd: baseHostCwd,
@@ -313,8 +295,8 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           systemPrompt = await buildSubagentSystemPrompt({
             name,
             persona,
-            riskLevel: context.riskLevel ?? "read-only",
-            config: context.config,
+            riskLevel,
+            config,
             cwd,
             hostCwd,
             home: baseHome,
@@ -344,7 +326,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       const effectiveSettings = resolveSubagentEffectiveSettings({
         persona,
         config: personaConfig,
-        riskLevel: context.riskLevel ?? "read-only",
+        riskLevel,
         launchModel: launchModelOverride,
       });
       const runtimeConfig: SubagentRuntimeConfig = {
@@ -395,7 +377,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             title,
             modelLabel,
             originHistoryEntryId: context.turnUserHistoryEntryId,
-            config: context.config ?? {},
+            config,
             authPath: context.authPath,
             backend,
             personaId: context.persona?.id,

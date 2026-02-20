@@ -26,6 +26,7 @@ function createToolEvent(label) {
     type: "bash_blocked",
     toolCallId: `tool-${label}`,
     command: label,
+    headerTarget: label,
     reason: "blocked",
   };
 }

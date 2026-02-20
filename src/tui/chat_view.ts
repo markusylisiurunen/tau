@@ -401,10 +401,12 @@ export class TuiChatView implements ChatView {
     labelOverride?: string;
   }): void {
     const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const headerTarget = args.command.split(/\r?\n/)[0] ?? args.command;
     const event: ToolUiEvent = {
       type: "bash_execution",
       toolCallId,
       command: args.command,
+      headerTarget,
       exitCode: args.exitCode,
       truncationInfo: args.truncationInfo,
       uiText: args.uiText,

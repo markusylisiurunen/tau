@@ -44,7 +44,7 @@ export type SubagentPersonaConfig = {
   launchModels?: string[];
 };
 
-export type SubagentConfigMap = Partial<Record<SubagentName, SubagentPersonaConfig>>;
+export type SubagentConfigMap = Record<SubagentName, SubagentPersonaConfig>;
 
 export type SubagentStatus = "running" | "success" | "error" | "aborted";
 
@@ -59,7 +59,7 @@ export type SubagentStateSnapshot = {
   toolCalls: number;
   startedAt: number;
   finishedAt?: number;
-  abortRequested?: boolean;
+  abortRequested: boolean;
   error?: string;
   finalText?: string;
 };

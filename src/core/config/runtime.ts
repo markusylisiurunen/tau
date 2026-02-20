@@ -28,22 +28,13 @@ export async function loadRuntimeConfig(
   const content = await loadAllContent(config, { cwd, deps: resolvedDeps });
   const warnings = [...configResult.errors, ...content.errors];
   if (config.defaultPersona) {
-    const raw = config.defaultPersona.trim();
-    if (raw) {
-      const personaValue = raw.split(":")[0]?.trim();
-      if (personaValue) {
-        const matched = content.personas.some(
-          (persona) => persona.id.toLowerCase() === personaValue.toLowerCase(),
-        );
-        if (!matched) {
-          warnings.push(`defaultPersona '${config.defaultPersona}' not found in loaded personas.`);
-        }
-      }
+    const matched = content.personas.some((persona) => persona.id === config.defaultPersona);
+    if (!matched) {
+      warnings.push(`defaultPersona '${config.defaultPersona}' not found in loaded personas.`);
     }
   }
   if (config.defaultTheme) {
-    const themeId = config.defaultTheme.toLowerCase();
-    const matched = content.themes.some((theme) => theme.id.toLowerCase() === themeId);
+    const matched = content.themes.some((theme) => theme.id === config.defaultTheme);
     if (!matched) {
       warnings.push(
         `defaultTheme '${config.defaultTheme}' not found in built-in themes, .tau/themes, or ~/.config/tau/themes.`,

@@ -3,6 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ToolDefinition, ToolDispatchContext, ToolDispatchResult } from "./registry.js";
 import { TOOL_NAME_EMIT_OUTPUT } from "./tool_names.js";
 
@@ -25,12 +26,17 @@ export const EMIT_OUTPUT_TOOL: Tool = {
 };
 
 const emitOutputArgsSchema = z.object({
-  text: z.string().catch(""),
+  text: z.string().trim().min(1),
 });
 
-function parseEmitOutputArgs(raw: unknown): { text: string } {
+function parseEmitOutputArgs(
+  raw: unknown,
+): { ok: true; data: { text: string } } | { ok: false; error: string } {
   const parsed = emitOutputArgsSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { text: "" };
+  if (!parsed.success) {
+    return { ok: false, error: formatZodError(parsed.error) };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 export function createEmitOutputToolDefinition(): ToolDefinition {
@@ -39,21 +45,23 @@ export function createEmitOutputToolDefinition(): ToolDefinition {
     async dispatch(
       toolCall: ToolCall,
       _riskLevel: RiskLevel,
-      _signal?: AbortSignal,
-      context?: ToolDispatchContext,
+      _signal: AbortSignal,
+      context: ToolDispatchContext,
     ): Promise<ToolDispatchResult> {
-      const { text } = parseEmitOutputArgs(toolCall.arguments);
+      const parsedArgs = parseEmitOutputArgs(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         return { kind: "single", toolResult };
       };
 
-      if (!text.trim()) {
-        return blocked("missing 'text' parameter. provide a message to send.");
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
 
-      const subagentContext = context?.subagentContext;
+      const { text } = parsedArgs.data;
+
+      const subagentContext = context.subagentContext;
       if (!subagentContext) {
         return blocked("emit_output tool is only available to subagents.");
       }

@@ -130,18 +130,6 @@ function parseAsyncStringList(
   return { values, errors: [] };
 }
 
-const TELEGRAM_DEFAULT_BOT_ID = "default";
-const TELEGRAM_BOT_CONFIG_KEYS = new Set([
-  "botToken",
-  "allowedProjectIds",
-  "allowedUserIds",
-  "allowedChatIds",
-  "defaultProjectId",
-  "systemMessage",
-  "pollIntervalMs",
-  "requestTimeoutSeconds",
-]);
-
 function parseTelegramBotConfig(
   raw: unknown,
   fieldPath: string,
@@ -156,12 +144,10 @@ function parseTelegramBotConfig(
   const config: AsyncServerTelegramBotConfig = {};
   const errors: string[] = [];
 
-  if (data.botToken !== undefined) {
-    if (typeof data.botToken === "string" && data.botToken.trim()) {
-      config.botToken = data.botToken.trim();
-    } else {
-      errors.push(`${sourceLabel}: ${fieldPath}.botToken must be a non-empty string.`);
-    }
+  if (typeof data.botToken === "string" && data.botToken.trim()) {
+    config.botToken = data.botToken.trim();
+  } else {
+    errors.push(`${sourceLabel}: ${fieldPath}.botToken must be a non-empty string.`);
   }
 
   if (data.allowedProjectIds !== undefined) {
@@ -283,46 +269,30 @@ function parseTelegramConfig(
     return { errors: [`${sourceLabel}: telegram must be an object.`] };
   }
 
-  const data = raw as Record<string, unknown>;
-  const entries = Object.entries(data);
-  const hasLegacyKeys = entries.some(([key]) => TELEGRAM_BOT_CONFIG_KEYS.has(key));
-  const hasNamedBots = entries.some(([key]) => !TELEGRAM_BOT_CONFIG_KEYS.has(key));
-
-  if (hasLegacyKeys && hasNamedBots) {
-    return {
-      errors: [
-        `${sourceLabel}: telegram must be either a single bot config object or a map of bot ids to bot config objects.`,
-      ],
-    };
+  const entries = Object.entries(raw);
+  if (entries.length === 0) {
+    return { errors: [`${sourceLabel}: telegram must define at least one bot id.`] };
   }
 
   const config: AsyncServerTelegramConfig = {};
   const errors: string[] = [];
 
-  if (hasLegacyKeys || entries.length === 0) {
-    const parsed = parseTelegramBotConfig(data, "telegram", sourceLabel, knownProjectIds);
+  for (const [botId, botRaw] of entries) {
+    if (!botId.trim()) {
+      errors.push(`${sourceLabel}: telegram bot id must be a non-empty string.`);
+      continue;
+    }
+
+    const parsed = parseTelegramBotConfig(
+      botRaw,
+      `telegram.${botId}`,
+      sourceLabel,
+      knownProjectIds,
+    );
     if (parsed.config) {
-      config[TELEGRAM_DEFAULT_BOT_ID] = parsed.config;
+      config[botId] = parsed.config;
     }
     errors.push(...parsed.errors);
-  } else {
-    for (const [botId, botRaw] of entries) {
-      if (!botId.trim()) {
-        errors.push(`${sourceLabel}: telegram bot id must be a non-empty string.`);
-        continue;
-      }
-
-      const parsed = parseTelegramBotConfig(
-        botRaw,
-        `telegram.${botId}`,
-        sourceLabel,
-        knownProjectIds,
-      );
-      if (parsed.config) {
-        config[botId] = parsed.config;
-      }
-      errors.push(...parsed.errors);
-    }
   }
 
   if (Object.keys(config).length === 0) {

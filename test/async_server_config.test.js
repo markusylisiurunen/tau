@@ -62,9 +62,11 @@ describe("async daemon config", () => {
             systemMessage: "this prompt is running from a scheduled cron job",
           },
           telegram: {
-            botToken: "bot-token",
-            defaultProjectId: "tau",
-            systemMessage: "telegram-specific notice",
+            default: {
+              botToken: "bot-token",
+              defaultProjectId: "tau",
+              systemMessage: "telegram-specific notice",
+            },
           },
           projects: {
             tau: {
@@ -139,7 +141,10 @@ describe("async daemon config", () => {
         configPath,
         JSON.stringify({
           telegram: {
-            systemMessage: "",
+            default: {
+              botToken: "bot-token",
+              systemMessage: "",
+            },
           },
           projects: {
             tau: {
@@ -150,7 +155,7 @@ describe("async daemon config", () => {
       );
 
       expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("telegram.systemMessage");
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("telegram.default.systemMessage");
     } finally {
       fx.cleanup();
     }

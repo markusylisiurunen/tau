@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -40,13 +41,18 @@ export const SEND_INPUT_TO_AGENT_TOOL: Tool = {
 };
 
 const sendInputArgsSchema = z.object({
-  id: z.string().trim().catch(""),
-  prompt: z.string().trim().catch(""),
+  id: z.string().trim().min(1),
+  prompt: z.string().trim().min(1),
 });
 
-function parseSendInputArgs(raw: unknown): { id: string; prompt: string } {
+function parseSendInputArgs(
+  raw: unknown,
+): { ok: true; data: { id: string; prompt: string } } | { ok: false; error: string } {
   const parsed = sendInputArgsSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { id: "", prompt: "" };
+  if (!parsed.success) {
+    return { ok: false, error: formatZodError(parsed.error) };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 function formatSendInputToolResult(args: { id: string; name: string; title: string }): string {
@@ -69,11 +75,12 @@ export function createSendInputToAgentToolDefinition(
     async dispatch(
       toolCall: ToolCall,
       _riskLevel: RiskLevel,
-      signal?: AbortSignal,
-      context?: ToolDispatchContext,
+      signal: AbortSignal,
+      context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { id, prompt } = parseSendInputArgs(toolCall.arguments);
-      const headerTarget = id || "(subagent)";
+      const parsedArgs = parseSendInputArgs(toolCall.arguments);
+      const id = parsedArgs.ok ? parsedArgs.data.id : "";
+      const headerTarget = id || "(invalid arguments)";
 
       const blocked = (
         reason: string,
@@ -92,17 +99,13 @@ export function createSendInputToAgentToolDefinition(
         return { kind: "single", toolResult, uiEvent } satisfies ToolDispatchResult;
       };
 
-      if (!id || !prompt) {
-        const missing = [!id ? "id" : undefined, !prompt ? "prompt" : undefined]
-          .filter(Boolean)
-          .join(", ");
-        return blocked(`missing required parameter(s): ${missing}.`, {
-          id: id || undefined,
-          title: id || "(subagent)",
-        });
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
 
-      const controlPlane = context?.subagentControlPlane;
+      const { prompt } = parsedArgs.data;
+
+      const controlPlane = context.subagentControlPlane;
       if (!controlPlane) {
         return blocked("subagent control plane is not available.", { id });
       }
@@ -111,6 +114,8 @@ export function createSendInputToAgentToolDefinition(
       if (!snapshot) {
         return blocked(`unknown subagent id: ${id}`, { id, title: id });
       }
+
+      const config = context.config;
 
       const target = resolveSnapshotTarget(snapshot, id);
 
@@ -143,10 +148,10 @@ export function createSendInputToAgentToolDefinition(
           const sendResult = controlPlane.sendInput({
             id,
             prompt,
-            config: context?.config ?? {},
-            authPath: context?.authPath,
+            config,
+            authPath: context.authPath,
             backend,
-            personaId: context?.persona?.id,
+            personaId: context.persona?.id,
           });
 
           if (!sendResult.ok) {

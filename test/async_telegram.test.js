@@ -5,6 +5,13 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { startAsyncTelegramAdapter } from "../dist/core/async/telegram.js";
 
+async function startAdapter(options) {
+  return startAsyncTelegramAdapter({
+    botId: "bot-default",
+    ...options,
+  });
+}
+
 async function waitFor(predicate, timeoutMs = 2000) {
   const start = Date.now();
   while (!predicate()) {
@@ -68,8 +75,24 @@ function createApiHarness(updateBatches) {
   };
 }
 
-function createSessionManagerHarness(initialSessions = []) {
-  const sessions = new Map(initialSessions.map((session) => [session.id, { ...session }]));
+function ownerIdForChat(chatId, botId = "bot-default") {
+  return `telegram:${botId}:chat:${chatId}`;
+}
+
+function createSessionManagerHarness(initialSessions = [], options = {}) {
+  const sessions = new Map(
+    initialSessions.map((session) => [
+      session.id,
+      {
+        ...session,
+        ...(session.ownerId
+          ? {}
+          : options.defaultOwnerId
+            ? { ownerId: options.defaultOwnerId }
+            : {}),
+      },
+    ]),
+  );
   const listeners = new Set();
   let nextSessionId = 1;
 
@@ -160,7 +183,7 @@ describe("async telegram adapter", () => {
     const apiHarness = createApiHarness([]);
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -195,7 +218,7 @@ describe("async telegram adapter", () => {
     const apiHarness = createApiHarness([]);
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -233,17 +256,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s1",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s1",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(20) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -276,17 +302,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s1",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s1",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(25) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -350,17 +379,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s2",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s2",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(260) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -407,24 +439,27 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "alpha-123",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-      {
-        id: "beta-456",
-        projectId: "demo",
-        state: "running",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "alpha-123",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+        {
+          id: "beta-456",
+          projectId: "demo",
+          state: "running",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(270) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -462,7 +497,7 @@ describe("async telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: {
         demo: { repo: "git@example.com:demo.git", description: "demo project" },
@@ -519,7 +554,7 @@ describe("async telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -565,7 +600,7 @@ describe("async telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: {
         demo: { repo: "git@example.com:demo.git" },
@@ -593,6 +628,7 @@ describe("async telegram adapter", () => {
 
       expect(managerHarness.manager.createSession).toHaveBeenCalledWith({
         projectId: "demo",
+        ownerId: ownerIdForChat(200),
       });
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s1", "follow up", {
         additionalSystemMessage: "telegram guidance",
@@ -677,7 +713,7 @@ describe("async telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botId: "ops",
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
@@ -762,7 +798,7 @@ describe("async telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       defaultProjectId: "demo",
@@ -834,7 +870,7 @@ describe("async telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       defaultProjectId: "demo",
@@ -894,7 +930,7 @@ describe("async telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       defaultProjectId: "demo",
@@ -960,7 +996,7 @@ describe("async telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       defaultProjectId: "demo",
@@ -1022,7 +1058,7 @@ describe("async telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       defaultProjectId: "demo",
@@ -1086,19 +1122,22 @@ describe("async telegram adapter", () => {
       return Buffer.from('{"ok":true}');
     });
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s31",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s31",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(211) },
+    );
 
     const mistralFetch = vi.fn(async () => createJsonResponse({ text: "transcribed voice" }));
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       mistralApiKey: "mistral-key",
@@ -1155,19 +1194,22 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s21",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s21",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(210) },
+    );
 
     const mistralFetch = vi.fn(async () => createJsonResponse({ text: "ship the fix" }));
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       mistralApiKey: "mistral-key",
@@ -1221,17 +1263,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s22",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s22",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(220) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -1281,19 +1326,22 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s23",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s23",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(230) },
+    );
 
     const mistralFetch = vi.fn(async () => createJsonResponse({ message: "bad audio" }, 400));
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       mistralApiKey: "mistral-key",
@@ -1333,7 +1381,7 @@ describe("async telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -1373,17 +1421,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s2",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s2",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(300) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -1434,17 +1485,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s2",
-        projectId: "demo",
-        state: "running",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s2",
+          projectId: "demo",
+          state: "running",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(305) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -1490,17 +1544,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s2",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s2",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(310) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -1534,17 +1591,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s3",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s3",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(320) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -1578,45 +1638,48 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s1",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-      {
-        id: "s2",
-        projectId: "demo",
-        state: "running",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-      {
-        id: "s3",
-        projectId: "demo",
-        state: "failed",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-      {
-        id: "s5",
-        projectId: "demo",
-        state: "queued",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-      {
-        id: "s6",
-        projectId: "demo",
-        state: "preparing-workspace",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s1",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+        {
+          id: "s2",
+          projectId: "demo",
+          state: "running",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+        {
+          id: "s3",
+          projectId: "demo",
+          state: "failed",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+        {
+          id: "s5",
+          projectId: "demo",
+          state: "queued",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+        {
+          id: "s6",
+          projectId: "demo",
+          state: "preparing-workspace",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(330) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -1626,8 +1689,9 @@ describe("async telegram adapter", () => {
     });
 
     try {
-      await waitFor(() => managerHarness.manager.closeInactiveSessions.mock.calls.length === 1);
-      expect(managerHarness.manager.closeInactiveSessions).toHaveBeenCalledTimes(1);
+      await waitFor(() => managerHarness.manager.closeSession.mock.calls.length === 2);
+      expect(managerHarness.manager.closeSession).toHaveBeenCalledWith("s1");
+      expect(managerHarness.manager.closeSession).toHaveBeenCalledWith("s3");
       expect(
         apiHarness.sendMessages.some(
           (entry) =>
@@ -1666,17 +1730,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s9",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s9",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(400) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -1749,17 +1816,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s10",
-        projectId: "demo",
-        state: "running",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s10",
+          projectId: "demo",
+          state: "running",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(450) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -1881,17 +1951,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s11",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s11",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(460) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -1955,7 +2028,7 @@ describe("async telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -2029,24 +2102,27 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s1",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-      {
-        id: "s2",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s1",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+        {
+          id: "s2",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(466) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -2145,17 +2221,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s13",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s13",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(475) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
@@ -2203,17 +2282,20 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness([
-      {
-        id: "s12",
-        projectId: "demo",
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
-    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s12",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(470) },
+    );
 
-    const adapter = await startAsyncTelegramAdapter({
+    const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,

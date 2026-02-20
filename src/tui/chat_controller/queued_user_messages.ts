@@ -3,7 +3,7 @@ type EditorAdapter = {
   setEditorText: (text: string) => void;
 };
 
-export type QueueDrainAdapter = {
+type QueueDrainAdapter = {
   isStreaming: () => boolean;
   onUserInput: (text: string) => Promise<void>;
   requestRender: () => void;

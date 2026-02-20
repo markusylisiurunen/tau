@@ -269,6 +269,7 @@ export type ToolDispatchContext = {
   history?: readonly Message[];
   systemPrompt?: string;
   riskLevel?: RiskLevel;
+  turnUserHistoryEntryId?: string;
   cwd?: string;
   hostCwd?: string;
   home?: string;

@@ -22,7 +22,7 @@ import {
 export type RpcServerRuntime = Pick<ChatRuntime, "runTurn" | "interruptTurn" | "isTurnRunning"> & {
   session: {
     addUserText(text: string, options?: { historyEntryId?: string }): string;
-    onSubagentEvent(handler: (event: CoreEvent) => void): () => void;
+    onEvent(handler: (event: CoreEvent) => void): () => void;
     reset(): void;
     readonly history: readonly Message[];
     readonly historyEntries: readonly HistoryEntry[];
@@ -46,8 +46,10 @@ export type RunRpcServerOptions = {
 export class RpcServer {
   private readonly runtime: RpcServerRuntime;
   private readonly send: (line: string) => void;
-  private unsubscribeSubagent?: () => void;
+  private unsubscribeEvent?: () => void;
   private activeSubmit?: Promise<void>;
+  private activeSubmitRequestId?: RpcRequestId;
+  private readonly submitRequestByUserHistoryEntryId = new Map<string, RpcRequestId>();
   private mutationQueue: Promise<void> = Promise.resolve();
   private pendingSessionMutations = 0;
   private initialized = false;
@@ -58,11 +60,13 @@ export class RpcServer {
     this.runtime = options.runtime;
     this.send = options.send;
 
-    this.unsubscribeSubagent = this.runtime.session.onSubagentEvent((event) => {
+    this.unsubscribeEvent = this.runtime.session.onEvent((event) => {
       if (this.rpcShutdown || this.closed) {
         return;
       }
-      this.sendMessage(createRpcEventMessage(wrapCoreEvent(event)));
+
+      const requestId = this.resolveEventRequestId(event);
+      this.sendMessage(createRpcEventMessage(wrapCoreEvent(event), { requestId }));
     });
 
     if (options.emitReadyOnStart ?? true) {
@@ -124,7 +128,8 @@ export class RpcServer {
     }
 
     this.closed = true;
-    this.unsubscribeSubagentListener();
+    this.clearEventCorrelationState();
+    this.unsubscribeEventListener();
 
     if (options.interruptActiveSubmit && (this.activeSubmit || this.runtime.isTurnRunning)) {
       this.runtime.interruptTurn();
@@ -184,6 +189,8 @@ export class RpcServer {
         ? { historyEntryId: request.params.historyEntryId }
         : undefined;
       const userHistoryEntryId = this.runtime.session.addUserText(request.params.text, addOptions);
+      this.submitRequestByUserHistoryEntryId.set(userHistoryEntryId, request.id);
+      this.activeSubmitRequestId = request.id;
 
       const submitPromise = this.executeSubmit(request.id, userHistoryEntryId);
       this.activeSubmit = submitPromise;
@@ -205,6 +212,7 @@ export class RpcServer {
       await this.enqueueMutation(() => {
         if (this.activeSubmit === submitPromise) {
           this.activeSubmit = undefined;
+          this.activeSubmitRequestId = undefined;
         }
       });
     }
@@ -212,9 +220,7 @@ export class RpcServer {
 
   private async executeSubmit(requestId: RpcRequestId, userHistoryEntryId: string): Promise<void> {
     try {
-      const turnResult = await this.runtime.runTurn((event) => {
-        this.sendMessage(createRpcEventMessage(wrapCoreEvent(event), { requestId }));
-      });
+      const turnResult = await this.runtime.runTurn(() => {});
 
       const result: RpcResultByMethod["session.submit"] = {
         userHistoryEntryId,
@@ -279,6 +285,7 @@ export class RpcServer {
 
       const previousSessionId = this.runtime.session.sessionId;
       this.runtime.session.reset();
+      this.clearEventCorrelationState();
 
       const result: RpcResultByMethod["session.reset"] = {
         previousSessionId,
@@ -304,7 +311,8 @@ export class RpcServer {
       await this.interruptAndWaitForActiveSubmit();
 
       this.rpcShutdown = true;
-      this.unsubscribeSubagentListener();
+      this.clearEventCorrelationState();
+      this.unsubscribeEventListener();
 
       const result: RpcResultByMethod["session.shutdown"] = {
         shutdown: true,
@@ -365,13 +373,30 @@ export class RpcServer {
     }
   }
 
-  private unsubscribeSubagentListener(): void {
-    if (!this.unsubscribeSubagent) {
+  private resolveEventRequestId(event: CoreEvent): RpcRequestId | undefined {
+    if (event.type === "subagent_ui") {
+      const originHistoryEntryId = event.originHistoryEntryId;
+      if (originHistoryEntryId) {
+        return this.submitRequestByUserHistoryEntryId.get(originHistoryEntryId);
+      }
+      return this.activeSubmitRequestId;
+    }
+
+    return this.activeSubmitRequestId;
+  }
+
+  private clearEventCorrelationState(): void {
+    this.activeSubmitRequestId = undefined;
+    this.submitRequestByUserHistoryEntryId.clear();
+  }
+
+  private unsubscribeEventListener(): void {
+    if (!this.unsubscribeEvent) {
       return;
     }
 
-    this.unsubscribeSubagent();
-    this.unsubscribeSubagent = undefined;
+    this.unsubscribeEvent();
+    this.unsubscribeEvent = undefined;
   }
 
   private sendMessage(message: Parameters<typeof serializeRpcMessage>[0]): void {

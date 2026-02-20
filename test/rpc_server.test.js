@@ -16,7 +16,7 @@ function request(id, method, params) {
 
 function createHarness(options = {}) {
   const lines = [];
-  const subagentHandlers = new Set();
+  const eventHandlers = new Set();
   const historyEntries = [];
   let sessionId = "session-1";
   let nextSessionId = 2;
@@ -25,6 +25,12 @@ function createHarness(options = {}) {
   let releaseTurn;
   let pendingTurnResult = { aborted: false };
   let pendingTurn = null;
+
+  const emitCoreEvent = (event) => {
+    for (const handler of eventHandlers) {
+      handler(event);
+    }
+  };
 
   const runtime = {
     get isTurnRunning() {
@@ -43,9 +49,9 @@ function createHarness(options = {}) {
         });
         return id;
       },
-      onSubagentEvent(handler) {
-        subagentHandlers.add(handler);
-        return () => subagentHandlers.delete(handler);
+      onEvent(handler) {
+        eventHandlers.add(handler);
+        return () => eventHandlers.delete(handler);
       },
       reset() {
         historyEntries.length = 0;
@@ -68,12 +74,12 @@ function createHarness(options = {}) {
           return await options.runTurn(onEvent);
         }
 
-        await onEvent({ type: "notice", severity: "info", text: "streaming" });
+        emitCoreEvent({ type: "notice", severity: "info", text: "streaming" });
         pendingTurn = new Promise((resolve) => {
           releaseTurn = resolve;
         });
         await pendingTurn;
-        await onEvent({ type: "notice", severity: "info", text: "finished" });
+        emitCoreEvent({ type: "notice", severity: "info", text: "finished" });
         return pendingTurnResult;
       } finally {
         running = false;
@@ -102,10 +108,14 @@ function createHarness(options = {}) {
     server,
     runtime,
     releaseTurn: () => releaseTurn?.(),
-    emitSubagent: (event) => {
-      for (const handler of subagentHandlers) {
-        handler({ type: "subagent_ui", event });
-      }
+    emitSubagent: (event, options = {}) => {
+      emitCoreEvent({
+        type: "subagent_ui",
+        event,
+        ...(options.originHistoryEntryId
+          ? { originHistoryEntryId: options.originHistoryEntryId }
+          : {}),
+      });
     },
   };
 }
@@ -127,7 +137,10 @@ describe("rpc_server", () => {
     );
 
     await Promise.resolve();
-    harness.emitSubagent({ type: "spawned", id: "agent-1", title: "research" });
+    harness.emitSubagent(
+      { type: "spawned", id: "agent-1", title: "research" },
+      { originHistoryEntryId: "history-1" },
+    );
 
     await harness.server.handleLine(request("submit-2", "session.submit", { text: "second turn" }));
 
@@ -144,7 +157,11 @@ describe("rpc_server", () => {
     );
 
     const submitEvent = harness.lines.find(
-      (line) => line.type === "event" && line.requestId === "submit-1" && line.event?.event,
+      (line) =>
+        line.type === "event" &&
+        line.requestId === "submit-1" &&
+        line.event?.event?.type === "notice" &&
+        line.event?.event?.text === "streaming",
     );
     expect(submitEvent).toEqual(
       expect.objectContaining({
@@ -163,16 +180,16 @@ describe("rpc_server", () => {
     expect(subagentEvent).toEqual(
       expect.objectContaining({
         type: "event",
-        event: {
+        event: expect.objectContaining({
           version: CORE_EVENT_VERSION,
-          event: {
+          event: expect.objectContaining({
             type: "subagent_ui",
             event: { type: "spawned", id: "agent-1", title: "research" },
-          },
-        },
+          }),
+        }),
       }),
     );
-    expect(subagentEvent.requestId).toBeUndefined();
+    expect(subagentEvent.requestId).toBe("submit-1");
 
     const busy = harness.lines.find((line) => line.type === "response" && line.id === "submit-2");
     expect(busy).toEqual({
@@ -200,6 +217,63 @@ describe("rpc_server", () => {
         },
       }),
     );
+  });
+
+  it("keeps subagent request correlation stable across later submits", async () => {
+    const harness = createHarness();
+
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", { text: "first turn" }),
+    );
+
+    await Promise.resolve();
+    harness.emitSubagent(
+      { type: "spawned", id: "agent-1", title: "research" },
+      { originHistoryEntryId: "history-1" },
+    );
+    harness.releaseTurn();
+    await firstSubmit;
+
+    const secondSubmit = harness.server.handleLine(
+      request("submit-2", "session.submit", { text: "second turn" }),
+    );
+
+    await Promise.resolve();
+    harness.emitSubagent(
+      {
+        type: "subagent_progress",
+        id: "agent-1",
+        text: "still working",
+        costTotal: 0,
+        turns: 1,
+        toolCalls: 0,
+      },
+      { originHistoryEntryId: "history-1" },
+    );
+
+    harness.releaseTurn();
+    await secondSubmit;
+
+    const lateSubagentEvent = harness.lines.find(
+      (line) =>
+        line.type === "event" &&
+        line.event?.event?.type === "subagent_ui" &&
+        line.event?.event?.event?.type === "subagent_progress",
+    );
+    expect(lateSubagentEvent).toEqual(
+      expect.objectContaining({
+        type: "event",
+        requestId: "submit-1",
+      }),
+    );
+
+    const secondSubmitEvent = harness.lines.find(
+      (line) =>
+        line.type === "event" &&
+        line.requestId === "submit-2" &&
+        line.event?.event?.type === "notice",
+    );
+    expect(secondSubmitEvent).toBeDefined();
   });
 
   it("handles interrupt, snapshot, reset, shutdown, and malformed lines", async () => {

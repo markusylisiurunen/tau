@@ -95,7 +95,7 @@ export class SessionEngine {
   private includeAgentContext: boolean;
   private sandboxEnabled: boolean;
   private readonly subagentControlPlane: SubagentControlPlane;
-  private readonly subagentListeners = new Set<(event: CoreSubagentUiEvent) => void>();
+  private readonly eventListeners = new Set<(event: CoreEvent) => void>();
   private historyEntries: HistoryEntry[] = [];
   private sessionId = `tau-main-${randomUUID()}`;
 
@@ -171,9 +171,9 @@ export class SessionEngine {
     }
   }
 
-  onSubagentEvent(handler: (event: CoreSubagentUiEvent) => void): () => void {
-    this.subagentListeners.add(handler);
-    return () => this.subagentListeners.delete(handler);
+  onEvent(handler: (event: CoreEvent) => void): () => void {
+    this.eventListeners.add(handler);
+    return () => this.eventListeners.delete(handler);
   }
 
   async terminateSubagent(id: string): Promise<boolean> {
@@ -365,10 +365,45 @@ export class SessionEngine {
   }
 
   private emitSubagentEvent(event: SubagentUiEvent): void {
-    const coreEvent: CoreSubagentUiEvent = { type: "subagent_ui", event };
-    for (const listener of this.subagentListeners) {
-      listener(coreEvent);
+    const subagentId = this.getSubagentEventId(event);
+    const originHistoryEntryId = subagentId
+      ? this.subagentControlPlane.getOriginHistoryEntryId(subagentId)
+      : undefined;
+    const coreEvent: CoreSubagentUiEvent = {
+      type: "subagent_ui",
+      event,
+      ...(originHistoryEntryId ? { originHistoryEntryId } : {}),
+    };
+    this.emitEvent(coreEvent);
+  }
+
+  private emitEvent(event: CoreEvent): void {
+    for (const listener of this.eventListeners) {
+      listener(event);
     }
+  }
+
+  private getSubagentEventId(event: SubagentUiEvent): string {
+    switch (event.type) {
+      case "subagent_spawned":
+      case "subagent_finished":
+        return event.state.id;
+      case "subagent_progress":
+      case "subagent_emit_output":
+      case "subagent_abort_requested":
+        return event.id;
+    }
+  }
+
+  private getCurrentTurnUserHistoryEntryId(): string | undefined {
+    for (let i = this.historyEntries.length - 1; i >= 0; i -= 1) {
+      const entry = this.historyEntries[i];
+      if (entry?.message.role === "user") {
+        return entry.id;
+      }
+    }
+
+    return undefined;
   }
 
   private getStreamingSettings(persona: Persona): TauStreamOptions {
@@ -403,6 +438,7 @@ export class SessionEngine {
 
   async *processTurn(signal: AbortSignal): AsyncGenerator<CoreEvent> {
     let subturns = 0;
+    const turnUserHistoryEntryId = this.getCurrentTurnUserHistoryEntryId();
 
     while (subturns < MAX_ASSISTANT_SUBTURNS && !signal.aborted) {
       subturns += 1;
@@ -428,6 +464,7 @@ export class SessionEngine {
         history: [...this.history],
         systemPrompt: this.systemPrompt,
         riskLevel: this.riskLevel,
+        turnUserHistoryEntryId,
         cwd: this.cwd,
         hostCwd: this.hostCwd,
         home: this.home,
@@ -451,22 +488,27 @@ export class SessionEngine {
           const historyEntryId = this.addMessage(event.message, {
             historyEntryId: event.message.toolCallId,
           });
-          yield {
+          const coreEvent: CoreEvent = {
             ...event,
             historyEntryId,
           };
+          this.emitEvent(coreEvent);
+          yield coreEvent;
           continue;
         }
+        this.emitEvent(event);
         yield event;
       }
     }
 
     if (subturns >= MAX_ASSISTANT_SUBTURNS) {
-      yield {
+      const event: CoreEvent = {
         type: "notice",
         severity: "warn",
         text: `stopped after ${MAX_ASSISTANT_SUBTURNS} tool subturns to avoid an infinite loop.`,
       };
+      this.emitEvent(event);
+      yield event;
     }
   }
 
@@ -474,7 +516,9 @@ export class SessionEngine {
     signal: AbortSignal,
   ): AsyncGenerator<CoreEvent, { finalMessage?: AssistantMessage }, void> {
     const historyEntryId = this.createHistoryEntryId();
-    yield { type: "assistant_start", historyEntryId };
+    const startEvent: CoreEvent = { type: "assistant_start", historyEntryId };
+    this.emitEvent(startEvent);
+    yield startEvent;
     const tools = this.getEnabledToolSchemas();
 
     const context: Context = {
@@ -523,14 +567,17 @@ export class SessionEngine {
         }
 
         if (next.value.type === "assistant_partial") {
-          yield {
+          const event: CoreEvent = {
             type: "assistant_partial",
             historyEntryId,
             snapshot: next.value.snapshot,
           };
+          this.emitEvent(event);
+          yield event;
           continue;
         }
 
+        this.emitEvent(next.value);
         yield next.value;
       }
 
@@ -551,7 +598,9 @@ export class SessionEngine {
         cost: { total: getUsageCostTotal(finalMessage.usage) },
         agent: { type: "main" },
       });
-      yield { type: "assistant_final", historyEntryId, message: finalMessage };
+      const event: CoreEvent = { type: "assistant_final", historyEntryId, message: finalMessage };
+      this.emitEvent(event);
+      yield event;
       return { finalMessage };
     } catch (err) {
       if (!signal.aborted) {

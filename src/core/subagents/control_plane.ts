@@ -48,6 +48,7 @@ type SubagentRecord = {
   name: SubagentName;
   title: string;
   modelLabel?: string;
+  originHistoryEntryId?: string;
   runtimeConfig: SubagentRuntimeConfig;
   messages: Message[];
   status: SubagentStatus;
@@ -131,6 +132,7 @@ export class SubagentControlPlane {
     prompt: string;
     title: string;
     modelLabel?: string;
+    originHistoryEntryId?: string;
     config: Config;
     authPath?: string;
     backend: ToolExecutionBackend;
@@ -145,8 +147,17 @@ export class SubagentControlPlane {
       };
     }
 
-    const { runtimeConfig, prompt, title, modelLabel, config, authPath, backend, personaId } =
-      options;
+    const {
+      runtimeConfig,
+      prompt,
+      title,
+      modelLabel,
+      originHistoryEntryId,
+      config,
+      authPath,
+      backend,
+      personaId,
+    } = options;
     const id = randomUUID();
 
     const record: SubagentRecord = {
@@ -154,6 +165,7 @@ export class SubagentControlPlane {
       name: runtimeConfig.name,
       title,
       modelLabel,
+      originHistoryEntryId,
       runtimeConfig,
       messages: [],
       status: "running",
@@ -254,6 +266,10 @@ export class SubagentControlPlane {
   getSnapshot(id: string): SubagentStateSnapshot | undefined {
     const record = this.records.get(id);
     return record ? this.toSnapshot(record) : undefined;
+  }
+
+  getOriginHistoryEntryId(id: string): string | undefined {
+    return this.records.get(id)?.originHistoryEntryId;
   }
 
   private startRun(options: {

@@ -75,8 +75,8 @@ export class CoreSession {
     this.engine.setPromptContext(context);
   }
 
-  onSubagentEvent(handler: (event: CoreSubagentUiEvent) => void): () => void {
-    return this.engine.onSubagentEvent(handler);
+  onEvent(handler: (event: CoreEvent) => void): () => void {
+    return this.engine.onEvent(handler);
   }
 
   async terminateSubagent(id: string): Promise<boolean> {

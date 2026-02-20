@@ -69,6 +69,7 @@ describe("subagent engine model notices", () => {
         },
       },
       signal: new AbortController().signal,
+      turnUserHistoryEntryId: "history-1",
     });
 
     expect(result.finalText).toBe("done");

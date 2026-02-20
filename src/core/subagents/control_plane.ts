@@ -318,6 +318,7 @@ export class SubagentControlPlane {
       signal: record.controller.signal,
       sessionId: record.id,
       personaId,
+      turnUserHistoryEntryId: record.originHistoryEntryId,
       subagentContext,
       messages: record.messages,
       onProgress: (event) => this.recordProgress(record.id, event),

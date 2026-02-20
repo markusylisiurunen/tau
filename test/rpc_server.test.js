@@ -108,13 +108,11 @@ function createHarness(options = {}) {
     server,
     runtime,
     releaseTurn: () => releaseTurn?.(),
-    emitSubagent: (event, options = {}) => {
+    emitSubagent: (event, originHistoryEntryId) => {
       emitCoreEvent({
         type: "subagent_ui",
         event,
-        ...(options.originHistoryEntryId
-          ? { originHistoryEntryId: options.originHistoryEntryId }
-          : {}),
+        originHistoryEntryId,
       });
     },
   };
@@ -137,10 +135,7 @@ describe("rpc_server", () => {
     );
 
     await Promise.resolve();
-    harness.emitSubagent(
-      { type: "spawned", id: "agent-1", title: "research" },
-      { originHistoryEntryId: "history-1" },
-    );
+    harness.emitSubagent({ type: "spawned", id: "agent-1", title: "research" }, "history-1");
 
     await harness.server.handleLine(request("submit-2", "session.submit", { text: "second turn" }));
 
@@ -227,10 +222,7 @@ describe("rpc_server", () => {
     );
 
     await Promise.resolve();
-    harness.emitSubagent(
-      { type: "spawned", id: "agent-1", title: "research" },
-      { originHistoryEntryId: "history-1" },
-    );
+    harness.emitSubagent({ type: "spawned", id: "agent-1", title: "research" }, "history-1");
     harness.releaseTurn();
     await firstSubmit;
 
@@ -248,7 +240,7 @@ describe("rpc_server", () => {
         turns: 1,
         toolCalls: 0,
       },
-      { originHistoryEntryId: "history-1" },
+      "history-1",
     );
 
     harness.releaseTurn();

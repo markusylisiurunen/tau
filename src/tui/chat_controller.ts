@@ -341,7 +341,7 @@ export class ChatController {
     this.maintenanceService = new SessionMaintenanceService({
       engine: this.engine,
       view: this.view,
-      runStreamingTask: (task) => this.runMaintenanceStreamingTask(task),
+      runStreamingTask: (task, onSettled) => this.runMaintenanceStreamingTask(task, onSettled),
       applyCompactedHistoryUi: (compactionMessage) =>
         this.applyCompactedHistoryUi(compactionMessage),
       requestSmartPruneSelection: (prompt, signal) =>
@@ -1029,17 +1029,26 @@ export class ChatController {
 
   private async runMaintenanceStreamingTask<T>(
     task: (signal: AbortSignal) => Promise<T>,
+    onSettled?: (outcome: MaintenanceTaskOutcome<T>) => void | Promise<void>,
   ): Promise<MaintenanceTaskOutcome<T>> {
     this.isStreaming = true;
     this.view.startWorkingIcon();
     const { busyTask, signal } = this.createAbortBusyTask();
     this.beginBusyTask(busyTask);
 
+    let outcome: MaintenanceTaskOutcome<T>;
     try {
       const value = await task(signal);
-      return { aborted: signal.aborted, value };
+      outcome = { aborted: signal.aborted, value };
     } catch (error) {
-      return { aborted: signal.aborted, error };
+      outcome = { aborted: signal.aborted, error };
+    }
+
+    try {
+      if (onSettled) {
+        await onSettled(outcome);
+      }
+      return outcome;
     } finally {
       this.endBusyTask(busyTask);
       this.view.stopWorkingIcon();

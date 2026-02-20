@@ -40,6 +40,7 @@ export type MaintenanceTaskOutcome<T> = {
 
 export type MaintenanceTaskRunner = <T>(
   task: (signal: AbortSignal) => Promise<T>,
+  onSettled?: (outcome: MaintenanceTaskOutcome<T>) => void | Promise<void>,
 ) => Promise<MaintenanceTaskOutcome<T>>;
 
 type SessionMaintenanceView = {
@@ -75,40 +76,60 @@ export class SessionMaintenanceService {
 
   async compactSummaryOnly(guidance?: string): Promise<void> {
     this.view.addSystemMessage("summarizing session...", "success");
-    const outcome = await this.runStreamingTask(async (signal) => {
-      const result = await this.engine.compact({
-        mode: "only-summary",
-        guidance,
-        signal,
-      });
-      this.applyCompactedHistoryUi(result.compactionMessage);
-      this.view.addSystemMessage(
-        "session compacted. previous context has been summarized.",
-        "success",
-      );
-    });
+    let handledFailure = false;
+    const outcome = await this.runStreamingTask(
+      async (signal) => {
+        const result = await this.engine.compact({
+          mode: "only-summary",
+          guidance,
+          signal,
+        });
+        this.applyCompactedHistoryUi(result.compactionMessage);
+        this.view.addSystemMessage(
+          "session compacted. previous context has been summarized.",
+          "success",
+        );
+      },
+      (taskOutcome) => {
+        if (!taskOutcome.error || taskOutcome.aborted) {
+          return;
+        }
+        handledFailure = true;
+        this.handleCompactionError(taskOutcome.error);
+      },
+    );
 
-    if (outcome.error && !outcome.aborted) {
+    if (!handledFailure && outcome.error && !outcome.aborted) {
       this.handleCompactionError(outcome.error);
     }
   }
 
   async compactSummaryAndLast(guidance?: string): Promise<void> {
     this.view.addSystemMessage("summarizing session...", "success");
-    const outcome = await this.runStreamingTask(async (signal) => {
-      const result = await this.engine.compact({
-        mode: "with-last-assistant",
-        guidance,
-        signal,
-      });
-      this.applyCompactedHistoryUi(result.compactionMessage);
-      const successText = result.includedLastAssistant
-        ? "session compacted. previous context and last assistant message have been included."
-        : "session compacted. previous context has been summarized.";
-      this.view.addSystemMessage(successText, "success");
-    });
+    let handledFailure = false;
+    const outcome = await this.runStreamingTask(
+      async (signal) => {
+        const result = await this.engine.compact({
+          mode: "with-last-assistant",
+          guidance,
+          signal,
+        });
+        this.applyCompactedHistoryUi(result.compactionMessage);
+        const successText = result.includedLastAssistant
+          ? "session compacted. previous context and last assistant message have been included."
+          : "session compacted. previous context has been summarized.";
+        this.view.addSystemMessage(successText, "success");
+      },
+      (taskOutcome) => {
+        if (!taskOutcome.error || taskOutcome.aborted) {
+          return;
+        }
+        handledFailure = true;
+        this.handleCompactionError(taskOutcome.error);
+      },
+    );
 
-    if (outcome.error && !outcome.aborted) {
+    if (!handledFailure && outcome.error && !outcome.aborted) {
       this.handleCompactionError(outcome.error);
     }
   }
@@ -301,55 +322,71 @@ export class SessionMaintenanceService {
 
     this.view.addSystemMessage("sampling prune candidates...", "success");
 
-    const prompt = this.buildSmartPrunePrompt({
-      history,
-      targetTokens,
-      guidance: parsed.guidance,
-    });
+    let handledFailure = false;
+    const selectionOutcome = await this.runStreamingTask(
+      async (signal) => {
+        const prompt = this.buildSmartPrunePrompt({
+          history,
+          targetTokens,
+          guidance: parsed.guidance,
+        });
 
-    const selectionOutcome = await this.runStreamingTask(async (signal) => {
-      const selection = await this.requestSmartPruneSelection(prompt, signal);
-      if (selection.length === 0) {
-        const summary = getEditSummary();
-        if (this.hasAnyPrunedEditChanges(summary)) {
-          this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
-        } else {
-          this.view.addSystemMessage("model returned no prune candidates.", "warn");
+        const selection = await this.requestSmartPruneSelection(prompt, signal);
+        if (selection.length === 0) {
+          const summary = getEditSummary();
+          if (this.hasAnyPrunedEditChanges(summary)) {
+            this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
+          } else {
+            this.view.addSystemMessage("model returned no prune candidates.", "warn");
+          }
+          return;
         }
-        return;
-      }
 
-      const toPrune = this.selectSmartPruneCandidates(selection, candidates, targetTokens);
-      if (toPrune.length === 0) {
-        const summary = getEditSummary();
-        if (this.hasAnyPrunedEditChanges(summary)) {
-          this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
-        } else {
-          this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
+        const toPrune = this.selectSmartPruneCandidates(selection, candidates, targetTokens);
+        if (toPrune.length === 0) {
+          const summary = getEditSummary();
+          if (this.hasAnyPrunedEditChanges(summary)) {
+            this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
+          } else {
+            this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
+          }
+          return;
         }
-        return;
-      }
 
-      const summary = getEditSummary();
-      let prunedBytes = 0;
-      for (const candidate of toPrune) {
-        prunedBytes += candidate.bytes;
-        const noticeText = this.buildPrunedToolResultNotice(candidate.toolResult, candidate.bytes);
-        const prunedResult: ToolResultMessage = {
-          ...candidate.toolResult,
-          content: [{ type: "text", text: noticeText }],
-        };
-        this.engine.replaceMessage(candidate.index, prunedResult);
-        this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, noticeText);
-      }
+        const summary = getEditSummary();
+        let prunedBytes = 0;
+        for (const candidate of toPrune) {
+          prunedBytes += candidate.bytes;
+          const noticeText = this.buildPrunedToolResultNotice(
+            candidate.toolResult,
+            candidate.bytes,
+          );
+          const prunedResult: ToolResultMessage = {
+            ...candidate.toolResult,
+            content: [{ type: "text", text: noticeText }],
+          };
+          this.engine.replaceMessage(candidate.index, prunedResult);
+          this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, noticeText);
+        }
 
-      this.view.addSystemMessage(
-        this.buildPruneSummaryMessage(summary, toPrune.length, prunedBytes),
-        "success",
-      );
-    });
+        this.view.addSystemMessage(
+          this.buildPruneSummaryMessage(summary, toPrune.length, prunedBytes),
+          "success",
+        );
+      },
+      (taskOutcome) => {
+        if (!taskOutcome.error || taskOutcome.aborted) {
+          return;
+        }
+        handledFailure = true;
+        this.view.addSystemMessage(
+          `prune failed: ${(taskOutcome.error as Error).message}`,
+          "error",
+        );
+      },
+    );
 
-    if (selectionOutcome.error && !selectionOutcome.aborted) {
+    if (!handledFailure && selectionOutcome.error && !selectionOutcome.aborted) {
       this.view.addSystemMessage(
         `prune failed: ${(selectionOutcome.error as Error).message}`,
         "error",
@@ -467,6 +504,10 @@ export class SessionMaintenanceService {
       }
 
       const assistant = message as AssistantMessage;
+      if (!Array.isArray(assistant.content)) {
+        continue;
+      }
+
       let changed = false;
       const nextContent = assistant.content.map((block) => {
         if (typeof block === "string" || block.type !== "toolCall") {
@@ -754,20 +795,24 @@ export class SessionMaintenanceService {
       if (message.role === "assistant") {
         lines.push("<assistant>");
         const assistant = message as AssistantMessage;
-        for (const block of assistant.content) {
-          if (typeof block === "string") {
-            this.appendPruneText(lines, block);
-            continue;
-          }
+        if (typeof assistant.content === "string") {
+          this.appendPruneText(lines, assistant.content);
+        } else if (Array.isArray(assistant.content)) {
+          for (const block of assistant.content) {
+            if (typeof block === "string") {
+              this.appendPruneText(lines, block);
+              continue;
+            }
 
-          if (block.type === "text") {
-            this.appendPruneText(lines, block.text ?? "");
-            continue;
-          }
+            if (block.type === "text") {
+              this.appendPruneText(lines, block.text ?? "");
+              continue;
+            }
 
-          if (block.type === "toolCall") {
-            const toolCall = block as ToolCall;
-            lines.push(this.buildPruneToolCallTag(toolCall));
+            if (block.type === "toolCall") {
+              const toolCall = block as ToolCall;
+              lines.push(this.buildPruneToolCallTag(toolCall));
+            }
           }
         }
         lines.push("</assistant>");

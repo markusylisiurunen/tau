@@ -207,7 +207,6 @@ export class ChatController {
   private readonly deps: CoreDeps;
   private subagentUnsubscribe?: () => void;
   private isStreaming = false;
-  private queuedUserMessages: string[];
   private readonly queuedMessageBuffer: QueuedUserMessages;
   private readonly interruptLifecycle: InterruptLifecycle;
   private readonly maintenanceService: SessionMaintenanceService;
@@ -270,8 +269,8 @@ export class ChatController {
       getConfig: () => this.config,
     });
     this.compactToolUi = true;
-    this.queuedUserMessages = options.queuedUserMessages ?? [];
-    this.queuedMessageBuffer = new QueuedUserMessages(this.queuedUserMessages);
+    const queuedUserMessages = options.queuedUserMessages ?? [];
+    this.queuedMessageBuffer = new QueuedUserMessages(queuedUserMessages);
     this.interruptLifecycle = new InterruptLifecycle();
     this.toolBackendDispose = options.toolBackendDispose;
 

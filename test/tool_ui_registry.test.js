@@ -140,7 +140,7 @@ describe("ToolUiRegistry", () => {
         "**agent-1**\nok",
       ),
     });
-    expect(waitFinished).toContain("waited");
+    expect(waitFinished).toContain("wait failed");
     expect(waitFinished).toContain("cost $0.17");
 
     const terminateFinished = renderEvent(registry, theme, {
@@ -154,6 +154,31 @@ describe("ToolUiRegistry", () => {
     });
     expect(terminateFinished).toContain("terminated");
     expect(terminateFinished).toContain("cost $0.05");
+  });
+
+  it("renders fallback subagent error text when uiText is absent", () => {
+    const spawnFailed = renderEvent(registry, theme, {
+      type: "spawn_agent_finished",
+      toolCallId: "s2",
+      name: "explore",
+      title: "scan repo",
+      headerTarget: "scan repo",
+      status: "error",
+      message: "aborted",
+    });
+    expect(spawnFailed).toContain("spawn failed");
+    expect(spawnFailed).toContain("aborted");
+
+    const terminateFailed = renderEvent(registry, theme, {
+      type: "terminate_agent_finished",
+      toolCallId: "t2",
+      agentId: "agent-2",
+      headerTarget: "agent-2",
+      status: "error",
+      finalStatus: "aborted",
+    });
+    expect(terminateFailed).toContain("terminate failed");
+    expect(terminateFailed).toContain("final status: aborted");
   });
 
   it("renders web tool events", () => {
@@ -174,6 +199,16 @@ describe("ToolUiRegistry", () => {
     });
     expect(searchFinished).toContain("web search");
 
+    const searchFailed = renderEvent(registry, theme, {
+      type: "web_search_finished",
+      toolCallId: "w1b",
+      objective: "latest tau release",
+      headerTarget: "latest tau release",
+      status: "error",
+      message: "missing Parallel API key.",
+    });
+    expect(searchFailed).toContain("missing Parallel API key.");
+
     const fetchStarted = renderEvent(registry, theme, {
       type: "web_fetch_started",
       toolCallId: "w2",
@@ -188,8 +223,10 @@ describe("ToolUiRegistry", () => {
       url: "https://example.com",
       headerTarget: "https://example.com",
       status: "error",
+      message: "request failed",
     });
     expect(fetchFinished).toContain("web fetch");
+    expect(fetchFinished).toContain("request failed");
   });
 
   it("renders file tool events", () => {

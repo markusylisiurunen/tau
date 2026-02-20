@@ -12,9 +12,9 @@ export type TauSdkRpcMethod =
   | "session.shutdown";
 
 export type TauSdkInitializeParams = {
-  client?: {
-    name?: string;
-    version?: string;
+  client: {
+    name: string;
+    version: string;
   };
 };
 

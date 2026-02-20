@@ -71,6 +71,25 @@ describe("rpc_protocol", () => {
       id: 3,
       error: expect.objectContaining({ code: RPC_ERROR_CODES.invalidParams }),
     });
+
+    const requestWithUnsupportedFields = parseRpcRequestLine(
+      JSON.stringify({
+        version: RPC_PROTOCOL_VERSION,
+        type: "request",
+        id: 4,
+        method: "session.submit",
+        params: { text: "hello" },
+        legacy: true,
+      }),
+    );
+    expect(requestWithUnsupportedFields).toEqual({
+      ok: false,
+      id: null,
+      error: expect.objectContaining({
+        code: RPC_ERROR_CODES.invalidRequest,
+        message: "request contains unsupported top-level fields",
+      }),
+    });
   });
 
   it("parses valid outgoing server messages", () => {
@@ -211,9 +230,46 @@ describe("rpc_protocol", () => {
       id: "req-9",
       error: expect.objectContaining({ code: RPC_ERROR_CODES.invalidRequest }),
     });
+
+    const responseWithUnsupportedFields = parseRpcOutgoingLine(
+      JSON.stringify({
+        version: RPC_PROTOCOL_VERSION,
+        type: "response",
+        id: "req-10",
+        ok: true,
+        result: { shutdown: true },
+        error: { code: RPC_ERROR_CODES.internalError, message: "should not be here" },
+      }),
+    );
+    expect(responseWithUnsupportedFields).toEqual({
+      ok: false,
+      reason: "invalid_payload",
+      messageType: "response",
+      id: "req-10",
+      error: expect.objectContaining({
+        code: RPC_ERROR_CODES.invalidRequest,
+        message: "successful response must only include result payload",
+      }),
+    });
   });
 
   it("validates per-method params", () => {
+    expect(validateRpcParams("initialize", { client: { name: "tau-sdk", version: "1" } })).toEqual({
+      ok: true,
+      value: {
+        client: {
+          name: "tau-sdk",
+          version: "1",
+        },
+      },
+    });
+
+    const invalidInitialize = validateRpcParams("initialize", {});
+    expect(invalidInitialize).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: RPC_ERROR_CODES.invalidParams }),
+    });
+
     expect(validateRpcParams("session.interrupt", {})).toEqual({ ok: true, value: {} });
 
     const invalidInterrupt = validateRpcParams("session.interrupt", { extra: true });

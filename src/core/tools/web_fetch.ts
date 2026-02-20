@@ -221,6 +221,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
           url: url || "(invalid url)",
           headerTarget,
           status: "error",
+          message: reason,
         };
         return { kind: "single", toolResult, uiEvent };
       };
@@ -317,6 +318,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
               url: args.url,
               headerTarget,
               status: "error",
+              message: reason,
             };
             return { kind: "single", toolResult, uiEvent };
           }

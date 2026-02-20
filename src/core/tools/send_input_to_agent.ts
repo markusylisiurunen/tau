@@ -61,10 +61,8 @@ function formatSendInputToolResult(args: { id: string; name: string; title: stri
   );
 }
 
-function resolveSnapshotTarget(snapshot?: SubagentStateSnapshot, agentId?: string) {
-  const name = snapshot?.name ?? "";
-  const title = snapshot?.title ?? agentId ?? "(subagent)";
-  return { name, title };
+function resolveSnapshotTarget(snapshot: SubagentStateSnapshot) {
+  return { name: snapshot.name, title: snapshot.title };
 }
 
 export function createSendInputToAgentToolDefinition(
@@ -117,7 +115,7 @@ export function createSendInputToAgentToolDefinition(
 
       const config = context.config;
 
-      const target = resolveSnapshotTarget(snapshot, id);
+      const target = resolveSnapshotTarget(snapshot);
 
       return {
         kind: "phased",
@@ -131,7 +129,14 @@ export function createSendInputToAgentToolDefinition(
         },
         run: (async (): Promise<ToolDispatchResult> => {
           if (signal?.aborted) {
-            const toolResult = createToolError(toolCall, "send_input_to_agent aborted");
+            const reason = "aborted";
+            const toolResult = createToolError(toolCall, `send_input_to_agent ${reason}`);
+            const uiText = buildSubagentUiText({
+              output: reason,
+              statusText: `${target.name} · ${id}`,
+              maxOutputLines: 16,
+              fullText: reason,
+            });
             const uiEvent: ToolUiEvent = {
               type: "send_input_to_agent_finished",
               toolCallId: toolCall.id,
@@ -140,7 +145,8 @@ export function createSendInputToAgentToolDefinition(
               title: target.title,
               headerTarget: target.title,
               status: "error",
-              message: "aborted",
+              message: reason,
+              uiText,
             };
             return { kind: "single", toolResult, uiEvent };
           }

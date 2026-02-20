@@ -87,6 +87,7 @@ export async function runSubagent(options: {
   onToolUiEvent?: (event: SubagentToolUiEvent) => void;
   sessionId?: string;
   personaId?: string;
+  turnUserHistoryEntryId: string;
   subagentContext?: ToolDispatchContext["subagentContext"];
 }): Promise<SubagentRunResult> {
   const {
@@ -98,6 +99,7 @@ export async function runSubagent(options: {
     onToolUiEvent,
     subagentContext,
     personaId,
+    turnUserHistoryEntryId,
   } = options;
   const authPath = options.authPath ?? getAuthPath();
   const authStorage = new AuthStorage(authPath);
@@ -152,7 +154,6 @@ export async function runSubagent(options: {
     issues.length > 0 ? ` (recent issues: ${issues.slice(-3).join("; ")})` : "";
 
   const sessionId = options.sessionId ?? `tau-subagent-${runtimeConfig.name}-${randomUUID()}`;
-  const turnUserHistoryEntryId = subagentContext?.originHistoryEntryId ?? `subagent-${sessionId}`;
 
   for (let subturn = 1; subturn <= maxSubturns && !signal.aborted; subturn++) {
     emitProgress("assistant: thinking");

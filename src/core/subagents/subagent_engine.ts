@@ -152,6 +152,7 @@ export async function runSubagent(options: {
     issues.length > 0 ? ` (recent issues: ${issues.slice(-3).join("; ")})` : "";
 
   const sessionId = options.sessionId ?? `tau-subagent-${runtimeConfig.name}-${randomUUID()}`;
+  const turnUserHistoryEntryId = subagentContext?.originHistoryEntryId ?? `subagent-${sessionId}`;
 
   for (let subturn = 1; subturn <= maxSubturns && !signal.aborted; subturn++) {
     emitProgress("assistant: thinking");
@@ -301,6 +302,7 @@ export async function runSubagent(options: {
       config,
       toolRegistry,
       authPath,
+      turnUserHistoryEntryId,
       subagentContext,
     };
 

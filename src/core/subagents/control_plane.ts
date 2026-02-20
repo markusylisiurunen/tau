@@ -48,7 +48,7 @@ type SubagentRecord = {
   name: SubagentName;
   title: string;
   modelLabel?: string;
-  originHistoryEntryId?: string;
+  originHistoryEntryId: string;
   runtimeConfig: SubagentRuntimeConfig;
   messages: Message[];
   status: SubagentStatus;
@@ -132,7 +132,7 @@ export class SubagentControlPlane {
     prompt: string;
     title: string;
     modelLabel?: string;
-    originHistoryEntryId?: string;
+    originHistoryEntryId: string;
     config: Config;
     authPath?: string;
     backend: ToolExecutionBackend;
@@ -268,8 +268,12 @@ export class SubagentControlPlane {
     return record ? this.toSnapshot(record) : undefined;
   }
 
-  getOriginHistoryEntryId(id: string): string | undefined {
-    return this.records.get(id)?.originHistoryEntryId;
+  getOriginHistoryEntryId(id: string): string {
+    const record = this.records.get(id);
+    if (!record) {
+      throw new Error(`unknown subagent id: ${id}`);
+    }
+    return record.originHistoryEntryId;
   }
 
   private startRun(options: {
@@ -299,6 +303,7 @@ export class SubagentControlPlane {
       id: record.id,
       name: record.name,
       title: record.title,
+      originHistoryEntryId: record.originHistoryEntryId,
       controlPlane: this,
     };
 

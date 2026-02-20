@@ -1,14 +1,13 @@
 import { type AsyncCronScheduler, startAsyncCronScheduler } from "./cron.js";
 import { type AsyncHttpServerHandle, startAsyncHttpServer } from "./http_server.js";
 import type { AsyncDaemonConfig } from "./server_config.js";
-import { type AsyncSessionManager, createScopedAsyncSessionManager } from "./session_manager.js";
+import type { AsyncSessionManager } from "./session_manager.js";
 import { type AsyncTelegramAdapterHandle, startAsyncTelegramAdapter } from "./telegram.js";
 
 type AsyncDaemonRuntimeDependencies = {
   startCronScheduler: typeof startAsyncCronScheduler;
   startHttpServer: typeof startAsyncHttpServer;
   startTelegramAdapter: typeof startAsyncTelegramAdapter;
-  createScopedSessionManager: typeof createScopedAsyncSessionManager;
 };
 
 export type StartAsyncDaemonRuntimeOptions = {
@@ -43,7 +42,6 @@ const defaultDeps: AsyncDaemonRuntimeDependencies = {
   startCronScheduler: startAsyncCronScheduler,
   startHttpServer: startAsyncHttpServer,
   startTelegramAdapter: startAsyncTelegramAdapter,
-  createScopedSessionManager: createScopedAsyncSessionManager,
 };
 
 async function closeRuntimeResources(resources: Partial<RuntimeResources>): Promise<void> {
@@ -130,13 +128,8 @@ export async function startAsyncDaemonRuntime(
         }
       }
 
-      const scopedSessionManager = deps.createScopedSessionManager({
-        sessionManager: options.sessionManager,
-        ownerId: `telegram:${botId}`,
-        allowedProjectIds,
-      });
-
       const telegramAdapter = await deps.startTelegramAdapter({
+        botId,
         botToken: telegramConfig.botToken,
         projects: scopedProjects,
         defaultProjectId: telegramConfig.defaultProjectId,
@@ -146,7 +139,7 @@ export async function startAsyncDaemonRuntime(
         pollIntervalMs: telegramConfig.pollIntervalMs,
         requestTimeoutSeconds: telegramConfig.requestTimeoutSeconds,
         mistralApiKey: options.mistralApiKey,
-        sessionManager: scopedSessionManager,
+        sessionManager: options.sessionManager,
         onLog: (entry) => {
           options.onLog?.(`[telegram:${botId}:${entry.level}] ${entry.message}`);
         },

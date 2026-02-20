@@ -85,14 +85,8 @@ describe("async daemon runtime", () => {
           events.push("start-http");
           return httpHandle;
         }),
-        createScopedSessionManager: vi.fn(({ ownerId }) => {
-          events.push(`scope:${ownerId}`);
-          return {
-            close: async () => {},
-          };
-        }),
         startTelegramAdapter: vi.fn(async (options) => {
-          events.push(`start-telegram:${options.botToken}`);
+          events.push(`start-telegram:${options.botToken}:${options.botId}`);
           options.onLog?.({
             level: "warn",
             message: "adapter ready",
@@ -103,12 +97,7 @@ describe("async daemon runtime", () => {
     });
 
     expect(runtime.baseUrl).toBe("http://127.0.0.1:7788");
-    expect(events).toEqual([
-      "start-cron",
-      "start-http",
-      "scope:telegram:bot-one",
-      "start-telegram:token-1",
-    ]);
+    expect(events).toEqual(["start-cron", "start-http", "start-telegram:token-1:bot-one"]);
     expect(logs).toEqual([
       "[cron:info] cron tick",
       "tau async cron scheduler enabled",
@@ -177,7 +166,6 @@ describe("async daemon runtime", () => {
         deps: {
           startCronScheduler: vi.fn(() => cronHandle),
           startHttpServer: vi.fn(async () => httpHandle),
-          createScopedSessionManager: vi.fn(() => ({ close: async () => {} })),
           startTelegramAdapter,
         },
       });

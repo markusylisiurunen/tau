@@ -74,12 +74,13 @@ function createSessionManagerHarness(initialSessions = []) {
   let nextSessionId = 1;
 
   const manager = {
-    createSession: vi.fn(async ({ projectId }) => {
+    createSession: vi.fn(async ({ projectId, ownerId }) => {
       const sessionId = `s${nextSessionId++}`;
       const now = "2024-01-01T00:00:00.000Z";
       const session = {
         id: sessionId,
         projectId,
+        ...(ownerId ? { ownerId } : {}),
         state: "waiting-input",
         createdAt: now,
         updatedAt: now,
@@ -615,6 +616,103 @@ describe("async telegram adapter", () => {
           (entry) => entry.chatId === 200 && entry.messageId === 502,
         ),
       );
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("isolates sessions per chat when bot id is configured", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 200, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 201, type: "private" },
+            from: { id: 8 },
+            text: "/sessions",
+          },
+        },
+        {
+          update_id: 3,
+          message: {
+            chat: { id: 201, type: "private" },
+            from: { id: 8 },
+            text: "/use s1",
+          },
+        },
+        {
+          update_id: 4,
+          message: {
+            chat: { id: 201, type: "private" },
+            from: { id: 8 },
+            text: "hello",
+          },
+        },
+        {
+          update_id: 5,
+          message: {
+            chat: { id: 201, type: "private" },
+            from: { id: 8 },
+            text: "/interrupt",
+          },
+        },
+        {
+          update_id: 6,
+          message: {
+            chat: { id: 201, type: "private" },
+            from: { id: 8 },
+            text: "/close s1",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAsyncTelegramAdapter({
+      botId: "ops",
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      defaultProjectId: "demo",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length >= 6);
+      expect(managerHarness.manager.createSession).toHaveBeenCalledWith({
+        projectId: "demo",
+        ownerId: "telegram:ops:chat:200",
+      });
+      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+      expect(managerHarness.manager.interruptSession).not.toHaveBeenCalled();
+      expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
+      expect(
+        apiHarness.sendMessages.some(
+          (entry) => entry.chatId === 201 && entry.text === "no sessions",
+        ),
+      ).toBe(true);
+      expect(
+        apiHarness.sendMessages.some(
+          (entry) => entry.chatId === 201 && entry.text.includes("session 's1' not found"),
+        ),
+      ).toBe(true);
+      expect(
+        apiHarness.sendMessages.some(
+          (entry) =>
+            entry.chatId === 201 && entry.text.includes("no active session. use /new or /sessions"),
+        ),
+      ).toBe(true);
     } finally {
       await adapter.close();
     }

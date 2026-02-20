@@ -9,6 +9,7 @@ import {
   AsyncSessionManagerError,
   type AsyncSessionManagerEvent,
   type AsyncSessionRecord,
+  createScopedAsyncSessionManager,
 } from "./session_manager.js";
 
 type TelegramChat = {
@@ -106,6 +107,7 @@ export type AsyncTelegramLogEntry = {
 };
 
 export type AsyncTelegramAdapterOptions = {
+  botId?: string;
   botToken: string;
   projects: Record<string, AsyncProjectConfig>;
   defaultProjectId?: string;
@@ -575,6 +577,9 @@ class AsyncTelegramAdapterImpl {
   private readonly requestTimeoutSeconds: number;
   private readonly mistralApiKey?: string;
   private readonly sessionManager: AsyncSessionManager;
+  private readonly enforceChatOwnership: boolean;
+  private readonly botOwnerPrefix: string;
+  private readonly allowedProjectIds: string[];
   private readonly api: AsyncTelegramApi;
   private readonly fetchImpl?: typeof fetch;
   private readonly onLog?: (entry: AsyncTelegramLogEntry) => void;
@@ -612,6 +617,9 @@ class AsyncTelegramAdapterImpl {
     this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
     this.mistralApiKey = options.mistralApiKey?.trim() || undefined;
     this.sessionManager = options.sessionManager;
+    this.enforceChatOwnership = Boolean(options.botId?.trim());
+    this.botOwnerPrefix = `telegram:${options.botId?.trim() || "default"}`;
+    this.allowedProjectIds = Object.keys(options.projects);
     this.api = options.api ?? createTelegramApi(options.botToken);
     this.fetchImpl = options.fetchImpl;
     this.onLog = options.onLog;
@@ -1158,6 +1166,26 @@ class AsyncTelegramAdapterImpl {
     return this.allowedUserIds.has(userId);
   }
 
+  private ownerIdForChat(chatId: number): string {
+    if (!this.enforceChatOwnership) {
+      return this.botOwnerPrefix;
+    }
+
+    return `${this.botOwnerPrefix}:chat:${chatId}`;
+  }
+
+  private getSessionManagerForChat(chatId: number): AsyncSessionManager {
+    if (!this.enforceChatOwnership) {
+      return this.sessionManager;
+    }
+
+    return createScopedAsyncSessionManager({
+      sessionManager: this.sessionManager,
+      ownerId: this.ownerIdForChat(chatId),
+      allowedProjectIds: this.allowedProjectIds,
+    });
+  }
+
   private async handleCommand(chatId: number, text: string): Promise<void> {
     const parts = splitCommandText(text);
     const command = stripCommandMention(parts[0] ?? "");
@@ -1378,7 +1406,8 @@ class AsyncTelegramAdapterImpl {
     }
 
     try {
-      const session = await this.sessionManager.createSession({
+      const sessionManager = this.getSessionManagerForChat(chatId);
+      const session = await sessionManager.createSession({
         projectId: parsed.projectId,
       });
 
@@ -1397,8 +1426,9 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    const sessions = this.sessionManager.listSessions();
-    const selectedSession = this.resolveSessionSelector(selector, sessions);
+    const sessionManager = this.getSessionManagerForChat(chatId);
+    const sessions = sessionManager.listSessions();
+    const selectedSession = this.resolveSessionSelector(selector, sessions, sessionManager);
     if ("error" in selectedSession) {
       await this.reply(chatId, selectedSession.error);
       return;
@@ -1417,8 +1447,9 @@ class AsyncTelegramAdapterImpl {
   private resolveSessionSelector(
     selector: string,
     sessions: AsyncSessionRecord[],
+    sessionManager: AsyncSessionManager,
   ): { session: AsyncSessionRecord } | { error: string } {
-    const exactSession = this.sessionManager.getSession(selector);
+    const exactSession = sessionManager.getSession(selector);
     if (exactSession) {
       return { session: exactSession };
     }
@@ -1462,7 +1493,8 @@ class AsyncTelegramAdapterImpl {
   }
 
   private async handleSessions(chatId: number): Promise<void> {
-    const sessions = this.sessionManager.listSessions();
+    const sessionManager = this.getSessionManagerForChat(chatId);
+    const sessions = sessionManager.listSessions();
     const lines = this.formatSessions(chatId, sessions);
 
     await this.reply(chatId, lines.join("\n"), {
@@ -1572,7 +1604,8 @@ class AsyncTelegramAdapterImpl {
     }
 
     try {
-      const result = await this.sessionManager.interruptSession(session.id);
+      const sessionManager = this.getSessionManagerForChat(chatId);
+      const result = await sessionManager.interruptSession(session.id);
       if (!result.interrupted) {
         await this.reply(chatId, formatSessionHeadline(result.session.id, "no run in progress"));
         return;
@@ -1593,7 +1626,8 @@ class AsyncTelegramAdapterImpl {
     const target = args[0]?.trim();
     if (target === "all") {
       try {
-        const closed = await this.sessionManager.closeInactiveSessions();
+        const sessionManager = this.getSessionManagerForChat(chatId);
+        const closed = await sessionManager.closeInactiveSessions();
         for (const session of closed) {
           this.clearClosedSession(session.id);
         }
@@ -1624,7 +1658,8 @@ class AsyncTelegramAdapterImpl {
     }
 
     try {
-      const closed = await this.sessionManager.closeSession(sessionId);
+      const sessionManager = this.getSessionManagerForChat(chatId);
+      const closed = await sessionManager.closeSession(sessionId);
       this.clearClosedSession(closed.id);
       await this.reply(chatId, formatSessionHeadline(closed.id, "closed"));
     } catch (error) {
@@ -1660,7 +1695,8 @@ class AsyncTelegramAdapterImpl {
         text,
         chatId,
       );
-      await this.sessionManager.sendMessage(
+      const sessionManager = this.getSessionManagerForChat(chatId);
+      await sessionManager.sendMessage(
         session.id,
         textWithAttachments,
         this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
@@ -1722,7 +1758,8 @@ class AsyncTelegramAdapterImpl {
         transcript,
         chatId,
       );
-      await this.sessionManager.sendMessage(
+      const sessionManager = this.getSessionManagerForChat(chatId);
+      await sessionManager.sendMessage(
         session.id,
         textWithAttachments,
         this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
@@ -1743,7 +1780,8 @@ class AsyncTelegramAdapterImpl {
       return undefined;
     }
 
-    const session = this.sessionManager.getSession(sessionId);
+    const sessionManager = this.getSessionManagerForChat(chatId);
+    const session = sessionManager.getSession(sessionId);
     if (!session) {
       this.clearActiveSession(chatId);
       this.clearSessionAttachments(sessionId);
@@ -1759,7 +1797,8 @@ class AsyncTelegramAdapterImpl {
       return activeSession;
     }
 
-    const sessions = this.sessionManager.listSessions();
+    const sessionManager = this.getSessionManagerForChat(chatId);
+    const sessions = sessionManager.listSessions();
     if (sessions.length !== 1) {
       return undefined;
     }
@@ -1847,11 +1886,19 @@ class AsyncTelegramAdapterImpl {
 
   private onSessionEvent(event: AsyncSessionManagerEvent): void {
     if (event.type === "session-progress") {
+      if (!this.chatsBySession.has(event.sessionId)) {
+        return;
+      }
+
       this.handleSessionProgress(event);
       return;
     }
 
     if (event.type !== "session-state-changed") {
+      return;
+    }
+
+    if (!this.chatsBySession.has(event.sessionId)) {
       return;
     }
 

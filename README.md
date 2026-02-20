@@ -124,7 +124,7 @@ use `tau async -- <prompt...>` when prompt text starts with a reserved command w
 
 for daemon/API/Telegram details, see [docs/async.md](docs/async.md).
 
-daemon config supports one Telegram bot (`telegram.botToken`) or multiple bots (`telegram.<botId>.botToken`), with optional per-bot `allowedProjectIds` scoping. Telegram sessions are bot-scoped (no cross-bot session sharing).
+daemon config supports one Telegram bot (`telegram.botToken`) or multiple bots (`telegram.<botId>.botToken`), with optional per-bot `allowedProjectIds` scoping. Telegram sessions are chat-scoped per bot (no cross-chat or cross-bot session sharing).
 
 Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). attachment-only messages do not trigger turns, attachments are downloaded to local temp files immediately, and queued attachments are prepended to the next text/voice turn as local temp file metadata.
 

@@ -156,7 +156,16 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
 
   if (data.defaultPersona !== undefined) {
     if (typeof data.defaultPersona === "string") {
-      config.defaultPersona = data.defaultPersona;
+      const defaultPersona = data.defaultPersona.trim();
+      if (!defaultPersona) {
+        errors.push(`${sourceLabel}: 'defaultPersona' must be a non-empty string.`);
+      } else if (defaultPersona.includes(":")) {
+        errors.push(
+          `${sourceLabel}: 'defaultPersona' must be a persona id only (reasoning overrides are not supported).`,
+        );
+      } else {
+        config.defaultPersona = defaultPersona;
+      }
     } else {
       errors.push(`${sourceLabel}: 'defaultPersona' must be a string.`);
     }
@@ -189,7 +198,12 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
 
   if (data.defaultTheme !== undefined) {
     if (typeof data.defaultTheme === "string") {
-      config.defaultTheme = data.defaultTheme;
+      const defaultTheme = data.defaultTheme.trim();
+      if (!defaultTheme) {
+        errors.push(`${sourceLabel}: 'defaultTheme' must be a non-empty string.`);
+      } else {
+        config.defaultTheme = defaultTheme;
+      }
     } else {
       errors.push(`${sourceLabel}: 'defaultTheme' must be a string.`);
     }
@@ -316,28 +330,25 @@ function parseAgentContextFiles(
     return { paths: [], errors: [] };
   }
 
-  const list = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : undefined;
-
-  if (!list) {
+  if (!Array.isArray(raw)) {
     return {
       paths: [],
-      errors: [`${sourceLabel}: 'agentContextFiles' must be a string or string array.`],
+      errors: [`${sourceLabel}: 'agentContextFiles' must be a string array.`],
     };
   }
 
-  const cleaned = list
-    .filter((entry): entry is string => typeof entry === "string")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
-  if (cleaned.length === 0) {
-    return {
-      paths: [],
-      errors: [`${sourceLabel}: 'agentContextFiles' must be a string or string array.`],
-    };
+  const paths: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string" || !entry.trim()) {
+      return {
+        paths: [],
+        errors: [`${sourceLabel}: 'agentContextFiles' must be a string array.`],
+      };
+    }
+    paths.push(entry.trim());
   }
 
-  return { paths: cleaned, errors: [] };
+  return { paths, errors: [] };
 }
 
 function parseSubagentsConfig(
@@ -357,13 +368,18 @@ function parseSubagentsConfig(
   const errors: string[] = [];
 
   if ("defaultLaunchModels" in data) {
+    if (!Array.isArray(data.defaultLaunchModels)) {
+      errors.push(`${sourceLabel}: subagents.defaultLaunchModels must be a string array.`);
+      return { errors };
+    }
+
     const launchModelsResult = parseSubagentLaunchModelList(data.defaultLaunchModels);
     if (launchModelsResult.error) {
       errors.push(
         `${sourceLabel}: subagents.defaultLaunchModels ${launchModelsResult.error}. expected <provider>/<model>:<effort>.`,
       );
     } else {
-      config.defaultLaunchModels = launchModelsResult.launchModels ?? [];
+      config.defaultLaunchModels = launchModelsResult.launchModels;
     }
   }
 
@@ -385,9 +401,7 @@ function parseModelNoticeTarget(rawKey: string): { normalizedKey?: string; error
     return { error: `unknown provider '${parsedKey.provider}'` };
   }
 
-  const model = getModels(provider).find(
-    (candidate) => candidate.id.toLowerCase() === parsedKey.modelId.toLowerCase(),
-  );
+  const model = getModels(provider).find((candidate) => candidate.id === parsedKey.modelId);
   if (!model) {
     return {
       error: `unknown model '${parsedKey.provider}/${parsedKey.modelId}'`,

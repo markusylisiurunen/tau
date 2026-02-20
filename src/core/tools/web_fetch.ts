@@ -81,44 +81,40 @@ export const WEB_FETCH_TOOL: Tool = {
 };
 
 const webFetchArgsSchema = z.object({
-  url: z.string().trim().catch(""),
-  objective: z.string().trim().optional().catch(undefined),
-  searchQueries: z
-    .array(z.string().trim())
-    .transform((queries) => queries.filter(Boolean))
-    .optional()
-    .catch(undefined),
-  excerpts: z.boolean().optional().catch(undefined),
-  fullContent: z.boolean().optional().catch(undefined),
-  maxCharsPerResult: z.number().int().min(200).max(100_000).optional().catch(undefined),
+  url: z.string().trim().min(1),
+  objective: z.string().trim().min(1).optional(),
+  searchQueries: z.array(z.string().trim().min(1)).min(1).optional(),
+  excerpts: z.boolean().optional(),
+  fullContent: z.boolean().optional(),
+  maxCharsPerResult: z.number().int().min(200).max(100_000).optional(),
 });
 
 type WebFetchArgs = z.infer<typeof webFetchArgsSchema>;
 
 const extractResultSchema = z
   .object({
-    url: z.string().catch(""),
-    title: z.string().nullable().optional().catch(undefined),
-    publish_date: z.string().nullable().optional().catch(undefined),
-    excerpts: z.array(z.string()).nullable().optional().catch(undefined),
-    full_content: z.string().nullable().optional().catch(undefined),
+    url: z.string().min(1),
+    title: z.string().nullable().optional(),
+    publish_date: z.string().nullable().optional(),
+    excerpts: z.array(z.string()).nullable().optional(),
+    full_content: z.string().nullable().optional(),
   })
   .passthrough();
 
 const extractErrorSchema = z
   .object({
-    url: z.string().catch(""),
-    error_type: z.string().catch("unknown error"),
-    http_status_code: z.number().int().nullable().catch(null),
-    content: z.string().nullable().catch(null),
+    url: z.string().min(1),
+    error_type: z.string().min(1),
+    http_status_code: z.number().int().nullable(),
+    content: z.string().nullable(),
   })
   .passthrough();
 
 const extractResponseSchema = z
   .object({
-    extract_id: z.string().catch(""),
-    results: z.array(extractResultSchema).catch([]),
-    errors: z.array(extractErrorSchema).catch([]),
+    extract_id: z.string().min(1),
+    results: z.array(extractResultSchema),
+    errors: z.array(extractErrorSchema),
     warnings: z.unknown().optional(),
     usage: z.unknown().optional(),
   })
@@ -130,24 +126,12 @@ type ExtractResult = ExtractResponse["results"][number];
 
 type ExtractError = ExtractResponse["errors"][number];
 
-function parseArgs(raw: unknown): WebFetchArgs {
+function parseArgs(raw: unknown): { ok: true; data: WebFetchArgs } | { ok: false; error: string } {
   const parsed = webFetchArgsSchema.safeParse(raw);
   if (!parsed.success) {
-    return { url: "" };
+    return { ok: false, error: formatZodError(parsed.error) };
   }
-
-  const args = parsed.data;
-  const objective = args.objective?.trim() || undefined;
-  const searchQueries = args.searchQueries?.map((q) => q.trim()).filter(Boolean);
-
-  return {
-    url: args.url,
-    ...(objective && { objective }),
-    ...(searchQueries && searchQueries.length > 0 && { searchQueries }),
-    ...(args.excerpts !== undefined && { excerpts: args.excerpts }),
-    ...(args.fullContent !== undefined && { fullContent: args.fullContent }),
-    ...(args.maxCharsPerResult !== undefined && { maxCharsPerResult: args.maxCharsPerResult }),
-  };
+  return { ok: true, data: parsed.data };
 }
 
 function estimateParallelExtractCostUsd(urlCount: number): number {
@@ -225,24 +209,27 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
       _riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const args = parseArgs(toolCall.arguments);
-      const headerTarget = args.url || "(missing url)";
+      const parsedArgs = parseArgs(toolCall.arguments);
+      const url = parsedArgs.ok ? parsedArgs.data.url : "";
+      const headerTarget = url || "(invalid arguments)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "web_fetch_finished",
           toolCallId: toolCall.id,
-          url: args.url || "(missing url)",
+          url: url || "(invalid url)",
           headerTarget,
           status: "error",
         };
         return { kind: "single", toolResult, uiEvent };
       };
 
-      if (!args.url) {
-        return blocked("missing required parameter 'url'.");
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
+
+      const args = parsedArgs.data;
 
       const apiKey = getParallelApiKey(config);
       if (!apiKey) {

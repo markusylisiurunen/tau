@@ -475,10 +475,6 @@ export function validateRpcParams(
 }
 
 function validateInitializeParams(params: unknown): RpcParamsValidationResult<RpcInitializeParams> {
-  if (params === undefined) {
-    return { ok: true, value: EMPTY_OBJECT };
-  }
-
   if (!isRecord(params) || !hasOnlyKeys(params, ["client"])) {
     return invalidParams("initialize params must be an object with optional client metadata");
   }
@@ -540,12 +536,8 @@ function validateNoParams(
   method: Exclude<RpcMethod, "initialize" | "session.submit">,
   params: unknown,
 ): RpcParamsValidationResult<Record<string, never>> {
-  if (params === undefined) {
-    return { ok: true, value: EMPTY_OBJECT };
-  }
-
   if (!isRecord(params) || Object.keys(params).length !== 0) {
-    return invalidParams(`${method} does not accept params`);
+    return invalidParams(`${method} params must be an empty object`);
   }
 
   return { ok: true, value: EMPTY_OBJECT };

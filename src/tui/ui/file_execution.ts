@@ -15,7 +15,7 @@ export function buildWriteSuccessView(
   theme: Theme,
   path: string,
   uiText: ToolUiText,
-  headerTarget: string = path,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const writeColor = (s: string) => palette.actionSuccess(s);
@@ -61,7 +61,7 @@ export function buildWriteBlockedView(
   theme: Theme,
   path: string,
   reason: string,
-  headerTarget: string = path,
+  headerTarget: string,
 ): ToolOutputViewModel {
   return buildBlockedToolView({
     theme,
@@ -76,7 +76,7 @@ export function buildEditSuccessView(
   theme: Theme,
   path: string,
   uiText: ToolUiText,
-  headerTarget: string = path,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const editColor = (s: string) => palette.actionSuccess(s);
@@ -123,7 +123,7 @@ export function buildEditBlockedView(
   theme: Theme,
   path: string,
   reason: string,
-  headerTarget: string = path,
+  headerTarget: string,
 ): ToolOutputViewModel {
   return buildBlockedToolView({
     theme,
@@ -138,7 +138,7 @@ export function buildViewImageSuccessView(
   theme: Theme,
   path: string,
   uiText: ToolUiText,
-  headerTarget: string = path,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const viewColor = (s: string) => palette.actionSuccess(s);
@@ -184,7 +184,7 @@ export function buildViewImageBlockedView(
   theme: Theme,
   path: string,
   reason: string,
-  headerTarget: string = path,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const errorColor = (s: string) => palette.actionError(s);
@@ -222,7 +222,7 @@ export function renderWriteSuccess(
   path: string,
   uiText: ToolUiText,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildWriteSuccessView(theme, path, uiText, headerTarget), compact);
 }
@@ -232,7 +232,7 @@ export function renderWriteBlocked(
   path: string,
   reason: string,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildWriteBlockedView(theme, path, reason, headerTarget), compact);
 }
@@ -242,7 +242,7 @@ export function renderEditSuccess(
   path: string,
   uiText: ToolUiText,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildEditSuccessView(theme, path, uiText, headerTarget), compact);
 }
@@ -252,7 +252,7 @@ export function renderEditBlocked(
   path: string,
   reason: string,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildEditBlockedView(theme, path, reason, headerTarget), compact);
 }
@@ -262,7 +262,7 @@ export function renderViewImageSuccess(
   path: string,
   uiText: ToolUiText,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildViewImageSuccessView(theme, path, uiText, headerTarget), compact);
 }
@@ -272,7 +272,7 @@ export function renderViewImageBlocked(
   path: string,
   reason: string,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildViewImageBlockedView(theme, path, reason, headerTarget), compact);
 }

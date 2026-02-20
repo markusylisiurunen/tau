@@ -46,7 +46,7 @@ describe("AuthStorage", () => {
     }
   });
 
-  it("filters invalid accounts from auth.json", () => {
+  it("rejects auth.json when any account entry is invalid", () => {
     const fx = createTempAuthPath();
     try {
       writeFileSync(
@@ -75,9 +75,8 @@ describe("AuthStorage", () => {
       );
 
       const storage = new AuthStorage(fx.authPath);
-      const accounts = storage.getData().providers["openai-codex"]?.accounts ?? [];
-      expect(accounts.length).toBe(1);
-      expect(accounts[0].accountId).toBe("acct-good");
+      expect(storage.getInvalidReason()).toBeDefined();
+      expect(storage.getData().providers).toEqual({});
     } finally {
       fx.cleanup();
     }

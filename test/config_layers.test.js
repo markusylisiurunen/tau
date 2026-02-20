@@ -242,6 +242,70 @@ describe("loadConfig", () => {
     }
   });
 
+  it("validates defaultPersona as a persona id only", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          defaultPersona: "gpt-5.2-chat:high",
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const result = loadConfigWithDiagnostics(fx.repo, deps);
+      expect(result.config.defaultPersona).toBe("opus-4.6-chat");
+      expect(
+        result.errors.some(
+          (error) => error.includes("defaultPersona") && error.includes("persona id only"),
+        ),
+      ).toBe(true);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("reports case-mismatched modelSystemNotices model ids", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          modelSystemNotices: {
+            "openai/GPT-5.2": "notice",
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const result = loadConfigWithDiagnostics(fx.repo, deps);
+      expect(result.config.modelSystemNotices).toBeUndefined();
+      expect(
+        result.errors.some(
+          (error) =>
+            error.includes("modelSystemNotices.openai/GPT-5.2") &&
+            error.includes("unknown model 'openai/GPT-5.2'"),
+        ),
+      ).toBe(true);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("reports sandbox validation errors", () => {
     const fx = setupFixture();
 

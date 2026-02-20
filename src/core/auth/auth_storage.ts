@@ -71,40 +71,95 @@ function validateAuthStorageData(value: unknown): {
   if (!value || typeof value !== "object") {
     return { data: { providers: {} }, invalidReason };
   }
+
   const providersValue = (value as { providers?: unknown }).providers;
   if (!providersValue || typeof providersValue !== "object" || Array.isArray(providersValue)) {
     return { data: { providers: {} }, invalidReason };
   }
+
   const providers: AuthStorageData["providers"] = {};
   for (const [key, providerValue] of Object.entries(providersValue as Record<string, unknown>)) {
-    if (!providerValue || typeof providerValue !== "object") {
-      providers[key] = { accounts: [] };
-      continue;
+    if (!key.trim()) {
+      return { data: { providers: {} }, invalidReason };
     }
-    const accounts = (providerValue as { accounts?: unknown }).accounts;
-    if (Array.isArray(accounts)) {
-      providers[key] = { accounts: accounts.filter(isStoredAccount) };
-    } else {
-      providers[key] = { accounts: [] };
+
+    if (!providerValue || typeof providerValue !== "object" || Array.isArray(providerValue)) {
+      return { data: { providers: {} }, invalidReason };
     }
+
+    const accountsValue = (providerValue as { accounts?: unknown }).accounts;
+    if (!Array.isArray(accountsValue)) {
+      return { data: { providers: {} }, invalidReason };
+    }
+
+    const accounts: StoredAccount[] = [];
+    for (const account of accountsValue) {
+      if (!isStoredAccount(account)) {
+        return { data: { providers: {} }, invalidReason };
+      }
+      accounts.push(account);
+    }
+
+    providers[key] = { accounts };
   }
+
   return { data: { providers } };
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isAuthAccountUsageWindow(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const record = value as Record<string, unknown>;
+  return (
+    isNonEmptyString(record.name) &&
+    typeof record.usedPercent === "number" &&
+    Number.isFinite(record.usedPercent) &&
+    typeof record.resetAt === "number" &&
+    Number.isFinite(record.resetAt) &&
+    typeof record.windowSeconds === "number" &&
+    Number.isFinite(record.windowSeconds)
+  );
+}
+
+function isAuthAccountUsage(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const windows = (value as { windows?: unknown }).windows;
+  return Array.isArray(windows) && windows.every(isAuthAccountUsageWindow);
+}
+
 function isStoredAccount(value: unknown): value is StoredAccount {
-  if (!value || typeof value !== "object") return false;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
   const record = value as Record<string, unknown>;
   const type = record.type;
+
   if (type === "oauth") {
+    const providerAccountId = record.providerAccountId;
+    const enterpriseUrl = record.enterpriseUrl;
+    const projectId = record.projectId;
+    const usage = record.usage;
+
     return (
-      typeof record.accountId === "string" &&
-      typeof record.access === "string" &&
-      typeof record.refresh === "string" &&
-      typeof record.expires === "number"
+      isNonEmptyString(record.accountId) &&
+      isNonEmptyString(record.access) &&
+      isNonEmptyString(record.refresh) &&
+      typeof record.expires === "number" &&
+      Number.isFinite(record.expires) &&
+      (providerAccountId === undefined || isNonEmptyString(providerAccountId)) &&
+      (enterpriseUrl === undefined || isNonEmptyString(enterpriseUrl)) &&
+      (projectId === undefined || isNonEmptyString(projectId)) &&
+      (usage === undefined || isAuthAccountUsage(usage))
     );
   }
+
   if (type === "api_key") {
-    return typeof record.accountId === "string" && typeof record.key === "string";
+    return isNonEmptyString(record.accountId) && isNonEmptyString(record.key);
   }
+
   return false;
 }

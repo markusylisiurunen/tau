@@ -3,21 +3,21 @@ import { serializeCoreEvent } from "../events/types.js";
 import type { ModeAdapter } from "./mode_adapter.js";
 
 export type RpcAdapterOptions = {
-  send?: (payload: string) => void;
+  send: (payload: string) => void;
 };
 
 export class RpcAdapter implements ModeAdapter {
   private readonly send: (payload: string) => void;
 
-  constructor(options: RpcAdapterOptions = {}) {
-    this.send = options.send ?? (() => {});
+  constructor(options: RpcAdapterOptions) {
+    this.send = options.send;
   }
 
   onEvent(event: CoreEvent): void {
     this.send(serializeCoreEvent(event));
   }
 
-  onUserInput(): void {
+  onUserInput(_text: string): void {
     // rpc input handling will be wired up in a future task
   }
 

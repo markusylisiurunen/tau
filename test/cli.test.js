@@ -24,6 +24,18 @@ describe("cli", () => {
     expect(options.caffeinated).toBe(false);
   });
 
+  it("requires exact persona id matching", () => {
+    expect(() => parseCliArgs(["--persona", "demo"], [{ id: "Demo" }])).toThrow(
+      "unknown persona 'demo'",
+    );
+  });
+
+  it("requires exact risk level casing", () => {
+    expect(() => parseCliArgs(["--risk", "READ-ONLY"], [])).toThrow(
+      "invalid risk level 'READ-ONLY'",
+    );
+  });
+
   it("help output includes rpc subcommand", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 

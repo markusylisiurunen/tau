@@ -36,12 +36,12 @@ describe("theme variants", () => {
     expect(resolveThemeTokensForAppearance(theme, "light")).toEqual(tokens);
   });
 
-  it("finds theme ids case-insensitively", () => {
+  it("finds theme ids by exact match", () => {
     const darkTokens = { brandAccent: "#111111" };
     const lightTokens = { brandAccent: "#eeeeee" };
     const themes = [
       {
-        id: "Gold",
+        id: "gold",
         tokens: darkTokens,
         variants: {
           dark: darkTokens,
@@ -53,7 +53,7 @@ describe("theme variants", () => {
     ];
 
     expect(resolveThemeTokensById("gold", themes, "dark")).toEqual(darkTokens);
-    expect(resolveThemeTokensById("GOLD", themes, "light")).toEqual(lightTokens);
+    expect(resolveThemeTokensById("GOLD", themes, "light")).toBeUndefined();
     expect(resolveThemeTokensById("missing", themes, "dark")).toBeUndefined();
   });
 });

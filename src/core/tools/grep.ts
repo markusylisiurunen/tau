@@ -5,6 +5,7 @@ import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import { TRUNCATION_MARKER, type TruncationResult, truncateForTokens } from "../utils/truncate.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -75,8 +76,8 @@ export const GREP_TOOL: Tool = {
 };
 
 const grepArgsSchema = z.object({
-  pattern: z.string().trim().catch(""),
-  paths: z.array(z.string().trim()).optional(),
+  pattern: z.string().trim().min(1),
+  paths: z.array(z.string().trim().min(1)).optional(),
   caseMode: z.enum(["smart", "sensitive", "insensitive"]).optional(),
   fixedStrings: z.boolean().optional(),
   wordRegexp: z.boolean().optional(),
@@ -84,7 +85,7 @@ const grepArgsSchema = z.object({
   beforeContext: z.number().int().min(0).optional(),
   afterContext: z.number().int().min(0).optional(),
   context: z.number().int().min(0).optional(),
-  glob: z.array(z.string()).optional(),
+  glob: z.array(z.string().trim().min(1)).optional(),
   hidden: z.boolean().optional(),
 });
 
@@ -102,9 +103,12 @@ type GrepArgs = {
   hidden?: boolean;
 };
 
-function parseGrepArgs(raw: unknown): GrepArgs {
+function parseGrepArgs(raw: unknown): { ok: true; data: GrepArgs } | { ok: false; error: string } {
   const parsed = grepArgsSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { pattern: "" };
+  if (!parsed.success) {
+    return { ok: false, error: formatZodError(parsed.error) };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 function buildGrepArgs(raw: z.infer<typeof grepArgsSchema>): {
@@ -231,25 +235,27 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
       _riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const parsed = parseGrepArgs(toolCall.arguments);
-      const headerTarget = parsed.pattern || "(missing pattern)";
+      const parsedArgs = parseGrepArgs(toolCall.arguments);
+      const pattern = parsedArgs.ok ? parsedArgs.data.pattern : "";
+      const headerTarget = pattern || "(invalid arguments)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "grep_blocked",
           toolCallId: toolCall.id,
-          pattern: parsed.pattern || "(missing pattern)",
+          pattern: pattern || "(invalid pattern)",
           headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
       };
 
-      if (!parsed.pattern) {
-        return blocked("missing 'pattern' parameter.");
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
 
+      const parsed = parsedArgs.data;
       const { args: baseArgs, paths } = buildGrepArgs(parsed);
       try {
         await backend.grep({

@@ -13,7 +13,7 @@ import {
 export function buildBashRunningView(
   theme: Theme,
   command: string,
-  headerTarget: string = command,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const runningColor = (s: string) => palette.actionRunning(s);
@@ -40,8 +40,8 @@ export function buildBashExecutionView(
   command: string,
   exitCode: number | null,
   uiText: ToolUiText,
-  labelOverride?: string,
-  headerTarget: string = command,
+  labelOverride: string | undefined,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette } = theme;
   const successColor = (s: string) => palette.actionSuccess(s);
@@ -92,7 +92,7 @@ export function buildBashBlockedView(
   theme: Theme,
   command: string,
   reason: string,
-  headerTarget: string = command,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const errorColor = (s: string) => palette.actionError(s);
@@ -129,7 +129,7 @@ export function buildBashAbortedView(
   theme: Theme,
   command: string,
   reason: string,
-  headerTarget: string = command,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const warnColor = (s: string) => palette.statusWarn(s);
@@ -168,7 +168,7 @@ export function renderBashRunning(
   theme: Theme,
   command: string,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildBashRunningView(theme, command, headerTarget), compact);
 }
@@ -179,7 +179,7 @@ export function renderBashExecution(
   exitCode: number | null,
   uiText: ToolUiText,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(
     buildBashExecutionView(theme, command, exitCode, uiText, undefined, headerTarget),
@@ -192,7 +192,7 @@ export function renderBashBlocked(
   command: string,
   reason: string,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildBashBlockedView(theme, command, reason, headerTarget), compact);
 }
@@ -202,7 +202,7 @@ export function renderBashAborted(
   command: string,
   reason: string,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildBashAbortedView(theme, command, reason, headerTarget), compact);
 }

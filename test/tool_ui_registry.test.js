@@ -38,6 +38,7 @@ describe("ToolUiRegistry", () => {
       type: "bash_started",
       toolCallId: "b1",
       command: "ls",
+      headerTarget: "ls",
     });
     expect(started).toContain("ls");
 
@@ -45,6 +46,7 @@ describe("ToolUiRegistry", () => {
       type: "bash_execution",
       toolCallId: "b1",
       command: "ls",
+      headerTarget: "ls",
       exitCode: 0,
       truncationInfo,
       uiText,
@@ -56,6 +58,7 @@ describe("ToolUiRegistry", () => {
       type: "bash_blocked",
       toolCallId: "b2",
       command: "rm -rf /",
+      headerTarget: "rm -rf /",
       reason: "blocked",
     });
     expect(blocked).toContain("bash blocked");
@@ -64,6 +67,7 @@ describe("ToolUiRegistry", () => {
       type: "bash_aborted",
       toolCallId: "b3",
       command: "sleep 5",
+      headerTarget: "sleep 5",
       reason: "aborted",
     });
     expect(aborted).toContain("aborted");
@@ -75,6 +79,7 @@ describe("ToolUiRegistry", () => {
       toolCallId: "s1",
       name: "explore",
       title: "scan repo",
+      headerTarget: "scan repo",
     });
     expect(spawnStarted).toContain("spawning");
 
@@ -83,6 +88,7 @@ describe("ToolUiRegistry", () => {
       toolCallId: "s1",
       name: "explore",
       title: "scan repo",
+      headerTarget: "scan repo",
       status: "success",
       agentId: "agent-1",
       uiText: makeUiText("    investigate repo", "    (agent-1)", "investigate repo"),
@@ -96,6 +102,7 @@ describe("ToolUiRegistry", () => {
       agentId: "agent-1",
       name: "explore",
       title: "scan repo",
+      headerTarget: "scan repo",
     });
     expect(sendStarted).toContain("sending");
 
@@ -105,6 +112,7 @@ describe("ToolUiRegistry", () => {
       agentId: "agent-1",
       name: "explore",
       title: "scan repo",
+      headerTarget: "scan repo",
       status: "success",
       uiText: makeUiText("    follow-up", "    (explore · agent-1)", "follow-up"),
     });
@@ -115,6 +123,7 @@ describe("ToolUiRegistry", () => {
       type: "wait_for_agent_started",
       toolCallId: "w1",
       agentIds: ["agent-1", "agent-2"],
+      headerTarget: "agent-1, agent-2",
     });
     expect(waitStarted).toContain("waiting");
 
@@ -122,6 +131,7 @@ describe("ToolUiRegistry", () => {
       type: "wait_for_agent_finished",
       toolCallId: "w1",
       agentIds: ["agent-1", "agent-2"],
+      headerTarget: "agent-1, agent-2",
       status: "error",
       message: "one failed",
       uiText: makeUiText(
@@ -137,6 +147,7 @@ describe("ToolUiRegistry", () => {
       type: "terminate_agent_finished",
       toolCallId: "t1",
       agentId: "agent-1",
+      headerTarget: "agent-1",
       status: "success",
       finalStatus: "aborted",
       uiText: makeUiText("    ok", "    (cost $0.05 · duration 1m 2s)", "ok"),
@@ -150,6 +161,7 @@ describe("ToolUiRegistry", () => {
       type: "web_search_started",
       toolCallId: "w1",
       objective: "latest tau release",
+      headerTarget: "latest tau release",
     });
     expect(searchStarted).toContain("web search");
 
@@ -157,6 +169,7 @@ describe("ToolUiRegistry", () => {
       type: "web_search_finished",
       toolCallId: "w1",
       objective: "latest tau release",
+      headerTarget: "latest tau release",
       status: "success",
     });
     expect(searchFinished).toContain("web search");
@@ -165,6 +178,7 @@ describe("ToolUiRegistry", () => {
       type: "web_fetch_started",
       toolCallId: "w2",
       url: "https://example.com",
+      headerTarget: "https://example.com",
     });
     expect(fetchStarted).toContain("web fetch");
 
@@ -172,6 +186,7 @@ describe("ToolUiRegistry", () => {
       type: "web_fetch_finished",
       toolCallId: "w2",
       url: "https://example.com",
+      headerTarget: "https://example.com",
       status: "error",
     });
     expect(fetchFinished).toContain("web fetch");
@@ -182,6 +197,7 @@ describe("ToolUiRegistry", () => {
       type: "write_success",
       toolCallId: "write-1",
       path: "notes.txt",
+      headerTarget: "notes.txt",
       bytes: 12,
       lines: 1,
       content: "hello world",
@@ -193,6 +209,7 @@ describe("ToolUiRegistry", () => {
       type: "write_blocked",
       toolCallId: "write-2",
       path: "notes.txt",
+      headerTarget: "notes.txt",
       reason: "blocked",
     });
     expect(writeBlocked).toContain("write blocked");
@@ -201,6 +218,7 @@ describe("ToolUiRegistry", () => {
       type: "edit_success",
       toolCallId: "edit-1",
       path: "notes.txt",
+      headerTarget: "notes.txt",
       oldLength: 5,
       newLength: 11,
       oldText: "hello",
@@ -217,6 +235,7 @@ describe("ToolUiRegistry", () => {
       type: "edit_blocked",
       toolCallId: "edit-2",
       path: "notes.txt",
+      headerTarget: "notes.txt",
       reason: "blocked",
     });
     expect(editBlocked).toContain("edit blocked");

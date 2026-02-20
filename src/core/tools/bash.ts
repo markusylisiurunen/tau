@@ -337,51 +337,56 @@ function resolveBashWorkingDirectory(args: {
   return args.workingDirectory ? resolve(baseCwd, args.workingDirectory) : baseCwd;
 }
 
-function getMissingArgsMessage(command: string, safetyLevel: BashSafetyLevel | undefined): string {
-  if (!command && !safetyLevel) {
-    return "bash tool call missing valid 'command' and 'safetyLevel' fields.";
-  }
-  if (!command) {
-    return "bash tool call missing a valid 'command' string.";
-  }
-  return "bash tool call missing a valid 'safetyLevel' value ('read' or 'write').";
-}
-
 const bashArgsSchema = z.object({
-  command: z.string().trim().catch(""),
-  safetyLevel: z.enum(["read", "write"]).optional().catch(undefined),
-  workingDirectory: z.string().trim().optional().catch(undefined),
-  timeout: z.number().positive().optional().catch(undefined),
-  maxOutputTokens: z.number().int().positive().optional().catch(undefined),
+  command: z.string().trim().min(1),
+  safetyLevel: z.enum(["read", "write"]),
+  workingDirectory: z.string().trim().min(1).optional(),
+  timeout: z.number().positive().optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
 });
 
-function parseBashArgs(raw: unknown): {
-  command: string;
-  safetyLevel: BashSafetyLevel | undefined;
-  workingDirectory: string | undefined;
-  timeout: number | undefined;
-  maxOutputTokens: number | undefined;
-  hasMaxOutputTokens: boolean;
-  commandForDisplay: string;
-} {
+function parseBashArgs(raw: unknown):
+  | {
+      ok: true;
+      data: {
+        command: string;
+        safetyLevel: BashSafetyLevel;
+        workingDirectory?: string;
+        timeout?: number;
+        maxOutputTokens?: number;
+        hasMaxOutputTokens: boolean;
+        commandForDisplay: string;
+      };
+    }
+  | { ok: false; error: string; commandForDisplay: string } {
+  const rawRecord =
+    typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : undefined;
+  const hasMaxOutputTokens = rawRecord ? "maxOutputTokens" in rawRecord : false;
+  const commandForDisplay =
+    rawRecord && typeof rawRecord.command === "string"
+      ? rawRecord.command.trim() || "(invalid command)"
+      : "(invalid command)";
+
   const parsed = bashArgsSchema.safeParse(raw);
-  const command = parsed.success ? parsed.data.command : "";
-  const safetyLevel = parsed.success
-    ? (parsed.data.safetyLevel as BashSafetyLevel | undefined)
-    : undefined;
-  const workingDirectory = parsed.success ? parsed.data.workingDirectory : undefined;
-  const timeout = parsed.success ? parsed.data.timeout : undefined;
-  const maxOutputTokens = parsed.success ? parsed.data.maxOutputTokens : undefined;
-  const hasMaxOutputTokens = typeof raw === "object" && raw !== null && "maxOutputTokens" in raw;
-  const commandForDisplay = command || "(missing command)";
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues.map((issue) => issue.message).join("; "),
+      commandForDisplay,
+    };
+  }
+
   return {
-    command,
-    safetyLevel,
-    workingDirectory,
-    timeout,
-    maxOutputTokens: clampOutputTokens(maxOutputTokens),
-    hasMaxOutputTokens,
-    commandForDisplay,
+    ok: true,
+    data: {
+      command: parsed.data.command,
+      safetyLevel: parsed.data.safetyLevel as BashSafetyLevel,
+      workingDirectory: parsed.data.workingDirectory,
+      timeout: parsed.data.timeout,
+      maxOutputTokens: clampOutputTokens(parsed.data.maxOutputTokens),
+      hasMaxOutputTokens,
+      commandForDisplay: parsed.data.command,
+    },
   };
 }
 
@@ -391,18 +396,13 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
     async dispatch(
       toolCall: ToolCall,
       riskLevel: RiskLevel,
-      signal?: AbortSignal,
-      context?: ToolDispatchContext,
+      signal: AbortSignal,
+      context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const {
-        command,
-        safetyLevel,
-        workingDirectory,
-        timeout,
-        maxOutputTokens,
-        hasMaxOutputTokens,
-        commandForDisplay,
-      } = parseBashArgs(toolCall.arguments);
+      const parsedArgs = parseBashArgs(toolCall.arguments);
+      const commandForDisplay = parsedArgs.ok
+        ? parsedArgs.data.commandForDisplay
+        : parsedArgs.commandForDisplay;
       const headerTarget = commandForDisplay.split(/\r?\n/)[0] ?? commandForDisplay;
 
       const blocked = (reason: string): ToolDispatchResult => {
@@ -417,18 +417,18 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
         return { kind: "single", toolResult, uiEvent };
       };
 
-      if (!command || !safetyLevel) {
-        const msg = getMissingArgsMessage(command, safetyLevel);
-        const toolResult = createToolError(toolCall, msg);
-        const uiEvent: ToolUiEvent = {
-          type: "bash_blocked",
-          toolCallId: toolCall.id,
-          command: commandForDisplay,
-          headerTarget,
-          reason: msg,
-        };
-        return { kind: "single", toolResult, uiEvent };
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
+
+      const {
+        command,
+        safetyLevel,
+        workingDirectory,
+        timeout,
+        maxOutputTokens,
+        hasMaxOutputTokens,
+      } = parsedArgs.data;
 
       if (riskLevel === "read-only" && safetyLevel === "write") {
         return blocked(
@@ -437,7 +437,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
       }
 
       const effectiveWorkingDirectory = resolveBashWorkingDirectory({
-        contextCwd: context?.cwd,
+        contextCwd: context.cwd,
         workingDirectory,
       });
 

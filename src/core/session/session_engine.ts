@@ -208,7 +208,7 @@ export class SessionEngine {
     }
     const current = this.historyEntries[index];
     if (!current) {
-      return false;
+      throw new Error(`history entry missing at index ${index}`);
     }
     this.historyEntries[index] = { ...current, message };
     return true;
@@ -230,7 +230,10 @@ export class SessionEngine {
     }
 
     const entry = this.historyEntries[historyIndex];
-    if (!entry || entry.message.role !== "user") {
+    if (!entry) {
+      throw new Error(`history entry missing at index ${historyIndex}`);
+    }
+    if (entry.message.role !== "user") {
       return undefined;
     }
 
@@ -317,8 +320,14 @@ export class SessionEngine {
   }
 
   private createHistoryEntryId(preferredId?: string): string {
-    const preferred = preferredId?.trim();
-    if (preferred && !this.historyEntries.some((entry) => entry.id === preferred)) {
+    if (preferredId !== undefined) {
+      const preferred = preferredId.trim();
+      if (!preferred) {
+        throw new Error("history entry id must not be empty");
+      }
+      if (this.historyEntries.some((entry) => entry.id === preferred)) {
+        throw new Error(`history entry id '${preferred}' already exists`);
+      }
       return preferred;
     }
 
@@ -395,8 +404,8 @@ export class SessionEngine {
 
   private getCurrentTurnUserHistoryEntryId(): string {
     for (let i = this.historyEntries.length - 1; i >= 0; i -= 1) {
-      const entry = this.historyEntries[i];
-      if (entry?.message.role === "user") {
+      const entry = this.historyEntries[i]!;
+      if (entry.message.role === "user") {
         return entry.id;
       }
     }

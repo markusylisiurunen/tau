@@ -103,12 +103,6 @@ function formatSubagentTitle(title: string | undefined): string {
   return trimmed || "(subagent)";
 }
 
-function formatAgentIdList(ids: string[]): string {
-  const cleaned = ids.map((id) => id.trim()).filter(Boolean);
-  if (cleaned.length === 0) return "(no ids)";
-  return cleaned.join(", ");
-}
-
 function buildSubagentRunningView(args: {
   theme: Theme;
   label: string;
@@ -203,7 +197,7 @@ export class ToolUiRegistry {
     reason: "aborted" | "interrupted",
     context: ToolUiRenderContext,
   ): ToolOutputViewModel {
-    return buildBashAbortedView(context.theme, command, reason);
+    return buildBashAbortedView(context.theme, command, reason, command);
   }
 }
 
@@ -212,11 +206,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("bash_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "bash_started" }>;
-    return buildBashRunningView(
-      context.theme,
-      uiEvent.command,
-      uiEvent.headerTarget ?? uiEvent.command,
-    );
+    return buildBashRunningView(context.theme, uiEvent.command, uiEvent.headerTarget);
   });
 
   registry.register("bash_execution", (event, context) => {
@@ -227,7 +217,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       uiEvent.exitCode,
       uiEvent.uiText,
       uiEvent.labelOverride,
-      uiEvent.headerTarget ?? uiEvent.command,
+      uiEvent.headerTarget,
     );
   });
 
@@ -237,7 +227,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       context.theme,
       uiEvent.command,
       uiEvent.reason,
-      uiEvent.headerTarget ?? uiEvent.command,
+      uiEvent.headerTarget,
     );
   });
 
@@ -247,7 +237,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       context.theme,
       uiEvent.command,
       uiEvent.reason,
-      uiEvent.headerTarget ?? uiEvent.command,
+      uiEvent.headerTarget,
     );
   });
 
@@ -256,13 +246,13 @@ export function createToolUiRegistry(): ToolUiRegistry {
     return buildSubagentRunningView({
       theme: context.theme,
       label: "spawning",
-      title: uiEvent.headerTarget ?? uiEvent.title,
+      title: uiEvent.headerTarget,
     });
   });
 
   registry.register("spawn_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "spawn_agent_finished" }>;
-    const title = formatSubagentTitle(uiEvent.headerTarget ?? uiEvent.title);
+    const title = formatSubagentTitle(uiEvent.headerTarget);
     if (!uiEvent.uiText) {
       return buildSimpleToolFinishedView({
         theme: context.theme,
@@ -284,7 +274,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("spawn_agent_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "spawn_agent_blocked" }>;
-    const title = formatSubagentTitle(uiEvent.headerTarget ?? uiEvent.title ?? uiEvent.name);
+    const title = formatSubagentTitle(uiEvent.headerTarget);
     return buildSimpleToolFinishedView({
       theme: context.theme,
       label: "spawn",
@@ -296,7 +286,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("send_input_to_agent_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "send_input_to_agent_started" }>;
-    const title = formatSubagentTitle(uiEvent.headerTarget ?? uiEvent.title ?? uiEvent.agentId);
+    const title = formatSubagentTitle(uiEvent.headerTarget);
     return buildSubagentRunningView({
       theme: context.theme,
       label: "sending",
@@ -306,7 +296,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("send_input_to_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "send_input_to_agent_finished" }>;
-    const title = formatSubagentTitle(uiEvent.headerTarget ?? uiEvent.title ?? uiEvent.agentId);
+    const title = formatSubagentTitle(uiEvent.headerTarget);
     if (!uiEvent.uiText) {
       return buildSimpleToolFinishedView({
         theme: context.theme,
@@ -328,9 +318,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("send_input_to_agent_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "send_input_to_agent_blocked" }>;
-    const title = formatSubagentTitle(
-      uiEvent.headerTarget ?? uiEvent.title ?? uiEvent.agentId ?? uiEvent.name,
-    );
+    const title = formatSubagentTitle(uiEvent.headerTarget);
     return buildSimpleToolFinishedView({
       theme: context.theme,
       label: "send input",
@@ -342,7 +330,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("wait_for_agent_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_started" }>;
-    const title = uiEvent.headerTarget ?? formatAgentIdList(uiEvent.agentIds);
+    const title = uiEvent.headerTarget;
     return buildSubagentRunningView({
       theme: context.theme,
       label: "waiting",
@@ -352,7 +340,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("wait_for_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_finished" }>;
-    const title = uiEvent.headerTarget ?? formatAgentIdList(uiEvent.agentIds);
+    const title = uiEvent.headerTarget;
     if (!uiEvent.uiText) {
       return buildSimpleToolFinishedView({
         theme: context.theme,
@@ -374,7 +362,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("wait_for_agent_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_blocked" }>;
-    const title = uiEvent.headerTarget ?? formatAgentIdList(uiEvent.agentIds ?? []);
+    const title = uiEvent.headerTarget;
     return buildSimpleToolFinishedView({
       theme: context.theme,
       label: "wait",
@@ -389,13 +377,13 @@ export function createToolUiRegistry(): ToolUiRegistry {
     return buildSubagentRunningView({
       theme: context.theme,
       label: "terminating",
-      title: uiEvent.headerTarget ?? uiEvent.agentId,
+      title: uiEvent.headerTarget,
     });
   });
 
   registry.register("terminate_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "terminate_agent_finished" }>;
-    const title = formatSubagentTitle(uiEvent.headerTarget ?? uiEvent.agentId);
+    const title = formatSubagentTitle(uiEvent.headerTarget);
     if (!uiEvent.uiText) {
       const message =
         uiEvent.finalStatus && uiEvent.finalStatus !== "success"
@@ -421,7 +409,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("terminate_agent_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "terminate_agent_blocked" }>;
-    const title = formatSubagentTitle(uiEvent.headerTarget ?? uiEvent.agentId);
+    const title = formatSubagentTitle(uiEvent.headerTarget);
     return buildSimpleToolFinishedView({
       theme: context.theme,
       label: "terminate",
@@ -433,11 +421,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("web_search_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "web_search_started" }>;
-    return buildSimpleToolRunningView(
-      context.theme,
-      "web search",
-      uiEvent.headerTarget ?? uiEvent.objective,
-    );
+    return buildSimpleToolRunningView(context.theme, "web search", uiEvent.headerTarget);
   });
 
   registry.register("web_search_finished", (event, context) => {
@@ -445,7 +429,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
     return buildSimpleToolFinishedView({
       theme: context.theme,
       label: "web search",
-      target: uiEvent.headerTarget ?? uiEvent.objective,
+      target: uiEvent.headerTarget,
       status: uiEvent.status,
       message: uiEvent.message,
     });
@@ -453,11 +437,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("web_fetch_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "web_fetch_started" }>;
-    return buildSimpleToolRunningView(
-      context.theme,
-      "web fetch",
-      uiEvent.headerTarget ?? uiEvent.url,
-    );
+    return buildSimpleToolRunningView(context.theme, "web fetch", uiEvent.headerTarget);
   });
 
   registry.register("web_fetch_finished", (event, context) => {
@@ -465,7 +445,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
     return buildSimpleToolFinishedView({
       theme: context.theme,
       label: "web fetch",
-      target: uiEvent.headerTarget ?? uiEvent.url,
+      target: uiEvent.headerTarget,
       status: uiEvent.status,
       message: uiEvent.message,
     });
@@ -473,42 +453,22 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("write_success", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "write_success" }>;
-    return buildWriteSuccessView(
-      context.theme,
-      uiEvent.path,
-      uiEvent.uiText,
-      uiEvent.headerTarget ?? uiEvent.path,
-    );
+    return buildWriteSuccessView(context.theme, uiEvent.path, uiEvent.uiText, uiEvent.headerTarget);
   });
 
   registry.register("write_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "write_blocked" }>;
-    return buildWriteBlockedView(
-      context.theme,
-      uiEvent.path,
-      uiEvent.reason,
-      uiEvent.headerTarget ?? uiEvent.path,
-    );
+    return buildWriteBlockedView(context.theme, uiEvent.path, uiEvent.reason, uiEvent.headerTarget);
   });
 
   registry.register("edit_success", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "edit_success" }>;
-    return buildEditSuccessView(
-      context.theme,
-      uiEvent.path,
-      uiEvent.uiText,
-      uiEvent.headerTarget ?? uiEvent.path,
-    );
+    return buildEditSuccessView(context.theme, uiEvent.path, uiEvent.uiText, uiEvent.headerTarget);
   });
 
   registry.register("edit_blocked", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "edit_blocked" }>;
-    return buildEditBlockedView(
-      context.theme,
-      uiEvent.path,
-      uiEvent.reason,
-      uiEvent.headerTarget ?? uiEvent.path,
-    );
+    return buildEditBlockedView(context.theme, uiEvent.path, uiEvent.reason, uiEvent.headerTarget);
   });
 
   registry.register("view_image_success", (event, context) => {
@@ -517,7 +477,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       context.theme,
       uiEvent.path,
       uiEvent.uiText,
-      uiEvent.headerTarget ?? uiEvent.path,
+      uiEvent.headerTarget,
     );
   });
 
@@ -527,7 +487,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       context.theme,
       uiEvent.path,
       uiEvent.reason,
-      uiEvent.headerTarget ?? uiEvent.path,
+      uiEvent.headerTarget,
     );
   });
 

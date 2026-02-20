@@ -32,10 +32,7 @@ export class CliError extends Error {
 export function resolvePersonaId(raw: string, personas: Persona[]): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
-  const exact = personas.find((p) => p.id === trimmed);
-  if (exact) return exact.id;
-  const lower = trimmed.toLowerCase();
-  return personas.find((p) => p.id.toLowerCase() === lower)?.id;
+  return personas.find((p) => p.id === trimmed)?.id;
 }
 
 export function parsePersonaString(
@@ -51,10 +48,7 @@ export function parsePersonaString(
   }
 
   const personaValue = trimmed.slice(0, colonIndex);
-  const reasoningValue = trimmed
-    .slice(colonIndex + 1)
-    .trim()
-    .toLowerCase();
+  const reasoningValue = trimmed.slice(colonIndex + 1).trim();
   const personaId = resolvePersonaId(personaValue, personas);
   const reasoning = (REASONING_LEVELS as string[]).includes(reasoningValue)
     ? (reasoningValue as ReasoningEffort)
@@ -64,7 +58,7 @@ export function parsePersonaString(
 }
 
 function parseRiskLevel(raw: string): RiskLevel {
-  const normalized = raw.trim().toLowerCase();
+  const normalized = raw.trim();
   if (!normalized) {
     throw new CliError("missing value for --risk");
   }
@@ -163,10 +157,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       }
       const colonIndex = value.indexOf(":");
       if (colonIndex !== -1) {
-        const reasoningValue = value
-          .slice(colonIndex + 1)
-          .trim()
-          .toLowerCase();
+        const reasoningValue = value.slice(colonIndex + 1).trim();
         if (!reasoningValue) {
           throw new CliError("missing reasoning level after ':' in --persona");
         }

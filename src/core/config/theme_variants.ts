@@ -5,7 +5,7 @@ function findTheme(
   themes: ThemeDefinition[],
 ): ThemeDefinition | undefined {
   if (!themeId) return undefined;
-  return themes.find((theme) => theme.id.toLowerCase() === themeId.toLowerCase());
+  return themes.find((theme) => theme.id === themeId);
 }
 
 export function resolveThemeTokensForAppearance(

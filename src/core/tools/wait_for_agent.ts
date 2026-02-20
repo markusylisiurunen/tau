@@ -5,6 +5,7 @@ import type { SubagentResult } from "../subagents/control_plane.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { truncateForTokens } from "../utils/truncate.js";
+import { formatZodError } from "../utils/zod.js";
 import type {
   ToolDefinition,
   ToolDispatchContext,
@@ -37,17 +38,18 @@ export const WAIT_FOR_AGENT_TOOL: Tool = {
 };
 
 const waitArgsSchema = z.object({
-  ids: z.array(z.string().trim()).catch([]),
+  ids: z.array(z.string().trim().min(1)).min(1),
 });
 
-function parseWaitArgs(raw: unknown): { ids: string[] } {
+function parseWaitArgs(
+  raw: unknown,
+): { ok: true; data: { ids: string[] } } | { ok: false; error: string } {
   const parsed = waitArgsSchema.safeParse(raw);
   if (!parsed.success) {
-    return { ids: [] };
+    return { ok: false, error: formatZodError(parsed.error) };
   }
 
-  const ids = parsed.data.ids.map((id) => id.trim()).filter(Boolean);
-  return { ids };
+  return { ok: true, data: parsed.data };
 }
 
 function buildSubagentBody(result: SubagentResult): string {
@@ -125,13 +127,14 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
     async dispatch(
       toolCall: ToolCall,
       _riskLevel: RiskLevel,
-      signal?: AbortSignal,
-      context?: ToolDispatchContext,
+      signal: AbortSignal,
+      context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const { ids } = parseWaitArgs(toolCall.arguments);
+      const parsedArgs = parseWaitArgs(toolCall.arguments);
+      const ids = parsedArgs.ok ? parsedArgs.data.ids : [];
       const formatHeaderTarget = (entries: string[]): string => {
         const cleaned = entries.map((id) => id.trim()).filter(Boolean);
-        return cleaned.length > 0 ? cleaned.join(", ") : "(no ids)";
+        return cleaned.length > 0 ? cleaned.join(", ") : "(invalid arguments)";
       };
       const headerTarget = formatHeaderTarget(ids);
 
@@ -147,6 +150,10 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
         return { kind: "single", toolResult, uiEvent };
       };
 
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
+      }
+
       const deduped: string[] = [];
       const seen = new Set<string>();
       for (const id of ids) {
@@ -157,11 +164,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
       }
       const dedupedTarget = formatHeaderTarget(deduped);
 
-      if (deduped.length === 0) {
-        return blocked("missing 'ids' parameter. provide at least one subagent id.");
-      }
-
-      const controlPlane = context?.subagentControlPlane;
+      const controlPlane = context.subagentControlPlane;
       if (!controlPlane) {
         return blocked("subagent control plane is not available.");
       }

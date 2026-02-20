@@ -122,7 +122,7 @@ function createController(view, options = {}) {
     sandboxEnabled: options.sandboxEnabled ?? false,
     caffeinated: options.caffeinated ?? false,
     toolBackend: options.toolBackend,
-    noAgentContextFiles: options.noAgentContextFiles ?? false,
+    noAgentContextFiles: options.noAgentContextFiles ?? true,
     deps: options.deps,
   });
 }
@@ -734,6 +734,7 @@ describe("ChatController startup bootstrap", () => {
       personas: [persona],
       initialPersonaId: persona.id,
       skills: discoveredSkills,
+      noAgentContextFiles: false,
       deps,
     });
 
@@ -765,6 +766,7 @@ describe("ChatController /cd project context notices", () => {
 
       const stub = createStubView();
       controller = createController(stub.view, {
+        noAgentContextFiles: false,
         deps: createProjectContextDeps(home),
       });
       const userMessages = [];
@@ -804,6 +806,7 @@ describe("ChatController /cd project context notices", () => {
 
       const stub = createStubView();
       controller = createController(stub.view, {
+        noAgentContextFiles: false,
         deps: createProjectContextDeps(home),
       });
       const userMessages = [];
@@ -845,6 +848,7 @@ describe("ChatController /cd project context notices", () => {
 
       const stub = createStubView();
       controller = createController(stub.view, {
+        noAgentContextFiles: false,
         deps: createProjectContextDeps(home),
       });
       const userMessages = [];
@@ -887,6 +891,7 @@ describe("ChatController /cd project context notices", () => {
 
       const stub = createStubView();
       controller = createController(stub.view, {
+        noAgentContextFiles: false,
         deps: createProjectContextDeps(home),
       });
       const userMessages = [];

@@ -5,6 +5,7 @@ import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import { TRUNCATION_MARKER } from "../utils/truncate.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -42,21 +43,26 @@ export const LIST_TOOL: Tool = {
 };
 
 const listArgsSchema = z.object({
-  path: z.string().trim().catch(""),
-  offset: z.number().int().min(0).optional(),
-  limit: z.number().int().min(1).optional(),
+  path: z.string().trim().min(1),
+  offset: z.number().int().min(0).default(0),
+  limit: z.number().int().min(1).default(LIST_DEFAULT_LIMIT),
 });
 
-function parseListArgs(raw: unknown): {
-  path: string;
-  offset: number;
-  limit: number;
-} {
+function parseListArgs(raw: unknown):
+  | {
+      ok: true;
+      data: {
+        path: string;
+        offset: number;
+        limit: number;
+      };
+    }
+  | { ok: false; error: string } {
   const parsed = listArgsSchema.safeParse(raw);
-  const path = parsed.success ? parsed.data.path : "";
-  const offset = parsed.success ? (parsed.data.offset ?? 0) : 0;
-  const limit = parsed.success ? (parsed.data.limit ?? LIST_DEFAULT_LIMIT) : LIST_DEFAULT_LIMIT;
-  return { path, offset, limit };
+  if (!parsed.success) {
+    return { ok: false, error: formatZodError(parsed.error) };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 function formatListToolResultText(entries: string[]): string {
@@ -95,30 +101,27 @@ export function createListToolDefinition(backend: ToolExecutionBackend): ToolDef
   return {
     schema: LIST_TOOL,
     async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
-      const { path, offset, limit } = parseListArgs(toolCall.arguments);
-      const headerTarget = path || "(missing path)";
+      const parsedArgs = parseListArgs(toolCall.arguments);
+      const path = parsedArgs.ok ? parsedArgs.data.path : "";
+      const headerTarget = path || "(invalid arguments)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
           type: "list_blocked",
           toolCallId: toolCall.id,
-          path: path || "(missing path)",
+          path: path || "(invalid path)",
           headerTarget,
           reason,
         };
         return { kind: "single", toolResult, uiEvent };
       };
 
-      // All acceptance checks passed; return result
-      if (!path) {
-        return blocked("missing 'path' parameter.");
+      if (!parsedArgs.ok) {
+        return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
 
-      if (offset < 0) {
-        return blocked("offset must be >= 0.");
-      }
-
+      const { offset, limit } = parsedArgs.data;
       const effectiveLimit = Math.min(Math.max(1, limit), LIST_MAX_ENTRIES);
 
       try {

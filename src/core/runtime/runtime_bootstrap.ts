@@ -45,6 +45,7 @@ export function resolvePersonaSkillsForPromptContext(args: {
     : args.discoveredSkills;
 
   const personaSkills = args.persona.skills;
+
   if (personaSkills === "*") {
     const skills = [...discoveredSkills];
     return {
@@ -54,7 +55,7 @@ export function resolvePersonaSkillsForPromptContext(args: {
     };
   }
 
-  if (!personaSkills || personaSkills.length === 0) {
+  if (personaSkills.length === 0) {
     return { skills: [], unknown: [], skillsBlock: undefined };
   }
 
@@ -68,7 +69,10 @@ export function resolvePersonaSkillsForPromptContext(args: {
 
   for (const name of personaSkills) {
     const trimmed = name.trim();
-    if (!trimmed) continue;
+    if (!trimmed) {
+      throw new Error(`persona '${args.persona.id}' has an empty skill name`);
+    }
+
     const skill = skillsByName.get(trimmed.toLowerCase());
     if (skill) {
       skills.push(skill);
@@ -123,6 +127,16 @@ export function resolveProjectContextForPromptContext(args: {
       })
     : agentsContext.files;
 
+  const pathForPrompt = sandboxScope
+    ? (path: string) => {
+        const promptPath = promptPathByHostPath.get(path);
+        if (!promptPath) {
+          throw new Error(`missing sandbox prompt path for AGENTS file '${path}'`);
+        }
+        return promptPath;
+      }
+    : (path: string) => path;
+
   return {
     agentsFiles,
     warnings: agentsContext.errors,
@@ -131,7 +145,7 @@ export function resolveProjectContextForPromptContext(args: {
       home: args.home,
       agentsFiles,
       readFile: args.readFile,
-      pathForPrompt: (path) => promptPathByHostPath.get(path) ?? path,
+      pathForPrompt,
     }),
   };
 }

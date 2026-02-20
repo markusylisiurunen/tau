@@ -124,7 +124,7 @@ use `tau async -- <prompt...>` when prompt text starts with a reserved command w
 
 for daemon/API/Telegram details, see [docs/async.md](docs/async.md).
 
-daemon config supports one Telegram bot (`telegram.botToken`) or multiple bots (`telegram.<botId>.botToken`), with optional per-bot `allowedProjectIds` scoping. Telegram sessions are chat-scoped per bot (no cross-chat or cross-bot session sharing).
+daemon config uses a bot-id map (`telegram.<botId>.botToken`), with optional per-bot `allowedProjectIds` scoping. Telegram sessions are chat-scoped per bot (no cross-chat or cross-bot session sharing).
 
 Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). attachment-only messages do not trigger turns, attachments are downloaded to local temp files immediately, and queued attachments are prepended to the next text/voice turn as local temp file metadata.
 
@@ -516,7 +516,7 @@ daemon-side async settings are in a separate config file passed to:
 tau async daemon --config-file <path>
 ```
 
-see [docs/async.md](docs/async.md) for daemon config schema (`host`, `port`, `authToken`, `telegram` (single bot object or map by bot id), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `projects.<id>.ref`, `projects.<id>.workingDirectory`, `projects.<id>.description`, `projects.<id>.bootstrapCommands`, `projects.<id>.backgroundBootstrapCommands`) and GitHub repo requirements (`owner/repo`, cloned via `gh repo clone`).
+see [docs/async.md](docs/async.md) for daemon config schema (`host`, `port`, `authToken`, `telegram` (map keyed by bot id), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `projects.<id>.ref`, `projects.<id>.workingDirectory`, `projects.<id>.description`, `projects.<id>.bootstrapCommands`, `projects.<id>.backgroundBootstrapCommands`) and GitHub repo requirements (`owner/repo`, cloned via `gh repo clone`).
 
 ### project bash commands
 

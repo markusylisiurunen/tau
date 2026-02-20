@@ -61,6 +61,7 @@ describe("core event playback", () => {
           type: "write_blocked",
           toolCallId: "write-1",
           path: "notes.txt",
+          headerTarget: "notes.txt",
           reason: "blocked",
         },
       },

@@ -107,7 +107,7 @@ export type AsyncTelegramLogEntry = {
 };
 
 export type AsyncTelegramAdapterOptions = {
-  botId?: string;
+  botId: string;
   botToken: string;
   projects: Record<string, AsyncProjectConfig>;
   defaultProjectId?: string;
@@ -602,6 +602,11 @@ class AsyncTelegramAdapterImpl {
   private closed = false;
 
   constructor(options: AsyncTelegramAdapterOptions) {
+    const botId = options.botId.trim();
+    if (!botId) {
+      throw new Error("telegram bot id must be a non-empty string");
+    }
+
     this.projects = options.projects;
     this.defaultProjectId = options.defaultProjectId;
     this.systemMessage = options.systemMessage?.trim() || undefined;
@@ -617,8 +622,8 @@ class AsyncTelegramAdapterImpl {
     this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
     this.mistralApiKey = options.mistralApiKey?.trim() || undefined;
     this.sessionManager = options.sessionManager;
-    this.enforceChatOwnership = Boolean(options.botId?.trim());
-    this.botOwnerPrefix = `telegram:${options.botId?.trim() || "default"}`;
+    this.enforceChatOwnership = true;
+    this.botOwnerPrefix = `telegram:${botId}`;
     this.allowedProjectIds = Object.keys(options.projects);
     this.api = options.api ?? createTelegramApi(options.botToken);
     this.fetchImpl = options.fetchImpl;

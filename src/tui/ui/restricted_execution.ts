@@ -23,7 +23,7 @@ export function buildReadSuccessView(
   startLine: number,
   endLine: number | undefined,
   uiText: ToolUiText,
-  headerTarget: string = path,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const readColor = (s: string) => palette.actionSuccess(s);
@@ -72,7 +72,7 @@ export function buildReadBlockedView(
   theme: Theme,
   path: string,
   reason: string,
-  headerTarget: string = path,
+  headerTarget: string,
 ): ToolOutputViewModel {
   return buildBlockedToolView({
     theme,
@@ -87,7 +87,7 @@ export function buildListSuccessView(
   theme: Theme,
   path: string,
   uiText: ToolUiText,
-  headerTarget: string = path,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const listColor = (s: string) => palette.actionSuccess(s);
@@ -139,7 +139,7 @@ export function buildListBlockedView(
   theme: Theme,
   path: string,
   reason: string,
-  headerTarget: string = path,
+  headerTarget: string,
 ): ToolOutputViewModel {
   return buildBlockedToolView({
     theme,
@@ -153,7 +153,7 @@ export function buildListBlockedView(
 export function buildGrepRunningView(
   theme: Theme,
   pattern: string,
-  headerTarget: string = pattern,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const runningColor = (s: string) => palette.actionRunning(s);
@@ -180,7 +180,7 @@ export function buildGrepFinishedView(
   pattern: string,
   status: "success" | "error",
   uiText: ToolUiText,
-  headerTarget: string = pattern,
+  headerTarget: string,
 ): ToolOutputViewModel {
   const { palette, text } = theme;
   const grepColor = (s: string) => palette.actionSuccess(s);
@@ -236,7 +236,7 @@ export function buildGrepBlockedView(
   theme: Theme,
   pattern: string,
   reason: string,
-  headerTarget: string = pattern,
+  headerTarget: string,
 ): ToolOutputViewModel {
   return buildBlockedToolView({
     theme,
@@ -254,7 +254,7 @@ export function renderReadSuccess(
   endLine: number | undefined,
   uiText: ToolUiText,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(
     buildReadSuccessView(theme, path, startLine, endLine, uiText, headerTarget),
@@ -267,7 +267,7 @@ export function renderReadBlocked(
   path: string,
   reason: string,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildReadBlockedView(theme, path, reason, headerTarget), compact);
 }
@@ -277,7 +277,7 @@ export function renderListSuccess(
   path: string,
   uiText: ToolUiText,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildListSuccessView(theme, path, uiText, headerTarget), compact);
 }
@@ -287,7 +287,7 @@ export function renderListBlocked(
   path: string,
   reason: string,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildListBlockedView(theme, path, reason, headerTarget), compact);
 }
@@ -296,7 +296,7 @@ export function renderGrepRunning(
   theme: Theme,
   pattern: string,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildGrepRunningView(theme, pattern, headerTarget), compact);
 }
@@ -307,7 +307,7 @@ export function renderGrepFinished(
   status: "success" | "error",
   uiText: ToolUiText,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(
     buildGrepFinishedView(theme, pattern, status, uiText, headerTarget),
@@ -320,7 +320,7 @@ export function renderGrepBlocked(
   pattern: string,
   reason: string,
   compact: boolean,
-  headerTarget?: string,
+  headerTarget: string,
 ): ReturnType<typeof renderToolOutput> {
   return renderToolOutput(buildGrepBlockedView(theme, pattern, reason, headerTarget), compact);
 }

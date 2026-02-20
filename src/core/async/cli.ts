@@ -12,31 +12,54 @@ export class AsyncCliError extends Error {
   }
 }
 
-type AsyncCommand =
-  | "create"
-  | "daemon"
-  | "list"
-  | "status"
-  | "logs"
-  | "send"
-  | "interrupt"
-  | "cron-list"
-  | "cron-runs"
-  | "cron-run";
-
-type ParsedAsyncArgs = {
+type ParsedAsyncSharedArgs = {
   help: boolean;
-  command: AsyncCommand;
-  prompt?: string;
-  sessionId?: string;
-  text?: string;
-  cronJobId?: string;
   projectId?: string;
   targetId?: string;
   url?: string;
   token?: string;
   configFilePath?: string;
 };
+
+type ParsedAsyncArgs =
+  | (ParsedAsyncSharedArgs & {
+      command: "create";
+      prompt: string;
+    })
+  | (ParsedAsyncSharedArgs & {
+      command: "daemon";
+    })
+  | (ParsedAsyncSharedArgs & {
+      command: "list";
+    })
+  | (ParsedAsyncSharedArgs & {
+      command: "status";
+      sessionId: string;
+    })
+  | (ParsedAsyncSharedArgs & {
+      command: "logs";
+      sessionId: string;
+    })
+  | (ParsedAsyncSharedArgs & {
+      command: "send";
+      sessionId: string;
+      text: string;
+    })
+  | (ParsedAsyncSharedArgs & {
+      command: "interrupt";
+      sessionId: string;
+    })
+  | (ParsedAsyncSharedArgs & {
+      command: "cron-list";
+    })
+  | (ParsedAsyncSharedArgs & {
+      command: "cron-runs";
+      cronJobId?: string;
+    })
+  | (ParsedAsyncSharedArgs & {
+      command: "cron-run";
+      cronJobId: string;
+    });
 
 export type RunAsyncCommandOptions = {
   cwd?: string;
@@ -324,10 +347,15 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
         throw new AsyncCliError("usage: tau async cron runs [jobId]");
       }
 
+      const cronJobId = positional.length === 3 ? positional[2]?.trim() : undefined;
+      if (cronJobId === "") {
+        throw new AsyncCliError("usage: tau async cron runs [jobId]");
+      }
+
       return {
         help,
         command: "cron-runs",
-        ...(positional.length === 3 ? { cronJobId: positional[2]?.trim() } : {}),
+        ...(cronJobId === undefined ? {} : { cronJobId }),
         projectId,
         targetId,
         url,
@@ -702,7 +730,7 @@ export async function runAsyncCommand(
     const payload = await requestJson({
       target,
       method: "GET",
-      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId ?? "")}`,
+      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}`,
       fetchImpl,
     });
     stdout(toJsonLine(payload));
@@ -713,7 +741,7 @@ export async function runAsyncCommand(
     const payload = await requestJson({
       target,
       method: "GET",
-      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId ?? "")}/logs`,
+      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}/logs`,
       fetchImpl,
     });
     stdout(toJsonLine(payload));
@@ -724,7 +752,7 @@ export async function runAsyncCommand(
     const payload = await requestJson({
       target,
       method: "POST",
-      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId ?? "")}/messages`,
+      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}/messages`,
       body: {
         text: parsed.text,
       },
@@ -738,7 +766,7 @@ export async function runAsyncCommand(
     const payload = await requestJson({
       target,
       method: "POST",
-      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId ?? "")}/interrupt`,
+      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}/interrupt`,
       body: {},
       fetchImpl,
     });
@@ -773,7 +801,7 @@ export async function runAsyncCommand(
     const payload = await requestJson({
       target,
       method: "POST",
-      path: `/v1/cron/jobs/${encodeURIComponent(parsed.cronJobId ?? "")}/run`,
+      path: `/v1/cron/jobs/${encodeURIComponent(parsed.cronJobId)}/run`,
       body: {},
       fetchImpl,
     });

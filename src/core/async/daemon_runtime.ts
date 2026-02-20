@@ -113,8 +113,8 @@ export async function startAsyncDaemonRuntime(
     });
 
     for (const [botId, telegramConfig] of telegramConfigs) {
-      if (!telegramConfig?.botToken) {
-        continue;
+      if (!telegramConfig.botToken) {
+        throw new AsyncDaemonRuntimeError(`telegram bot '${botId}' is missing required botToken`);
       }
 
       const allowedProjectIds =

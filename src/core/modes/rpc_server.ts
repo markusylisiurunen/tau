@@ -220,7 +220,7 @@ export class RpcServer {
 
   private async executeSubmit(requestId: RpcRequestId, userHistoryEntryId: string): Promise<void> {
     try {
-      const turnResult = await this.runtime.runTurn(() => {});
+      const turnResult = await this.runtime.runTurn();
 
       const result: RpcResultByMethod["session.submit"] = {
         userHistoryEntryId,

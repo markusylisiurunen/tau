@@ -67,11 +67,11 @@ function createHarness(options = {}) {
         return sessionId;
       },
     },
-    async runTurn(onEvent) {
+    async runTurn() {
       running = true;
       try {
         if (options.runTurn) {
-          return await options.runTurn(onEvent);
+          return await options.runTurn();
         }
 
         emitCoreEvent({ type: "notice", severity: "info", text: "streaming" });

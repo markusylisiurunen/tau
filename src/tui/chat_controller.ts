@@ -2406,7 +2406,7 @@ export class ChatController {
     this.beginBusyTask(busyTask);
 
     try {
-      runResult = await this.runtime.runTurn(() => {});
+      runResult = await this.runtime.runTurn();
     } catch (err) {
       const message = (err as Error).message || "request failed";
       this.view.addSystemMessage(message, "error");

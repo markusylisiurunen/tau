@@ -1,5 +1,4 @@
 import type { Config } from "../config/index.js";
-import type { CoreEvent } from "../events/types.js";
 import { CoreSession } from "../session/core_session.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
@@ -126,8 +125,8 @@ export class ChatRuntime {
     return this.latestPromptComposition;
   }
 
-  runTurn(onEvent: (event: CoreEvent) => void | Promise<void>): Promise<ConversationTurnResult> {
-    return this.turnRuntime.run(onEvent);
+  runTurn(): Promise<ConversationTurnResult> {
+    return this.turnRuntime.run();
   }
 
   interruptTurn(): boolean {

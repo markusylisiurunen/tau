@@ -9,27 +9,26 @@ describe("ConversationTurnRuntime", () => {
       { type: "notice", severity: "error", text: "third" },
     ];
 
+    const produced = [];
     const session = {
       async *events(signal) {
         for (const event of emitted) {
           if (signal.aborted) {
             break;
           }
+          produced.push(event.text);
           yield event;
         }
       },
     };
 
     const runtime = new ConversationTurnRuntime(session);
-    const received = [];
 
     expect(runtime.isRunning).toBe(false);
-    const result = await runtime.run(async (event) => {
-      received.push(event.text);
-    });
+    const result = await runtime.run();
 
     expect(result).toEqual(expect.objectContaining({ aborted: false }));
-    expect(received).toEqual(["first", "second", "third"]);
+    expect(produced).toEqual(["first", "second", "third"]);
     expect(runtime.isRunning).toBe(false);
   });
 
@@ -47,10 +46,10 @@ describe("ConversationTurnRuntime", () => {
     };
 
     const runtime = new ConversationTurnRuntime(session);
-    const firstRun = runtime.run(() => {});
+    const firstRun = runtime.run();
 
     expect(runtime.isRunning).toBe(true);
-    await expect(runtime.run(() => {})).rejects.toThrow("conversation turn is already running");
+    await expect(runtime.run()).rejects.toThrow("conversation turn is already running");
 
     release();
     await firstRun;
@@ -58,24 +57,22 @@ describe("ConversationTurnRuntime", () => {
   });
 
   it("interrupts the active run and reports aborted status", async () => {
+    let runtime;
+    let seen = 0;
     const session = {
       async *events(signal) {
         yield { type: "notice", severity: "info", text: "tick" };
+        seen += 1;
+        runtime.interrupt();
         while (!signal.aborted) {
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
       },
     };
 
-    const runtime = new ConversationTurnRuntime(session);
-    let seen = 0;
+    runtime = new ConversationTurnRuntime(session);
 
-    const result = await runtime.run((event) => {
-      if (event.type === "notice") {
-        seen += 1;
-      }
-      runtime.interrupt();
-    });
+    const result = await runtime.run();
 
     expect(seen).toBe(1);
     expect(result).toEqual(expect.objectContaining({ aborted: true }));

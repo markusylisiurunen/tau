@@ -70,14 +70,18 @@ function createEnvironment(now = Date.parse("2026-01-01T00:00:00.000Z")) {
 
 describe("ChatRuntime", () => {
   it("runs and interrupts turns through ConversationTurnRuntime", async () => {
+    let runtime;
+    let seen = 0;
     const { session } = createStubSession(async function* (signal) {
       yield { type: "notice", severity: "info", text: "tick" };
+      seen += 1;
+      runtime.interruptTurn();
       while (!signal.aborted) {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
     });
 
-    const runtime = new ChatRuntime({
+    runtime = new ChatRuntime({
       session,
       persona: createPersona(),
       riskLevel: "read-only",
@@ -88,18 +92,12 @@ describe("ChatRuntime", () => {
       environment: createEnvironment(),
     });
 
-    const received = [];
-    const run = runtime.runTurn((event) => {
-      if (event.type === "notice") {
-        received.push(event.text);
-      }
-      runtime.interruptTurn();
-    });
+    const run = runtime.runTurn();
 
     expect(runtime.isTurnRunning).toBe(true);
     const result = await run;
 
-    expect(received).toEqual(["tick"]);
+    expect(seen).toBe(1);
     expect(result).toEqual(expect.objectContaining({ aborted: true }));
     expect(runtime.isTurnRunning).toBe(false);
     expect(runtime.interruptTurn()).toBe(false);

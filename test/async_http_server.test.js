@@ -172,6 +172,63 @@ describe("async http server", () => {
     expect(manager.interruptSession).toHaveBeenCalledWith("s1");
   });
 
+  it("returns 400 for create requests with unsupported fields or blank prompt", async () => {
+    const manager = createManager();
+    const handle = await startAsyncHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "secret",
+      sessionManager: manager,
+    });
+    handles.push(handle);
+
+    const unsupportedFieldResponse = await fetch(`${handle.baseUrl}/v1/sessions`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ projectId: "demo", prompt: "hello", legacy: true }),
+    });
+
+    expect(unsupportedFieldResponse.status).toBe(400);
+
+    const blankPromptResponse = await fetch(`${handle.baseUrl}/v1/sessions`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ projectId: "demo", prompt: "   " }),
+    });
+
+    expect(blankPromptResponse.status).toBe(400);
+    expect(manager.createSession).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for send-message requests with unsupported fields", async () => {
+    const manager = createManager();
+    const handle = await startAsyncHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "secret",
+      sessionManager: manager,
+    });
+    handles.push(handle);
+
+    const response = await fetch(`${handle.baseUrl}/v1/sessions/s1/messages`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ text: "hello", legacy: true }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(manager.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("returns 400 for malformed json request bodies", async () => {
     const manager = createManager();
     const handle = await startAsyncHttpServer({
@@ -241,6 +298,29 @@ describe("async http server", () => {
     });
 
     expect(response.status).toBe(400);
+  });
+
+  it("returns 400 for empty cron jobId query values", async () => {
+    const manager = createManager();
+    const cronScheduler = createCronScheduler();
+
+    const handle = await startAsyncHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "secret",
+      sessionManager: manager,
+      cronScheduler,
+    });
+    handles.push(handle);
+
+    const response = await fetch(`${handle.baseUrl}/v1/cron/runs?jobId=%20`, {
+      headers: {
+        authorization: "Bearer secret",
+      },
+    });
+
+    expect(response.status).toBe(400);
+    expect(cronScheduler.listRuns).not.toHaveBeenCalled();
   });
 
   it("supports cron inspection and manual trigger routes when scheduler is enabled", async () => {

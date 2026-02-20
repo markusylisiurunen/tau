@@ -130,6 +130,12 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
             const result = await controlPlane.terminate(id, signal);
             if (!result) {
               const message = `unknown subagent id '${id}'.`;
+              const uiText = buildSubagentUiText({
+                output: message,
+                statusText: "error",
+                maxOutputLines: 16,
+                fullText: message,
+              });
               const uiEvent: ToolUiEvent = {
                 type: "terminate_agent_finished",
                 toolCallId: toolCall.id,
@@ -137,6 +143,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
                 headerTarget,
                 status: "error",
                 message,
+                uiText,
               };
               const toolResult = createToolError(toolCall, message);
               return { kind: "single", toolResult, uiEvent };
@@ -171,15 +178,23 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
             return { kind: "single", toolResult, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
+            const reason = message.trim() || "terminate_agent failed";
+            const uiText = buildSubagentUiText({
+              output: reason,
+              statusText: "error",
+              maxOutputLines: 16,
+              fullText: reason,
+            });
             const uiEvent: ToolUiEvent = {
               type: "terminate_agent_finished",
               toolCallId: toolCall.id,
               agentId: id,
               headerTarget,
               status: "error",
-              message,
+              message: reason,
+              uiText,
             };
-            const toolResult = createToolError(toolCall, message);
+            const toolResult = createToolError(toolCall, reason);
             return { kind: "single", toolResult, uiEvent };
           }
         })(),

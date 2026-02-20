@@ -159,6 +159,11 @@ function parseCronPath(pathname: string): CronPathRoute | "invalid" | undefined 
   return undefined;
 }
 
+function hasOnlyKeys(source: Record<string, unknown>, allowedKeys: string[]): boolean {
+  const allowed = new Set(allowedKeys);
+  return Object.keys(source).every((key) => allowed.has(key));
+}
+
 function mapSessionErrorStatus(error: AsyncSessionManagerError): number {
   switch (error.code) {
     case "not_found":
@@ -174,7 +179,7 @@ function mapSessionErrorStatus(error: AsyncSessionManagerError): number {
 }
 
 function readCreateBody(raw: unknown): AsyncHttpCreateSessionRequest | undefined {
-  if (!isRecord(raw)) {
+  if (!isRecord(raw) || !hasOnlyKeys(raw, ["projectId", "prompt"])) {
     return undefined;
   }
 
@@ -184,16 +189,24 @@ function readCreateBody(raw: unknown): AsyncHttpCreateSessionRequest | undefined
   }
 
   const promptValue = raw.prompt;
-  if (promptValue !== undefined && typeof promptValue !== "string") {
+  if (promptValue === undefined) {
+    return { projectId };
+  }
+
+  if (typeof promptValue !== "string") {
     return undefined;
   }
 
-  const prompt = typeof promptValue === "string" ? promptValue : undefined;
-  return { projectId, ...(prompt === undefined ? {} : { prompt }) };
+  const prompt = promptValue.trim();
+  if (!prompt) {
+    return undefined;
+  }
+
+  return { projectId, prompt };
 }
 
 function readSendBody(raw: unknown): AsyncHttpSendMessageRequest | undefined {
-  if (!isRecord(raw)) {
+  if (!isRecord(raw) || !hasOnlyKeys(raw, ["text"])) {
     return undefined;
   }
 
@@ -320,7 +333,13 @@ export async function startAsyncHttpServer(
               return;
             }
 
-            const jobId = url.searchParams.get("jobId")?.trim() || undefined;
+            const hasJobIdQuery = url.searchParams.has("jobId");
+            const jobId = url.searchParams.get("jobId")?.trim();
+            if (hasJobIdQuery && !jobId) {
+              sendError(response, 400, "invalid jobId query parameter");
+              return;
+            }
+
             const runs = cronScheduler
               .listRuns({
                 ...(jobId ? { jobId } : {}),

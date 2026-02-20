@@ -200,7 +200,13 @@ export function createLocalToolExecutionBackend(
     async grep(options) {
       const { baseArgs, pattern, paths, signal, timeoutMs, dryRun } = options;
 
-      const resolvedPaths = paths.map((p) => p.trim() || ".");
+      const resolvedPaths = paths.map((path) => {
+        const cleaned = path.trim();
+        if (!cleaned) {
+          throw new Error("invalid grep path: empty path.");
+        }
+        return cleaned;
+      });
       const fullArgs = [...baseArgs, "--", pattern, ...resolvedPaths];
 
       if (dryRun) {
@@ -307,7 +313,10 @@ export async function createSandboxToolExecutionBackend(options: {
   const resolveContainerPath = (
     rawPath: string,
   ): { containerPath: string; displayPath: string } => {
-    const cleaned = rawPath.trim() || ".";
+    const cleaned = rawPath.trim();
+    if (!cleaned) {
+      throw new Error("invalid path: empty path.");
+    }
     if (cleaned.includes("\0")) {
       throw new Error("invalid path: contains null byte.");
     }
@@ -481,7 +490,9 @@ export async function createSandboxToolExecutionBackend(options: {
       for (let i = 0; i + 1 < chunks.length; i += 2) {
         const type = chunks[i];
         const name = chunks[i + 1];
-        if (!type || !name) continue;
+        if (!type || !name) {
+          throw new Error("failed to parse directory listing.");
+        }
         entries.push({
           name,
           isDirectory: type === "d",

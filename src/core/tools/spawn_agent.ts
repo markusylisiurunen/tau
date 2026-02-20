@@ -346,6 +346,10 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       }
 
       const modelLabel = launchModelOverride?.normalized;
+      const statusWorkingDirectory = runtimeConfig.workingDirectory
+        ? formatCwd(runtimeConfig.workingDirectory)
+        : undefined;
+      const statusPrefixParts = [name, modelLabel, statusWorkingDirectory].filter(Boolean);
 
       return {
         kind: "phased",
@@ -358,7 +362,14 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         },
         run: (async (): Promise<ToolDispatchResult> => {
           if (signal?.aborted) {
-            const toolResult = createToolError(toolCall, "spawn_agent aborted");
+            const reason = "aborted";
+            const toolResult = createToolError(toolCall, `spawn_agent ${reason}`);
+            const uiText = buildSubagentUiText({
+              output: reason,
+              statusText: [...statusPrefixParts, reason].join(" · "),
+              maxOutputLines: 16,
+              fullText: reason,
+            });
             const uiEvent: ToolUiEvent = {
               type: "spawn_agent_finished",
               toolCallId: toolCall.id,
@@ -366,7 +377,8 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
               title,
               headerTarget,
               status: "error",
-              message: "aborted",
+              message: reason,
+              uiText,
             };
             return { kind: "single", toolResult, uiEvent };
           }
@@ -403,12 +415,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             workingDirectory: runtimeConfig.workingDirectory,
           });
 
-          const statusWorkingDirectory = runtimeConfig.workingDirectory
-            ? formatCwd(runtimeConfig.workingDirectory)
-            : undefined;
-          const statusParts = [name, modelLabel, statusWorkingDirectory, spawnResult.id].filter(
-            Boolean,
-          );
+          const statusParts = [...statusPrefixParts, spawnResult.id];
           const toolResult: ToolResultMessage = createToolResult(toolCall, resultText, false);
           const uiText = buildSubagentUiText({
             output: prompt,

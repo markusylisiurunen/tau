@@ -143,7 +143,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
         const uiEvent: ToolUiEvent = {
           type: "wait_for_agent_blocked",
           toolCallId: toolCall.id,
-          agentIds: ids.length > 0 ? ids : undefined,
+          agentIds: ids,
           headerTarget,
           reason,
         };
@@ -205,15 +205,22 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
             return { kind: "single", toolResult, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
+            const reason = message.trim() || "wait_for_agent failed";
+            const uiText = buildSubagentUiText({
+              output: reason,
+              statusText: "error",
+              fullText: reason,
+            });
             const uiEvent: ToolUiEvent = {
               type: "wait_for_agent_finished",
               toolCallId: toolCall.id,
               agentIds: deduped,
               headerTarget: dedupedTarget,
               status: "error",
-              message,
+              message: reason,
+              uiText,
             };
-            const toolResult = createToolError(toolCall, message);
+            const toolResult = createToolError(toolCall, reason);
             return { kind: "single", toolResult, uiEvent };
           }
         })(),

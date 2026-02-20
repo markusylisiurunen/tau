@@ -193,6 +193,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
           objective: objective || "(invalid objective)",
           headerTarget,
           status: "error",
+          message: reason,
         };
         return { kind: "single", toolResult, uiEvent };
       };
@@ -294,6 +295,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
               objective: args.objective,
               headerTarget,
               status: "error",
+              message: reason,
             };
             return { kind: "single", toolResult, uiEvent };
           }

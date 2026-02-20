@@ -269,6 +269,14 @@ describe("sdk_client", () => {
     expect(args).toContain("read-only");
     expect(args).toContain("--no-agent-context-files");
 
+    const initializeRequest = child.requests.find((request) => request.method === "initialize");
+    expect(initializeRequest?.params).toEqual({
+      client: {
+        name: "tau-sdk",
+        version: "1",
+      },
+    });
+
     const events = [];
     client.onEvent((event) => {
       events.push(event);
@@ -292,6 +300,30 @@ describe("sdk_client", () => {
     ]);
 
     await client.close();
+  });
+
+  it("rejects invalid initialize metadata before sending rpc requests", async () => {
+    const child = new FakeChildProcess();
+    const spawn = vi.fn(() => child);
+
+    await expect(
+      createTauSdkClient({
+        spawn,
+        scriptPath: "/fake/main.js",
+        initialize: {
+          client: {
+            name: "",
+            version: "1",
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      name: "TauTransportError",
+      message: "sdk initialize.client.name and initialize.client.version must be non-empty strings",
+    });
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(child.requests).toEqual([]);
   });
 
   it("throws TauRpcResponseError for rpc error responses", async () => {

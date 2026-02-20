@@ -33,9 +33,9 @@ export type RpcErrorCode = (typeof RPC_ERROR_CODES)[keyof typeof RPC_ERROR_CODES
 export type RpcRequestId = string | number;
 
 export type RpcInitializeParams = {
-  client?: {
-    name?: string;
-    version?: string;
+  client: {
+    name: string;
+    version: string;
   };
 };
 
@@ -287,6 +287,17 @@ export function parseRpcRequestLine(line: string): RpcParseResult {
     };
   }
 
+  if (!hasOnlyKeys(parsed, ["version", "type", "id", "method", "params"])) {
+    return {
+      ok: false,
+      id: null,
+      error: createRpcError(
+        RPC_ERROR_CODES.invalidRequest,
+        "request contains unsupported top-level fields",
+      ),
+    };
+  }
+
   const maybeId = parseRequestId(parsed.id);
   if (!maybeId.ok) {
     return {
@@ -476,31 +487,28 @@ export function validateRpcParams(
 
 function validateInitializeParams(params: unknown): RpcParamsValidationResult<RpcInitializeParams> {
   if (!isRecord(params) || !hasOnlyKeys(params, ["client"])) {
-    return invalidParams("initialize params must be an object with optional client metadata");
+    return invalidParams("initialize params must be an object with client metadata");
   }
 
   const client = params.client;
-  if (client === undefined) {
-    return { ok: true, value: EMPTY_OBJECT };
-  }
-
   if (!isRecord(client) || !hasOnlyKeys(client, ["name", "version"])) {
-    return invalidParams("initialize.client must be an object with optional name/version strings");
+    return invalidParams("initialize.client must be an object with name/version strings");
   }
 
-  if (
-    (client.name !== undefined && typeof client.name !== "string") ||
-    (client.version !== undefined && typeof client.version !== "string")
-  ) {
-    return invalidParams("initialize.client.name and initialize.client.version must be strings");
+  if (typeof client.name !== "string" || !client.name.trim()) {
+    return invalidParams("initialize.client.name must be a non-empty string");
+  }
+
+  if (typeof client.version !== "string" || !client.version.trim()) {
+    return invalidParams("initialize.client.version must be a non-empty string");
   }
 
   return {
     ok: true,
     value: {
       client: {
-        ...(client.name !== undefined ? { name: client.name } : {}),
-        ...(client.version !== undefined ? { version: client.version } : {}),
+        name: client.name.trim(),
+        version: client.version.trim(),
       },
     },
   };
@@ -544,6 +552,15 @@ function validateNoParams(
 }
 
 function parseRpcReadyMessage(payload: Record<string, unknown>): RpcOutgoingParseResult {
+  if (!hasOnlyKeys(payload, ["version", "type", "sessionId", "methods", "coreEventVersion"])) {
+    return outgoingParseFailure(
+      "ready",
+      null,
+      RPC_ERROR_CODES.invalidRequest,
+      "ready message contains unsupported fields",
+    );
+  }
+
   if (typeof payload.sessionId !== "string") {
     return outgoingParseFailure(
       "ready",
@@ -584,6 +601,15 @@ function parseRpcReadyMessage(payload: Record<string, unknown>): RpcOutgoingPars
 }
 
 function parseRpcEventMessage(payload: Record<string, unknown>): RpcOutgoingParseResult {
+  if (!hasOnlyKeys(payload, ["version", "type", "event", "requestId"])) {
+    return outgoingParseFailure(
+      "event",
+      null,
+      RPC_ERROR_CODES.invalidRequest,
+      "event message contains unsupported fields",
+    );
+  }
+
   const event = parseCoreEventEnvelope(payload.event);
   if (!event.ok) {
     return outgoingParseFailure(
@@ -628,6 +654,15 @@ function parseRpcEventMessage(payload: Record<string, unknown>): RpcOutgoingPars
 }
 
 function parseRpcResponseMessage(payload: Record<string, unknown>): RpcOutgoingParseResult {
+  if (!hasOnlyKeys(payload, ["version", "type", "id", "ok", "result", "error"])) {
+    return outgoingParseFailure(
+      "response",
+      null,
+      RPC_ERROR_CODES.invalidRequest,
+      "response message contains unsupported fields",
+    );
+  }
+
   const responseId = parseNullableRequestId(payload.id);
   const requestId = responseId.ok ? responseId.id : null;
   if (!responseId.ok) {
@@ -642,6 +677,15 @@ function parseRpcResponseMessage(payload: Record<string, unknown>): RpcOutgoingP
   }
 
   if (payload.ok === true) {
+    if (!hasOnlyKeys(payload, ["version", "type", "id", "ok", "result"])) {
+      return outgoingParseFailure(
+        "response",
+        requestId,
+        RPC_ERROR_CODES.invalidRequest,
+        "successful response must only include result payload",
+      );
+    }
+
     const correlatedId = parseRequestId(payload.id);
     if (!correlatedId.ok) {
       return outgoingParseFailure(
@@ -676,6 +720,15 @@ function parseRpcResponseMessage(payload: Record<string, unknown>): RpcOutgoingP
   }
 
   if (payload.ok === false) {
+    if (!hasOnlyKeys(payload, ["version", "type", "id", "ok", "error"])) {
+      return outgoingParseFailure(
+        "response",
+        requestId,
+        RPC_ERROR_CODES.invalidRequest,
+        "error response must only include error payload",
+      );
+    }
+
     if (!isRecord(payload.error)) {
       return outgoingParseFailure(
         "response",

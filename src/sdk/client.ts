@@ -17,6 +17,7 @@ import type {
   TauSdkClient,
   TauSdkClientOptions,
   TauSdkEventListener,
+  TauSdkInitializeParams,
   TauSdkSpawnFunction,
   TauSdkSubmitOptions,
 } from "./types.js";
@@ -31,6 +32,13 @@ type PendingRequest = {
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;
 const DEFAULT_MAIN_SCRIPT_PATH = fileURLToPath(new URL("../main.js", import.meta.url));
+
+const DEFAULT_INITIALIZE_PARAMS: RpcInitializeParams = {
+  client: {
+    name: "tau-sdk",
+    version: "1",
+  },
+};
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -446,6 +454,7 @@ class TauSdkClientImpl implements TauSdkClient {
 }
 
 export async function createTauSdkClient(options: TauSdkClientOptions = {}): Promise<TauSdkClient> {
+  const initializeParams = resolveInitializeParams(options.initialize);
   const spawn = options.spawn ?? spawnProcess;
   const command = options.executable ?? process.execPath;
   const args = buildProcessArgs(options);
@@ -466,15 +475,34 @@ export async function createTauSdkClient(options: TauSdkClientOptions = {}): Pro
   const client = new TauSdkClientImpl(childProcess);
 
   try {
-    await client.connect(
-      options.initialize ?? {},
-      options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
-    );
+    await client.connect(initializeParams, options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
     return client;
   } catch (error) {
     await client.close();
     throw error;
   }
+}
+
+function resolveInitializeParams(params: TauSdkInitializeParams | undefined): RpcInitializeParams {
+  const candidate = params ?? DEFAULT_INITIALIZE_PARAMS;
+
+  if (
+    typeof candidate.client.name !== "string" ||
+    !candidate.client.name.trim() ||
+    typeof candidate.client.version !== "string" ||
+    !candidate.client.version.trim()
+  ) {
+    throw new TauTransportError(
+      "sdk initialize.client.name and initialize.client.version must be non-empty strings",
+    );
+  }
+
+  return {
+    client: {
+      name: candidate.client.name.trim(),
+      version: candidate.client.version.trim(),
+    },
+  };
 }
 
 function buildProcessArgs(options: TauSdkClientOptions): string[] {

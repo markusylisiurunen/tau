@@ -103,6 +103,24 @@ function formatSubagentTitle(title: string | undefined): string {
   return trimmed || "(subagent)";
 }
 
+function ensureSubagentUiText(args: {
+  uiText?: ToolUiText;
+  status: "success" | "error";
+  message?: string;
+  statusLine?: string;
+}): ToolUiText {
+  if (args.uiText) {
+    return args.uiText;
+  }
+
+  const fallbackLine = args.message?.trim() || (args.status === "success" ? "ok" : "failed");
+  return {
+    previewLines: [{ text: fallbackLine }],
+    statusLine: args.statusLine,
+    fullLines: [{ text: fallbackLine }],
+  };
+}
+
 function buildSubagentRunningView(args: {
   theme: Theme;
   label: string;
@@ -188,8 +206,12 @@ export class ToolUiRegistry {
     this.renderers.set(type, renderer);
   }
 
-  render(event: ToolUiEvent, context: ToolUiRenderContext): ToolOutputViewModel | undefined {
-    return this.renderers.get(event.type)?.(event, context);
+  render(event: ToolUiEvent, context: ToolUiRenderContext): ToolOutputViewModel {
+    const renderer = this.renderers.get(event.type);
+    if (!renderer) {
+      throw new Error(`missing tool ui renderer for event type '${event.type}'.`);
+    }
+    return renderer(event, context);
   }
 
   renderBashAborted(
@@ -253,22 +275,17 @@ export function createToolUiRegistry(): ToolUiRegistry {
   registry.register("spawn_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "spawn_agent_finished" }>;
     const title = formatSubagentTitle(uiEvent.headerTarget);
-    if (!uiEvent.uiText) {
-      return buildSimpleToolFinishedView({
-        theme: context.theme,
-        label: "spawn",
-        target: title,
-        status: uiEvent.status,
-        message: uiEvent.message,
-      });
-    }
     return buildSubagentFinishedView({
       theme: context.theme,
       label: "spawned",
       failureLabel: "spawn failed",
       title,
       status: uiEvent.status,
-      uiText: uiEvent.uiText,
+      uiText: ensureSubagentUiText({
+        uiText: uiEvent.uiText,
+        status: uiEvent.status,
+        message: uiEvent.message,
+      }),
     });
   });
 
@@ -297,22 +314,17 @@ export function createToolUiRegistry(): ToolUiRegistry {
   registry.register("send_input_to_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "send_input_to_agent_finished" }>;
     const title = formatSubagentTitle(uiEvent.headerTarget);
-    if (!uiEvent.uiText) {
-      return buildSimpleToolFinishedView({
-        theme: context.theme,
-        label: "send input",
-        target: title,
-        status: uiEvent.status,
-        message: uiEvent.message,
-      });
-    }
     return buildSubagentFinishedView({
       theme: context.theme,
       label: "sent input",
       failureLabel: "send failed",
       title,
       status: uiEvent.status,
-      uiText: uiEvent.uiText,
+      uiText: ensureSubagentUiText({
+        uiText: uiEvent.uiText,
+        status: uiEvent.status,
+        message: uiEvent.message,
+      }),
     });
   });
 
@@ -341,22 +353,17 @@ export function createToolUiRegistry(): ToolUiRegistry {
   registry.register("wait_for_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_finished" }>;
     const title = uiEvent.headerTarget;
-    if (!uiEvent.uiText) {
-      return buildSimpleToolFinishedView({
-        theme: context.theme,
-        label: "wait",
-        target: title,
-        status: uiEvent.status,
-        message: uiEvent.message,
-      });
-    }
     return buildSubagentFinishedView({
       theme: context.theme,
       label: "waited",
-      failureLabel: "waited",
+      failureLabel: "wait failed",
       title,
       status: uiEvent.status,
-      uiText: uiEvent.uiText,
+      uiText: ensureSubagentUiText({
+        uiText: uiEvent.uiText,
+        status: uiEvent.status,
+        message: uiEvent.message,
+      }),
     });
   });
 
@@ -384,26 +391,21 @@ export function createToolUiRegistry(): ToolUiRegistry {
   registry.register("terminate_agent_finished", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "terminate_agent_finished" }>;
     const title = formatSubagentTitle(uiEvent.headerTarget);
-    if (!uiEvent.uiText) {
-      const message =
-        uiEvent.finalStatus && uiEvent.finalStatus !== "success"
-          ? `final status: ${uiEvent.finalStatus}`
-          : uiEvent.message;
-      return buildSimpleToolFinishedView({
-        theme: context.theme,
-        label: "terminate",
-        target: title,
-        status: uiEvent.status,
-        message,
-      });
-    }
+    const fallbackMessage =
+      uiEvent.finalStatus && uiEvent.finalStatus !== "success"
+        ? `final status: ${uiEvent.finalStatus}`
+        : uiEvent.message;
     return buildSubagentFinishedView({
       theme: context.theme,
       label: "terminated",
-      failureLabel: "terminated",
+      failureLabel: "terminate failed",
       title,
       status: uiEvent.status,
-      uiText: uiEvent.uiText,
+      uiText: ensureSubagentUiText({
+        uiText: uiEvent.uiText,
+        status: uiEvent.status,
+        message: fallbackMessage,
+      }),
     });
   });
 

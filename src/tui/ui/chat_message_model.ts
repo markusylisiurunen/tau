@@ -1,4 +1,4 @@
-import { type Component, Container } from "@mariozechner/pi-tui";
+import type { Component } from "@mariozechner/pi-tui";
 import type { ToolUiEvent } from "../../core/tools/registry.js";
 import { AppIntroComponent, type AppIntroModel } from "./app_intro.js";
 import { AssistantMessageComponent, type AssistantMessageModel } from "./assistant_message.js";
@@ -131,9 +131,6 @@ export function renderChatMessage(
         theme,
         compact: compactToolUi,
       });
-      if (!view) {
-        return { component: new Container(), isAssistant: false };
-      }
       const component = renderToolOutput(view, compactToolUi);
       return {
         component,
@@ -144,7 +141,6 @@ export function renderChatMessage(
             theme: nextOptions.theme,
             compact: nextOptions.compactToolUi,
           });
-          if (!nextView) return false;
           component.update(buildToolOutputProps(nextView, nextOptions.compactToolUi));
           return true;
         },

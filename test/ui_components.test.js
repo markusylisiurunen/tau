@@ -4,6 +4,7 @@ import { expect, test } from "vitest";
 import { AppIntroComponent } from "../dist/tui/ui/app_intro.js";
 import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
 import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
+import { renderChatMessage } from "../dist/tui/ui/chat_message_model.js";
 import {
   OneLineSegmentsComponent,
   truncateFromEndByWidth,
@@ -112,6 +113,37 @@ test("ChatContainerComponent hides empty assistant messages even when thoughts a
   const gap = lines.slice(firstIndex + 1, secondIndex);
   const emptyLines = gap.filter((line) => line.trim() === "");
   expect(emptyLines.length).toBe(1);
+});
+
+test("renderChatMessage fails fast when a tool renderer is missing", () => {
+  const theme = createTagTheme();
+  const toolUiRegistry = createToolUiRegistry();
+
+  expect(() =>
+    renderChatMessage(
+      {
+        type: "tool",
+        event: {
+          type: "list_success",
+          toolCallId: "list-1",
+          path: ".",
+          offset: 0,
+          limit: 10,
+          total: 1,
+          returned: 1,
+          entries: ["a.txt"],
+          uiText: { previewLines: [], fullLines: [] },
+          headerTarget: ".",
+        },
+      },
+      {
+        theme,
+        thoughtsVisible: false,
+        compactToolUi: true,
+        toolUiRegistry,
+      },
+    ),
+  ).toThrow("missing tool ui renderer for event type 'list_success'.");
 });
 
 test("QueuedMessagesComponent renders numbered, italicized previews", () => {

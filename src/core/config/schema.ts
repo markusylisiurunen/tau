@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
 import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
+import { z } from "zod";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS, type RiskLevel, RiskLevelSchema } from "../types.js";
 import { normalizeModelNoticeKey, parseModelNoticeKey } from "../utils/model_notices.js";
-import { isRecord } from "../utils/type_guards.js";
 import type { BashCommand } from "./bash_commands.js";
 import { parseBashCommands } from "./bash_commands.js";
 import type { ConfigDeps } from "./deps.js";
@@ -100,6 +100,84 @@ type ConfigDiagnostics = {
   errors: string[];
 };
 
+const NonEmptyStringSchema = z.string().trim().min(1);
+const BooleanSchema = z.boolean();
+const AgentContextFilesSchema = z.array(NonEmptyStringSchema);
+const ApiKeyProviderSchema = z.string();
+const ApiKeysSchema = z
+  .object({
+    anthropic: z.unknown().optional(),
+    google: z.unknown().optional(),
+    openai: z.unknown().optional(),
+    parallel: z.unknown().optional(),
+    mistral: z.unknown().optional(),
+  })
+  .passthrough();
+const SandboxSchema = z
+  .object({
+    image: z.unknown().optional(),
+    mountPath: z.unknown().optional(),
+    pruneAfterHours: z.unknown().optional(),
+    extraDockerArgs: z.unknown().optional(),
+    environmentInfo: z.unknown().optional(),
+  })
+  .passthrough();
+const SandboxFieldsSchema = z.object({
+  image: NonEmptyStringSchema,
+  mountPath: NonEmptyStringSchema,
+  pruneAfterHours: z.number().finite().gt(0),
+  extraDockerArgs: z.array(z.string().refine((entry) => entry.trim().length > 0)),
+  environmentInfo: z.string(),
+});
+const SubagentsConfigSchema = z
+  .object({
+    defaultLaunchModels: z.array(z.string()).optional(),
+  })
+  .passthrough();
+const StringRecordSchema = z.object({}).catchall(z.unknown());
+const PositiveIntegerSchema = z.number().int().finite().gt(0);
+const AsyncClientTargetSchema = z.object({
+  url: NonEmptyStringSchema,
+  token: NonEmptyStringSchema,
+  timeoutMs: PositiveIntegerSchema.optional(),
+});
+
+function parseOptionalFields(
+  data: Record<string, unknown>,
+  sourceLabel: string,
+  specs: readonly [key: string, schema: z.ZodTypeAny, errorMessage: string][],
+): { values: Record<string, unknown>; errors: string[] } {
+  const values: Record<string, unknown> = {};
+  const errors: string[] = [];
+
+  for (const [key, schema, errorMessage] of specs) {
+    const value = data[key];
+    if (value === undefined) {
+      continue;
+    }
+    const parsed = schema.safeParse(value);
+    if (!parsed.success) {
+      errors.push(`${sourceLabel}: ${errorMessage}`);
+      continue;
+    }
+    values[key] = parsed.data;
+  }
+
+  return { values, errors };
+}
+function assignParsedConfigValue<K extends keyof Config>(
+  config: Config,
+  errors: string[],
+  key: K,
+  value: Config[K] | undefined,
+  parseErrors: string[],
+): void {
+  if (value !== undefined) {
+    config[key] = value;
+  }
+  errors.push(...parseErrors);
+}
+
 function parseConfigJson(
   content: string,
   sourceLabel: string,
@@ -118,6 +196,87 @@ function parseConfigJson(
   }
 }
 
+function parseApiKeysConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: Config["apiKeys"]; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  const parsed = ApiKeysSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { errors: [`${sourceLabel}: 'apiKeys' must be an object.`] };
+  }
+
+  const apiKeys: Config["apiKeys"] = {};
+  const errors: string[] = [];
+
+  for (const provider of ["anthropic", "google", "openai", "parallel", "mistral"] as const) {
+    const value = parsed.data[provider];
+    if (value === undefined) {
+      continue;
+    }
+    const parsedValue = ApiKeyProviderSchema.safeParse(value);
+    if (!parsedValue.success) {
+      errors.push(`${sourceLabel}: apiKeys.${provider} must be a string.`);
+      continue;
+    }
+    apiKeys[provider] = parsedValue.data;
+  }
+
+  if (Object.keys(apiKeys).length === 0) {
+    return { errors };
+  }
+
+  return { config: apiKeys, errors };
+}
+
+function parseDefaultPersona(
+  raw: unknown,
+  sourceLabel: string,
+): { defaultPersona?: string; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  const parsedPersona = z.string().safeParse(raw);
+  if (!parsedPersona.success) {
+    return { errors: [`${sourceLabel}: 'defaultPersona' must be a string.`] };
+  }
+
+  const ref = parsePersonaReference(parsedPersona.data);
+  if (ref.personaId && !ref.error) {
+    return {
+      defaultPersona: formatPersonaReference({
+        personaId: ref.personaId,
+        reasoning: ref.reasoning,
+      }),
+      errors: [],
+    };
+  }
+
+  if (ref.error === "empty-persona") {
+    return { errors: [`${sourceLabel}: 'defaultPersona' must be a non-empty string.`] };
+  }
+
+  if (ref.error === "missing-reasoning") {
+    return {
+      errors: [`${sourceLabel}: 'defaultPersona' is missing a reasoning level after ':'.`],
+    };
+  }
+
+  if (ref.error === "invalid-reasoning") {
+    return {
+      errors: [
+        `${sourceLabel}: 'defaultPersona' has invalid reasoning level '${ref.rawReasoning}'. allowed levels: ${REASONING_LEVELS.join(", ")}.`,
+      ],
+    };
+  }
+
+  return { errors: [] };
+}
+
 function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostics {
   if (typeof raw !== "object" || raw === null) {
     return { config: {}, errors: [`${sourceLabel}: config must be an object.`] };
@@ -127,123 +286,68 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
   const config: Config = {};
   const errors: string[] = [];
 
-  if (data.apiKeys !== undefined) {
-    if (typeof data.apiKeys !== "object" || data.apiKeys === null) {
-      errors.push(`${sourceLabel}: 'apiKeys' must be an object.`);
-    } else {
-      const apiKeys: Config["apiKeys"] = {};
-      const keys = data.apiKeys as Record<string, unknown>;
-      const providers = ["anthropic", "google", "openai", "parallel", "mistral"] as const;
-      for (const provider of providers) {
-        const value = keys[provider];
-        if (value === undefined) continue;
-        if (typeof value !== "string") {
-          errors.push(`${sourceLabel}: apiKeys.${provider} must be a string.`);
-          continue;
-        }
-        apiKeys[provider] = value;
-      }
-      if (Object.keys(apiKeys).length > 0) {
-        config.apiKeys = apiKeys;
-      }
-    }
-  }
+  const apiKeysResult = parseApiKeysConfig(data.apiKeys, sourceLabel);
+  assignParsedConfigValue(config, errors, "apiKeys", apiKeysResult.config, apiKeysResult.errors);
 
   const sandboxResult = parseSandboxConfig(data.sandbox, sourceLabel);
-  if (sandboxResult.config) {
-    config.sandbox = sandboxResult.config;
-  }
-  errors.push(...sandboxResult.errors);
+  assignParsedConfigValue(config, errors, "sandbox", sandboxResult.config, sandboxResult.errors);
 
-  if (data.defaultPersona !== undefined) {
-    if (typeof data.defaultPersona === "string") {
-      const parsedDefaultPersona = parsePersonaReference(data.defaultPersona);
-      if (parsedDefaultPersona.error === "empty-persona") {
-        errors.push(`${sourceLabel}: 'defaultPersona' must be a non-empty string.`);
-      } else if (parsedDefaultPersona.error === "missing-reasoning") {
-        errors.push(`${sourceLabel}: 'defaultPersona' is missing a reasoning level after ':'.`);
-      } else if (parsedDefaultPersona.error === "invalid-reasoning") {
-        errors.push(
-          `${sourceLabel}: 'defaultPersona' has invalid reasoning level '${parsedDefaultPersona.rawReasoning}'. allowed levels: ${REASONING_LEVELS.join(", ")}.`,
-        );
-      } else if (parsedDefaultPersona.personaId) {
-        config.defaultPersona = formatPersonaReference({
-          personaId: parsedDefaultPersona.personaId,
-          reasoning: parsedDefaultPersona.reasoning,
-        });
-      }
-    } else {
-      errors.push(`${sourceLabel}: 'defaultPersona' must be a string.`);
-    }
-  }
+  const defaultPersonaResult = parseDefaultPersona(data.defaultPersona, sourceLabel);
+  assignParsedConfigValue(
+    config,
+    errors,
+    "defaultPersona",
+    defaultPersonaResult.defaultPersona,
+    defaultPersonaResult.errors,
+  );
 
-  if (data.defaultRisk !== undefined) {
-    const parsed = RiskLevelSchema.safeParse(data.defaultRisk);
-    if (parsed.success) {
-      config.defaultRisk = parsed.data;
-    } else {
-      errors.push(`${sourceLabel}: 'defaultRisk' must be a valid risk level.`);
-    }
-  }
-
-  if (data.disableBuiltinPersonas !== undefined) {
-    if (typeof data.disableBuiltinPersonas === "boolean") {
-      config.disableBuiltinPersonas = data.disableBuiltinPersonas;
-    } else {
-      errors.push(`${sourceLabel}: 'disableBuiltinPersonas' must be a boolean.`);
-    }
-  }
-
-  if (data.disableBuiltinThemes !== undefined) {
-    if (typeof data.disableBuiltinThemes === "boolean") {
-      config.disableBuiltinThemes = data.disableBuiltinThemes;
-    } else {
-      errors.push(`${sourceLabel}: 'disableBuiltinThemes' must be a boolean.`);
-    }
-  }
-
-  if (data.defaultTheme !== undefined) {
-    if (typeof data.defaultTheme === "string") {
-      const defaultTheme = data.defaultTheme.trim();
-      if (!defaultTheme) {
-        errors.push(`${sourceLabel}: 'defaultTheme' must be a non-empty string.`);
-      } else {
-        config.defaultTheme = defaultTheme;
-      }
-    } else {
-      errors.push(`${sourceLabel}: 'defaultTheme' must be a string.`);
-    }
-  }
+  const scalarResult = parseOptionalFields(data, sourceLabel, [
+    ["defaultRisk", RiskLevelSchema, "'defaultRisk' must be a valid risk level."],
+    ["disableBuiltinPersonas", BooleanSchema, "'disableBuiltinPersonas' must be a boolean."],
+    ["disableBuiltinThemes", BooleanSchema, "'disableBuiltinThemes' must be a boolean."],
+    ["defaultTheme", NonEmptyStringSchema, "'defaultTheme' must be a non-empty string."],
+  ]);
+  Object.assign(config as Record<string, unknown>, scalarResult.values);
+  errors.push(...scalarResult.errors);
 
   const bashResult = parseBashCommands(data.bashCommands, sourceLabel);
-  if (bashResult.commands.length > 0) {
-    config.bashCommands = bashResult.commands;
-  }
-  errors.push(...bashResult.errors);
+  assignParsedConfigValue(
+    config,
+    errors,
+    "bashCommands",
+    bashResult.commands.length > 0 ? bashResult.commands : undefined,
+    bashResult.errors,
+  );
 
   const agentResult = parseAgentContextFiles(data.agentContextFiles, sourceLabel);
-  if (agentResult.paths.length > 0) {
-    config.agentContextFiles = agentResult.paths;
-  }
-  errors.push(...agentResult.errors);
+  assignParsedConfigValue(
+    config,
+    errors,
+    "agentContextFiles",
+    agentResult.paths.length > 0 ? agentResult.paths : undefined,
+    agentResult.errors,
+  );
 
   const subagentsResult = parseSubagentsConfig(data.subagents, sourceLabel);
-  if (subagentsResult.config) {
-    config.subagents = subagentsResult.config;
-  }
-  errors.push(...subagentsResult.errors);
+  assignParsedConfigValue(
+    config,
+    errors,
+    "subagents",
+    subagentsResult.config,
+    subagentsResult.errors,
+  );
 
   const modelSystemNoticesResult = parseModelSystemNotices(data.modelSystemNotices, sourceLabel);
-  if (modelSystemNoticesResult.notices) {
-    config.modelSystemNotices = modelSystemNoticesResult.notices;
-  }
-  errors.push(...modelSystemNoticesResult.errors);
+  assignParsedConfigValue(
+    config,
+    errors,
+    "modelSystemNotices",
+    modelSystemNoticesResult.notices,
+    modelSystemNoticesResult.errors,
+  );
 
   const asyncResult = parseAsyncConfig(data.async, sourceLabel);
-  if (asyncResult.config) {
-    config.async = asyncResult.config;
-  }
-  errors.push(...asyncResult.errors);
+  assignParsedConfigValue(config, errors, "async", asyncResult.config, asyncResult.errors);
 
   return { config, errors };
 }
@@ -256,76 +360,40 @@ function parseSandboxConfig(
     return { errors: [] };
   }
 
-  if (typeof raw !== "object" || raw === null) {
+  const parsed = SandboxSchema.safeParse(raw);
+  if (!parsed.success) {
     return { errors: [`${sourceLabel}: 'sandbox' must be an object.`] };
   }
 
-  const data = raw as Record<string, unknown>;
-  const errors: string[] = [];
-  const sandbox: SandboxConfig = {};
+  const sandboxResult = parseOptionalFields(parsed.data, sourceLabel, [
+    ["image", SandboxFieldsSchema.shape.image, "sandbox.image must be a non-empty string."],
+    [
+      "mountPath",
+      SandboxFieldsSchema.shape.mountPath,
+      "sandbox.mountPath must be a non-empty string.",
+    ],
+    [
+      "pruneAfterHours",
+      SandboxFieldsSchema.shape.pruneAfterHours,
+      "sandbox.pruneAfterHours must be a positive number.",
+    ],
+    [
+      "extraDockerArgs",
+      SandboxFieldsSchema.shape.extraDockerArgs,
+      "sandbox.extraDockerArgs must be a string array.",
+    ],
+    [
+      "environmentInfo",
+      SandboxFieldsSchema.shape.environmentInfo,
+      "sandbox.environmentInfo must be a string.",
+    ],
+  ]);
 
-  if (data.image !== undefined) {
-    if (typeof data.image === "string" && data.image.trim()) {
-      sandbox.image = data.image.trim();
-    } else {
-      errors.push(`${sourceLabel}: sandbox.image must be a non-empty string.`);
-    }
+  if (Object.keys(sandboxResult.values).length === 0) {
+    return { errors: sandboxResult.errors };
   }
 
-  if (data.mountPath !== undefined) {
-    if (typeof data.mountPath === "string" && data.mountPath.trim()) {
-      sandbox.mountPath = data.mountPath.trim();
-    } else {
-      errors.push(`${sourceLabel}: sandbox.mountPath must be a non-empty string.`);
-    }
-  }
-
-  if (data.pruneAfterHours !== undefined) {
-    if (
-      typeof data.pruneAfterHours === "number" &&
-      Number.isFinite(data.pruneAfterHours) &&
-      data.pruneAfterHours > 0
-    ) {
-      sandbox.pruneAfterHours = data.pruneAfterHours;
-    } else {
-      errors.push(`${sourceLabel}: sandbox.pruneAfterHours must be a positive number.`);
-    }
-  }
-
-  if (data.extraDockerArgs !== undefined) {
-    if (Array.isArray(data.extraDockerArgs)) {
-      const args: string[] = [];
-      let invalid = false;
-      for (const entry of data.extraDockerArgs) {
-        if (typeof entry !== "string" || !entry.trim()) {
-          invalid = true;
-          continue;
-        }
-        args.push(entry);
-      }
-      if (invalid) {
-        errors.push(`${sourceLabel}: sandbox.extraDockerArgs must be a string array.`);
-      } else {
-        sandbox.extraDockerArgs = args;
-      }
-    } else {
-      errors.push(`${sourceLabel}: sandbox.extraDockerArgs must be a string array.`);
-    }
-  }
-
-  if (data.environmentInfo !== undefined) {
-    if (typeof data.environmentInfo === "string") {
-      sandbox.environmentInfo = data.environmentInfo;
-    } else {
-      errors.push(`${sourceLabel}: sandbox.environmentInfo must be a string.`);
-    }
-  }
-
-  if (Object.keys(sandbox).length === 0) {
-    return { errors };
-  }
-
-  return { config: sandbox, errors };
+  return { config: sandboxResult.values as SandboxConfig, errors: sandboxResult.errors };
 }
 
 function parseAgentContextFiles(
@@ -336,25 +404,15 @@ function parseAgentContextFiles(
     return { paths: [], errors: [] };
   }
 
-  if (!Array.isArray(raw)) {
+  const parsed = AgentContextFilesSchema.safeParse(raw);
+  if (!parsed.success) {
     return {
       paths: [],
       errors: [`${sourceLabel}: 'agentContextFiles' must be a string array.`],
     };
   }
 
-  const paths: string[] = [];
-  for (const entry of raw) {
-    if (typeof entry !== "string" || !entry.trim()) {
-      return {
-        paths: [],
-        errors: [`${sourceLabel}: 'agentContextFiles' must be a string array.`],
-      };
-    }
-    paths.push(entry.trim());
-  }
-
-  return { paths, errors: [] };
+  return { paths: parsed.data, errors: [] };
 }
 
 function parseSubagentsConfig(
@@ -365,35 +423,34 @@ function parseSubagentsConfig(
     return { errors: [] };
   }
 
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+  const parsed = SubagentsConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    if (parsed.error.issues.some((issue) => issue.path[0] === "defaultLaunchModels")) {
+      return { errors: [`${sourceLabel}: subagents.defaultLaunchModels must be a string array.`] };
+    }
     return { errors: [`${sourceLabel}: 'subagents' must be an object.`] };
   }
 
-  const data = raw as Record<string, unknown>;
-  const config: NonNullable<Config["subagents"]> = {};
-  const errors: string[] = [];
+  const { defaultLaunchModels } = parsed.data;
+  if (defaultLaunchModels === undefined) {
+    return { errors: [] };
+  }
 
-  if ("defaultLaunchModels" in data) {
-    if (!Array.isArray(data.defaultLaunchModels)) {
-      errors.push(`${sourceLabel}: subagents.defaultLaunchModels must be a string array.`);
-      return { errors };
-    }
-
-    const launchModelsResult = parseSubagentLaunchModelList(data.defaultLaunchModels);
-    if (launchModelsResult.error) {
-      errors.push(
+  const launchModelsResult = parseSubagentLaunchModelList(defaultLaunchModels);
+  if (launchModelsResult.error) {
+    return {
+      errors: [
         `${sourceLabel}: subagents.defaultLaunchModels ${launchModelsResult.error}. expected <provider>/<model>:<effort>.`,
-      );
-    } else {
-      config.defaultLaunchModels = launchModelsResult.launchModels;
-    }
+      ],
+    };
   }
 
-  if (Object.keys(config).length === 0) {
-    return { errors };
-  }
-
-  return { config, errors };
+  return {
+    config: {
+      defaultLaunchModels: launchModelsResult.launchModels,
+    },
+    errors: [],
+  };
 }
 
 function parseModelNoticeTarget(rawKey: string): { normalizedKey?: string; error?: string } {
@@ -427,15 +484,15 @@ function parseModelSystemNotices(
     return { errors: [] };
   }
 
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+  const parsedRecord = StringRecordSchema.safeParse(raw);
+  if (!parsedRecord.success) {
     return { errors: [`${sourceLabel}: 'modelSystemNotices' must be an object.`] };
   }
 
-  const data = raw as Record<string, unknown>;
   const notices: Record<string, string> = {};
   const errors: string[] = [];
 
-  for (const [rawKey, rawValue] of Object.entries(data)) {
+  for (const [rawKey, rawValue] of Object.entries(parsedRecord.data)) {
     const parsedKey = parseModelNoticeTarget(rawKey);
     if (parsedKey.error || !parsedKey.normalizedKey) {
       errors.push(
@@ -444,14 +501,15 @@ function parseModelSystemNotices(
       continue;
     }
 
-    if (typeof rawValue !== "string" || !rawValue.trim()) {
+    const parsedNotice = NonEmptyStringSchema.safeParse(rawValue);
+    if (!parsedNotice.success) {
       errors.push(
         `${sourceLabel}: modelSystemNotices.${rawKey} must be a non-empty string notice.`,
       );
       continue;
     }
 
-    notices[parsedKey.normalizedKey] = rawValue.trim();
+    notices[parsedKey.normalizedKey] = parsedNotice.data;
   }
 
   if (Object.keys(notices).length === 0) {
@@ -461,65 +519,41 @@ function parseModelSystemNotices(
   return { notices, errors };
 }
 
-function isPositiveInteger(value: unknown): value is number {
-  return (
-    typeof value === "number" && Number.isInteger(value) && Number.isFinite(value) && value > 0
-  );
-}
-
-function parsePositiveIntegerField(value: unknown, options?: { max?: number }): number | undefined {
-  if (!isPositiveInteger(value)) {
-    return undefined;
-  }
-
-  if (options?.max !== undefined && value > options.max) {
-    return undefined;
-  }
-
-  return value;
-}
-
 function parseAsyncClientTarget(
   raw: unknown,
   sourceLabel: string,
   key: string,
 ): { config?: AsyncClientTargetConfig; errors: string[] } {
-  if (!isRecord(raw)) {
+  const parsedRecord = StringRecordSchema.safeParse(raw);
+  if (!parsedRecord.success) {
     return { errors: [`${sourceLabel}: async.client.targets.${key} must be an object.`] };
   }
 
-  const data = raw as Record<string, unknown>;
-  const errors: string[] = [];
-
-  if (typeof data.url !== "string" || !data.url.trim()) {
-    errors.push(`${sourceLabel}: async.client.targets.${key}.url must be a non-empty string.`);
+  const parsedTarget = AsyncClientTargetSchema.safeParse(parsedRecord.data);
+  if (parsedTarget.success) {
+    return { config: parsedTarget.data, errors: [] };
   }
 
-  if (typeof data.token !== "string" || !data.token.trim()) {
-    errors.push(`${sourceLabel}: async.client.targets.${key}.token must be a non-empty string.`);
-  }
-
-  const config: AsyncClientTargetConfig = {
-    url: typeof data.url === "string" ? data.url.trim() : "",
-    token: typeof data.token === "string" ? data.token.trim() : "",
-  };
-
-  if (data.timeoutMs !== undefined) {
-    const parsed = parsePositiveIntegerField(data.timeoutMs);
-    if (parsed !== undefined) {
-      config.timeoutMs = parsed;
-    } else {
-      errors.push(
-        `${sourceLabel}: async.client.targets.${key}.timeoutMs must be a positive integer.`,
-      );
+  const errors = new Set<string>();
+  for (const issue of parsedTarget.error.issues) {
+    switch (issue.path[0]) {
+      case "url":
+        errors.add(`${sourceLabel}: async.client.targets.${key}.url must be a non-empty string.`);
+        break;
+      case "token":
+        errors.add(`${sourceLabel}: async.client.targets.${key}.token must be a non-empty string.`);
+        break;
+      case "timeoutMs":
+        errors.add(
+          `${sourceLabel}: async.client.targets.${key}.timeoutMs must be a positive integer.`,
+        );
+        break;
+      default:
+        break;
     }
   }
 
-  if (errors.length > 0) {
-    return { errors };
-  }
-
-  return { config, errors: [] };
+  return { errors: [...errors] };
 }
 
 function parseAsyncClientConfig(
@@ -530,46 +564,49 @@ function parseAsyncClientConfig(
     return { errors: [] };
   }
 
-  if (!isRecord(raw)) {
+  const parsedRecord = StringRecordSchema.safeParse(raw);
+  if (!parsedRecord.success) {
     return { errors: [`${sourceLabel}: async.client must be an object.`] };
   }
 
-  const data = raw as Record<string, unknown>;
-  const errors: string[] = [];
+  const data = parsedRecord.data;
   const config: AsyncClientConfig = {};
+  const scalarResult = parseOptionalFields(data, sourceLabel, [
+    [
+      "defaultTarget",
+      NonEmptyStringSchema,
+      "async.client.defaultTarget must be a non-empty string.",
+    ],
+    [
+      "defaultProjectId",
+      NonEmptyStringSchema,
+      "async.client.defaultProjectId must be a non-empty string.",
+    ],
+  ]);
+  Object.assign(config as Record<string, unknown>, scalarResult.values);
 
-  if (data.defaultTarget !== undefined) {
-    if (typeof data.defaultTarget === "string" && data.defaultTarget.trim()) {
-      config.defaultTarget = data.defaultTarget.trim();
-    } else {
-      errors.push(`${sourceLabel}: async.client.defaultTarget must be a non-empty string.`);
-    }
-  }
-
-  if (data.defaultProjectId !== undefined) {
-    if (typeof data.defaultProjectId === "string" && data.defaultProjectId.trim()) {
-      config.defaultProjectId = data.defaultProjectId.trim();
-    } else {
-      errors.push(`${sourceLabel}: async.client.defaultProjectId must be a non-empty string.`);
-    }
-  }
+  const errors: string[] = [...scalarResult.errors];
 
   if (data.targets !== undefined) {
-    if (!isRecord(data.targets)) {
+    const parsedTargetsRecord = StringRecordSchema.safeParse(data.targets);
+    if (!parsedTargetsRecord.success) {
       errors.push(`${sourceLabel}: async.client.targets must be an object.`);
     } else {
       const targets: Record<string, AsyncClientTargetConfig> = {};
-      for (const [key, value] of Object.entries(data.targets)) {
-        if (!key.trim()) {
+      for (const [key, value] of Object.entries(parsedTargetsRecord.data)) {
+        const parsedTargetKey = NonEmptyStringSchema.safeParse(key);
+        if (!parsedTargetKey.success) {
           errors.push(`${sourceLabel}: async.client.targets keys must be non-empty.`);
           continue;
         }
-        const parsed = parseAsyncClientTarget(value, sourceLabel, key);
-        if (parsed.config) {
-          targets[key] = parsed.config;
+
+        const parsedTarget = parseAsyncClientTarget(value, sourceLabel, key);
+        if (parsedTarget.config) {
+          targets[key] = parsedTarget.config;
         }
-        errors.push(...parsed.errors);
+        errors.push(...parsedTarget.errors);
       }
+
       if (Object.keys(targets).length > 0) {
         config.targets = targets;
       }
@@ -591,11 +628,12 @@ function parseAsyncConfig(
     return { errors: [] };
   }
 
-  if (!isRecord(raw)) {
+  const parsedRecord = StringRecordSchema.safeParse(raw);
+  if (!parsedRecord.success) {
     return { errors: [`${sourceLabel}: 'async' must be an object.`] };
   }
 
-  const data = raw as Record<string, unknown>;
+  const data = parsedRecord.data;
   const config: AsyncConfig = {};
   const errors: string[] = [];
 
@@ -605,15 +643,13 @@ function parseAsyncConfig(
   }
   errors.push(...clientResult.errors);
 
-  if (data.server !== undefined) {
+  const movedAsyncFields = ["server", "projects"] as const;
+  for (const field of movedAsyncFields) {
+    if (data[field] === undefined) {
+      continue;
+    }
     errors.push(
-      `${sourceLabel}: async.server was moved to daemon config file. use 'tau async daemon --config-file <path>'.`,
-    );
-  }
-
-  if (data.projects !== undefined) {
-    errors.push(
-      `${sourceLabel}: async.projects was moved to daemon config file. use 'tau async daemon --config-file <path>'.`,
+      `${sourceLabel}: async.${field} was moved to daemon config file. use 'tau async daemon --config-file <path>'.`,
     );
   }
 
@@ -652,10 +688,10 @@ function loadConfigFile(
   }
 }
 
-function mergeApiKeys(
-  target: Config["apiKeys"] | undefined,
-  overlay: Config["apiKeys"] | undefined,
-): Config["apiKeys"] | undefined {
+function mergeOptionalObject<T extends object>(
+  target: T | undefined,
+  overlay: T | undefined,
+): T | undefined {
   if (!target && !overlay) {
     return undefined;
   }
@@ -663,21 +699,7 @@ function mergeApiKeys(
   return {
     ...(target ?? {}),
     ...(overlay ?? {}),
-  };
-}
-
-function mergeSandboxConfig(
-  target: SandboxConfig | undefined,
-  overlay: SandboxConfig | undefined,
-): SandboxConfig | undefined {
-  if (!target && !overlay) {
-    return undefined;
-  }
-
-  return {
-    ...(target ?? {}),
-    ...(overlay ?? {}),
-  };
+  } as T;
 }
 
 function mergeSubagentsConfig(
@@ -697,34 +719,6 @@ function mergeSubagentsConfig(
   }
 
   return merged;
-}
-
-function mergeModelSystemNotices(
-  target: Config["modelSystemNotices"] | undefined,
-  overlay: Config["modelSystemNotices"] | undefined,
-): Config["modelSystemNotices"] | undefined {
-  if (!target && !overlay) {
-    return undefined;
-  }
-
-  return {
-    ...(target ?? {}),
-    ...(overlay ?? {}),
-  };
-}
-
-function mergeAsyncClientTarget(
-  target: AsyncClientTargetConfig | undefined,
-  overlay: AsyncClientTargetConfig | undefined,
-): AsyncClientTargetConfig | undefined {
-  if (!target && !overlay) {
-    return undefined;
-  }
-
-  return {
-    ...(target ?? {}),
-    ...(overlay ?? {}),
-  } as AsyncClientTargetConfig;
 }
 
 function mergeAsyncClientConfig(
@@ -755,7 +749,7 @@ function mergeAsyncClientConfig(
     }
 
     for (const [key, value] of Object.entries(overlay?.targets ?? {})) {
-      targets.set(key, mergeAsyncClientTarget(targets.get(key), value) ?? value);
+      targets.set(key, mergeOptionalObject(targets.get(key), value) ?? value);
     }
 
     if (targets.size > 0) {
@@ -781,29 +775,6 @@ function mergeAsyncConfig(
   };
 
   return merged;
-}
-
-function resolveAsyncConfig(_level: ConfigLevel, config: AsyncConfig): AsyncConfig {
-  return {
-    ...config,
-    ...(config.client
-      ? {
-          client: {
-            ...config.client,
-            ...(config.client.targets
-              ? {
-                  targets: Object.fromEntries(
-                    Object.entries(config.client.targets).map(([key, value]) => [
-                      key,
-                      { ...value },
-                    ]),
-                  ),
-                }
-              : {}),
-          },
-        }
-      : {}),
-  };
 }
 
 function resolveAgentContextPaths(level: ConfigLevel, rawPaths: string[]): string[] {
@@ -841,14 +812,11 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     const level = levels[i]!;
     const config = configs[i] ?? {};
 
-    apiKeys = mergeApiKeys(apiKeys, config.apiKeys);
-    sandbox = mergeSandboxConfig(sandbox, config.sandbox);
+    apiKeys = mergeOptionalObject(apiKeys, config.apiKeys);
+    sandbox = mergeOptionalObject(sandbox, config.sandbox);
     subagents = mergeSubagentsConfig(subagents, config.subagents);
-    modelSystemNotices = mergeModelSystemNotices(modelSystemNotices, config.modelSystemNotices);
-    asyncConfig = mergeAsyncConfig(
-      asyncConfig,
-      config.async ? resolveAsyncConfig(level, config.async) : undefined,
-    );
+    modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
+    asyncConfig = mergeAsyncConfig(asyncConfig, config.async);
 
     if (config.defaultPersona !== undefined) {
       merged.defaultPersona = config.defaultPersona;

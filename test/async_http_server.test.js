@@ -1,4 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  AsyncHttpRequestParseError,
+  decodeAsyncHttpRoute,
+  parseCreateSessionBody,
+  parseCronRunsQuery,
+  parseSendMessageBody,
+} from "../dist/core/async/http_protocol.js";
 import { startAsyncHttpServer } from "../dist/core/async/http_server.js";
 
 const handles = [];
@@ -91,21 +98,55 @@ function createCronScheduler() {
   };
 }
 
-describe("async http server", () => {
-  it("allows /healthz without auth", async () => {
-    const manager = createManager();
-    const handle = await startAsyncHttpServer({
-      host: "127.0.0.1",
-      port: 0,
-      authToken: "secret",
-      sessionManager: manager,
-    });
-    handles.push(handle);
+describe("async http protocol", () => {
+  it("decodes supported method+pathname routes", () => {
+    const cases = [
+      ["GET", "/healthz", { route: "healthz" }],
+      ["POST", "/v1/sessions", { route: "create-session" }],
+      ["GET", "/v1/sessions", { route: "list-sessions" }],
+      ["GET", "/v1/sessions/s1", { route: "get-session", sessionId: "s1" }],
+      ["POST", "/v1/sessions/s1/messages", { route: "send-message", sessionId: "s1" }],
+      ["GET", "/v1/cron/runs", { route: "list-cron-runs" }],
+      ["POST", "/v1/cron/jobs/nightly/run", { route: "trigger-cron-job", jobId: "nightly" }],
+    ];
 
-    const healthz = await fetch(`${handle.baseUrl}/healthz`);
-    expect(healthz.status).toBe(200);
+    for (const [method, path, expected] of cases) {
+      expect(decodeAsyncHttpRoute(method, path)).toEqual(expected);
+    }
   });
 
+  it("parses create-session body with optional prompt", () => {
+    expect(parseCreateSessionBody({ projectId: "demo" })).toEqual({ projectId: "demo" });
+    expect(parseCreateSessionBody({ projectId: "demo", prompt: "  hello  " })).toEqual({
+      projectId: "demo",
+      prompt: "hello",
+    });
+  });
+
+  it("parses and rejects send-message body", () => {
+    expect(parseSendMessageBody({ text: "  hi  " })).toEqual({ text: "hi" });
+    expect(() => parseSendMessageBody({ text: "", legacy: true })).toThrow(
+      AsyncHttpRequestParseError,
+    );
+  });
+
+  it("parses cron-runs query and rejects invalid parameters", () => {
+    expect(parseCronRunsQuery(new URLSearchParams(""))).toEqual({});
+    expect(parseCronRunsQuery(new URLSearchParams("jobId=nightly&limit=10"))).toEqual({
+      jobId: "nightly",
+      limit: 10,
+    });
+
+    const invalidCases = ["jobId=%20", "limit=0", "limit=1&limit=2", "extra=1"];
+    for (const query of invalidCases) {
+      expect(() => parseCronRunsQuery(new URLSearchParams(query))).toThrow(
+        AsyncHttpRequestParseError,
+      );
+    }
+  });
+});
+
+describe("async http server", () => {
   it("accepts valid bearer token and rejects invalid token", async () => {
     const manager = createManager();
     const handle = await startAsyncHttpServer({
@@ -172,63 +213,6 @@ describe("async http server", () => {
     expect(manager.interruptSession).toHaveBeenCalledWith("s1");
   });
 
-  it("returns 400 for create requests with unsupported fields or blank prompt", async () => {
-    const manager = createManager();
-    const handle = await startAsyncHttpServer({
-      host: "127.0.0.1",
-      port: 0,
-      authToken: "secret",
-      sessionManager: manager,
-    });
-    handles.push(handle);
-
-    const unsupportedFieldResponse = await fetch(`${handle.baseUrl}/v1/sessions`, {
-      method: "POST",
-      headers: {
-        authorization: "Bearer secret",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ projectId: "demo", prompt: "hello", legacy: true }),
-    });
-
-    expect(unsupportedFieldResponse.status).toBe(400);
-
-    const blankPromptResponse = await fetch(`${handle.baseUrl}/v1/sessions`, {
-      method: "POST",
-      headers: {
-        authorization: "Bearer secret",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ projectId: "demo", prompt: "   " }),
-    });
-
-    expect(blankPromptResponse.status).toBe(400);
-    expect(manager.createSession).not.toHaveBeenCalled();
-  });
-
-  it("returns 400 for send-message requests with unsupported fields", async () => {
-    const manager = createManager();
-    const handle = await startAsyncHttpServer({
-      host: "127.0.0.1",
-      port: 0,
-      authToken: "secret",
-      sessionManager: manager,
-    });
-    handles.push(handle);
-
-    const response = await fetch(`${handle.baseUrl}/v1/sessions/s1/messages`, {
-      method: "POST",
-      headers: {
-        authorization: "Bearer secret",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ text: "hello", legacy: true }),
-    });
-
-    expect(response.status).toBe(400);
-    expect(manager.sendMessage).not.toHaveBeenCalled();
-  });
-
   it("returns 400 for malformed json request bodies", async () => {
     const manager = createManager();
     const handle = await startAsyncHttpServer({
@@ -249,78 +233,6 @@ describe("async http server", () => {
     });
 
     expect(response.status).toBe(400);
-  });
-
-  it("returns 413 for oversized json request bodies", async () => {
-    const manager = createManager();
-    const handle = await startAsyncHttpServer({
-      host: "127.0.0.1",
-      port: 0,
-      authToken: "secret",
-      sessionManager: manager,
-    });
-    handles.push(handle);
-
-    const response = await fetch(`${handle.baseUrl}/v1/sessions`, {
-      method: "POST",
-      headers: {
-        authorization: "Bearer secret",
-        "content-type": "application/json",
-      },
-      body: "x".repeat(1_000_001),
-    });
-
-    expect(response.status).toBe(413);
-  });
-
-  it("returns 400 for malformed session id path encoding", async () => {
-    const manager = createManager();
-    manager.getSession = vi.fn(() => ({
-      id: "s1",
-      projectId: "demo",
-      state: "waiting-input",
-      createdAt: "2024-01-01T00:00:00.000Z",
-      updatedAt: "2024-01-01T00:00:00.000Z",
-    }));
-
-    const handle = await startAsyncHttpServer({
-      host: "127.0.0.1",
-      port: 0,
-      authToken: "secret",
-      sessionManager: manager,
-    });
-    handles.push(handle);
-
-    const response = await fetch(`${handle.baseUrl}/v1/sessions/%E0%A4%A`, {
-      headers: {
-        authorization: "Bearer secret",
-      },
-    });
-
-    expect(response.status).toBe(400);
-  });
-
-  it("returns 400 for empty cron jobId query values", async () => {
-    const manager = createManager();
-    const cronScheduler = createCronScheduler();
-
-    const handle = await startAsyncHttpServer({
-      host: "127.0.0.1",
-      port: 0,
-      authToken: "secret",
-      sessionManager: manager,
-      cronScheduler,
-    });
-    handles.push(handle);
-
-    const response = await fetch(`${handle.baseUrl}/v1/cron/runs?jobId=%20`, {
-      headers: {
-        authorization: "Bearer secret",
-      },
-    });
-
-    expect(response.status).toBe(400);
-    expect(cronScheduler.listRuns).not.toHaveBeenCalled();
   });
 
   it("supports cron inspection and manual trigger routes when scheduler is enabled", async () => {

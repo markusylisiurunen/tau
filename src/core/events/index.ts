@@ -1,4 +1,16 @@
 export type {
+  CoreEventParseFailure,
+  CoreEventParseResult,
+  CoreEventParseSuccess,
+} from "./parser.js";
+export {
+  isCoreEventVersion,
+  parseCoreEvent,
+  parseCoreEventEnvelope,
+  safeParseCoreEvent,
+  safeParseCoreEventEnvelope,
+} from "./parser.js";
+export type {
   CoreAssistantFinalEvent,
   CoreAssistantPartialEvent,
   CoreAssistantStartEvent,

@@ -1,9 +1,10 @@
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
+import { z } from "zod";
 import type { AsyncProjectConfig } from "../config/schema.js";
 import { transcribeMistralAudio } from "../utils/mistral_transcription.js";
-import { isRecord } from "../utils/type_guards.js";
+import { formatZodError } from "../utils/zod.js";
 import {
   type AsyncSessionManager,
   AsyncSessionManagerError,
@@ -472,13 +473,93 @@ function formatSessionHeadline(sessionId: string, label: string): string {
   return `(${sessionId}) ${label}`;
 }
 
+const telegramObject = <Shape extends z.ZodRawShape>(shape: Shape) => z.object(shape).passthrough();
+
+const telegramPartialObject = <Shape extends z.ZodRawShape>(shape: Shape) =>
+  telegramObject(shape).partial();
+
+function parseOrThrow<Result>(schema: z.ZodType<Result>, raw: unknown, message: string): Result {
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(`${message}: ${formatZodError(parsed.error)}`);
+  }
+  return parsed.data;
+}
+
+const TelegramEnvelopeSchema = z.discriminatedUnion("ok", [
+  z.object({
+    ok: z.literal(true),
+    description: z.string().optional(),
+    result: z.unknown(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    description: z.string().optional(),
+    result: z.unknown().optional(),
+  }),
+]);
+
+const TelegramChatSchema = telegramObject({ id: z.number(), type: z.string() });
+const TelegramUserSchema = telegramObject({ id: z.number() });
+const TELEGRAM_FILE_SHAPE = {
+  file_id: z.string(),
+  file_name: z.string(),
+  mime_type: z.string(),
+  file_size: z.number(),
+};
+const TelegramFileSchema = telegramPartialObject(TELEGRAM_FILE_SHAPE);
+
+const TelegramPhotoVariantSchema = telegramPartialObject({
+  file_id: z.string(),
+  file_size: z.number(),
+  width: z.number(),
+  height: z.number(),
+});
+
+const TelegramVoiceSchema = TelegramFileSchema.pick({ file_id: true, mime_type: true });
+const TelegramAudioSchema = TelegramFileSchema.pick({
+  file_id: true,
+  mime_type: true,
+  file_name: true,
+});
+
+const TelegramMessageSchema = telegramPartialObject({
+  message_id: z.number(),
+  chat: TelegramChatSchema,
+  from: TelegramUserSchema,
+  text: z.string(),
+  caption: z.string(),
+  photo: z.array(TelegramPhotoVariantSchema),
+  document: TelegramFileSchema,
+  voice: TelegramVoiceSchema,
+  audio: TelegramAudioSchema,
+});
+
+const TelegramCallbackQuerySchema = telegramPartialObject({
+  id: z.string(),
+  from: TelegramUserSchema,
+  data: z.string(),
+  message: telegramPartialObject({ chat: TelegramChatSchema }),
+});
+
+const TelegramUpdateSchema = telegramPartialObject({
+  update_id: z.number(),
+  message: TelegramMessageSchema,
+  callback_query: TelegramCallbackQuerySchema,
+});
+
+const TelegramGetUpdatesResultSchema = z.array(TelegramUpdateSchema);
+const TelegramGetFileResultSchema = z.object({ file_path: z.string() });
+const TelegramAckResultSchema = z.literal(true);
+
 function createTelegramApi(botToken: string): AsyncTelegramApi {
   const apiUrl = `https://api.telegram.org/bot${botToken}`;
 
-  async function callTelegramMethod<T>(
+  async function callTelegramMethod<Result>(
     method: string,
     payload: Record<string, unknown>,
-  ): Promise<T> {
+    resultSchema: z.ZodType<Result>,
+  ): Promise<Result> {
     const response = await fetch(`${apiUrl}/${method}`, {
       method: "POST",
       headers: {
@@ -492,47 +573,64 @@ function createTelegramApi(botToken: string): AsyncTelegramApi {
       throw new Error(detail || `telegram ${method} failed: HTTP ${response.status}`);
     }
 
-    let data: unknown;
+    let raw: unknown;
     try {
-      data = await response.json();
+      raw = await response.json();
     } catch {
       throw new Error(`telegram ${method} returned invalid JSON`);
     }
 
-    if (!isRecord(data)) {
-      throw new Error(`telegram ${method} returned an invalid response payload`);
-    }
+    const envelope = parseOrThrow(
+      TelegramEnvelopeSchema,
+      raw,
+      `telegram ${method} returned an invalid response payload`,
+    );
 
-    if (data.ok !== true) {
-      const detail = typeof data.description === "string" ? data.description.trim() : "";
+    if (!envelope.ok) {
+      const detail = envelope.description?.trim() ?? "";
       throw new Error(detail || `telegram ${method} request failed`);
     }
 
-    return data.result as T;
+    return parseOrThrow(
+      resultSchema,
+      envelope.result,
+      `telegram ${method} returned an invalid result`,
+    );
   }
 
   return {
     async getUpdates(args) {
-      const updates = await callTelegramMethod<TelegramUpdate[]>("getUpdates", {
-        offset: args.offset,
-        timeout: args.timeoutSeconds,
-        allowed_updates: args.allowedUpdates,
-      });
-
-      return updates;
+      return callTelegramMethod(
+        "getUpdates",
+        {
+          offset: args.offset,
+          timeout: args.timeoutSeconds,
+          allowed_updates: args.allowedUpdates,
+        },
+        TelegramGetUpdatesResultSchema,
+      );
     },
     async sendMessage(chatId, text, options) {
-      await callTelegramMethod("sendMessage", {
-        chat_id: chatId,
-        text,
-        ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
-      });
+      await callTelegramMethod(
+        "sendMessage",
+        {
+          chat_id: chatId,
+          text,
+          ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
+        },
+        z.unknown(),
+      );
     },
     async downloadFile(fileId) {
-      const file = await callTelegramMethod<{ file_path?: string }>("getFile", {
-        file_id: fileId,
-      });
-      const filePath = file.file_path?.trim();
+      const parsed = await callTelegramMethod(
+        "getFile",
+        {
+          file_id: fileId,
+        },
+        TelegramGetFileResultSchema,
+      );
+
+      const filePath = parsed.file_path?.trim();
       if (!filePath) {
         throw new Error("telegram file path is missing");
       }
@@ -547,22 +645,34 @@ function createTelegramApi(botToken: string): AsyncTelegramApi {
       return Buffer.from(bytes);
     },
     async setCommands(commands) {
-      await callTelegramMethod("setMyCommands", {
-        commands,
-      });
+      await callTelegramMethod(
+        "setMyCommands",
+        {
+          commands,
+        },
+        TelegramAckResultSchema,
+      );
     },
     async setMessageReaction(chatId, messageId) {
-      await callTelegramMethod("setMessageReaction", {
-        chat_id: chatId,
-        message_id: messageId,
-        reaction: [{ type: "emoji", emoji: MESSAGE_QUEUED_REACTION_EMOJI }],
-      });
+      await callTelegramMethod(
+        "setMessageReaction",
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          reaction: [{ type: "emoji", emoji: MESSAGE_QUEUED_REACTION_EMOJI }],
+        },
+        TelegramAckResultSchema,
+      );
     },
     async answerCallbackQuery(callbackQueryId, text) {
-      await callTelegramMethod("answerCallbackQuery", {
-        callback_query_id: callbackQueryId,
-        ...(text ? { text } : {}),
-      });
+      await callTelegramMethod(
+        "answerCallbackQuery",
+        {
+          callback_query_id: callbackQueryId,
+          ...(text ? { text } : {}),
+        },
+        TelegramAckResultSchema,
+      );
     },
   };
 }
@@ -724,7 +834,7 @@ class AsyncTelegramAdapterImpl {
       return [];
     }
 
-    return updates.filter((entry): entry is TelegramUpdate => isRecord(entry));
+    return updates;
   }
 
   private async raceWithAbort<T>(promise: Promise<T>): Promise<T | undefined> {

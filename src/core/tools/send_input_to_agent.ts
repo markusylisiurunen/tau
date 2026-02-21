@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { formatZodError } from "../utils/zod.js";
+import { parseToolArgs } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -45,16 +45,6 @@ const sendInputArgsSchema = z.object({
   prompt: z.string().trim().min(1),
 });
 
-function parseSendInputArgs(
-  raw: unknown,
-): { ok: true; data: { id: string; prompt: string } } | { ok: false; error: string } {
-  const parsed = sendInputArgsSchema.safeParse(raw);
-  if (!parsed.success) {
-    return { ok: false, error: formatZodError(parsed.error) };
-  }
-  return { ok: true, data: parsed.data };
-}
-
 function formatSendInputToolResult(args: { id: string; name: string; title: string }): string {
   return [`id: ${args.id}`, `name: ${args.name}`, `title: ${args.title}`, "status: running"].join(
     "\n",
@@ -76,9 +66,9 @@ export function createSendInputToAgentToolDefinition(
       signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const parsedArgs = parseSendInputArgs(toolCall.arguments);
-      const id = parsedArgs.ok ? parsedArgs.data.id : "";
-      const headerTarget = id || "(invalid arguments)";
+      let id = "";
+      let prompt = "";
+      let headerTarget = "(invalid arguments)";
 
       const blocked = (
         reason: string,
@@ -97,11 +87,13 @@ export function createSendInputToAgentToolDefinition(
         return { kind: "single", toolResult, uiEvent } satisfies ToolDispatchResult;
       };
 
+      const parsedArgs = parseToolArgs(sendInputArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
         return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
 
-      const { prompt } = parsedArgs.data;
+      ({ id, prompt } = parsedArgs.data);
+      headerTarget = id;
 
       const controlPlane = context.subagentControlPlane;
       if (!controlPlane) {

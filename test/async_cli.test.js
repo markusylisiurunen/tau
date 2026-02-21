@@ -234,4 +234,25 @@ describe("async cli", () => {
       }),
     ).rejects.toMatchObject({ message: expect.stringContaining("--config-file") });
   });
+
+  it("surfaces server error details from JSON error payloads", async () => {
+    await expect(
+      runAsyncCommand(["list"], {
+        config: {
+          async: {
+            client: {
+              targets: {
+                one: {
+                  url: "http://localhost:9000",
+                  token: "tok",
+                },
+              },
+            },
+          },
+        },
+        fetchImpl: vi.fn(async () => createJsonResponse({ error: "bad request" }, 400)),
+        stdout: () => {},
+      }),
+    ).rejects.toMatchObject({ message: "request failed (400): bad request" });
+  });
 });

@@ -15,7 +15,7 @@ import {
   resolveSandboxHostRoot,
   resolveSandboxMappedWorkingDirectory,
 } from "../utils/sandbox_prompt_paths.js";
-import { formatZodError } from "../utils/zod.js";
+import { parseToolArgs } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -85,25 +85,6 @@ const spawnArgsSchema = z.object({
   workingDirectory: z.string().trim().min(1).optional(),
 });
 
-function parseSpawnArgs(raw: unknown):
-  | {
-      ok: true;
-      data: {
-        name: string;
-        title: string;
-        prompt: string;
-        model?: string;
-        workingDirectory?: string;
-      };
-    }
-  | { ok: false; error: string } {
-  const parsed = spawnArgsSchema.safeParse(raw);
-  if (!parsed.success) {
-    return { ok: false, error: formatZodError(parsed.error) };
-  }
-  return { ok: true, data: parsed.data };
-}
-
 function formatSpawnToolResult(args: {
   id: string;
   name: string;
@@ -138,13 +119,17 @@ async function buildSubagentSystemPrompt(args: {
   sandboxEnabled: boolean;
   sandboxHostRoot?: string;
 }): Promise<string | undefined> {
-  const skills = await loadSkillsForPromptContext({
+  const skillsResult = await loadSkillsForPromptContext({
     config: args.config,
     cwd: args.hostCwd,
   });
+  if (skillsResult.errors.length > 0) {
+    throw new Error(`failed to load skills for prompt context:\n${skillsResult.errors.join("\n")}`);
+  }
+
   const bootstrap = resolveRuntimePromptBootstrap({
     persona: args.persona,
-    discoveredSkills: skills,
+    discoveredSkills: skillsResult.skills,
     cwd: args.hostCwd,
     home: args.home,
     includeAgentContext: args.includeAgentContext,
@@ -184,10 +169,9 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const parsedArgs = parseSpawnArgs(toolCall.arguments);
-      const name = parsedArgs.ok ? parsedArgs.data.name : "";
-      const title = parsedArgs.ok ? parsedArgs.data.title : "";
-      const headerTarget = title || "(invalid arguments)";
+      let name = "";
+      let title = "";
+      let headerTarget = "(invalid arguments)";
 
       const blocked = (reason: string, details?: { name?: string; title?: string }) => {
         const toolResult = createToolError(toolCall, reason);
@@ -202,11 +186,15 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         return { kind: "single", toolResult, uiEvent } satisfies ToolDispatchResult;
       };
 
+      const parsedArgs = parseToolArgs(spawnArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
         return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
 
       const { prompt, model, workingDirectory } = parsedArgs.data;
+      name = parsedArgs.data.name;
+      title = parsedArgs.data.title;
+      headerTarget = title;
 
       const persona = context.persona;
       if (!persona?.subagents || Object.keys(persona.subagents).length === 0) {

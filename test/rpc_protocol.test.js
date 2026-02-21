@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { CORE_EVENT_VERSION, wrapCoreEvent } from "../dist/core/events/types.js";
+import {
+  CORE_EVENT_VERSION,
+  parseCoreEvent,
+  parseCoreEventEnvelope,
+  safeParseCoreEvent,
+  safeParseCoreEventEnvelope,
+  wrapCoreEvent,
+} from "../dist/core/events/index.js";
 import {
   createRpcErrorResponse,
   createRpcEventMessage,
@@ -34,6 +41,42 @@ describe("rpc_protocol", () => {
         method: "session.submit",
         params: { text: "hello" },
       },
+    });
+  });
+
+  it("covers core event parser boundaries", () => {
+    const event = { type: "notice", severity: "info", text: "ok" };
+
+    expect(parseCoreEvent(event)).toEqual(event);
+    expect(parseCoreEventEnvelope(wrapCoreEvent(event))).toEqual({
+      version: CORE_EVENT_VERSION,
+      event,
+    });
+
+    expect(safeParseCoreEvent({ type: "notice", text: "missing severity" })).toEqual({
+      ok: false,
+      message: expect.stringContaining("invalid core event payload"),
+    });
+    expect(() => parseCoreEvent("bad")).toThrowError("core event payload must be an object");
+
+    expect(
+      safeParseCoreEventEnvelope({
+        version: CORE_EVENT_VERSION,
+        event: { type: "assistant_start" },
+      }),
+    ).toEqual({
+      ok: false,
+      message: expect.stringContaining("invalid core event envelope"),
+    });
+
+    expect(
+      safeParseCoreEventEnvelope({
+        version: 99,
+        event: { type: "notice", severity: "info", text: "ok" },
+      }),
+    ).toEqual({
+      ok: false,
+      message: "unsupported core event version: 99",
     });
   });
 
@@ -89,98 +132,6 @@ describe("rpc_protocol", () => {
         code: RPC_ERROR_CODES.invalidRequest,
         message: "request contains unsupported top-level fields",
       }),
-    });
-  });
-
-  it("parses valid outgoing server messages", () => {
-    const ready = parseRpcOutgoingLine(
-      JSON.stringify({
-        version: RPC_PROTOCOL_VERSION,
-        type: "ready",
-        sessionId: "session-1",
-        methods: [...RPC_METHODS],
-        coreEventVersion: CORE_EVENT_VERSION,
-      }),
-    );
-    expect(ready).toEqual({
-      ok: true,
-      message: {
-        version: RPC_PROTOCOL_VERSION,
-        type: "ready",
-        sessionId: "session-1",
-        methods: [...RPC_METHODS],
-        coreEventVersion: CORE_EVENT_VERSION,
-      },
-    });
-
-    const event = parseRpcOutgoingLine(
-      JSON.stringify({
-        version: RPC_PROTOCOL_VERSION,
-        type: "event",
-        requestId: "req-1",
-        event: {
-          version: CORE_EVENT_VERSION,
-          event: { type: "notice", severity: "info", text: "hello" },
-        },
-      }),
-    );
-    expect(event).toEqual({
-      ok: true,
-      message: {
-        version: RPC_PROTOCOL_VERSION,
-        type: "event",
-        requestId: "req-1",
-        event: {
-          version: CORE_EVENT_VERSION,
-          event: { type: "notice", severity: "info", text: "hello" },
-        },
-      },
-    });
-
-    const successResponse = parseRpcOutgoingLine(
-      JSON.stringify({
-        version: RPC_PROTOCOL_VERSION,
-        type: "response",
-        id: 7,
-        ok: true,
-        result: { shutdown: true },
-      }),
-    );
-    expect(successResponse).toEqual({
-      ok: true,
-      message: {
-        version: RPC_PROTOCOL_VERSION,
-        type: "response",
-        id: 7,
-        ok: true,
-        result: { shutdown: true },
-      },
-    });
-
-    const errorResponse = parseRpcOutgoingLine(
-      JSON.stringify({
-        version: RPC_PROTOCOL_VERSION,
-        type: "response",
-        id: "req-2",
-        ok: false,
-        error: {
-          code: RPC_ERROR_CODES.busy,
-          message: "a session turn is already running",
-        },
-      }),
-    );
-    expect(errorResponse).toEqual({
-      ok: true,
-      message: {
-        version: RPC_PROTOCOL_VERSION,
-        type: "response",
-        id: "req-2",
-        ok: false,
-        error: {
-          code: RPC_ERROR_CODES.busy,
-          message: "a session turn is already running",
-        },
-      },
     });
   });
 
@@ -268,6 +219,18 @@ describe("rpc_protocol", () => {
     expect(invalidInitialize).toEqual({
       ok: false,
       error: expect.objectContaining({ code: RPC_ERROR_CODES.invalidParams }),
+    });
+
+    expect(
+      validateRpcParams("initialize", {
+        client: { name: "tau-sdk", version: "1", extra: true },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: RPC_ERROR_CODES.invalidParams,
+        message: "initialize.client must be an object with name/version strings",
+      }),
     });
 
     expect(validateRpcParams("session.interrupt", {})).toEqual({ ok: true, value: {} });

@@ -5,7 +5,7 @@ import type { SubagentResult } from "../subagents/control_plane.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { truncateForTokens } from "../utils/truncate.js";
-import { formatZodError } from "../utils/zod.js";
+import { parseToolArgs } from "../utils/zod.js";
 import type {
   ToolDefinition,
   ToolDispatchContext,
@@ -40,17 +40,6 @@ export const WAIT_FOR_AGENT_TOOL: Tool = {
 const waitArgsSchema = z.object({
   ids: z.array(z.string().trim().min(1)).min(1),
 });
-
-function parseWaitArgs(
-  raw: unknown,
-): { ok: true; data: { ids: string[] } } | { ok: false; error: string } {
-  const parsed = waitArgsSchema.safeParse(raw);
-  if (!parsed.success) {
-    return { ok: false, error: formatZodError(parsed.error) };
-  }
-
-  return { ok: true, data: parsed.data };
-}
 
 function buildSubagentBody(result: SubagentResult): string {
   const outputs = result.outputs
@@ -130,13 +119,12 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
       signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const parsedArgs = parseWaitArgs(toolCall.arguments);
-      const ids = parsedArgs.ok ? parsedArgs.data.ids : [];
+      let ids: string[] = [];
       const formatHeaderTarget = (entries: string[]): string => {
         const cleaned = entries.map((id) => id.trim()).filter(Boolean);
         return cleaned.length > 0 ? cleaned.join(", ") : "(invalid arguments)";
       };
-      const headerTarget = formatHeaderTarget(ids);
+      let headerTarget = "(invalid arguments)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -150,9 +138,13 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
         return { kind: "single", toolResult, uiEvent };
       };
 
+      const parsedArgs = parseToolArgs(waitArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
         return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
+
+      ({ ids } = parsedArgs.data);
+      headerTarget = formatHeaderTarget(ids);
 
       const deduped: string[] = [];
       const seen = new Set<string>();

@@ -188,6 +188,7 @@ const MAX_TELEGRAM_ATTACHMENTS_PER_TURN = 10;
 const MAX_TELEGRAM_ATTACHMENT_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
 const TELEGRAM_ATTACHMENT_TEMP_DIR_PREFIX = "tau-telegram-attachments-";
+const NO_ACTIVE_SESSION_MESSAGE = "no active session. use /new or /sessions";
 
 const SUPPORTED_TEXT_ATTACHMENT_EXTENSIONS = new Set([
   ".txt",
@@ -1027,9 +1028,8 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    const session = this.getActiveOrSingleSession(chatId);
+    const session = await this.requireActiveOrSingleSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -1041,32 +1041,29 @@ class AsyncTelegramAdapterImpl {
     for (const attachment of parsedAttachments) {
       const attachmentLabel = describeAttachment(attachment.fileName, attachment.mimeType);
       if (pending.length >= MAX_TELEGRAM_ATTACHMENTS_PER_TURN) {
-        await this.reply(
+        await this.replySkippedAttachment(
           chatId,
-          `skipped attachment ${attachmentLabel}: exceeds attachment limit (${MAX_TELEGRAM_ATTACHMENTS_PER_TURN} files per turn)`,
+          attachmentLabel,
+          `exceeds attachment limit (${MAX_TELEGRAM_ATTACHMENTS_PER_TURN} files per turn)`,
         );
         continue;
       }
 
-      if (
-        typeof attachment.sizeBytes === "number" &&
-        attachment.sizeBytes > MAX_TELEGRAM_ATTACHMENT_FILE_BYTES
-      ) {
-        await this.reply(
-          chatId,
-          `skipped attachment ${attachmentLabel}: exceeds per-file limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_FILE_BYTES)})`,
-        );
+      const declaredFileLimitReason =
+        typeof attachment.sizeBytes === "number"
+          ? this.getAttachmentPerFileLimitReason(attachment.sizeBytes)
+          : undefined;
+      if (declaredFileLimitReason) {
+        await this.replySkippedAttachment(chatId, attachmentLabel, declaredFileLimitReason);
         continue;
       }
 
-      if (
-        typeof attachment.sizeBytes === "number" &&
-        totalSizeBytes + attachment.sizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES
-      ) {
-        await this.reply(
-          chatId,
-          `skipped attachment ${attachmentLabel}: exceeds per-turn total limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES)})`,
-        );
+      const declaredTotalLimitReason =
+        typeof attachment.sizeBytes === "number"
+          ? this.getAttachmentTotalLimitReason(totalSizeBytes, attachment.sizeBytes)
+          : undefined;
+      if (declaredTotalLimitReason) {
+        await this.replySkippedAttachment(chatId, attachmentLabel, declaredTotalLimitReason);
         continue;
       }
 
@@ -1082,19 +1079,15 @@ class AsyncTelegramAdapterImpl {
       }
 
       const sizeBytes = bytes.byteLength;
-      if (sizeBytes > MAX_TELEGRAM_ATTACHMENT_FILE_BYTES) {
-        await this.reply(
-          chatId,
-          `skipped attachment ${attachmentLabel}: exceeds per-file limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_FILE_BYTES)})`,
-        );
+      const fileLimitReason = this.getAttachmentPerFileLimitReason(sizeBytes);
+      if (fileLimitReason) {
+        await this.replySkippedAttachment(chatId, attachmentLabel, fileLimitReason);
         continue;
       }
 
-      if (totalSizeBytes + sizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES) {
-        await this.reply(
-          chatId,
-          `skipped attachment ${attachmentLabel}: exceeds per-turn total limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES)})`,
-        );
+      const totalLimitReason = this.getAttachmentTotalLimitReason(totalSizeBytes, sizeBytes);
+      if (totalLimitReason) {
+        await this.replySkippedAttachment(chatId, attachmentLabel, totalLimitReason);
         continue;
       }
 
@@ -1183,19 +1176,18 @@ class AsyncTelegramAdapterImpl {
         continue;
       }
 
-      if (materialized.sizeBytes > MAX_TELEGRAM_ATTACHMENT_FILE_BYTES) {
-        await this.reply(
-          chatId,
-          `skipped attachment ${attachmentLabel}: exceeds per-file limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_FILE_BYTES)})`,
-        );
+      const fileLimitReason = this.getAttachmentPerFileLimitReason(materialized.sizeBytes);
+      if (fileLimitReason) {
+        await this.replySkippedAttachment(chatId, attachmentLabel, fileLimitReason);
         continue;
       }
 
-      if (totalSizeBytes + materialized.sizeBytes > MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES) {
-        await this.reply(
-          chatId,
-          `skipped attachment ${attachmentLabel}: exceeds per-turn total limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES)})`,
-        );
+      const totalLimitReason = this.getAttachmentTotalLimitReason(
+        totalSizeBytes,
+        materialized.sizeBytes,
+      );
+      if (totalLimitReason) {
+        await this.replySkippedAttachment(chatId, attachmentLabel, totalLimitReason);
         continue;
       }
 
@@ -1306,57 +1298,26 @@ class AsyncTelegramAdapterImpl {
     const command = stripCommandMention(parts[0] ?? "");
     const args = parts.slice(1);
 
-    if (command === "/help") {
-      await this.handleHelp(chatId);
+    const commandHandlers: Record<string, () => Promise<void>> = {
+      "/help": () => this.handleHelp(chatId),
+      "/new": () => this.handleNew(chatId, args),
+      "/projects": () => this.handleProjects(chatId),
+      "/use": () => this.handleUse(chatId, args),
+      "/sessions": () => this.handleSessions(chatId),
+      "/status": () => this.handleStatus(chatId),
+      "/interrupt": () => this.handleInterrupt(chatId),
+      "/close": () => this.handleClose(chatId, args),
+      "/verbose": () => this.handleVerbosityCommand(chatId, "verbose"),
+      "/quiet": () => this.handleVerbosityCommand(chatId, "quiet"),
+    };
+
+    const handler = commandHandlers[command];
+    if (!handler) {
+      await this.reply(chatId, "unsupported command. use /help");
       return;
     }
 
-    if (command === "/new") {
-      await this.handleNew(chatId, args);
-      return;
-    }
-
-    if (command === "/projects") {
-      await this.handleProjects(chatId);
-      return;
-    }
-
-    if (command === "/use") {
-      await this.handleUse(chatId, args);
-      return;
-    }
-
-    if (command === "/sessions") {
-      await this.handleSessions(chatId);
-      return;
-    }
-
-    if (command === "/status") {
-      await this.handleStatus(chatId);
-      return;
-    }
-
-    if (command === "/interrupt") {
-      await this.handleInterrupt(chatId);
-      return;
-    }
-
-    if (command === "/close") {
-      await this.handleClose(chatId, args);
-      return;
-    }
-
-    if (command === "/verbose") {
-      await this.handleVerbosityCommand(chatId, "verbose");
-      return;
-    }
-
-    if (command === "/quiet") {
-      await this.handleVerbosityCommand(chatId, "quiet");
-      return;
-    }
-
-    await this.reply(chatId, "unsupported command. use /help");
+    await handler();
   }
 
   private async handleCallback(chatId: number, callbackData: string): Promise<boolean> {
@@ -1374,43 +1335,24 @@ class AsyncTelegramAdapterImpl {
       return false;
     }
 
-    const action = callbackData.slice(CALLBACK_ACTION_PREFIX.length) as QuickAction;
-    if (action === "new") {
-      await this.handleNew(chatId, []);
-      return true;
+    const actionHandlers: Record<QuickAction, () => Promise<void>> = {
+      new: () => this.handleNew(chatId, []),
+      sessions: () => this.handleSessions(chatId),
+      status: () => this.handleStatus(chatId),
+      interrupt: () => this.handleInterrupt(chatId),
+      close: () => this.handleClose(chatId, []),
+      quiet: () => this.handleVerbosityCommand(chatId, "quiet"),
+      verbose: () => this.handleVerbosityCommand(chatId, "verbose"),
+    };
+
+    const action = callbackData.slice(CALLBACK_ACTION_PREFIX.length).trim();
+    const handler = actionHandlers[action as QuickAction];
+    if (!handler) {
+      return false;
     }
 
-    if (action === "sessions") {
-      await this.handleSessions(chatId);
-      return true;
-    }
-
-    if (action === "status") {
-      await this.handleStatus(chatId);
-      return true;
-    }
-
-    if (action === "interrupt") {
-      await this.handleInterrupt(chatId);
-      return true;
-    }
-
-    if (action === "close") {
-      await this.handleClose(chatId, []);
-      return true;
-    }
-
-    if (action === "quiet") {
-      await this.handleVerbosityCommand(chatId, "quiet");
-      return true;
-    }
-
-    if (action === "verbose") {
-      await this.handleVerbosityCommand(chatId, "verbose");
-      return true;
-    }
-
-    return false;
+    await handler();
+    return true;
   }
 
   private async handleHelp(chatId: number): Promise<void> {
@@ -1692,9 +1634,8 @@ class AsyncTelegramAdapterImpl {
   }
 
   private async handleStatus(chatId: number): Promise<void> {
-    const session = this.getActiveSession(chatId);
+    const session = await this.requireActiveSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -1712,9 +1653,8 @@ class AsyncTelegramAdapterImpl {
   }
 
   private async handleInterrupt(chatId: number): Promise<void> {
-    const session = this.getActiveSession(chatId);
+    const session = await this.requireActiveSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -1768,7 +1708,7 @@ class AsyncTelegramAdapterImpl {
 
     const sessionId = target ?? this.getActiveSession(chatId)?.id;
     if (!sessionId) {
-      await this.reply(chatId, "no active session. use /new or /sessions");
+      await this.reply(chatId, NO_ACTIVE_SESSION_MESSAGE);
       return;
     }
 
@@ -1783,9 +1723,8 @@ class AsyncTelegramAdapterImpl {
   }
 
   private async handleVerbosityCommand(chatId: number, verbosity: SessionVerbosity): Promise<void> {
-    const session = this.getActiveSession(chatId);
+    const session = await this.requireActiveSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -1798,29 +1737,13 @@ class AsyncTelegramAdapterImpl {
     text: string,
     sourceMessageId?: number,
   ): Promise<void> {
-    const session = this.getActiveOrSingleSession(chatId);
+    const session = await this.requireActiveOrSingleSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
     try {
-      const textWithAttachments = await this.buildMessageTextWithAttachments(
-        session.id,
-        text,
-        chatId,
-      );
-      const sessionManager = this.getSessionManagerForChat(chatId);
-      await sessionManager.sendMessage(
-        session.id,
-        textWithAttachments,
-        this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
-      );
-      this.resetPendingAttachmentQueue(session.id);
-      await this.reactToQueuedMessage(chatId, sourceMessageId);
-      if (this.isVerboseSession(session.id)) {
-        await this.reply(chatId, this.formatMessageQueued(session.id));
-      }
+      await this.submitSessionMessage(chatId, session.id, text, sourceMessageId);
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
@@ -1831,9 +1754,8 @@ class AsyncTelegramAdapterImpl {
     message: TelegramAudioMessage,
     sourceMessageId?: number,
   ): Promise<void> {
-    const session = this.getActiveOrSingleSession(chatId);
+    const session = await this.requireActiveOrSingleSession(chatId);
     if (!session) {
-      await this.reply(chatId, "no active session. use /new or /sessions");
       return;
     }
 
@@ -1868,25 +1790,79 @@ class AsyncTelegramAdapterImpl {
     }
 
     try {
-      const textWithAttachments = await this.buildMessageTextWithAttachments(
-        session.id,
-        transcript,
-        chatId,
-      );
-      const sessionManager = this.getSessionManagerForChat(chatId);
-      await sessionManager.sendMessage(
-        session.id,
-        textWithAttachments,
-        this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
-      );
-      this.resetPendingAttachmentQueue(session.id);
-      await this.reactToQueuedMessage(chatId, sourceMessageId);
-      if (this.isVerboseSession(session.id)) {
-        await this.reply(chatId, this.formatMessageQueued(session.id));
-      }
+      await this.submitSessionMessage(chatId, session.id, transcript, sourceMessageId);
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
+  }
+
+  private async requireActiveSession(chatId: number): Promise<AsyncSessionRecord | undefined> {
+    const session = this.getActiveSession(chatId);
+    if (!session) {
+      await this.reply(chatId, NO_ACTIVE_SESSION_MESSAGE);
+      return undefined;
+    }
+
+    return session;
+  }
+
+  private async requireActiveOrSingleSession(
+    chatId: number,
+  ): Promise<AsyncSessionRecord | undefined> {
+    const session = this.getActiveOrSingleSession(chatId);
+    if (!session) {
+      await this.reply(chatId, NO_ACTIVE_SESSION_MESSAGE);
+      return undefined;
+    }
+
+    return session;
+  }
+
+  private async submitSessionMessage(
+    chatId: number,
+    sessionId: string,
+    text: string,
+    sourceMessageId?: number,
+  ): Promise<void> {
+    const textWithAttachments = await this.buildMessageTextWithAttachments(sessionId, text, chatId);
+    const sessionManager = this.getSessionManagerForChat(chatId);
+    await sessionManager.sendMessage(
+      sessionId,
+      textWithAttachments,
+      this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
+    );
+    this.resetPendingAttachmentQueue(sessionId);
+    await this.reactToQueuedMessage(chatId, sourceMessageId);
+    if (this.isVerboseSession(sessionId)) {
+      await this.reply(chatId, this.formatMessageQueued(sessionId));
+    }
+  }
+
+  private getAttachmentPerFileLimitReason(sizeBytes: number): string | undefined {
+    if (sizeBytes <= MAX_TELEGRAM_ATTACHMENT_FILE_BYTES) {
+      return undefined;
+    }
+
+    return `exceeds per-file limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_FILE_BYTES)})`;
+  }
+
+  private getAttachmentTotalLimitReason(
+    totalSizeBytes: number,
+    nextSizeBytes: number,
+  ): string | undefined {
+    if (totalSizeBytes + nextSizeBytes <= MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES) {
+      return undefined;
+    }
+
+    return `exceeds per-turn total limit (${describeAttachmentLimitBytes(MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES)})`;
+  }
+
+  private async replySkippedAttachment(
+    chatId: number,
+    attachmentLabel: string,
+    reason: string,
+  ): Promise<void> {
+    await this.reply(chatId, `skipped attachment ${attachmentLabel}: ${reason}`);
   }
 
   private getActiveSession(chatId: number): AsyncSessionRecord | undefined {

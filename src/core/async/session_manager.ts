@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { createTauSdkClient } from "../../sdk/client.js";
 import type { TauSdkClient, TauSdkClientOptions, TauSdkEvent } from "../../sdk/types.js";
@@ -175,7 +175,6 @@ export type AsyncSessionManagerOptions = {
 
 class AsyncSessionManagerImpl implements AsyncSessionManager {
   private readonly sessions = new Map<string, SessionEntry>();
-  private readonly sessionInternalIds = new Map<string, string>();
   private readonly listeners = new Set<(event: AsyncSessionManagerEvent) => void>();
   private readonly projects: Record<string, AsyncProjectConfig>;
   private readonly workspaceRoot: string;
@@ -222,7 +221,6 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       throw new AsyncSessionManagerError("max_sessions", "maximum session count reached");
     }
 
-    const internalId = randomUUID();
     const id = this.createSessionId();
     const now = this.now().toISOString();
     const entry: SessionEntry = {
@@ -240,8 +238,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       cancelRequested: false,
     };
 
-    this.sessions.set(internalId, entry);
-    this.sessionInternalIds.set(id, internalId);
+    this.sessions.set(id, entry);
     this.log(entry, "info", "session queued");
     this.emit({
       type: "session-created",
@@ -740,22 +737,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   }
 
   private deleteEntry(sessionId: string): void {
-    const internalId = this.sessionInternalIds.get(sessionId);
-    if (!internalId) {
-      return;
-    }
-
-    this.sessionInternalIds.delete(sessionId);
-    this.sessions.delete(internalId);
+    this.sessions.delete(sessionId);
   }
 
   private getEntryBySessionId(sessionId: string): SessionEntry | undefined {
-    const internalId = this.sessionInternalIds.get(sessionId);
-    if (!internalId) {
-      return undefined;
-    }
-
-    return this.sessions.get(internalId);
+    return this.sessions.get(sessionId);
   }
 
   private requireSession(sessionId: string): SessionEntry {
@@ -778,7 +764,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
         id += character;
       }
 
-      if (!this.sessionInternalIds.has(id)) {
+      if (!this.sessions.has(id)) {
         return id;
       }
     }

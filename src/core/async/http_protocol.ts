@@ -139,7 +139,7 @@ export function decodeAsyncHttpRoute(
       ? { route: "create-session" }
       : method === "GET"
         ? { route: "list-sessions" }
-        : "not-found";
+        : "method-not-allowed";
   }
 
   if (pathname === "/v1/cron/jobs") {

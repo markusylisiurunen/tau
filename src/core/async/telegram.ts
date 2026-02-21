@@ -269,17 +269,20 @@ type QuickAction = "new" | "sessions" | "status" | "interrupt" | "close" | "quie
 
 type SessionVerbosity = "verbose" | "quiet";
 
-const TELEGRAM_COMMANDS: TelegramBotCommand[] = [
-  { command: "help", description: "show supported commands" },
-  { command: "new", description: "start a new session" },
-  { command: "projects", description: "list configured projects" },
-  { command: "use", description: "switch active session" },
-  { command: "sessions", description: "list sessions" },
-  { command: "status", description: "show active session status" },
-  { command: "interrupt", description: "interrupt active run" },
-  { command: "close", description: "close session(s)" },
-  { command: "verbose", description: "stream progress updates" },
-  { command: "quiet", description: "only send final assistant message" },
+type TelegramCommandHandler = (chatId: number, args: string[]) => Promise<void>;
+
+type TelegramCommandDefinition = {
+  command: `/${string}`;
+  description: string;
+  usage: string;
+  callbackAction?: QuickAction;
+  handler: TelegramCommandHandler;
+};
+
+const QUICK_ACTION_ROWS: readonly (readonly QuickAction[])[] = [
+  ["new", "sessions", "status"],
+  ["interrupt", "close"],
+  ["quiet", "verbose"],
 ];
 
 function splitCommandText(text: string): string[] {
@@ -694,6 +697,9 @@ class AsyncTelegramAdapterImpl {
   private readonly api: AsyncTelegramApi;
   private readonly fetchImpl?: typeof fetch;
   private readonly onLog?: (entry: AsyncTelegramLogEntry) => void;
+  private readonly commandDefinitions: TelegramCommandDefinition[];
+  private readonly commandHandlers: Map<string, TelegramCommandHandler>;
+  private readonly callbackActionHandlers: Map<QuickAction, TelegramCommandHandler>;
   private readonly abortController = new AbortController();
   private readonly activeSessionsByChat = new Map<number, string>();
   private readonly sessionsByChat = new Map<number, Set<string>>();
@@ -739,6 +745,16 @@ class AsyncTelegramAdapterImpl {
     this.api = options.api ?? createTelegramApi(options.botToken);
     this.fetchImpl = options.fetchImpl;
     this.onLog = options.onLog;
+    this.commandDefinitions = this.createCommandDefinitions();
+    this.commandHandlers = new Map();
+    this.callbackActionHandlers = new Map();
+
+    for (const definition of this.commandDefinitions) {
+      this.commandHandlers.set(definition.command, definition.handler);
+      if (definition.callbackAction) {
+        this.callbackActionHandlers.set(definition.callbackAction, definition.handler);
+      }
+    }
 
     this.unsubscribeSessionEvents = this.sessionManager.onEvent((event) => {
       this.onSessionEvent(event);
@@ -778,14 +794,91 @@ class AsyncTelegramAdapterImpl {
     this.onLog?.({ level, message, ...(data === undefined ? {} : { data }) });
   }
 
+  private createCommandDefinitions(): TelegramCommandDefinition[] {
+    return [
+      {
+        command: "/help",
+        description: "show supported commands",
+        usage: "/help",
+        handler: async (chatId) => this.handleHelp(chatId),
+      },
+      {
+        command: "/new",
+        description: "start a new session",
+        usage: "/new [projectId]",
+        callbackAction: "new",
+        handler: async (chatId, args) => this.handleNew(chatId, args),
+      },
+      {
+        command: "/projects",
+        description: "list configured projects",
+        usage: "/projects",
+        handler: async (chatId) => this.handleProjects(chatId),
+      },
+      {
+        command: "/use",
+        description: "switch active session",
+        usage: "/use <sessionId|prefix|index>",
+        handler: async (chatId, args) => this.handleUse(chatId, args),
+      },
+      {
+        command: "/sessions",
+        description: "list sessions",
+        usage: "/sessions",
+        callbackAction: "sessions",
+        handler: async (chatId) => this.handleSessions(chatId),
+      },
+      {
+        command: "/status",
+        description: "show active session status",
+        usage: "/status",
+        callbackAction: "status",
+        handler: async (chatId) => this.handleStatus(chatId),
+      },
+      {
+        command: "/interrupt",
+        description: "interrupt active run",
+        usage: "/interrupt",
+        callbackAction: "interrupt",
+        handler: async (chatId) => this.handleInterrupt(chatId),
+      },
+      {
+        command: "/close",
+        description: "close session(s)",
+        usage: "/close [<sessionId>|all]",
+        callbackAction: "close",
+        handler: async (chatId, args) => this.handleClose(chatId, args),
+      },
+      {
+        command: "/verbose",
+        description: "stream progress updates",
+        usage: "/verbose",
+        callbackAction: "verbose",
+        handler: async (chatId) => this.handleVerbosityCommand(chatId, "verbose"),
+      },
+      {
+        command: "/quiet",
+        description: "only send final assistant message",
+        usage: "/quiet",
+        callbackAction: "quiet",
+        handler: async (chatId) => this.handleVerbosityCommand(chatId, "quiet"),
+      },
+    ];
+  }
+
   private async syncCommands(): Promise<void> {
     if (!this.api.setCommands) {
       return;
     }
 
+    const commands: TelegramBotCommand[] = this.commandDefinitions.map((definition) => ({
+      command: definition.command.slice(1),
+      description: definition.description,
+    }));
+
     try {
-      await this.api.setCommands(TELEGRAM_COMMANDS);
-      this.log("info", "telegram commands synced", { count: TELEGRAM_COMMANDS.length });
+      await this.api.setCommands(commands);
+      this.log("info", "telegram commands synced", { count: commands.length });
     } catch (error) {
       this.log("warn", "failed to sync telegram commands", {
         cause: error instanceof Error ? error.message : String(error),
@@ -1297,27 +1390,14 @@ class AsyncTelegramAdapterImpl {
     const parts = splitCommandText(text);
     const command = stripCommandMention(parts[0] ?? "");
     const args = parts.slice(1);
+    const handler = this.commandHandlers.get(command);
 
-    const commandHandlers: Record<string, () => Promise<void>> = {
-      "/help": () => this.handleHelp(chatId),
-      "/new": () => this.handleNew(chatId, args),
-      "/projects": () => this.handleProjects(chatId),
-      "/use": () => this.handleUse(chatId, args),
-      "/sessions": () => this.handleSessions(chatId),
-      "/status": () => this.handleStatus(chatId),
-      "/interrupt": () => this.handleInterrupt(chatId),
-      "/close": () => this.handleClose(chatId, args),
-      "/verbose": () => this.handleVerbosityCommand(chatId, "verbose"),
-      "/quiet": () => this.handleVerbosityCommand(chatId, "quiet"),
-    };
-
-    const handler = commandHandlers[command];
     if (!handler) {
       await this.reply(chatId, "unsupported command. use /help");
       return;
     }
 
-    await handler();
+    await handler(chatId, args);
   }
 
   private async handleCallback(chatId: number, callbackData: string): Promise<boolean> {
@@ -1335,39 +1415,20 @@ class AsyncTelegramAdapterImpl {
       return false;
     }
 
-    const actionHandlers: Record<QuickAction, () => Promise<void>> = {
-      new: () => this.handleNew(chatId, []),
-      sessions: () => this.handleSessions(chatId),
-      status: () => this.handleStatus(chatId),
-      interrupt: () => this.handleInterrupt(chatId),
-      close: () => this.handleClose(chatId, []),
-      quiet: () => this.handleVerbosityCommand(chatId, "quiet"),
-      verbose: () => this.handleVerbosityCommand(chatId, "verbose"),
-    };
-
-    const action = callbackData.slice(CALLBACK_ACTION_PREFIX.length).trim();
-    const handler = actionHandlers[action as QuickAction];
+    const action = callbackData.slice(CALLBACK_ACTION_PREFIX.length).trim() as QuickAction;
+    const handler = this.callbackActionHandlers.get(action);
     if (!handler) {
       return false;
     }
 
-    await handler();
+    await handler(chatId, []);
     return true;
   }
 
   private async handleHelp(chatId: number): Promise<void> {
     const lines = [
       "commands:",
-      "/help",
-      "/new [projectId]",
-      "/projects",
-      "/sessions",
-      "/use <sessionId|prefix|index>",
-      "/status",
-      "/interrupt",
-      "/close [<sessionId>|all]",
-      "/verbose",
-      "/quiet",
+      ...this.commandDefinitions.map((definition) => definition.usage),
       "",
       "tip: use /sessions and tap a session button to switch quickly",
     ];
@@ -1615,21 +1676,12 @@ class AsyncTelegramAdapterImpl {
 
   private buildQuickActionsKeyboard(): TelegramInlineKeyboardMarkup {
     return {
-      inline_keyboard: [
-        [
-          { text: "/new", callback_data: `${CALLBACK_ACTION_PREFIX}new` },
-          { text: "/sessions", callback_data: `${CALLBACK_ACTION_PREFIX}sessions` },
-          { text: "/status", callback_data: `${CALLBACK_ACTION_PREFIX}status` },
-        ],
-        [
-          { text: "/interrupt", callback_data: `${CALLBACK_ACTION_PREFIX}interrupt` },
-          { text: "/close", callback_data: `${CALLBACK_ACTION_PREFIX}close` },
-        ],
-        [
-          { text: "/quiet", callback_data: `${CALLBACK_ACTION_PREFIX}quiet` },
-          { text: "/verbose", callback_data: `${CALLBACK_ACTION_PREFIX}verbose` },
-        ],
-      ],
+      inline_keyboard: QUICK_ACTION_ROWS.map((row) =>
+        row.map((action) => ({
+          text: `/${action}`,
+          callback_data: `${CALLBACK_ACTION_PREFIX}${action}`,
+        })),
+      ),
     };
   }
 

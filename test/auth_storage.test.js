@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
   const actual = await importOriginal();
@@ -28,6 +28,10 @@ function createTempAuthPath() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("AuthStorage", () => {
@@ -134,6 +138,125 @@ describe("CredentialResolver", () => {
       const account = saved.providers["openai-codex"].accounts[0];
       expect(account.access).toBe("new-access");
       expect(account.refresh).toBe("new-refresh");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("refreshes exhausted codex accounts before deciding failover candidates", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify(
+          {
+            providers: {
+              "openai-codex": {
+                accounts: [
+                  {
+                    type: "oauth",
+                    accountId: "acct-exhausted",
+                    providerAccountId: "provider-exhausted",
+                    access: "access-exhausted",
+                    refresh: "refresh-exhausted",
+                    expires: 0,
+                    usage: {
+                      windows: [
+                        {
+                          name: "primary",
+                          usedPercent: 100,
+                          resetAt: 4102444800,
+                          windowSeconds: 3600,
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    type: "oauth",
+                    accountId: "acct-next",
+                    providerAccountId: "provider-next",
+                    access: "access-next",
+                    refresh: "refresh-next",
+                    expires: 0,
+                    usage: {
+                      windows: [
+                        {
+                          name: "primary",
+                          usedPercent: 100,
+                          resetAt: 4102444800,
+                          windowSeconds: 3600,
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      getOAuthApiKey.mockImplementation(async (_provider, providers) => {
+        const account = providers["openai-codex"];
+        if (account.refresh === "refresh-exhausted") {
+          return {
+            apiKey: "api-exhausted",
+            newCredentials: {
+              access: account.access,
+              refresh: account.refresh,
+              expires: account.expires,
+              accountId: account.accountId,
+            },
+          };
+        }
+
+        return {
+          apiKey: "api-next",
+          newCredentials: {
+            access: account.access,
+            refresh: account.refresh,
+            expires: account.expires,
+            accountId: account.accountId,
+          },
+        };
+      });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url, init) => {
+          const rawHeaders = init?.headers;
+          const accountId =
+            rawHeaders instanceof Headers
+              ? rawHeaders.get("ChatGPT-Account-Id")
+              : rawHeaders && typeof rawHeaders === "object"
+                ? rawHeaders["ChatGPT-Account-Id"]
+                : undefined;
+          const usedPercent = accountId === "provider-next" ? 12 : 100;
+          return {
+            ok: true,
+            json: async () => ({
+              rate_limit: {
+                primary_window: {
+                  used_percent: usedPercent,
+                  reset_at: 4102444800,
+                  limit_window_seconds: 3600,
+                },
+              },
+            }),
+          };
+        }),
+      );
+
+      const storage = new AuthStorage(fx.authPath);
+      const resolver = createCredentialResolver({
+        authStorage: storage,
+        getConfig: () => ({}),
+      });
+
+      const apiKey = await resolver.getApiKey("openai-codex", { sessionId: "session-1" });
+      expect(apiKey).toBe("api-next");
     } finally {
       fx.cleanup();
     }

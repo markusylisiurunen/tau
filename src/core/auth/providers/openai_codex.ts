@@ -127,25 +127,19 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       usage: account.usage,
     }));
 
-    const usableCandidates = candidates.filter((candidate) => isUsageUsable(candidate.usage, now));
-    if (usableCandidates.length === 0) {
-      return undefined;
-    }
+    candidates.sort((a, b) => compareAccountPriority(a, b, now));
 
-    usableCandidates.sort((a, b) => compareAccountPriority(a, b, now));
-
-    for (const candidate of usableCandidates) {
+    for (const candidate of candidates) {
       const apiKey = await this.getApiKeyForAccount(authStorage, candidate.account.accountId);
       if (!apiKey) {
         continue;
       }
 
       let usage = candidate.usage;
-      if (shouldRefreshUsage(usage, now)) {
+      if (shouldRefreshUsage(usage, now) || !isUsageUsable(usage, now)) {
         const refreshed = await this.getUsageSnapshot(authStorage, candidate.account, {
           apiKey,
-          refreshIfExpired: true,
-          refreshIfMissing: true,
+          forceRefresh: true,
         });
         usage = refreshed ?? usage;
       }

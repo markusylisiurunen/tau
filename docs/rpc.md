@@ -78,14 +78,15 @@ rules:
 
 - `id` must be a string or number.
 - `method` must be one of the supported rpc methods.
-- params are validated per method.
+- `params` are validated per method.
+- unsupported extra top-level request fields are rejected.
 - unsupported extra fields inside `params` are rejected.
 
 ### methods
 
 #### initialize
 
-params (optional):
+params (required):
 
 ```json
 { "client": { "name": "my-client", "version": "0.1.0" } }
@@ -149,7 +150,7 @@ if another turn is already running, tau returns:
 
 #### session.interrupt
 
-params: `{}` (or omitted)
+params (required): `{}`
 
 returns:
 
@@ -164,7 +165,7 @@ returns:
 
 #### session.snapshot
 
-params: `{}` (or omitted)
+params (required): `{}`
 
 returns current session state:
 
@@ -176,7 +177,7 @@ returns current session state:
 
 #### session.reset
 
-params: `{}` (or omitted)
+params (required): `{}`
 
 behavior:
 
@@ -190,7 +191,7 @@ response includes both previous and new session ids.
 
 #### session.shutdown
 
-params: `{}` (or omitted)
+params (required): `{}`
 
 behavior:
 

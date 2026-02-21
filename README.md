@@ -246,7 +246,7 @@ tau uses risk levels to control what the model can do. this lets you stay in con
 
 sub-agents inherit the session risk level unless overridden in persona config. a sub-agent configured with `riskLevel: read-write` can write even when the main session is `read-only`.
 
-start with a specific risk level:
+start with a specific risk level (exact values: `read-only` or `read-write`):
 
 ```sh
 tau --risk read-write
@@ -305,6 +305,8 @@ tau comes with several built-in personas across different models:
 chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.
 
 switch personas at startup with `--persona` or mid-session with `/persona:<id>`:
+
+persona id matching is exact/case-sensitive.
 
 ```sh
 tau --persona opus-4.6-coder
@@ -472,15 +474,15 @@ settings merge from least-specific to most-specific.
 }
 ```
 
-the `defaultPersona` field specifies which persona to use when starting the app. the `--persona` flag overrides this setting.
+the `defaultPersona` field specifies which persona to use when starting the app. it must be a persona id only (no `:reasoning` suffix), and matching is exact/case-sensitive. the `--persona` flag overrides this setting.
 
 the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 
-the `defaultTheme` field sets the theme id to load at startup. if not specified, it defaults to `gold`.
+the `defaultTheme` field sets the theme id to load at startup. it must be non-empty, and matching is exact/case-sensitive. if not specified, it defaults to `gold`.
 
 the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launch overrides for the built-in `default` sub-agent. values must use `<provider>/<model>:<effort>`.
 
-the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. when a message is sent to that model, tau prepends the notice as a `<system>...</system>` block before the user content. this applies to main-session user messages and sub-agent prompts, regardless of persona id.
+the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider/model matching is exact/case-sensitive against loaded model ids. when a message is sent to that model, tau prepends the notice as a `<system>...</system>` block before the user content. this applies to main-session user messages and sub-agent prompts, regardless of persona id.
 
 if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinThemes` is set to `true`, tau will not load built-in themes. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 

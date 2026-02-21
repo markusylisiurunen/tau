@@ -26,7 +26,7 @@ export const EMIT_OUTPUT_TOOL: Tool = {
 };
 
 const emitOutputArgsSchema = z.object({
-  text: z.string().trim().min(1),
+  text: z.string().min(1),
 });
 
 function parseEmitOutputArgs(
@@ -35,6 +35,9 @@ function parseEmitOutputArgs(
   const parsed = emitOutputArgsSchema.safeParse(raw);
   if (!parsed.success) {
     return { ok: false, error: formatZodError(parsed.error) };
+  }
+  if (!parsed.data.text.trim()) {
+    return { ok: false, error: "text must not be blank" };
   }
   return { ok: true, data: parsed.data };
 }

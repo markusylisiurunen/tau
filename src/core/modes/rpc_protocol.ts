@@ -287,17 +287,6 @@ export function parseRpcRequestLine(line: string): RpcParseResult {
     };
   }
 
-  if (!hasOnlyKeys(parsed, ["version", "type", "id", "method", "params"])) {
-    return {
-      ok: false,
-      id: null,
-      error: createRpcError(
-        RPC_ERROR_CODES.invalidRequest,
-        "request contains unsupported top-level fields",
-      ),
-    };
-  }
-
   const maybeId = parseRequestId(parsed.id);
   if (!maybeId.ok) {
     return {
@@ -311,6 +300,17 @@ export function parseRpcRequestLine(line: string): RpcParseResult {
   }
 
   const id = maybeId.id;
+
+  if (!hasOnlyKeys(parsed, ["version", "type", "id", "method", "params"])) {
+    return {
+      ok: false,
+      id,
+      error: createRpcError(
+        RPC_ERROR_CODES.invalidRequest,
+        "request contains unsupported top-level fields",
+      ),
+    };
+  }
 
   if (parsed.version !== RPC_PROTOCOL_VERSION) {
     return {

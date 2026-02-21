@@ -107,6 +107,8 @@ Daemon-side settings are loaded from a separate JSON file.
 }
 ```
 
+for `projects.<id>.persona`, use `<id>` or `<id>:<reasoning>`.
+
 Cron jobs are loaded from markdown files under `cron.jobsDir`.
 
 Example `cron-jobs/docs-drift-nightly.md`:

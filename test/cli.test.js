@@ -30,6 +30,18 @@ describe("cli", () => {
     );
   });
 
+  it("parses persona reasoning suffix", () => {
+    const options = parseCliArgs(["--persona", "demo:high"], [{ id: "demo" }]);
+    expect(options.personaId).toBe("demo");
+    expect(options.reasoningOverride).toBe("high");
+  });
+
+  it("rejects invalid persona reasoning suffix", () => {
+    expect(() => parseCliArgs(["--persona", "demo:ultra"], [{ id: "demo" }])).toThrow(
+      "invalid reasoning level 'ultra'",
+    );
+  });
+
   it("requires exact risk level casing", () => {
     expect(() => parseCliArgs(["--risk", "READ-ONLY"], [])).toThrow(
       "invalid risk level 'READ-ONLY'",

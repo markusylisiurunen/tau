@@ -76,7 +76,7 @@ returns a connected `TauSdkClient` instance.
 - `env?: NodeJS.ProcessEnv`
   - extra environment variables merged on top of `process.env`
 - `persona?: string`
-  - forwarded as `--persona <id>`
+  - forwarded as `--persona <id>[:<reasoning>]`
 - `riskLevel?: "read-only" | "read-write"`
   - forwarded as `--risk <level>`
 - `sandbox?: boolean`

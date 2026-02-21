@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parsePersonaReference } from "./persona_reference.js";
 import {
   type Persona,
   REASONING_LEVELS,
@@ -39,22 +40,16 @@ export function parsePersonaString(
   raw: string,
   personas: Persona[],
 ): { personaId: string | undefined; reasoning: ReasoningEffort | undefined } {
-  const trimmed = raw.trim();
-  if (!trimmed) return { personaId: undefined, reasoning: undefined };
-
-  const colonIndex = trimmed.indexOf(":");
-  if (colonIndex === -1) {
-    return { personaId: resolvePersonaId(trimmed, personas), reasoning: undefined };
+  const parsed = parsePersonaReference(raw);
+  if (!parsed.personaId || parsed.error) {
+    return { personaId: undefined, reasoning: undefined };
   }
 
-  const personaValue = trimmed.slice(0, colonIndex);
-  const reasoningValue = trimmed.slice(colonIndex + 1).trim();
-  const personaId = resolvePersonaId(personaValue, personas);
-  const reasoning = (REASONING_LEVELS as string[]).includes(reasoningValue)
-    ? (reasoningValue as ReasoningEffort)
-    : undefined;
-
-  return { personaId, reasoning };
+  const personaId = resolvePersonaId(parsed.personaId, personas);
+  return {
+    personaId,
+    reasoning: personaId ? parsed.reasoning : undefined,
+  };
 }
 
 function parseRiskLevel(raw: string): RiskLevel {
@@ -148,29 +143,31 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       const { value, nextIndex } = parseValue(arg, argv, i);
       i = nextIndex;
 
-      const parsed = parsePersonaString(value, personas);
-      if (!parsed.personaId) {
-        const colonIndex = value.indexOf(":");
-        const personaValue = colonIndex !== -1 ? value.slice(0, colonIndex) : value;
+      const parsedReference = parsePersonaReference(value);
+      if (parsedReference.error === "missing-reasoning") {
+        throw new CliError("missing reasoning level after ':' in --persona");
+      }
+      if (parsedReference.error === "invalid-reasoning") {
+        const allowed = [...REASONING_LEVELS].join(", ");
+        throw new CliError(
+          `invalid reasoning level '${parsedReference.rawReasoning}'. allowed levels: ${allowed}`,
+        );
+      }
+      if (!parsedReference.personaId) {
+        throw new CliError("missing persona id in --persona");
+      }
+
+      const resolvedPersonaId = resolvePersonaId(parsedReference.personaId, personas);
+      if (!resolvedPersonaId) {
         const available = personas.map((p) => p.id).join(", ");
-        throw new CliError(`unknown persona '${personaValue}'. available personas: ${available}`);
+        throw new CliError(
+          `unknown persona '${parsedReference.personaId}'. available personas: ${available}`,
+        );
       }
-      const colonIndex = value.indexOf(":");
-      if (colonIndex !== -1) {
-        const reasoningValue = value.slice(colonIndex + 1).trim();
-        if (!reasoningValue) {
-          throw new CliError("missing reasoning level after ':' in --persona");
-        }
-        if (parsed.reasoning === undefined) {
-          const allowed = [...REASONING_LEVELS].join(", ");
-          throw new CliError(
-            `invalid reasoning level '${reasoningValue}'. allowed levels: ${allowed}`,
-          );
-        }
-      }
-      personaId = parsed.personaId;
-      if (parsed.reasoning !== undefined) {
-        reasoningOverride = parsed.reasoning;
+
+      personaId = resolvedPersonaId;
+      if (parsedReference.reasoning !== undefined) {
+        reasoningOverride = parsedReference.reasoning;
       }
 
       continue;

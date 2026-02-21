@@ -96,6 +96,7 @@ export interface ChatControllerOptions {
   themes?: ThemeDefinition[];
   bashCommands?: BashCommand[];
   initialPersonaId?: string;
+  initialReasoningOverride?: ReasoningEffort;
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
   initialHistory?: Message[];
@@ -275,13 +276,21 @@ export class ChatController {
     this.toolBackendDispose = options.toolBackendDispose;
 
     this.includeAgentContext = !options.noAgentContextFiles;
-    this.currentPersona =
+    const initialPersona =
       (options.initialPersonaId &&
         this.personas.find(
           (p) => p.id.toLowerCase() === options.initialPersonaId!.toLowerCase(),
         )) ||
       this.personas[0]!;
+    this.currentPersona = this.createSessionPersona(initialPersona);
     this.clampPersonaReasoning(this.currentPersona);
+
+    if (options.initialReasoningOverride !== undefined) {
+      const allowed = this.getAllowedReasoningLevels(this.currentPersona);
+      if (allowed.includes(options.initialReasoningOverride)) {
+        this.currentPersona.settings.reasoning = options.initialReasoningOverride;
+      }
+    }
 
     if (options.initialRiskLevel) {
       this.riskLevel = options.initialRiskLevel;
@@ -521,6 +530,12 @@ export class ChatController {
 
       case "assistant_final": {
         const state = this.ensureAssistantState(event.historyEntryId);
+        if (this.shouldSuppressAbortedAssistantMessage(event.message)) {
+          this.refreshStatus();
+          this.assistantState = undefined;
+          return;
+        }
+
         const model: AssistantMessageModel = { type: "assistant", message: event.message };
         state.model = model;
         if (!state.inserted) {
@@ -554,6 +569,23 @@ export class ChatController {
       case "tool_result":
         return;
     }
+  }
+
+  private shouldSuppressAbortedAssistantMessage(message: AssistantMessage): boolean {
+    if (message.stopReason !== "aborted") {
+      return false;
+    }
+
+    for (const content of message.content) {
+      if (content.type === "text" && content.text.trim().length > 0) {
+        return false;
+      }
+      if (this.showThinking && content.type === "thinking" && content.thinking.trim().length > 0) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private ensureAssistantState(historyEntryId: string): AssistantState {
@@ -808,6 +840,16 @@ export class ChatController {
     return unique.length ? unique : REASONING_LEVELS;
   }
 
+  private createSessionPersona(persona: Persona): Persona {
+    return {
+      ...persona,
+      settings: { ...persona.settings },
+      allowedReasoningLevels: persona.allowedReasoningLevels
+        ? [...persona.allowedReasoningLevels]
+        : undefined,
+    };
+  }
+
   private clampPersonaReasoning(persona: Persona): void {
     const allowed = this.getAllowedReasoningLevels(persona);
     const desired = persona.settings.reasoning;
@@ -826,8 +868,10 @@ export class ChatController {
   }
 
   private cyclePersonality(): void {
-    const index = this.personas.indexOf(this.currentPersona);
-    const next = this.personas[(index + 1) % this.personas.length]!;
+    const index = this.personas.findIndex(
+      (persona) => persona.id.toLowerCase() === this.currentPersona.id.toLowerCase(),
+    );
+    const next = this.personas[(index + 1) % this.personas.length] ?? this.personas[0]!;
     this.switchPersona(next.id);
   }
 
@@ -2099,7 +2143,7 @@ export class ChatController {
       return;
     }
 
-    this.currentPersona = persona;
+    this.currentPersona = this.createSessionPersona(persona);
     this.clampPersonaReasoning(this.currentPersona);
     const skillsContext = this.getSkillsIndexBlockForPersona(this.currentPersona);
     this.rebuildSystemPrompt(skillsContext.skillsBlock);
@@ -2249,12 +2293,12 @@ export class ChatController {
     );
 
     if (updatedPersona) {
-      this.currentPersona = updatedPersona;
+      this.currentPersona = this.createSessionPersona(updatedPersona);
       this.clampPersonaReasoning(this.currentPersona);
       return null;
     }
 
-    this.currentPersona = personas[0]!;
+    this.currentPersona = this.createSessionPersona(personas[0]!);
     this.clampPersonaReasoning(this.currentPersona);
     const personaLabel = this.currentPersona.label || this.currentPersona.id;
     return {
@@ -2418,7 +2462,11 @@ export class ChatController {
     } finally {
       this.endBusyTask(busyTask);
       await this.stopTurnCaffeinate();
-      const reason = runResult.aborted ? "aborted" : "interrupted";
+      const reason: "aborted" | "interrupted" = interruptRequested
+        ? "interrupted"
+        : runResult.aborted
+          ? "aborted"
+          : "interrupted";
 
       this.view.finalizeToolUiPending(reason);
 

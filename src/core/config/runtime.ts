@@ -1,3 +1,4 @@
+import { parsePersonaReference } from "../persona_reference.js";
 import type { PromptTemplate } from "../prompts.js";
 import type { Persona, Skill } from "../types.js";
 import type { BashCommand } from "./bash_commands.js";
@@ -28,7 +29,11 @@ export async function loadRuntimeConfig(
   const content = await loadAllContent(config, { cwd, deps: resolvedDeps });
   const warnings = [...configResult.errors, ...content.errors];
   if (config.defaultPersona) {
-    const matched = content.personas.some((persona) => persona.id === config.defaultPersona);
+    const parsedDefaultPersona = parsePersonaReference(config.defaultPersona);
+    const personaId = parsedDefaultPersona.personaId;
+    const matched = personaId
+      ? content.personas.some((persona) => persona.id === personaId)
+      : false;
     if (!matched) {
       warnings.push(`defaultPersona '${config.defaultPersona}' not found in loaded personas.`);
     }

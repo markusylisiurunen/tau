@@ -242,7 +242,7 @@ describe("loadConfig", () => {
     }
   });
 
-  it("validates defaultPersona as a persona id only", () => {
+  it("accepts defaultPersona with optional reasoning", () => {
     const fx = setupFixture();
 
     try {
@@ -261,10 +261,37 @@ describe("loadConfig", () => {
       });
 
       const result = loadConfigWithDiagnostics(fx.repo, deps);
+      expect(result.config.defaultPersona).toBe("gpt-5.2-chat:high");
+      expect(result.errors).toEqual([]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("validates defaultPersona reasoning suffix", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          defaultPersona: "gpt-5.2-chat:ultra",
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const result = loadConfigWithDiagnostics(fx.repo, deps);
       expect(result.config.defaultPersona).toBe("opus-4.6-chat");
       expect(
         result.errors.some(
-          (error) => error.includes("defaultPersona") && error.includes("persona id only"),
+          (error) =>
+            error.includes("defaultPersona") && error.includes("invalid reasoning level 'ultra'"),
         ),
       ).toBe(true);
     } finally {

@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
+import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
-import { type RiskLevel, RiskLevelSchema } from "../types.js";
+import { REASONING_LEVELS, type RiskLevel, RiskLevelSchema } from "../types.js";
 import { normalizeModelNoticeKey, parseModelNoticeKey } from "../utils/model_notices.js";
 import { isRecord } from "../utils/type_guards.js";
 import type { BashCommand } from "./bash_commands.js";
@@ -156,15 +157,20 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
 
   if (data.defaultPersona !== undefined) {
     if (typeof data.defaultPersona === "string") {
-      const defaultPersona = data.defaultPersona.trim();
-      if (!defaultPersona) {
+      const parsedDefaultPersona = parsePersonaReference(data.defaultPersona);
+      if (parsedDefaultPersona.error === "empty-persona") {
         errors.push(`${sourceLabel}: 'defaultPersona' must be a non-empty string.`);
-      } else if (defaultPersona.includes(":")) {
+      } else if (parsedDefaultPersona.error === "missing-reasoning") {
+        errors.push(`${sourceLabel}: 'defaultPersona' is missing a reasoning level after ':'.`);
+      } else if (parsedDefaultPersona.error === "invalid-reasoning") {
         errors.push(
-          `${sourceLabel}: 'defaultPersona' must be a persona id only (reasoning overrides are not supported).`,
+          `${sourceLabel}: 'defaultPersona' has invalid reasoning level '${parsedDefaultPersona.rawReasoning}'. allowed levels: ${REASONING_LEVELS.join(", ")}.`,
         );
-      } else {
-        config.defaultPersona = defaultPersona;
+      } else if (parsedDefaultPersona.personaId) {
+        config.defaultPersona = formatPersonaReference({
+          personaId: parsedDefaultPersona.personaId,
+          reasoning: parsedDefaultPersona.reasoning,
+        });
       }
     } else {
       errors.push(`${sourceLabel}: 'defaultPersona' must be a string.`);

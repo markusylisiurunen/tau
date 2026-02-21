@@ -113,6 +113,16 @@ async function readPipedStdin(): Promise<string | undefined> {
   return data;
 }
 
+function clonePersonaForSession(persona: Persona): Persona {
+  return {
+    ...persona,
+    settings: { ...persona.settings },
+    allowedReasoningLevels: persona.allowedReasoningLevels
+      ? [...persona.allowedReasoningLevels]
+      : undefined,
+  };
+}
+
 async function runRpcMode(options: {
   cli: CliOptions;
   config: Config;
@@ -452,7 +462,15 @@ if (cli.personaId) {
     reasoningOverride = checkpointReasoning;
   }
 } else if (config.defaultPersona) {
-  initialPersonaId = personas.find((persona) => persona.id === config.defaultPersona)?.id;
+  const parsedDefaultPersona = parsePersonaString(config.defaultPersona, personas);
+  initialPersonaId = parsedDefaultPersona.personaId;
+  if (
+    reasoningOverride === undefined &&
+    parsedDefaultPersona.personaId !== undefined &&
+    parsedDefaultPersona.reasoning !== undefined
+  ) {
+    reasoningOverride = parsedDefaultPersona.reasoning;
+  }
 }
 
 const initialRiskLevel = cli.riskLevel ?? checkpointRiskLevel ?? config.defaultRisk;
@@ -460,9 +478,10 @@ const initialRiskLevel = cli.riskLevel ?? checkpointRiskLevel ?? config.defaultR
 if (cli.debug) {
   let debugPersona: Persona | undefined;
   if (personas.length > 0) {
-    debugPersona = initialPersonaId
+    const selectedPersona = initialPersonaId
       ? (personas.find((p) => p.id === initialPersonaId) ?? personas[0]!)
       : personas[0]!;
+    debugPersona = clonePersonaForSession(selectedPersona);
 
     if (reasoningOverride !== undefined) {
       debugPersona.settings.reasoning = reasoningOverride;
@@ -505,9 +524,10 @@ if (personas.length === 0) {
   process.exit(1);
 }
 
-const initialPersona = initialPersonaId
+const initialPersonaBase = initialPersonaId
   ? (personas.find((p) => p.id === initialPersonaId) ?? personas[0]!)
   : personas[0]!;
+const initialPersona = clonePersonaForSession(initialPersonaBase);
 
 if (reasoningOverride !== undefined) {
   initialPersona.settings.reasoning = reasoningOverride;
@@ -546,6 +566,7 @@ const app = new ChatApp({
   bashCommands,
   terminalAppearance,
   initialPersonaId,
+  initialReasoningOverride: reasoningOverride,
   initialUserMessage,
   initialRiskLevel: effectiveRiskLevel,
   initialHistory: checkpointHistory,

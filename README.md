@@ -474,7 +474,7 @@ settings merge from least-specific to most-specific.
 }
 ```
 
-the `defaultPersona` field specifies which persona to use when starting the app. it must be a persona id only (no `:reasoning` suffix), and matching is exact/case-sensitive. the `--persona` flag overrides this setting.
+the `defaultPersona` field specifies which persona to use when starting the app. it accepts `<id>` or `<id>:<reasoning>`, and matching is exact/case-sensitive. the `--persona` flag overrides this setting.
 
 the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 

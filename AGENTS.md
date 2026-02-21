@@ -183,7 +183,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 - **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `bashCommands`, `agentContextFiles`, `sandbox`, `subagents`, `modelSystemNotices`, `async`). This level is only included when cwd is inside home.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
   - `apiKeys.mistral` (optional): Mistral API key for `/speak` and Telegram audio transcription.
-  - `defaultPersona` (optional): String ID of the persona to use by default when starting the app. Must be a persona id only (no `:reasoning` suffix) and matches are exact/case-sensitive. Overridden by `--persona` flag.
+  - `defaultPersona` (optional): String persona reference used by default when starting the app. Accepts `<id>` or `<id>:<reasoning>` and matches are exact/case-sensitive. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `sandbox` (optional): Docker sandbox settings (see below).
   - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.

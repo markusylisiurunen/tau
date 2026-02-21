@@ -75,6 +75,7 @@ describe("async daemon config", () => {
               workingDirectory: "packages/core",
               description: "core workspace",
               ref: "main",
+              persona: "gpt-5.2-coder:high",
               bootstrapCommands: ["npm ci"],
               backgroundBootstrapCommands: ["npm run build"],
             },
@@ -91,6 +92,7 @@ describe("async daemon config", () => {
       expect(config.projects.tau.workingDirectory).toBe("packages/core");
       expect(config.projects.tau.description).toBe("core workspace");
       expect(config.projects.tau.repo).toBe("markusylisiurunen/tau");
+      expect(config.projects.tau.persona).toBe("gpt-5.2-coder:high");
       expect(config.projects.tau.bootstrapCommands).toEqual(["npm ci"]);
       expect(config.projects.tau.backgroundBootstrapCommands).toEqual(["npm run build"]);
       expect(config.telegram?.default?.defaultProjectId).toBe("tau");
@@ -317,6 +319,30 @@ describe("async daemon config", () => {
 
       expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
       expect(() => loadAsyncDaemonConfig(configPath)).toThrow("owner/repo");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects invalid projects.<id>.persona reasoning suffixes", () => {
+    const fx = setupFixture();
+
+    try {
+      const configPath = join(fx.root, "daemon.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          projects: {
+            tau: {
+              repo: "markusylisiurunen/tau",
+              persona: "gpt-5.2-coder:ultra",
+            },
+          },
+        }),
+      );
+
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("invalid reasoning level 'ultra'");
     } finally {
       fx.cleanup();
     }

@@ -6,6 +6,8 @@ import type {
   AsyncServerTelegramBotConfig,
   AsyncServerTelegramConfig,
 } from "../config/schema.js";
+import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
+import { REASONING_LEVELS } from "../types.js";
 import type { AsyncCronJobConfig } from "./cron.js";
 import { parseCronSchedule } from "./cron.js";
 
@@ -470,8 +472,24 @@ function parseProject(
   }
 
   if (data.persona !== undefined) {
-    if (typeof data.persona === "string" && data.persona.trim()) {
-      config.persona = data.persona.trim();
+    if (typeof data.persona === "string") {
+      const parsedPersona = parsePersonaReference(data.persona);
+      if (parsedPersona.error === "empty-persona") {
+        errors.push(`${sourceLabel}: projects.${projectId}.persona must be a non-empty string.`);
+      } else if (parsedPersona.error === "missing-reasoning") {
+        errors.push(
+          `${sourceLabel}: projects.${projectId}.persona is missing a reasoning level after ':'.`,
+        );
+      } else if (parsedPersona.error === "invalid-reasoning") {
+        errors.push(
+          `${sourceLabel}: projects.${projectId}.persona has invalid reasoning level '${parsedPersona.rawReasoning}'. allowed levels: ${REASONING_LEVELS.join(", ")}.`,
+        );
+      } else if (parsedPersona.personaId) {
+        config.persona = formatPersonaReference({
+          personaId: parsedPersona.personaId,
+          reasoning: parsedPersona.reasoning,
+        });
+      }
     } else {
       errors.push(`${sourceLabel}: projects.${projectId}.persona must be a non-empty string.`);
     }

@@ -182,7 +182,48 @@ function createSpawnAbortResult() {
   };
 }
 
+describe("ChatController persona switching", () => {
+  it("resets to the persona default reasoning on /persona switch", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view, {
+      initialPersonaId: "gpt-5.2-chat",
+    });
+
+    expect(controller.currentPersona.settings.reasoning).toBe("medium");
+
+    const handlers = controller.getInputHandlers();
+    handlers.onShiftTab?.();
+    expect(controller.currentPersona.settings.reasoning).toBe("high");
+
+    await controller.onUserInput("/persona:opus-4.6-chat");
+    await controller.onUserInput("/persona:gpt-5.2-chat");
+
+    expect(controller.currentPersona.id).toBe("gpt-5.2-chat");
+    expect(controller.currentPersona.settings.reasoning).toBe("medium");
+  });
+});
+
 describe("ChatController event handling", () => {
+  it("suppresses empty aborted assistant final messages", () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.onEvent({ type: "assistant_start", historyEntryId: "assistant-aborted" });
+    controller.onEvent({
+      type: "assistant_final",
+      historyEntryId: "assistant-aborted",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "aborted",
+      },
+    });
+
+    const assistantAdds = stub.added.filter((m) => m.type === "assistant_partial");
+    expect(assistantAdds).toEqual([]);
+    expect(stub.updated).toEqual([]);
+  });
+
   it("inserts assistant partial only when text starts or thinking is visible", () => {
     const stub = createStubView();
     const controller = createController(stub.view);
@@ -271,6 +312,7 @@ describe("ChatController interrupt handling", () => {
     expect(interruptSpy).toHaveBeenCalledTimes(1);
     expect(stub.systemMessages).toContainEqual({ text: "interrupted", kind: "error" });
     expect(stub.systemMessages.filter((m) => m.text === "interrupted")).toHaveLength(1);
+    expect(stub.finalizeToolUiPendingCalls).toEqual(["interrupted"]);
   });
 
   it("does not show interrupted when there is no cancellable active task", () => {

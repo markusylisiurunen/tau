@@ -9,7 +9,7 @@ import type { CoreEvent } from "../core/events/types.js";
 import type { ModeAdapter } from "../core/modes/mode_adapter.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
-import type { Persona, RiskLevel, Skill } from "../core/types.js";
+import type { Persona, ReasoningEffort, RiskLevel, Skill } from "../core/types.js";
 import { ChatController } from "./chat_controller.js";
 import { TuiChatView } from "./chat_view.js";
 import { EXIT_DOUBLE_PRESS_WINDOW_MS, EXIT_TOAST_DURATION_MS } from "./constants.js";
@@ -23,6 +23,7 @@ export interface ChatAppOptions {
   bashCommands?: BashCommand[];
   terminalAppearance?: ThemeAppearance;
   initialPersonaId?: string;
+  initialReasoningOverride?: ReasoningEffort;
   initialUserMessage?: string;
   initialRiskLevel?: RiskLevel;
   initialHistory?: Message[];

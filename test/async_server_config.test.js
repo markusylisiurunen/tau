@@ -15,6 +15,16 @@ function setupFixture() {
   };
 }
 
+function withFixture(run) {
+  const fx = setupFixture();
+
+  try {
+    run(fx);
+  } finally {
+    fx.cleanup();
+  }
+}
+
 function writeCronJobFile(cronJobsDir, args) {
   const lines = [
     "---",
@@ -30,11 +40,20 @@ function writeCronJobFile(cronJobsDir, args) {
   writeFileSync(join(cronJobsDir, `${args.id}.md`), lines.join("\n"));
 }
 
+function writeConfigFile(path, value) {
+  writeFileSync(path, JSON.stringify(value));
+}
+
+function expectConfigError(configPath, ...messageParts) {
+  expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
+  for (const messagePart of messageParts) {
+    expect(() => loadAsyncDaemonConfig(configPath)).toThrow(messagePart);
+  }
+}
+
 describe("async daemon config", () => {
   it("loads valid daemon config and resolves workspace roots relative to config file", () => {
-    const fx = setupFixture();
-
-    try {
+    withFixture((fx) => {
       const configDir = join(fx.root, "config");
       mkdirSync(configDir, { recursive: true });
       const configPath = join(configDir, "daemon.json");
@@ -105,94 +124,141 @@ describe("async daemon config", () => {
           prompt: "check for documentation drift",
         },
       });
-    } finally {
-      fx.cleanup();
-    }
+    });
   });
 
-  it("rejects empty systemMessage", () => {
-    const fx = setupFixture();
+  const unknownKeyCases = [
+    {
+      name: "rejects unknown top-level async daemon config keys",
+      config: {
+        projects: { tau: { repo: "markusylisiurunen/tau" } },
+        extra: true,
+      },
+      errors: ["unknown key in config: extra"],
+    },
+    {
+      name: "rejects unknown cron config keys",
+      config: {
+        projects: { tau: { repo: "markusylisiurunen/tau" } },
+        cron: { jobsDir: "cron-jobs", extra: true },
+      },
+      errors: ["unknown key in cron: extra"],
+    },
+    {
+      name: "rejects unknown telegram bot config keys",
+      config: {
+        telegram: { ops: { botToken: "ops-token", unknownSetting: true } },
+        projects: { tau: { repo: "markusylisiurunen/tau" } },
+      },
+      errors: ["unknown key in telegram.ops: unknownSetting"],
+    },
+    {
+      name: "rejects unknown project config keys",
+      config: {
+        projects: { tau: { repo: "markusylisiurunen/tau", unexpected: "value" } },
+      },
+      errors: ["unknown key in projects.tau: unexpected"],
+    },
+  ];
 
-    try {
-      const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          systemMessage: "   ",
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-            },
+  for (const testCase of unknownKeyCases) {
+    it(testCase.name, () => {
+      withFixture((fx) => {
+        const configPath = join(fx.root, "daemon.json");
+        writeConfigFile(configPath, testCase.config);
+        expectConfigError(configPath, ...testCase.errors);
+      });
+    });
+  }
+
+  const validationCases = [
+    {
+      name: "rejects empty systemMessage",
+      config: { systemMessage: "   ", projects: { tau: { repo: "markusylisiurunen/tau" } } },
+      errors: ["systemMessage"],
+    },
+    {
+      name: "rejects empty telegram.systemMessage",
+      config: {
+        telegram: { default: { botToken: "bot-token", systemMessage: "" } },
+        projects: { tau: { repo: "markusylisiurunen/tau" } },
+      },
+      errors: ["telegram.default.systemMessage"],
+    },
+    {
+      name: "rejects empty cron.systemMessage",
+      config: {
+        cron: { systemMessage: "" },
+        projects: { tau: { repo: "markusylisiurunen/tau" } },
+      },
+      errors: ["cron.systemMessage"],
+    },
+    {
+      name: "rejects repos outside owner/repo format",
+      config: {
+        projects: { bad: { repo: "https://github.com/markusylisiurunen/tau.git" } },
+      },
+      errors: ["owner/repo"],
+    },
+    {
+      name: "rejects invalid projects.<id>.persona reasoning suffixes",
+      config: {
+        projects: { tau: { repo: "markusylisiurunen/tau", persona: "gpt-5.2-coder:ultra" } },
+      },
+      errors: ["invalid reasoning level 'ultra'"],
+    },
+    {
+      name: "rejects absolute projects.<id>.workingDirectory values",
+      config: {
+        projects: { tau: { repo: "markusylisiurunen/tau", workingDirectory: "/tmp/repo" } },
+      },
+      errors: ["workingDirectory must be a relative path"],
+    },
+    {
+      name: "rejects invalid backgroundBootstrapCommands values",
+      config: {
+        projects: {
+          tau: {
+            repo: "markusylisiurunen/tau",
+            backgroundBootstrapCommands: ["npm run build", "   "],
           },
-        }),
-      );
+        },
+      },
+      errors: ["backgroundBootstrapCommands"],
+    },
+  ];
 
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("systemMessage");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("rejects empty telegram.systemMessage", () => {
-    const fx = setupFixture();
-
-    try {
-      const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          telegram: {
-            default: {
-              botToken: "bot-token",
-              systemMessage: "",
-            },
-          },
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-            },
-          },
-        }),
-      );
-
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("telegram.default.systemMessage");
-    } finally {
-      fx.cleanup();
-    }
-  });
+  for (const testCase of validationCases) {
+    it(testCase.name, () => {
+      withFixture((fx) => {
+        const configPath = join(fx.root, "daemon.json");
+        writeConfigFile(configPath, testCase.config);
+        expectConfigError(configPath, ...testCase.errors);
+      });
+    });
+  }
 
   it("loads named telegram bots and keeps per-bot project allowlists", () => {
-    const fx = setupFixture();
-
-    try {
+    withFixture((fx) => {
       const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          telegram: {
-            ops: {
-              botToken: "ops-token",
-              allowedProjectIds: ["tau"],
-              defaultProjectId: "tau",
-            },
-            docs: {
-              botToken: "docs-token",
-              allowedProjectIds: ["docs"],
-              systemMessage: "docs only",
-            },
+      writeConfigFile(configPath, {
+        telegram: {
+          ops: {
+            botToken: "ops-token",
+            allowedProjectIds: ["tau"],
+            defaultProjectId: "tau",
           },
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-            },
-            docs: {
-              repo: "markusylisiurunen/docs",
-            },
+          docs: {
+            botToken: "docs-token",
+            allowedProjectIds: ["docs"],
+            systemMessage: "docs only",
           },
-        }),
-      );
+        },
+        projects: {
+          tau: { repo: "markusylisiurunen/tau" },
+          docs: { repo: "markusylisiurunen/docs" },
+        },
+      });
 
       const config = loadAsyncDaemonConfig(configPath);
       expect(config.telegram).toEqual({
@@ -207,201 +273,48 @@ describe("async daemon config", () => {
           systemMessage: "docs only",
         },
       });
-    } finally {
-      fx.cleanup();
-    }
+    });
   });
 
   it("rejects unknown telegram allowedProjectIds", () => {
-    const fx = setupFixture();
-
-    try {
+    withFixture((fx) => {
       const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          telegram: {
-            ops: {
-              botToken: "ops-token",
-              allowedProjectIds: ["missing"],
-            },
-          },
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-            },
-          },
-        }),
-      );
+      writeConfigFile(configPath, {
+        telegram: {
+          ops: { botToken: "ops-token", allowedProjectIds: ["missing"] },
+        },
+        projects: {
+          tau: { repo: "markusylisiurunen/tau" },
+        },
+      });
 
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("allowedProjectIds");
-    } finally {
-      fx.cleanup();
-    }
+      expectConfigError(configPath, "allowedProjectIds");
+    });
   });
 
   it("rejects defaultProjectId outside allowedProjectIds", () => {
-    const fx = setupFixture();
-
-    try {
+    withFixture((fx) => {
       const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          telegram: {
-            ops: {
-              botToken: "ops-token",
-              allowedProjectIds: ["tau"],
-              defaultProjectId: "docs",
-            },
+      writeConfigFile(configPath, {
+        telegram: {
+          ops: {
+            botToken: "ops-token",
+            allowedProjectIds: ["tau"],
+            defaultProjectId: "docs",
           },
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-            },
-            docs: {
-              repo: "markusylisiurunen/docs",
-            },
-          },
-        }),
-      );
+        },
+        projects: {
+          tau: { repo: "markusylisiurunen/tau" },
+          docs: { repo: "markusylisiurunen/docs" },
+        },
+      });
 
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("defaultProjectId");
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("allowedProjectIds");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("rejects empty cron.systemMessage", () => {
-    const fx = setupFixture();
-
-    try {
-      const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          cron: {
-            systemMessage: "",
-          },
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-            },
-          },
-        }),
-      );
-
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("cron.systemMessage");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("rejects repos outside owner/repo format", () => {
-    const fx = setupFixture();
-
-    try {
-      const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          projects: {
-            bad: {
-              repo: "https://github.com/markusylisiurunen/tau.git",
-            },
-          },
-        }),
-      );
-
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("owner/repo");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("rejects invalid projects.<id>.persona reasoning suffixes", () => {
-    const fx = setupFixture();
-
-    try {
-      const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-              persona: "gpt-5.2-coder:ultra",
-            },
-          },
-        }),
-      );
-
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("invalid reasoning level 'ultra'");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("rejects absolute projects.<id>.workingDirectory values", () => {
-    const fx = setupFixture();
-
-    try {
-      const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-              workingDirectory: "/tmp/repo",
-            },
-          },
-        }),
-      );
-
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(
-        "workingDirectory must be a relative path",
-      );
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("rejects invalid backgroundBootstrapCommands values", () => {
-    const fx = setupFixture();
-
-    try {
-      const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-              backgroundBootstrapCommands: ["npm run build", "   "],
-            },
-          },
-        }),
-      );
-
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("backgroundBootstrapCommands");
-    } finally {
-      fx.cleanup();
-    }
+      expectConfigError(configPath, "defaultProjectId", "allowedProjectIds");
+    });
   });
 
   it("skips disabled cron job markdown files", () => {
-    const fx = setupFixture();
-
-    try {
+    withFixture((fx) => {
       const cronJobsDir = join(fx.root, "cron-jobs");
       mkdirSync(cronJobsDir, { recursive: true });
 
@@ -414,122 +327,144 @@ describe("async daemon config", () => {
       });
 
       const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-            },
-          },
-          cron: {
-            jobsDir: "cron-jobs",
-          },
-        }),
-      );
+      writeConfigFile(configPath, {
+        projects: {
+          tau: { repo: "markusylisiurunen/tau" },
+        },
+        cron: { jobsDir: "cron-jobs" },
+      });
 
       const config = loadAsyncDaemonConfig(configPath);
       expect(config.cronJobs).toEqual({});
-    } finally {
-      fx.cleanup();
-    }
+    });
   });
 
-  it("rejects missing cron.jobsDir", () => {
-    const fx = setupFixture();
+  const cronFrontmatterCases = [
+    {
+      name: "rejects unknown cron job frontmatter keys",
+      contents: [
+        "---",
+        "id: nightly",
+        "projectId: tau",
+        'schedule: "0 2 * * *"',
+        "unexpected: true",
+        "---",
+        "check docs drift",
+        "",
+      ].join("\n"),
+      errors: ["unknown key in", "frontmatter: unexpected"],
+    },
+    {
+      name: "rejects cron job frontmatter with missing closing delimiter",
+      contents: [
+        "---",
+        "id: nightly",
+        "projectId: tau",
+        'schedule: "0 2 * * *"',
+        "check docs",
+      ].join("\n"),
+      errors: ["frontmatter is missing a closing '---' delimiter", join("cron-jobs", "nightly.md")],
+    },
+    {
+      name: "rejects cron job files with invalid frontmatter yaml",
+      contents: [
+        "---",
+        "id: nightly",
+        "projectId: tau",
+        "schedule: [",
+        "---",
+        "check docs drift",
+        "",
+      ].join("\n"),
+      errors: ["invalid frontmatter YAML", join("cron-jobs", "nightly.md")],
+    },
+    {
+      name: "rejects cron job files with non-object frontmatter",
+      contents: ["---", "- nightly", "---", "check docs"].join("\n"),
+      errors: ["frontmatter must be a YAML object", join("cron-jobs", "nightly.md")],
+    },
+  ];
 
-    try {
-      const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
+  for (const testCase of cronFrontmatterCases) {
+    it(testCase.name, () => {
+      withFixture((fx) => {
+        const cronJobsDir = join(fx.root, "cron-jobs");
+        mkdirSync(cronJobsDir, { recursive: true });
+        writeFileSync(join(cronJobsDir, "nightly.md"), testCase.contents);
+
+        const configPath = join(fx.root, "daemon.json");
+        writeConfigFile(configPath, {
           projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-            },
+            tau: { repo: "markusylisiurunen/tau" },
           },
           cron: {
             jobsDir: "cron-jobs",
           },
-        }),
-      );
+        });
 
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("cron.jobsDir does not exist");
-    } finally {
-      fx.cleanup();
-    }
+        expectConfigError(configPath, ...testCase.errors);
+      });
+    });
+  }
+
+  it("rejects missing cron.jobsDir", () => {
+    withFixture((fx) => {
+      const configPath = join(fx.root, "daemon.json");
+      writeConfigFile(configPath, {
+        projects: {
+          tau: { repo: "markusylisiurunen/tau" },
+        },
+        cron: {
+          jobsDir: "cron-jobs",
+        },
+      });
+
+      expectConfigError(configPath, "cron.jobsDir does not exist");
+    });
   });
 
-  it("rejects cron jobs with invalid schedule expressions", () => {
-    const fx = setupFixture();
-
-    try {
-      const cronJobsDir = join(fx.root, "cron-jobs");
-      mkdirSync(cronJobsDir, { recursive: true });
-      writeCronJobFile(cronJobsDir, {
+  const cronJobValidationCases = [
+    {
+      name: "rejects cron jobs with invalid schedule expressions",
+      cronJob: {
         id: "nightly",
         projectId: "tau",
         schedule: "bad expression",
         prompt: "check docs drift",
-      });
-
-      const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-            },
-          },
-          cron: {
-            jobsDir: "cron-jobs",
-          },
-        }),
-      );
-
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow("frontmatter schedule is invalid");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("rejects cron jobs that reference unknown projects", () => {
-    const fx = setupFixture();
-
-    try {
-      const cronJobsDir = join(fx.root, "cron-jobs");
-      mkdirSync(cronJobsDir, { recursive: true });
-      writeCronJobFile(cronJobsDir, {
+      },
+      errors: ["frontmatter schedule is invalid"],
+    },
+    {
+      name: "rejects cron jobs that reference unknown projects",
+      cronJob: {
         id: "nightly",
         projectId: "missing",
         schedule: "0 2 * * *",
         prompt: "check docs drift",
-      });
+      },
+      errors: ["frontmatter projectId refers to an unknown project"],
+    },
+  ];
 
-      const configPath = join(fx.root, "daemon.json");
-      writeFileSync(
-        configPath,
-        JSON.stringify({
+  for (const testCase of cronJobValidationCases) {
+    it(testCase.name, () => {
+      withFixture((fx) => {
+        const cronJobsDir = join(fx.root, "cron-jobs");
+        mkdirSync(cronJobsDir, { recursive: true });
+        writeCronJobFile(cronJobsDir, testCase.cronJob);
+
+        const configPath = join(fx.root, "daemon.json");
+        writeConfigFile(configPath, {
           projects: {
-            tau: {
-              repo: "markusylisiurunen/tau",
-            },
+            tau: { repo: "markusylisiurunen/tau" },
           },
           cron: {
             jobsDir: "cron-jobs",
           },
-        }),
-      );
+        });
 
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(AsyncDaemonConfigError);
-      expect(() => loadAsyncDaemonConfig(configPath)).toThrow(
-        "frontmatter projectId refers to an unknown project",
-      );
-    } finally {
-      fx.cleanup();
-    }
-  });
+        expectConfigError(configPath, ...testCase.errors);
+      });
+    });
+  }
 });

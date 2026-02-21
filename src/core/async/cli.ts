@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Config } from "../config/schema.js";
 import { getMistralApiKey, loadConfig } from "../config/schema.js";
 import { AsyncDaemonRuntimeError, startAsyncDaemonRuntime } from "./daemon_runtime.js";
@@ -74,6 +75,12 @@ type ResolvedTarget = {
   token: string;
   timeoutMs?: number;
 };
+
+const ErrorPayloadMessageSchema = z
+  .object({
+    error: z.unknown(),
+  })
+  .transform((payload) => String(payload.error));
 
 function parseValue(
   arg: string,
@@ -527,8 +534,9 @@ async function requestJson(args: {
     }
 
     if (!response.ok) {
-      if (payload && typeof payload === "object" && payload !== null && "error" in payload) {
-        throw new AsyncCliError(`request failed (${response.status}): ${String(payload.error)}`);
+      const parsedErrorPayload = ErrorPayloadMessageSchema.safeParse(payload);
+      if (parsedErrorPayload.success) {
+        throw new AsyncCliError(`request failed (${response.status}): ${parsedErrorPayload.data}`);
       }
       throw new AsyncCliError(`request failed (${response.status})`);
     }
@@ -698,116 +706,64 @@ export async function runAsyncCommand(
   const target = resolveTarget(config, parsed);
   const fetchImpl = options.fetchImpl ?? fetch;
 
-  if (parsed.command === "create") {
-    const projectId = resolveProjectId(parsed, config);
-    const payload = await requestJson({
-      target,
-      method: "POST",
-      path: "/v1/sessions",
-      body: {
-        projectId,
-        prompt: parsed.prompt,
-      },
-      fetchImpl,
-    });
+  const request = (() => {
+    switch (parsed.command) {
+      case "create":
+        return {
+          method: "POST" as const,
+          path: "/v1/sessions",
+          body: {
+            projectId: resolveProjectId(parsed, config),
+            prompt: parsed.prompt,
+          },
+        };
+      case "list":
+        return { method: "GET" as const, path: "/v1/sessions" };
+      case "status":
+        return {
+          method: "GET" as const,
+          path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}`,
+        };
+      case "logs":
+        return {
+          method: "GET" as const,
+          path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}/logs`,
+        };
+      case "send":
+        return {
+          method: "POST" as const,
+          path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}/messages`,
+          body: { text: parsed.text },
+        };
+      case "interrupt":
+        return {
+          method: "POST" as const,
+          path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}/interrupt`,
+          body: {},
+        };
+      case "cron-list":
+        return { method: "GET" as const, path: "/v1/cron/jobs" };
+      case "cron-runs": {
+        const query = parsed.cronJobId ? `?jobId=${encodeURIComponent(parsed.cronJobId)}` : "";
+        return { method: "GET" as const, path: `/v1/cron/runs${query}` };
+      }
+      case "cron-run":
+        return {
+          method: "POST" as const,
+          path: `/v1/cron/jobs/${encodeURIComponent(parsed.cronJobId)}/run`,
+          body: {},
+        };
+      default:
+        throw new AsyncCliError("unsupported async command");
+    }
+  })();
 
-    stdout(toJsonLine(payload));
-    return;
-  }
-
-  if (parsed.command === "list") {
-    const payload = await requestJson({
-      target,
-      method: "GET",
-      path: "/v1/sessions",
-      fetchImpl,
-    });
-    stdout(toJsonLine(payload));
-    return;
-  }
-
-  if (parsed.command === "status") {
-    const payload = await requestJson({
-      target,
-      method: "GET",
-      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}`,
-      fetchImpl,
-    });
-    stdout(toJsonLine(payload));
-    return;
-  }
-
-  if (parsed.command === "logs") {
-    const payload = await requestJson({
-      target,
-      method: "GET",
-      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}/logs`,
-      fetchImpl,
-    });
-    stdout(toJsonLine(payload));
-    return;
-  }
-
-  if (parsed.command === "send") {
-    const payload = await requestJson({
-      target,
-      method: "POST",
-      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}/messages`,
-      body: {
-        text: parsed.text,
-      },
-      fetchImpl,
-    });
-    stdout(toJsonLine(payload));
-    return;
-  }
-
-  if (parsed.command === "interrupt") {
-    const payload = await requestJson({
-      target,
-      method: "POST",
-      path: `/v1/sessions/${encodeURIComponent(parsed.sessionId)}/interrupt`,
-      body: {},
-      fetchImpl,
-    });
-    stdout(toJsonLine(payload));
-    return;
-  }
-
-  if (parsed.command === "cron-list") {
-    const payload = await requestJson({
-      target,
-      method: "GET",
-      path: "/v1/cron/jobs",
-      fetchImpl,
-    });
-    stdout(toJsonLine(payload));
-    return;
-  }
-
-  if (parsed.command === "cron-runs") {
-    const query = parsed.cronJobId ? `?jobId=${encodeURIComponent(parsed.cronJobId)}` : "";
-    const payload = await requestJson({
-      target,
-      method: "GET",
-      path: `/v1/cron/runs${query}`,
-      fetchImpl,
-    });
-    stdout(toJsonLine(payload));
-    return;
-  }
-
-  if (parsed.command === "cron-run") {
-    const payload = await requestJson({
-      target,
-      method: "POST",
-      path: `/v1/cron/jobs/${encodeURIComponent(parsed.cronJobId)}/run`,
-      body: {},
-      fetchImpl,
-    });
-    stdout(toJsonLine(payload));
-    return;
-  }
-
-  throw new AsyncCliError("unsupported async command");
+  const payload = await requestJson({
+    target,
+    method: request.method,
+    path: request.path,
+    ...(request.body === undefined ? {} : { body: request.body }),
+    fetchImpl,
+  });
+  stdout(toJsonLine(payload));
 }

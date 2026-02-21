@@ -1,7 +1,6 @@
 import { basename, join } from "node:path";
 import type { Api, KnownProvider, Model, Tool } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
-import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { personas as builtinPersonas } from "../personas.js";
 import type { PromptTemplate } from "../prompts.js";
@@ -35,15 +34,12 @@ import { ReasoningEffortSchema, RiskLevelSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
 import { createDefaultConfigDeps } from "./deps.js";
+import { parseMarkdownFrontMatter } from "./markdown_frontmatter.js";
 import type { ConfigLevel, ConfigLevelScope } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
-import { parseSkill } from "./skill_parser.js";
+import { loadSkillsContent as loadCanonicalSkillsContent } from "./skills_loader.js";
 import { buildVirtualBundle } from "./virtual_bundle.js";
-
-interface FrontMatter {
-  [key: string]: unknown;
-}
 
 interface FileEntry {
   path: string;
@@ -76,46 +72,6 @@ export interface ThemeDefinition {
   scope: ConfigLevelScope;
 }
 
-function parseMarkdownWithFrontMatter(content: string): { frontMatter: FrontMatter; body: string } {
-  const lines = content.split("\n");
-
-  if (lines[0]?.trim() !== "---") {
-    return { frontMatter: {}, body: content };
-  }
-
-  let endIndex = -1;
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i]?.trim() === "---") {
-      endIndex = i;
-      break;
-    }
-  }
-
-  if (endIndex === -1) {
-    return { frontMatter: {}, body: content };
-  }
-
-  const frontMatterLines = lines.slice(1, endIndex);
-  const bodyLines = lines.slice(endIndex + 1);
-
-  const frontMatter = parseYamlFrontMatter(frontMatterLines.join("\n"));
-  const body = bodyLines.join("\n").trim();
-
-  return { frontMatter, body };
-}
-
-function parseYamlFrontMatter(yamlText: string): FrontMatter {
-  try {
-    const parsed = parseYaml(yamlText) as unknown;
-    if (!parsed || typeof parsed !== "object") {
-      return {};
-    }
-    return parsed as FrontMatter;
-  } catch {
-    return {};
-  }
-}
-
 function isKnownProvider(value: string): value is KnownProvider {
   return getProviders().includes(value as KnownProvider);
 }
@@ -129,23 +85,22 @@ const SubagentNameSchema = z
 
 type SubagentName = z.infer<typeof SubagentNameSchema>;
 
-function parseSubagentName(value: unknown): { name: SubagentName } | { error: string } {
-  const parsed = SubagentNameSchema.safeParse(value);
-  if (!parsed.success) {
-    return { error: `invalid subagent: ${formatZodError(parsed.error)}` };
-  }
+const StringListSchema = z.array(z.string());
 
-  return { name: parsed.data };
-}
+const TrimmedNonEmptyStringListSchema = StringListSchema.transform((list) =>
+  list.map((item) => item.trim()),
+).refine((list) => list.every(Boolean), {
+  message: "entries must be non-empty strings",
+});
 
 const SubagentSpecSchema = z
   .object({
     provider: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),
     reasoning: ReasoningEffortSchema.optional(),
-    tools: z.unknown().optional(),
+    tools: StringListSchema.optional(),
     riskLevel: RiskLevelSchema.optional(),
-    launchModels: z.unknown().optional(),
+    launchModels: StringListSchema.optional(),
     systemPrompt: z.string().trim().min(1).optional(),
     description: z.string().trim().min(1).optional(),
   })
@@ -161,28 +116,32 @@ const SubagentSpecSchema = z
     }
   });
 
-const subagentToolsSchema = z.array(z.string()).optional();
-
 const SUBAGENT_TOOL_NAME_SET = new Set<SubagentToolName>(SUBAGENT_TOOL_NAMES);
 
-function parseSubagentTools(toolsRaw: unknown): { tools?: SubagentToolName[]; error?: string } {
+const SubagentConfigInputSchema = z.record(
+  SubagentNameSchema,
+  z.union([z.literal(false), SubagentSpecSchema]),
+);
+
+function parseSubagentTools(toolsRaw: string[] | undefined): {
+  tools?: SubagentToolName[];
+  error?: string;
+} {
   if (toolsRaw === undefined) {
     return {};
   }
 
-  const parsed = subagentToolsSchema.safeParse(toolsRaw);
+  const parsed = TrimmedNonEmptyStringListSchema.safeParse(toolsRaw);
   if (!parsed.success) {
-    return { error: "tools must be a list of strings" };
+    return {
+      error:
+        parsed.error.issues[0]?.message === "entries must be non-empty strings"
+          ? "tools entries must be non-empty strings"
+          : "tools must be a list of strings",
+    };
   }
 
-  if (parsed.data === undefined) {
-    return {};
-  }
-
-  const cleaned = parsed.data.map((tool) => tool.trim().toLowerCase());
-  if (cleaned.some((name) => !name)) {
-    return { error: "tools entries must be non-empty strings" };
-  }
+  const cleaned = parsed.data.map((tool) => tool.toLowerCase());
 
   if (cleaned.length === 0) {
     return { tools: [] };
@@ -228,25 +187,23 @@ function parseSubagentConfig(subagentsRaw: unknown): {
     return {};
   }
 
-  if (!subagentsRaw || typeof subagentsRaw !== "object" || Array.isArray(subagentsRaw)) {
-    return { error: "subagents must be an object" };
-  }
-
   const config: SubagentConfigMap = {};
   let defaultDisabled = false;
 
-  const configParsed = z.record(z.string(), z.unknown()).safeParse(subagentsRaw);
+  const configParsed = SubagentConfigInputSchema.safeParse(subagentsRaw);
   if (!configParsed.success) {
-    return { error: "subagents must be an object" };
+    const invalidName = configParsed.error.issues.some(
+      (issue) => issue.path.length > 0 && issue.path[0] !== undefined,
+    );
+    return {
+      error: invalidName
+        ? `invalid subagent: ${formatZodError(configParsed.error)}`
+        : "subagents must be an object",
+    };
   }
 
   for (const [name, specRaw] of Object.entries(configParsed.data)) {
-    const nameResult = parseSubagentName(name);
-    if ("error" in nameResult) {
-      return { error: nameResult.error };
-    }
-
-    const validatedName = nameResult.name;
+    const validatedName = name as SubagentName;
 
     if (validatedName === DEFAULT_SUBAGENT_NAME) {
       if (specRaw === false) {
@@ -258,34 +215,25 @@ function parseSubagentConfig(subagentsRaw: unknown): {
       };
     }
 
-    if (!specRaw || typeof specRaw !== "object") {
+    if (specRaw === false) {
       return {
         error: `subagent ${validatedName}: systemPrompt is required for custom subagents`,
       };
     }
 
-    const spec = SubagentSpecSchema.safeParse(specRaw);
-    if (!spec.success) {
-      return { error: `subagent ${validatedName}: ${formatZodError(spec.error)}` };
-    }
-
-    if (!spec.data.systemPrompt) {
+    if (!specRaw.systemPrompt) {
       return {
         error: `subagent ${validatedName}: systemPrompt is required for custom subagents`,
       };
     }
 
-    if (spec.data.launchModels !== undefined && !Array.isArray(spec.data.launchModels)) {
-      return { error: `subagent ${validatedName}: launchModels must be a list of strings` };
-    }
-
-    const provider = spec.data.provider;
-    const model = spec.data.model;
-    const toolsResult = parseSubagentTools(spec.data.tools);
+    const provider = specRaw.provider;
+    const model = specRaw.model;
+    const toolsResult = parseSubagentTools(specRaw.tools);
     if (toolsResult.error) {
       return { error: `subagent ${validatedName}: ${toolsResult.error}` };
     }
-    const launchModelsResult = parseSubagentLaunchModelList(spec.data.launchModels);
+    const launchModelsResult = parseSubagentLaunchModelList(specRaw.launchModels);
     if (launchModelsResult.error) {
       return {
         error: `subagent ${validatedName}: launchModels ${launchModelsResult.error}`,
@@ -293,10 +241,10 @@ function parseSubagentConfig(subagentsRaw: unknown): {
     }
     const tools = toolsResult.tools;
     const launchModels = launchModelsResult.launchModels;
-    const riskLevel = spec.data.riskLevel;
+    const riskLevel = specRaw.riskLevel;
     const settings =
-      spec.data.reasoning !== undefined && spec.data.reasoning !== "none"
-        ? { reasoning: spec.data.reasoning }
+      specRaw.reasoning !== undefined && specRaw.reasoning !== "none"
+        ? { reasoning: specRaw.reasoning }
         : undefined;
 
     let modelObj: Model<Api> | undefined;
@@ -310,8 +258,8 @@ function parseSubagentConfig(subagentsRaw: unknown): {
     }
 
     const entry: SubagentPersonaConfig = {
-      systemPrompt: spec.data.systemPrompt,
-      ...(spec.data.description ? { description: spec.data.description } : {}),
+      systemPrompt: specRaw.systemPrompt,
+      ...(specRaw.description ? { description: specRaw.description } : {}),
       ...(modelObj ? { model: modelObj } : {}),
       ...(settings ? { settings } : {}),
       ...(tools !== undefined ? { tools } : {}),
@@ -330,19 +278,17 @@ function parsePersonaTools(toolsRaw: unknown): { tools?: Tool[]; error?: string 
     return {};
   }
 
-  const parsed = toolsSchema.safeParse(toolsRaw);
+  const parsed = TrimmedNonEmptyStringListSchema.safeParse(toolsRaw);
   if (!parsed.success) {
-    return { error: "tools must be a list of strings" };
+    return {
+      error:
+        parsed.error.issues[0]?.message === "entries must be non-empty strings"
+          ? "tools entries must be non-empty strings"
+          : "tools must be a list of strings",
+    };
   }
 
-  if (parsed.data === undefined) {
-    return {};
-  }
-
-  const cleaned = parsed.data.map((tool) => tool.trim().toLowerCase());
-  if (cleaned.some((name) => !name)) {
-    return { error: "tools entries must be non-empty strings" };
-  }
+  const cleaned = parsed.data.map((tool) => tool.toLowerCase());
 
   if (cleaned.length === 0) {
     return { tools: [] };
@@ -444,37 +390,6 @@ function listJsonFiles(dir: string, deps: ConfigDeps): JsonPathsResult {
   }
 }
 
-function listSkillFiles(dir: string, deps: ConfigDeps): MarkdownPathsResult {
-  let entries: string[];
-  try {
-    entries = deps.fs.listDir(dir);
-  } catch {
-    return { paths: [], errors: [`failed to read directory: ${dir}`] };
-  }
-
-  const paths: string[] = [];
-
-  for (const entry of entries) {
-    const skillDir = join(dir, entry);
-
-    let isDir = false;
-    try {
-      isDir = deps.fs.stat(skillDir).isDirectory();
-    } catch {
-      continue;
-    }
-
-    if (!isDir) continue;
-
-    const filePath = join(skillDir, "SKILL.md");
-    if (!deps.fs.exists(filePath)) continue;
-
-    paths.push(filePath);
-  }
-
-  return { paths, errors: [] };
-}
-
 function loadEntries(
   dir: string,
   deps: ConfigDeps,
@@ -550,8 +465,6 @@ const promptFrontMatterSchema = z
   })
   .passthrough();
 
-const toolsSchema = z.array(z.string()).optional();
-
 const PERSONA_TOOL_DEFINITIONS = new Map([
   [TOOL_NAME_BASH, BASH_TOOL],
   [TOOL_NAME_WRITE, WRITE_TOOL],
@@ -577,9 +490,12 @@ function parsePersona(
   source: "user" | "project",
   basePersonasById?: Map<string, Persona>,
 ): { persona?: Persona; error?: string } {
-  const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
+  const markdownResult = parseMarkdownFrontMatter(content);
+  if (!markdownResult.ok) {
+    return { error: `${file}: ${markdownResult.message}. skipped.` };
+  }
 
-  const parsedFrontMatter = personaFrontMatterSchema.safeParse(frontMatter);
+  const parsedFrontMatter = personaFrontMatterSchema.safeParse(markdownResult.frontMatter);
   if (!parsedFrontMatter.success) {
     return { error: `${file}: missing required fields (id, provider, model). skipped.` };
   }
@@ -702,7 +618,9 @@ function parsePersona(
 
   const finalLabel = label || basePersona?.label || "custom";
   const finalDescription = description ?? basePersona?.description;
-  const finalSystemPrompt = body.trim() ? body : (basePersona?.systemPrompt ?? body);
+  const finalSystemPrompt = markdownResult.body.trim()
+    ? markdownResult.body
+    : (basePersona?.systemPrompt ?? markdownResult.body);
 
   const finalAllowedReasoningLevels =
     allowedReasoningLevels && allowedReasoningLevels.length > 0
@@ -727,9 +645,12 @@ function parsePersona(
 }
 
 function parsePrompt(file: string, content: string): { prompt?: PromptTemplate; error?: string } {
-  const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
+  const markdownResult = parseMarkdownFrontMatter(content);
+  if (!markdownResult.ok) {
+    return { error: `${file}: ${markdownResult.message}. skipped.` };
+  }
 
-  const parsedFrontMatter = promptFrontMatterSchema.safeParse(frontMatter);
+  const parsedFrontMatter = promptFrontMatterSchema.safeParse(markdownResult.frontMatter);
   if (!parsedFrontMatter.success) {
     return { error: `${file}: missing required field 'id'. skipped.` };
   }
@@ -744,7 +665,7 @@ function parsePrompt(file: string, content: string): { prompt?: PromptTemplate; 
 
   const prompt: PromptTemplate = {
     id,
-    template: body,
+    template: markdownResult.body,
     ...(label && { label }),
     ...(description && { description }),
   };
@@ -1035,121 +956,11 @@ export async function loadProjectThemes(args?: {
   return { themes, errors };
 }
 
-function loadSkillsFromDir(dir: string, deps: ConfigDeps): { skills: Skill[]; errors: string[] } {
-  const { entries, errors } = loadMarkdownEntries(dir, deps, listSkillFiles);
-  const skills: Skill[] = [];
-
-  for (const entry of entries) {
-    const result = parseSkill(entry.path, entry.content);
-    if (result.skill) {
-      skills.push(result.skill);
-    } else if (result.error) {
-      errors.push(result.error);
-    }
-  }
-
-  return { skills, errors };
-}
-
-export async function loadUserSkills(args?: {
-  deps?: ConfigDeps;
-  levels?: ConfigLevel[];
-  cwd?: string;
-}): Promise<{
-  skills: Skill[];
-  errors: string[];
-}> {
-  const { deps, levels } = resolveContentContext({
-    deps: args?.deps,
-    levels: args?.levels,
-    cwd: args?.cwd,
-  });
-  const globalLevel = levels.find((level) => level.scope === "global");
-  if (!globalLevel) {
-    return { skills: [], errors: [] };
-  }
-
-  const skills: Skill[] = [];
-  const errors: string[] = [];
-  const skillDirs = [globalLevel.skillsDir, globalLevel.agentsSkillsDir];
-
-  for (const dir of skillDirs) {
-    const result = loadSkillsFromDir(dir, deps);
-    skills.push(...result.skills);
-    errors.push(...result.errors);
-  }
-
-  return { skills, errors };
-}
-
-export async function loadProjectSkills(args?: {
-  cwd?: string;
-  deps?: ConfigDeps;
-  levels?: ConfigLevel[];
-}): Promise<{
-  skills: Skill[];
-  errors: string[];
-}> {
-  const { deps, levels } = resolveContentContext({
-    deps: args?.deps,
-    levels: args?.levels,
-    cwd: args?.cwd,
-  });
-  const projectLevels = levels.filter((level) => level.scope === "project");
-  if (projectLevels.length === 0) {
-    return { skills: [], errors: [] };
-  }
-
-  const skills: Skill[] = [];
-  const errors: string[] = [];
-
-  // Parent-first order, closest directory wins on conflicts.
-  for (const level of projectLevels) {
-    const skillDirs = [level.skillsDir, level.agentsSkillsDir];
-
-    for (const dir of skillDirs) {
-      const result = loadSkillsFromDir(dir, deps);
-      skills.push(...result.skills);
-      errors.push(...result.errors);
-    }
-  }
-
-  return { skills, errors };
-}
-
 export async function loadSkillsContent(
   config?: Config,
   options?: { cwd?: string; deps?: ConfigDeps; levels?: ConfigLevel[] },
 ): Promise<{ skills: Skill[]; errors: string[] }> {
-  const { deps, levels } = resolveContentContext({
-    deps: options?.deps,
-    levels: options?.levels,
-    cwd: options?.cwd,
-  });
-
-  const virtualBundle = buildVirtualBundle(config ?? {}, deps);
-  const userSkillsResult = await loadUserSkills({ deps, levels });
-  const projectSkillsResult = await loadProjectSkills({ deps, levels });
-
-  const skillsByName = new Map<string, Skill>();
-  for (const skill of virtualBundle.skills) {
-    skillsByName.set(skill.name.toLowerCase(), skill);
-  }
-  for (const skill of userSkillsResult.skills) {
-    skillsByName.set(skill.name.toLowerCase(), skill);
-  }
-  for (const skill of projectSkillsResult.skills) {
-    skillsByName.set(skill.name.toLowerCase(), skill);
-  }
-
-  const skills = Array.from(skillsByName.values()).sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-  );
-
-  return {
-    skills,
-    errors: [...userSkillsResult.errors, ...projectSkillsResult.errors],
-  };
+  return loadCanonicalSkillsContent(config, options);
 }
 
 export async function loadAllContent(

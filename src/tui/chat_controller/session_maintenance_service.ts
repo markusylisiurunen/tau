@@ -32,6 +32,19 @@ type EditPruneSummary = {
   bytesRemoved: number;
 };
 
+type PrunePreparation = {
+  candidates: ToolResultPruneCandidate[];
+  totalTokens: number;
+  targetTokens: number;
+};
+
+type ToolResultContentInspection = {
+  text: string;
+  textBytes: number;
+  hasImage: boolean;
+  firstText?: string;
+};
+
 export type MaintenanceTaskOutcome<T> = {
   aborted: boolean;
   value?: T;
@@ -160,92 +173,26 @@ export class SessionMaintenanceService {
       return;
     }
 
-    const candidates: ToolResultPruneCandidate[] = [];
-    let totalTokens = 0;
-
-    for (let index = 0; index < history.length; index++) {
-      const message = history[index];
-      if (message?.role !== "toolResult") continue;
-      const toolResult = message as ToolResultMessage;
-      if (toolResult.toolName !== TOOL_NAME_BASH) {
-        continue;
-      }
-      const info = this.getToolResultContentInfo(toolResult);
-      if (info.firstText?.startsWith(PRUNED_TOOL_RESULT_PREFIX)) {
-        continue;
-      }
-      if (info.hasImage) {
-        continue;
-      }
-      const tokens = bytesToTokens(info.bytes);
-      candidates.push({
-        index,
-        toolResult,
-        bytes: info.bytes,
-        tokens,
-        order: candidates.length,
-      });
-      totalTokens += tokens;
-    }
-
-    if (candidates.length === 0 || totalTokens === 0) {
-      if (this.hasAnyPrunedEditChanges(editSummary)) {
-        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
-      } else {
-        this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
-      }
+    const prune = this.preparePruneCandidates(history, fraction);
+    if (prune.candidates.length === 0 || prune.totalTokens === 0) {
+      this.reportPruneNoop(editSummary, "no bash tool results or edit tool calls to prune.");
       return;
     }
 
-    const targetTokens = Math.ceil(totalTokens * fraction);
-    if (targetTokens <= 0) {
-      if (this.hasAnyPrunedEditChanges(editSummary)) {
-        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
-      } else {
-        this.view.addSystemMessage("prune fraction is too small to remove anything.", "warn");
-      }
+    if (prune.targetTokens <= 0) {
+      this.reportPruneNoop(editSummary, "prune fraction is too small to remove anything.");
       return;
     }
 
-    const ordered =
-      strategy === "largest"
-        ? [...candidates].sort(
-            (a, b) => b.tokens - a.tokens || b.bytes - a.bytes || a.order - b.order,
-          )
-        : candidates;
-
-    const toPrune: ToolResultPruneCandidate[] = [];
-    let prunedTokens = 0;
-    let prunedBytes = 0;
-
-    for (const candidate of ordered) {
-      if (prunedTokens >= targetTokens) break;
-      toPrune.push(candidate);
-      prunedTokens += candidate.tokens;
-      prunedBytes += candidate.bytes;
-    }
-
+    const toPrune = this.selectPruneCandidatesByStrategy(prune, strategy);
     if (toPrune.length === 0) {
-      if (this.hasAnyPrunedEditChanges(editSummary)) {
-        this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
-      } else {
-        this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
-      }
+      this.reportPruneNoop(editSummary, "no bash tool results or edit tool calls to prune.");
       return;
     }
 
-    for (const candidate of toPrune) {
-      const noticeText = this.buildPrunedToolResultNotice(candidate.toolResult, candidate.bytes);
-      const prunedResult: ToolResultMessage = {
-        ...candidate.toolResult,
-        content: [{ type: "text", text: noticeText }],
-      };
-      this.engine.replaceMessage(candidate.index, prunedResult);
-      this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, noticeText);
-    }
-
+    const applied = this.applyBashPruneCandidates(toPrune);
     this.view.addSystemMessage(
-      this.buildPruneSummaryMessage(editSummary, toPrune.length, prunedBytes),
+      this.buildPruneSummaryMessage(editSummary, applied.resultsPruned, applied.bytesPruned),
       "success",
     );
   }
@@ -270,6 +217,7 @@ export class SessionMaintenanceService {
     }
 
     try {
+      const prune = this.preparePruneCandidates(history, fraction);
       let editSummary: EditPruneSummary | undefined;
       const getEditSummary = (): EditPruneSummary => {
         if (!editSummary) {
@@ -278,52 +226,13 @@ export class SessionMaintenanceService {
         return editSummary;
       };
 
-      const candidates: ToolResultPruneCandidate[] = [];
-      let totalTokens = 0;
-
-      for (let index = 0; index < history.length; index++) {
-        const message = history[index];
-        if (message?.role !== "toolResult") continue;
-        const toolResult = message as ToolResultMessage;
-        if (toolResult.toolName !== TOOL_NAME_BASH) {
-          continue;
-        }
-        const details = this.getToolResultContentDetails(toolResult);
-        if (details.firstText?.startsWith(PRUNED_TOOL_RESULT_PREFIX)) {
-          continue;
-        }
-        if (details.hasImage) {
-          continue;
-        }
-        const tokens = bytesToTokens(details.bytes);
-        candidates.push({
-          index,
-          toolResult,
-          bytes: details.bytes,
-          tokens,
-          order: candidates.length,
-        });
-        totalTokens += tokens;
-      }
-
-      if (candidates.length === 0 || totalTokens === 0) {
-        const summary = getEditSummary();
-        if (this.hasAnyPrunedEditChanges(summary)) {
-          this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
-        } else {
-          this.view.addSystemMessage("no bash tool results or edit tool calls to prune.", "warn");
-        }
+      if (prune.candidates.length === 0 || prune.totalTokens === 0) {
+        this.reportPruneNoop(getEditSummary(), "no bash tool results or edit tool calls to prune.");
         return;
       }
 
-      const targetTokens = Math.ceil(totalTokens * fraction);
-      if (targetTokens <= 0) {
-        const summary = getEditSummary();
-        if (this.hasAnyPrunedEditChanges(summary)) {
-          this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
-        } else {
-          this.view.addSystemMessage("prune fraction is too small to remove anything.", "warn");
-        }
+      if (prune.targetTokens <= 0) {
+        this.reportPruneNoop(getEditSummary(), "prune fraction is too small to remove anything.");
         return;
       }
 
@@ -334,53 +243,36 @@ export class SessionMaintenanceService {
         async (signal) => {
           const prompt = this.buildSmartPrunePrompt({
             history,
-            targetTokens,
+            targetTokens: prune.targetTokens,
             guidance: parsed.guidance,
           });
 
           const selection = await this.requestSmartPruneSelection(prompt, signal);
           if (selection.length === 0) {
-            const summary = getEditSummary();
-            if (this.hasAnyPrunedEditChanges(summary)) {
-              this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
-            } else {
-              this.view.addSystemMessage("model returned no prune candidates.", "warn");
-            }
+            this.reportPruneNoop(getEditSummary(), "model returned no prune candidates.");
             return;
           }
 
-          const toPrune = this.selectSmartPruneCandidates(selection, candidates, targetTokens);
+          const toPrune = this.selectSmartPruneCandidates(
+            selection,
+            prune.candidates,
+            prune.targetTokens,
+          );
           if (toPrune.length === 0) {
-            const summary = getEditSummary();
-            if (this.hasAnyPrunedEditChanges(summary)) {
-              this.view.addSystemMessage(this.buildPruneSummaryMessage(summary), "success");
-            } else {
-              this.view.addSystemMessage(
-                "no bash tool results or edit tool calls to prune.",
-                "warn",
-              );
-            }
+            this.reportPruneNoop(
+              getEditSummary(),
+              "no bash tool results or edit tool calls to prune.",
+            );
             return;
           }
 
-          const summary = getEditSummary();
-          let prunedBytes = 0;
-          for (const candidate of toPrune) {
-            prunedBytes += candidate.bytes;
-            const noticeText = this.buildPrunedToolResultNotice(
-              candidate.toolResult,
-              candidate.bytes,
-            );
-            const prunedResult: ToolResultMessage = {
-              ...candidate.toolResult,
-              content: [{ type: "text", text: noticeText }],
-            };
-            this.engine.replaceMessage(candidate.index, prunedResult);
-            this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, noticeText);
-          }
-
+          const applied = this.applyBashPruneCandidates(toPrune);
           this.view.addSystemMessage(
-            this.buildPruneSummaryMessage(summary, toPrune.length, prunedBytes),
+            this.buildPruneSummaryMessage(
+              getEditSummary(),
+              applied.resultsPruned,
+              applied.bytesPruned,
+            ),
             "success",
           );
         },
@@ -454,6 +346,98 @@ export class SessionMaintenanceService {
     }
 
     return { fraction: DEFAULT_PRUNE_FRACTION, guidance: trimmed };
+  }
+
+  private preparePruneCandidates(history: readonly Message[], fraction: number): PrunePreparation {
+    const candidates: ToolResultPruneCandidate[] = [];
+    let totalTokens = 0;
+
+    for (let index = 0; index < history.length; index++) {
+      const message = history[index];
+      if (message?.role !== "toolResult") {
+        continue;
+      }
+
+      const toolResult = message as ToolResultMessage;
+      if (toolResult.toolName !== TOOL_NAME_BASH) {
+        continue;
+      }
+
+      const inspection = this.inspectToolResultContent(toolResult);
+      if (inspection.firstText?.startsWith(PRUNED_TOOL_RESULT_PREFIX) || inspection.hasImage) {
+        continue;
+      }
+
+      const tokens = bytesToTokens(inspection.textBytes);
+      candidates.push({
+        index,
+        toolResult,
+        bytes: inspection.textBytes,
+        tokens,
+        order: candidates.length,
+      });
+      totalTokens += tokens;
+    }
+
+    return {
+      candidates,
+      totalTokens,
+      targetTokens: Math.ceil(totalTokens * fraction),
+    };
+  }
+
+  private selectPruneCandidatesByStrategy(
+    prune: PrunePreparation,
+    strategy: "earliest" | "largest",
+  ): ToolResultPruneCandidate[] {
+    const ordered =
+      strategy === "largest"
+        ? [...prune.candidates].sort(
+            (a, b) => b.tokens - a.tokens || b.bytes - a.bytes || a.order - b.order,
+          )
+        : prune.candidates;
+
+    const selected: ToolResultPruneCandidate[] = [];
+    let selectedTokens = 0;
+
+    for (const candidate of ordered) {
+      if (selectedTokens >= prune.targetTokens) {
+        break;
+      }
+      selected.push(candidate);
+      selectedTokens += candidate.tokens;
+    }
+
+    return selected;
+  }
+
+  private applyBashPruneCandidates(candidates: ToolResultPruneCandidate[]): {
+    resultsPruned: number;
+    bytesPruned: number;
+  } {
+    let bytesPruned = 0;
+
+    for (const candidate of candidates) {
+      bytesPruned += candidate.bytes;
+      const noticeText = this.buildPrunedToolResultNotice(candidate.toolResult, candidate.bytes);
+      const prunedResult: ToolResultMessage = {
+        ...candidate.toolResult,
+        content: [{ type: "text", text: noticeText }],
+      };
+      this.engine.replaceMessage(candidate.index, prunedResult);
+      this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, noticeText);
+    }
+
+    return { resultsPruned: candidates.length, bytesPruned };
+  }
+
+  private reportPruneNoop(editSummary: EditPruneSummary, fallbackMessage: string): void {
+    if (this.hasAnyPrunedEditChanges(editSummary)) {
+      this.view.addSystemMessage(this.buildPruneSummaryMessage(editSummary), "success");
+      return;
+    }
+
+    this.view.addSystemMessage(fallbackMessage, "warn");
   }
 
   private hasAnyPrunedEditChanges(summary: EditPruneSummary): boolean {
@@ -586,8 +570,8 @@ export class SessionMaintenanceService {
         continue;
       }
 
-      const info = this.getToolResultContentInfo(toolResult);
-      if (info.firstText?.startsWith(PRUNED_EDIT_RESULT_PREFIX)) {
+      const inspection = this.inspectToolResultContent(toolResult);
+      if (inspection.firstText?.startsWith(PRUNED_EDIT_RESULT_PREFIX)) {
         continue;
       }
 
@@ -658,39 +642,9 @@ export class SessionMaintenanceService {
     });
   }
 
-  private getToolResultContentInfo(toolResult: ToolResultMessage): {
-    bytes: number;
-    hasImage: boolean;
-    firstText?: string;
-  } {
-    let bytes = 0;
-    let hasImage = false;
-    let firstText: string | undefined;
-
-    for (const block of toolResult.content) {
-      if (block.type === "text") {
-        if (firstText === undefined) {
-          firstText = block.text;
-        }
-        bytes += Buffer.byteLength(block.text, "utf8");
-        continue;
-      }
-
-      if (block.type === "image") {
-        hasImage = true;
-      }
-    }
-
-    return { bytes, hasImage, firstText };
-  }
-
-  private getToolResultContentDetails(toolResult: ToolResultMessage): {
-    text: string;
-    bytes: number;
-    hasImage: boolean;
-    firstText?: string;
-  } {
+  private inspectToolResultContent(toolResult: ToolResultMessage): ToolResultContentInspection {
     const parts: string[] = [];
+    let textBytes = 0;
     let hasImage = false;
     let firstText: string | undefined;
 
@@ -700,6 +654,7 @@ export class SessionMaintenanceService {
           firstText = block.text;
         }
         parts.push(block.text);
+        textBytes += Buffer.byteLength(block.text, "utf8");
         continue;
       }
 
@@ -708,10 +663,9 @@ export class SessionMaintenanceService {
       }
     }
 
-    const text = parts.join("\n").trimEnd();
     return {
-      text,
-      bytes: Buffer.byteLength(text, "utf8"),
+      text: parts.join("\n").trimEnd(),
+      textBytes,
       hasImage,
       firstText,
     };
@@ -833,16 +787,16 @@ export class SessionMaintenanceService {
     const lines: string[] = [];
     const name = this.escapeXmlAttribute(toolResult.toolName);
     const toolCallId = this.escapeXmlAttribute(toolResult.toolCallId);
-    const details = this.getToolResultContentDetails(toolResult);
+    const inspection = this.inspectToolResultContent(toolResult);
 
-    if (details.hasImage) {
+    if (inspection.hasImage) {
       lines.push(`<tool-result name="${name}" tool_call_id="${toolCallId}">`);
       lines.push("<preview>[image omitted]</preview>");
       lines.push("</tool-result>");
       return lines;
     }
 
-    const preview = this.buildPruneToolResultPreview(details.text);
+    const preview = this.buildPruneToolResultPreview(inspection.text);
     lines.push(
       `<tool-result name="${name}" tool_call_id="${toolCallId}" total_tokens="${preview.totalTokens}">`,
     );

@@ -22,16 +22,13 @@ export {
 } from "./cron.js";
 export type { AsyncDaemonRuntimeHandle, StartAsyncDaemonRuntimeOptions } from "./daemon_runtime.js";
 export { AsyncDaemonRuntimeError, startAsyncDaemonRuntime } from "./daemon_runtime.js";
-export type {
-  AsyncHttpCreateSessionRequest,
-  AsyncHttpErrorResponse,
-  AsyncHttpSendMessageRequest,
-  AsyncHttpSuccessResponse,
-} from "./http_protocol.js";
 export {
-  isRecord,
+  AsyncHttpRequestParseError,
+  decodeAsyncHttpRoute,
+  parseCreateSessionBody,
+  parseCronRunsQuery,
+  parseSendMessageBody,
   readJsonBody,
-  readStringField,
   sendError,
   sendJson,
   sendOk,

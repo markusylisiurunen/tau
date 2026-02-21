@@ -156,4 +156,84 @@ describe("SessionMaintenanceService", () => {
       kind: "error",
     });
   });
+
+  it("applies edit pruning when smart selection is empty", async () => {
+    const history = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "edit-call-1",
+            name: TOOL_NAME_EDIT,
+            arguments: {
+              path: "src/example.ts",
+              oldText: "before",
+              newText: "after",
+            },
+          },
+        ],
+        timestamp: 1,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "edit-call-1",
+        toolName: TOOL_NAME_EDIT,
+        content: [{ type: "text", text: "successfully edited src/example.ts" }],
+        isError: false,
+        timestamp: 2,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "bash-call-1",
+        toolName: TOOL_NAME_BASH,
+        content: [{ type: "text", text: "bash output" }],
+        isError: false,
+        timestamp: 3,
+      },
+    ];
+
+    const { service, viewMessages } = createService({
+      history,
+      requestSmartPruneSelection: async () => [],
+    });
+
+    await service.pruneToolResultsSmart();
+
+    const toolCall = history[0].content[0];
+    expect(toolCall.arguments.oldText).toBe("[content pruned]");
+    expect(toolCall.arguments.newText).toBe("[content pruned]");
+    expect(viewMessages.at(-1)).toEqual({
+      text: expect.stringContaining("pruned 1 edit tool call"),
+      kind: "success",
+    });
+  });
+
+  it("prunes largest bash result first", () => {
+    const history = [
+      {
+        role: "toolResult",
+        toolCallId: "bash-call-1",
+        toolName: TOOL_NAME_BASH,
+        content: [{ type: "text", text: "tiny" }],
+        isError: false,
+        timestamp: 1,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "bash-call-2",
+        toolName: TOOL_NAME_BASH,
+        content: [{ type: "text", text: "very large output\n".repeat(200) }],
+        isError: false,
+        timestamp: 2,
+      },
+    ];
+
+    const { service } = createService({ history });
+
+    service.pruneToolResults("largest", "0.5");
+
+    expect(history[0].content[0].text).toBe("tiny");
+    expect(history[1].content[0].text).toContain("[tool result pruned] bash output removed");
+  });
 });

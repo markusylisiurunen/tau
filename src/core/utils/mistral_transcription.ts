@@ -1,8 +1,13 @@
+import { z } from "zod";
+
 const MISTRAL_TRANSCRIPTION_URL = "https://api.mistral.ai/v1/audio/transcriptions";
 const DEFAULT_MISTRAL_TRANSCRIPTION_MODEL = "voxtral-mini-latest";
 const DEFAULT_MISTRAL_LANGUAGE = "en";
 const DEFAULT_MISTRAL_AUDIO_MIME_TYPE = "audio/wav";
 const DEFAULT_MISTRAL_AUDIO_FILE_NAME = "speech.wav";
+
+const errorSchema = z.object({ message: z.string() });
+const successSchema = z.object({ text: z.string() });
 
 export type MistralTranscriptionOptions = {
   apiKey: string;
@@ -39,33 +44,21 @@ export async function transcribeMistralAudio(
     body: formData,
   });
 
-  let payload: unknown;
   const responseText = await response.text();
-  if (responseText) {
-    try {
-      payload = JSON.parse(responseText) as unknown;
-    } catch {
-      payload = undefined;
-    }
+  let payload: unknown;
+  try {
+    payload = responseText ? JSON.parse(responseText) : undefined;
+  } catch {
+    payload = undefined;
   }
 
   if (!response.ok) {
-    const fromObject =
-      payload && typeof payload === "object" && "message" in payload
-        ? (payload as Record<string, unknown>).message
-        : undefined;
-    const fromString = typeof fromObject === "string" ? fromObject : undefined;
-    const fallback = responseText.trim() || `HTTP ${response.status}`;
-    throw new Error(fromString || fallback);
+    const parsed = errorSchema.safeParse(payload);
+    throw new Error(
+      parsed.success ? parsed.data.message : responseText.trim() || `HTTP ${response.status}`,
+    );
   }
 
-  const text =
-    payload && typeof payload === "object" && "text" in payload
-      ? (payload as Record<string, unknown>).text
-      : undefined;
-  if (typeof text !== "string") {
-    return "";
-  }
-
-  return text;
+  const parsed = successSchema.safeParse(payload);
+  return parsed.success ? parsed.data.text : "";
 }

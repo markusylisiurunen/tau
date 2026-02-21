@@ -272,4 +272,48 @@ describe("custom personas", () => {
       fx.cleanup();
     }
   });
+
+  it("surfaces persona frontmatter YAML parse errors", async () => {
+    const fx = setupFixture();
+
+    try {
+      const personasDir = join(fx.home, ".config", "tau", "personas");
+      mkdirSync(personasDir, { recursive: true });
+      writeFileSync(
+        join(personasDir, "broken.md"),
+        ["---", "id broken", "provider: anthropic", "model: claude-haiku-4-5", "---"].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+
+      expect(personas.find((persona) => persona.id === "broken")).toBeUndefined();
+      expect(errors.some((error) => error.includes("invalid frontmatter YAML"))).toBe(true);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("surfaces prompt frontmatter non-object errors", async () => {
+    const fx = setupFixture();
+
+    try {
+      const promptsDir = join(fx.home, ".config", "tau", "prompts");
+      mkdirSync(promptsDir, { recursive: true });
+      writeFileSync(
+        join(promptsDir, "broken.md"),
+        ["---", "- not", "- an", "- object", "---", "hello"].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { prompts, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+
+      expect(prompts.find((prompt) => prompt.id === "broken")).toBeUndefined();
+      expect(errors.some((error) => error.includes("frontmatter must be a YAML object"))).toBe(
+        true,
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
 });

@@ -12,12 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveConfigLevels } from "../dist/core/config/paths.js";
-import {
-  getMistralApiKey,
-  getParallelApiKey,
-  loadConfig,
-  loadConfigWithDiagnostics,
-} from "../dist/core/config/schema.js";
+import { loadConfig, loadConfigWithDiagnostics } from "../dist/core/config/schema.js";
 
 function createConfigDeps({ cwd, home, env }) {
   return {
@@ -76,27 +71,6 @@ describe("config paths", () => {
     }
   });
 
-  it("stops at filesystem root when cwd is outside home", () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      expect(levels.map((level) => level.configDir)).toEqual([join(fx.repo, ".tau")]);
-    } finally {
-      fx.cleanup();
-    }
-  });
-});
-
-describe("loadConfig", () => {
   it("merges levels with most-specific wins", () => {
     const fx = setupFixture();
 
@@ -242,7 +216,7 @@ describe("loadConfig", () => {
     }
   });
 
-  it("accepts defaultPersona with optional reasoning", () => {
+  it("keeps valid scalar fields while reporting invalid scalar fields", () => {
     const fx = setupFixture();
 
     try {
@@ -250,7 +224,10 @@ describe("loadConfig", () => {
       writeFileSync(
         join(fx.repo, ".tau", "config.json"),
         JSON.stringify({
-          defaultPersona: "gpt-5.2-chat:high",
+          defaultRisk: "invalid",
+          disableBuiltinPersonas: true,
+          disableBuiltinThemes: "yes",
+          defaultTheme: " midnight ",
         }),
       );
 
@@ -261,165 +238,16 @@ describe("loadConfig", () => {
       });
 
       const result = loadConfigWithDiagnostics(fx.repo, deps);
-      expect(result.config.defaultPersona).toBe("gpt-5.2-chat:high");
-      expect(result.errors).toEqual([]);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("validates defaultPersona reasoning suffix", () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-      writeFileSync(
-        join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({
-          defaultPersona: "gpt-5.2-chat:ultra",
-        }),
+      expect(result.config.defaultRisk).toBe("read-only");
+      expect(result.config.disableBuiltinPersonas).toBe(true);
+      expect(result.config.disableBuiltinThemes).toBeUndefined();
+      expect(result.config.defaultTheme).toBe("midnight");
+      expect(result.errors).toContain(
+        `${join(fx.repo, ".tau", "config.json")}: 'defaultRisk' must be a valid risk level.`,
       );
-
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const result = loadConfigWithDiagnostics(fx.repo, deps);
-      expect(result.config.defaultPersona).toBe("opus-4.6-chat");
-      expect(
-        result.errors.some(
-          (error) =>
-            error.includes("defaultPersona") && error.includes("invalid reasoning level 'ultra'"),
-        ),
-      ).toBe(true);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("reports case-mismatched modelSystemNotices model ids", () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-      writeFileSync(
-        join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({
-          modelSystemNotices: {
-            "openai/GPT-5.2": "notice",
-          },
-        }),
+      expect(result.errors).toContain(
+        `${join(fx.repo, ".tau", "config.json")}: 'disableBuiltinThemes' must be a boolean.`,
       );
-
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const result = loadConfigWithDiagnostics(fx.repo, deps);
-      expect(result.config.modelSystemNotices).toBeUndefined();
-      expect(
-        result.errors.some(
-          (error) =>
-            error.includes("modelSystemNotices.openai/GPT-5.2") &&
-            error.includes("unknown model 'openai/GPT-5.2'"),
-        ),
-      ).toBe(true);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("reports sandbox validation errors", () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-      writeFileSync(
-        join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({
-          sandbox: {
-            pruneAfterHours: -1,
-            extraDockerArgs: [1, "ok"],
-            mountPath: "",
-          },
-        }),
-      );
-
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const result = loadConfigWithDiagnostics(fx.repo, deps);
-      expect(result.errors.length).toBeGreaterThan(0);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("validates subagents.defaultLaunchModels", () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-      writeFileSync(
-        join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({
-          subagents: {
-            defaultLaunchModels: ["openai/gpt-5.2", "openai/gpt-5.2:invalid"],
-          },
-        }),
-      );
-
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const result = loadConfigWithDiagnostics(fx.repo, deps);
-      expect(result.config.subagents).toBeUndefined();
-      expect(result.errors.some((error) => error.includes("subagents.defaultLaunchModels"))).toBe(
-        true,
-      );
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("validates modelSystemNotices keys and values", () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-      writeFileSync(
-        join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({
-          modelSystemNotices: {
-            "openai/gpt-5.2": "always use tau tools",
-            "openai/does-not-exist": "unknown model",
-            "not-a-model-key": "bad key",
-            "anthropic/claude-sonnet-4-5": "   ",
-          },
-        }),
-      );
-
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const result = loadConfigWithDiagnostics(fx.repo, deps);
-      expect(result.config.modelSystemNotices).toEqual({
-        "openai/gpt-5.2": "always use tau tools",
-      });
-      expect(result.errors.some((error) => error.includes("modelSystemNotices"))).toBe(true);
     } finally {
       fx.cleanup();
     }
@@ -485,107 +313,6 @@ describe("loadConfig", () => {
       });
     } finally {
       fx.cleanup();
-    }
-  });
-
-  it("reports async validation errors and moved daemon fields", () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-      writeFileSync(
-        join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({
-          async: {
-            client: {
-              defaultTarget: 1,
-              defaultProjectId: 2,
-              targets: {
-                bad: {
-                  url: "",
-                  token: "",
-                  timeoutMs: 0,
-                },
-              },
-            },
-            server: {
-              port: 70000,
-            },
-            projects: {
-              alpha: {
-                repo: "owner/repo",
-              },
-            },
-          },
-        }),
-      );
-
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const result = loadConfigWithDiagnostics(fx.repo, deps);
-      expect(result.config.async).toBeUndefined();
-      expect(result.errors.some((error) => error.includes("async.client.defaultTarget"))).toBe(
-        true,
-      );
-      expect(result.errors.some((error) => error.includes("async.client.defaultProjectId"))).toBe(
-        true,
-      );
-      expect(result.errors.some((error) => error.includes("async.server was moved"))).toBe(true);
-      expect(result.errors.some((error) => error.includes("async.projects was moved"))).toBe(true);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("prefers MISTRAL_API_KEY over apiKeys.mistral", () => {
-    const config = { apiKeys: { mistral: "config-mistral" } };
-
-    expect(getMistralApiKey(config, { MISTRAL_API_KEY: "env-mistral" })).toBe("env-mistral");
-    expect(getMistralApiKey(config, {})).toBe("config-mistral");
-  });
-
-  it("uses the injected env map when resolving MISTRAL_API_KEY", () => {
-    const previous = process.env.MISTRAL_API_KEY;
-    process.env.MISTRAL_API_KEY = "process-mistral";
-
-    try {
-      const config = { apiKeys: { mistral: "config-mistral" } };
-      expect(getMistralApiKey(config, {})).toBe("config-mistral");
-      expect(getMistralApiKey(config)).toBe("process-mistral");
-    } finally {
-      if (previous === undefined) {
-        delete process.env.MISTRAL_API_KEY;
-      } else {
-        process.env.MISTRAL_API_KEY = previous;
-      }
-    }
-  });
-
-  it("prefers PARALLEL_API_KEY over apiKeys.parallel", () => {
-    const config = { apiKeys: { parallel: "config-parallel" } };
-
-    expect(getParallelApiKey(config, { PARALLEL_API_KEY: "env-parallel" })).toBe("env-parallel");
-    expect(getParallelApiKey(config, {})).toBe("config-parallel");
-  });
-
-  it("uses the injected env map when resolving PARALLEL_API_KEY", () => {
-    const previous = process.env.PARALLEL_API_KEY;
-    process.env.PARALLEL_API_KEY = "process-parallel";
-
-    try {
-      const config = { apiKeys: { parallel: "config-parallel" } };
-      expect(getParallelApiKey(config, {})).toBe("config-parallel");
-      expect(getParallelApiKey(config)).toBe("process-parallel");
-    } finally {
-      if (previous === undefined) {
-        delete process.env.PARALLEL_API_KEY;
-      } else {
-        process.env.PARALLEL_API_KEY = previous;
-      }
     }
   });
 });

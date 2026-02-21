@@ -423,20 +423,13 @@ describe("spawn_agent tool", () => {
     const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-"));
     const projectRoot = join(tmpRoot, "project");
     const skillDir = join(projectRoot, ".tau", "skills", "scoped-skill");
-    const invalidSkillDir = join(projectRoot, ".tau", "skills", "bad--skill");
     const sourceDir = join(projectRoot, "src");
 
     mkdirSync(skillDir, { recursive: true });
-    mkdirSync(invalidSkillDir, { recursive: true });
     mkdirSync(sourceDir, { recursive: true });
     writeFileSync(
       join(skillDir, "SKILL.md"),
       ["---", "name: scoped-skill", "description: scoped helper", "---", "", "body"].join("\n"),
-      "utf-8",
-    );
-    writeFileSync(
-      join(invalidSkillDir, "SKILL.md"),
-      ["---", "name: bad--skill", "description: invalid helper", "---", "", "body"].join("\n"),
       "utf-8",
     );
     writeFileSync(join(projectRoot, "AGENTS.md"), "project context marker\n", "utf-8");
@@ -452,7 +445,7 @@ describe("spawn_agent tool", () => {
         includeAgentContext: true,
         persona: {
           ...base.context.persona,
-          skills: ["scoped-skill", "bad--skill"],
+          skills: ["scoped-skill"],
         },
       });
 
@@ -482,7 +475,56 @@ describe("spawn_agent tool", () => {
       expect(spawned[0].systemPrompt).toContain("project context marker");
       expect(spawned[0].systemPrompt).toContain("<available-skills>");
       expect(spawned[0].systemPrompt).toContain("<name>scoped-skill</name>");
-      expect(spawned[0].systemPrompt).not.toContain("<name>bad--skill</name>");
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports skill-loading diagnostics when workingDirectory prompt rebuild finds invalid skills", async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-invalid-skill-"));
+    const projectRoot = join(tmpRoot, "project");
+    const invalidSkillDir = join(projectRoot, ".tau", "skills", "bad--skill");
+    const sourceDir = join(projectRoot, "src");
+
+    mkdirSync(invalidSkillDir, { recursive: true });
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(
+      join(invalidSkillDir, "SKILL.md"),
+      ["---", "name: bad--skill", "description: invalid helper", "---", "", "body"].join("\n"),
+      "utf-8",
+    );
+
+    try {
+      const backend = createLocalToolExecutionBackend();
+      const tool = createSpawnAgentToolDefinition(backend);
+      const { context, spawned } = createContext({
+        cwd: sourceDir,
+        hostCwd: sourceDir,
+        home: tmpRoot,
+      });
+
+      const result = await tool.dispatch(
+        {
+          id: "call-9b",
+          name: TOOL_NAME_SPAWN_AGENT,
+          arguments: {
+            name: "researcher",
+            title: "research task",
+            prompt: "collect findings",
+            workingDirectory: "..",
+          },
+        },
+        "read-only",
+        undefined,
+        context,
+      );
+
+      expect(result.kind).toBe("single");
+      expect(result.toolResult.isError).toBe(true);
+      expect(getText(result.toolResult)).toContain("failed to build subagent prompt");
+      expect(getText(result.toolResult)).toContain("failed to load skills for prompt context");
+      expect(getText(result.toolResult)).toContain("invalid frontmatter");
+      expect(spawned).toHaveLength(0);
     } finally {
       rmSync(tmpRoot, { recursive: true, force: true });
     }

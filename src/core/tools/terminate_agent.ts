@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { SubagentResult } from "../subagents/control_plane.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { formatZodError } from "../utils/zod.js";
+import { parseToolArgs } from "../utils/zod.js";
 import type {
   ToolDefinition,
   ToolDispatchContext,
@@ -36,16 +36,6 @@ export const TERMINATE_AGENT_TOOL: Tool = {
 const terminateArgsSchema = z.object({
   id: z.string().trim().min(1),
 });
-
-function parseTerminateArgs(
-  raw: unknown,
-): { ok: true; data: { id: string } } | { ok: false; error: string } {
-  const parsed = terminateArgsSchema.safeParse(raw);
-  if (!parsed.success) {
-    return { ok: false, error: formatZodError(parsed.error) };
-  }
-  return { ok: true, data: parsed.data };
-}
 
 function formatTerminateResult(result: SubagentResult): string {
   const payload = {
@@ -92,9 +82,8 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
       signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
-      const parsedArgs = parseTerminateArgs(toolCall.arguments);
-      const id = parsedArgs.ok ? parsedArgs.data.id : "";
-      const headerTarget = id || "(invalid arguments)";
+      let id = "";
+      let headerTarget = "(invalid arguments)";
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -108,9 +97,13 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
         return { kind: "single", toolResult, uiEvent };
       };
 
+      const parsedArgs = parseToolArgs(terminateArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
         return blocked(`invalid arguments: ${parsedArgs.error}`);
       }
+
+      ({ id } = parsedArgs.data);
+      headerTarget = id;
 
       const controlPlane = context.subagentControlPlane;
       if (!controlPlane) {

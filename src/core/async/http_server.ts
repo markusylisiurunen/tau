@@ -8,11 +8,12 @@ import {
 import {
   AsyncHttpBodyParseError,
   AsyncHttpBodyTooLargeError,
-  type AsyncHttpCreateSessionRequest,
-  type AsyncHttpSendMessageRequest,
-  isRecord,
+  AsyncHttpRequestParseError,
+  decodeAsyncHttpRoute,
+  parseCreateSessionBody,
+  parseCronRunsQuery,
+  parseSendMessageBody,
   readJsonBody,
-  readStringField,
   sendError,
   sendOk,
 } from "./http_protocol.js";
@@ -37,17 +38,6 @@ export type AsyncHttpServerHandle = {
   close(): Promise<void>;
 };
 
-type SessionPathRoute =
-  | { route: "session"; sessionId: string }
-  | { route: "logs"; sessionId: string }
-  | { route: "messages"; sessionId: string }
-  | { route: "interrupt"; sessionId: string };
-
-type CronPathRoute =
-  | { route: "cron-jobs" }
-  | { route: "cron-runs" }
-  | { route: "cron-run"; jobId: string };
-
 function isAuthorized(request: IncomingMessage, authToken: string): boolean {
   const header = request.headers.authorization;
   if (typeof header !== "string") {
@@ -64,106 +54,6 @@ function isAuthorized(request: IncomingMessage, authToken: string): boolean {
   return timingSafeEqual(expected, received);
 }
 
-function decodePathSegment(value: string): string | undefined {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return undefined;
-  }
-}
-
-function parseSessionPath(pathname: string): SessionPathRoute | "invalid" | undefined {
-  const sessionMatch = /^\/v1\/sessions\/([^/]+)$/.exec(pathname);
-  if (sessionMatch) {
-    const segment = sessionMatch[1];
-    if (segment === undefined) {
-      return "invalid";
-    }
-
-    const sessionId = decodePathSegment(segment);
-    if (!sessionId) {
-      return "invalid";
-    }
-    return { route: "session", sessionId };
-  }
-
-  const logsMatch = /^\/v1\/sessions\/([^/]+)\/logs$/.exec(pathname);
-  if (logsMatch) {
-    const segment = logsMatch[1];
-    if (segment === undefined) {
-      return "invalid";
-    }
-
-    const sessionId = decodePathSegment(segment);
-    if (!sessionId) {
-      return "invalid";
-    }
-    return { route: "logs", sessionId };
-  }
-
-  const messagesMatch = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(pathname);
-  if (messagesMatch) {
-    const segment = messagesMatch[1];
-    if (segment === undefined) {
-      return "invalid";
-    }
-
-    const sessionId = decodePathSegment(segment);
-    if (!sessionId) {
-      return "invalid";
-    }
-    return { route: "messages", sessionId };
-  }
-
-  const interruptMatch = /^\/v1\/sessions\/([^/]+)\/interrupt$/.exec(pathname);
-  if (interruptMatch) {
-    const segment = interruptMatch[1];
-    if (segment === undefined) {
-      return "invalid";
-    }
-
-    const sessionId = decodePathSegment(segment);
-    if (!sessionId) {
-      return "invalid";
-    }
-    return { route: "interrupt", sessionId };
-  }
-
-  return undefined;
-}
-
-function parseCronPath(pathname: string): CronPathRoute | "invalid" | undefined {
-  if (pathname === "/v1/cron/jobs") {
-    return { route: "cron-jobs" };
-  }
-
-  if (pathname === "/v1/cron/runs") {
-    return { route: "cron-runs" };
-  }
-
-  const manualRunMatch = /^\/v1\/cron\/jobs\/([^/]+)\/run$/.exec(pathname);
-  if (manualRunMatch) {
-    const segment = manualRunMatch[1];
-    if (segment === undefined) {
-      return "invalid";
-    }
-
-    const jobId = decodePathSegment(segment);
-    if (!jobId) {
-      return "invalid";
-    }
-
-    return { route: "cron-run", jobId };
-  }
-
-  return undefined;
-}
-
-function hasOnlyKeys(source: Record<string, unknown>, allowedKeys: string[]): boolean {
-  const allowed = new Set(allowedKeys);
-  return Object.keys(source).every((key) => allowed.has(key));
-}
-
 function mapSessionErrorStatus(error: AsyncSessionManagerError): number {
   switch (error.code) {
     case "not_found":
@@ -176,46 +66,6 @@ function mapSessionErrorStatus(error: AsyncSessionManagerError): number {
     case "max_sessions":
       return 400;
   }
-}
-
-function readCreateBody(raw: unknown): AsyncHttpCreateSessionRequest | undefined {
-  if (!isRecord(raw) || !hasOnlyKeys(raw, ["projectId", "prompt"])) {
-    return undefined;
-  }
-
-  const projectId = readStringField(raw, "projectId");
-  if (!projectId) {
-    return undefined;
-  }
-
-  const promptValue = raw.prompt;
-  if (promptValue === undefined) {
-    return { projectId };
-  }
-
-  if (typeof promptValue !== "string") {
-    return undefined;
-  }
-
-  const prompt = promptValue.trim();
-  if (!prompt) {
-    return undefined;
-  }
-
-  return { projectId, prompt };
-}
-
-function readSendBody(raw: unknown): AsyncHttpSendMessageRequest | undefined {
-  if (!isRecord(raw) || !hasOnlyKeys(raw, ["text"])) {
-    return undefined;
-  }
-
-  const text = readStringField(raw, "text");
-  if (!text) {
-    return undefined;
-  }
-
-  return { text };
 }
 
 async function readRequestBody(
@@ -260,23 +110,6 @@ function serializeCronRun(run: AsyncCronRunRecord): AsyncCronRunRecord {
   return { ...run };
 }
 
-function parsePositiveLimit(raw: string | null): number | undefined {
-  if (raw === null) {
-    return undefined;
-  }
-
-  if (!/^\d+$/.test(raw)) {
-    return undefined;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    return undefined;
-  }
-
-  return parsed;
-}
-
 export async function startAsyncHttpServer(
   options: AsyncHttpServerOptions,
 ): Promise<AsyncHttpServerHandle> {
@@ -296,63 +129,166 @@ export async function startAsyncHttpServer(
         const method = request.method;
         const url = new URL(request.url, `http://${options.host}:${options.port}`);
 
-        if (url.pathname === "/healthz") {
-          sendOk(response, 200, { status: "ok" });
-          return;
-        }
-
         if (url.pathname.startsWith("/v1/") && !isAuthorized(request, options.authToken)) {
           response.setHeader("www-authenticate", 'Bearer realm="tau-async"');
           sendError(response, 401, "unauthorized");
           return;
         }
 
-        const cronRoute = parseCronPath(url.pathname);
-        if (cronRoute === "invalid") {
-          sendError(response, 400, "invalid cron job id");
+        let route: ReturnType<typeof decodeAsyncHttpRoute>;
+        try {
+          route = decodeAsyncHttpRoute(method, url.pathname);
+        } catch (error) {
+          if (error instanceof AsyncHttpRequestParseError) {
+            sendError(response, error.statusCode, error.message);
+            return;
+          }
+          throw error;
+        }
+
+        if (route === "not-found") {
+          sendError(response, 404, "not found");
           return;
         }
 
-        if (cronRoute) {
-          const cronScheduler = options.cronScheduler;
-          if (!cronScheduler) {
-            sendError(response, 404, "cron scheduler not enabled");
+        if (route === "method-not-allowed") {
+          sendError(response, 405, "method not allowed");
+          return;
+        }
+
+        switch (route.route) {
+          case "healthz": {
+            sendOk(response, 200, { status: "ok" });
             return;
           }
 
-          if (cronRoute.route === "cron-jobs" && method === "GET") {
+          case "create-session": {
+            try {
+              const rawBody = await readRequestBody(request, response);
+              if (rawBody === undefined) {
+                return;
+              }
+
+              const parsed = parseCreateSessionBody(rawBody);
+              const session = await options.sessionManager.createSession(parsed);
+              sendOk(response, 201, { session: serializeSession(session) });
+            } catch (error) {
+              if (error instanceof AsyncHttpRequestParseError) {
+                sendError(response, error.statusCode, error.message);
+                return;
+              }
+
+              handleManagerError(response, error, "failed to create session");
+            }
+            return;
+          }
+
+          case "list-sessions": {
+            const sessions = options.sessionManager.listSessions().map(serializeSession);
+            sendOk(response, 200, { sessions });
+            return;
+          }
+
+          case "get-session": {
+            const session = options.sessionManager.getSession(route.sessionId);
+            if (!session) {
+              sendError(response, 404, "session not found");
+              return;
+            }
+            sendOk(response, 200, { session: serializeSession(session) });
+            return;
+          }
+
+          case "get-session-logs": {
+            const logs = options.sessionManager.getLogs(route.sessionId);
+            if (!logs) {
+              sendError(response, 404, "session not found");
+              return;
+            }
+            sendOk(response, 200, { logs });
+            return;
+          }
+
+          case "send-message": {
+            try {
+              const rawBody = await readRequestBody(request, response);
+              if (rawBody === undefined) {
+                return;
+              }
+
+              const parsed = parseSendMessageBody(rawBody);
+              const session = await options.sessionManager.sendMessage(
+                route.sessionId,
+                parsed.text,
+              );
+              sendOk(response, 200, { session: serializeSession(session) });
+            } catch (error) {
+              if (error instanceof AsyncHttpRequestParseError) {
+                sendError(response, error.statusCode, error.message);
+                return;
+              }
+
+              handleManagerError(response, error, "failed to send message");
+            }
+            return;
+          }
+
+          case "interrupt-session": {
+            try {
+              const interrupted = await options.sessionManager.interruptSession(route.sessionId);
+              sendOk(response, 200, {
+                session: serializeSession(interrupted.session),
+                interrupted: interrupted.interrupted,
+                isTurnRunning: interrupted.isTurnRunning,
+              });
+            } catch (error) {
+              handleManagerError(response, error, "failed to interrupt session");
+            }
+            return;
+          }
+
+          case "list-cron-jobs": {
+            const cronScheduler = options.cronScheduler;
+            if (!cronScheduler) {
+              sendError(response, 404, "cron scheduler not enabled");
+              return;
+            }
+
             sendOk(response, 200, { jobs: cronScheduler.listJobs() });
             return;
           }
 
-          if (cronRoute.route === "cron-runs" && method === "GET") {
-            const limitRaw = url.searchParams.get("limit");
-            const limit = parsePositiveLimit(limitRaw);
-            if (limitRaw !== null && limit === undefined) {
-              sendError(response, 400, "invalid limit query parameter");
+          case "list-cron-runs": {
+            const cronScheduler = options.cronScheduler;
+            if (!cronScheduler) {
+              sendError(response, 404, "cron scheduler not enabled");
               return;
             }
 
-            const hasJobIdQuery = url.searchParams.has("jobId");
-            const jobId = url.searchParams.get("jobId")?.trim();
-            if (hasJobIdQuery && !jobId) {
-              sendError(response, 400, "invalid jobId query parameter");
-              return;
-            }
+            try {
+              const query = parseCronRunsQuery(url.searchParams);
+              const runs = cronScheduler.listRuns(query).map(serializeCronRun);
+              sendOk(response, 200, { runs });
+            } catch (error) {
+              if (error instanceof AsyncHttpRequestParseError) {
+                sendError(response, error.statusCode, error.message);
+                return;
+              }
 
-            const runs = cronScheduler
-              .listRuns({
-                ...(jobId ? { jobId } : {}),
-                ...(limit ? { limit } : {}),
-              })
-              .map(serializeCronRun);
-            sendOk(response, 200, { runs });
+              throw error;
+            }
             return;
           }
 
-          if (cronRoute.route === "cron-run" && method === "POST") {
+          case "trigger-cron-job": {
+            const cronScheduler = options.cronScheduler;
+            if (!cronScheduler) {
+              sendError(response, 404, "cron scheduler not enabled");
+              return;
+            }
+
             try {
-              const run = await cronScheduler.triggerJobNow(cronRoute.jobId);
+              const run = await cronScheduler.triggerJobNow(route.jobId);
               sendOk(response, 200, { run: serializeCronRun(run) });
             } catch (error) {
               if (error instanceof AsyncCronSchedulerError && error.code === "not_found") {
@@ -364,105 +300,7 @@ export async function startAsyncHttpServer(
             }
             return;
           }
-
-          sendError(response, 405, "method not allowed");
-          return;
         }
-
-        if (url.pathname === "/v1/sessions" && method === "POST") {
-          try {
-            const rawBody = await readRequestBody(request, response);
-            if (rawBody === undefined) {
-              return;
-            }
-
-            const parsed = readCreateBody(rawBody);
-            if (!parsed) {
-              sendError(response, 400, "invalid request body");
-              return;
-            }
-
-            const session = await options.sessionManager.createSession(parsed);
-            sendOk(response, 201, { session: serializeSession(session) });
-          } catch (error) {
-            handleManagerError(response, error, "failed to create session");
-          }
-          return;
-        }
-
-        if (url.pathname === "/v1/sessions" && method === "GET") {
-          const sessions = options.sessionManager.listSessions().map(serializeSession);
-          sendOk(response, 200, { sessions });
-          return;
-        }
-
-        const route = parseSessionPath(url.pathname);
-        if (route === "invalid") {
-          sendError(response, 400, "invalid session id");
-          return;
-        }
-
-        if (!route) {
-          sendError(response, 404, "not found");
-          return;
-        }
-
-        if (route.route === "session" && method === "GET") {
-          const session = options.sessionManager.getSession(route.sessionId);
-          if (!session) {
-            sendError(response, 404, "session not found");
-            return;
-          }
-          sendOk(response, 200, { session: serializeSession(session) });
-          return;
-        }
-
-        if (route.route === "logs" && method === "GET") {
-          const logs = options.sessionManager.getLogs(route.sessionId);
-          if (!logs) {
-            sendError(response, 404, "session not found");
-            return;
-          }
-          sendOk(response, 200, { logs });
-          return;
-        }
-
-        if (route.route === "messages" && method === "POST") {
-          try {
-            const rawBody = await readRequestBody(request, response);
-            if (rawBody === undefined) {
-              return;
-            }
-
-            const parsed = readSendBody(rawBody);
-            if (!parsed) {
-              sendError(response, 400, "invalid request body");
-              return;
-            }
-
-            const session = await options.sessionManager.sendMessage(route.sessionId, parsed.text);
-            sendOk(response, 200, { session: serializeSession(session) });
-          } catch (error) {
-            handleManagerError(response, error, "failed to send message");
-          }
-          return;
-        }
-
-        if (route.route === "interrupt" && method === "POST") {
-          try {
-            const interrupted = await options.sessionManager.interruptSession(route.sessionId);
-            sendOk(response, 200, {
-              session: serializeSession(interrupted.session),
-              interrupted: interrupted.interrupted,
-              isTurnRunning: interrupted.isTurnRunning,
-            });
-          } catch (error) {
-            handleManagerError(response, error, "failed to interrupt session");
-          }
-          return;
-        }
-
-        sendError(response, 405, "method not allowed");
       } catch {
         if (!response.headersSent) {
           sendError(response, 500, "internal server error");

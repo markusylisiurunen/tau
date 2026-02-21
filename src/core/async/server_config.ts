@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { z } from "zod";
+import { parseMarkdownFrontMatter } from "../config/markdown_frontmatter.js";
 import type {
   AsyncProjectConfig,
   AsyncServerTelegramBotConfig,
@@ -10,8 +11,6 @@ import { formatPersonaReference, parsePersonaReference } from "../persona_refere
 import { REASONING_LEVELS } from "../types.js";
 import type { AsyncCronJobConfig } from "./cron.js";
 import { parseCronSchedule } from "./cron.js";
-
-type RiskLevel = "read-only" | "read-write";
 
 export type AsyncDaemonCronConfig = {
   systemMessage?: string;
@@ -38,98 +37,127 @@ export class AsyncDaemonConfigError extends Error {
   }
 }
 
-type FrontMatter = {
-  [key: string]: unknown;
-};
+const CRON_JOB_FRONTMATTER_KEYS = new Set(["id", "projectId", "schedule", "enabled"]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+const nonEmptyStringSchema = z.string().trim().min(1, "must be a non-empty string.");
+
+const positiveIntegerSchema = z
+  .number()
+  .int("must be a positive integer.")
+  .positive("must be a positive integer.");
+
+const asyncIdListSchema = z.array(z.number().int(), {
+  message: "must be an array of integers.",
+});
+
+const asyncStringListSchema = z.array(nonEmptyStringSchema, {
+  message: "must be an array of non-empty strings.",
+});
+
+const asyncDaemonCronSchema = z
+  .object({
+    systemMessage: nonEmptyStringSchema.optional(),
+    jobsDir: nonEmptyStringSchema.optional(),
+  })
+  .strict();
+
+const asyncDaemonTopLevelSchema = z
+  .object({
+    host: nonEmptyStringSchema.optional(),
+    port: z
+      .number()
+      .int("must be a positive integer <= 65535.")
+      .positive("must be a positive integer <= 65535.")
+      .max(65535, "must be a positive integer <= 65535.")
+      .optional(),
+    authToken: nonEmptyStringSchema.optional(),
+    maxSessions: positiveIntegerSchema.optional(),
+    workspaceRoot: nonEmptyStringSchema.optional(),
+    systemMessage: nonEmptyStringSchema.optional(),
+    telegram: z.unknown().optional(),
+    cron: z.unknown().optional(),
+    projects: z.unknown().optional(),
+  })
+  .strict();
+
+const telegramBotSchema = z
+  .object({
+    botToken: nonEmptyStringSchema,
+    allowedProjectIds: asyncStringListSchema.min(1, "must not be empty.").optional(),
+    allowedUserIds: asyncIdListSchema.optional(),
+    allowedChatIds: asyncIdListSchema.optional(),
+    defaultProjectId: nonEmptyStringSchema.optional(),
+    systemMessage: nonEmptyStringSchema.optional(),
+    pollIntervalMs: positiveIntegerSchema.optional(),
+    requestTimeoutSeconds: positiveIntegerSchema.optional(),
+  })
+  .strict();
+
+function createProjectSchema(configDir: string) {
+  return z
+    .object({
+      repo: nonEmptyStringSchema.refine((value) => isGithubRepoRef(value), {
+        message: "must be in owner/repo format (GitHub).",
+      }),
+      ref: nonEmptyStringSchema.optional(),
+      workspaceRoot: nonEmptyStringSchema
+        .transform((value) => resolve(configDir, value))
+        .optional(),
+      workingDirectory: nonEmptyStringSchema
+        .refine((value) => !isAbsolute(value), {
+          message: "must be a relative path.",
+        })
+        .optional(),
+      description: nonEmptyStringSchema.optional(),
+      bootstrapCommands: z
+        .array(
+          z.string().refine((value) => value.trim().length > 0),
+          {
+            message: "must be a non-empty string array.",
+          },
+        )
+        .min(1, "must be a non-empty string array.")
+        .optional(),
+      backgroundBootstrapCommands: z
+        .array(
+          z.string().refine((value) => value.trim().length > 0),
+          {
+            message: "must be a non-empty string array.",
+          },
+        )
+        .min(1, "must be a non-empty string array.")
+        .optional(),
+      persona: z.string().optional(),
+      riskLevel: z.enum(["read-only", "read-write"]).optional(),
+      sandbox: z.boolean().optional(),
+      noAgentContextFiles: z.boolean().optional(),
+    })
+    .strict();
 }
 
-function isPositiveInteger(value: unknown): value is number {
-  return (
-    typeof value === "number" && Number.isInteger(value) && Number.isFinite(value) && value > 0
-  );
+function formatUnknownKeysError(sourceLabel: string, fieldPath: string, keys: string[]): string {
+  const unknownKeys = [...keys].sort();
+  const keyLabel = unknownKeys.length === 1 ? "key" : "keys";
+  return `${sourceLabel}: unknown ${keyLabel} in ${fieldPath}: ${unknownKeys.join(", ")}.`;
 }
 
-function parseMarkdownWithFrontMatter(content: string): { frontMatter: FrontMatter; body: string } {
-  const lines = content.split("\n");
-
-  if (lines[0]?.trim() !== "---") {
-    return { frontMatter: {}, body: content.trim() };
-  }
-
-  let endIndex = -1;
-  for (let i = 1; i < lines.length; i += 1) {
-    if (lines[i]?.trim() === "---") {
-      endIndex = i;
-      break;
-    }
-  }
-
-  if (endIndex === -1) {
-    return { frontMatter: {}, body: content.trim() };
-  }
-
-  const frontMatterLines = lines.slice(1, endIndex);
-  const bodyLines = lines.slice(endIndex + 1);
-
-  return {
-    frontMatter: parseYamlFrontMatter(frontMatterLines.join("\n")),
-    body: bodyLines.join("\n").trim(),
-  };
-}
-
-function parseYamlFrontMatter(yamlText: string): FrontMatter {
-  try {
-    const parsed = parseYaml(yamlText) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-    return parsed as FrontMatter;
-  } catch {
-    return {};
-  }
-}
-
-function parseAsyncIdList(
-  raw: unknown,
-  fieldPath: string,
+function formatSectionZodErrors(
+  error: z.ZodError,
   sourceLabel: string,
-): { values?: number[]; errors: string[] } {
-  if (!Array.isArray(raw)) {
-    return { errors: [`${sourceLabel}: ${fieldPath} must be an array of integers.`] };
-  }
-
-  const values: number[] = [];
-  for (const entry of raw) {
-    if (typeof entry !== "number" || !Number.isFinite(entry) || !Number.isInteger(entry)) {
-      return { errors: [`${sourceLabel}: ${fieldPath} must be an array of integers.`] };
-    }
-    values.push(entry);
-  }
-
-  return { values, errors: [] };
-}
-
-function parseAsyncStringList(
-  raw: unknown,
   fieldPath: string,
-  sourceLabel: string,
-): { values?: string[]; errors: string[] } {
-  if (!Array.isArray(raw)) {
-    return { errors: [`${sourceLabel}: ${fieldPath} must be an array of non-empty strings.`] };
-  }
-
-  const values: string[] = [];
-  for (const entry of raw) {
-    if (typeof entry !== "string" || !entry.trim()) {
-      return { errors: [`${sourceLabel}: ${fieldPath} must be an array of non-empty strings.`] };
+): string[] {
+  const errors: string[] = [];
+  for (const issue of error.issues) {
+    if (issue.code === "unrecognized_keys") {
+      errors.push(formatUnknownKeysError(sourceLabel, fieldPath, issue.keys));
+      continue;
     }
-    values.push(entry.trim());
+
+    const issuePath = issue.path.length > 0 ? `.${issue.path.join(".")}` : "";
+    errors.push(`${sourceLabel}: ${fieldPath}${issuePath} ${issue.message}`);
   }
 
-  return { values, errors: [] };
+  return errors;
 }
 
 function parseTelegramBotConfig(
@@ -138,100 +166,22 @@ function parseTelegramBotConfig(
   sourceLabel: string,
   knownProjectIds: Set<string>,
 ): { config?: AsyncServerTelegramBotConfig; errors: string[] } {
-  if (!isRecord(raw)) {
-    return { errors: [`${sourceLabel}: ${fieldPath} must be an object.`] };
+  const parsed = telegramBotSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { errors: formatSectionZodErrors(parsed.error, sourceLabel, fieldPath) };
   }
 
-  const data = raw as Record<string, unknown>;
-  const config: AsyncServerTelegramBotConfig = {};
+  const config: AsyncServerTelegramBotConfig = parsed.data;
   const errors: string[] = [];
 
-  if (typeof data.botToken === "string" && data.botToken.trim()) {
-    config.botToken = data.botToken.trim();
-  } else {
-    errors.push(`${sourceLabel}: ${fieldPath}.botToken must be a non-empty string.`);
-  }
-
-  if (data.allowedProjectIds !== undefined) {
-    const parsed = parseAsyncStringList(
-      data.allowedProjectIds,
-      `${fieldPath}.allowedProjectIds`,
-      sourceLabel,
+  if (config.allowedProjectIds) {
+    const missingProjectIds = config.allowedProjectIds.filter(
+      (projectId) => !knownProjectIds.has(projectId),
     );
-
-    if (parsed.values) {
-      if (parsed.values.length === 0) {
-        errors.push(`${sourceLabel}: ${fieldPath}.allowedProjectIds must not be empty.`);
-      } else {
-        const missingProjectIds = parsed.values.filter(
-          (projectId) => !knownProjectIds.has(projectId),
-        );
-        if (missingProjectIds.length > 0) {
-          errors.push(
-            `${sourceLabel}: ${fieldPath}.allowedProjectIds contains unknown project ids: ${missingProjectIds.join(", ")}`,
-          );
-        } else {
-          config.allowedProjectIds = parsed.values;
-        }
-      }
-    }
-
-    errors.push(...parsed.errors);
-  }
-
-  if (data.allowedUserIds !== undefined) {
-    const parsed = parseAsyncIdList(
-      data.allowedUserIds,
-      `${fieldPath}.allowedUserIds`,
-      sourceLabel,
-    );
-    if (parsed.values) {
-      config.allowedUserIds = parsed.values;
-    }
-    errors.push(...parsed.errors);
-  }
-
-  if (data.allowedChatIds !== undefined) {
-    const parsed = parseAsyncIdList(
-      data.allowedChatIds,
-      `${fieldPath}.allowedChatIds`,
-      sourceLabel,
-    );
-    if (parsed.values) {
-      config.allowedChatIds = parsed.values;
-    }
-    errors.push(...parsed.errors);
-  }
-
-  if (data.defaultProjectId !== undefined) {
-    if (typeof data.defaultProjectId === "string" && data.defaultProjectId.trim()) {
-      config.defaultProjectId = data.defaultProjectId.trim();
-    } else {
-      errors.push(`${sourceLabel}: ${fieldPath}.defaultProjectId must be a non-empty string.`);
-    }
-  }
-
-  if (data.systemMessage !== undefined) {
-    if (typeof data.systemMessage === "string" && data.systemMessage.trim()) {
-      config.systemMessage = data.systemMessage.trim();
-    } else {
-      errors.push(`${sourceLabel}: ${fieldPath}.systemMessage must be a non-empty string.`);
-    }
-  }
-
-  if (data.pollIntervalMs !== undefined) {
-    if (isPositiveInteger(data.pollIntervalMs)) {
-      config.pollIntervalMs = data.pollIntervalMs;
-    } else {
-      errors.push(`${sourceLabel}: ${fieldPath}.pollIntervalMs must be a positive integer.`);
-    }
-  }
-
-  if (data.requestTimeoutSeconds !== undefined) {
-    if (isPositiveInteger(data.requestTimeoutSeconds)) {
-      config.requestTimeoutSeconds = data.requestTimeoutSeconds;
-    } else {
-      errors.push(`${sourceLabel}: ${fieldPath}.requestTimeoutSeconds must be a positive integer.`);
+    if (missingProjectIds.length > 0) {
+      errors.push(
+        `${sourceLabel}: ${fieldPath}.allowedProjectIds contains unknown project ids: ${missingProjectIds.join(", ")}`,
+      );
     }
   }
 
@@ -251,11 +201,11 @@ function parseTelegramBotConfig(
     );
   }
 
-  if (Object.keys(config).length === 0) {
+  if (errors.length > 0) {
     return { errors };
   }
 
-  return { config, errors };
+  return { config, errors: [] };
 }
 
 function parseTelegramConfig(
@@ -267,11 +217,12 @@ function parseTelegramConfig(
     return { errors: [] };
   }
 
-  if (!isRecord(raw)) {
+  const parsedObject = z.record(z.string(), z.unknown()).safeParse(raw);
+  if (!parsedObject.success) {
     return { errors: [`${sourceLabel}: telegram must be an object.`] };
   }
 
-  const entries = Object.entries(raw);
+  const entries = Object.entries(parsedObject.data);
   if (entries.length === 0) {
     return { errors: [`${sourceLabel}: telegram must define at least one bot id.`] };
   }
@@ -312,43 +263,17 @@ function parseCronConfig(
     return { errors: [] };
   }
 
-  if (!isRecord(raw)) {
-    return { errors: [`${sourceLabel}: cron must be an object.`] };
+  const parsed = asyncDaemonCronSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { errors: formatSectionZodErrors(parsed.error, sourceLabel, "cron") };
   }
 
-  const data = raw as Record<string, unknown>;
-  const config: AsyncDaemonCronConfig = {};
-  const errors: string[] = [];
-
-  if (data.systemMessage !== undefined) {
-    if (typeof data.systemMessage === "string" && data.systemMessage.trim()) {
-      config.systemMessage = data.systemMessage.trim();
-    } else {
-      errors.push(`${sourceLabel}: cron.systemMessage must be a non-empty string.`);
-    }
-  }
-
-  if (data.jobsDir !== undefined) {
-    if (typeof data.jobsDir === "string" && data.jobsDir.trim()) {
-      config.jobsDir = data.jobsDir.trim();
-    } else {
-      errors.push(`${sourceLabel}: cron.jobsDir must be a non-empty string.`);
-    }
-  }
-
+  const config = parsed.data;
   if (Object.keys(config).length === 0) {
-    return { errors };
+    return { errors: [] };
   }
 
-  return { config, errors };
-}
-
-function parseRiskLevel(raw: unknown): RiskLevel | undefined {
-  if (raw === "read-only" || raw === "read-write") {
-    return raw;
-  }
-
-  return undefined;
+  return { config, errors: [] };
 }
 
 function isGithubRepoRef(value: string): boolean {
@@ -361,164 +286,32 @@ function parseProject(
   projectId: string,
   configDir: string,
 ): { config?: AsyncProjectConfig; errors: string[] } {
-  if (!isRecord(raw)) {
-    return { errors: [`${sourceLabel}: projects.${projectId} must be an object.`] };
+  const schema = createProjectSchema(configDir);
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    return { errors: formatSectionZodErrors(parsed.error, sourceLabel, `projects.${projectId}`) };
   }
 
-  const data = raw as Record<string, unknown>;
+  const config: AsyncProjectConfig = parsed.data;
   const errors: string[] = [];
 
-  const repoRaw = data.repo;
-  if (typeof repoRaw !== "string" || !repoRaw.trim()) {
-    errors.push(`${sourceLabel}: projects.${projectId}.repo must be a non-empty string.`);
-  } else if (!isGithubRepoRef(repoRaw.trim())) {
-    errors.push(
-      `${sourceLabel}: projects.${projectId}.repo must be in owner/repo format (GitHub).`,
-    );
-  }
-
-  const config: AsyncProjectConfig = {
-    repo: typeof repoRaw === "string" ? repoRaw.trim() : "",
-  };
-
-  if (data.ref !== undefined) {
-    if (typeof data.ref === "string" && data.ref.trim()) {
-      config.ref = data.ref.trim();
-    } else {
-      errors.push(`${sourceLabel}: projects.${projectId}.ref must be a non-empty string.`);
-    }
-  }
-
-  if (data.workspaceRoot !== undefined) {
-    if (typeof data.workspaceRoot === "string" && data.workspaceRoot.trim()) {
-      config.workspaceRoot = resolve(configDir, data.workspaceRoot.trim());
-    } else {
-      errors.push(
-        `${sourceLabel}: projects.${projectId}.workspaceRoot must be a non-empty string.`,
-      );
-    }
-  }
-
-  if (data.workingDirectory !== undefined) {
-    if (typeof data.workingDirectory === "string" && data.workingDirectory.trim()) {
-      const workingDirectory = data.workingDirectory.trim();
-      if (isAbsolute(workingDirectory)) {
-        errors.push(
-          `${sourceLabel}: projects.${projectId}.workingDirectory must be a relative path.`,
-        );
-      } else {
-        config.workingDirectory = workingDirectory;
-      }
-    } else {
-      errors.push(
-        `${sourceLabel}: projects.${projectId}.workingDirectory must be a non-empty string.`,
-      );
-    }
-  }
-
-  if (data.description !== undefined) {
-    if (typeof data.description === "string" && data.description.trim()) {
-      config.description = data.description.trim();
-    } else {
-      errors.push(`${sourceLabel}: projects.${projectId}.description must be a non-empty string.`);
-    }
-  }
-
-  if (data.bootstrapCommands !== undefined) {
-    if (!Array.isArray(data.bootstrapCommands) || data.bootstrapCommands.length === 0) {
-      errors.push(
-        `${sourceLabel}: projects.${projectId}.bootstrapCommands must be a non-empty string array.`,
-      );
-    } else {
-      const commands: string[] = [];
-      for (const command of data.bootstrapCommands) {
-        if (typeof command !== "string" || !command.trim()) {
-          errors.push(
-            `${sourceLabel}: projects.${projectId}.bootstrapCommands must be a non-empty string array.`,
-          );
-          break;
-        }
-        commands.push(command);
-      }
-      if (commands.length > 0) {
-        config.bootstrapCommands = commands;
-      }
-    }
-  }
-
-  if (data.backgroundBootstrapCommands !== undefined) {
-    if (
-      !Array.isArray(data.backgroundBootstrapCommands) ||
-      data.backgroundBootstrapCommands.length === 0
-    ) {
-      errors.push(
-        `${sourceLabel}: projects.${projectId}.backgroundBootstrapCommands must be a non-empty string array.`,
-      );
-    } else {
-      const commands: string[] = [];
-      for (const command of data.backgroundBootstrapCommands) {
-        if (typeof command !== "string" || !command.trim()) {
-          errors.push(
-            `${sourceLabel}: projects.${projectId}.backgroundBootstrapCommands must be a non-empty string array.`,
-          );
-          break;
-        }
-        commands.push(command);
-      }
-      if (commands.length > 0) {
-        config.backgroundBootstrapCommands = commands;
-      }
-    }
-  }
-
-  if (data.persona !== undefined) {
-    if (typeof data.persona === "string") {
-      const parsedPersona = parsePersonaReference(data.persona);
-      if (parsedPersona.error === "empty-persona") {
-        errors.push(`${sourceLabel}: projects.${projectId}.persona must be a non-empty string.`);
-      } else if (parsedPersona.error === "missing-reasoning") {
-        errors.push(
-          `${sourceLabel}: projects.${projectId}.persona is missing a reasoning level after ':'.`,
-        );
-      } else if (parsedPersona.error === "invalid-reasoning") {
-        errors.push(
-          `${sourceLabel}: projects.${projectId}.persona has invalid reasoning level '${parsedPersona.rawReasoning}'. allowed levels: ${REASONING_LEVELS.join(", ")}.`,
-        );
-      } else if (parsedPersona.personaId) {
-        config.persona = formatPersonaReference({
-          personaId: parsedPersona.personaId,
-          reasoning: parsedPersona.reasoning,
-        });
-      }
-    } else {
+  if (config.persona !== undefined) {
+    const parsedPersona = parsePersonaReference(config.persona);
+    if (parsedPersona.error === "empty-persona") {
       errors.push(`${sourceLabel}: projects.${projectId}.persona must be a non-empty string.`);
-    }
-  }
-
-  if (data.riskLevel !== undefined) {
-    const riskLevel = parseRiskLevel(data.riskLevel);
-    if (riskLevel) {
-      config.riskLevel = riskLevel;
-    } else {
+    } else if (parsedPersona.error === "missing-reasoning") {
       errors.push(
-        `${sourceLabel}: projects.${projectId}.riskLevel must be read-only or read-write.`,
+        `${sourceLabel}: projects.${projectId}.persona is missing a reasoning level after ':'.`,
       );
-    }
-  }
-
-  if (data.sandbox !== undefined) {
-    if (typeof data.sandbox === "boolean") {
-      config.sandbox = data.sandbox;
-    } else {
-      errors.push(`${sourceLabel}: projects.${projectId}.sandbox must be a boolean.`);
-    }
-  }
-
-  if (data.noAgentContextFiles !== undefined) {
-    if (typeof data.noAgentContextFiles === "boolean") {
-      config.noAgentContextFiles = data.noAgentContextFiles;
-    } else {
-      errors.push(`${sourceLabel}: projects.${projectId}.noAgentContextFiles must be a boolean.`);
+    } else if (parsedPersona.error === "invalid-reasoning") {
+      errors.push(
+        `${sourceLabel}: projects.${projectId}.persona has invalid reasoning level '${parsedPersona.rawReasoning}'. allowed levels: ${REASONING_LEVELS.join(", ")}.`,
+      );
+    } else if (parsedPersona.personaId) {
+      config.persona = formatPersonaReference({
+        personaId: parsedPersona.personaId,
+        reasoning: parsedPersona.reasoning,
+      });
     }
   }
 
@@ -534,14 +327,15 @@ function parseProjects(
   sourceLabel: string,
   configDir: string,
 ): { projects: Record<string, AsyncProjectConfig>; errors: string[] } {
-  if (!isRecord(raw)) {
+  const parsedObject = z.record(z.string(), z.unknown()).safeParse(raw);
+  if (!parsedObject.success) {
     return { projects: {}, errors: [`${sourceLabel}: projects must be an object.`] };
   }
 
   const errors: string[] = [];
   const projects: Record<string, AsyncProjectConfig> = {};
 
-  for (const [projectId, value] of Object.entries(raw)) {
+  for (const [projectId, value] of Object.entries(parsedObject.data)) {
     if (!projectId.trim()) {
       errors.push(`${sourceLabel}: projects keys must be non-empty.`);
       continue;
@@ -573,9 +367,21 @@ function parseCronJobMarkdownFile(
     };
   }
 
-  const { frontMatter, body } = parseMarkdownWithFrontMatter(content);
+  const markdownResult = parseMarkdownFrontMatter(content);
+  if (!markdownResult.ok) {
+    return { errors: [`${sourceLabel}: ${filePath}: ${markdownResult.message}.`] };
+  }
+
+  const { frontMatter, body } = markdownResult;
+
   const fileId = basename(filePath, ".md").trim();
   const errors: string[] = [];
+  const unknownKeys = Object.keys(frontMatter)
+    .filter((key) => !CRON_JOB_FRONTMATTER_KEYS.has(key))
+    .sort();
+  if (unknownKeys.length > 0) {
+    errors.push(formatUnknownKeysError(sourceLabel, `${filePath} frontmatter`, unknownKeys));
+  }
 
   const enabledRaw = frontMatter.enabled;
   if (enabledRaw !== undefined && typeof enabledRaw !== "boolean") {
@@ -731,66 +537,26 @@ export function loadAsyncDaemonConfig(configFilePath: string): AsyncDaemonConfig
     );
   }
 
-  if (!isRecord(parsed)) {
+  const parsedConfigObject = z.record(z.string(), z.unknown()).safeParse(parsed);
+  if (!parsedConfigObject.success) {
     throw new AsyncDaemonConfigError(`${sourceLabel}: config must be an object.`);
   }
 
-  const data = parsed as Record<string, unknown>;
+  const data = parsedConfigObject.data;
   const errors: string[] = [];
 
-  let host = "127.0.0.1";
-  if (data.host !== undefined) {
-    if (typeof data.host === "string" && data.host.trim()) {
-      host = data.host.trim();
-    } else {
-      errors.push(`${sourceLabel}: host must be a non-empty string.`);
-    }
+  const topLevelResult = asyncDaemonTopLevelSchema.safeParse(data);
+  if (!topLevelResult.success) {
+    errors.push(...formatSectionZodErrors(topLevelResult.error, sourceLabel, "config"));
   }
 
-  let port = 7788;
-  if (data.port !== undefined) {
-    if (isPositiveInteger(data.port) && data.port <= 65535) {
-      port = data.port;
-    } else {
-      errors.push(`${sourceLabel}: port must be a positive integer <= 65535.`);
-    }
-  }
-
-  let authToken: string | undefined;
-  if (data.authToken !== undefined) {
-    if (typeof data.authToken === "string" && data.authToken.trim()) {
-      authToken = data.authToken.trim();
-    } else {
-      errors.push(`${sourceLabel}: authToken must be a non-empty string.`);
-    }
-  }
-
-  let maxSessions: number | undefined;
-  if (data.maxSessions !== undefined) {
-    if (isPositiveInteger(data.maxSessions)) {
-      maxSessions = data.maxSessions;
-    } else {
-      errors.push(`${sourceLabel}: maxSessions must be a positive integer.`);
-    }
-  }
-
-  let workspaceRoot = resolve(configDir, ".tau", "async-workspaces");
-  if (data.workspaceRoot !== undefined) {
-    if (typeof data.workspaceRoot === "string" && data.workspaceRoot.trim()) {
-      workspaceRoot = resolve(configDir, data.workspaceRoot.trim());
-    } else {
-      errors.push(`${sourceLabel}: workspaceRoot must be a non-empty string.`);
-    }
-  }
-
-  let systemMessage: string | undefined;
-  if (data.systemMessage !== undefined) {
-    if (typeof data.systemMessage === "string" && data.systemMessage.trim()) {
-      systemMessage = data.systemMessage.trim();
-    } else {
-      errors.push(`${sourceLabel}: systemMessage must be a non-empty string.`);
-    }
-  }
+  const topLevel = topLevelResult.success ? topLevelResult.data : {};
+  const host = topLevel.host ?? "127.0.0.1";
+  const port = topLevel.port ?? 7788;
+  const authToken = topLevel.authToken;
+  const maxSessions = topLevel.maxSessions;
+  const workspaceRoot = resolve(configDir, topLevel.workspaceRoot ?? ".tau/async-workspaces");
+  const systemMessage = topLevel.systemMessage;
 
   const projectsResult = parseProjects(data.projects, sourceLabel, configDir);
   const telegramResult = parseTelegramConfig(

@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { assertNever } from "../utils/never.js";
 import {
   type AsyncCronRunRecord,
   type AsyncCronScheduler,
@@ -300,6 +301,9 @@ export async function startAsyncHttpServer(
             }
             return;
           }
+
+          default:
+            assertNever(route);
         }
       } catch {
         if (!response.headersSent) {

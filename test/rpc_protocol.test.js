@@ -84,7 +84,7 @@ describe("rpc_protocol", () => {
     );
     expect(requestWithUnsupportedFields).toEqual({
       ok: false,
-      id: null,
+      id: 4,
       error: expect.objectContaining({
         code: RPC_ERROR_CODES.invalidRequest,
         message: "request contains unsupported top-level fields",

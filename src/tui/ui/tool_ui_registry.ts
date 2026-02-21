@@ -219,7 +219,8 @@ export class ToolUiRegistry {
     reason: "aborted" | "interrupted",
     context: ToolUiRenderContext,
   ): ToolOutputViewModel {
-    return buildBashAbortedView(context.theme, command, reason, command);
+    const headerTarget = command.split(/\r?\n/)[0] ?? command;
+    return buildBashAbortedView(context.theme, command, reason, headerTarget);
   }
 }
 

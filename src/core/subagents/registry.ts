@@ -87,10 +87,6 @@ export function resolveSubagentEffectiveSettings(args: {
 }
 
 export function getSubagentBasePrompt(name: string, config: SubagentPersonaConfig): string {
-  if (!config) {
-    throw new Error(`subagent '${name}' has no config`);
-  }
-
   if (name === DEFAULT_SUBAGENT_NAME) {
     return DEFAULT_SUBAGENT_DEFINITION.systemPrompt;
   }
@@ -106,10 +102,6 @@ export function getSubagentDescription(
   name: string,
   config: SubagentPersonaConfig,
 ): string | undefined {
-  if (!config) {
-    throw new Error(`subagent '${name}' has no config`);
-  }
-
   if (config.description) return config.description;
   if (name === DEFAULT_SUBAGENT_NAME) {
     return DEFAULT_SUBAGENT_DEFINITION.description;

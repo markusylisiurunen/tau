@@ -161,6 +161,13 @@ Base URL: `http://<host>:<port>`
 - `GET /v1/cron/runs?jobId=<id>&limit=<n>`
 - `POST /v1/cron/jobs/:jobId/run`
 
+Request validation notes:
+
+- `POST /v1/sessions` only accepts `projectId` and optional `prompt`.
+- when provided, `prompt` must be a non-blank string.
+- `POST /v1/sessions/:sessionId/messages` only accepts `text`.
+- `GET /v1/cron/runs?jobId=...` rejects blank `jobId` values.
+
 Requests under `/v1/*` require:
 
 ```http

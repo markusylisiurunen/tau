@@ -65,6 +65,7 @@ default behavior:
 - runs tau via the package's bundled `dist/main.js`
 - invokes the `rpc` subcommand
 - waits up to `5000ms` for the rpc `ready` message
+- sends rpc `initialize` with default metadata `{ client: { name: "tau-sdk", version: "1" } }`
 
 returns a connected `TauSdkClient` instance.
 
@@ -84,8 +85,9 @@ returns a connected `TauSdkClient` instance.
   - forwarded as `--no-agent-context-files`
 - `connectTimeoutMs?: number`
   - ready/initialize timeout (default `5000`)
-- `initialize?: { client?: { name?: string; version?: string } }`
+- `initialize?: { client: { name: string; version: string } }`
   - metadata sent with rpc `initialize`
+  - `client.name` and `client.version` must be non-empty strings
 - `executable?: string`
   - process command to spawn (default `process.execPath`)
 - `executableArgs?: string[]`

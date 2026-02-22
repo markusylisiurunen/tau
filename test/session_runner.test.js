@@ -48,10 +48,19 @@ describe("session runner tool dispatch context", () => {
 
     const toolRegistry = new ToolRegistry([definition]);
     const dispatchContext = {
+      scope: "subagent",
       config: {},
       toolRegistry,
       authPath: "/tmp/auth.json",
       turnUserHistoryEntryId: "history-1",
+      cwd: "/repo/subagent",
+      subagentContext: {
+        id: "subagent-1",
+        name: "default",
+        title: "default",
+        originHistoryEntryId: "history-1",
+        controlPlane: { recordEmitOutput: () => {} },
+      },
     };
 
     const events = [];

@@ -18,7 +18,12 @@ import {
   createLocalToolExecutionBackend,
   scopeToolExecutionBackend,
 } from "../tools/execution_backend.js";
-import type { ToolDispatchContext, ToolRegistry, ToolUiEvent } from "../tools/registry.js";
+import type {
+  SubagentDispatchContext,
+  ToolDispatchContext,
+  ToolRegistry,
+  ToolUiEvent,
+} from "../tools/registry.js";
 import type { RiskLevel } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
@@ -88,7 +93,7 @@ export async function runSubagent(options: {
   sessionId?: string;
   personaId?: string;
   turnUserHistoryEntryId: string;
-  subagentContext?: ToolDispatchContext["subagentContext"];
+  subagentContext: SubagentDispatchContext;
 }): Promise<SubagentRunResult> {
   const {
     runtimeConfig,
@@ -113,9 +118,7 @@ export async function runSubagent(options: {
   }
 
   const baseBackend = options.backend ?? createLocalToolExecutionBackend();
-  const backend = runtimeConfig.workingDirectory
-    ? scopeToolExecutionBackend(baseBackend, runtimeConfig.workingDirectory)
-    : baseBackend;
+  const backend = scopeToolExecutionBackend(baseBackend, runtimeConfig.workingDirectory);
   const allowedTools = runtimeConfig.tools;
   const toolRegistry = buildToolRegistryForAllowedTools(allowedTools, config, backend);
   const messages = options.messages ?? [];
@@ -300,10 +303,12 @@ export async function runSubagent(options: {
     };
 
     const dispatchContext: ToolDispatchContext = {
+      scope: "subagent",
       config,
       toolRegistry,
       authPath,
       turnUserHistoryEntryId,
+      cwd: runtimeConfig.workingDirectory,
       subagentContext,
     };
 

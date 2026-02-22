@@ -17,12 +17,13 @@ import {
 } from "../utils/sandbox_prompt_paths.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type {
-  ToolDefinition,
-  ToolDispatchContext,
-  ToolDispatchResult,
-  ToolDispatchResultWithPhases,
-  ToolUiEvent,
+import {
+  isMainToolDispatchContext,
+  type ToolDefinition,
+  type ToolDispatchContext,
+  type ToolDispatchResult,
+  type ToolDispatchResultWithPhases,
+  type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText } from "./subagent_ui.js";
 import { TOOL_NAME_SPAWN_AGENT } from "./tool_names.js";
@@ -196,8 +197,25 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       title = parsedArgs.data.title;
       headerTarget = title;
 
-      const persona = context.persona;
-      if (!persona?.subagents || Object.keys(persona.subagents).length === 0) {
+      if (!isMainToolDispatchContext(context)) {
+        return blocked("spawn_agent tool is only available in the main session.", {
+          name,
+          title,
+        });
+      }
+
+      const {
+        persona,
+        config,
+        cwd: baseCwd,
+        hostCwd: baseHostCwd,
+        home: baseHome,
+        includeAgentContext,
+        sandboxEnabled,
+        subagentPrompts,
+      } = context;
+
+      if (!persona.subagents || Object.keys(persona.subagents).length === 0) {
         return blocked("spawn_agent tool is not enabled for the current persona.", {
           name,
           title,
@@ -211,8 +229,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           title,
         });
       }
-
-      const config = context.config;
 
       let launchModelOverride: SubagentLaunchModel | undefined;
       if (model) {
@@ -248,10 +264,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         launchModelOverride = parsedLaunchModel.launchModel;
       }
 
-      const baseCwd = context.cwd ?? process.cwd();
-      const baseHostCwd = context.hostCwd ?? process.cwd();
-      const baseHome = context.home ?? process.env.HOME ?? process.cwd();
-      const sandboxEnabled = context.sandboxEnabled ?? false;
       const sandboxMountPath = config.sandbox?.mountPath;
       const sandboxHostRoot = resolveSandboxHostRoot({
         cwd: baseCwd,
@@ -288,7 +300,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             cwd,
             hostCwd,
             home: baseHome,
-            includeAgentContext: context.includeAgentContext !== false,
+            includeAgentContext,
             sandboxEnabled,
             sandboxHostRoot,
           });
@@ -302,7 +314,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           );
         }
       } else {
-        systemPrompt = context.subagentPrompts?.[name];
+        systemPrompt = subagentPrompts[name];
       }
       if (!systemPrompt) {
         return blocked(`subagent '${name}' is missing its system prompt.`, {
@@ -326,12 +338,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       };
 
       const controlPlane = context.subagentControlPlane;
-      if (!controlPlane) {
-        return blocked("subagent control plane is not available.", {
-          name,
-          title,
-        });
-      }
 
       const modelLabel = launchModelOverride?.normalized;
       const statusWorkingDirectory = runtimeConfig.workingDirectory
@@ -380,7 +386,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             config,
             authPath: context.authPath,
             backend,
-            personaId: context.persona?.id,
+            personaId: context.persona.id,
           });
 
           if (!spawnResult.ok) {

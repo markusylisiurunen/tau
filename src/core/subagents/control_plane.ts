@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Message } from "@mariozechner/pi-ai";
 import type { Config } from "../config/index.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import type { ToolDispatchContext } from "../tools/registry.js";
+import type { SubagentDispatchContext } from "../tools/registry.js";
 import { formatToolUiEventForProgress } from "../utils/subagent_utils.js";
 import type { SubagentProgressEvent, SubagentToolUiEvent } from "./subagent_engine.js";
 import { runSubagent } from "./subagent_engine.js";
@@ -158,15 +158,29 @@ export class SubagentControlPlane {
       backend,
       personaId,
     } = options;
+
+    const workingDirectory = runtimeConfig.workingDirectory.trim();
+    if (!workingDirectory) {
+      return {
+        ok: false,
+        reason: "subagent workingDirectory must not be blank.",
+      };
+    }
+
+    const normalizedRuntimeConfig = {
+      ...runtimeConfig,
+      workingDirectory,
+    };
+
     const id = randomUUID();
 
     const record: SubagentRecord = {
       id,
-      name: runtimeConfig.name,
+      name: normalizedRuntimeConfig.name,
       title,
       modelLabel,
       originHistoryEntryId,
-      runtimeConfig,
+      runtimeConfig: normalizedRuntimeConfig,
       messages: [],
       status: "running",
       costTotal: 0,
@@ -299,7 +313,7 @@ export class SubagentControlPlane {
     record.turnsOffset = record.turns;
     record.toolCallsOffset = record.toolCalls;
 
-    const subagentContext: ToolDispatchContext["subagentContext"] = {
+    const subagentContext: SubagentDispatchContext = {
       id: record.id,
       name: record.name,
       title: record.title,

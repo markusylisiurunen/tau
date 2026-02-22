@@ -466,11 +466,9 @@ export class SessionEngine {
 
       const enabledTools = this.getEnabledToolSchemas();
       const dispatchContext: ToolDispatchContext = {
+        scope: "main",
         persona: this.persona,
         config: this.config,
-        history: [...this.history],
-        systemPrompt: this.systemPrompt,
-        riskLevel: this.riskLevel,
         turnUserHistoryEntryId,
         cwd: this.cwd,
         hostCwd: this.hostCwd,

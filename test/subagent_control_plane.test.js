@@ -11,6 +11,29 @@ vi.mock("../dist/core/subagents/subagent_engine.js", () => ({
 import { SubagentControlPlane } from "../dist/core/subagents/control_plane.js";
 
 describe("subagent control plane origin correlation", () => {
+  it("rejects blank subagent workingDirectory at spawn boundary", () => {
+    const controlPlane = new SubagentControlPlane({
+      onEvent: () => {},
+    });
+
+    const spawnResult = controlPlane.spawn({
+      runtimeConfig: {
+        name: "default",
+        workingDirectory: "   ",
+      },
+      prompt: "first",
+      title: "research",
+      originHistoryEntryId: "history-1",
+      config: {},
+      backend: {},
+    });
+
+    expect(spawnResult).toEqual({
+      ok: false,
+      reason: "subagent workingDirectory must not be blank.",
+    });
+  });
+
   it("preserves spawn origin history entry across send_input_to_agent runs", async () => {
     runSubagentMock.mockReset();
     runSubagentMock.mockResolvedValue({
@@ -27,6 +50,7 @@ describe("subagent control plane origin correlation", () => {
     const spawnResult = controlPlane.spawn({
       runtimeConfig: {
         name: "default",
+        workingDirectory: "/repo",
       },
       prompt: "first",
       title: "research",

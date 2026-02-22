@@ -1,4 +1,4 @@
-import type { Message, Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import type { Config } from "../config/index.js";
 import type { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentName, SubagentStatus } from "../subagents/types.js";
@@ -264,24 +264,43 @@ export type SubagentDispatchContext = {
   controlPlane: SubagentControlPlane;
 };
 
-export type ToolDispatchContext = {
-  persona?: Persona;
+type ToolDispatchBaseContext = {
   config: Config;
-  history?: readonly Message[];
-  systemPrompt?: string;
-  riskLevel?: RiskLevel;
   turnUserHistoryEntryId: string;
-  cwd?: string;
-  hostCwd?: string;
-  home?: string;
-  includeAgentContext?: boolean;
-  sandboxEnabled?: boolean;
-  subagentPrompts?: Record<string, string>;
+  cwd: string;
   toolRegistry: ToolRegistry;
   authPath: string;
-  subagentContext?: SubagentDispatchContext;
-  subagentControlPlane?: SubagentControlPlane;
 };
+
+export type MainToolDispatchContext = ToolDispatchBaseContext & {
+  scope: "main";
+  persona: Persona;
+  hostCwd: string;
+  home: string;
+  includeAgentContext: boolean;
+  sandboxEnabled: boolean;
+  subagentPrompts: Record<string, string>;
+  subagentControlPlane: SubagentControlPlane;
+};
+
+export type SubagentToolDispatchContext = ToolDispatchBaseContext & {
+  scope: "subagent";
+  subagentContext: SubagentDispatchContext;
+};
+
+export type ToolDispatchContext = MainToolDispatchContext | SubagentToolDispatchContext;
+
+export function isMainToolDispatchContext(
+  context: ToolDispatchContext,
+): context is MainToolDispatchContext {
+  return context.scope === "main";
+}
+
+export function isSubagentToolDispatchContext(
+  context: ToolDispatchContext,
+): context is SubagentToolDispatchContext {
+  return context.scope === "subagent";
+}
 
 export interface ToolDefinition {
   readonly schema: Tool;

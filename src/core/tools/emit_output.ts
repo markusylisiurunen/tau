@@ -4,7 +4,12 @@ import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import { formatZodError } from "../utils/zod.js";
-import type { ToolDefinition, ToolDispatchContext, ToolDispatchResult } from "./registry.js";
+import {
+  isSubagentToolDispatchContext,
+  type ToolDefinition,
+  type ToolDispatchContext,
+  type ToolDispatchResult,
+} from "./registry.js";
 import { TOOL_NAME_EMIT_OUTPUT } from "./tool_names.js";
 
 const EMIT_OUTPUT_DESCRIPTION = [
@@ -64,10 +69,11 @@ export function createEmitOutputToolDefinition(): ToolDefinition {
 
       const { text } = parsedArgs.data;
 
-      const subagentContext = context.subagentContext;
-      if (!subagentContext) {
+      if (!isSubagentToolDispatchContext(context)) {
         return blocked("emit_output tool is only available to subagents.");
       }
+
+      const { subagentContext } = context;
 
       subagentContext.controlPlane.recordEmitOutput(subagentContext.id, text);
 

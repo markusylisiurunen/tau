@@ -6,12 +6,13 @@ import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type {
-  ToolDefinition,
-  ToolDispatchContext,
-  ToolDispatchResult,
-  ToolDispatchResultWithPhases,
-  ToolUiEvent,
+import {
+  isMainToolDispatchContext,
+  type ToolDefinition,
+  type ToolDispatchContext,
+  type ToolDispatchResult,
+  type ToolDispatchResultWithPhases,
+  type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText } from "./subagent_ui.js";
 import { TOOL_NAME_SEND_INPUT_TO_AGENT } from "./tool_names.js";
@@ -95,10 +96,11 @@ export function createSendInputToAgentToolDefinition(
       ({ id, prompt } = parsedArgs.data);
       headerTarget = id;
 
-      const controlPlane = context.subagentControlPlane;
-      if (!controlPlane) {
-        return blocked("subagent control plane is not available.", { id });
+      if (!isMainToolDispatchContext(context)) {
+        return blocked("send_input_to_agent tool is only available in the main session.", { id });
       }
+
+      const controlPlane = context.subagentControlPlane;
 
       const snapshot = controlPlane.getSnapshot(id);
       if (!snapshot) {
@@ -149,7 +151,7 @@ export function createSendInputToAgentToolDefinition(
             config,
             authPath: context.authPath,
             backend,
-            personaId: context.persona?.id,
+            personaId: context.persona.id,
           });
 
           if (!sendResult.ok) {

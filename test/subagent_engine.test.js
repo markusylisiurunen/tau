@@ -20,7 +20,7 @@ vi.mock("../dist/core/usage/logs.js", () => ({
 
 import { runSubagent } from "../dist/core/subagents/subagent_engine.js";
 
-function createAssistantMessage(model) {
+function createAssistantMessage(model, overrides = {}) {
   return {
     role: "assistant",
     api: "anthropic-messages",
@@ -37,6 +37,18 @@ function createAssistantMessage(model) {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
     content: [{ type: "text", text: "done" }],
+    ...overrides,
+  };
+}
+
+function createToolResult(toolCall, text) {
+  return {
+    role: "tool",
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    timestamp: Date.now(),
+    isError: false,
+    content: [{ type: "text", text }],
   };
 }
 
@@ -61,6 +73,7 @@ describe("subagent engine model notices", () => {
         model: persona.model,
         tools: [],
         riskLevel: "read-only",
+        workingDirectory: "/repo/current",
       },
       prompt: "collect findings",
       config: {
@@ -70,9 +83,80 @@ describe("subagent engine model notices", () => {
       },
       signal: new AbortController().signal,
       turnUserHistoryEntryId: "history-1",
+      subagentContext: {
+        id: "subagent-1",
+        name: "default",
+        title: "default",
+        originHistoryEntryId: "history-1",
+        controlPlane: { recordEmitOutput: () => {} },
+      },
     });
 
     expect(result.finalText).toBe("done");
     expect(capturedUserMessages).toEqual(["<system>subagent notice</system>\n\ncollect findings"]);
+  });
+
+  it("passes subagent workingDirectory as dispatch context cwd", async () => {
+    runModelSubturnMock.mockReset();
+    runToolCallsMock.mockReset();
+
+    const persona = personas.find((entry) => entry.model.provider === "anthropic");
+    expect(persona).toBeDefined();
+
+    const toolCall = {
+      id: "tool-call-1",
+      type: "toolCall",
+      name: "bash",
+      arguments: {
+        command: "pwd",
+        safetyLevel: "read",
+      },
+    };
+
+    runModelSubturnMock
+      .mockImplementationOnce(async function* () {
+        yield* [];
+        return createAssistantMessage(persona.model, {
+          stopReason: "toolUse",
+          content: [toolCall],
+        });
+      })
+      .mockImplementationOnce(async function* () {
+        yield* [];
+        return createAssistantMessage(persona.model);
+      });
+
+    runToolCallsMock.mockImplementationOnce(async function* ({ dispatchContext }) {
+      expect(dispatchContext.cwd).toBe("/repo/subdir");
+      yield {
+        type: "tool_result",
+        message: createToolResult(toolCall, "/repo/subdir"),
+      };
+    });
+
+    const result = await runSubagent({
+      runtimeConfig: {
+        name: "default",
+        systemPrompt: "subagent system",
+        model: persona.model,
+        tools: ["bash"],
+        riskLevel: "read-only",
+        workingDirectory: "/repo/subdir",
+      },
+      prompt: "collect findings",
+      config: {},
+      signal: new AbortController().signal,
+      turnUserHistoryEntryId: "history-1",
+      subagentContext: {
+        id: "subagent-1",
+        name: "default",
+        title: "default",
+        originHistoryEntryId: "history-1",
+        controlPlane: { recordEmitOutput: () => {} },
+      },
+    });
+
+    expect(result.finalText).toBe("done");
+    expect(runToolCallsMock).toHaveBeenCalledTimes(1);
   });
 });

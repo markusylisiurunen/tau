@@ -25,6 +25,7 @@ function createContext(overrides = {}) {
   const spawned = [];
 
   const context = {
+    scope: "main",
     persona: {
       id: "test-persona",
       label: "test persona",

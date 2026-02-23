@@ -320,7 +320,7 @@ If you need dependency details (rare), check `references/repos/` first and treat
 
 **Formatting**: Do not hand-format code (no manual import sorting or line wrapping). Run `npm run check` and let Biome handle formatting.
 
-**Commit style**: Short, imperative, lowercase subject lines (no prefixes). When explicitly working a GitHub issue with a single commit (no PR), include a closing keyword line (for example, `fixes #123`) in the commit body. If opening a PR, put the closing keyword in the PR body instead of the commit body.
+**Commit style**: Short, imperative, lowercase subject lines (no prefixes). Commit bodies are either empty or a single closing keyword line (for example, `fixes #123`) when explicitly working a GitHub issue with a single commit (no PR). Do not include any other commit body text. If opening a PR, put the closing keyword in the PR body instead of the commit body.
 
 **Branch names**: Lowercase, a few descriptive words. Do not include prefixes or issue references.
 

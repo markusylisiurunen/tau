@@ -743,6 +743,7 @@ describe("async session manager", () => {
       });
       return { interrupted: true, isTurnRunning: true };
     });
+    const cleanupWorkspacePath = vi.fn(async () => {});
 
     const manager = createAsyncSessionManager({
       projects: {
@@ -755,6 +756,7 @@ describe("async session manager", () => {
         sessionCwd: "/tmp/ws/demo",
       })),
       createClient: vi.fn(async () => clientHarness.client),
+      cleanupWorkspacePath,
     });
 
     const created = await manager.createSession({ projectId: "demo" });
@@ -770,6 +772,8 @@ describe("async session manager", () => {
     expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
+    expect(cleanupWorkspacePath).toHaveBeenCalledTimes(1);
+    expect(cleanupWorkspacePath).toHaveBeenCalledWith("/tmp/ws/demo");
 
     const logs = manager.getLogs(created.id) ?? [];
     expect(logs.some((entry) => entry.message === "manager shutdown requested")).toBe(true);
@@ -786,6 +790,7 @@ describe("async session manager", () => {
     clientHarness.client.close = vi.fn(async () => {
       throw new Error("close boom");
     });
+    const cleanupWorkspacePath = vi.fn(async () => {});
 
     const manager = createAsyncSessionManager({
       projects: {
@@ -798,6 +803,7 @@ describe("async session manager", () => {
         sessionCwd: "/tmp/ws/demo",
       })),
       createClient: vi.fn(async () => clientHarness.client),
+      cleanupWorkspacePath,
     });
 
     const created = await manager.createSession({ projectId: "demo" });
@@ -811,6 +817,8 @@ describe("async session manager", () => {
     expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
+    expect(cleanupWorkspacePath).toHaveBeenCalledTimes(1);
+    expect(cleanupWorkspacePath).toHaveBeenCalledWith("/tmp/ws/demo");
 
     const logs = manager.getLogs(created.id) ?? [];
     expect(logs.some((entry) => entry.message === "interrupt failed")).toBe(true);

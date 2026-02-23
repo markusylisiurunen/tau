@@ -581,16 +581,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     await Promise.allSettled(
       entries.map(async (entry) => {
         await this.stopClient(entry);
-
-        const pendingWork = [
-          entry.activeSubmit,
-          entry.initializePromise,
-          entry.backgroundBootstrapPromise,
-        ].filter((promise): promise is Promise<void> => promise !== undefined);
-
-        if (pendingWork.length > 0) {
-          await Promise.allSettled(pendingWork);
-        }
+        await this.runWorkspaceCleanup(entry);
       }),
     );
   }

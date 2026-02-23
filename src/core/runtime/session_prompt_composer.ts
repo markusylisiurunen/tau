@@ -56,7 +56,11 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
   const subagents = args.persona.subagents;
   if (subagents) {
     for (const [name, config] of Object.entries(subagents)) {
-      const personaSystemPrompt = getSubagentBasePrompt(name, config);
+      const personaSystemPrompt = getSubagentBasePrompt({
+        name,
+        config,
+        mainPersonaSystemPrompt: args.persona.systemPrompt,
+      });
 
       const subagentEnvironmentTag = buildEnvironmentTag({
         riskLevel: config.riskLevel ?? args.riskLevel,

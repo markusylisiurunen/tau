@@ -2,7 +2,6 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
-  TOOL_NAME_EMIT_OUTPUT,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB_FETCH,
   TOOL_NAME_WEB_SEARCH,
@@ -21,7 +20,6 @@ export const SUBAGENT_TOOL_NAMES = [
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB_SEARCH,
   TOOL_NAME_WEB_FETCH,
-  TOOL_NAME_EMIT_OUTPUT,
 ] as const;
 
 export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
@@ -77,12 +75,6 @@ export type SubagentUiEvent =
   | { type: "subagent_emit_output"; id: string; text: string }
   | { type: "subagent_abort_requested"; id: string }
   | { type: "subagent_finished"; state: SubagentStateSnapshot };
-
-export type SubagentDefinition = {
-  name: SubagentName;
-  description?: string;
-  systemPrompt: string;
-};
 
 export type SubagentRuntimeConfig = {
   name: SubagentName;

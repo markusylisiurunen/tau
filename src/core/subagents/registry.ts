@@ -7,7 +7,7 @@ import {
   TOOL_NAME_WRITE,
 } from "../tools/tool_names.js";
 import type { Persona, RiskLevel } from "../types.js";
-import { DEFAULT_SUBAGENT_DEFINITION } from "./default.js";
+import { buildDefaultSubagentSystemPrompt, DEFAULT_SUBAGENT_DESCRIPTION } from "./default.js";
 import {
   DEFAULT_SUBAGENT_NAME,
   type SubagentLaunchModel,
@@ -86,16 +86,20 @@ export function resolveSubagentEffectiveSettings(args: {
   };
 }
 
-export function getSubagentBasePrompt(name: string, config: SubagentPersonaConfig): string {
-  if (name === DEFAULT_SUBAGENT_NAME) {
-    return DEFAULT_SUBAGENT_DEFINITION.systemPrompt;
+export function getSubagentBasePrompt(args: {
+  name: string;
+  config: SubagentPersonaConfig;
+  mainPersonaSystemPrompt: string;
+}): string {
+  if (args.name === DEFAULT_SUBAGENT_NAME) {
+    return buildDefaultSubagentSystemPrompt(args.mainPersonaSystemPrompt);
   }
 
-  if (!config.systemPrompt) {
-    throw new Error(`subagent '${name}' is missing a system prompt`);
+  if (!args.config.systemPrompt) {
+    throw new Error(`subagent '${args.name}' is missing a system prompt`);
   }
 
-  return config.systemPrompt;
+  return args.config.systemPrompt;
 }
 
 export function getSubagentDescription(
@@ -104,7 +108,7 @@ export function getSubagentDescription(
 ): string | undefined {
   if (config.description) return config.description;
   if (name === DEFAULT_SUBAGENT_NAME) {
-    return DEFAULT_SUBAGENT_DEFINITION.description;
+    return DEFAULT_SUBAGENT_DESCRIPTION;
   }
   return undefined;
 }

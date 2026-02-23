@@ -130,6 +130,11 @@ describe("ChatRuntime", () => {
     expect(runtime.promptComposition.subagentPrompts.default).toContain(
       '<risk-level level="read-only">',
     );
+    expect(runtime.promptComposition.subagentPrompts.default).toContain("<inherited-instructions>");
+    expect(runtime.promptComposition.subagentPrompts.default).toContain("main system prompt");
+    expect(runtime.promptComposition.subagentPrompts.default).not.toContain(
+      "{{inherited_instructions}}",
+    );
   });
 
   it("rebuilds full system prompts with main and subagent content", () => {
@@ -165,6 +170,8 @@ describe("ChatRuntime", () => {
     expect(composition.baseSystemPrompt).toContain("<datetime>2026-01-01T00:00:00.000Z</datetime>");
 
     expect(composition.subagentPrompts.default).toContain('<risk-level level="read-only">');
+    expect(composition.subagentPrompts.default).toContain("<inherited-instructions>");
+    expect(composition.subagentPrompts.default).toContain("main system prompt");
     expect(composition.subagentPrompts.researcher).toContain("research subagent prompt");
     expect(composition.subagentPrompts.researcher).toContain('<risk-level level="read-write">');
     expect(composition.subagentPrompts.researcher).toContain("<sandbox-info>");

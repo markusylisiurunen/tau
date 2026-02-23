@@ -37,7 +37,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Async daemon runtime** (`src/core/async/`): Async CLI + daemon stack (`cli.ts`, `cron.ts`, `http_protocol.ts`, `http_server.ts`, `server_config.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools (local host or docker sandbox)
-- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent) and sub-agent (emit_output plus allowed tools) registries
+- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent) and sub-agent (configured allowed tools) registries
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
@@ -45,7 +45,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 
 **Data flow**: TUI mode: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering. RPC mode: NDJSON requests on stdin → RPC server (`src/core/modes/rpc_server.ts`) → `ChatRuntime`/`CoreSession` → NDJSON responses/events on stdout. SDK mode: Node code → `src/sdk/client.ts` → spawned `tau rpc` subprocess over stdin/stdout NDJSON. Async mode: `tau async daemon` → async HTTP server (`src/core/async/http_server.ts`) + session manager (`src/core/async/session_manager.ts`) + optional cron scheduler (`src/core/async/cron.ts`) + optional Telegram long-poll adapter (`src/core/async/telegram.ts`) over `getUpdates`/`getFile`/`sendMessage`.
 
-**Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Assistant and tool-result events include stable `historyEntryId` values so the UI can correlate rendered rows with session history across rewind operations. Subagent UI updates (spawned, progress, emit_output messages, finished) are emitted as `subagent_ui` on the same core event channel via `CoreSession.onEvent()`, including stable origin correlation metadata for RPC request mapping. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
+**Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress, `tool_result` when tools complete, and `notice` for warnings. Assistant and tool-result events include stable `historyEntryId` values so the UI can correlate rendered rows with session history across rewind operations. Subagent UI updates (spawned, progress, optional emit_output messages when enabled, finished) are emitted as `subagent_ui` on the same core event channel via `CoreSession.onEvent()`, including stable origin correlation metadata for RPC request mapping. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
 
 ## Key modules
 
@@ -120,17 +120,17 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 
 ## Tool system
 
-| Tool                  | Purpose                        | Risk requirement                               |
-| --------------------- | ------------------------------ | ---------------------------------------------- |
-| `bash`                | Shell execution                | `read-only` for reads, `read-write` for writes |
-| `write`               | Create/overwrite files         | `read-write`                                   |
-| `edit`                | Replace exact text in files    | `read-write`                                   |
-| `view_image`          | View an image file             | `read-only`                                    |
-| `spawn_agent`         | Start a background subagent    | `read-only` or `read-write`                    |
-| `send_input_to_agent` | Send input to an idle subagent | `read-only` or `read-write`                    |
-| `wait_for_agent`      | Await subagent completion      | `read-only` or `read-write`                    |
-| `terminate_agent`     | Stop a running subagent        | `read-only` or `read-write`                    |
-| `emit_output`         | Subagent-only output to main   | `read-only` or `read-write`                    |
+| Tool                  | Purpose                                                                  | Risk requirement                               |
+| --------------------- | ------------------------------------------------------------------------ | ---------------------------------------------- |
+| `bash`                | Shell execution                                                          | `read-only` for reads, `read-write` for writes |
+| `write`               | Create/overwrite files                                                   | `read-write`                                   |
+| `edit`                | Replace exact text in files                                              | `read-write`                                   |
+| `view_image`          | View an image file                                                       | `read-only`                                    |
+| `spawn_agent`         | Start a background subagent                                              | `read-only` or `read-write`                    |
+| `send_input_to_agent` | Send input to an idle subagent                                           | `read-only` or `read-write`                    |
+| `wait_for_agent`      | Await subagent completion                                                | `read-only` or `read-write`                    |
+| `terminate_agent`     | Stop a running subagent                                                  | `read-only` or `read-write`                    |
+| `emit_output`         | Subagent-only output to main (currently disabled in subagent registries) | `read-only` or `read-write`                    |
 
 Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set.
 
@@ -158,7 +158,7 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 - Current preview shapes: bash uses head/tail output plus a status line; write shows up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
 - Pruned tool results patch existing tool cards by `toolCallId`, preserve headers, replace the body with model-visible pruned content, and prefix status as `✂ pruned · <existing status>` (or `✂ pruned` when no status exists).
 
-**Subagent-only tools**: subagents run with a dedicated tool registry that always includes `emit_output` plus the tools enabled for that subagent (inherited from the main persona or explicitly overridden). Risk level is inherited by default but can be overridden per subagent, including `read-write` even when the main session is `read-only`. `spawn_agent` can optionally set launch model/reasoning via `<provider>/<model>:<effort>` (allowlisted by `launchModels`) and can optionally set `workingDirectory`. When `workingDirectory` is set, the subagent runs from that directory and its prompt context (cwd, AGENTS.md scope, skills block) is rebuilt as if tau was started there. See `src/core/subagents/subagent_engine.ts` and `src/core/tools/spawn_agent.ts`.
+**Subagent-only tools**: subagents run with a dedicated tool registry that includes the tools enabled for that subagent (inherited from the main persona or explicitly overridden). The `emit_output` tool definition remains in the codebase but is currently disabled for subagent registries. Risk level is inherited by default but can be overridden per subagent, including `read-write` even when the main session is `read-only`. The built-in `default` subagent prompt wraps and inherits the main persona system prompt, while enforcing default-subagent rules that take precedence on conflicts. `spawn_agent` can optionally set launch model/reasoning via `<provider>/<model>:<effort>` (allowlisted by `launchModels`) and can optionally set `workingDirectory`. When `workingDirectory` is set, the subagent runs from that directory and its prompt context (cwd, AGENTS.md scope, skills block) is rebuilt as if tau was started there. See `src/core/subagents/subagent_engine.ts` and `src/core/tools/spawn_agent.ts`.
 
 **Subagent limit**: at most 8 subagents may run concurrently.
 

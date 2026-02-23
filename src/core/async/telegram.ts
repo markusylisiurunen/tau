@@ -711,6 +711,8 @@ class AsyncTelegramAdapterImpl {
   private readonly pendingAttachmentsBySession = new Map<string, TelegramPendingAttachment[]>();
   private readonly pendingAttachmentTempDirBySession = new Map<string, string>();
   private readonly attachmentTempDirsBySession = new Map<string, Set<string>>();
+  private readonly updateQueueTailByKey = new Map<string, Promise<void>>();
+  private readonly inFlightUpdateTasks = new Set<Promise<void>>();
 
   private readonly unsubscribeSessionEvents: () => void;
   private readonly loopPromise: Promise<void>;
@@ -777,14 +779,15 @@ class AsyncTelegramAdapterImpl {
     this.abortController.abort();
     this.unsubscribeSessionEvents();
 
-    for (const sessionId of Array.from(this.attachmentTempDirsBySession.keys())) {
-      await this.cleanupSessionAttachmentTempDirs(sessionId);
-    }
-    this.pendingAttachmentsBySession.clear();
-    this.pendingAttachmentTempDirBySession.clear();
-
     try {
       await this.loopPromise;
+      await this.waitForInFlightUpdateTasks();
+
+      for (const sessionId of Array.from(this.attachmentTempDirsBySession.keys())) {
+        await this.cleanupSessionAttachmentTempDirs(sessionId);
+      }
+      this.pendingAttachmentsBySession.clear();
+      this.pendingAttachmentTempDirBySession.clear();
     } finally {
       this.log("info", "telegram adapter stopped");
     }
@@ -900,7 +903,7 @@ class AsyncTelegramAdapterImpl {
             this.nextUpdateOffset = Math.max(this.nextUpdateOffset, updateId + 1);
           }
 
-          await this.handleUpdate(update);
+          this.enqueueUpdate(update);
         }
       } catch (error) {
         if (this.abortController.signal.aborted) {
@@ -913,6 +916,66 @@ class AsyncTelegramAdapterImpl {
         await this.wait(this.pollIntervalMs);
       }
     }
+  }
+
+  private enqueueUpdate(update: TelegramUpdate): void {
+    const queueKey = this.getUpdateQueueKey(update);
+    const previousTask = this.updateQueueTailByKey.get(queueKey) ?? Promise.resolve();
+
+    const queuedTask = previousTask
+      .then(async () => {
+        if (this.abortController.signal.aborted) {
+          return;
+        }
+
+        await this.handleUpdate(update);
+      })
+      .catch((error) => {
+        if (this.abortController.signal.aborted) {
+          return;
+        }
+
+        const updateId =
+          typeof update.update_id === "number" && Number.isFinite(update.update_id)
+            ? update.update_id
+            : undefined;
+        this.log("warn", "telegram update handling failed", {
+          ...(updateId === undefined ? {} : { updateId }),
+          cause: error instanceof Error ? error.message : String(error),
+        });
+      });
+
+    const trackedTask = queuedTask.finally(() => {
+      this.inFlightUpdateTasks.delete(trackedTask);
+      if (this.updateQueueTailByKey.get(queueKey) === trackedTask) {
+        this.updateQueueTailByKey.delete(queueKey);
+      }
+    });
+
+    this.updateQueueTailByKey.set(queueKey, trackedTask);
+    this.inFlightUpdateTasks.add(trackedTask);
+  }
+
+  private getUpdateQueueKey(update: TelegramUpdate): string {
+    const messageChatId = update.message?.chat?.id;
+    if (typeof messageChatId === "number" && Number.isFinite(messageChatId)) {
+      return `chat:${messageChatId}`;
+    }
+
+    const callbackChatId = update.callback_query?.message?.chat?.id;
+    if (typeof callbackChatId === "number" && Number.isFinite(callbackChatId)) {
+      return `chat:${callbackChatId}`;
+    }
+
+    return "global";
+  }
+
+  private async waitForInFlightUpdateTasks(): Promise<void> {
+    if (this.inFlightUpdateTasks.size === 0) {
+      return;
+    }
+
+    await Promise.allSettled(Array.from(this.inFlightUpdateTasks));
   }
 
   private async getUpdates(): Promise<TelegramUpdate[]> {

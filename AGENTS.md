@@ -290,6 +290,8 @@ RPC mode command surface is protocol-based (`initialize`, `session.submit`, `ses
 - `npm run build` - Compile to dist/ (TypeScript emits `.d.ts` files, then `postbuild` removes every declaration outside `dist/sdk/` via `find dist -name '*.d.ts' ! -path 'dist/sdk/*' -delete`)
 - `npm test` - Build + run UI tests
 
+**Testing focus**: Prefer high-impact tests that cover critical paths and regression-prone behavior. Avoid low-value test churn for non-critical code.
+
 **Search examples**
 
 - Find symbol references in src: `rg "ChatController" src`

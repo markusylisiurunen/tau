@@ -449,6 +449,12 @@ describe("session prompt composer", () => {
     expect(result.baseSystemPrompt).toContain("<sandbox-info>");
 
     expect(result.subagentPrompts.default).toContain('<risk-level level="read-only">');
+    expect(result.subagentPrompts.default).toContain("<inherited-instructions>");
+    expect(result.subagentPrompts.default).toContain("main system prompt");
+    expect(result.subagentPrompts.default).not.toContain("{{inherited_instructions}}");
+    expect(result.subagentPrompts.default).toContain(
+      "You are a subagent supporting the main agent.",
+    );
     expect(result.subagentPrompts.researcher).toContain("research subagent prompt");
     expect(result.subagentPrompts.researcher).toContain('<risk-level level="read-write">');
     expect(result.subagentPrompts.researcher).toContain("<sandbox-info>");

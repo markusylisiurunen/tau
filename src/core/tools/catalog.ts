@@ -12,7 +12,6 @@ import { createTerminateAgentToolDefinition } from "./terminate_agent.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
-  TOOL_NAME_EMIT_OUTPUT,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB_FETCH,
   TOOL_NAME_WEB_SEARCH,
@@ -23,6 +22,8 @@ import { createWaitForAgentToolDefinition } from "./wait_for_agent.js";
 import { createWebFetchToolDefinition } from "./web_fetch.js";
 import { createWebSearchToolDefinition } from "./web_search.js";
 import { createWriteToolDefinition } from "./write.js";
+
+const SUBAGENT_EMIT_OUTPUT_ENABLED = false;
 
 export const ToolCatalog = {
   createRegistry(backend: ToolExecutionBackend): ToolRegistry {
@@ -43,7 +44,9 @@ export const ToolCatalog = {
     config: Config,
     backend: ToolExecutionBackend,
   ): ToolRegistry {
-    const definitions: ToolDefinition[] = [createEmitOutputToolDefinition()];
+    const definitions: ToolDefinition[] = SUBAGENT_EMIT_OUTPUT_ENABLED
+      ? [createEmitOutputToolDefinition()]
+      : [];
     const seen = new Set<string>();
 
     const addTool = (tool: SubagentToolName): void => {
@@ -68,8 +71,6 @@ export const ToolCatalog = {
           break;
         case TOOL_NAME_WEB_FETCH:
           definitions.push(createWebFetchToolDefinition(config));
-          break;
-        case TOOL_NAME_EMIT_OUTPUT:
           break;
       }
     };

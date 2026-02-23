@@ -154,11 +154,13 @@ function parseSubagentTools(toolsRaw: string[] | undefined): {
   for (const name of cleaned) {
     if (seen.has(name)) continue;
     seen.add(name);
+
     if (SUBAGENT_TOOL_NAME_SET.has(name as SubagentToolName)) {
       selected.push(name as SubagentToolName);
-    } else {
-      unknown.push(name);
+      continue;
     }
+
+    unknown.push(name);
   }
 
   if (unknown.length > 0) {

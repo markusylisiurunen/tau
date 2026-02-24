@@ -26,12 +26,13 @@ or store keys in `~/.config/tau/config.json`:
     "openai": "sk-...",
     "google": "...",
     "parallel": "...",
-    "mistral": "..."
+    "mistral": "...",
+    "custom-provider": "..."
   }
 }
 ```
 
-for provider keys (`anthropic`, `openai`, `google`), tau checks `~/.config/tau/config.json` before environment variables.
+`apiKeys` is a provider-id to key map. tau checks `apiKeys.<provider>` before environment variables.
 
 `parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents and can be provided through `apiKeys.parallel` or `PARALLEL_API_KEY` (`PARALLEL_API_KEY` takes precedence).
 
@@ -455,7 +456,8 @@ settings merge from least-specific to most-specific.
     "openai": "sk-...",
     "google": "...",
     "parallel": "...",
-    "mistral": "..."
+    "mistral": "...",
+    "custom-provider": "..."
   },
   "defaultPersona": "gpt-5.2-chat",
   "defaultRisk": "read-write",
@@ -473,6 +475,8 @@ settings merge from least-specific to most-specific.
   }
 }
 ```
+
+the `apiKeys` field is a map from provider id to API key string. keys are merged across config levels by provider id.
 
 the `defaultPersona` field specifies which persona to use when starting the app. it accepts `<id>` or `<id>:<reasoning>`, and matching is exact/case-sensitive. the `--persona` flag overrides this setting.
 

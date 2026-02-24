@@ -1,4 +1,4 @@
-import { getModel } from "@mariozechner/pi-ai";
+import { resolveModelOrThrow } from "./models/catalog.js";
 import { DEFAULT_SUBAGENT_NAME, type SubagentConfigMap } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
@@ -197,7 +197,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "opus-4.6",
     description: "Claude Opus 4.6",
-    model: getModel("anthropic", "claude-opus-4-6"),
+    model: resolveModelOrThrow("anthropic", "claude-opus-4-6"),
     allowedReasoningLevels: ["low", "high", "xhigh"],
     settings: { reasoning: "high" },
     skills: "*",
@@ -205,7 +205,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "gpt-5.2",
     description: "GPT-5.2",
-    model: getModel("openai", "gpt-5.2"),
+    model: resolveModelOrThrow("openai", "gpt-5.2"),
     allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -213,7 +213,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "gpt-5.3-codex-chatgpt",
     description: "GPT-5.3-Codex (ChatGPT)",
-    model: getModel("openai-codex", "gpt-5.3-codex"),
+    model: resolveModelOrThrow("openai-codex", "gpt-5.3-codex"),
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -221,7 +221,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "gpt-5.2-codex-api",
     description: "GPT-5.2-Codex (API)",
-    model: getModel("openai", "gpt-5.2-codex"),
+    model: resolveModelOrThrow("openai", "gpt-5.2-codex"),
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -229,7 +229,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "gemini-3.1-pro",
     description: "Gemini 3.1 Pro",
-    model: getModel("google", "gemini-3.1-pro-preview"),
+    model: resolveModelOrThrow("google", "gemini-3.1-pro-preview"),
     allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "low" },
     skills: "*",
@@ -237,7 +237,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "gemini-3-flash",
     description: "Gemini 3 Flash",
-    model: getModel("google", "gemini-3-flash-preview"),
+    model: resolveModelOrThrow("google", "gemini-3-flash-preview"),
     allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "medium" },
     skills: "*",

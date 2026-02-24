@@ -1,26 +1,21 @@
-import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
-import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { z } from "zod";
+import { listProviders, resolveModel as resolveCatalogModel } from "../models/catalog.js";
 import { REASONING_LEVELS, ReasoningEffortSchema } from "../types.js";
 import type { SubagentLaunchModel } from "./types.js";
 
 const LaunchModelListSchema = z.array(z.string());
 
-function parseProvider(raw: string): KnownProvider | undefined {
+function parseProvider(raw: string): string | undefined {
   const provider = raw.trim().toLowerCase();
   if (!provider) {
     return undefined;
   }
 
-  if (!getProviders().includes(provider as KnownProvider)) {
+  if (!listProviders().includes(provider)) {
     return undefined;
   }
 
-  return provider as KnownProvider;
-}
-
-function resolveModel(provider: KnownProvider, modelId: string): Model<Api> | undefined {
-  return getModels(provider).find((candidate) => candidate.id === modelId);
+  return provider;
 }
 
 export function parseSubagentLaunchModel(value: string): {
@@ -60,7 +55,7 @@ export function parseSubagentLaunchModel(value: string): {
     return { error: `unknown provider '${providerPart.trim()}'` };
   }
 
-  const model = resolveModel(provider, modelIdPart);
+  const model = resolveCatalogModel(provider, modelIdPart);
   if (!model) {
     return { error: `unknown model '${provider}/${modelIdPart}'` };
   }

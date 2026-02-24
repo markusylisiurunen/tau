@@ -12,7 +12,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveConfigLevels } from "../dist/core/config/paths.js";
-import { loadConfig, loadConfigWithDiagnostics } from "../dist/core/config/schema.js";
+import {
+  getApiKeyForProvider,
+  loadConfig,
+  loadConfigWithDiagnostics,
+} from "../dist/core/config/schema.js";
 
 function createConfigDeps({ cwd, home, env }) {
   return {
@@ -248,6 +252,56 @@ describe("config paths", () => {
       expect(result.errors).toContain(
         `${join(fx.repo, ".tau", "config.json")}: 'disableBuiltinThemes' must be a boolean.`,
       );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("merges api keys for arbitrary providers", () => {
+    const fx = setupFixture();
+
+    try {
+      const repo = join(fx.home, "repo");
+      const nested = join(repo, "packages", "pkg1");
+      mkdirSync(nested, { recursive: true });
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+      mkdirSync(join(repo, ".tau"), { recursive: true });
+
+      writeFileSync(
+        join(fx.home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          apiKeys: {
+            openai: "global-openai",
+            "custom-provider": "global-custom",
+          },
+        }),
+      );
+
+      writeFileSync(
+        join(repo, ".tau", "config.json"),
+        JSON.stringify({
+          apiKeys: {
+            "custom-provider": "repo-custom",
+            "another-provider": "repo-another",
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: nested,
+        home: fx.home,
+        env: {},
+      });
+
+      const config = loadConfig(nested, deps);
+      expect(config.apiKeys).toEqual({
+        openai: "global-openai",
+        "custom-provider": "repo-custom",
+        "another-provider": "repo-another",
+      });
+      expect(getApiKeyForProvider(config, "custom-provider")).toBe("repo-custom");
+      expect(getApiKeyForProvider(config, "another-provider")).toBe("repo-another");
+      expect(getApiKeyForProvider(config, "openai")).toBe("global-openai");
     } finally {
       fx.cleanup();
     }

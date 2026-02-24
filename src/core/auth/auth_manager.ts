@@ -1,4 +1,4 @@
-import type { KnownProvider, OAuthCredentials } from "@mariozechner/pi-ai";
+import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import type { AuthStorage } from "./auth_storage.js";
 import type { AuthProviderAdapter } from "./provider_adapter.js";
 import { OpenAICodexAdapter } from "./providers/openai_codex.js";
@@ -76,10 +76,7 @@ export class AuthManager {
     }
   }
 
-  async getApiKey(
-    provider: KnownProvider,
-    options?: { sessionId?: string },
-  ): Promise<string | undefined> {
+  async getApiKey(provider: string, options?: { sessionId?: string }): Promise<string | undefined> {
     const adapter = this.adapters.get(provider);
     if (!adapter) {
       return undefined;
@@ -131,7 +128,7 @@ export class AuthManager {
   }
 
   async noteProviderError(
-    provider: KnownProvider,
+    provider: string,
     options?: { sessionId?: string; error?: unknown },
   ): Promise<void> {
     const adapter = this.adapters.get(provider);

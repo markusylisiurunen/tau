@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
@@ -123,6 +123,19 @@ async function buildSubagentSystemPrompt(args: {
   const skillsResult = await loadSkillsForPromptContext({
     config: args.config,
     cwd: args.hostCwd,
+    deps: {
+      fs: {
+        readFile: (path) => readFileSync(path, "utf-8"),
+        exists: (path) => existsSync(path),
+        listDir: (path) => readdirSync(path),
+        stat: (path) => statSync(path),
+      },
+      env: {
+        getEnv: () => process.env,
+        cwd: () => args.hostCwd,
+        home: () => args.home,
+      },
+    },
   });
   if (skillsResult.errors.length > 0) {
     throw new Error(`failed to load skills for prompt context:\n${skillsResult.errors.join("\n")}`);
@@ -386,6 +399,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             modelLabel,
             originHistoryEntryId: context.turnUserHistoryEntryId,
             config,
+            modelResolver: context.modelResolver,
             authPath: context.authPath,
             backend,
             personaId: context.persona.id,

@@ -7,7 +7,7 @@ import { AuthStorage } from "../auth/auth_storage.js";
 import { type CredentialResolver, createCredentialResolver } from "../auth/credential_resolver.js";
 import type { Config } from "../config/index.js";
 import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
-import { loadModelResolver } from "../models/catalog.js";
+import { loadModelResolver, type ModelResolver } from "../models/catalog.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { SubagentControlPlane } from "../subagents/control_plane.js";
@@ -90,6 +90,7 @@ export class SessionEngine {
   private home: string;
   private includeAgentContext: boolean;
   private sandboxEnabled: boolean;
+  private modelResolver: ModelResolver;
   private readonly subagentControlPlane: SubagentControlPlane;
   private readonly eventListeners = new Set<(event: CoreEvent) => void>();
   private historyEntries: HistoryEntry[] = [];
@@ -108,6 +109,7 @@ export class SessionEngine {
     this.home = options.home ?? this.deps.env.home();
     this.includeAgentContext = options.includeAgentContext ?? true;
     this.sandboxEnabled = options.sandboxEnabled ?? false;
+    this.modelResolver = this.createDispatchModelResolver();
     this.authPath = getAuthPath(this.deps.env.home());
     const authStorage = new AuthStorage(this.authPath);
     this.credentialResolver = createCredentialResolver({
@@ -141,6 +143,7 @@ export class SessionEngine {
 
   setConfig(config: Config): void {
     this.config = config;
+    this.modelResolver = this.createDispatchModelResolver();
   }
 
   setPromptContext(context: {
@@ -165,6 +168,8 @@ export class SessionEngine {
     if (context.sandboxEnabled !== undefined) {
       this.sandboxEnabled = context.sandboxEnabled;
     }
+
+    this.modelResolver = this.createDispatchModelResolver();
   }
 
   onEvent(handler: (event: CoreEvent) => void): () => void {
@@ -418,7 +423,7 @@ export class SessionEngine {
     return this.toolRegistry.getEnabledToolSchemas(this.persona.tools);
   }
 
-  private createDispatchModelResolver() {
+  private createDispatchModelResolver(): ModelResolver {
     const cwd = this.hostCwd || this.cwd || this.deps.env.cwd();
     const home = this.home || this.deps.env.home() || cwd;
 
@@ -482,7 +487,6 @@ export class SessionEngine {
       }
 
       const enabledTools = this.getEnabledToolSchemas();
-      const modelResolver = this.createDispatchModelResolver();
       const dispatchContext: ToolDispatchContext = {
         scope: "main",
         persona: this.persona,
@@ -495,7 +499,7 @@ export class SessionEngine {
         sandboxEnabled: this.sandboxEnabled,
         subagentPrompts: this.subagentPrompts,
         toolRegistry: this.toolRegistry,
-        modelResolver,
+        modelResolver: this.modelResolver,
         authPath: this.authPath,
         subagentControlPlane: this.subagentControlPlane,
       };

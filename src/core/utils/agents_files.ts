@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { basename, dirname, join, parse, resolve, sep } from "node:path";
 import type { ConfigDeps } from "../config/deps.js";
 import { loadConfigWithDiagnostics } from "../config/schema.js";
+import { loadModelResolver } from "../models/catalog.js";
 
 type AgentsFilesInScopeResult = {
   files: string[];
@@ -113,7 +114,8 @@ function findAdditionalAgentsFilesFromConfigsDetailed(args: {
   home: string;
 }): AgentsFilesInScopeResult {
   const deps = createAgentsConfigDeps(args.cwd, args.home);
-  const configResult = loadConfigWithDiagnostics(args.cwd, deps);
+  const modelResolver = loadModelResolver({ cwd: args.cwd, deps });
+  const configResult = loadConfigWithDiagnostics(args.cwd, deps, { modelResolver });
   const files: string[] = [];
   const errors = [...configResult.errors];
 

@@ -1,9 +1,5 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
-import {
-  listModels,
-  listProviders,
-  resolveModel as resolveCatalogModel,
-} from "../models/catalog.js";
+import { listProviders } from "../models/catalog.js";
 import { REASONING_LEVELS, ReasoningEffortSchema } from "../types.js";
 import type { SubagentLaunchModel } from "./types.js";
 
@@ -22,31 +18,9 @@ function parseProvider(raw: string): string | undefined {
   return provider;
 }
 
-function createSyntheticModel(provider: string, modelId: string): Model<Api> | undefined {
-  const template = listModels(provider)[0];
-  if (!template) {
-    return undefined;
-  }
-
-  return {
-    ...template,
-    id: modelId,
-    name: modelId,
-  };
-}
-
-function defaultResolveModel(provider: string, modelId: string): Model<Api> | undefined {
-  const model = resolveCatalogModel(provider, modelId);
-  if (model) {
-    return model;
-  }
-
-  return createSyntheticModel(provider, modelId);
-}
-
 export function parseSubagentLaunchModel(
   value: string,
-  options?: { resolveModel?: LaunchModelResolver },
+  options: { resolveModel: LaunchModelResolver },
 ): {
   launchModel?: SubagentLaunchModel;
   error?: string;
@@ -84,8 +58,7 @@ export function parseSubagentLaunchModel(
     return { error: `unknown provider '${providerPart.trim()}'` };
   }
 
-  const resolveModel = options?.resolveModel ?? defaultResolveModel;
-  const model = resolveModel(provider, modelIdPart);
+  const model = options.resolveModel(provider, modelIdPart);
   if (!model) {
     return { error: `unknown model '${provider}/${modelIdPart}'` };
   }
@@ -108,7 +81,7 @@ export function parseSubagentLaunchModel(
 
 export function parseSubagentLaunchModelList(
   raw: unknown,
-  options?: { resolveModel?: LaunchModelResolver },
+  options: { resolveModel: LaunchModelResolver },
 ): {
   launchModels?: string[];
   error?: string;

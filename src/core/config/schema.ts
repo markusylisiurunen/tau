@@ -1,6 +1,11 @@
 import { resolve } from "node:path";
 import { z } from "zod";
-import { listProviders, loadModelResolver, type ModelResolver } from "../models/catalog.js";
+import {
+  type LoadedModelResolver,
+  listProviders,
+  loadModelResolver,
+  type ModelResolver,
+} from "../models/catalog.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS, type RiskLevel, RiskLevelSchema } from "../types.js";
@@ -8,7 +13,6 @@ import { normalizeModelNoticeKey, parseModelNoticeKey } from "../utils/model_not
 import type { BashCommand } from "./bash_commands.js";
 import { parseBashCommands } from "./bash_commands.js";
 import type { ConfigDeps } from "./deps.js";
-import { createDefaultConfigDeps } from "./deps.js";
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import { getVirtualConfigDefaults } from "./virtual_defaults.js";
@@ -886,20 +890,15 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 }
 
 export function loadConfigWithDiagnostics(
-  cwd?: string,
-  deps?: ConfigDeps,
+  cwd: string,
+  deps: ConfigDeps,
+  options: { modelResolver: LoadedModelResolver },
 ): { config: Config; errors: string[] } {
-  const resolvedDeps = deps ?? createDefaultConfigDeps();
-  const resolvedCwd = cwd ?? resolvedDeps.env.cwd();
-  const levels = resolveConfigLevels(resolvedDeps, { cwd: resolvedCwd });
-  const modelResolverResult = loadModelResolver({
-    deps: resolvedDeps,
-    levels,
-    cwd: resolvedCwd,
-  });
+  const levels = resolveConfigLevels(deps, { cwd });
+  const modelResolverResult = options.modelResolver;
 
   const results = levels.map((level) =>
-    loadConfigFile(level, resolvedDeps, level.configPath, modelResolverResult.resolveModel),
+    loadConfigFile(level, deps, level.configPath, modelResolverResult.resolveModel),
   );
 
   return {
@@ -911,8 +910,9 @@ export function loadConfigWithDiagnostics(
   };
 }
 
-export function loadConfig(cwd?: string, deps?: ConfigDeps): Config {
-  return loadConfigWithDiagnostics(cwd, deps).config;
+export function loadConfig(cwd: string, deps: ConfigDeps): Config {
+  const modelResolver = loadModelResolver({ cwd, deps });
+  return loadConfigWithDiagnostics(cwd, deps, { modelResolver }).config;
 }
 
 export function getApiKeyForProvider(config: Config, provider: string): string | undefined {

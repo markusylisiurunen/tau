@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import type { Skill } from "../types.js";
 import type { ConfigDeps } from "./deps.js";
-import { createDefaultConfigDeps } from "./deps.js";
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
@@ -68,26 +67,17 @@ function loadSkillsFromDir(dir: string, deps: ConfigDeps): SkillsLoadResult {
   return { skills, errors };
 }
 
-function resolveLevels(args: {
-  deps: ConfigDeps;
-  cwd: string;
-  levels?: ConfigLevel[];
-}): ConfigLevel[] {
-  return args.levels ?? resolveConfigLevels(args.deps, { cwd: args.cwd });
-}
-
 export async function loadSkillsContent(
-  config?: Config,
-  options?: { cwd?: string; deps?: ConfigDeps; levels?: ConfigLevel[] },
+  config: Config | undefined,
+  options: { deps: ConfigDeps; levels: ConfigLevel[] },
 ): Promise<SkillsLoadResult> {
-  const deps = options?.deps ?? createDefaultConfigDeps();
-  const cwd = options?.cwd ?? deps.env.cwd();
-  const levels = resolveLevels({ deps, cwd, levels: options?.levels });
+  const deps = options.deps;
+  const levels = options.levels;
 
   const skillsByName = new Map<string, Skill>();
   const errors: string[] = [];
 
-  const virtualBundle = buildVirtualBundle(config ?? {}, deps);
+  const virtualBundle = buildVirtualBundle(config ?? {});
   for (const skill of virtualBundle.skills) {
     skillsByName.set(skill.name.toLowerCase(), skill);
   }
@@ -112,12 +102,11 @@ export async function loadSkillsContent(
 export async function loadSkillsForPromptContext(args: {
   config?: Config;
   cwd: string;
-  deps?: ConfigDeps;
-  levels?: ConfigLevel[];
+  deps: ConfigDeps;
 }): Promise<SkillsLoadResult> {
+  const levels = resolveConfigLevels(args.deps, { cwd: args.cwd });
   return loadSkillsContent(args.config, {
     deps: args.deps,
-    cwd: args.cwd,
-    levels: args.levels,
+    levels,
   });
 }

@@ -23,6 +23,7 @@ import {
   buildVirtualBundle,
   ChatRuntime,
   CliError,
+  createDefaultConfigDeps,
   createDefaultCoreDeps,
   createLocalToolExecutionBackend,
   createSandboxToolExecutionBackend,
@@ -54,6 +55,7 @@ import { ChatApp } from "./tui/index.js";
 import { detectTerminalAppearance } from "./tui/terminal_appearance.js";
 
 const cwd = process.cwd();
+const configDeps = createDefaultConfigDeps();
 const argv = process.argv.slice(2);
 const isRpcSubcommand = argv[0] === "rpc";
 
@@ -307,7 +309,7 @@ if (argv[0] === "install") {
 
 if (argv[0] === "async") {
   try {
-    const asyncConfig = loadConfig(cwd);
+    const asyncConfig = loadConfig(cwd, configDeps);
     await runAsyncCommand(argv.slice(1), {
       cwd,
       env: process.env,
@@ -348,7 +350,7 @@ async function createSandboxBackend(config: Config) {
 }
 
 try {
-  const runtime = await loadRuntimeConfig(cwd);
+  const runtime = await loadRuntimeConfig(cwd, configDeps);
   config = runtime.config;
   personas = runtime.personas;
   prompts = runtime.prompts;
@@ -370,7 +372,7 @@ try {
   // eslint-disable-next-line no-console
   console.error(`failed to load user content: ${(err as Error).message}`);
 
-  config = loadConfig(cwd);
+  config = loadConfig(cwd, configDeps);
   bashCommands = config.bashCommands ?? [];
 
   const virtualBundle = buildVirtualBundle(config);

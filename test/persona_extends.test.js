@@ -11,7 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadAllContent } from "../dist/core/config/index.js";
+import { loadAllContent, resolveConfigLevels } from "../dist/core/config/index.js";
+import { loadModelResolver } from "../dist/core/models/catalog.js";
 
 function setupFixture() {
   const home = mkdtempSync(join(tmpdir(), "tau-personas-home-"));
@@ -25,6 +26,19 @@ function setupFixture() {
       rmSync(home, { recursive: true, force: true });
     },
   };
+}
+
+async function loadAllContentWithModelResolver(config, options) {
+  const modelResolver = loadModelResolver({
+    cwd: options.cwd,
+    deps: options.deps,
+  }).resolveModel;
+  const levels = resolveConfigLevels(options.deps, { cwd: options.cwd });
+  return await loadAllContent(config, {
+    deps: options.deps,
+    levels,
+    modelResolver,
+  });
 }
 
 describe("custom personas", () => {
@@ -63,7 +77,7 @@ describe("custom personas", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
       const base = personas.find((p) => p.id === "gpt-5.2-coder");
@@ -109,7 +123,7 @@ describe("custom personas", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContent(
+      const { personas, errors } = await loadAllContentWithModelResolver(
         { disableBuiltinPersonas: true },
         { deps, cwd: fx.cwd },
       );
@@ -143,7 +157,7 @@ describe("custom personas", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
       const persona = personas.find((p) => p.id === "no-skills");
@@ -176,7 +190,7 @@ describe("custom personas", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
       const persona = personas.find((p) => p.id === "subset-skills");
@@ -212,7 +226,7 @@ describe("custom personas", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContent(
+      const { personas, errors } = await loadAllContentWithModelResolver(
         {
           subagents: {
             defaultLaunchModels: ["openai/gpt-5.2:low"],
@@ -285,7 +299,7 @@ describe("custom personas", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
       const persona = personas.find((entry) => entry.id === "custom-models");
@@ -367,7 +381,7 @@ describe("custom personas", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
       const persona = personas.find((entry) => entry.id === "scoped-model");
@@ -409,7 +423,7 @@ describe("custom personas", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
       const persona = personas.find((entry) => entry.id === "gpt-5.2-chat");
@@ -426,7 +440,7 @@ describe("custom personas", () => {
 
     try {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const withOverrides = await loadAllContent(
+      const withOverrides = await loadAllContentWithModelResolver(
         {
           subagents: {
             defaultLaunchModels: ["openai/gpt-5.2:low"],
@@ -440,7 +454,7 @@ describe("custom personas", () => {
       );
       expect(withOverridesPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.2:low"]);
 
-      const withoutOverrides = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const withoutOverrides = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       const withoutOverridesPersona = withoutOverrides.personas.find(
         (persona) => persona.id === "gpt-5.2-chat",
       );
@@ -455,7 +469,7 @@ describe("custom personas", () => {
 
     try {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { prompts, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { prompts, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
       expect(prompts).toEqual([]);
     } finally {
@@ -475,7 +489,7 @@ describe("custom personas", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
 
       expect(personas.find((persona) => persona.id === "broken")).toBeUndefined();
       expect(errors.some((error) => error.includes("invalid frontmatter YAML"))).toBe(true);
@@ -496,7 +510,7 @@ describe("custom personas", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { prompts, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { prompts, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
 
       expect(prompts.find((prompt) => prompt.id === "broken")).toBeUndefined();
       expect(errors.some((error) => error.includes("frontmatter must be a YAML object"))).toBe(

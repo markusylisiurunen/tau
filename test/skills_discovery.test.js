@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadAllContent, resolveConfigLevels } from "../dist/core/config/index.js";
 import { loadSkillsForPromptContext } from "../dist/core/config/skills_loader.js";
+import { loadModelResolver } from "../dist/core/models/catalog.js";
 
 function createConfigDeps({ cwd, home }) {
   return {
@@ -53,6 +54,19 @@ function writeSkill(skillsDir, name, description) {
   );
 }
 
+async function loadAllContentWithModelResolver(config, options) {
+  const modelResolver = loadModelResolver({
+    cwd: options.cwd,
+    deps: options.deps,
+  }).resolveModel;
+  const levels = resolveConfigLevels(options.deps, { cwd: options.cwd });
+  return await loadAllContent(config, {
+    deps: options.deps,
+    levels,
+    modelResolver,
+  });
+}
+
 describe("skills discovery", () => {
   it("loads project skills from .agents/skills when .tau is absent", async () => {
     const fx = setupFixture();
@@ -62,7 +76,13 @@ describe("skills discovery", () => {
       writeSkill(skillsDir, "alpha", "alpha from agents");
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { skills, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { skills, errors } = await loadAllContentWithModelResolver(
+        {},
+        {
+          deps,
+          cwd: fx.cwd,
+        },
+      );
 
       expect(errors).toEqual([]);
       expect(skills.map((skill) => skill.name)).toEqual(["alpha"]);
@@ -88,7 +108,13 @@ describe("skills discovery", () => {
         .map((level) => level.levelRoot);
       expect(levels).toEqual([repoRoot, packageRoot]);
 
-      const { skills, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { skills, errors } = await loadAllContentWithModelResolver(
+        {},
+        {
+          deps,
+          cwd: fx.cwd,
+        },
+      );
       expect(errors).toEqual([]);
       expect(skills.map((skill) => skill.name)).toEqual(["pkg-skill", "root-skill"]);
     } finally {
@@ -105,7 +131,13 @@ describe("skills discovery", () => {
       writeSkill(join(repoRoot, ".agents", "skills"), "shared", "from agents");
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { skills, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { skills, errors } = await loadAllContentWithModelResolver(
+        {},
+        {
+          deps,
+          cwd: fx.cwd,
+        },
+      );
       expect(errors).toEqual([]);
 
       const shared = skills.find((skill) => skill.name === "shared");
@@ -227,7 +259,13 @@ describe("skills discovery", () => {
       writeSkill(join(fx.home, ".agents", "skills"), "global-agent", "from global agents");
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { skills, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      const { skills, errors } = await loadAllContentWithModelResolver(
+        {},
+        {
+          deps,
+          cwd: fx.cwd,
+        },
+      );
       expect(errors).toEqual([]);
 
       const globalAgent = skills.find((skill) => skill.name === "global-agent");

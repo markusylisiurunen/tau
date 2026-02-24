@@ -225,12 +225,9 @@ Optional per-bot allowlists:
 - `allowedUserIds`
 - `allowedChatIds`
 
-If `allowedProjectIds` is omitted, the bot can access all async projects.
-Sessions are chat-scoped within each bot: each DM chat can only see and control sessions it created, even for the same project.
-If `allowedUserIds` and `allowedChatIds` are provided, both must match for a DM to be processed.
+If `allowedProjectIds` is omitted, the bot can access all async projects. Sessions are chat-scoped within each bot: each DM chat can only see and control sessions it created, even for the same project. If `allowedUserIds` and `allowedChatIds` are provided, both must match for a DM to be processed.
 
-Telegram keeps one selected session per chat for command and plain-text input routing, but it continues
-streaming events for every session that has been selected in that chat.
+Telegram keeps one selected session per chat for command and plain-text input routing, but it continues streaming events for every session that has been selected in that chat.
 
 Lifecycle notifications are sent back to associated chats:
 

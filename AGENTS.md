@@ -123,17 +123,17 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 
 ## Tool system
 
-| Tool                  | Purpose                                                                  | Risk requirement                               |
-| --------------------- | ------------------------------------------------------------------------ | ---------------------------------------------- |
-| `bash`                | Shell execution                                                          | `read-only` for reads, `read-write` for writes |
-| `write`               | Create/overwrite files                                                   | `read-write`                                   |
-| `edit`                | Replace exact text in files                                              | `read-write`                                   |
-| `view_image`          | View an image file                                                       | `read-only`                                    |
-| `spawn_agent`         | Start a background subagent                                              | `read-only` or `read-write`                    |
-| `send_input_to_agent` | Send input to an idle subagent                                           | `read-only` or `read-write`                    |
-| `wait_for_agent`      | Await subagent completion                                                | `read-only` or `read-write`                    |
-| `terminate_agent`     | Stop a running subagent                                                  | `read-only` or `read-write`                    |
-| `emit_output`         | Subagent-only output to main (currently disabled in subagent registries) | `read-only` or `read-write`                    |
+| Tool | Purpose | Risk requirement |
+| --- | --- | --- |
+| `bash` | Shell execution | `read-only` for reads, `read-write` for writes |
+| `write` | Create/overwrite files | `read-write` |
+| `edit` | Replace exact text in files | `read-write` |
+| `view_image` | View an image file | `read-only` |
+| `spawn_agent` | Start a background subagent | `read-only` or `read-write` |
+| `send_input_to_agent` | Send input to an idle subagent | `read-only` or `read-write` |
+| `wait_for_agent` | Await subagent completion | `read-only` or `read-write` |
+| `terminate_agent` | Stop a running subagent | `read-only` or `read-write` |
+| `emit_output` | Subagent-only output to main (currently disabled in subagent registries) | `read-only` or `read-write` |
 
 Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set.
 

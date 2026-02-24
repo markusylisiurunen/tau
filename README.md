@@ -45,10 +45,7 @@ to use the OpenAI Codex subscription provider (`openai-codex`), run:
 tau auth login codex
 ```
 
-this prints a login URL and starts a local callback server on `127.0.0.1:1455`. complete the
-login in your browser and tau will store tokens in `~/.config/tau/auth.json`. if port `1455`
-is already in use, or the browser callback fails, tau will prompt you to paste the redirect
-URL/code. if you see token refresh errors later, run the login command again to re-authenticate.
+this prints a login URL and starts a local callback server on `127.0.0.1:1455`. complete the login in your browser and tau will store tokens in `~/.config/tau/auth.json`. if port `1455` is already in use, or the browser callback fails, tau will prompt you to paste the redirect URL/code. if you see token refresh errors later, run the login command again to re-authenticate.
 
 to list authenticated accounts and usage:
 
@@ -62,17 +59,13 @@ to remove stored credentials:
 tau auth logout codex --account <email>
 ```
 
-to force a specific Codex account for this run, set `TAU_CODEX_ACCOUNT` to the
-account email or account id (same matching as `auth logout`). when set, tau will
-only use that account and will not fail over.
+to force a specific Codex account for this run, set `TAU_CODEX_ACCOUNT` to the account email or account id (same matching as `auth logout`). when set, tau will only use that account and will not fail over.
 
-`openai-codex` does **not** use `OPENAI_API_KEY` or `apiKeys.openai`; it relies on the OAuth
-tokens in `~/.config/tau/auth.json`.
+`openai-codex` does **not** use `OPENAI_API_KEY` or `apiKeys.openai`; it relies on the OAuth tokens in `~/.config/tau/auth.json`.
 
 ## usage logging
 
-tau writes JSONL usage logs to `~/.config/tau/logs/usage-YYYY-MM-DD.jsonl` for every assistant
-response (main and sub-agent). summarize usage with:
+tau writes JSONL usage logs to `~/.config/tau/logs/usage-YYYY-MM-DD.jsonl` for every assistant response (main and sub-agent). summarize usage with:
 
 ```sh
 tau usage --since 2025-01-01 --persona gpt-5.2-coder
@@ -116,11 +109,9 @@ tau async cron runs [jobId]
 tau async cron run <jobId>
 ```
 
-project id for `tau async <prompt...>` resolves from `--project <id>` first, then
-`async.client.defaultProjectId` from config.
+project id for `tau async <prompt...>` resolves from `--project <id>` first, then `async.client.defaultProjectId` from config.
 
-use `tau async -- <prompt...>` when prompt text starts with a reserved command word (for example,
-`list`).
+use `tau async -- <prompt...>` when prompt text starts with a reserved command word (for example, `list`).
 
 for daemon/API/Telegram details, see [docs/async.md](docs/async.md).
 
@@ -166,9 +157,7 @@ tau ships starter prompt and skill templates as markdown content in this reposit
 tau install
 ```
 
-this writes prompts and skills into `.tau/` under your current working directory. use `--global` to
-install into `~/.config/tau/` instead, and `--force` to overwrite existing files/directories.
-use `--prompt <id>` or `--skill <name>` to install only one item (for targeted updates).
+this writes prompts and skills into `.tau/` under your current working directory. use `--global` to install into `~/.config/tau/` instead, and `--force` to overwrite existing files/directories. use `--prompt <id>` or `--skill <name>` to install only one item (for targeted updates).
 
 ## security notice
 
@@ -203,8 +192,7 @@ tau can load custom palette overrides from theme files. create a theme at:
 - `.tau/themes/<id>.json` (project)
 - `~/.config/tau/themes/<id>.json` (global)
 
-then set `"defaultTheme": "<id>"` in config. any palette token not defined in the file renders as plain text.
-theme values accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, or `hsl(h, s%, l%)`. hex without `#` is ignored.
+then set `"defaultTheme": "<id>"` in config. any palette token not defined in the file renders as plain text. theme values accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, or `hsl(h, s%, l%)`. hex without `#` is ignored.
 
 built-in themes are available by default with ids: `crimson`, `ember`, `gold`, `lime`, `grass`, `emerald`, `jade`, `teal`, `cyan`, `azure`, `cobalt`, `violet`, `purple`, `magenta`, `rose`. built-ins auto-adapt to dark/light terminal backgrounds via OSC 11 detection at startup (best effort, dark fallback). set `defaultTheme` to one of these ids, or disable them with `disableBuiltinThemes`.
 
@@ -384,30 +372,30 @@ tau updates the nearest `AGENTS.md` in your current directory ancestry (or creat
 
 tau supports slash commands for common actions:
 
-| command                     | description                                                                             |
-| --------------------------- | --------------------------------------------------------------------------------------- |
-| `/help`                     | show available commands                                                                 |
-| `/new`                      | clear the session and start fresh                                                       |
-| `/rewind`                   | open a picker to rewind context from a selected user message                            |
-| `/copy:text`                | copy the last assistant message                                                         |
-| `/copy:code`                | copy just the code blocks                                                               |
-| `/checkpoint`               | save a checkpoint file for loading later                                                |
-| `/reload`                   | reload personas, model overrides, prompts, skills, themes, bash commands, and AGENTS.md |
-| `/speak`                    | toggle microphone recording and transcribe into the editor (macOS only)                 |
-| `/cd`                       | change the working directory                                                            |
-| `/compact:summary-only`     | compress history into one synthetic user summary message                                |
-| `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present           |
-| `/prune:earliest`           | prune bash tool results from oldest to newest and compact edit payloads/results         |
-| `/prune:largest`            | prune largest bash tool results first and compact edit payloads/results                 |
-| `/prune:smart`              | prune bash tool results via model selection and compact edit payloads/results           |
-| `/persona:<id>`             | switch to a different persona                                                           |
-| `/prompt:<id>`              | insert a saved prompt template                                                          |
-| `/theme:<id>`               | switch to a loaded theme                                                                |
-| `/bash:<id>`                | run a saved shell command                                                               |
-| `/risk:read-only`           | allow read-only tool calls                                                              |
-| `/risk:read-write`          | allow all tools                                                                         |
-| `!<cmd>`                    | run a shell command directly (bypasses risk checks; uses sandbox if enabled)            |
-| `!!<cmd>`                   | run a shell command without adding output to the model context                          |
+| command | description |
+| --- | --- |
+| `/help` | show available commands |
+| `/new` | clear the session and start fresh |
+| `/rewind` | open a picker to rewind context from a selected user message |
+| `/copy:text` | copy the last assistant message |
+| `/copy:code` | copy just the code blocks |
+| `/checkpoint` | save a checkpoint file for loading later |
+| `/reload` | reload personas, model overrides, prompts, skills, themes, bash commands, and AGENTS.md |
+| `/speak` | toggle microphone recording and transcribe into the editor (macOS only) |
+| `/cd` | change the working directory |
+| `/compact:summary-only` | compress history into one synthetic user summary message |
+| `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present |
+| `/prune:earliest` | prune bash tool results from oldest to newest and compact edit payloads/results |
+| `/prune:largest` | prune largest bash tool results first and compact edit payloads/results |
+| `/prune:smart` | prune bash tool results via model selection and compact edit payloads/results |
+| `/persona:<id>` | switch to a different persona |
+| `/prompt:<id>` | insert a saved prompt template |
+| `/theme:<id>` | switch to a loaded theme |
+| `/bash:<id>` | run a saved shell command |
+| `/risk:read-only` | allow read-only tool calls |
+| `/risk:read-write` | allow all tools |
+| `!<cmd>` | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
+| `!!<cmd>` | run a shell command without adding output to the model context |
 
 use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
 
@@ -443,14 +431,9 @@ the prune commands drop bash tool results from the active context without summar
 
 ### global config
 
-tau loads config from `~/.config/tau/config.json` only when the current working directory is
-inside your home directory. it also loads any `.tau/config.json` found by walking up from the
-current working directory to home (or to the filesystem root when cwd is outside home).
-settings merge from least-specific to most-specific.
+tau loads config from `~/.config/tau/config.json` only when the current working directory is inside your home directory. it also loads any `.tau/config.json` found by walking up from the current working directory to home (or to the filesystem root when cwd is outside home). settings merge from least-specific to most-specific.
 
-model definitions can be extended and overridden through `~/.config/tau/models.json` and
-`.tau/models.json` with the same discovery and precedence rules as `config.json`.
-see [docs/models.md](docs/models.md).
+model definitions can be extended and overridden through `~/.config/tau/models.json` and `.tau/models.json` with the same discovery and precedence rules as `config.json`. see [docs/models.md](docs/models.md).
 
 ```json
 {
@@ -558,8 +541,7 @@ you can tell tau to always include extra `AGENTS.md` files by adding an `agentCo
 { "agentContextFiles": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries must point at `AGENTS.md`.
-entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
+paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries must point at `AGENTS.md`. entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
 
 ### custom personas
 
@@ -572,8 +554,7 @@ provider: anthropic
 model: claude-opus-4-5
 ---
 
-you are a helpful assistant specialized in my workflow.
-focus on clarity and efficiency.
+you are a helpful assistant specialized in my workflow. focus on clarity and efficiency.
 ```
 
 the frontmatter defines the persona. required fields:
@@ -582,9 +563,7 @@ the frontmatter defines the persona. required fields:
 - `provider`: model provider id (for example `openai`, `anthropic`, `google`)
 - `model`: model id for the provider (for example `gpt-5.2`, `claude-opus-4-5`)
 
-custom personas/subagents can reference model ids that are not bundled yet, as long as the
-provider is known. configure model metadata in `models.json` files or let tau derive defaults.
-see [docs/models.md](docs/models.md).
+custom personas/subagents can reference model ids that are not bundled yet, as long as the provider is known. configure model metadata in `models.json` files or let tau derive defaults. see [docs/models.md](docs/models.md).
 
 the persona file name (without the `.md` extension) must match the `id`.
 
@@ -641,8 +620,7 @@ tau does not include prompt templates by default. run `tau install` to bootstrap
 id: review
 ---
 
-review this code for bugs, edge cases, and style issues.
-suggest specific improvements with code examples.
+review this code for bugs, edge cases, and style issues. suggest specific improvements with code examples.
 ```
 
 insert them with `/prompt:review`. if a prompt id conflicts across levels, the most specific level wins.

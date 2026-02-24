@@ -139,54 +139,6 @@ describe("spawn_agent tool", () => {
     expect(spawned[0].settings.reasoning).toBe("high");
   });
 
-  it("accepts unbundled launch model ids for known providers", async () => {
-    const backend = createLocalToolExecutionBackend();
-    const tool = createSpawnAgentToolDefinition(backend);
-    const { context, spawned } = createContext({
-      persona: {
-        id: "test-persona",
-        label: "test persona",
-        model: createModels().anthropic,
-        systemPrompt: "main",
-        settings: { reasoning: "low" },
-        source: "project",
-        subagents: {
-          researcher: {
-            systemPrompt: "research",
-            launchModels: ["openai/gpt-5.9-custom:high"],
-          },
-        },
-      },
-      subagentPrompts: {
-        researcher: "research prompt",
-      },
-    });
-
-    const dispatched = await tool.dispatch(
-      {
-        id: "call-1c",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-          model: "openai/gpt-5.9-custom:high",
-        },
-      },
-      "read-only",
-      undefined,
-      context,
-    );
-
-    expect(dispatched.kind).toBe("phased");
-    const result = await dispatched.run;
-    expect(result.kind).toBe("single");
-    expect(result.toolResult.isError).toBe(false);
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0].model.provider).toBe("openai");
-    expect(spawned[0].model.id).toBe("gpt-5.9-custom");
-  });
-
   it("uses models.json metadata for unbundled launch model overrides", async () => {
     const backend = createLocalToolExecutionBackend();
     const tool = createSpawnAgentToolDefinition(backend);

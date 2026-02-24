@@ -1,7 +1,7 @@
 import { basename, join } from "node:path";
 import type { Tool } from "@mariozechner/pi-ai";
 import { z } from "zod";
-import { resolveModel as resolveCatalogModel } from "../models/catalog.js";
+import { loadModelResolver, type ModelResolver } from "../models/catalog.js";
 import { personas as builtinPersonas } from "../personas.js";
 import type { PromptTemplate } from "../prompts.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
@@ -175,7 +175,10 @@ function cloneSubagentPersonaConfig(config: SubagentPersonaConfig): SubagentPers
   };
 }
 
-function parseSubagentConfig(subagentsRaw: unknown): {
+function parseSubagentConfig(
+  subagentsRaw: unknown,
+  modelResolver: ModelResolver,
+): {
   config?: SubagentConfigMap;
   defaultDisabled?: boolean;
   error?: string;
@@ -230,7 +233,9 @@ function parseSubagentConfig(subagentsRaw: unknown): {
     if (toolsResult.error) {
       return { error: `subagent ${validatedName}: ${toolsResult.error}` };
     }
-    const launchModelsResult = parseSubagentLaunchModelList(specRaw.launchModels);
+    const launchModelsResult = parseSubagentLaunchModelList(specRaw.launchModels, {
+      resolveModel: modelResolver,
+    });
     if (launchModelsResult.error) {
       return {
         error: `subagent ${validatedName}: launchModels ${launchModelsResult.error}`,
@@ -246,7 +251,7 @@ function parseSubagentConfig(subagentsRaw: unknown): {
 
     let modelObj: Persona["model"] | undefined;
     if (provider && model) {
-      modelObj = resolveModel(provider, model);
+      modelObj = modelResolver(provider, model);
       if (!modelObj) {
         return {
           error: `subagent ${validatedName}: failed to resolve model "${provider}:${model}"`,
@@ -314,8 +319,56 @@ function parsePersonaTools(toolsRaw: unknown): { tools?: Tool[]; error?: string 
   return { tools: selected };
 }
 
-function resolveModel(provider: string, modelId: string): Persona["model"] | undefined {
-  return resolveCatalogModel(provider, modelId);
+function resolvePersonaModels(
+  persona: Persona,
+  modelResolver: ModelResolver,
+): { persona?: Persona; error?: string } {
+  const resolvedPersonaModel = modelResolver(persona.model.provider, persona.model.id);
+  if (!resolvedPersonaModel) {
+    return {
+      error: `failed to resolve model "${persona.model.provider}:${persona.model.id}"`,
+    };
+  }
+
+  if (!persona.subagents) {
+    return {
+      persona: {
+        ...persona,
+        model: resolvedPersonaModel,
+      },
+    };
+  }
+
+  const resolvedSubagents: SubagentConfigMap = {};
+
+  for (const [name, config] of Object.entries(persona.subagents)) {
+    if (!config?.model) {
+      if (config) {
+        resolvedSubagents[name] = cloneSubagentPersonaConfig(config);
+      }
+      continue;
+    }
+
+    const resolvedSubagentModel = modelResolver(config.model.provider, config.model.id);
+    if (!resolvedSubagentModel) {
+      return {
+        error: `subagent ${name}: failed to resolve model "${config.model.provider}:${config.model.id}"`,
+      };
+    }
+
+    resolvedSubagents[name] = {
+      ...cloneSubagentPersonaConfig(config),
+      model: resolvedSubagentModel,
+    };
+  }
+
+  return {
+    persona: {
+      ...persona,
+      model: resolvedPersonaModel,
+      subagents: resolvedSubagents,
+    },
+  };
 }
 
 function mergeById<T extends { id: string }>(base: T[], overlay: T[], overlay2?: T[]): T[] {
@@ -484,6 +537,7 @@ function parsePersona(
   file: string,
   content: string,
   source: "user" | "project",
+  modelResolver: ModelResolver,
   basePersonasById?: Map<string, Persona>,
 ): { persona?: Persona; error?: string } {
   const markdownResult = parseMarkdownFrontMatter(content);
@@ -515,7 +569,7 @@ function parsePersona(
     return { error: `${file}: extends "${extendsId}" not found. skipped.` };
   }
 
-  const modelObj = resolveModel(provider, model);
+  const modelObj = modelResolver(provider, model);
   if (!modelObj) {
     return { error: `${file}: failed to load model "${provider}:${model}". skipped.` };
   }
@@ -551,7 +605,7 @@ function parsePersona(
   }
 
   // Parse subagents
-  const subagentsResult = parseSubagentConfig(subagentsRaw);
+  const subagentsResult = parseSubagentConfig(subagentsRaw, modelResolver);
   if (subagentsResult.error) {
     return { error: `${file}: ${subagentsResult.error}. skipped.` };
   }
@@ -717,6 +771,7 @@ function parseTheme(
 
 export async function loadUserPersonas(args?: {
   basePersonasById?: Map<string, Persona>;
+  modelResolver?: ModelResolver;
   deps?: ConfigDeps;
   levels?: ConfigLevel[];
   cwd?: string;
@@ -733,16 +788,17 @@ export async function loadUserPersonas(args?: {
   if (!globalLevel) {
     return { personas: [], errors: [] };
   }
+
+  const modelResolver = args?.modelResolver ?? loadModelResolver({ deps, levels }).resolveModel;
   const personasDir = globalLevel.personasDir;
   const { entries, errors } = loadMarkdownEntries(personasDir, deps, listMarkdownFiles);
-
   const personas: Persona[] = [];
 
   const basePersonasById =
     args?.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
 
   for (const file of entries) {
-    const result = parsePersona(file.path, file.content, "user", basePersonasById);
+    const result = parsePersona(file.path, file.content, "user", modelResolver, basePersonasById);
     if (result.persona) {
       personas.push(result.persona);
     } else if (result.error) {
@@ -755,6 +811,7 @@ export async function loadUserPersonas(args?: {
 
 export async function loadProjectPersonas(args?: {
   basePersonasById?: Map<string, Persona>;
+  modelResolver?: ModelResolver;
   cwd?: string;
   deps?: ConfigDeps;
   levels?: ConfigLevel[];
@@ -773,6 +830,7 @@ export async function loadProjectPersonas(args?: {
     return { personas: [], errors: [] };
   }
 
+  const modelResolver = args?.modelResolver ?? loadModelResolver({ deps, levels }).resolveModel;
   const personas: Persona[] = [];
   const errors: string[] = [];
 
@@ -789,7 +847,13 @@ export async function loadProjectPersonas(args?: {
     errors.push(...entryErrors);
 
     for (const file of entries) {
-      const result = parsePersona(file.path, file.content, "project", basePersonasById);
+      const result = parsePersona(
+        file.path,
+        file.content,
+        "project",
+        modelResolver,
+        basePersonasById,
+      );
       if (result.persona) {
         personas.push(result.persona);
       } else if (result.error) {
@@ -978,14 +1042,45 @@ export async function loadAllContent(
   const virtualBundle = buildVirtualBundle(config ?? {}, deps);
 
   try {
-    const basePersonasById = new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
+    const modelResolverResult = loadModelResolver({ deps, levels });
+    const builtinPersonaErrors: string[] = [];
+    const resolvedBuiltinPersonas: Persona[] = [];
+
+    for (const persona of builtinPersonas) {
+      const resolved = resolvePersonaModels(persona, modelResolverResult.resolveModel);
+      if (resolved.persona) {
+        resolvedBuiltinPersonas.push(resolved.persona);
+      } else if (resolved.error) {
+        builtinPersonaErrors.push(`builtin persona '${persona.id}': ${resolved.error}`);
+      }
+    }
+
+    const resolvedVirtualBundlePersonas: Persona[] = [];
+    for (const persona of virtualBundle.personas) {
+      const resolved = resolvePersonaModels(persona, modelResolverResult.resolveModel);
+      if (resolved.persona) {
+        resolvedVirtualBundlePersonas.push(resolved.persona);
+      } else if (resolved.error) {
+        builtinPersonaErrors.push(`builtin persona '${persona.id}': ${resolved.error}`);
+      }
+    }
+
+    const basePersonasById = new Map(
+      resolvedBuiltinPersonas.map((persona) => [persona.id.toLowerCase(), persona] as const),
+    );
 
     const userPersonasResult = await loadUserPersonas({
       basePersonasById,
+      modelResolver: modelResolverResult.resolveModel,
       deps,
       levels,
     });
-    const projectPersonasResult = await loadProjectPersonas({ basePersonasById, deps, levels });
+    const projectPersonasResult = await loadProjectPersonas({
+      basePersonasById,
+      modelResolver: modelResolverResult.resolveModel,
+      deps,
+      levels,
+    });
     const userPromptsResult = await loadUserPrompts({ deps, levels });
     const projectPromptsResult = await loadProjectPrompts({ deps, levels });
     const skillsResult = await loadSkillsContent(config, { deps, levels });
@@ -993,6 +1088,8 @@ export async function loadAllContent(
     const projectThemesResult = await loadProjectThemes({ deps, levels });
 
     const allErrors = [
+      ...modelResolverResult.errors,
+      ...builtinPersonaErrors,
       ...userPersonasResult.errors,
       ...projectPersonasResult.errors,
       ...userPromptsResult.errors,
@@ -1007,7 +1104,7 @@ export async function loadAllContent(
     // Precedence: virtual bundle < global < nearest .tau levels.
     const defaultLaunchModels = config?.subagents?.defaultLaunchModels;
     const personas = mergeById(
-      virtualBundle.personas,
+      resolvedVirtualBundlePersonas,
       userPersonasResult.personas,
       projectPersonasResult.personas,
     ).map((persona) => withDefaultSubagentLaunchModels(persona, defaultLaunchModels));

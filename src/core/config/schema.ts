@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { z } from "zod";
-import { listProviders, resolveModel as resolveCatalogModel } from "../models/catalog.js";
+import { listProviders, loadModelResolver, type ModelResolver } from "../models/catalog.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS, type RiskLevel, RiskLevelSchema } from "../types.js";
@@ -266,7 +266,11 @@ function parseDefaultPersona(
   return { errors: [] };
 }
 
-function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostics {
+function validateConfigData(
+  raw: unknown,
+  sourceLabel: string,
+  modelResolver: ModelResolver,
+): ConfigDiagnostics {
   if (typeof raw !== "object" || raw === null) {
     return { config: {}, errors: [`${sourceLabel}: config must be an object.`] };
   }
@@ -317,7 +321,7 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
     agentResult.errors,
   );
 
-  const subagentsResult = parseSubagentsConfig(data.subagents, sourceLabel);
+  const subagentsResult = parseSubagentsConfig(data.subagents, sourceLabel, modelResolver);
   assignParsedConfigValue(
     config,
     errors,
@@ -326,7 +330,11 @@ function validateConfigData(raw: unknown, sourceLabel: string): ConfigDiagnostic
     subagentsResult.errors,
   );
 
-  const modelSystemNoticesResult = parseModelSystemNotices(data.modelSystemNotices, sourceLabel);
+  const modelSystemNoticesResult = parseModelSystemNotices(
+    data.modelSystemNotices,
+    sourceLabel,
+    modelResolver,
+  );
   assignParsedConfigValue(
     config,
     errors,
@@ -407,6 +415,7 @@ function parseAgentContextFiles(
 function parseSubagentsConfig(
   raw: unknown,
   sourceLabel: string,
+  modelResolver: ModelResolver,
 ): { config?: Config["subagents"]; errors: string[] } {
   if (raw === undefined) {
     return { errors: [] };
@@ -425,7 +434,9 @@ function parseSubagentsConfig(
     return { errors: [] };
   }
 
-  const launchModelsResult = parseSubagentLaunchModelList(defaultLaunchModels);
+  const launchModelsResult = parseSubagentLaunchModelList(defaultLaunchModels, {
+    resolveModel: modelResolver,
+  });
   if (launchModelsResult.error) {
     return {
       errors: [
@@ -442,7 +453,10 @@ function parseSubagentsConfig(
   };
 }
 
-function parseModelNoticeTarget(rawKey: string): { normalizedKey?: string; error?: string } {
+function parseModelNoticeTarget(
+  rawKey: string,
+  modelResolver: ModelResolver,
+): { normalizedKey?: string; error?: string } {
   const parsedKey = parseModelNoticeKey(rawKey);
   if (!parsedKey) {
     return { error: "must use keys in format '<provider>/<model>'" };
@@ -453,7 +467,7 @@ function parseModelNoticeTarget(rawKey: string): { normalizedKey?: string; error
     return { error: `unknown provider '${parsedKey.provider}'` };
   }
 
-  const model = resolveCatalogModel(provider, parsedKey.modelId);
+  const model = modelResolver(provider, parsedKey.modelId);
   if (!model) {
     return {
       error: `unknown model '${parsedKey.provider}/${parsedKey.modelId}'`,
@@ -468,6 +482,7 @@ function parseModelNoticeTarget(rawKey: string): { normalizedKey?: string; error
 function parseModelSystemNotices(
   raw: unknown,
   sourceLabel: string,
+  modelResolver: ModelResolver,
 ): { notices?: Record<string, string>; errors: string[] } {
   if (raw === undefined) {
     return { errors: [] };
@@ -482,7 +497,7 @@ function parseModelSystemNotices(
   const errors: string[] = [];
 
   for (const [rawKey, rawValue] of Object.entries(parsedRecord.data)) {
-    const parsedKey = parseModelNoticeTarget(rawKey);
+    const parsedKey = parseModelNoticeTarget(rawKey, modelResolver);
     if (parsedKey.error || !parsedKey.normalizedKey) {
       errors.push(
         `${sourceLabel}: modelSystemNotices.${rawKey} ${parsedKey.error ?? "is invalid"}.`,
@@ -653,6 +668,7 @@ function loadConfigFile(
   level: ConfigLevel,
   deps: ConfigDeps,
   sourceLabel: string,
+  modelResolver: ModelResolver,
 ): ConfigDiagnostics {
   try {
     if (!deps.fs.exists(level.configPath)) {
@@ -665,7 +681,7 @@ function loadConfigFile(
       return { config: {}, errors: parsed.errors };
     }
 
-    const validated = validateConfigData(parsed.data, sourceLabel);
+    const validated = validateConfigData(parsed.data, sourceLabel, modelResolver);
     return { config: validated.config, errors: [...parsed.errors, ...validated.errors] };
   } catch (err) {
     return {
@@ -876,15 +892,22 @@ export function loadConfigWithDiagnostics(
   const resolvedDeps = deps ?? createDefaultConfigDeps();
   const resolvedCwd = cwd ?? resolvedDeps.env.cwd();
   const levels = resolveConfigLevels(resolvedDeps, { cwd: resolvedCwd });
+  const modelResolverResult = loadModelResolver({
+    deps: resolvedDeps,
+    levels,
+    cwd: resolvedCwd,
+  });
 
-  const results = levels.map((level) => loadConfigFile(level, resolvedDeps, level.configPath));
+  const results = levels.map((level) =>
+    loadConfigFile(level, resolvedDeps, level.configPath, modelResolverResult.resolveModel),
+  );
 
   return {
     config: mergeConfigLevels(
       levels,
       results.map((result) => result.config),
     ),
-    errors: results.flatMap((result) => result.errors),
+    errors: [...modelResolverResult.errors, ...results.flatMap((result) => result.errors)],
   };
 }
 

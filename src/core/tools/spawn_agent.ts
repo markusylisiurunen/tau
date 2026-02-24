@@ -232,7 +232,9 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
 
       let launchModelOverride: SubagentLaunchModel | undefined;
       if (model) {
-        const parsedLaunchModel = parseSubagentLaunchModel(model);
+        const parsedLaunchModel = parseSubagentLaunchModel(model, {
+          resolveModel: context.modelResolver,
+        });
         if (parsedLaunchModel.error || !parsedLaunchModel.launchModel) {
           return blocked(`invalid model parameter: ${parsedLaunchModel.error}.`, {
             name,

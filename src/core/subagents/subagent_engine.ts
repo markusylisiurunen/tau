@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import type { AssistantMessage, Context, Message, ToolCall } from "@mariozechner/pi-ai";
 import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
 import { type CredentialResolver, createCredentialResolver } from "../auth/credential_resolver.js";
 import type { Config } from "../config/index.js";
+import { loadModelResolver } from "../models/catalog.js";
 import { type RunnerEvent, runModelSubturn, runToolCalls } from "../session/runner.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
@@ -115,6 +117,22 @@ export async function runSubagent(options: {
   const backend = scopeToolExecutionBackend(baseBackend, runtimeConfig.workingDirectory);
   const allowedTools = runtimeConfig.tools;
   const toolRegistry = buildToolRegistryForAllowedTools(allowedTools, config, backend);
+  const modelResolver = loadModelResolver({
+    cwd: runtimeConfig.workingDirectory,
+    deps: {
+      fs: {
+        readFile: (path) => readFileSync(path, "utf-8"),
+        exists: (path) => existsSync(path),
+        listDir: (path) => readdirSync(path),
+        stat: (path) => statSync(path),
+      },
+      env: {
+        getEnv: () => process.env,
+        cwd: () => runtimeConfig.workingDirectory,
+        home: () => process.env.HOME ?? runtimeConfig.workingDirectory,
+      },
+    },
+  }).resolveModel;
   const messages = options.messages ?? [];
   const promptWithModelNotice = prependModelNotice(
     prompt,
@@ -298,6 +316,7 @@ export async function runSubagent(options: {
       authPath,
       turnUserHistoryEntryId,
       cwd: runtimeConfig.workingDirectory,
+      modelResolver,
       subagentContext,
     };
 

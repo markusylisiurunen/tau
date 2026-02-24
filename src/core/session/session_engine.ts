@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import type { AssistantMessage, Context, Message, ToolCall } from "@mariozechner/pi-ai";
 import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
@@ -6,6 +7,7 @@ import { AuthStorage } from "../auth/auth_storage.js";
 import { type CredentialResolver, createCredentialResolver } from "../auth/credential_resolver.js";
 import type { Config } from "../config/index.js";
 import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
+import { loadModelResolver } from "../models/catalog.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { SubagentControlPlane } from "../subagents/control_plane.js";
@@ -416,6 +418,28 @@ export class SessionEngine {
     return this.toolRegistry.getEnabledToolSchemas(this.persona.tools);
   }
 
+  private createDispatchModelResolver() {
+    const cwd = this.hostCwd || this.cwd || this.deps.env.cwd();
+    const home = this.home || this.deps.env.home() || cwd;
+
+    return loadModelResolver({
+      cwd,
+      deps: {
+        fs: {
+          readFile: (path) => readFileSync(path, "utf-8"),
+          exists: (path) => existsSync(path),
+          listDir: (path) => readdirSync(path),
+          stat: (path) => statSync(path),
+        },
+        env: {
+          getEnv: () => this.deps.env.env(),
+          cwd: () => cwd,
+          home: () => home,
+        },
+      },
+    }).resolveModel;
+  }
+
   private async resolveApiKeyForCurrentPersona(): Promise<string | undefined> {
     let apiKey: string | undefined;
     try {
@@ -458,6 +482,7 @@ export class SessionEngine {
       }
 
       const enabledTools = this.getEnabledToolSchemas();
+      const modelResolver = this.createDispatchModelResolver();
       const dispatchContext: ToolDispatchContext = {
         scope: "main",
         persona: this.persona,
@@ -470,6 +495,7 @@ export class SessionEngine {
         sandboxEnabled: this.sandboxEnabled,
         subagentPrompts: this.subagentPrompts,
         toolRegistry: this.toolRegistry,
+        modelResolver,
         authPath: this.authPath,
         subagentControlPlane: this.subagentControlPlane,
       };

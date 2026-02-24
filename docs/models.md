@@ -1,0 +1,109 @@
+# custom model configuration
+
+Tau supports extending and overriding bundled model definitions with `models.json` files.
+
+Supported paths follow the same discovery rules as `config.json`:
+
+- `~/.config/tau/models.json` (global, only when cwd is under home)
+- `.tau/models.json` (project, discovered by walking up from cwd to home or filesystem root)
+
+Merge order is parent-first, most specific wins:
+
+- bundled models
+- global `models.json`
+- project `models.json` files from farthest parent to nearest
+
+## schema
+
+```json
+{
+  "providers": {
+    "openai": {
+      "api": "openai-responses",
+      "baseUrl": "https://proxy.example.com/v1",
+      "headers": {
+        "x-custom": "value"
+      },
+      "compat": {
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "gpt-5.2-custom",
+          "name": "GPT-5.2 Custom",
+          "api": "openai-responses",
+          "baseUrl": "https://model-endpoint.example.com/v1",
+          "headers": {
+            "x-model-header": "value"
+          },
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 200000,
+          "maxTokens": 16384,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "compat": {
+            "maxTokensField": "max_tokens"
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Notes:
+
+- Provider keys must be known providers in the loaded Tau model catalog.
+- `models[].id` is required. Other model fields are optional.
+- Provider-level fields (`api`, `baseUrl`, `headers`, `compat`) apply to all models on that provider.
+- Model-level fields override provider-level and bundled values.
+- `headers` are merged (provider headers first, model headers override by key).
+- `compat` is shallow-merged.
+
+## behavior for unbundled model ids
+
+Custom personas, custom subagents, and subagent launch allowlists can reference model ids that are not bundled yet, as long as the provider is known.
+
+When Tau sees an unbundled model id:
+
+- If it exists in merged `models.json` config, Tau uses that merged definition.
+- Otherwise Tau synthesizes a model definition from provider defaults and requested id.
+
+This lets you use newly released model ids immediately without waiting for a catalog update.
+
+## example
+
+`.tau/models.json`:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "models": [
+        {
+          "id": "gpt-5.9",
+          "contextWindow": 400000,
+          "maxTokens": 32000
+        }
+      ]
+    }
+  }
+}
+```
+
+`.tau/personas/new-model.md`:
+
+```md
+---
+id: new-model
+provider: openai
+model: gpt-5.9
+---
+
+You are a helpful assistant.
+```

@@ -1,9 +1,13 @@
-import { z } from "zod";
-import { listProviders, resolveModel as resolveCatalogModel } from "../models/catalog.js";
+import type { Api, Model } from "@mariozechner/pi-ai";
+import {
+  listModels,
+  listProviders,
+  resolveModel as resolveCatalogModel,
+} from "../models/catalog.js";
 import { REASONING_LEVELS, ReasoningEffortSchema } from "../types.js";
 import type { SubagentLaunchModel } from "./types.js";
 
-const LaunchModelListSchema = z.array(z.string());
+export type LaunchModelResolver = (provider: string, modelId: string) => Model<Api> | undefined;
 
 function parseProvider(raw: string): string | undefined {
   const provider = raw.trim().toLowerCase();
@@ -18,7 +22,32 @@ function parseProvider(raw: string): string | undefined {
   return provider;
 }
 
-export function parseSubagentLaunchModel(value: string): {
+function createSyntheticModel(provider: string, modelId: string): Model<Api> | undefined {
+  const template = listModels(provider)[0];
+  if (!template) {
+    return undefined;
+  }
+
+  return {
+    ...template,
+    id: modelId,
+    name: modelId,
+  };
+}
+
+function defaultResolveModel(provider: string, modelId: string): Model<Api> | undefined {
+  const model = resolveCatalogModel(provider, modelId);
+  if (model) {
+    return model;
+  }
+
+  return createSyntheticModel(provider, modelId);
+}
+
+export function parseSubagentLaunchModel(
+  value: string,
+  options?: { resolveModel?: LaunchModelResolver },
+): {
   launchModel?: SubagentLaunchModel;
   error?: string;
 } {
@@ -55,7 +84,8 @@ export function parseSubagentLaunchModel(value: string): {
     return { error: `unknown provider '${providerPart.trim()}'` };
   }
 
-  const model = resolveCatalogModel(provider, modelIdPart);
+  const resolveModel = options?.resolveModel ?? defaultResolveModel;
+  const model = resolveModel(provider, modelIdPart);
   if (!model) {
     return { error: `unknown model '${provider}/${modelIdPart}'` };
   }
@@ -76,7 +106,10 @@ export function parseSubagentLaunchModel(value: string): {
   };
 }
 
-export function parseSubagentLaunchModelList(raw: unknown): {
+export function parseSubagentLaunchModelList(
+  raw: unknown,
+  options?: { resolveModel?: LaunchModelResolver },
+): {
   launchModels?: string[];
   error?: string;
 } {
@@ -84,16 +117,15 @@ export function parseSubagentLaunchModelList(raw: unknown): {
     return {};
   }
 
-  const parsedList = LaunchModelListSchema.safeParse(raw);
-  if (!parsedList.success) {
+  if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== "string")) {
     return { error: "must be a list of strings" };
   }
 
   const normalized: string[] = [];
   const seen = new Set<string>();
 
-  for (const entry of parsedList.data) {
-    const parsed = parseSubagentLaunchModel(entry);
+  for (const entry of raw) {
+    const parsed = parseSubagentLaunchModel(entry, options);
     if (parsed.error) {
       return { error: parsed.error };
     }

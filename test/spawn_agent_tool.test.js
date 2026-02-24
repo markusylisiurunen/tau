@@ -1,7 +1,17 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { loadModelResolver } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { createSpawnAgentToolDefinition } from "../dist/core/tools/spawn_agent.js";
@@ -26,6 +36,7 @@ function createContext(overrides = {}) {
 
   const context = {
     scope: "main",
+    modelResolver: loadModelResolver().resolveModel,
     persona: {
       id: "test-persona",
       label: "test persona",
@@ -104,6 +115,154 @@ describe("spawn_agent tool", () => {
     expect(spawned[0].model.provider).toBe(openai.provider);
     expect(spawned[0].model.id).toBe(openai.id);
     expect(spawned[0].settings.reasoning).toBe("high");
+  });
+
+  it("accepts unbundled launch model ids for known providers", async () => {
+    const backend = createLocalToolExecutionBackend();
+    const tool = createSpawnAgentToolDefinition(backend);
+    const { context, spawned } = createContext({
+      persona: {
+        id: "test-persona",
+        label: "test persona",
+        model: createModels().anthropic,
+        systemPrompt: "main",
+        settings: { reasoning: "low" },
+        source: "project",
+        subagents: {
+          researcher: {
+            systemPrompt: "research",
+            launchModels: ["openai/gpt-5.9-custom:high"],
+          },
+        },
+      },
+      subagentPrompts: {
+        researcher: "research prompt",
+      },
+    });
+
+    const dispatched = await tool.dispatch(
+      {
+        id: "call-1c",
+        name: TOOL_NAME_SPAWN_AGENT,
+        arguments: {
+          name: "researcher",
+          title: "research task",
+          prompt: "collect findings",
+          model: "openai/gpt-5.9-custom:high",
+        },
+      },
+      "read-only",
+      undefined,
+      context,
+    );
+
+    expect(dispatched.kind).toBe("phased");
+    const result = await dispatched.run;
+    expect(result.kind).toBe("single");
+    expect(result.toolResult.isError).toBe(false);
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].model.provider).toBe("openai");
+    expect(spawned[0].model.id).toBe("gpt-5.9-custom");
+  });
+
+  it("uses models.json metadata for unbundled launch model overrides", async () => {
+    const backend = createLocalToolExecutionBackend();
+    const tool = createSpawnAgentToolDefinition(backend);
+    const home = mkdtempSync(join(tmpdir(), "tau-spawn-model-home-"));
+    const cwd = join(home, "repo");
+
+    try {
+      mkdirSync(join(cwd, ".tau"), { recursive: true });
+      writeFileSync(
+        join(cwd, ".tau", "models.json"),
+        JSON.stringify(
+          {
+            providers: {
+              openai: {
+                models: [
+                  {
+                    id: "gpt-5.9-custom",
+                    baseUrl: "https://models.example.com/openai-launch",
+                    headers: {
+                      "x-launch-model": "ok",
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const modelResolver = loadModelResolver({
+        cwd,
+        deps: {
+          fs: {
+            readFile: (path) => readFileSync(path, "utf-8"),
+            exists: (path) => existsSync(path),
+            listDir: (path) => readdirSync(path),
+            stat: (path) => statSync(path),
+          },
+          env: {
+            getEnv: () => ({}),
+            cwd: () => cwd,
+            home: () => home,
+          },
+        },
+      }).resolveModel;
+
+      const { context, spawned } = createContext({
+        persona: {
+          id: "test-persona",
+          label: "test persona",
+          model: createModels().anthropic,
+          systemPrompt: "main",
+          settings: { reasoning: "low" },
+          source: "project",
+          subagents: {
+            researcher: {
+              systemPrompt: "research",
+              launchModels: ["openai/gpt-5.9-custom:high"],
+            },
+          },
+        },
+        subagentPrompts: {
+          researcher: "research prompt",
+        },
+        cwd,
+        hostCwd: cwd,
+        home,
+        modelResolver,
+      });
+
+      const dispatched = await tool.dispatch(
+        {
+          id: "call-1d",
+          name: TOOL_NAME_SPAWN_AGENT,
+          arguments: {
+            name: "researcher",
+            title: "research task",
+            prompt: "collect findings",
+            model: "openai/gpt-5.9-custom:high",
+          },
+        },
+        "read-only",
+        undefined,
+        context,
+      );
+
+      expect(dispatched.kind).toBe("phased");
+      const result = await dispatched.run;
+      expect(result.kind).toBe("single");
+      expect(result.toolResult.isError).toBe(false);
+      expect(spawned).toHaveLength(1);
+      expect(spawned[0].model.baseUrl).toBe("https://models.example.com/openai-launch");
+      expect(spawned[0].model.headers["x-launch-model"]).toBe("ok");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("shows the launch model override in status when it matches the persona model", async () => {

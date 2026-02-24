@@ -25,8 +25,9 @@ export async function loadRuntimeConfig(
   deps: ConfigDeps,
 ): Promise<RuntimeConfigResult> {
   const levels = resolveConfigLevels(deps, { cwd });
-  const modelResolverResult = loadModelResolver({ cwd, deps });
-  const configResult = loadConfigWithDiagnostics(cwd, deps, {
+  const modelResolverResult = loadModelResolver({ deps, levels });
+  const configResult = loadConfigWithDiagnostics(deps, {
+    levels,
     modelResolver: modelResolverResult,
   });
   const config = configResult.config;

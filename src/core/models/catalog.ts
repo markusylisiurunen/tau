@@ -2,7 +2,7 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import type { ConfigDeps } from "../config/deps.js";
-import { resolveConfigLevels } from "../config/paths.js";
+import type { ConfigLevel } from "../config/paths.js";
 import { TAU_PROVIDER_EXTENSIONS, type TauProviderApiKeyResolverArgs } from "./tau_extensions.js";
 
 type ApiKeyResolver = (args: TauProviderApiKeyResolverArgs) => string | undefined;
@@ -34,6 +34,7 @@ export type ModelResolver = (provider: string, modelId: string) => Model<Api> | 
 
 export type LoadedModelResolver = {
   resolveModel: ModelResolver;
+  resolveConfiguredModel: ModelResolver;
   errors: string[];
 };
 
@@ -286,13 +287,15 @@ function applyModelPatch(model: Model<Api>, patch: ModelPatch): Model<Api> {
 }
 
 function mergeProviderPatch(base: ModelPatch | undefined, overlay: ModelPatch): ModelPatch {
+  const mergedHeaders = {
+    ...(base?.headers ?? {}),
+    ...(overlay.headers ?? {}),
+  };
+
   return {
     ...(base ?? {}),
     ...overlay,
-    headers: {
-      ...(base?.headers ?? {}),
-      ...(overlay.headers ?? {}),
-    },
+    ...(Object.keys(mergedHeaders).length > 0 ? { headers: mergedHeaders } : {}),
     compat: mergeCompat(base?.compat as Model<Api>["compat"], overlay.compat),
   };
 }
@@ -379,9 +382,12 @@ function loadModelsFile(
   return { data: parsed.data };
 }
 
-export function loadModelResolver(options: { deps: ConfigDeps; cwd: string }): LoadedModelResolver {
+export function loadModelResolver(options: {
+  deps: ConfigDeps;
+  levels: ConfigLevel[];
+}): LoadedModelResolver {
   const deps = options.deps;
-  const levels = resolveConfigLevels(deps, { cwd: options.cwd });
+  const levels = options.levels;
 
   const state = getCatalogState();
   const knownProviders = new Set(state.providers.keys());
@@ -471,7 +477,7 @@ export function loadModelResolver(options: { deps: ConfigDeps; cwd: string }): L
     }
   }
 
-  const resolveModel: ModelResolver = (providerRaw, modelIdRaw) => {
+  const resolveConfiguredModel: ModelResolver = (providerRaw, modelIdRaw) => {
     const provider = providerRaw.trim().toLowerCase();
     const modelId = modelIdRaw.trim();
     if (!provider || !modelId || !knownProviders.has(provider)) {
@@ -479,8 +485,23 @@ export function loadModelResolver(options: { deps: ConfigDeps; cwd: string }): L
     }
 
     const existing = modelsByKey.get(modelKey(provider, modelId));
+    if (!existing) {
+      return undefined;
+    }
+
+    return cloneModel(existing);
+  };
+
+  const resolveModel: ModelResolver = (providerRaw, modelIdRaw) => {
+    const provider = providerRaw.trim().toLowerCase();
+    const modelId = modelIdRaw.trim();
+    if (!provider || !modelId || !knownProviders.has(provider)) {
+      return undefined;
+    }
+
+    const existing = resolveConfiguredModel(provider, modelId);
     if (existing) {
-      return cloneModel(existing);
+      return existing;
     }
 
     const synthetic = createSyntheticModel(provider, modelId, providerTemplates);
@@ -498,6 +519,7 @@ export function loadModelResolver(options: { deps: ConfigDeps; cwd: string }): L
 
   return {
     resolveModel,
+    resolveConfiguredModel,
     errors,
   };
 }

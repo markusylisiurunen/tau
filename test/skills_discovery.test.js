@@ -55,11 +55,11 @@ function writeSkill(skillsDir, name, description) {
 }
 
 async function loadAllContentWithModelResolver(config, options) {
-  const modelResolver = loadModelResolver({
-    cwd: options.cwd,
-    deps: options.deps,
-  }).resolveModel;
   const levels = resolveConfigLevels(options.deps, { cwd: options.cwd });
+  const modelResolver = loadModelResolver({
+    deps: options.deps,
+    levels,
+  }).resolveModel;
   return await loadAllContent(config, {
     deps: options.deps,
     levels,

@@ -1046,13 +1046,16 @@ export async function loadAllContent(
       }
     }
 
-    const resolvedVirtualBundlePersonas: Persona[] = [];
-    for (const persona of virtualBundle.personas) {
-      const resolved = resolvePersonaModels(persona, modelResolverResult.resolveModel);
-      if (resolved.persona) {
-        resolvedVirtualBundlePersonas.push(resolved.persona);
-      } else if (resolved.error) {
-        builtinPersonaErrors.push(`builtin persona '${persona.id}': ${resolved.error}`);
+    const resolvedVirtualBundlePersonas: Persona[] =
+      virtualBundle.personas === builtinPersonas ? [...resolvedBuiltinPersonas] : [];
+    if (resolvedVirtualBundlePersonas.length === 0) {
+      for (const persona of virtualBundle.personas) {
+        const resolved = resolvePersonaModels(persona, modelResolverResult.resolveModel);
+        if (resolved.persona) {
+          resolvedVirtualBundlePersonas.push(resolved.persona);
+        } else if (resolved.error) {
+          builtinPersonaErrors.push(`builtin persona '${persona.id}': ${resolved.error}`);
+        }
       }
     }
 

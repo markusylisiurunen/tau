@@ -273,7 +273,10 @@ function parseDefaultPersona(
 function validateConfigData(
   raw: unknown,
   sourceLabel: string,
-  modelResolver: ModelResolver,
+  options: {
+    resolveModel: ModelResolver;
+    resolveConfiguredModel: ModelResolver;
+  },
 ): ConfigDiagnostics {
   if (typeof raw !== "object" || raw === null) {
     return { config: {}, errors: [`${sourceLabel}: config must be an object.`] };
@@ -325,7 +328,7 @@ function validateConfigData(
     agentResult.errors,
   );
 
-  const subagentsResult = parseSubagentsConfig(data.subagents, sourceLabel, modelResolver);
+  const subagentsResult = parseSubagentsConfig(data.subagents, sourceLabel, options.resolveModel);
   assignParsedConfigValue(
     config,
     errors,
@@ -337,7 +340,7 @@ function validateConfigData(
   const modelSystemNoticesResult = parseModelSystemNotices(
     data.modelSystemNotices,
     sourceLabel,
-    modelResolver,
+    options.resolveConfiguredModel,
   );
   assignParsedConfigValue(
     config,
@@ -672,7 +675,10 @@ function loadConfigFile(
   level: ConfigLevel,
   deps: ConfigDeps,
   sourceLabel: string,
-  modelResolver: ModelResolver,
+  options: {
+    resolveModel: ModelResolver;
+    resolveConfiguredModel: ModelResolver;
+  },
 ): ConfigDiagnostics {
   try {
     if (!deps.fs.exists(level.configPath)) {
@@ -685,7 +691,7 @@ function loadConfigFile(
       return { config: {}, errors: parsed.errors };
     }
 
-    const validated = validateConfigData(parsed.data, sourceLabel, modelResolver);
+    const validated = validateConfigData(parsed.data, sourceLabel, options);
     return { config: validated.config, errors: [...parsed.errors, ...validated.errors] };
   } catch (err) {
     return {
@@ -890,20 +896,24 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 }
 
 export function loadConfigWithDiagnostics(
-  cwd: string,
   deps: ConfigDeps,
-  options: { modelResolver: LoadedModelResolver },
+  options: {
+    levels: ConfigLevel[];
+    modelResolver: LoadedModelResolver;
+  },
 ): { config: Config; errors: string[] } {
-  const levels = resolveConfigLevels(deps, { cwd });
   const modelResolverResult = options.modelResolver;
 
-  const results = levels.map((level) =>
-    loadConfigFile(level, deps, level.configPath, modelResolverResult.resolveModel),
+  const results = options.levels.map((level) =>
+    loadConfigFile(level, deps, level.configPath, {
+      resolveModel: modelResolverResult.resolveModel,
+      resolveConfiguredModel: modelResolverResult.resolveConfiguredModel,
+    }),
   );
 
   return {
     config: mergeConfigLevels(
-      levels,
+      options.levels,
       results.map((result) => result.config),
     ),
     errors: [...modelResolverResult.errors, ...results.flatMap((result) => result.errors)],
@@ -911,8 +921,9 @@ export function loadConfigWithDiagnostics(
 }
 
 export function loadConfig(cwd: string, deps: ConfigDeps): Config {
-  const modelResolver = loadModelResolver({ cwd, deps });
-  return loadConfigWithDiagnostics(cwd, deps, { modelResolver }).config;
+  const levels = resolveConfigLevels(deps, { cwd });
+  const modelResolver = loadModelResolver({ deps, levels });
+  return loadConfigWithDiagnostics(deps, { levels, modelResolver }).config;
 }
 
 export function getApiKeyForProvider(config: Config, provider: string): string | undefined {

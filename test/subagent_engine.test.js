@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { resolveConfigLevels } from "../dist/core/config/index.js";
 import { personas } from "../dist/core/personas.js";
 
 const { capturedUserMessages, runModelSubturnMock, runToolCallsMock } = vi.hoisted(() => ({
@@ -23,22 +24,22 @@ import { loadModelResolver } from "../dist/core/models/catalog.js";
 import { runSubagent } from "../dist/core/subagents/subagent_engine.js";
 
 function createModelResolver(cwd = process.cwd(), home = process.env.HOME ?? cwd) {
-  return loadModelResolver({
-    cwd,
-    deps: {
-      fs: {
-        readFile: (path) => readFileSync(path, "utf-8"),
-        exists: (path) => existsSync(path),
-        listDir: (path) => readdirSync(path),
-        stat: (path) => statSync(path),
-      },
-      env: {
-        getEnv: () => ({}),
-        cwd: () => cwd,
-        home: () => home,
-      },
+  const deps = {
+    fs: {
+      readFile: (path) => readFileSync(path, "utf-8"),
+      exists: (path) => existsSync(path),
+      listDir: (path) => readdirSync(path),
+      stat: (path) => statSync(path),
     },
-  }).resolveModel;
+    env: {
+      getEnv: () => ({}),
+      cwd: () => cwd,
+      home: () => home,
+    },
+  };
+  const levels = resolveConfigLevels(deps, { cwd });
+
+  return loadModelResolver({ deps, levels }).resolveModel;
 }
 
 function createAssistantMessage(model, overrides = {}) {

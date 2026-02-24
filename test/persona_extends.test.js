@@ -231,6 +231,196 @@ describe("custom personas", () => {
     }
   });
 
+  it("supports models.json overrides for custom persona and subagent models", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
+
+      writeFileSync(
+        join(fx.home, ".config", "tau", "models.json"),
+        JSON.stringify(
+          {
+            providers: {
+              openai: {
+                models: [
+                  {
+                    id: "gpt-5.2-custom",
+                    baseUrl: "https://models.example.com/openai",
+                    headers: {
+                      "x-custom": "ok",
+                    },
+                    contextWindow: 654321,
+                    maxTokens: 12345,
+                    reasoning: false,
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      writeFileSync(
+        join(fx.home, ".config", "tau", "personas", "custom-models.md"),
+        [
+          "---",
+          "id: custom-models",
+          "provider: openai",
+          "model: gpt-5.2-custom",
+          "subagents:",
+          "  analyst:",
+          "    systemPrompt: analyze repository state",
+          "    provider: openai",
+          "    model: gpt-5.2-custom",
+          "    launchModels:",
+          "      - openai/gpt-5.2-custom:high",
+          "---",
+          "custom prompt",
+          "",
+        ].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      const persona = personas.find((entry) => entry.id === "custom-models");
+      expect(persona).toBeTruthy();
+      expect(persona.model.id).toBe("gpt-5.2-custom");
+      expect(persona.model.baseUrl).toBe("https://models.example.com/openai");
+      expect(persona.model.headers["x-custom"]).toBe("ok");
+      expect(persona.model.contextWindow).toBe(654321);
+      expect(persona.model.maxTokens).toBe(12345);
+      expect(persona.model.reasoning).toBe(false);
+      expect(persona.subagents.analyst.model.id).toBe("gpt-5.2-custom");
+      expect(persona.subagents.analyst.launchModels).toEqual(["openai/gpt-5.2-custom:high"]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("uses models.json precedence matching config.json", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
+      mkdirSync(join(fx.cwd, ".tau"), { recursive: true });
+      mkdirSync(join(fx.cwd, ".tau", "personas"), { recursive: true });
+
+      writeFileSync(
+        join(fx.home, ".config", "tau", "models.json"),
+        JSON.stringify(
+          {
+            providers: {
+              openai: {
+                models: [
+                  {
+                    id: "gpt-5.2-scoped",
+                    contextWindow: 100000,
+                    maxTokens: 1000,
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      writeFileSync(
+        join(fx.cwd, ".tau", "models.json"),
+        JSON.stringify(
+          {
+            providers: {
+              openai: {
+                models: [
+                  {
+                    id: "gpt-5.2-scoped",
+                    contextWindow: 200000,
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      writeFileSync(
+        join(fx.cwd, ".tau", "personas", "scoped-model.md"),
+        [
+          "---",
+          "id: scoped-model",
+          "provider: openai",
+          "model: gpt-5.2-scoped",
+          "---",
+          "custom prompt",
+          "",
+        ].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      const persona = personas.find((entry) => entry.id === "scoped-model");
+      expect(persona).toBeTruthy();
+      expect(persona.model.contextWindow).toBe(200000);
+      expect(persona.model.maxTokens).toBe(1000);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("applies models.json overrides to bundled personas", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+
+      writeFileSync(
+        join(fx.home, ".config", "tau", "models.json"),
+        JSON.stringify(
+          {
+            providers: {
+              openai: {
+                models: [
+                  {
+                    id: "gpt-5.2",
+                    baseUrl: "https://models.example.com/builtin-openai",
+                    headers: {
+                      "x-builtin": "ok",
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContent({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      const persona = personas.find((entry) => entry.id === "gpt-5.2-chat");
+      expect(persona).toBeTruthy();
+      expect(persona.model.baseUrl).toBe("https://models.example.com/builtin-openai");
+      expect(persona.model.headers["x-builtin"]).toBe("ok");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("does not mutate built-in default subagent launch models between loads", async () => {
     const fx = setupFixture();
 

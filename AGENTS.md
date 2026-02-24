@@ -30,7 +30,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **ConversationTurnRuntime** (`src/core/runtime/conversation_turn_runtime.ts`): Assistant-turn runner with interruption and abort handling for core event streams
 - **Session prompt composer** (`src/core/runtime/session_prompt_composer.ts`): Composes main-session and subagent system prompts with environment and context blocks
 - **Runtime bootstrap resolver** (`src/core/runtime/runtime_bootstrap.ts`): Shared startup resolver for prompt context, AGENTS context, and persona skill filtering used by TUI/RPC/subagent working-directory prompt rebuilds
-- **Model catalog** (`src/core/models/catalog.ts`): Unified provider/model registry (pi-ai + Tau extensions) used for model resolution and provider routing metadata
+- **Model catalog** (`src/core/models/catalog.ts`): Unified provider/model registry (pi-ai + Tau extensions) with layered `models.json` overlays used for model resolution and provider routing metadata
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly and history preparation for `/compact:*` flows (summary-only and summary + last assistant)
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface plus RPC protocol/server wiring for alternate front-ends
@@ -51,7 +51,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 ## Key modules
 
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
-- `docs/` - Extended user-facing docs that complement README.md (`rpc.md` documents RPC mode/protocol, `sdk.md` documents the Node SDK API, `async.md` documents async daemon/client + Telegram)
+- `docs/` - Extended user-facing docs that complement README.md (`rpc.md` documents RPC mode/protocol, `sdk.md` documents the Node SDK API, `async.md` documents async daemon/client + Telegram, `models.md` documents custom model configuration/overrides)
 - `src/sdk/` - SDK client modules for spawning and talking to the RPC subprocess (`tau rpc`) from Node
 - `src/core/`
   - `personas.ts` - Built-in persona definitions and system prompt blocks
@@ -70,7 +70,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `config/virtual_defaults.ts` - Built-in default content
   - `config/content_loader.ts` - Load personas, prompts, skills, themes
   - `config/schema.ts` - Config schema and merge rules
-  - `models/catalog.ts` - Unified model/provider catalog used by config and persona resolution
+  - `models/catalog.ts` - Unified model/provider catalog used by config and persona resolution, including layered `models.json` overlays
   - `models/tau_extensions.ts` - Tau-owned extension hooks for additional providers/models
   - `auth/cli.ts` - login/logout flows
   - `install/cli.ts` - starter prompts/skills installer (`tau install`)
@@ -176,7 +176,7 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `reasoning`: default reasoning effort level
 - `allowedReasoningLevels`: list of reasoning levels shown in the UI
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted on custom personas, defaults to `"*"`; set `skills: []` to disable skills completely.
-- `subagents`: optional map of subagent definitions. The built-in `default` subagent is implicitly enabled unless `default: false` is provided. Custom subagents must be defined as `{ systemPrompt, description?, provider+model?, reasoning?, tools?, riskLevel?, launchModels? }` with lowercase-dash names (max 64 chars). `launchModels` values are allowlisted launch overrides in `<provider>/<model>:<effort>` format. The `default` subagent cannot be overridden.
+- `subagents`: optional map of subagent definitions. The built-in `default` subagent is implicitly enabled unless `default: false` is provided. Custom subagents must be defined as `{ systemPrompt, description?, provider+model?, reasoning?, tools?, riskLevel?, launchModels? }` with lowercase-dash names (max 64 chars). `launchModels` values are allowlisted launch overrides in `<provider>/<model>:<effort>` format. Persona/subagent model ids may be unbundled as long as provider is known (Tau derives provider defaults when needed, and `models.json` can override fields). The `default` subagent cannot be overridden.
 - `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled). risk levels still apply.
 
 On conflicts, the most specific level wins (built-ins are the base layer).
@@ -194,11 +194,12 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.
   - `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Must be non-empty and matches are exact/case-sensitive. Defaults to `gold`.
   - `subagents.defaultLaunchModels` (optional): Allowlisted `spawn_agent` launch overrides for the built-in `default` subagent (`<provider>/<model>:<effort>` entries).
-  - `modelSystemNotices` (optional): Map of `<provider>/<model>` to notice text. Provider/model ids must match loaded model ids exactly (case-sensitive). Tau prepends the notice as a `<system>` block before each user message sent to that model (main session and subagents).
+  - `modelSystemNotices` (optional): Map of `<provider>/<model>` to notice text. Provider ids must be known and model ids are exact/case-sensitive (including unbundled ids). Tau prepends the notice as a `<system>` block before each user message sent to that model (main session and subagents).
   - `async.client` (optional): Async client config (`defaultTarget`, `defaultProjectId`, `targets.<id>.url`, `targets.<id>.token`, `targets.<id>.timeoutMs`).
   - daemon-side async settings are loaded from a separate JSON file passed via `tau async daemon --config-file <path>` (`host`, `port`, `authToken`, `maxSessions`, `telegram` (map keyed by bot id, with optional `allowedProjectIds`; sessions are chat-scoped within each bot), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `systemMessage`, and project fields like `workingDirectory`, `description`, `bootstrapCommands`, and `backgroundBootstrapCommands`). On daemon startup, Tau removes existing entries under configured async workspace roots (`workspaceRoot` plus any per-project overrides) before adapters start, and the Telegram adapter prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Assume zero or one async daemon process per host; concurrent daemons are unsupported.
 
 - **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `sandbox`, `modelSystemNotices`, and `async.client` merge per field; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
+- **Model overrides**: `~/.config/tau/models.json` (global, only when cwd is under home) and `.tau/models.json` (project) are discovered using the same level resolution as `config.json`. Entries overlay bundled model definitions by `provider + model id` (most specific wins). Known providers only.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`). Each command runs with cwd set to the config level root (same root used to resolve `agentContextFiles`).
 

@@ -384,30 +384,30 @@ tau updates the nearest `AGENTS.md` in your current directory ancestry (or creat
 
 tau supports slash commands for common actions:
 
-| command                     | description                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------- |
-| `/help`                     | show available commands                                                         |
-| `/new`                      | clear the session and start fresh                                               |
-| `/rewind`                   | open a picker to rewind context from a selected user message                    |
-| `/copy:text`                | copy the last assistant message                                                 |
-| `/copy:code`                | copy just the code blocks                                                       |
-| `/checkpoint`               | save a checkpoint file for loading later                                        |
-| `/reload`                   | reload personas, prompts, skills, themes, bash commands, and AGENTS.md          |
-| `/speak`                    | toggle microphone recording and transcribe into the editor (macOS only)         |
-| `/cd`                       | change the working directory                                                    |
-| `/compact:summary-only`     | compress history into one synthetic user summary message                        |
-| `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present   |
-| `/prune:earliest`           | prune bash tool results from oldest to newest and compact edit payloads/results |
-| `/prune:largest`            | prune largest bash tool results first and compact edit payloads/results         |
-| `/prune:smart`              | prune bash tool results via model selection and compact edit payloads/results   |
-| `/persona:<id>`             | switch to a different persona                                                   |
-| `/prompt:<id>`              | insert a saved prompt template                                                  |
-| `/theme:<id>`               | switch to a loaded theme                                                        |
-| `/bash:<id>`                | run a saved shell command                                                       |
-| `/risk:read-only`           | allow read-only tool calls                                                      |
-| `/risk:read-write`          | allow all tools                                                                 |
-| `!<cmd>`                    | run a shell command directly (bypasses risk checks; uses sandbox if enabled)    |
-| `!!<cmd>`                   | run a shell command without adding output to the model context                  |
+| command                     | description                                                                             |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| `/help`                     | show available commands                                                                 |
+| `/new`                      | clear the session and start fresh                                                       |
+| `/rewind`                   | open a picker to rewind context from a selected user message                            |
+| `/copy:text`                | copy the last assistant message                                                         |
+| `/copy:code`                | copy just the code blocks                                                               |
+| `/checkpoint`               | save a checkpoint file for loading later                                                |
+| `/reload`                   | reload personas, model overrides, prompts, skills, themes, bash commands, and AGENTS.md |
+| `/speak`                    | toggle microphone recording and transcribe into the editor (macOS only)                 |
+| `/cd`                       | change the working directory                                                            |
+| `/compact:summary-only`     | compress history into one synthetic user summary message                                |
+| `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present           |
+| `/prune:earliest`           | prune bash tool results from oldest to newest and compact edit payloads/results         |
+| `/prune:largest`            | prune largest bash tool results first and compact edit payloads/results                 |
+| `/prune:smart`              | prune bash tool results via model selection and compact edit payloads/results           |
+| `/persona:<id>`             | switch to a different persona                                                           |
+| `/prompt:<id>`              | insert a saved prompt template                                                          |
+| `/theme:<id>`               | switch to a loaded theme                                                                |
+| `/bash:<id>`                | run a saved shell command                                                               |
+| `/risk:read-only`           | allow read-only tool calls                                                              |
+| `/risk:read-write`          | allow all tools                                                                         |
+| `!<cmd>`                    | run a shell command directly (bypasses risk checks; uses sandbox if enabled)            |
+| `!!<cmd>`                   | run a shell command without adding output to the model context                          |
 
 use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
 
@@ -448,6 +448,10 @@ inside your home directory. it also loads any `.tau/config.json` found by walkin
 current working directory to home (or to the filesystem root when cwd is outside home).
 settings merge from least-specific to most-specific.
 
+model definitions can be extended and overridden through `~/.config/tau/models.json` and
+`.tau/models.json` with the same discovery and precedence rules as `config.json`.
+see [docs/models.md](docs/models.md).
+
 ```json
 {
   "apiKeys": {
@@ -484,7 +488,7 @@ the `defaultTheme` field sets the theme id to load at startup. it must be non-em
 
 the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launch overrides for the built-in `default` sub-agent. values must use `<provider>/<model>:<effort>`.
 
-the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider/model matching is exact/case-sensitive against loaded model ids. when a message is sent to that model, tau prepends the notice as a `<system>...</system>` block before the user content. this applies to main-session user messages and sub-agent prompts, regardless of persona id.
+the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider ids must be known and model ids are exact/case-sensitive (including unbundled ids). when a message is sent to that model, tau prepends the notice as a `<system>...</system>` block before the user content. this applies to main-session user messages and sub-agent prompts, regardless of persona id.
 
 if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinThemes` is set to `true`, tau will not load built-in themes. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 
@@ -578,6 +582,10 @@ the frontmatter defines the persona. required fields:
 - `provider`: model provider id (for example `openai`, `anthropic`, `google`)
 - `model`: model id for the provider (for example `gpt-5.2`, `claude-opus-4-5`)
 
+custom personas/subagents can reference model ids that are not bundled yet, as long as the
+provider is known. configure model metadata in `models.json` files or let tau derive defaults.
+see [docs/models.md](docs/models.md).
+
 the persona file name (without the `.md` extension) must match the `id`.
 
 optional frontmatter fields:
@@ -654,7 +662,7 @@ optional fields: `license`, `compatibility` (<=500 chars), `metadata` (string ma
 
 enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), use `"*"` to enable all discovered skills, or set `skills: []` to disable skills completely. built-in personas and custom personas with omitted `skills` default to `skills: "*"`. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and file path. in sandbox mode, skills outside the mounted host root are excluded and included paths are rewritten to sandbox paths.
 
-use `/reload` to pick up changes to personas, prompts, skills, themes, bash commands, and AGENTS.md without restarting.
+use `/reload` to pick up changes to personas, model overrides, prompts, skills, themes, bash commands, and AGENTS.md without restarting.
 
 ## how it works
 

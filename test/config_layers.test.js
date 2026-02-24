@@ -307,6 +307,34 @@ describe("config paths", () => {
     }
   });
 
+  it("accepts defaultLaunchModels for known providers even when model id is not bundled", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          subagents: {
+            defaultLaunchModels: ["openai/gpt-5.9-custom:high"],
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const result = loadConfigWithDiagnostics(fx.repo, deps);
+      expect(result.errors).toEqual([]);
+      expect(result.config.subagents.defaultLaunchModels).toEqual(["openai/gpt-5.9-custom:high"]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("merges async client config targets by key", () => {
     const fx = setupFixture();
 

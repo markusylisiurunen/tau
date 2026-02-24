@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createDefaultConfigDeps } from "../config/deps.js";
 import type { Config } from "../config/schema.js";
 import { getMistralApiKey, loadConfig } from "../config/schema.js";
 import { AsyncDaemonRuntimeError, startAsyncDaemonRuntime } from "./daemon_runtime.js";
@@ -675,7 +676,7 @@ export async function runAsyncCommand(
 
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
-  const config = options.config ?? loadConfig(cwd);
+  const config = options.config ?? loadConfig(cwd, createDefaultConfigDeps());
 
   if (parsed.command === "daemon") {
     if (!parsed.configFilePath) {

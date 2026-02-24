@@ -44,8 +44,8 @@ function isDirectory(deps: ConfigDeps, path: string): boolean {
   }
 }
 
-export function resolveConfigLevels(deps: ConfigDeps, options?: { cwd?: string }): ConfigLevel[] {
-  const cwdAbs = resolve(options?.cwd ?? deps.env.cwd());
+export function resolveConfigLevels(deps: ConfigDeps, options: { cwd: string }): ConfigLevel[] {
+  const cwdAbs = resolve(options.cwd);
   const homeAbs = resolve(deps.env.home());
 
   const withinHome = cwdAbs === homeAbs || cwdAbs.startsWith(homeAbs + sep);

@@ -17,6 +17,7 @@ import {
   loadConfig,
   loadConfigWithDiagnostics,
 } from "../dist/core/config/schema.js";
+import { loadModelResolver } from "../dist/core/models/catalog.js";
 
 function createConfigDeps({ cwd, home, env }) {
   return {
@@ -209,7 +210,8 @@ describe("config paths", () => {
         env: {},
       });
 
-      const result = loadConfigWithDiagnostics(fx.repo, deps);
+      const modelResolver = loadModelResolver({ cwd: fx.repo, deps });
+      const result = loadConfigWithDiagnostics(fx.repo, deps, { modelResolver });
       expect(result.config).toMatchObject({
         defaultPersona: "opus-4.6-chat",
         defaultRisk: "read-only",
@@ -241,7 +243,8 @@ describe("config paths", () => {
         env: {},
       });
 
-      const result = loadConfigWithDiagnostics(fx.repo, deps);
+      const modelResolver = loadModelResolver({ cwd: fx.repo, deps });
+      const result = loadConfigWithDiagnostics(fx.repo, deps, { modelResolver });
       expect(result.config.defaultRisk).toBe("read-only");
       expect(result.config.disableBuiltinPersonas).toBe(true);
       expect(result.config.disableBuiltinThemes).toBeUndefined();
@@ -327,7 +330,8 @@ describe("config paths", () => {
         env: {},
       });
 
-      const result = loadConfigWithDiagnostics(fx.repo, deps);
+      const modelResolver = loadModelResolver({ cwd: fx.repo, deps });
+      const result = loadConfigWithDiagnostics(fx.repo, deps, { modelResolver });
       expect(result.errors).toEqual([]);
       expect(result.config.subagents.defaultLaunchModels).toEqual(["openai/gpt-5.9-custom:high"]);
     } finally {

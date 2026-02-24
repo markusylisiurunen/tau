@@ -1,7 +1,7 @@
 import { basename, join } from "node:path";
 import type { Tool } from "@mariozechner/pi-ai";
 import { z } from "zod";
-import { loadModelResolver, type ModelResolver } from "../models/catalog.js";
+import type { ModelResolver } from "../models/catalog.js";
 import { personas as builtinPersonas } from "../personas.js";
 import type { PromptTemplate } from "../prompts.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
@@ -33,10 +33,8 @@ import type { Persona, Skill } from "../types.js";
 import { ReasoningEffortSchema, RiskLevelSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
-import { createDefaultConfigDeps } from "./deps.js";
 import { parseMarkdownFrontMatter } from "./markdown_frontmatter.js";
 import type { ConfigLevel, ConfigLevelScope } from "./paths.js";
-import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
 import { loadSkillsContent as loadCanonicalSkillsContent } from "./skills_loader.js";
 import { buildVirtualBundle } from "./virtual_bundle.js";
@@ -478,14 +476,14 @@ function loadJsonEntries(
   return loadEntries(dir, deps, listFiles);
 }
 
-function resolveContentContext(options?: {
-  deps?: ConfigDeps;
-  levels?: ConfigLevel[];
-  cwd?: string;
-}): { deps: ConfigDeps; levels: ConfigLevel[] } {
-  const deps = options?.deps ?? createDefaultConfigDeps();
-  const levels = options?.levels ?? resolveConfigLevels(deps, { cwd: options?.cwd });
-  return { deps, levels };
+function resolveContentContext(options: { deps: ConfigDeps; levels: ConfigLevel[] }): {
+  deps: ConfigDeps;
+  levels: ConfigLevel[];
+} {
+  return {
+    deps: options.deps,
+    levels: options.levels,
+  };
 }
 
 const personaFrontMatterSchema = z
@@ -769,36 +767,39 @@ function parseTheme(
   };
 }
 
-export async function loadUserPersonas(args?: {
+export async function loadUserPersonas(args: {
   basePersonasById?: Map<string, Persona>;
-  modelResolver?: ModelResolver;
-  deps?: ConfigDeps;
-  levels?: ConfigLevel[];
-  cwd?: string;
+  modelResolver: ModelResolver;
+  deps: ConfigDeps;
+  levels: ConfigLevel[];
 }): Promise<{
   personas: Persona[];
   errors: string[];
 }> {
   const { deps, levels } = resolveContentContext({
-    deps: args?.deps,
-    levels: args?.levels,
-    cwd: args?.cwd,
+    deps: args.deps,
+    levels: args.levels,
   });
   const globalLevel = levels.find((level) => level.scope === "global");
   if (!globalLevel) {
     return { personas: [], errors: [] };
   }
 
-  const modelResolver = args?.modelResolver ?? loadModelResolver({ deps, levels }).resolveModel;
   const personasDir = globalLevel.personasDir;
   const { entries, errors } = loadMarkdownEntries(personasDir, deps, listMarkdownFiles);
   const personas: Persona[] = [];
 
   const basePersonasById =
-    args?.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
+    args.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
 
   for (const file of entries) {
-    const result = parsePersona(file.path, file.content, "user", modelResolver, basePersonasById);
+    const result = parsePersona(
+      file.path,
+      file.content,
+      "user",
+      args.modelResolver,
+      basePersonasById,
+    );
     if (result.persona) {
       personas.push(result.persona);
     } else if (result.error) {
@@ -809,20 +810,18 @@ export async function loadUserPersonas(args?: {
   return { personas, errors };
 }
 
-export async function loadProjectPersonas(args?: {
+export async function loadProjectPersonas(args: {
   basePersonasById?: Map<string, Persona>;
-  modelResolver?: ModelResolver;
-  cwd?: string;
-  deps?: ConfigDeps;
-  levels?: ConfigLevel[];
+  modelResolver: ModelResolver;
+  deps: ConfigDeps;
+  levels: ConfigLevel[];
 }): Promise<{
   personas: Persona[];
   errors: string[];
 }> {
   const { deps, levels } = resolveContentContext({
-    deps: args?.deps,
-    levels: args?.levels,
-    cwd: args?.cwd,
+    deps: args.deps,
+    levels: args.levels,
   });
 
   const projectLevels = levels.filter((level) => level.scope === "project");
@@ -830,12 +829,11 @@ export async function loadProjectPersonas(args?: {
     return { personas: [], errors: [] };
   }
 
-  const modelResolver = args?.modelResolver ?? loadModelResolver({ deps, levels }).resolveModel;
   const personas: Persona[] = [];
   const errors: string[] = [];
 
   const basePersonasById =
-    args?.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
+    args.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
 
   // Parent-first order, closest directory wins on conflicts.
   for (const level of projectLevels) {
@@ -851,7 +849,7 @@ export async function loadProjectPersonas(args?: {
         file.path,
         file.content,
         "project",
-        modelResolver,
+        args.modelResolver,
         basePersonasById,
       );
       if (result.persona) {
@@ -865,18 +863,13 @@ export async function loadProjectPersonas(args?: {
   return { personas, errors };
 }
 
-export async function loadUserPrompts(args?: {
-  deps?: ConfigDeps;
-  levels?: ConfigLevel[];
-  cwd?: string;
-}): Promise<{
+export async function loadUserPrompts(args: { deps: ConfigDeps; levels: ConfigLevel[] }): Promise<{
   prompts: PromptTemplate[];
   errors: string[];
 }> {
   const { deps, levels } = resolveContentContext({
-    deps: args?.deps,
-    levels: args?.levels,
-    cwd: args?.cwd,
+    deps: args.deps,
+    levels: args.levels,
   });
   const globalLevel = levels.find((level) => level.scope === "global");
   if (!globalLevel) {
@@ -899,18 +892,16 @@ export async function loadUserPrompts(args?: {
   return { prompts, errors };
 }
 
-export async function loadProjectPrompts(args?: {
-  cwd?: string;
-  deps?: ConfigDeps;
-  levels?: ConfigLevel[];
+export async function loadProjectPrompts(args: {
+  deps: ConfigDeps;
+  levels: ConfigLevel[];
 }): Promise<{
   prompts: PromptTemplate[];
   errors: string[];
 }> {
   const { deps, levels } = resolveContentContext({
-    deps: args?.deps,
-    levels: args?.levels,
-    cwd: args?.cwd,
+    deps: args.deps,
+    levels: args.levels,
   });
 
   const projectLevels = levels.filter((level) => level.scope === "project");
@@ -943,18 +934,13 @@ export async function loadProjectPrompts(args?: {
   return { prompts, errors };
 }
 
-export async function loadUserThemes(args?: {
-  deps?: ConfigDeps;
-  levels?: ConfigLevel[];
-  cwd?: string;
-}): Promise<{
+export async function loadUserThemes(args: { deps: ConfigDeps; levels: ConfigLevel[] }): Promise<{
   themes: ThemeDefinition[];
   errors: string[];
 }> {
   const { deps, levels } = resolveContentContext({
-    deps: args?.deps,
-    levels: args?.levels,
-    cwd: args?.cwd,
+    deps: args.deps,
+    levels: args.levels,
   });
   const globalLevel = levels.find((level) => level.scope === "global");
   if (!globalLevel) {
@@ -976,18 +962,16 @@ export async function loadUserThemes(args?: {
   return { themes, errors };
 }
 
-export async function loadProjectThemes(args?: {
-  cwd?: string;
-  deps?: ConfigDeps;
-  levels?: ConfigLevel[];
+export async function loadProjectThemes(args: {
+  deps: ConfigDeps;
+  levels: ConfigLevel[];
 }): Promise<{
   themes: ThemeDefinition[];
   errors: string[];
 }> {
   const { deps, levels } = resolveContentContext({
-    deps: args?.deps,
-    levels: args?.levels,
-    cwd: args?.cwd,
+    deps: args.deps,
+    levels: args.levels,
   });
 
   const projectLevels = levels.filter((level) => level.scope === "project");
@@ -1017,15 +1001,19 @@ export async function loadProjectThemes(args?: {
 }
 
 export async function loadSkillsContent(
-  config?: Config,
-  options?: { cwd?: string; deps?: ConfigDeps; levels?: ConfigLevel[] },
+  config: Config | undefined,
+  options: { deps: ConfigDeps; levels: ConfigLevel[] },
 ): Promise<{ skills: Skill[]; errors: string[] }> {
   return loadCanonicalSkillsContent(config, options);
 }
 
 export async function loadAllContent(
-  config?: Config,
-  options?: { cwd?: string; deps?: ConfigDeps; levels?: ConfigLevel[] },
+  config: Config | undefined,
+  options: {
+    deps: ConfigDeps;
+    levels: ConfigLevel[];
+    modelResolver: ModelResolver;
+  },
 ): Promise<{
   personas: Persona[];
   prompts: PromptTemplate[];
@@ -1034,15 +1022,18 @@ export async function loadAllContent(
   errors: string[];
 }> {
   const { deps, levels } = resolveContentContext({
-    deps: options?.deps,
-    levels: options?.levels,
-    cwd: options?.cwd,
+    deps: options.deps,
+    levels: options.levels,
   });
 
-  const virtualBundle = buildVirtualBundle(config ?? {}, deps);
+  const virtualBundle = buildVirtualBundle(config ?? {});
 
   try {
-    const modelResolverResult = loadModelResolver({ deps, levels });
+    const modelResolverResult = {
+      resolveModel: options.modelResolver,
+      errors: [] as string[],
+    };
+
     const builtinPersonaErrors: string[] = [];
     const resolvedBuiltinPersonas: Persona[] = [];
 

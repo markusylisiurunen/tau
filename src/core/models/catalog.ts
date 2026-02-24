@@ -2,8 +2,6 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import type { ConfigDeps } from "../config/deps.js";
-import { createDefaultConfigDeps } from "../config/deps.js";
-import type { ConfigLevel } from "../config/paths.js";
 import { resolveConfigLevels } from "../config/paths.js";
 import { TAU_PROVIDER_EXTENSIONS, type TauProviderApiKeyResolverArgs } from "./tau_extensions.js";
 
@@ -381,13 +379,9 @@ function loadModelsFile(
   return { data: parsed.data };
 }
 
-export function loadModelResolver(options?: {
-  deps?: ConfigDeps;
-  levels?: ConfigLevel[];
-  cwd?: string;
-}): LoadedModelResolver {
-  const deps = options?.deps ?? createDefaultConfigDeps();
-  const levels = options?.levels ?? resolveConfigLevels(deps, { cwd: options?.cwd });
+export function loadModelResolver(options: { deps: ConfigDeps; cwd: string }): LoadedModelResolver {
+  const deps = options.deps;
+  const levels = resolveConfigLevels(deps, { cwd: options.cwd });
 
   const state = getCatalogState();
   const knownProviders = new Set(state.providers.keys());

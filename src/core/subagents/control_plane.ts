@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Message } from "@mariozechner/pi-ai";
 import type { Config } from "../config/index.js";
+import type { ModelResolver } from "../models/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { SubagentDispatchContext } from "../tools/registry.js";
 import { formatToolUiEventForProgress } from "../utils/subagent_utils.js";
@@ -50,6 +51,7 @@ type SubagentRecord = {
   modelLabel?: string;
   originHistoryEntryId: string;
   runtimeConfig: SubagentRuntimeConfig;
+  modelResolver: ModelResolver;
   messages: Message[];
   status: SubagentStatus;
   costTotal: number;
@@ -134,6 +136,7 @@ export class SubagentControlPlane {
     modelLabel?: string;
     originHistoryEntryId: string;
     config: Config;
+    modelResolver: ModelResolver;
     authPath?: string;
     backend: ToolExecutionBackend;
     personaId?: string;
@@ -154,6 +157,7 @@ export class SubagentControlPlane {
       modelLabel,
       originHistoryEntryId,
       config,
+      modelResolver,
       authPath,
       backend,
       personaId,
@@ -181,6 +185,7 @@ export class SubagentControlPlane {
       modelLabel,
       originHistoryEntryId,
       runtimeConfig: normalizedRuntimeConfig,
+      modelResolver,
       messages: [],
       status: "running",
       costTotal: 0,
@@ -207,11 +212,12 @@ export class SubagentControlPlane {
     id: string;
     prompt: string;
     config: Config;
+    modelResolver: ModelResolver;
     authPath?: string;
     backend: ToolExecutionBackend;
     personaId?: string;
   }): SubagentSendInputResult {
-    const { id, prompt, config, authPath, backend, personaId } = options;
+    const { id, prompt, config, modelResolver, authPath, backend, personaId } = options;
     const record = this.records.get(id);
     if (!record) {
       return { ok: false, reason: `unknown subagent id: ${id}` };
@@ -233,6 +239,7 @@ export class SubagentControlPlane {
       };
     }
 
+    record.modelResolver = modelResolver;
     this.startRun({ record, prompt, config, authPath, backend, personaId });
 
     return { ok: true, id: record.id, name: record.name, title: record.title };
@@ -334,6 +341,7 @@ export class SubagentControlPlane {
       personaId,
       turnUserHistoryEntryId: record.originHistoryEntryId,
       subagentContext,
+      modelResolver: record.modelResolver,
       messages: record.messages,
       onProgress: (event) => this.recordProgress(record.id, event),
       onToolUiEvent: (event) => this.recordToolUiEvent(record.id, event),

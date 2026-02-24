@@ -149,6 +149,7 @@ export function createSendInputToAgentToolDefinition(
             id,
             prompt,
             config,
+            modelResolver: context.modelResolver,
             authPath: context.authPath,
             backend,
             personaId: context.persona.id,

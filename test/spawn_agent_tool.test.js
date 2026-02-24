@@ -30,13 +30,34 @@ function createModels() {
   return { anthropic, openai };
 }
 
+function createModelResolver(cwd, home) {
+  return loadModelResolver({
+    cwd,
+    deps: {
+      fs: {
+        readFile: (path) => readFileSync(path, "utf-8"),
+        exists: (path) => existsSync(path),
+        listDir: (path) => readdirSync(path),
+        stat: (path) => statSync(path),
+      },
+      env: {
+        getEnv: () => ({}),
+        cwd: () => cwd,
+        home: () => home,
+      },
+    },
+  }).resolveModel;
+}
+
 function createContext(overrides = {}) {
   const { anthropic, openai } = createModels();
   const spawned = [];
+  const baseCwd = overrides.cwd ?? "/repo/current";
+  const baseHome = overrides.home ?? "/repo";
 
   const context = {
     scope: "main",
-    modelResolver: loadModelResolver().resolveModel,
+    modelResolver: createModelResolver(baseCwd, baseHome),
     persona: {
       id: "test-persona",
       label: "test persona",
@@ -62,9 +83,9 @@ function createContext(overrides = {}) {
       default: "default prompt",
       researcher: "research prompt",
     },
-    cwd: "/repo/current",
-    hostCwd: "/repo/current",
-    home: "/repo",
+    cwd: baseCwd,
+    hostCwd: baseCwd,
+    home: baseHome,
     config: {},
     toolRegistry: { schemas: [] },
     authPath: "/tmp/auth.json",

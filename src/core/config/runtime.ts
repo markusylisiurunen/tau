@@ -1,3 +1,4 @@
+import { loadModelResolver } from "../models/catalog.js";
 import { parsePersonaReference } from "../persona_reference.js";
 import type { PromptTemplate } from "../prompts.js";
 import type { Persona, Skill } from "../types.js";
@@ -5,7 +6,7 @@ import type { BashCommand } from "./bash_commands.js";
 import type { ThemeDefinition } from "./content_loader.js";
 import { loadAllContent } from "./content_loader.js";
 import type { ConfigDeps } from "./deps.js";
-import { createDefaultConfigDeps } from "./deps.js";
+import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
 import { loadConfigWithDiagnostics } from "./schema.js";
 
@@ -21,12 +22,19 @@ export interface RuntimeConfigResult {
 
 export async function loadRuntimeConfig(
   cwd: string,
-  deps?: ConfigDeps,
+  deps: ConfigDeps,
 ): Promise<RuntimeConfigResult> {
-  const resolvedDeps = deps ?? createDefaultConfigDeps();
-  const configResult = loadConfigWithDiagnostics(cwd, resolvedDeps);
+  const levels = resolveConfigLevels(deps, { cwd });
+  const modelResolverResult = loadModelResolver({ cwd, deps });
+  const configResult = loadConfigWithDiagnostics(cwd, deps, {
+    modelResolver: modelResolverResult,
+  });
   const config = configResult.config;
-  const content = await loadAllContent(config, { cwd, deps: resolvedDeps });
+  const content = await loadAllContent(config, {
+    deps,
+    levels,
+    modelResolver: modelResolverResult.resolveModel,
+  });
   const warnings = [...configResult.errors, ...content.errors];
   if (config.defaultPersona) {
     const parsedDefaultPersona = parsePersonaReference(config.defaultPersona);

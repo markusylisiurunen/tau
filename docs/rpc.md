@@ -186,8 +186,7 @@ behavior:
 - waits for in-flight submit handling to settle
 - clears history and creates a new session id
 
-concurrent reset calls are processed in arrival order (ordered transitions, not collapse).
-response includes both previous and new session ids.
+concurrent reset calls are processed in arrival order (ordered transitions, not collapse). response includes both previous and new session ids.
 
 #### session.shutdown
 
@@ -201,8 +200,7 @@ behavior:
 - stops forwarding streamed core events
 - marks rpc server as shut down
 
-concurrent shutdown calls are idempotent (`{ "shutdown": true }`).
-after shutdown, non-`initialize` requests return `invalid_request` (`"rpc server is shut down"`).
+concurrent shutdown calls are idempotent (`{ "shutdown": true }`). after shutdown, non-`initialize` requests return `invalid_request` (`"rpc server is shut down"`).
 
 ## events
 
@@ -262,8 +260,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 
 ## concurrency and ordering
 
-`runRpcServer` handles incoming lines concurrently with explicit serialization for mutating
-transitions. this means:
+`runRpcServer` handles incoming lines concurrently with explicit serialization for mutating transitions. this means:
 
 - multiple requests can be accepted before earlier ones complete
 - `session.reset` and `session.shutdown` run through a shared mutation queue (arrival order)

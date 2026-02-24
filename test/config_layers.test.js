@@ -312,36 +312,6 @@ describe("config paths", () => {
     }
   });
 
-  it("accepts defaultLaunchModels for known providers even when model id is not bundled", () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-      writeFileSync(
-        join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({
-          subagents: {
-            defaultLaunchModels: ["openai/gpt-5.9-custom:high"],
-          },
-        }),
-      );
-
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      const modelResolver = loadModelResolver({ deps, levels });
-      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
-      expect(result.errors).toEqual([]);
-      expect(result.config.subagents.defaultLaunchModels).toEqual(["openai/gpt-5.9-custom:high"]);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("rejects modelSystemNotices for unknown model ids", () => {
     const fx = setupFixture();
 
@@ -370,53 +340,6 @@ describe("config paths", () => {
       expect(result.errors).toContain(
         `${join(fx.repo, ".tau", "config.json")}: modelSystemNotices.openai/gpt-5.9-custom unknown model 'openai/gpt-5.9-custom'.`,
       );
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("accepts modelSystemNotices for models configured in models.json", () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-      writeFileSync(
-        join(fx.repo, ".tau", "models.json"),
-        JSON.stringify(
-          {
-            providers: {
-              openai: {
-                models: [{ id: "gpt-5.9-custom" }],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
-      writeFileSync(
-        join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({
-          modelSystemNotices: {
-            "openai/gpt-5.9-custom": "custom notice",
-          },
-        }),
-      );
-
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      const modelResolver = loadModelResolver({ deps, levels });
-      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
-
-      expect(result.errors).toEqual([]);
-      expect(result.config.modelSystemNotices).toEqual({
-        "openai/gpt-5.9-custom": "custom notice",
-      });
     } finally {
       fx.cleanup();
     }

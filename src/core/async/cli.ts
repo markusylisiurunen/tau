@@ -76,37 +76,72 @@ type ResolvedTarget = {
   timeoutMs?: number;
 };
 
-const ErrorPayloadMessageSchema = z
-  .object({
-    error: z.unknown(),
-  })
-  .transform((payload) => String(payload.error));
+const AsyncOptionNames = ["project", "target", "url", "token", "config-file"] as const;
+type AsyncOptionName = (typeof AsyncOptionNames)[number];
+const AsyncOptionNameSet = new Set<string>(AsyncOptionNames);
 
-function parseValue(
-  arg: string,
-  argv: string[],
-  index: number,
-): { value: string; nextIndex: number } {
-  const eqIndex = arg.indexOf("=");
-  if (eqIndex !== -1) {
-    const value = arg.slice(eqIndex + 1).trim();
-    if (!value) {
-      throw new AsyncCliError(`missing value for ${arg.slice(0, eqIndex)}`);
-    }
-    return { value, nextIndex: index };
+const CronSubcommands = new Set<string>(["list", "runs", "run"]);
+
+function requireTrimmedValue(value: string | undefined, message: string): string {
+  if (typeof value !== "string") {
+    throw new AsyncCliError(message);
   }
 
-  const next = argv[index + 1];
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new AsyncCliError(message);
+  }
+
+  return trimmed;
+}
+
+function parsePromptText(tokens: string[], message: string): string {
+  const prompt = tokens.join(" ").trim();
+  if (!prompt) {
+    throw new AsyncCliError(message);
+  }
+
+  return prompt;
+}
+
+function parseLongOptionToken(arg: string): {
+  name: AsyncOptionName;
+  flag: string;
+  inlineValue?: string;
+} {
+  const match = /^--([a-z-]+)(?:=(.*))?$/.exec(arg);
+  if (!match) {
+    throw new AsyncCliError(`unknown option: ${arg}`);
+  }
+
+  const name = match[1] ?? "";
+  if (!AsyncOptionNameSet.has(name)) {
+    throw new AsyncCliError(`unknown option: ${arg}`);
+  }
+
+  return {
+    name: name as AsyncOptionName,
+    flag: `--${name}`,
+    inlineValue: match[2],
+  };
+}
+
+function parseValue(args: { flag: string; inlineValue?: string; argv: string[]; index: number }): {
+  value: string;
+  nextIndex: number;
+} {
+  if (args.inlineValue !== undefined) {
+    const value = requireTrimmedValue(args.inlineValue, `missing value for ${args.flag}`);
+    return { value, nextIndex: args.index };
+  }
+
+  const next = args.argv[args.index + 1];
   if (!next || next.startsWith("-")) {
-    throw new AsyncCliError(`missing value for ${arg}`);
+    throw new AsyncCliError(`missing value for ${args.flag}`);
   }
 
-  const value = next.trim();
-  if (!value) {
-    throw new AsyncCliError(`missing value for ${arg}`);
-  }
-
-  return { value, nextIndex: index + 1 };
+  const value = requireTrimmedValue(next, `missing value for ${args.flag}`);
+  return { value, nextIndex: args.index + 1 };
 }
 
 function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
@@ -137,70 +172,58 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
       continue;
     }
 
-    if (arg === "--project" || arg.startsWith("--project=")) {
-      const parsed = parseValue(arg, argv, i);
-      i = parsed.nextIndex;
-      projectId = parsed.value;
-      continue;
-    }
-
-    if (arg === "--target" || arg.startsWith("--target=")) {
-      const parsed = parseValue(arg, argv, i);
-      i = parsed.nextIndex;
-      targetId = parsed.value;
-      continue;
-    }
-
-    if (arg === "--url" || arg.startsWith("--url=")) {
-      const parsed = parseValue(arg, argv, i);
-      i = parsed.nextIndex;
-      url = parsed.value;
-      continue;
-    }
-
-    if (arg === "--token" || arg.startsWith("--token=")) {
-      const parsed = parseValue(arg, argv, i);
-      i = parsed.nextIndex;
-      token = parsed.value;
-      continue;
-    }
-
-    if (arg === "--config-file" || arg.startsWith("--config-file=")) {
-      const parsed = parseValue(arg, argv, i);
-      i = parsed.nextIndex;
-      configFilePath = parsed.value;
-      continue;
-    }
-
     if (arg.startsWith("-")) {
-      throw new AsyncCliError(`unknown option: ${arg}`);
+      const optionToken = parseLongOptionToken(arg);
+      const parsed = parseValue({
+        flag: optionToken.flag,
+        inlineValue: optionToken.inlineValue,
+        argv,
+        index: i,
+      });
+      i = parsed.nextIndex;
+
+      switch (optionToken.name) {
+        case "project":
+          projectId = parsed.value;
+          break;
+        case "target":
+          targetId = parsed.value;
+          break;
+        case "url":
+          url = parsed.value;
+          break;
+        case "token":
+          token = parsed.value;
+          break;
+        case "config-file":
+          configFilePath = parsed.value;
+          break;
+      }
+      continue;
     }
 
     positional.push(arg);
   }
 
-  const toCreateArgs = (): ParsedAsyncArgs => {
-    const prompt = positional.join(" ").trim();
-    if (!prompt) {
-      throw new AsyncCliError("missing prompt text");
-    }
-
-    return {
-      help,
-      command: "create",
-      prompt,
-      projectId,
-      targetId,
-      url,
-      token,
-      configFilePath,
-    };
+  const shared: ParsedAsyncSharedArgs = {
+    help,
+    ...(projectId === undefined ? {} : { projectId }),
+    ...(targetId === undefined ? {} : { targetId }),
+    ...(url === undefined ? {} : { url }),
+    ...(token === undefined ? {} : { token }),
+    ...(configFilePath === undefined ? {} : { configFilePath }),
   };
+
+  const toCreateArgs = (): ParsedAsyncArgs => ({
+    ...shared,
+    command: "create",
+    prompt: parsePromptText(positional, "missing prompt text"),
+  });
 
   const first = positional[0];
   if (!first) {
-    if (help) {
-      return { help: true, command: "list", projectId, targetId, url, token, configFilePath };
+    if (shared.help) {
+      return { ...shared, command: "list" };
     }
     throw new AsyncCliError("missing async command or prompt");
   }
@@ -211,14 +234,14 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
 
   if (first === "daemon") {
     if (positional.length === 1) {
-      return { help, command: "daemon", projectId, targetId, url, token, configFilePath };
+      return { ...shared, command: "daemon" };
     }
     return toCreateArgs();
   }
 
   if (first === "list") {
     if (positional.length === 1) {
-      return { help, command: "list", projectId, targetId, url, token, configFilePath };
+      return { ...shared, command: "list" };
     }
     return toCreateArgs();
   }
@@ -227,22 +250,15 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
     if (positional.length === 1) {
       throw new AsyncCliError("missing session id for status");
     }
+
     if (positional.length === 2) {
-      const sessionId = positional[1]?.trim();
-      if (!sessionId) {
-        throw new AsyncCliError("missing session id for status");
-      }
       return {
-        help,
+        ...shared,
         command: "status",
-        sessionId,
-        projectId,
-        targetId,
-        url,
-        token,
-        configFilePath,
+        sessionId: requireTrimmedValue(positional[1], "missing session id for status"),
       };
     }
+
     return toCreateArgs();
   }
 
@@ -250,54 +266,30 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
     if (positional.length === 1) {
       throw new AsyncCliError("missing session id for logs");
     }
+
     if (positional.length === 2) {
-      const sessionId = positional[1]?.trim();
-      if (!sessionId) {
-        throw new AsyncCliError("missing session id for logs");
-      }
       return {
-        help,
+        ...shared,
         command: "logs",
-        sessionId,
-        projectId,
-        targetId,
-        url,
-        token,
-        configFilePath,
+        sessionId: requireTrimmedValue(positional[1], "missing session id for logs"),
       };
     }
+
     return toCreateArgs();
   }
 
   if (first === "send") {
-    if (positional.length === 1) {
-      throw new AsyncCliError("missing session id for send");
-    }
-
-    const sessionId = positional[1]?.trim();
-    if (!sessionId) {
-      throw new AsyncCliError("missing session id for send");
-    }
+    const sessionId = requireTrimmedValue(positional[1], "missing session id for send");
 
     if (positional.length === 2) {
       throw new AsyncCliError("missing message text for send");
     }
 
-    const text = positional.slice(2).join(" ").trim();
-    if (!text) {
-      throw new AsyncCliError("missing message text for send");
-    }
-
     return {
-      help,
+      ...shared,
       command: "send",
       sessionId,
-      text,
-      projectId,
-      targetId,
-      url,
-      token,
-      configFilePath,
+      text: parsePromptText(positional.slice(2), "missing message text for send"),
     };
   }
 
@@ -305,95 +297,66 @@ function parseAsyncArgs(argv: string[]): ParsedAsyncArgs {
     if (positional.length === 1) {
       throw new AsyncCliError("missing session id for interrupt");
     }
+
     if (positional.length === 2) {
-      const sessionId = positional[1]?.trim();
-      if (!sessionId) {
-        throw new AsyncCliError("missing session id for interrupt");
-      }
       return {
-        help,
+        ...shared,
         command: "interrupt",
-        sessionId,
-        projectId,
-        targetId,
-        url,
-        token,
-        configFilePath,
+        sessionId: requireTrimmedValue(positional[1], "missing session id for interrupt"),
       };
     }
+
     return toCreateArgs();
   }
 
   if (first === "cron") {
-    const subcommand = positional[1]?.trim();
+    const missingCronSubcommandMessage =
+      "missing cron subcommand. use: cron list | cron runs [jobId] | cron run <jobId>";
+    const subcommandRaw = requireTrimmedValue(positional[1], missingCronSubcommandMessage);
 
-    if (!subcommand) {
-      throw new AsyncCliError(
-        "missing cron subcommand. use: cron list | cron runs [jobId] | cron run <jobId>",
-      );
+    if (!CronSubcommands.has(subcommandRaw)) {
+      throw new AsyncCliError(`unknown cron subcommand '${subcommandRaw}'`);
     }
 
-    if (subcommand === "list") {
+    if (subcommandRaw === "list") {
       if (positional.length !== 2) {
         throw new AsyncCliError("usage: tau async cron list");
       }
 
       return {
-        help,
+        ...shared,
         command: "cron-list",
-        projectId,
-        targetId,
-        url,
-        token,
-        configFilePath,
       };
     }
 
-    if (subcommand === "runs") {
+    if (subcommandRaw === "runs") {
       if (positional.length > 3) {
         throw new AsyncCliError("usage: tau async cron runs [jobId]");
       }
 
-      const cronJobId = positional.length === 3 ? positional[2]?.trim() : undefined;
-      if (cronJobId === "") {
-        throw new AsyncCliError("usage: tau async cron runs [jobId]");
-      }
+      const cronJobId =
+        positional.length === 3
+          ? requireTrimmedValue(positional[2], "usage: tau async cron runs [jobId]")
+          : undefined;
 
       return {
-        help,
+        ...shared,
         command: "cron-runs",
         ...(cronJobId === undefined ? {} : { cronJobId }),
-        projectId,
-        targetId,
-        url,
-        token,
-        configFilePath,
       };
     }
 
-    if (subcommand === "run") {
-      const cronJobId = positional[2]?.trim();
-      if (!cronJobId) {
-        throw new AsyncCliError("missing cron job id for run");
-      }
+    const cronJobId = requireTrimmedValue(positional[2], "missing cron job id for run");
 
-      if (positional.length !== 3) {
-        throw new AsyncCliError("usage: tau async cron run <jobId>");
-      }
-
-      return {
-        help,
-        command: "cron-run",
-        cronJobId,
-        projectId,
-        targetId,
-        url,
-        token,
-        configFilePath,
-      };
+    if (positional.length !== 3) {
+      throw new AsyncCliError("usage: tau async cron run <jobId>");
     }
 
-    throw new AsyncCliError(`unknown cron subcommand '${subcommand}'`);
+    return {
+      ...shared,
+      command: "cron-run",
+      cronJobId,
+    };
   }
 
   return toCreateArgs();
@@ -443,8 +406,8 @@ function logStartupCleanupSummary(args: {
 }
 
 function resolveProjectId(args: ParsedAsyncArgs, config: Config): string {
-  const configured = config.async?.client?.defaultProjectId;
-  const projectId = args.projectId?.trim() || configured?.trim();
+  const configured = config.async?.client?.defaultProjectId?.trim();
+  const projectId = args.projectId ?? (configured || undefined);
   if (!projectId) {
     throw new AsyncCliError(
       "missing project id. use --project <id> or set async.client.defaultProjectId",
@@ -491,13 +454,45 @@ function buildUrl(baseUrl: string, path: string): string {
   return new URL(path.startsWith("/") ? path.slice(1) : path, base).toString();
 }
 
+const ErrorEnvelopeSchema = z
+  .object({
+    error: z.unknown(),
+  })
+  .transform((payload) => String(payload.error));
+
+const SuccessEnvelopeSchema = z.object({
+  ok: z.literal(true),
+  data: z.unknown(),
+});
+
+function throwRequestFailure(status: number, payload: unknown): never {
+  const parsedError = ErrorEnvelopeSchema.safeParse(payload);
+  if (parsedError.success) {
+    throw new AsyncCliError(`request failed (${status}): ${parsedError.data}`);
+  }
+
+  throw new AsyncCliError(`request failed (${status})`);
+}
+
+function parseResponsePayload(text: string): unknown {
+  if (!text.trim()) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
 async function requestJson(args: {
   target: ResolvedTarget;
   method: "GET" | "POST";
   path: string;
   body?: unknown;
   fetchImpl: typeof fetch;
-}): Promise<unknown> {
+}): Promise<z.infer<typeof SuccessEnvelopeSchema>> {
   const controller = new AbortController();
   const timeoutMs = args.target.timeoutMs ?? 30_000;
 
@@ -522,26 +517,18 @@ async function requestJson(args: {
       signal: controller.signal,
     });
 
-    const text = await response.text();
-    let payload: unknown;
-
-    if (text.trim()) {
-      try {
-        payload = JSON.parse(text) as unknown;
-      } catch {
-        payload = text;
-      }
-    }
+    const payload = parseResponsePayload(await response.text());
 
     if (!response.ok) {
-      const parsedErrorPayload = ErrorPayloadMessageSchema.safeParse(payload);
-      if (parsedErrorPayload.success) {
-        throw new AsyncCliError(`request failed (${response.status}): ${parsedErrorPayload.data}`);
-      }
-      throw new AsyncCliError(`request failed (${response.status})`);
+      throwRequestFailure(response.status, payload);
     }
 
-    return payload;
+    const successPayload = SuccessEnvelopeSchema.safeParse(payload);
+    if (!successPayload.success) {
+      throw new AsyncCliError(`unexpected response format (${response.status})`);
+    }
+
+    return successPayload.data;
   } catch (error) {
     if (error instanceof AsyncCliError) {
       throw error;
@@ -753,8 +740,6 @@ export async function runAsyncCommand(
           path: `/v1/cron/jobs/${encodeURIComponent(parsed.cronJobId)}/run`,
           body: {},
         };
-      default:
-        throw new AsyncCliError("unsupported async command");
     }
   })();
 

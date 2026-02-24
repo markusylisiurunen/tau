@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
 import { formatUsageDateKey, getUsageLogDir } from "./logs.js";
 
@@ -10,11 +11,12 @@ export class UsageCliError extends Error {
   }
 }
 
-type UsageGroupBy = "day" | "model";
+const UsageGroupBySchema = z.enum(["day", "model"]);
+type UsageGroupBy = z.infer<typeof UsageGroupBySchema>;
 
 type UsageCliOptions = {
   help: boolean;
-  since?: string;
+  sinceKey?: string;
   persona?: string;
   provider?: string;
   model?: string;
@@ -32,6 +34,33 @@ type UsageAggregate = {
 };
 
 const LOG_FILE_PATTERN = /^usage-(\d{4}-\d{2}-\d{2})\.jsonl$/;
+
+const usageNumberSchema = z.coerce.number().finite();
+
+const usageLogEntrySchema = z
+  .object({
+    timestamp: usageNumberSchema,
+    personaId: z.string().optional(),
+    provider: z.string().optional(),
+    model: z.string().optional(),
+    usage: z
+      .object({
+        input: usageNumberSchema.optional(),
+        output: usageNumberSchema.optional(),
+        cacheRead: usageNumberSchema.optional(),
+        cacheWrite: usageNumberSchema.optional(),
+        total: usageNumberSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
+    cost: z
+      .object({
+        total: usageNumberSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
 
 function parseValue(arg: string, argv: string[], index: number): { value: string; next: number } {
   const eqIndex = arg.indexOf("=");
@@ -51,71 +80,16 @@ function parseValue(arg: string, argv: string[], index: number): { value: string
   return { value: next, next: index + 1 };
 }
 
-function parseUsageArgs(argv: string[]): UsageCliOptions {
-  let help = false;
-  let since: string | undefined;
-  let persona: string | undefined;
-  let provider: string | undefined;
-  let model: string | undefined;
-  let groupBy: UsageGroupBy = "day";
-
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
-
-    if (arg === "--help" || arg === "-h") {
-      help = true;
-      continue;
-    }
-
-    if (arg === "--since" || arg.startsWith("--since=")) {
-      const parsed = parseValue(arg, argv, i);
-      i = parsed.next;
-      since = parsed.value;
-      continue;
-    }
-
-    if (arg === "--persona" || arg.startsWith("--persona=")) {
-      const parsed = parseValue(arg, argv, i);
-      i = parsed.next;
-      persona = parsed.value;
-      continue;
-    }
-
-    if (arg === "--provider" || arg.startsWith("--provider=")) {
-      const parsed = parseValue(arg, argv, i);
-      i = parsed.next;
-      provider = parsed.value;
-      continue;
-    }
-
-    if (arg === "--model" || arg.startsWith("--model=")) {
-      const parsed = parseValue(arg, argv, i);
-      i = parsed.next;
-      model = parsed.value;
-      continue;
-    }
-
-    if (arg === "--group-by" || arg.startsWith("--group-by=")) {
-      const parsed = parseValue(arg, argv, i);
-      i = parsed.next;
-      if (parsed.value !== "day" && parsed.value !== "model") {
-        throw new UsageCliError(`invalid group-by '${parsed.value}'. expected day or model.`);
-      }
-      groupBy = parsed.value;
-      continue;
-    }
-
-    if (arg.startsWith("-")) {
-      throw new UsageCliError(`unknown option: ${arg}`);
-    }
-
-    throw new UsageCliError(`unexpected argument: ${arg}`);
+function parseGroupBy(value: string): UsageGroupBy {
+  const parsed = UsageGroupBySchema.safeParse(value);
+  if (!parsed.success) {
+    throw new UsageCliError(`invalid group-by '${value}'. expected day or model.`);
   }
 
-  return { help, since, persona, provider, model, groupBy };
+  return parsed.data;
 }
 
-function parseSinceDate(raw: string): string {
+function parseSince(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) {
     throw new UsageCliError("missing value for --since");
@@ -131,6 +105,72 @@ function parseSinceDate(raw: string): string {
   }
 
   return formatUsageDateKey(parsed);
+}
+
+function parseUsageArgs(argv: string[]): UsageCliOptions {
+  let help = false;
+  let sinceRaw: string | undefined;
+  let persona: string | undefined;
+  let provider: string | undefined;
+  let model: string | undefined;
+  let groupBy: UsageGroupBy = "day";
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+
+    if (arg === "--help" || arg === "-h") {
+      help = true;
+      continue;
+    }
+
+    const option = arg.includes("=") ? arg.slice(0, arg.indexOf("=")) : arg;
+    switch (option) {
+      case "--since": {
+        const parsed = parseValue(arg, argv, i);
+        sinceRaw = parsed.value;
+        i = parsed.next;
+        break;
+      }
+      case "--persona": {
+        const parsed = parseValue(arg, argv, i);
+        persona = parsed.value;
+        i = parsed.next;
+        break;
+      }
+      case "--provider": {
+        const parsed = parseValue(arg, argv, i);
+        provider = parsed.value;
+        i = parsed.next;
+        break;
+      }
+      case "--model": {
+        const parsed = parseValue(arg, argv, i);
+        model = parsed.value;
+        i = parsed.next;
+        break;
+      }
+      case "--group-by": {
+        const parsed = parseValue(arg, argv, i);
+        groupBy = parseGroupBy(parsed.value);
+        i = parsed.next;
+        break;
+      }
+      default:
+        if (arg.startsWith("-")) {
+          throw new UsageCliError(`unknown option: ${arg}`);
+        }
+        throw new UsageCliError(`unexpected argument: ${arg}`);
+    }
+  }
+
+  return {
+    help,
+    sinceKey: !help && sinceRaw !== undefined ? parseSince(sinceRaw) : undefined,
+    persona,
+    provider,
+    model,
+    groupBy,
+  };
 }
 
 function toAggregate(): UsageAggregate {
@@ -154,6 +194,7 @@ function matchesFilter(value: string | undefined, filter: string | undefined): b
 function appendAggregate(
   target: UsageAggregate,
   entry: {
+    requests?: number;
     input?: number;
     output?: number;
     cacheRead?: number;
@@ -162,7 +203,7 @@ function appendAggregate(
     costTotal?: number;
   },
 ): void {
-  target.requests += 1;
+  target.requests += entry.requests ?? 1;
   target.input += entry.input ?? 0;
   target.output += entry.output ?? 0;
   target.cacheRead += entry.cacheRead ?? 0;
@@ -171,10 +212,63 @@ function appendAggregate(
   target.costTotal += entry.costTotal ?? 0;
 }
 
-function readNumber(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+function formatAggregateRow(label: string, aggregate: UsageAggregate): string[] {
+  return [
+    label,
+    `requests: ${aggregate.requests}`,
+    `↑${formatTokenWindow(aggregate.input)}`,
+    `↓${formatTokenWindow(aggregate.output)}`,
+    `r${formatTokenWindow(aggregate.cacheRead)}`,
+    `w${formatTokenWindow(aggregate.cacheWrite)}`,
+    `total: ${formatTokenWindow(aggregate.total)}`,
+    `cost: $${formatAdaptiveNumber(aggregate.costTotal, 2, 5)}`,
+  ];
+}
+
+type ParsedUsageLogEntry = {
+  entryDateKey: string;
+  personaId?: string;
+  provider?: string;
+  model?: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  costTotal: number;
+};
+
+function parseUsageLogLine(line: string): ParsedUsageLogEntry | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+
+  const parsedEntry = usageLogEntrySchema.safeParse(parsed);
+  if (!parsedEntry.success) {
+    return null;
+  }
+
+  const usage = parsedEntry.data.usage;
+  const input = usage?.input ?? 0;
+  const output = usage?.output ?? 0;
+  const cacheRead = usage?.cacheRead ?? 0;
+  const cacheWrite = usage?.cacheWrite ?? 0;
+
+  return {
+    entryDateKey: formatUsageDateKey(new Date(parsedEntry.data.timestamp)),
+    personaId: parsedEntry.data.personaId,
+    provider: parsedEntry.data.provider,
+    model: parsedEntry.data.model,
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    total: usage?.total ?? input + output + cacheRead + cacheWrite,
+    costTotal: parsedEntry.data.cost?.total ?? 0,
+  };
 }
 
 export function printUsageHelp(): void {
@@ -201,7 +295,7 @@ export async function runUsageCommand(argv: string[]): Promise<void> {
     return;
   }
 
-  const sinceKey = options.since ? parseSinceDate(options.since) : undefined;
+  const sinceKey = options.sinceKey;
 
   const logDir = getUsageLogDir();
   let files: string[];
@@ -240,57 +334,31 @@ export async function runUsageCommand(argv: string[]): Promise<void> {
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      } catch {
+      const entry = parseUsageLogLine(trimmed);
+      if (!entry) {
         continue;
       }
 
-      const timestamp = Number(parsed?.timestamp ?? NaN);
-      if (!Number.isFinite(timestamp)) {
+      if (sinceKey && entry.entryDateKey < sinceKey) {
         continue;
       }
 
-      const entryDateKey = formatUsageDateKey(new Date(timestamp));
-      if (sinceKey && entryDateKey < sinceKey) {
+      if (!matchesFilter(entry.personaId, options.persona)) {
         continue;
       }
-
-      const personaId = typeof parsed.personaId === "string" ? parsed.personaId : undefined;
-      const provider = typeof parsed.provider === "string" ? parsed.provider : undefined;
-      const model = typeof parsed.model === "string" ? parsed.model : undefined;
-
-      if (!matchesFilter(personaId, options.persona)) {
+      if (!matchesFilter(entry.provider, options.provider)) {
         continue;
       }
-      if (!matchesFilter(provider, options.provider)) {
+      if (!matchesFilter(entry.model, options.model)) {
         continue;
       }
-      if (!matchesFilter(model, options.model)) {
-        continue;
-      }
-
-      const usage =
-        parsed.usage && typeof parsed.usage === "object"
-          ? (parsed.usage as Record<string, unknown>)
-          : {};
-      const input = readNumber(usage.input);
-      const output = readNumber(usage.output);
-      const cacheRead = readNumber(usage.cacheRead);
-      const cacheWrite = readNumber(usage.cacheWrite);
-      const rawTotal = usage.total;
-      const total =
-        rawTotal !== undefined ? readNumber(rawTotal) : input + output + cacheRead + cacheWrite;
-      const cost = parsed.cost as Record<string, unknown> | undefined;
-      const costTotal = readNumber(cost?.total);
 
       const groupKey =
         options.groupBy === "model"
-          ? `${provider ?? "unknown"}/${model ?? "unknown"}`
-          : entryDateKey;
+          ? `${entry.provider ?? "unknown"}/${entry.model ?? "unknown"}`
+          : entry.entryDateKey;
       const aggregate = aggregates.get(groupKey) ?? toAggregate();
-      appendAggregate(aggregate, { input, output, cacheRead, cacheWrite, total, costTotal });
+      appendAggregate(aggregate, entry);
       aggregates.set(groupKey, aggregate);
     }
   }
@@ -303,51 +371,13 @@ export async function runUsageCommand(argv: string[]): Promise<void> {
   const rows: string[][] = [];
   const totalAggregate = toAggregate();
 
-  for (const dateKey of [...aggregates.keys()].sort()) {
-    const aggregate = aggregates.get(dateKey)!;
-    totalAggregate.requests += aggregate.requests;
-    totalAggregate.input += aggregate.input;
-    totalAggregate.output += aggregate.output;
-    totalAggregate.cacheRead += aggregate.cacheRead;
-    totalAggregate.cacheWrite += aggregate.cacheWrite;
-    totalAggregate.total += aggregate.total;
-    totalAggregate.costTotal += aggregate.costTotal;
-
-    const input = `↑${formatTokenWindow(aggregate.input)}`;
-    const output = `↓${formatTokenWindow(aggregate.output)}`;
-    const cacheRead = `r${formatTokenWindow(aggregate.cacheRead)}`;
-    const cacheWrite = `w${formatTokenWindow(aggregate.cacheWrite)}`;
-    const total = formatTokenWindow(aggregate.total);
-    const cost = `$${formatAdaptiveNumber(aggregate.costTotal, 2, 5)}`;
-
-    rows.push([
-      dateKey,
-      `requests: ${aggregate.requests}`,
-      input,
-      output,
-      cacheRead,
-      cacheWrite,
-      `total: ${total}`,
-      `cost: ${cost}`,
-    ]);
+  for (const groupKey of [...aggregates.keys()].sort()) {
+    const aggregate = aggregates.get(groupKey)!;
+    appendAggregate(totalAggregate, aggregate);
+    rows.push(formatAggregateRow(groupKey, aggregate));
   }
 
-  const totalInput = `↑${formatTokenWindow(totalAggregate.input)}`;
-  const totalOutput = `↓${formatTokenWindow(totalAggregate.output)}`;
-  const totalCacheRead = `r${formatTokenWindow(totalAggregate.cacheRead)}`;
-  const totalCacheWrite = `w${formatTokenWindow(totalAggregate.cacheWrite)}`;
-  const totalTokens = formatTokenWindow(totalAggregate.total);
-  const totalCost = `$${formatAdaptiveNumber(totalAggregate.costTotal, 2, 5)}`;
-  const totalRow = [
-    "total",
-    `requests: ${totalAggregate.requests}`,
-    totalInput,
-    totalOutput,
-    totalCacheRead,
-    totalCacheWrite,
-    `total: ${totalTokens}`,
-    `cost: ${totalCost}`,
-  ];
+  const totalRow = formatAggregateRow("total", totalAggregate);
   const allRows = [...rows, totalRow];
   const columnWidths = allRows.reduce((widths, row) => {
     row.forEach((cell, index) => {

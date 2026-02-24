@@ -85,22 +85,14 @@ const SubagentNameSchema = z
 
 type SubagentName = z.infer<typeof SubagentNameSchema>;
 
-const StringListSchema = z.array(z.string());
-
-const TrimmedNonEmptyStringListSchema = StringListSchema.transform((list) =>
-  list.map((item) => item.trim()),
-).refine((list) => list.every(Boolean), {
-  message: "entries must be non-empty strings",
-});
-
 const SubagentSpecSchema = z
   .object({
     provider: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),
     reasoning: ReasoningEffortSchema.optional(),
-    tools: StringListSchema.optional(),
+    tools: z.array(z.string()).optional(),
     riskLevel: RiskLevelSchema.optional(),
-    launchModels: StringListSchema.optional(),
+    launchModels: z.array(z.string()).optional(),
     systemPrompt: z.string().trim().min(1).optional(),
     description: z.string().trim().min(1).optional(),
   })
@@ -122,6 +114,13 @@ const SubagentConfigInputSchema = z.record(
   SubagentNameSchema,
   z.union([z.literal(false), SubagentSpecSchema]),
 );
+
+const TrimmedNonEmptyStringListSchema = z
+  .array(z.string())
+  .transform((list) => list.map((item) => item.trim()))
+  .refine((list) => list.every(Boolean), {
+    message: "entries must be non-empty strings",
+  });
 
 function parseSubagentTools(toolsRaw: string[] | undefined): {
   tools?: SubagentToolName[];

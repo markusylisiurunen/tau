@@ -9,6 +9,7 @@ import type {
   Message,
   ToolResultMessage,
 } from "@mariozechner/pi-ai";
+import { z } from "zod";
 import { formatCodexAuthError } from "../core/auth/auth_messages.js";
 import { getAuthPath } from "../core/auth/auth_paths.js";
 import { AuthStorage } from "../core/auth/auth_storage.js";
@@ -179,6 +180,10 @@ const SPEAK_TEMP_FILE_TEMPLATE = "/tmp/tau-speak.XXXXXX";
 const SPEAK_RECORDING_MIN_BYTES = 1024;
 const SPEAK_RECORDING_MAX_DURATION_MS = 5 * 60 * 1000;
 const CAFFEINATE_COMMAND = "/usr/bin/caffeinate";
+
+const SmartPruneResponseSchema = z.object({
+  prune: z.array(z.string().trim().min(1)),
+});
 
 export class ChatController {
   private readonly view: ChatView;
@@ -2083,28 +2088,12 @@ export class ChatController {
       return null;
     }
 
-    if (!parsed || typeof parsed !== "object") {
+    const parsedSelection = SmartPruneResponseSchema.safeParse(parsed);
+    if (!parsedSelection.success) {
       return null;
     }
 
-    const prune = (parsed as { prune?: unknown }).prune;
-    if (!Array.isArray(prune)) {
-      return null;
-    }
-
-    const ids: string[] = [];
-    for (const value of prune) {
-      if (typeof value !== "string") {
-        return null;
-      }
-      const id = value.trim();
-      if (id.length === 0) {
-        return null;
-      }
-      ids.push(id);
-    }
-
-    return ids;
+    return parsedSelection.data.prune;
   }
 
   private formatRiskLevelNotice(level: RiskLevel): string {

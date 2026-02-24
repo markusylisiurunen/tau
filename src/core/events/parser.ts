@@ -1,7 +1,3 @@
-import type { AssistantMessage, ToolResultMessage } from "@mariozechner/pi-ai";
-import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
-import type { SubagentUiEvent } from "../subagents/types.js";
-import type { ToolUiEvent } from "../tools/registry.js";
 import {
   CORE_EVENT_VERSION,
   type CoreEvent,
@@ -13,11 +9,13 @@ export type CoreEventParseFailure = { ok: false; message: string };
 export type CoreEventParseSuccess<T> = { ok: true; value: T };
 export type CoreEventParseResult<T> = CoreEventParseSuccess<T> | CoreEventParseFailure;
 
-const stopReasons = ["stop", "length", "toolUse", "error", "aborted"];
-const subagentStatuses = ["running", "success", "error", "aborted"];
+type UnknownRecord = Record<string, unknown>;
+
+const stopReasons = ["stop", "length", "toolUse", "error", "aborted"] as const;
+const subagentStatuses = ["running", "success", "error", "aborted"] as const;
+const noticeSeverities = ["info", "warn", "error"] as const;
+
 const fail = (message: string): CoreEventParseFailure => ({ ok: false, message });
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 export function parseCoreEvent(value: unknown): CoreEvent {
   const parsed = safeParseCoreEvent(value);
@@ -26,9 +24,19 @@ export function parseCoreEvent(value: unknown): CoreEvent {
 }
 
 export function safeParseCoreEvent(value: unknown): CoreEventParseResult<CoreEvent> {
-  if (!isRecord(value)) return fail("core event payload must be an object");
-  if (typeof value.type !== "string") return fail("core event payload.type must be a string");
-  return isCoreEvent(value) ? { ok: true, value } : fail("invalid core event payload");
+  if (!isRecord(value)) {
+    return fail("core event payload must be an object");
+  }
+
+  if (typeof value.type !== "string") {
+    return fail("core event payload.type must be a string");
+  }
+
+  if (!isValidCoreEvent(value, value.type)) {
+    return fail("invalid core event payload");
+  }
+
+  return { ok: true, value: value as CoreEvent };
 }
 
 export function parseCoreEventEnvelope(value: unknown): CoreEventEnvelope {
@@ -40,22 +48,34 @@ export function parseCoreEventEnvelope(value: unknown): CoreEventEnvelope {
 export function safeParseCoreEventEnvelope(
   value: unknown,
 ): CoreEventParseResult<CoreEventEnvelope> {
-  if (!isRecord(value)) return fail("core event envelope must be an object");
-  if (value.version !== CORE_EVENT_VERSION) {
+  if (!isRecord(value)) {
+    return fail("core event envelope must be an object");
+  }
+
+  if (!isCoreEventVersion(value.version)) {
     return fail(`unsupported core event version: ${String(value.version)}`);
   }
+
   const event = safeParseCoreEvent(value.event);
-  return event.ok
-    ? { ok: true, value: { version: CORE_EVENT_VERSION, event: event.value } }
-    : fail(`invalid core event envelope: ${event.message}`);
+  if (!event.ok) {
+    return fail(`invalid core event envelope: ${event.message}`);
+  }
+
+  return {
+    ok: true,
+    value: {
+      version: CORE_EVENT_VERSION,
+      event: event.value,
+    },
+  };
 }
 
 export function isCoreEventVersion(value: unknown): value is CoreEventVersion {
   return value === CORE_EVENT_VERSION;
 }
 
-function isCoreEvent(value: Record<string, unknown>): value is CoreEvent {
-  switch (value.type) {
+function isValidCoreEvent(value: UnknownRecord, eventType: string): boolean {
+  switch (eventType) {
     case "assistant_start":
       return typeof value.historyEntryId === "string";
     case "assistant_final":
@@ -63,10 +83,7 @@ function isCoreEvent(value: Record<string, unknown>): value is CoreEvent {
     case "assistant_partial":
       return typeof value.historyEntryId === "string" && isAssistantPartialSnapshot(value.snapshot);
     case "notice":
-      return (
-        (value.severity === "info" || value.severity === "warn" || value.severity === "error") &&
-        typeof value.text === "string"
-      );
+      return isOneOf(value.severity, noticeSeverities) && typeof value.text === "string";
     case "tool_ui":
       return isToolUiEvent(value.uiEvent);
     case "subagent_ui":
@@ -78,16 +95,15 @@ function isCoreEvent(value: Record<string, unknown>): value is CoreEvent {
   }
 }
 
-function isAssistantMessage(value: unknown): value is AssistantMessage {
+function isAssistantMessage(value: unknown): boolean {
   return (
     isRecord(value) &&
     value.role === "assistant" &&
-    (value.stopReason === undefined ||
-      (typeof value.stopReason === "string" && stopReasons.includes(value.stopReason)))
+    (value.stopReason === undefined || isOneOf(value.stopReason, stopReasons))
   );
 }
 
-function isToolResultMessage(value: unknown): value is ToolResultMessage {
+function isToolResultMessage(value: unknown): boolean {
   return (
     isRecord(value) &&
     value.role === "toolResult" &&
@@ -96,7 +112,7 @@ function isToolResultMessage(value: unknown): value is ToolResultMessage {
   );
 }
 
-function isAssistantPartialSnapshot(value: unknown): value is AssistantPartialSnapshot {
+function isAssistantPartialSnapshot(value: unknown): boolean {
   return (
     isRecord(value) &&
     typeof value.text === "string" &&
@@ -106,15 +122,23 @@ function isAssistantPartialSnapshot(value: unknown): value is AssistantPartialSn
   );
 }
 
-function isToolUiEvent(value: unknown): value is ToolUiEvent {
-  if (!isRecord(value) || typeof value.type !== "string") return false;
-  return value.type === "tool_pruned"
-    ? typeof value.toolCallId === "string" && typeof value.content === "string"
-    : typeof value.headerTarget === "string";
+function isToolUiEvent(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return false;
+  }
+
+  if (value.type === "tool_pruned") {
+    return typeof value.toolCallId === "string" && typeof value.content === "string";
+  }
+
+  return typeof value.headerTarget === "string";
 }
 
-function isSubagentUiEvent(value: unknown): value is SubagentUiEvent {
-  if (!isRecord(value) || typeof value.type !== "string") return false;
+function isSubagentUiEvent(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return false;
+  }
+
   switch (value.type) {
     case "subagent_spawned":
     case "subagent_finished":
@@ -123,9 +147,9 @@ function isSubagentUiEvent(value: unknown): value is SubagentUiEvent {
       return (
         typeof value.id === "string" &&
         typeof value.text === "string" &&
-        typeof value.costTotal === "number" &&
-        typeof value.turns === "number" &&
-        typeof value.toolCalls === "number"
+        isFiniteNumber(value.costTotal) &&
+        isFiniteNumber(value.turns) &&
+        isFiniteNumber(value.toolCalls)
       );
     case "subagent_emit_output":
       return typeof value.id === "string" && typeof value.text === "string";
@@ -142,7 +166,18 @@ function isSubagentState(value: unknown): boolean {
     typeof value.id === "string" &&
     typeof value.name === "string" &&
     typeof value.title === "string" &&
-    typeof value.status === "string" &&
-    subagentStatuses.includes(value.status)
+    isOneOf(value.status, subagentStatuses)
   );
+}
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isOneOf<T extends readonly string[]>(value: unknown, values: T): value is T[number] {
+  return typeof value === "string" && values.includes(value);
 }

@@ -1,27 +1,23 @@
-import { z } from "zod";
 import { parsePersonaReference } from "./persona_reference.js";
 import {
   type Persona,
   REASONING_LEVELS,
   type ReasoningEffort,
-  ReasoningEffortSchema,
   type RiskLevel,
   RiskLevelSchema,
 } from "./types.js";
 
-export const CliOptionsSchema = z.object({
-  help: z.boolean(),
-  debug: z.boolean(),
-  loadPath: z.string().optional(),
-  personaId: z.string().optional(),
-  reasoningOverride: ReasoningEffortSchema.optional(),
-  riskLevel: RiskLevelSchema.optional(),
-  sandbox: z.boolean(),
-  caffeinated: z.boolean(),
-  noAgentContextFiles: z.boolean(),
-});
-
-export type CliOptions = z.infer<typeof CliOptionsSchema>;
+export type CliOptions = {
+  help: boolean;
+  debug: boolean;
+  loadPath?: string;
+  personaId?: string;
+  reasoningOverride?: ReasoningEffort;
+  riskLevel?: RiskLevel;
+  sandbox: boolean;
+  caffeinated: boolean;
+  noAgentContextFiles: boolean;
+};
 
 export class CliError extends Error {
   constructor(message: string) {
@@ -52,19 +48,54 @@ export function parsePersonaString(
   };
 }
 
-function parseRiskLevel(raw: string): RiskLevel {
+function parsePersonaOption(
+  raw: string,
+  personas: Persona[],
+): { personaId: string; reasoningOverride: ReasoningEffort | undefined } {
+  const parsedReference = parsePersonaReference(raw);
+
+  if (parsedReference.error === "missing-reasoning") {
+    throw new CliError("missing reasoning level after ':' in --persona");
+  }
+
+  if (parsedReference.error === "invalid-reasoning") {
+    const allowed = REASONING_LEVELS.join(", ");
+    throw new CliError(
+      `invalid reasoning level '${parsedReference.rawReasoning}'. allowed levels: ${allowed}`,
+    );
+  }
+
+  if (!parsedReference.personaId) {
+    throw new CliError("missing persona id in --persona");
+  }
+
+  const personaId = resolvePersonaId(parsedReference.personaId, personas);
+  if (!personaId) {
+    const available = personas.map((p) => p.id).join(", ");
+    throw new CliError(
+      `unknown persona '${parsedReference.personaId}'. available personas: ${available}`,
+    );
+  }
+
+  return {
+    personaId,
+    reasoningOverride: parsedReference.reasoning,
+  };
+}
+
+function parseRiskOption(raw: string): RiskLevel {
   const normalized = raw.trim();
   if (!normalized) {
     throw new CliError("missing value for --risk");
   }
 
   const parsed = RiskLevelSchema.safeParse(normalized);
-  if (parsed.success) {
-    return parsed.data;
+  if (!parsed.success) {
+    const allowed = RiskLevelSchema.options.join(", ");
+    throw new CliError(`invalid risk level '${raw}'. allowed levels: ${allowed}`);
   }
 
-  const allowed = RiskLevelSchema.options.join(", ");
-  throw new CliError(`invalid risk level '${raw}'. allowed levels: ${allowed}`);
+  return parsed.data;
 }
 
 function parseValue(
@@ -113,9 +144,9 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     }
 
     if (arg === "--load" || arg === "-l" || arg.startsWith("--load=") || arg.startsWith("-l=")) {
-      const { value, nextIndex } = parseValue(arg, argv, i);
-      i = nextIndex;
-      loadPath = value;
+      const parsed = parseValue(arg, argv, i);
+      loadPath = parsed.value;
+      i = parsed.nextIndex;
       continue;
     }
 
@@ -140,53 +171,29 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       arg.startsWith("--persona=") ||
       arg.startsWith("-p=")
     ) {
-      const { value, nextIndex } = parseValue(arg, argv, i);
-      i = nextIndex;
-
-      const parsedReference = parsePersonaReference(value);
-      if (parsedReference.error === "missing-reasoning") {
-        throw new CliError("missing reasoning level after ':' in --persona");
-      }
-      if (parsedReference.error === "invalid-reasoning") {
-        const allowed = [...REASONING_LEVELS].join(", ");
-        throw new CliError(
-          `invalid reasoning level '${parsedReference.rawReasoning}'. allowed levels: ${allowed}`,
-        );
-      }
-      if (!parsedReference.personaId) {
-        throw new CliError("missing persona id in --persona");
-      }
-
-      const resolvedPersonaId = resolvePersonaId(parsedReference.personaId, personas);
-      if (!resolvedPersonaId) {
-        const available = personas.map((p) => p.id).join(", ");
-        throw new CliError(
-          `unknown persona '${parsedReference.personaId}'. available personas: ${available}`,
-        );
-      }
-
-      personaId = resolvedPersonaId;
-      if (parsedReference.reasoning !== undefined) {
-        reasoningOverride = parsedReference.reasoning;
-      }
-
+      const parsed = parseValue(arg, argv, i);
+      const persona = parsePersonaOption(parsed.value, personas);
+      personaId = persona.personaId;
+      reasoningOverride = persona.reasoningOverride;
+      i = parsed.nextIndex;
       continue;
     }
 
     if (arg === "--risk" || arg === "-r" || arg.startsWith("--risk=") || arg.startsWith("-r=")) {
-      const { value, nextIndex } = parseValue(arg, argv, i);
-      i = nextIndex;
-      riskLevel = parseRiskLevel(value);
+      const parsed = parseValue(arg, argv, i);
+      riskLevel = parseRiskOption(parsed.value);
+      i = parsed.nextIndex;
       continue;
     }
 
     if (arg.startsWith("-")) {
       throw new CliError(`unknown option: ${arg}`);
     }
+
     throw new CliError(`unexpected argument: ${arg}`);
   }
 
-  const options = {
+  return {
     help,
     debug,
     loadPath,
@@ -197,7 +204,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     caffeinated,
     noAgentContextFiles,
   };
-  return CliOptionsSchema.parse(options);
 }
 
 export function printHelp(personas: Persona[]): void {

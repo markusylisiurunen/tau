@@ -37,9 +37,9 @@ export class AsyncDaemonConfigError extends Error {
   }
 }
 
-const CRON_JOB_FRONTMATTER_KEYS = new Set(["id", "projectId", "schedule", "enabled"]);
-
 const nonEmptyStringSchema = z.string().trim().min(1, "must be a non-empty string.");
+
+const CRON_JOB_FRONTMATTER_KEYS = new Set(["id", "projectId", "schedule", "enabled"]);
 
 const positiveIntegerSchema = z
   .number()
@@ -376,6 +376,7 @@ function parseCronJobMarkdownFile(
 
   const fileId = basename(filePath, ".md").trim();
   const errors: string[] = [];
+
   const unknownKeys = Object.keys(frontMatter)
     .filter((key) => !CRON_JOB_FRONTMATTER_KEYS.has(key))
     .sort();
@@ -393,8 +394,7 @@ function parseCronJobMarkdownFile(
     return { errors: [] };
   }
 
-  const idRaw = frontMatter.id;
-  const id = typeof idRaw === "string" ? idRaw.trim() : "";
+  const id = typeof frontMatter.id === "string" ? frontMatter.id.trim() : "";
   if (!id) {
     errors.push(`${sourceLabel}: ${filePath}: frontmatter id must be a non-empty string.`);
     return { errors };
@@ -406,16 +406,14 @@ function parseCronJobMarkdownFile(
     );
   }
 
-  const projectIdRaw = frontMatter.projectId;
-  const projectId = typeof projectIdRaw === "string" ? projectIdRaw.trim() : "";
+  const projectId = typeof frontMatter.projectId === "string" ? frontMatter.projectId.trim() : "";
   if (!projectId) {
     errors.push(`${sourceLabel}: ${filePath}: frontmatter projectId must be a non-empty string.`);
   } else if (!projects[projectId]) {
     errors.push(`${sourceLabel}: ${filePath}: frontmatter projectId refers to an unknown project.`);
   }
 
-  const scheduleRaw = frontMatter.schedule;
-  const schedule = typeof scheduleRaw === "string" ? scheduleRaw.trim() : "";
+  const schedule = typeof frontMatter.schedule === "string" ? frontMatter.schedule.trim() : "";
   if (!schedule) {
     errors.push(`${sourceLabel}: ${filePath}: frontmatter schedule must be a non-empty string.`);
   } else {
@@ -433,7 +431,7 @@ function parseCronJobMarkdownFile(
     errors.push(`${sourceLabel}: ${filePath}: cron job prompt body must be non-empty.`);
   }
 
-  if (errors.length > 0) {
+  if (errors.length > 0 || !projectId || !schedule || !prompt) {
     return { errors };
   }
 

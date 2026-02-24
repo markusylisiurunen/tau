@@ -501,12 +501,13 @@ export class SessionMaintenanceService {
       }
 
       const assistant = message as AssistantMessage;
-      if (!Array.isArray(assistant.content)) {
-        throw new Error("invalid assistant message content while pruning edit tool calls");
-      }
+      const assistantContent = this.getAssistantContentOrThrow(
+        assistant,
+        "pruning edit tool calls",
+      );
 
       let changed = false;
-      const nextContent = assistant.content.map((block) => {
+      const nextContent = assistantContent.map((block) => {
         if (block.type !== "toolCall") {
           return block;
         }
@@ -586,6 +587,17 @@ export class SessionMaintenanceService {
     }
 
     return summary;
+  }
+
+  private getAssistantContentOrThrow(
+    assistant: AssistantMessage,
+    context: "pruning edit tool calls" | "building smart prune prompt",
+  ): AssistantMessage["content"] {
+    if (!Array.isArray(assistant.content)) {
+      throw new Error(`invalid assistant message content while ${context}`);
+    }
+
+    return assistant.content;
   }
 
   private getToolCallArgumentsObject(toolCall: ToolCall): Record<string, unknown> {
@@ -716,11 +728,12 @@ export class SessionMaintenanceService {
       if (message.role === "assistant") {
         lines.push("<assistant>");
         const assistant = message as AssistantMessage;
-        if (!Array.isArray(assistant.content)) {
-          throw new Error("invalid assistant message content while building smart prune prompt");
-        }
+        const assistantContent = this.getAssistantContentOrThrow(
+          assistant,
+          "building smart prune prompt",
+        );
 
-        for (const block of assistant.content) {
+        for (const block of assistantContent) {
           if (block.type === "text") {
             this.appendPruneText(lines, block.text);
             continue;

@@ -34,7 +34,7 @@ export function parseMarkdownFrontMatter(content: string): ParseMarkdownFrontMat
   return {
     ok: true,
     hasFrontMatter: true,
-    frontMatter: parsed as MarkdownFrontMatter,
+    frontMatter: parsed,
     body: lines
       .slice(endIndex + 1)
       .join("\n")

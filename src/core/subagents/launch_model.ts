@@ -1,7 +1,10 @@
 import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
-import { ReasoningEffortSchema } from "../types.js";
+import { z } from "zod";
+import { REASONING_LEVELS, ReasoningEffortSchema } from "../types.js";
 import type { SubagentLaunchModel } from "./types.js";
+
+const LaunchModelListSchema = z.array(z.string());
 
 function parseProvider(raw: string): KnownProvider | undefined {
   const provider = raw.trim().toLowerCase();
@@ -65,10 +68,9 @@ export function parseSubagentLaunchModel(value: string): {
   const reasoning = ReasoningEffortSchema.safeParse(effortPart);
   if (!reasoning.success) {
     return {
-      error: "invalid reasoning effort. expected one of: none, minimal, low, medium, high, xhigh",
+      error: `invalid reasoning effort. expected one of: ${REASONING_LEVELS.join(", ")}`,
     };
   }
-
   const normalized = `${provider}/${model.id}:${reasoning.data}`;
   return {
     launchModel: {
@@ -87,18 +89,15 @@ export function parseSubagentLaunchModelList(raw: unknown): {
     return {};
   }
 
-  if (!Array.isArray(raw)) {
+  const parsedList = LaunchModelListSchema.safeParse(raw);
+  if (!parsedList.success) {
     return { error: "must be a list of strings" };
   }
 
   const normalized: string[] = [];
   const seen = new Set<string>();
 
-  for (const entry of raw) {
-    if (typeof entry !== "string") {
-      return { error: "must be a list of strings" };
-    }
-
+  for (const entry of parsedList.data) {
     const parsed = parseSubagentLaunchModel(entry);
     if (parsed.error) {
       return { error: parsed.error };

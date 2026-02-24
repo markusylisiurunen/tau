@@ -17,21 +17,8 @@ const USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
 const FORCED_ACCOUNT_ENV = "TAU_CODEX_ACCOUNT";
 
 type CodexAccount = StoredOAuthAccount;
-
-type UsageResponse = {
-  rate_limit?: {
-    primary_window?: {
-      used_percent?: number;
-      reset_at?: number;
-      limit_window_seconds?: number;
-    };
-    secondary_window?: {
-      used_percent?: number;
-      reset_at?: number;
-      limit_window_seconds?: number;
-    };
-  };
-};
+type UnknownRecord = Record<string, unknown>;
+type AccountPriorityCandidate = { usage?: AuthAccountUsage; index: number };
 
 export class OpenAICodexAdapter implements AuthProviderAdapter {
   readonly id = PROVIDER_ID;
@@ -44,18 +31,15 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   addOAuthAccount(authStorage: AuthStorage, credentials: OAuthCredentials): void {
     const claims = assertCodexClaims(credentials);
     const accountId = claims.accountId;
-    const providerAccountId = normalizeString(credentials.accountId) ?? claims.accountId;
-    const enterpriseUrl = normalizeString(credentials.enterpriseUrl);
-    const projectId = normalizeString(credentials.projectId);
     const account: CodexAccount = {
       type: "oauth",
       accountId,
-      providerAccountId,
+      providerAccountId: normalizeString(credentials.accountId) ?? claims.accountId,
       access: credentials.access,
       refresh: credentials.refresh,
       expires: credentials.expires,
-      enterpriseUrl,
-      projectId,
+      enterpriseUrl: normalizeString(credentials.enterpriseUrl),
+      projectId: normalizeString(credentials.projectId),
     };
 
     authStorage.update((data) => {
@@ -76,13 +60,13 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     let removed = false;
     authStorage.update((data) => {
       const providerData = ensureProvider(data, PROVIDER_ID);
-      const nextAccounts = providerData.accounts.filter((account) => {
-        if (account.type !== "oauth") return true;
-        if (!matchesIdentifier(account, normalizedId)) return true;
+      providerData.accounts = providerData.accounts.filter((account) => {
+        if (account.type !== "oauth" || !matchesIdentifier(account, normalizedId)) {
+          return true;
+        }
         removed = true;
         return false;
       });
-      providerData.accounts = nextAccounts;
     });
     return removed;
   }
@@ -91,12 +75,10 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     const accounts = getAccounts(authStorage);
     if (accounts.length === 0) return [];
 
-    const details = await Promise.all(
+    return Promise.all(
       accounts.map(async (account) => {
         const identity = decodeIdentity(account.access);
-        const usage = await this.getUsageSnapshot(authStorage, account, {
-          forceRefresh: true,
-        });
+        const usage = await this.getUsageSnapshot(authStorage, account, { forceRefresh: true });
         return {
           provider: PROVIDER_ID,
           accountId: account.accountId,
@@ -106,8 +88,6 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         } satisfies AuthAccountInfo;
       }),
     );
-
-    return details;
   }
 
   async selectAccount(authStorage: AuthStorage): Promise<AuthProviderSelection | undefined> {
@@ -121,22 +101,15 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     }
 
     const now = nowSeconds();
-    const candidates = accounts.map((account, index) => ({
-      account,
-      index,
-      usage: account.usage,
-    }));
-
+    const candidates = accounts.map((account, index) => ({ account, index, usage: account.usage }));
     candidates.sort((a, b) => compareAccountPriority(a, b, now));
 
     for (const candidate of candidates) {
       const apiKey = await this.getApiKeyForAccount(authStorage, candidate.account.accountId);
-      if (!apiKey) {
-        continue;
-      }
+      if (!apiKey) continue;
 
       let usage = candidate.usage;
-      if (shouldRefreshUsage(usage, now) || !isUsageUsable(usage, now)) {
+      if (!isUsageUsable(usage, now) || !usage || isUsageExpired(usage, now)) {
         const refreshed = await this.getUsageSnapshot(authStorage, candidate.account, {
           apiKey,
           forceRefresh: true,
@@ -144,11 +117,9 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         usage = refreshed ?? usage;
       }
 
-      if (!isUsageUsable(usage, now)) {
-        continue;
+      if (isUsageUsable(usage, now)) {
+        return { accountId: candidate.account.accountId, apiKey };
       }
-
-      return { accountId: candidate.account.accountId, apiKey };
     }
 
     return undefined;
@@ -156,24 +127,18 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
 
   selectAccountFromList(accounts: AuthAccountInfo[]): string | undefined {
     if (accounts.length === 0) return undefined;
-    const now = nowSeconds();
 
     const forcedAccountId = getForcedAccountIdFromList(accounts);
     if (forcedAccountId) return forcedAccountId;
 
-    const candidates = accounts.map((account, index) => ({ account, index }));
-    const usableCandidates = candidates.filter((candidate) =>
-      isUsageUsable(candidate.account.usage, now),
-    );
-    if (usableCandidates.length === 0) return undefined;
-    usableCandidates.sort((a, b) =>
-      compareAccountPriority(
-        { index: a.index, usage: a.account.usage },
-        { index: b.index, usage: b.account.usage },
-        now,
-      ),
-    );
-    return usableCandidates[0]?.account.accountId;
+    const now = nowSeconds();
+    const candidates = accounts
+      .map((account, index) => ({ accountId: account.accountId, usage: account.usage, index }))
+      .filter((candidate) => isUsageUsable(candidate.usage, now));
+    if (candidates.length === 0) return undefined;
+
+    candidates.sort((a, b) => compareAccountPriority(a, b, now));
+    return candidates[0]?.accountId;
   }
 
   async getApiKeyForAccount(
@@ -182,23 +147,18 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   ): Promise<string | undefined> {
     const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
     if (!account) return undefined;
-    const credential = toOAuthCredentials(account);
+
     const result = await getOAuthApiKey(PROVIDER_ID as OAuthProvider, {
-      [PROVIDER_ID]: credential,
+      [PROVIDER_ID]: toOAuthCredentials(account),
     });
     if (!result) return undefined;
+
     if (shouldUpdateAccount(account, result.newCredentials)) {
-      authStorage.update((data) => {
-        const providerData = ensureProvider(data, PROVIDER_ID);
-        const index = providerData.accounts.findIndex(
-          (entry) => entry.type === "oauth" && entry.accountId === account.accountId,
-        );
-        if (index < 0) return;
-        const current = providerData.accounts[index];
-        if (!current || current.type !== "oauth") return;
-        providerData.accounts[index] = mergeUpdatedCredentials(current, result.newCredentials);
-      });
+      updateStoredOAuthAccount(authStorage, account.accountId, (current) =>
+        mergeUpdatedCredentials(current, result.newCredentials),
+      );
     }
+
     return result.apiKey;
   }
 
@@ -213,13 +173,13 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   ): Promise<boolean> {
     const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
     if (!account) return false;
-    const now = nowSeconds();
+
     const usage = await this.getUsageSnapshot(authStorage, account, {
       apiKey: options?.apiKey,
       refreshIfExpired: true,
       refreshIfMissing: true,
     });
-    return isUsageUsable(usage, now);
+    return isUsageUsable(usage, nowSeconds());
   }
 
   async handleProviderError(
@@ -237,20 +197,17 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       forceRefresh: true,
       refreshIfMissing: true,
     });
-    if (!selectedUsage) return false;
+    if (!selectedUsage || !isUsageExhausted(selectedUsage)) return false;
 
-    const exhausted = isUsageExhausted(selectedUsage);
-    if (exhausted) {
-      for (const account of accounts) {
-        if (account.accountId === accountId) continue;
-        await this.getUsageSnapshot(authStorage, account, {
-          forceRefresh: true,
-          refreshIfMissing: true,
-        });
-      }
+    for (const account of accounts) {
+      if (account.accountId === accountId) continue;
+      await this.getUsageSnapshot(authStorage, account, {
+        forceRefresh: true,
+        refreshIfMissing: true,
+      });
     }
 
-    return exhausted;
+    return true;
   }
 
   private async getUsageSnapshot(
@@ -265,33 +222,31 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   ): Promise<AuthAccountUsage | undefined> {
     const now = nowSeconds();
     let usage = account.usage;
-    const forceRefresh = options?.forceRefresh ?? false;
-    const refreshMissing = options?.refreshIfMissing ?? false;
-    const refreshExpired = options?.refreshIfExpired ?? false;
     const shouldRefresh =
-      forceRefresh ||
-      (refreshMissing && !usage) ||
-      (refreshExpired && usage && isUsageExpired(usage, now));
+      Boolean(options?.forceRefresh) ||
+      (Boolean(options?.refreshIfMissing) && !usage) ||
+      (Boolean(options?.refreshIfExpired) && usage !== undefined && isUsageExpired(usage, now));
+    if (!shouldRefresh) return usage;
 
-    if (shouldRefresh) {
-      try {
-        const apiKey =
-          options?.apiKey ?? (await this.getApiKeyForAccount(authStorage, account.accountId));
-        if (!apiKey) return usage;
-        const refreshedAccount =
-          getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ??
-          account;
-        const refreshed = await fetchUsage(apiKey, refreshedAccount.providerAccountId);
-        if (refreshed) {
-          usage = refreshed;
-          updateAccountUsage(authStorage, account.accountId, refreshed);
-        }
-      } catch {
-        return usage;
-      }
+    try {
+      const apiKey =
+        options?.apiKey ?? (await this.getApiKeyForAccount(authStorage, account.accountId));
+      if (!apiKey) return usage;
+
+      const refreshedAccount =
+        getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ?? account;
+      const refreshedUsage = await fetchUsage(apiKey, refreshedAccount.providerAccountId);
+      if (!refreshedUsage) return usage;
+
+      usage = refreshedUsage;
+      updateStoredOAuthAccount(authStorage, account.accountId, (current) => ({
+        ...current,
+        usage: refreshedUsage,
+      }));
+      return usage;
+    } catch {
+      return usage;
     }
-
-    return usage;
   }
 }
 
@@ -303,38 +258,46 @@ function ensureProvider(data: AuthStorageData, providerId: string) {
 }
 
 function getAccounts(authStorage: AuthStorage): CodexAccount[] {
-  const data = authStorage.getData();
-  const provider = data.providers[PROVIDER_ID];
-  if (!provider || !Array.isArray(provider.accounts)) return [];
+  const provider = authStorage.getData().providers[PROVIDER_ID];
+  if (!provider) return [];
   return provider.accounts.filter((account): account is CodexAccount => account.type === "oauth");
 }
 
 function resolveForcedAccountId(authStorage: AuthStorage): string | undefined {
-  const raw = process.env[FORCED_ACCOUNT_ENV];
-  if (!raw) return undefined;
-  const identifier = normalizeIdentifier(raw);
-  if (!identifier) return undefined;
-  const account = getAccounts(authStorage).find((entry) => matchesIdentifier(entry, identifier));
+  const forced = readForcedAccountIdentifier();
+  if (!forced) return undefined;
+
+  const account = getAccounts(authStorage).find((entry) =>
+    matchesIdentifier(entry, forced.identifier),
+  );
   if (!account) {
     throw new Error(
-      `${FORCED_ACCOUNT_ENV} did not match any stored Codex account: "${raw}". ` +
+      `${FORCED_ACCOUNT_ENV} did not match any stored Codex account: "${forced.raw}". ` +
         'Run "tau auth list" to see available accounts.',
     );
   }
+
   return account.accountId;
 }
 
 function getForcedAccountIdFromList(accounts: AuthAccountInfo[]): string | undefined {
-  const raw = process.env[FORCED_ACCOUNT_ENV];
-  if (!raw) return undefined;
-  const identifier = normalizeIdentifier(raw);
-  if (!identifier) return undefined;
+  const forced = readForcedAccountIdentifier();
+  if (!forced) return undefined;
+
   const account = accounts.find(
     (entry) =>
-      entry.email?.trim().toLowerCase() === identifier ||
-      entry.accountId.trim().toLowerCase() === identifier,
+      entry.email?.trim().toLowerCase() === forced.identifier ||
+      entry.accountId.trim().toLowerCase() === forced.identifier,
   );
   return account?.accountId;
+}
+
+function readForcedAccountIdentifier(): { raw: string; identifier: string } | undefined {
+  const raw = process.env[FORCED_ACCOUNT_ENV];
+  if (!raw) return undefined;
+
+  const identifier = normalizeIdentifier(raw);
+  return identifier ? { raw, identifier } : undefined;
 }
 
 function toOAuthCredentials(account: CodexAccount): OAuthCredentials {
@@ -356,14 +319,12 @@ function assertCodexClaims(credentials: OAuthCredentials): {
   email: string;
   plan: string;
 } {
-  const payload = decodeJwtPayload(credentials.access);
-  const accountId = extractAccountId(payload);
-  const identity = decodeIdentityPayload(payload);
+  const claims = parseCodexClaims(decodeJwtPayload(credentials.access));
 
   const missing: string[] = [];
-  if (!accountId) missing.push("account id");
-  if (!identity.email) missing.push("email");
-  if (!identity.plan) missing.push("plan");
+  if (!claims.accountId) missing.push("account id");
+  if (!claims.email) missing.push("email");
+  if (!claims.plan) missing.push("plan");
   if (missing.length > 0) {
     throw new Error(
       `oauth access token missing required claims: ${missing.join(", ")}. please re-authenticate.`,
@@ -371,56 +332,49 @@ function assertCodexClaims(credentials: OAuthCredentials): {
   }
 
   const providedAccountId = normalizeString(credentials.accountId);
-  if (providedAccountId && providedAccountId !== accountId) {
+  if (providedAccountId && providedAccountId !== claims.accountId) {
     throw new Error(
-      `oauth access token account id "${accountId}" does not match credentials account id "${providedAccountId}".`,
+      `oauth access token account id "${claims.accountId}" does not match credentials account id "${providedAccountId}".`,
     );
   }
 
-  return { accountId: accountId!, email: identity.email!, plan: identity.plan! };
+  return { accountId: claims.accountId!, email: claims.email!, plan: claims.plan! };
 }
 
 function decodeIdentity(accessToken: string): { email?: string; plan?: string } {
-  return decodeIdentityPayload(decodeJwtPayload(accessToken));
+  const claims = parseCodexClaims(decodeJwtPayload(accessToken));
+  return { email: claims.email, plan: claims.plan };
 }
 
-function decodeIdentityPayload(payload: ReturnType<typeof decodeJwtPayload>): {
+function parseCodexClaims(payload: ReturnType<typeof decodeJwtPayload>): {
+  accountId?: string;
   email?: string;
   plan?: string;
 } {
   if (!payload) return {};
 
-  const emailValue =
-    payload.email ??
-    (typeof payload["https://api.openai.com/profile"] === "object"
-      ? (payload["https://api.openai.com/profile"] as { email?: unknown }).email
-      : undefined);
-  const planValue =
-    (typeof payload["https://api.openai.com/auth"] === "object"
-      ? (payload["https://api.openai.com/auth"] as { chatgpt_plan_type?: unknown })
-          .chatgpt_plan_type
-      : undefined) ?? payload.chatgpt_plan_type;
-
-  const email = normalizeString(emailValue);
-  const plan = normalizeString(planValue);
-  return { email, plan };
-}
-
-function extractAccountId(payload: ReturnType<typeof decodeJwtPayload>): string | undefined {
-  if (!payload) return undefined;
-  const authPayload = payload["https://api.openai.com/auth"];
-  if (authPayload && typeof authPayload === "object") {
-    const chatgptAccountId = (authPayload as { chatgpt_account_id?: unknown }).chatgpt_account_id;
-    const normalized = normalizeString(chatgptAccountId);
-    if (normalized) return normalized;
-  }
-  return normalizeString(payload.chatgpt_account_id);
+  const profileClaims = asRecord(payload["https://api.openai.com/profile"]);
+  const authClaims = asRecord(payload["https://api.openai.com/auth"]);
+  return {
+    email: normalizeString(payload.email) ?? normalizeString(profileClaims?.email),
+    plan:
+      normalizeString(authClaims?.chatgpt_plan_type) ?? normalizeString(payload.chatgpt_plan_type),
+    accountId:
+      normalizeString(authClaims?.chatgpt_account_id) ??
+      normalizeString(payload.chatgpt_account_id),
+  };
 }
 
 function normalizeString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function asRecord(value: unknown): UnknownRecord | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : undefined;
 }
 
 function normalizeIdentifier(value: string): string {
@@ -430,9 +384,7 @@ function normalizeIdentifier(value: string): string {
 function matchesIdentifier(account: CodexAccount, identifier: string): boolean {
   if (!identifier) return false;
   if (account.accountId.toLowerCase() === identifier) return true;
-  const identity = decodeIdentity(account.access);
-  const email = identity.email ? identity.email.toLowerCase() : undefined;
-  return email === identifier;
+  return decodeIdentity(account.access).email?.toLowerCase() === identifier;
 }
 
 async function fetchUsage(
@@ -446,38 +398,39 @@ async function fetchUsage(
   if (providerAccountId) {
     headers["ChatGPT-Account-Id"] = providerAccountId;
   }
-  const response = await fetch(USAGE_ENDPOINT, { method: "GET", headers });
-  if (!response.ok) {
-    return undefined;
-  }
-  const data = (await response.json()) as UsageResponse;
-  const primary = data.rate_limit?.primary_window;
-  const secondary = data.rate_limit?.secondary_window;
 
-  const windows: AuthAccountUsageWindow[] = [];
-  if (primary) {
-    windows.push({
-      name: "primary",
-      usedPercent: clampPercent(primary.used_percent),
-      resetAt: normalizeNumber(primary.reset_at),
-      windowSeconds: normalizeNumber(primary.limit_window_seconds),
-    });
-  }
-  if (secondary) {
-    windows.push({
-      name: "secondary",
-      usedPercent: clampPercent(secondary.used_percent),
-      resetAt: normalizeNumber(secondary.reset_at),
-      windowSeconds: normalizeNumber(secondary.limit_window_seconds),
-    });
-  }
-  if (windows.length === 0) return undefined;
-  return { windows };
+  const response = await fetch(USAGE_ENDPOINT, { method: "GET", headers });
+  if (!response.ok) return undefined;
+
+  const root = asRecord((await response.json()) as unknown);
+  const rateLimit = asRecord(root?.rate_limit);
+  if (!rateLimit) return undefined;
+
+  const windows = [
+    parseUsageWindow(rateLimit.primary_window, "primary"),
+    parseUsageWindow(rateLimit.secondary_window, "secondary"),
+  ].filter((window): window is AuthAccountUsageWindow => window !== undefined);
+  return windows.length > 0 ? { windows } : undefined;
+}
+
+function parseUsageWindow(
+  value: unknown,
+  name: "primary" | "secondary",
+): AuthAccountUsageWindow | undefined {
+  const window = asRecord(value);
+  if (!window) return undefined;
+
+  return {
+    name,
+    usedPercent: clampPercent(window.used_percent),
+    resetAt: normalizeNumber(window.reset_at),
+    windowSeconds: normalizeNumber(window.limit_window_seconds),
+  };
 }
 
 function compareAccountPriority(
-  a: { usage?: AuthAccountUsage; index: number },
-  b: { usage?: AuthAccountUsage; index: number },
+  a: AccountPriorityCandidate,
+  b: AccountPriorityCandidate,
   now: number,
 ): number {
   const activeA = hasActivePrimaryWindow(a.usage, now);
@@ -491,7 +444,6 @@ function compareAccountPriority(
   if (usedA !== undefined && usedB !== undefined && usedA !== usedB) {
     return usedB - usedA;
   }
-
   return a.index - b.index;
 }
 
@@ -500,11 +452,12 @@ function findWindow(usage: AuthAccountUsage, name: string): AuthAccountUsageWind
 }
 
 function getUsageUsedPercent(usage: AuthAccountUsage | undefined, now: number): number | undefined {
-  if (!usage) return undefined;
-  if (isUsageExpired(usage, now)) return undefined;
-  const primary = findWindow(usage, "primary");
-  const secondary = findWindow(usage, "secondary");
-  return Math.max(primary?.usedPercent ?? 0, secondary?.usedPercent ?? 0);
+  if (!usage || isUsageExpired(usage, now)) return undefined;
+
+  return Math.max(
+    findWindow(usage, "primary")?.usedPercent ?? 0,
+    findWindow(usage, "secondary")?.usedPercent ?? 0,
+  );
 }
 
 function nowSeconds(): number {
@@ -516,21 +469,16 @@ function isUsageExpired(usage: AuthAccountUsage, now: number): boolean {
 }
 
 function isUsageExhausted(usage: AuthAccountUsage): boolean {
-  const primary = findWindow(usage, "primary");
-  const secondary = findWindow(usage, "secondary");
-  const threshold = 99;
-  return (primary?.usedPercent ?? 0) >= threshold || (secondary?.usedPercent ?? 0) >= threshold;
+  return (
+    Math.max(
+      findWindow(usage, "primary")?.usedPercent ?? 0,
+      findWindow(usage, "secondary")?.usedPercent ?? 0,
+    ) >= 99
+  );
 }
 
 function isUsageUsable(usage: AuthAccountUsage | undefined, now: number): boolean {
-  if (!usage) return true;
-  if (isUsageExpired(usage, now)) return true;
-  return !isUsageExhausted(usage);
-}
-
-function shouldRefreshUsage(usage: AuthAccountUsage | undefined, now: number): boolean {
-  if (!usage) return true;
-  return isUsageExpired(usage, now);
+  return !usage || isUsageExpired(usage, now) || !isUsageExhausted(usage);
 }
 
 function hasActivePrimaryWindow(usage: AuthAccountUsage | undefined, now: number): boolean {
@@ -539,31 +487,32 @@ function hasActivePrimaryWindow(usage: AuthAccountUsage | undefined, now: number
   return Boolean(primary && primary.resetAt > now);
 }
 
-function updateAccountUsage(
+function updateStoredOAuthAccount(
   authStorage: AuthStorage,
   accountId: string,
-  usage: AuthAccountUsage,
+  update: (account: CodexAccount) => CodexAccount,
 ): void {
   authStorage.update((data) => {
-    const providerData = ensureProvider(data, PROVIDER_ID);
-    const index = providerData.accounts.findIndex(
+    const accounts = ensureProvider(data, PROVIDER_ID).accounts;
+    const index = accounts.findIndex(
       (entry) => entry.type === "oauth" && entry.accountId === accountId,
     );
     if (index < 0) return;
-    const account = providerData.accounts[index];
+
+    const account = accounts[index];
     if (!account || account.type !== "oauth") return;
-    providerData.accounts[index] = { ...account, usage };
+    accounts[index] = update(account);
   });
 }
 
 function clampPercent(value: unknown): number {
-  if (typeof value !== "number" || Number.isNaN(value)) return 0;
-  return Math.min(100, Math.max(0, Math.round(value)));
+  return typeof value === "number" && !Number.isNaN(value)
+    ? Math.min(100, Math.max(0, Math.round(value)))
+    : 0;
 }
 
 function normalizeNumber(value: unknown): number {
-  if (typeof value !== "number" || Number.isNaN(value)) return 0;
-  return Math.round(value);
+  return typeof value === "number" && !Number.isNaN(value) ? Math.round(value) : 0;
 }
 
 function shouldUpdateAccount(current: CodexAccount, updated: OAuthCredentials): boolean {
@@ -581,16 +530,13 @@ function shouldUpdateAccount(current: CodexAccount, updated: OAuthCredentials): 
 }
 
 function mergeUpdatedCredentials(account: CodexAccount, updated: OAuthCredentials): CodexAccount {
-  const providerAccountId = normalizeString(updated.accountId) ?? account.providerAccountId;
-  const enterpriseUrl = normalizeString(updated.enterpriseUrl) ?? account.enterpriseUrl;
-  const projectId = normalizeString(updated.projectId) ?? account.projectId;
   return {
     ...account,
     access: updated.access,
     refresh: updated.refresh,
     expires: updated.expires,
-    providerAccountId,
-    enterpriseUrl,
-    projectId,
+    providerAccountId: normalizeString(updated.accountId) ?? account.providerAccountId,
+    enterpriseUrl: normalizeString(updated.enterpriseUrl) ?? account.enterpriseUrl,
+    projectId: normalizeString(updated.projectId) ?? account.projectId,
   };
 }

@@ -94,8 +94,8 @@ function parseInstallArgs(argv: string[]): InstallCliOptions {
         throw new InstallCliError("--prompt can only be provided once");
       }
       const parsed = parseValue(arg, argv, i);
-      i = parsed.nextIndex;
       promptId = parsed.value;
+      i = parsed.nextIndex;
       continue;
     }
 
@@ -104,8 +104,8 @@ function parseInstallArgs(argv: string[]): InstallCliOptions {
         throw new InstallCliError("--skill can only be provided once");
       }
       const parsed = parseValue(arg, argv, i);
-      i = parsed.nextIndex;
       skillName = parsed.value;
+      i = parsed.nextIndex;
       continue;
     }
 
@@ -116,11 +116,17 @@ function parseInstallArgs(argv: string[]): InstallCliOptions {
     throw new InstallCliError(`unexpected argument: ${arg}`);
   }
 
-  if (promptId && skillName) {
+  if (promptId !== undefined && skillName !== undefined) {
     throw new InstallCliError("--prompt and --skill are mutually exclusive");
   }
 
-  return { help, global, force, promptId, skillName };
+  return {
+    help,
+    global,
+    force,
+    promptId,
+    skillName,
+  };
 }
 
 function resolveStarterContentRoot(): string {

@@ -3,9 +3,8 @@ import { resolve } from "node:path";
 import { createTauSdkClient } from "../../sdk/client.js";
 import type { TauSdkClient, TauSdkClientOptions, TauSdkEvent } from "../../sdk/types.js";
 import type { AsyncProjectConfig } from "../config/schema.js";
-import type { CoreEvent } from "../events/types.js";
+import { safeParseCoreEventEnvelope } from "../events/parser.js";
 import { extractAssistantText } from "../utils/messages.js";
-import { isRecord } from "../utils/type_guards.js";
 import {
   cleanupWorkspacePath as cleanupWorkspacePathOnDisk,
   type PrepareWorkspaceOptions,
@@ -64,6 +63,13 @@ export type AsyncSessionRecord = {
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const PUBLIC_SESSION_ID_LENGTH = 8;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
+
+const ACTIVE_STATES: Set<AsyncSessionState> = new Set([
+  "queued",
+  "preparing-workspace",
+  "running",
+  "waiting-input",
+]);
 
 function elapsedMs(startTime: bigint): number {
   return Number((process.hrtime.bigint() - startTime) / NANOSECONDS_PER_MILLISECOND);
@@ -296,10 +302,6 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       throw new AsyncSessionManagerError("invalid_state", "message text cannot be empty");
     }
 
-    if (entry.record.state === "running") {
-      throw new AsyncSessionManagerError("busy", "session is running");
-    }
-
     if (entry.record.state === "failed") {
       throw new AsyncSessionManagerError(
         "invalid_state",
@@ -311,7 +313,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       throw new AsyncSessionManagerError("not_ready", "session is still preparing");
     }
 
-    if (entry.activeSubmit) {
+    if (entry.record.state === "running" || entry.activeSubmit) {
       throw new AsyncSessionManagerError("busy", "session is running");
     }
 
@@ -418,15 +420,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       });
 
       const clientConnectStart = process.hrtime.bigint();
-      const client = await this.createClient({
-        cwd: workspace.sessionCwd,
-        ...(entry.project.persona ? { persona: entry.project.persona } : {}),
-        ...(entry.project.riskLevel ? { riskLevel: entry.project.riskLevel } : {}),
-        ...(entry.project.sandbox !== undefined ? { sandbox: entry.project.sandbox } : {}),
-        ...(entry.project.noAgentContextFiles !== undefined
-          ? { noAgentContextFiles: entry.project.noAgentContextFiles }
-          : {}),
-      });
+      const client = await this.createClient(this.buildClientOptions(entry, workspace.sessionCwd));
       const clientConnectDurationMs = elapsedMs(clientConnectStart);
 
       if (entry.cancelRequested) {
@@ -567,6 +561,23 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     });
 
     return submitPromise;
+  }
+
+  private buildClientOptions(entry: SessionEntry, cwd: string): TauSdkClientOptions {
+    const options: TauSdkClientOptions = { cwd };
+    if (entry.project.persona) {
+      options.persona = entry.project.persona;
+    }
+    if (entry.project.riskLevel) {
+      options.riskLevel = entry.project.riskLevel;
+    }
+    if (entry.project.sandbox !== undefined) {
+      options.sandbox = entry.project.sandbox;
+    }
+    if (entry.project.noAgentContextFiles !== undefined) {
+      options.noAgentContextFiles = entry.project.noAgentContextFiles;
+    }
+    return options;
   }
 
   private async closeAllSessions(): Promise<void> {
@@ -715,16 +726,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   }
 
   private isActiveState(state: AsyncSessionState): boolean {
-    return (
-      state === "queued" ||
-      state === "preparing-workspace" ||
-      state === "running" ||
-      state === "waiting-input"
-    );
+    return ACTIVE_STATES.has(state);
   }
 
   private isCloseableWithCloseAll(state: AsyncSessionState): boolean {
-    return state === "waiting-input" || state === "failed";
+    return CLOSEABLE_STATES_WITH_CLOSE_ALL.has(state);
   }
 
   private deleteEntry(sessionId: string): void {
@@ -748,11 +754,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       const random = randomBytes(PUBLIC_SESSION_ID_LENGTH);
       let id = "";
       for (const byte of random) {
-        const character = BASE58_ALPHABET[byte % BASE58_ALPHABET.length];
-        if (character === undefined) {
-          throw new Error("failed to allocate session id");
-        }
-        id += character;
+        id += BASE58_ALPHABET[byte % BASE58_ALPHABET.length];
       }
 
       if (!this.sessions.has(id)) {
@@ -845,61 +847,51 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       return;
     }
 
-    const coreEvent = this.parseCoreEvent(sdkEvent);
-    if (!coreEvent) {
+    const parsedEnvelope = safeParseCoreEventEnvelope(sdkEvent.event);
+    if (!parsedEnvelope.ok) {
       return;
     }
 
-    if (coreEvent.type === "tool_ui") {
-      if (coreEvent.uiEvent.type === "bash_started") {
-        this.emitProgress(entry, {
-          type: "bash-command",
-          command: coreEvent.uiEvent.command,
-        });
+    const { event: coreEvent } = parsedEnvelope.value;
+
+    switch (coreEvent.type) {
+      case "tool_ui": {
+        switch (coreEvent.uiEvent.type) {
+          case "bash_started":
+            this.emitProgress(entry, {
+              type: "bash-command",
+              command: coreEvent.uiEvent.command,
+            });
+            return;
+          case "edit_success":
+            this.emitProgress(entry, {
+              type: "edited-file",
+              path: coreEvent.uiEvent.path,
+            });
+            return;
+          case "write_success":
+            this.emitProgress(entry, {
+              type: "wrote-file",
+              path: coreEvent.uiEvent.path,
+            });
+            return;
+          default:
+            return;
+        }
+      }
+      case "assistant_final": {
+        const text = extractAssistantText(coreEvent.message);
+        if (text) {
+          this.emitProgress(entry, {
+            type: "assistant-message",
+            text,
+          });
+        }
         return;
       }
-
-      if (coreEvent.uiEvent.type === "edit_success") {
-        this.emitProgress(entry, {
-          type: "edited-file",
-          path: coreEvent.uiEvent.path,
-        });
+      default:
         return;
-      }
-
-      if (coreEvent.uiEvent.type === "write_success") {
-        this.emitProgress(entry, {
-          type: "wrote-file",
-          path: coreEvent.uiEvent.path,
-        });
-      }
-      return;
     }
-
-    if (coreEvent.type === "assistant_final") {
-      const text = extractAssistantText(coreEvent.message);
-      if (!text) {
-        return;
-      }
-
-      this.emitProgress(entry, {
-        type: "assistant-message",
-        text,
-      });
-    }
-  }
-
-  private parseCoreEvent(sdkEvent: TauSdkEvent): CoreEvent | undefined {
-    if (!isRecord(sdkEvent.event)) {
-      return undefined;
-    }
-
-    const coreEvent = sdkEvent.event.event;
-    if (!isRecord(coreEvent) || typeof coreEvent.type !== "string") {
-      return undefined;
-    }
-
-    return coreEvent as CoreEvent;
   }
 
   private emitProgress(entry: SessionEntry, progress: AsyncSessionProgress): void {

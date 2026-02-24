@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { resolveConfigLevels } from "../dist/core/config/index.js";
 import {
   listModels,
   listProviders,
@@ -89,22 +90,21 @@ describe("model catalog", () => {
         ),
       );
 
-      const resolver = loadModelResolver({
-        cwd: nested,
-        deps: {
-          fs: {
-            readFile: (path) => readFileSync(path, "utf-8"),
-            exists: (path) => existsSync(path),
-            listDir: (path) => readdirSync(path),
-            stat: (path) => statSync(path),
-          },
-          env: {
-            getEnv: () => ({}),
-            cwd: () => nested,
-            home: () => home,
-          },
+      const deps = {
+        fs: {
+          readFile: (path) => readFileSync(path, "utf-8"),
+          exists: (path) => existsSync(path),
+          listDir: (path) => readdirSync(path),
+          stat: (path) => statSync(path),
         },
-      });
+        env: {
+          getEnv: () => ({}),
+          cwd: () => nested,
+          home: () => home,
+        },
+      };
+      const levels = resolveConfigLevels(deps, { cwd: nested });
+      const resolver = loadModelResolver({ deps, levels });
 
       expect(resolver.errors).toEqual([]);
       const model = resolver.resolveModel("openai", "gpt-5.9-custom");

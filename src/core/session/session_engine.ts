@@ -6,6 +6,7 @@ import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
 import { type CredentialResolver, createCredentialResolver } from "../auth/credential_resolver.js";
 import type { Config } from "../config/index.js";
+import { resolveConfigLevels } from "../config/paths.js";
 import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
 import { loadModelResolver, type ModelResolver } from "../models/catalog.js";
 import type { CoreDeps } from "../runtime/deps.js";
@@ -427,22 +428,22 @@ export class SessionEngine {
     const cwd = this.hostCwd || this.cwd || this.deps.env.cwd();
     const home = this.home || this.deps.env.home() || cwd;
 
-    return loadModelResolver({
-      cwd,
-      deps: {
-        fs: {
-          readFile: (path) => readFileSync(path, "utf-8"),
-          exists: (path) => existsSync(path),
-          listDir: (path) => readdirSync(path),
-          stat: (path) => statSync(path),
-        },
-        env: {
-          getEnv: () => this.deps.env.env(),
-          cwd: () => cwd,
-          home: () => home,
-        },
+    const deps = {
+      fs: {
+        readFile: (path: string) => readFileSync(path, "utf-8"),
+        exists: (path: string) => existsSync(path),
+        listDir: (path: string) => readdirSync(path),
+        stat: (path: string) => statSync(path),
       },
-    }).resolveModel;
+      env: {
+        getEnv: () => this.deps.env.env(),
+        cwd: () => cwd,
+        home: () => home,
+      },
+    };
+    const levels = resolveConfigLevels(deps, { cwd });
+
+    return loadModelResolver({ deps, levels }).resolveModel;
   }
 
   private async resolveApiKeyForCurrentPersona(): Promise<string | undefined> {

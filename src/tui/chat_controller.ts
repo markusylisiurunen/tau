@@ -3,12 +3,7 @@ import { realpathSync, statSync } from "node:fs";
 import { mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
-import type {
-  AssistantMessage,
-  KnownProvider,
-  Message,
-  ToolResultMessage,
-} from "@mariozechner/pi-ai";
+import type { AssistantMessage, Message, ToolResultMessage } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import { formatCodexAuthError } from "../core/auth/auth_messages.js";
 import { getAuthPath } from "../core/auth/auth_paths.js";
@@ -1996,10 +1991,9 @@ export class ChatController {
   ): Promise<string[]> {
     let apiKey: string | undefined;
     try {
-      apiKey = await this.credentialResolver.getApiKey(
-        this.currentPersona.model.provider as KnownProvider,
-        { sessionId: this.engine.sessionId },
-      );
+      apiKey = await this.credentialResolver.getApiKey(this.currentPersona.model.provider, {
+        sessionId: this.engine.sessionId,
+      });
     } catch (error) {
       if (this.currentPersona.model.provider === "openai-codex") {
         throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));

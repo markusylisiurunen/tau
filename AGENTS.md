@@ -30,6 +30,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **ConversationTurnRuntime** (`src/core/runtime/conversation_turn_runtime.ts`): Assistant-turn runner with interruption and abort handling for core event streams
 - **Session prompt composer** (`src/core/runtime/session_prompt_composer.ts`): Composes main-session and subagent system prompts with environment and context blocks
 - **Runtime bootstrap resolver** (`src/core/runtime/runtime_bootstrap.ts`): Shared startup resolver for prompt context, AGENTS context, and persona skill filtering used by TUI/RPC/subagent working-directory prompt rebuilds
+- **Model catalog** (`src/core/models/catalog.ts`): Unified provider/model registry (pi-ai + Tau extensions) used for model resolution and provider routing metadata
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly and history preparation for `/compact:*` flows (summary-only and summary + last assistant)
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface plus RPC protocol/server wiring for alternate front-ends
@@ -69,6 +70,8 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `config/virtual_defaults.ts` - Built-in default content
   - `config/content_loader.ts` - Load personas, prompts, skills, themes
   - `config/schema.ts` - Config schema and merge rules
+  - `models/catalog.ts` - Unified model/provider catalog used by config and persona resolution
+  - `models/tau_extensions.ts` - Tau-owned extension hooks for additional providers/models
   - `auth/cli.ts` - login/logout flows
   - `install/cli.ts` - starter prompts/skills installer (`tau install`)
   - `auth/auth_storage.ts` - Credential storage and refresh
@@ -181,6 +184,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 ## Configuration
 
 - **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `bashCommands`, `agentContextFiles`, `sandbox`, `subagents`, `modelSystemNotices`, `async`). This level is only included when cwd is inside home.
+  - `apiKeys` (optional): Map of provider id to API key (`apiKeys.<provider>`). Keys merge by provider id across config levels.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
   - `apiKeys.mistral` (optional): Mistral API key for `/speak` and Telegram audio transcription.
   - `defaultPersona` (optional): String persona reference used by default when starting the app. Accepts `<id>` or `<id>:<reasoning>` and matches are exact/case-sensitive. Overridden by `--persona` flag.
@@ -190,7 +194,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.
   - `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Must be non-empty and matches are exact/case-sensitive. Defaults to `gold`.
   - `subagents.defaultLaunchModels` (optional): Allowlisted `spawn_agent` launch overrides for the built-in `default` subagent (`<provider>/<model>:<effort>` entries).
-  - `modelSystemNotices` (optional): Map of `<provider>/<model>` to notice text. Provider/model ids must match known models exactly (case-sensitive). Tau prepends the notice as a `<system>` block before each user message sent to that model (main session and subagents).
+  - `modelSystemNotices` (optional): Map of `<provider>/<model>` to notice text. Provider/model ids must match loaded model ids exactly (case-sensitive). Tau prepends the notice as a `<system>` block before each user message sent to that model (main session and subagents).
   - `async.client` (optional): Async client config (`defaultTarget`, `defaultProjectId`, `targets.<id>.url`, `targets.<id>.token`, `targets.<id>.timeoutMs`).
   - daemon-side async settings are loaded from a separate JSON file passed via `tau async daemon --config-file <path>` (`host`, `port`, `authToken`, `maxSessions`, `telegram` (map keyed by bot id, with optional `allowedProjectIds`; sessions are chat-scoped within each bot), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `systemMessage`, and project fields like `workingDirectory`, `description`, `bootstrapCommands`, and `backgroundBootstrapCommands`). On daemon startup, Tau removes existing entries under configured async workspace roots (`workspaceRoot` plus any per-project overrides) before adapters start, and the Telegram adapter prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Assume zero or one async daemon process per host; concurrent daemons are unsupported.
 

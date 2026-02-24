@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
 import { z } from "zod";
+import { listProviders, resolveModel as resolveCatalogModel } from "../models/catalog.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS, type RiskLevel, RiskLevelSchema } from "../types.js";
@@ -14,13 +14,7 @@ import { resolveConfigLevels } from "./paths.js";
 import { getVirtualConfigDefaults } from "./virtual_defaults.js";
 
 export interface Config {
-  apiKeys?: {
-    anthropic?: string;
-    google?: string;
-    openai?: string;
-    parallel?: string;
-    mistral?: string;
-  };
+  apiKeys?: Record<string, string>;
   sandbox?: SandboxConfig;
   defaultPersona?: string;
   defaultRisk?: RiskLevel;
@@ -104,15 +98,7 @@ const NonEmptyStringSchema = z.string().trim().min(1);
 const BooleanSchema = z.boolean();
 const AgentContextFilesSchema = z.array(NonEmptyStringSchema);
 const ApiKeyProviderSchema = z.string();
-const ApiKeysSchema = z
-  .object({
-    anthropic: z.unknown().optional(),
-    google: z.unknown().optional(),
-    openai: z.unknown().optional(),
-    parallel: z.unknown().optional(),
-    mistral: z.unknown().optional(),
-  })
-  .passthrough();
+const ApiKeysSchema = z.object({}).catchall(z.unknown());
 const SandboxSchema = z
   .object({
     image: z.unknown().optional(),
@@ -212,16 +198,19 @@ function parseApiKeysConfig(
   const apiKeys: Config["apiKeys"] = {};
   const errors: string[] = [];
 
-  for (const provider of ["anthropic", "google", "openai", "parallel", "mistral"] as const) {
-    const value = parsed.data[provider];
-    if (value === undefined) {
+  for (const [rawProvider, rawValue] of Object.entries(parsed.data)) {
+    const provider = rawProvider.trim();
+    if (!provider) {
+      errors.push(`${sourceLabel}: apiKeys keys must be non-empty strings.`);
       continue;
     }
-    const parsedValue = ApiKeyProviderSchema.safeParse(value);
+
+    const parsedValue = ApiKeyProviderSchema.safeParse(rawValue);
     if (!parsedValue.success) {
       errors.push(`${sourceLabel}: apiKeys.${provider} must be a string.`);
       continue;
     }
+
     apiKeys[provider] = parsedValue.data;
   }
 
@@ -459,12 +448,12 @@ function parseModelNoticeTarget(rawKey: string): { normalizedKey?: string; error
     return { error: "must use keys in format '<provider>/<model>'" };
   }
 
-  const provider = parsedKey.provider as KnownProvider;
-  if (!getProviders().includes(provider)) {
+  const provider = parsedKey.provider;
+  if (!listProviders().includes(provider)) {
     return { error: `unknown provider '${parsedKey.provider}'` };
   }
 
-  const model = getModels(provider).find((candidate) => candidate.id === parsedKey.modelId);
+  const model = resolveCatalogModel(provider, parsedKey.modelId);
   if (!model) {
     return {
       error: `unknown model '${parsedKey.provider}/${parsedKey.modelId}'`,
@@ -903,18 +892,19 @@ export function loadConfig(cwd?: string, deps?: ConfigDeps): Config {
   return loadConfigWithDiagnostics(cwd, deps).config;
 }
 
-export function getApiKeyForProvider(config: Config, provider: KnownProvider): string | undefined {
-  const apiKeys = config.apiKeys || {};
-  switch (provider) {
-    case "anthropic":
-      return apiKeys.anthropic;
-    case "google":
-      return apiKeys.google;
-    case "openai":
-      return apiKeys.openai;
-    default:
-      return undefined;
+export function getApiKeyForProvider(config: Config, provider: string): string | undefined {
+  const apiKeys = config.apiKeys;
+  if (!apiKeys) {
+    return undefined;
   }
+
+  const key = apiKeys[provider];
+  if (typeof key !== "string") {
+    return undefined;
+  }
+
+  const trimmed = key.trim();
+  return trimmed || undefined;
 }
 
 function getTrimmedEnvValue(key: string, env?: NodeJS.ProcessEnv): string | undefined {

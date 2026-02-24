@@ -1,7 +1,7 @@
 import { basename, join } from "node:path";
-import type { Api, KnownProvider, Model, Tool } from "@mariozechner/pi-ai";
-import { getModels, getProviders } from "@mariozechner/pi-ai";
+import type { Tool } from "@mariozechner/pi-ai";
 import { z } from "zod";
+import { resolveModel as resolveCatalogModel } from "../models/catalog.js";
 import { personas as builtinPersonas } from "../personas.js";
 import type { PromptTemplate } from "../prompts.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
@@ -70,10 +70,6 @@ export interface ThemeDefinition {
   variants?: ThemeVariantTokens;
   sourcePath: string;
   scope: ConfigLevelScope;
-}
-
-function isKnownProvider(value: string): value is KnownProvider {
-  return getProviders().includes(value as KnownProvider);
 }
 
 const SubagentNameSchema = z
@@ -248,7 +244,7 @@ function parseSubagentConfig(subagentsRaw: unknown): {
         ? { reasoning: specRaw.reasoning }
         : undefined;
 
-    let modelObj: Model<Api> | undefined;
+    let modelObj: Persona["model"] | undefined;
     if (provider && model) {
       modelObj = resolveModel(provider, model);
       if (!modelObj) {
@@ -318,9 +314,8 @@ function parsePersonaTools(toolsRaw: unknown): { tools?: Tool[]; error?: string 
   return { tools: selected };
 }
 
-function resolveModel(provider: string, modelId: string): Model<Api> | undefined {
-  if (!isKnownProvider(provider)) return undefined;
-  return getModels(provider).find((m) => m.id === modelId) as Model<Api> | undefined;
+function resolveModel(provider: string, modelId: string): Persona["model"] | undefined {
+  return resolveCatalogModel(provider, modelId);
 }
 
 function mergeById<T extends { id: string }>(base: T[], overlay: T[], overlay2?: T[]): T[] {

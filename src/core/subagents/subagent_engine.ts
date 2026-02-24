@@ -1,11 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type {
-  AssistantMessage,
-  Context,
-  KnownProvider,
-  Message,
-  ToolCall,
-} from "@mariozechner/pi-ai";
+import type { AssistantMessage, Context, Message, ToolCall } from "@mariozechner/pi-ai";
 import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
@@ -169,9 +163,7 @@ export async function runSubagent(options: {
 
     let apiKey: string | undefined;
     try {
-      apiKey = await credentialResolver.getApiKey(runtimeConfig.model.provider as KnownProvider, {
-        sessionId,
-      });
+      apiKey = await credentialResolver.getApiKey(runtimeConfig.model.provider, { sessionId });
     } catch (error) {
       if (runtimeConfig.model.provider === "openai-codex") {
         throw new Error(formatCodexAuthError(authPath, (error as Error)?.message));
@@ -221,13 +213,10 @@ export async function runSubagent(options: {
     } catch (err) {
       if (!signal.aborted) {
         try {
-          await credentialResolver.noteProviderError?.(
-            runtimeConfig.model.provider as KnownProvider,
-            {
-              sessionId,
-              error: err,
-            },
-          );
+          await credentialResolver.noteProviderError?.(runtimeConfig.model.provider, {
+            sessionId,
+            error: err,
+          });
         } catch {}
       }
       if (signal.aborted) {

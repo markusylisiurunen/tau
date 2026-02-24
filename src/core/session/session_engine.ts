@@ -1,11 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type {
-  AssistantMessage,
-  Context,
-  KnownProvider,
-  Message,
-  ToolCall,
-} from "@mariozechner/pi-ai";
+import type { AssistantMessage, Context, Message, ToolCall } from "@mariozechner/pi-ai";
 import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
@@ -425,10 +419,9 @@ export class SessionEngine {
   private async resolveApiKeyForCurrentPersona(): Promise<string | undefined> {
     let apiKey: string | undefined;
     try {
-      apiKey = await this.credentialResolver.getApiKey(
-        this.persona.model.provider as KnownProvider,
-        { sessionId: this.sessionId },
-      );
+      apiKey = await this.credentialResolver.getApiKey(this.persona.model.provider, {
+        sessionId: this.sessionId,
+      });
     } catch (error) {
       if (this.persona.model.provider === "openai-codex") {
         throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));
@@ -610,13 +603,10 @@ export class SessionEngine {
     } catch (err) {
       if (!signal.aborted) {
         try {
-          await this.credentialResolver.noteProviderError?.(
-            this.persona.model.provider as KnownProvider,
-            {
-              sessionId: this.sessionId,
-              error: err,
-            },
-          );
+          await this.credentialResolver.noteProviderError?.(this.persona.model.provider, {
+            sessionId: this.sessionId,
+            error: err,
+          });
         } catch {}
       }
       if (signal.aborted) {

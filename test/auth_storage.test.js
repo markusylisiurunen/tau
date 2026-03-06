@@ -3,16 +3,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
+vi.mock("@mariozechner/pi-ai/oauth", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     getOAuthApiKey: vi.fn(),
+  };
+});
+
+vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
     getEnvApiKey: vi.fn(),
   };
 });
 
-const { getOAuthApiKey, getEnvApiKey } = await import("@mariozechner/pi-ai");
+const { getOAuthApiKey } = await import("@mariozechner/pi-ai/oauth");
+const { getEnvApiKey } = await import("@mariozechner/pi-ai");
 
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
 import { createCredentialResolver } from "../dist/core/auth/credential_resolver.js";

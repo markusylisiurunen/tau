@@ -26,7 +26,7 @@ export async function transcribeMistralAudio(
   formData.append("model", options.model ?? DEFAULT_MISTRAL_TRANSCRIPTION_MODEL);
   formData.append(
     "file",
-    new Blob([options.audio], {
+    new Blob([Uint8Array.from(options.audio)], {
       type: options.mimeType ?? DEFAULT_MISTRAL_AUDIO_MIME_TYPE,
     }),
     options.fileName ?? DEFAULT_MISTRAL_AUDIO_FILE_NAME,

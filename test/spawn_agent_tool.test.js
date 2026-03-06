@@ -24,8 +24,8 @@ function getText(toolResult) {
 }
 
 function createModels() {
-  const anthropic = personas.find((persona) => persona.model.provider === "anthropic")?.model;
-  const openai = personas.find((persona) => persona.model.provider === "openai")?.model;
+  const anthropic = personas.find((persona) => persona.id === "opus-4.6-chat")?.model;
+  const openai = personas.find((persona) => persona.id === "gpt-5.4-chat")?.model;
   expect(anthropic).toBeTruthy();
   expect(openai).toBeTruthy();
   return { anthropic, openai };

@@ -68,7 +68,7 @@ to force a specific Codex account for this run, set `TAU_CODEX_ACCOUNT` to the a
 tau writes JSONL usage logs to `~/.config/tau/logs/usage-YYYY-MM-DD.jsonl` for every assistant response (main and sub-agent). summarize usage with:
 
 ```sh
-tau usage --since 2025-01-01 --persona gpt-5.2-coder
+tau usage --since 2025-01-01 --persona gpt-5.4-coder
 ```
 
 filters: `--since`, `--persona`, `--provider`, `--model`.
@@ -78,7 +78,7 @@ filters: `--since`, `--persona`, `--provider`, `--model`.
 tau can run without the TUI via NDJSON RPC over stdin/stdout:
 
 ```sh
-tau rpc --persona gpt-5.2-coder --risk read-only
+tau rpc --persona gpt-5.4-coder --risk read-only
 ```
 
 RPC mode reuses the same startup config/persona/risk/sandbox loading as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message). `--caffeinated` is a macOS-only TUI flag and is rejected in RPC mode.
@@ -285,10 +285,11 @@ tau uses `caffeinate -i` and only holds the sleep assertion during active assist
 tau comes with several built-in personas across different models:
 
 - **Claude Opus 4.6** (Anthropic): chat and coder variants
-- **GPT-5.2** (OpenAI): chat and coder variants
-- **GPT-5.3-Codex** (OpenAI): coder-only variant for ChatGPT Plus/Pro subscriptions (`gpt-5.3-codex-chatgpt`)
-- **GPT-5.2-Codex** (OpenAI API): coder-only variant for direct API access (`gpt-5.2-codex-api`)
-- **Gemini 3.1 Pro** and **Gemini 3 Flash** (Google): chat variants only
+- **GPT-5.3-Codex** (OpenAI): chat and coder variants
+- **GPT-5.4** (OpenAI): chat and coder variants
+- **GPT-5.3-Codex (ChatGPT)** (OpenAI Codex): chat and coder variants (`gpt-5.3-codex-chatgpt`)
+- **GPT-5.4 (ChatGPT)** (OpenAI Codex): chat and coder variants (`gpt-5.4-chatgpt`)
+- **Gemini 3.1 Pro** and **Gemini 3 Flash** (Google): chat and coder variants
 
 chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.
 
@@ -444,14 +445,14 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
     "parallel": "...",
     "mistral": "..."
   },
-  "defaultPersona": "gpt-5.2-chat",
+  "defaultPersona": "gpt-5.4-chat",
   "defaultRisk": "read-write",
   "disableBuiltinPersonas": false,
   "disableBuiltinThemes": false,
   "defaultTheme": "solarized",
   "subagents": {
     "defaultLaunchModels": [
-      "openai/gpt-5.2:high",
+      "openai/gpt-5.4:high",
       "anthropic/claude-haiku-4-5:low"
     ]
   },
@@ -561,7 +562,7 @@ the frontmatter defines the persona. required fields:
 
 - `id`: unique id used by `--persona` and `/persona:<id>`
 - `provider`: model provider id (for example `openai`, `anthropic`, `google`)
-- `model`: model id for the provider (for example `gpt-5.2`, `claude-opus-4-5`)
+- `model`: model id for the provider (for example `gpt-5.4`, `claude-opus-4-5`)
 
 custom personas/subagents can reference model ids that are not bundled yet, as long as the provider is known. configure model metadata in `models.json` files or let tau derive defaults. see [docs/models.md](docs/models.md).
 
@@ -571,7 +572,7 @@ optional frontmatter fields:
 
 - `label`: display name shown in the ui (defaults to the base persona label if `extends` is used)
 - `description`: human-readable description used in lists/autocomplete
-- `extends`: inherit optional fields from a built-in persona id (for example `gpt-5.2-coder`). `provider` and `model` are still required. if the markdown body is empty, the base persona's system prompt is used.
+- `extends`: inherit optional fields from a built-in persona id (for example `gpt-5.4-coder`). `provider` and `model` are still required. if the markdown body is empty, the base persona's system prompt is used.
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.
@@ -589,7 +590,7 @@ optional frontmatter fields:
       tools: [web_search, web_fetch, bash]
       riskLevel: read-only
       launchModels:
-        - openai/gpt-5.2:high
+        - openai/gpt-5.4:high
         - anthropic/claude-haiku-4-5:medium
   ```
 - `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled). risk levels still apply.
@@ -603,7 +604,7 @@ to clone a built-in persona but swap the provider/model, use `extends`:
 ```markdown
 ---
 id: my-haiku-coder
-extends: gpt-5.2-coder
+extends: gpt-5.4-coder
 provider: anthropic
 model: claude-haiku-4-5
 ---

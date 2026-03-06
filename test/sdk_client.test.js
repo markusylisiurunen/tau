@@ -250,7 +250,7 @@ describe("sdk_client", () => {
     const spawn = vi.fn(() => child);
     const clientPromise = createTauSdkClient({
       spawn,
-      persona: "gpt-5.2-coder",
+      persona: "gpt-5.4-coder",
       riskLevel: "read-only",
       noAgentContextFiles: true,
       connectTimeoutMs: 500,
@@ -264,7 +264,7 @@ describe("sdk_client", () => {
     expect(command).toBe(process.execPath);
     expect(args).toContain("rpc");
     expect(args).toContain("--persona");
-    expect(args).toContain("gpt-5.2-coder");
+    expect(args).toContain("gpt-5.4-coder");
     expect(args).toContain("--risk");
     expect(args).toContain("read-only");
     expect(args).toContain("--no-agent-context-files");

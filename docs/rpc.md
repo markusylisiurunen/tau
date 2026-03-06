@@ -5,7 +5,7 @@ rpc mode runs tau without the interactive TUI. instead of rendering a terminal U
 start it like this:
 
 ```sh
-tau rpc --persona gpt-5.2-coder --risk read-only
+tau rpc --persona gpt-5.4-coder --risk read-only
 ```
 
 you can still use the usual startup flags (`--persona`, `--risk`, `--sandbox`, `--load`, `--no-agent-context-files`, etc). `--persona` accepts `<id>` or `<id>:<reasoning>`. rpc mode uses the same config/persona loading and runtime as TUI mode. `--caffeinated` is TUI-only and rejected in rpc mode.

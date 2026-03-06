@@ -186,7 +186,7 @@ describe("ChatController persona switching", () => {
   it("resets to the persona default reasoning on /persona switch", async () => {
     const stub = createStubView();
     const controller = createController(stub.view, {
-      initialPersonaId: "gpt-5.2-chat",
+      initialPersonaId: "gpt-5.4-chat",
     });
 
     expect(controller.currentPersona.settings.reasoning).toBe("medium");
@@ -196,9 +196,9 @@ describe("ChatController persona switching", () => {
     expect(controller.currentPersona.settings.reasoning).toBe("high");
 
     await controller.onUserInput("/persona:opus-4.6-chat");
-    await controller.onUserInput("/persona:gpt-5.2-chat");
+    await controller.onUserInput("/persona:gpt-5.4-chat");
 
-    expect(controller.currentPersona.id).toBe("gpt-5.2-chat");
+    expect(controller.currentPersona.id).toBe("gpt-5.4-chat");
     expect(controller.currentPersona.settings.reasoning).toBe("medium");
   });
 });

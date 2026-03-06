@@ -98,7 +98,7 @@ Daemon-side settings are loaded from a separate JSON file.
       "description": "core runtime workspace",
       "bootstrapCommands": ["npm ci"],
       "backgroundBootstrapCommands": ["npm run build"],
-      "persona": "gpt-5.2-coder",
+      "persona": "gpt-5.4-coder",
       "riskLevel": "read-only",
       "sandbox": false,
       "noAgentContextFiles": false

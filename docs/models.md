@@ -29,8 +29,8 @@ Merge order is parent-first, most specific wins:
       },
       "models": [
         {
-          "id": "gpt-5.2-custom",
-          "name": "GPT-5.2 Custom",
+          "id": "gpt-5.4-custom",
+          "name": "GPT-5.4 Custom",
           "api": "openai-responses",
           "baseUrl": "https://model-endpoint.example.com/v1",
           "headers": {

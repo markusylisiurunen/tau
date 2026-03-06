@@ -26,12 +26,12 @@ describe("model catalog", () => {
     expect(providers).toContain("anthropic");
 
     const openaiModels = listModels("openai");
-    expect(openaiModels.some((model) => model.id === "gpt-5.2")).toBe(true);
+    expect(openaiModels.some((model) => model.id === "gpt-5.4")).toBe(true);
 
-    const model = resolveModel("openai", "gpt-5.2");
+    const model = resolveModel("openai", "gpt-5.4");
     expect(model).toBeTruthy();
     expect(model.provider).toBe("openai");
-    expect(model.id).toBe("gpt-5.2");
+    expect(model.id).toBe("gpt-5.4");
   });
 
   it("returns no models for unknown providers", () => {

@@ -94,7 +94,7 @@ describe("async daemon config", () => {
               workingDirectory: "packages/core",
               description: "core workspace",
               ref: "main",
-              persona: "gpt-5.2-coder:high",
+              persona: "gpt-5.4-coder:high",
               bootstrapCommands: ["npm ci"],
               backgroundBootstrapCommands: ["npm run build"],
             },
@@ -111,7 +111,7 @@ describe("async daemon config", () => {
       expect(config.projects.tau.workingDirectory).toBe("packages/core");
       expect(config.projects.tau.description).toBe("core workspace");
       expect(config.projects.tau.repo).toBe("markusylisiurunen/tau");
-      expect(config.projects.tau.persona).toBe("gpt-5.2-coder:high");
+      expect(config.projects.tau.persona).toBe("gpt-5.4-coder:high");
       expect(config.projects.tau.bootstrapCommands).toEqual(["npm ci"]);
       expect(config.projects.tau.backgroundBootstrapCommands).toEqual(["npm run build"]);
       expect(config.telegram?.default?.defaultProjectId).toBe("tau");
@@ -203,7 +203,7 @@ describe("async daemon config", () => {
     {
       name: "rejects invalid projects.<id>.persona reasoning suffixes",
       config: {
-        projects: { tau: { repo: "markusylisiurunen/tau", persona: "gpt-5.2-coder:ultra" } },
+        projects: { tau: { repo: "markusylisiurunen/tau", persona: "gpt-5.4-coder:ultra" } },
       },
       errors: ["invalid reasoning level 'ultra'"],
     },

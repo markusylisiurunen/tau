@@ -68,7 +68,7 @@ describe("custom personas", () => {
         [
           "---",
           "id: haiku-clone-of-gpt-coder",
-          "extends: gpt-5.2-coder",
+          "extends: gpt-5.4-coder",
           "provider: anthropic",
           "model: claude-haiku-4-5",
           "---",
@@ -80,7 +80,7 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
-      const base = personas.find((p) => p.id === "gpt-5.2-coder");
+      const base = personas.find((p) => p.id === "gpt-5.4-coder");
       const clone = personas.find((p) => p.id === "haiku-clone-of-gpt-coder");
 
       expect(base).toBeTruthy();
@@ -110,10 +110,10 @@ describe("custom personas", () => {
     try {
       mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
       writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "gpt-5.2-chat.md"),
+        join(fx.home, ".config", "tau", "personas", "gpt-5.4-chat.md"),
         [
           "---",
-          "id: gpt-5.2-chat",
+          "id: gpt-5.4-chat",
           "provider: anthropic",
           "model: claude-haiku-4-5",
           "---",
@@ -129,7 +129,7 @@ describe("custom personas", () => {
       );
       expect(errors).toEqual([]);
 
-      expect(personas.map((p) => p.id)).toEqual(["gpt-5.2-chat"]);
+      expect(personas.map((p) => p.id)).toEqual(["gpt-5.4-chat"]);
       expect(personas[0].source).toBe("user");
       expect(personas[0].skills).toBe("*");
     } finally {
@@ -217,8 +217,8 @@ describe("custom personas", () => {
           "  analyst:",
           "    systemPrompt: analyze repository state",
           "    launchModels:",
-          "      - openai/gpt-5.2:high",
-          "      - openai/gpt-5.2:high",
+          "      - openai/gpt-5.4:high",
+          "      - openai/gpt-5.4:high",
           "---",
           "persona with launch models",
           "",
@@ -229,7 +229,7 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver(
         {
           subagents: {
-            defaultLaunchModels: ["openai/gpt-5.2:low"],
+            defaultLaunchModels: ["openai/gpt-5.4:low"],
           },
         },
         { deps, cwd: fx.cwd },
@@ -238,8 +238,8 @@ describe("custom personas", () => {
 
       const customPersona = personas.find((persona) => persona.id === "launch-models");
       expect(customPersona).toBeTruthy();
-      expect(customPersona.subagents.analyst.launchModels).toEqual(["openai/gpt-5.2:high"]);
-      expect(customPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.2:low"]);
+      expect(customPersona.subagents.analyst.launchModels).toEqual(["openai/gpt-5.4:high"]);
+      expect(customPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.4:low"]);
     } finally {
       fx.cleanup();
     }
@@ -253,20 +253,20 @@ describe("custom personas", () => {
       const withOverrides = await loadAllContentWithModelResolver(
         {
           subagents: {
-            defaultLaunchModels: ["openai/gpt-5.2:low"],
+            defaultLaunchModels: ["openai/gpt-5.4:low"],
           },
         },
         { deps, cwd: fx.cwd },
       );
 
       const withOverridesPersona = withOverrides.personas.find(
-        (persona) => persona.id === "gpt-5.2-chat",
+        (persona) => persona.id === "gpt-5.4-chat",
       );
-      expect(withOverridesPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.2:low"]);
+      expect(withOverridesPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.4:low"]);
 
       const withoutOverrides = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       const withoutOverridesPersona = withoutOverrides.personas.find(
-        (persona) => persona.id === "gpt-5.2-chat",
+        (persona) => persona.id === "gpt-5.4-chat",
       );
       expect(withoutOverridesPersona.subagents.default.launchModels).toBeUndefined();
     } finally {

@@ -69,13 +69,13 @@ function createContext(overrides = {}) {
       source: "project",
       subagents: {
         default: {
-          launchModels: ["openai/gpt-5.2:high"],
+          launchModels: ["openai/gpt-5.4:high"],
         },
         researcher: {
           systemPrompt: "research",
           model: anthropic,
           settings: { reasoning: "medium" },
-          launchModels: ["openai/gpt-5.2:high"],
+          launchModels: ["openai/gpt-5.4:high"],
         },
       },
     },
@@ -119,7 +119,7 @@ describe("spawn_agent tool", () => {
           name: "researcher",
           title: "research task",
           prompt: "collect findings",
-          model: "openai/gpt-5.2:high",
+          model: "openai/gpt-5.4:high",
         },
       },
       "read-only",
@@ -132,7 +132,7 @@ describe("spawn_agent tool", () => {
     expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(false);
     expect(result.uiEvent.type).toBe("spawn_agent_finished");
-    expect(result.uiEvent.uiText.statusLine).toContain("openai/gpt-5.2:high");
+    expect(result.uiEvent.uiText.statusLine).toContain("openai/gpt-5.4:high");
     expect(spawned).toHaveLength(1);
     expect(spawned[0].model.provider).toBe(openai.provider);
     expect(spawned[0].model.id).toBe(openai.id);
@@ -156,7 +156,7 @@ describe("spawn_agent tool", () => {
             systemPrompt: "research",
             model: openai,
             settings: { reasoning: "medium" },
-            launchModels: ["openai/gpt-5.2:high"],
+            launchModels: ["openai/gpt-5.4:high"],
           },
         },
       },
@@ -173,7 +173,7 @@ describe("spawn_agent tool", () => {
           name: "researcher",
           title: "research task",
           prompt: "collect findings",
-          model: "openai/gpt-5.2:high",
+          model: "openai/gpt-5.4:high",
         },
       },
       "read-only",
@@ -186,7 +186,7 @@ describe("spawn_agent tool", () => {
     expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(false);
     expect(result.uiEvent.type).toBe("spawn_agent_finished");
-    expect(result.uiEvent.uiText.statusLine).toContain("openai/gpt-5.2:high");
+    expect(result.uiEvent.uiText.statusLine).toContain("openai/gpt-5.4:high");
   });
 
   it("blocks launch model overrides when no allowlist exists", async () => {
@@ -219,7 +219,7 @@ describe("spawn_agent tool", () => {
           name: "researcher",
           title: "research task",
           prompt: "collect findings",
-          model: "openai/gpt-5.2:high",
+          model: "openai/gpt-5.4:high",
         },
       },
       "read-only",
@@ -245,7 +245,7 @@ describe("spawn_agent tool", () => {
           name: "researcher",
           title: "research task",
           prompt: "collect findings",
-          model: "openai/gpt-5.2:low",
+          model: "openai/gpt-5.4:low",
         },
       },
       "read-only",
@@ -256,7 +256,7 @@ describe("spawn_agent tool", () => {
     expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
     expect(getText(result.toolResult)).toContain("is not allowed for subagent");
-    expect(getText(result.toolResult)).toContain("openai/gpt-5.2:high");
+    expect(getText(result.toolResult)).toContain("openai/gpt-5.4:high");
     expect(spawned).toHaveLength(0);
   });
 
@@ -303,7 +303,7 @@ describe("spawn_agent tool", () => {
           name: "default",
           title: "default task",
           prompt: "collect findings",
-          model: "openai/gpt-5.2:high",
+          model: "openai/gpt-5.4:high",
         },
       },
       "read-only",

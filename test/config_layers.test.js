@@ -99,7 +99,7 @@ describe("config paths", () => {
             defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
           },
           modelSystemNotices: {
-            "openai/gpt-5.2": "global codex notice",
+            "openai/gpt-5.4": "global codex notice",
             "anthropic/claude-sonnet-4-5": "global anthropic notice",
           },
         }),
@@ -117,10 +117,10 @@ describe("config paths", () => {
           ],
           agentContextFiles: ["docs/AGENTS.md"],
           subagents: {
-            defaultLaunchModels: ["openai/gpt-5.2:high"],
+            defaultLaunchModels: ["openai/gpt-5.4:high"],
           },
           modelSystemNotices: {
-            "openai/gpt-5.2": "repo codex notice",
+            "openai/gpt-5.4": "repo codex notice",
           },
         }),
       );
@@ -166,10 +166,10 @@ describe("config paths", () => {
         join(nested, "AGENTS.md"),
       ]);
       expect(config.subagents).toEqual({
-        defaultLaunchModels: ["openai/gpt-5.2:high"],
+        defaultLaunchModels: ["openai/gpt-5.4:high"],
       });
       expect(config.modelSystemNotices).toEqual({
-        "openai/gpt-5.2": "repo codex notice",
+        "openai/gpt-5.4": "repo codex notice",
         "anthropic/claude-sonnet-4-5": "global anthropic notice",
       });
     } finally {

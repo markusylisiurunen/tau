@@ -1,5 +1,6 @@
-import { type Component, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { type Component, visibleWidth } from "@mariozechner/pi-tui";
 import type { SubagentStateSnapshot, SubagentUiEvent } from "../../core/subagents/types.js";
+import { truncateFromEndByWidthPreserveAnsi } from "./components/one_line_segments.js";
 import type { Theme } from "./theme/index.js";
 
 type SubagentPanelLine = {
@@ -270,7 +271,7 @@ export class SubagentPanelComponent implements Component {
   }
 
   private fitLine(line: string, width: number): string {
-    const truncated = truncateToWidth(line, width, "…");
+    const truncated = truncateFromEndByWidthPreserveAnsi(line, width);
     const pad = Math.max(0, width - visibleWidth(truncated));
     return `${truncated}${" ".repeat(pad)}`;
   }

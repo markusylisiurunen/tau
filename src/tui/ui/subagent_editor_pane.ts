@@ -1,5 +1,8 @@
-import { type Component, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { truncateFromEndByWidth } from "./components/one_line_segments.js";
+import { type Component, visibleWidth } from "@mariozechner/pi-tui";
+import {
+  truncateFromEndByWidth,
+  truncateFromEndByWidthPreserveAnsi,
+} from "./components/one_line_segments.js";
 import type { CustomEditor } from "./custom_editor.js";
 import type { SubagentPanelComponent } from "./subagent_panel.js";
 import type { Theme } from "./theme/index.js";
@@ -52,7 +55,7 @@ export class SubagentEditorPaneComponent implements Component {
     const border = this.theme.palette.editorSubagentBorder;
     const vertical = border("│");
     const pad = " ".repeat(Math.max(0, paddingX));
-    const truncated = truncateToWidth(line, contentWidth, "…");
+    const truncated = truncateFromEndByWidthPreserveAnsi(line, contentWidth);
     const padded = this.padToWidth(truncated, contentWidth);
     return `${vertical}${pad}${padded}${pad}${vertical}`;
   }

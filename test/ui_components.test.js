@@ -8,6 +8,7 @@ import { renderChatMessage } from "../dist/tui/ui/chat_message_model.js";
 import {
   OneLineSegmentsComponent,
   truncateFromEndByWidth,
+  truncateFromEndByWidthPreserveAnsi,
 } from "../dist/tui/ui/components/one_line_segments.js";
 import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
 import { FooterComponent } from "../dist/tui/ui/footer.js";
@@ -212,6 +213,15 @@ test("truncateFromEndByWidth respects max width", () => {
   expect(truncateFromEndByWidth("hello", 1)).toBe("…");
   expect(truncateFromEndByWidth("hello", 4)).toBe("hel…");
   expect(truncateFromEndByWidth("hello", 5)).toBe("hello");
+});
+
+test("truncateFromEndByWidthPreserveAnsi keeps the ellipsis inside the active style", () => {
+  const red = `\x1b[31mhello world\x1b[0m`;
+  const truncated = truncateFromEndByWidthPreserveAnsi(red, 6);
+
+  expect(stripAnsi(truncated)).toBe("hello…");
+  expect(truncated).toContain("hello…\x1b[0m");
+  expect(truncated).not.toContain("\x1b[0m…");
 });
 
 test("CustomEditor clamps wrapped lines to the inner width", () => {

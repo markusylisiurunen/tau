@@ -1,7 +1,10 @@
 import { Key, matchesKey, visibleWidth } from "@mariozechner/pi-tui";
 import { DOUBLE_PRESS_WINDOW_MS } from "../constants.js";
 import { Editor } from "./components/editor.js";
-import { truncateFromEndByWidth } from "./components/one_line_segments.js";
+import {
+  truncateFromEndByWidth,
+  truncateFromEndByWidthPreserveAnsi,
+} from "./components/one_line_segments.js";
 import { getMentionAutocompleteToken } from "./slash_autocomplete.js";
 import type { Theme } from "./theme/index.js";
 
@@ -523,124 +526,9 @@ export class CustomEditor extends Editor {
     const lineWidth = visibleWidth(line);
     if (lineWidth === width) return line;
     if (lineWidth > width) {
-      return this.padToWidth(this.truncateFromEndByWidthPreserveAnsi(line, width), width);
+      return this.padToWidth(truncateFromEndByWidthPreserveAnsi(line, width), width);
     }
     return this.padToWidth(line, width);
-  }
-
-  private truncateFromEndByWidthPreserveAnsi(text: string, maxCols: number): string {
-    if (!text.includes("\x1b")) {
-      return truncateFromEndByWidth(text, maxCols);
-    }
-
-    if (maxCols <= 0) return "";
-    if (visibleWidth(text) <= maxCols) return text;
-    if (maxCols === 1) return "…";
-
-    const ellipsis = "…";
-    const targetCols = Math.max(0, maxCols - visibleWidth(ellipsis));
-    if (targetCols <= 0) return ellipsis;
-
-    const parts = this.splitAnsiParts(text);
-
-    let out = "";
-    let outCols = 0;
-
-    outer: for (const part of parts) {
-      if (part.type === "ansi") {
-        out += part.value;
-        continue;
-      }
-
-      for (const g of this.segmentGraphemes(part.value)) {
-        const gCols = visibleWidth(g);
-        if (outCols + gCols > targetCols) break outer;
-        out += g;
-        outCols += gCols;
-      }
-    }
-
-    // If we truncated, ensure we reset any active SGR to avoid leaking styles.
-    if (!out.endsWith("\x1b[0m")) {
-      out += `${ellipsis}\x1b[0m`;
-      return out;
-    }
-
-    return `${out}${ellipsis}`;
-  }
-
-  private splitAnsiParts(text: string): Array<{ type: "ansi" | "text"; value: string }> {
-    const parts: Array<{ type: "ansi" | "text"; value: string }> = [];
-    let i = 0;
-
-    while (i < text.length) {
-      const escIndex = text.indexOf("\x1b", i);
-      if (escIndex === -1) {
-        const tail = text.slice(i);
-        if (tail) parts.push({ type: "text", value: tail });
-        break;
-      }
-
-      if (escIndex > i) {
-        const chunk = text.slice(i, escIndex);
-        if (chunk) parts.push({ type: "text", value: chunk });
-      }
-
-      const parsed = this.parseAnsiSequence(text, escIndex);
-      if (parsed) {
-        parts.push({ type: "ansi", value: parsed.sequence });
-        i = parsed.nextIndex;
-      } else {
-        parts.push({ type: "text", value: "\x1b" });
-        i = escIndex + 1;
-      }
-    }
-
-    return parts;
-  }
-
-  private parseAnsiSequence(
-    text: string,
-    start: number,
-  ): { sequence: string; nextIndex: number } | null {
-    if (text[start] !== "\x1b") return null;
-
-    const next = text[start + 1];
-
-    if (next === "[") {
-      let i = start + 2;
-      while (i < text.length) {
-        const code = text.charCodeAt(i);
-        if (code >= 0x40 && code <= 0x7e) {
-          i++;
-          return { sequence: text.slice(start, i), nextIndex: i };
-        }
-        i++;
-      }
-      return { sequence: text.slice(start), nextIndex: text.length };
-    }
-
-    if (next === "]") {
-      // OSC: terminate on BEL or ST (ESC backslash)
-      let i = start + 2;
-      while (i < text.length) {
-        const c = text[i];
-        if (c === "\x07") {
-          i++;
-          return { sequence: text.slice(start, i), nextIndex: i };
-        }
-
-        if (c === "\x1b" && text[i + 1] === "\\") {
-          i += 2;
-          return { sequence: text.slice(start, i), nextIndex: i };
-        }
-
-        i++;
-      }
-      return { sequence: text.slice(start), nextIndex: text.length };
-    }
-
-    return null;
   }
 
   private renderEditorContent(

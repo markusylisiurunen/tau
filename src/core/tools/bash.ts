@@ -226,6 +226,7 @@ export function formatBashToolResultText(args: {
 }): string {
   const { truncationInfo, exitCode } = args;
   const { model, captureTruncated, gated, fullOutputPath } = truncationInfo;
+  const hasNoOutput = model.outputBytes === 0;
 
   if (gated) {
     const preview = model.content;
@@ -233,6 +234,10 @@ export function formatBashToolResultText(args: {
     const gateNote = `\n\n[output gated: this command already ran and any side effects have persisted. full output estimate: ~${totalTokenEstimate} tokens.${formatBashOutputFileHint({ path: fullOutputPath })} maxOutputTokens can be set to ${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}; up to ${BASH_MAX_OUTPUT_TOKENS} only when the user explicitly requests it. user requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
     const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
     return `${preview}${gateNote}${exitNote}`;
+  }
+
+  if (hasNoOutput && exitCode === 0) {
+    return "command produced no output (exit 0)";
   }
 
   const outputForContext = model.content;

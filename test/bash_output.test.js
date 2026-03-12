@@ -70,6 +70,26 @@ describe("bash output policy", () => {
     expect(truncationInfo.model.truncated).toBe(false);
   });
 
+  it("returns a default message for empty successful output", () => {
+    const toolText = formatBashToolResultText({
+      truncationInfo: {
+        output: "",
+        model: {
+          content: "",
+          truncated: false,
+          totalLines: 0,
+          outputLines: 0,
+          totalBytes: 0,
+          outputBytes: 0,
+        },
+        captureTruncated: false,
+      },
+      exitCode: 0,
+    });
+
+    expect(toolText).toBe("command produced no output (exit 0)");
+  });
+
   it("omits working directory when it is not provided", () => {
     const uiText = buildBashUiText({
       truncationInfo: {

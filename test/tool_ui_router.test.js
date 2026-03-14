@@ -119,7 +119,7 @@ describe("ToolUiRouter prune mutations", () => {
     });
 
     const prunedContent =
-      "[tool result pruned] bash output removed (12 tokens). re-run the command if needed.";
+      "[Tool result pruned] bash output removed (12 tokens). Re-run the command if needed.";
     harness.router.handle({
       type: "tool_pruned",
       toolCallId: "bash-1",
@@ -177,7 +177,7 @@ describe("ToolUiRouter prune mutations", () => {
     });
 
     const prunedContent =
-      "[tool result pruned] bash output removed (20 tokens). re-run the command if needed.";
+      "[Tool result pruned] bash output removed (20 tokens). Re-run the command if needed.";
     harness.router.handle({
       type: "tool_pruned",
       toolCallId: "bash-2",

@@ -201,8 +201,8 @@ describe("SessionMaintenanceService", () => {
     await service.pruneToolResultsSmart();
 
     const toolCall = history[0].content[0];
-    expect(toolCall.arguments.oldText).toBe("[content pruned]");
-    expect(toolCall.arguments.newText).toBe("[content pruned]");
+    expect(toolCall.arguments.oldText).toBe("[Content pruned]");
+    expect(toolCall.arguments.newText).toBe("[Content pruned]");
     expect(viewMessages.at(-1)).toEqual({
       text: expect.stringContaining("pruned 1 edit tool call"),
       kind: "success",
@@ -234,6 +234,6 @@ describe("SessionMaintenanceService", () => {
     service.pruneToolResults("largest", "0.5");
 
     expect(history[0].content[0].text).toBe("tiny");
-    expect(history[1].content[0].text).toContain("[tool result pruned] bash output removed");
+    expect(history[1].content[0].text).toContain("[Tool result pruned] bash output removed");
   });
 });

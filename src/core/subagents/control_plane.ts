@@ -145,8 +145,8 @@ export class SubagentControlPlane {
       return {
         ok: false,
         reason:
-          `subagent limit reached (max ${MAX_ACTIVE_SUBAGENTS} active). ` +
-          "wait for existing agents to finish.",
+          `Subagent limit reached (max ${MAX_ACTIVE_SUBAGENTS} active). ` +
+          "Wait for existing agents to finish.",
       };
     }
 
@@ -167,7 +167,7 @@ export class SubagentControlPlane {
     if (!workingDirectory) {
       return {
         ok: false,
-        reason: "subagent workingDirectory must not be blank.",
+        reason: "Subagent workingDirectory must not be blank.",
       };
     }
 
@@ -220,13 +220,13 @@ export class SubagentControlPlane {
     const { id, prompt, config, modelResolver, authPath, backend, personaId } = options;
     const record = this.records.get(id);
     if (!record) {
-      return { ok: false, reason: `unknown subagent id: ${id}` };
+      return { ok: false, reason: `Unknown subagent ID: ${id}` };
     }
 
     if (record.status === "running") {
       return {
         ok: false,
-        reason: `subagent ${id} is already running. wait for it to finish before sending input.`,
+        reason: `Subagent ${id} is already running. Wait for it to finish before sending input.`,
       };
     }
 
@@ -234,8 +234,8 @@ export class SubagentControlPlane {
       return {
         ok: false,
         reason:
-          `subagent limit reached (max ${MAX_ACTIVE_SUBAGENTS} active). ` +
-          "wait for existing agents to finish.",
+          `Subagent limit reached (max ${MAX_ACTIVE_SUBAGENTS} active). ` +
+          "Wait for existing agents to finish.",
       };
     }
 
@@ -258,7 +258,7 @@ export class SubagentControlPlane {
   async waitFor(ids: string[], signal?: AbortSignal): Promise<SubagentResult[]> {
     const missing = ids.filter((id) => !this.records.has(id));
     if (missing.length > 0) {
-      throw new Error(`unknown subagent id(s): ${missing.join(", ")}`);
+      throw new Error(`Unknown subagent ID(s): ${missing.join(", ")}`);
     }
 
     const completions = ids.map((id) => this.waitForRecord(id));
@@ -292,7 +292,7 @@ export class SubagentControlPlane {
   getOriginHistoryEntryId(id: string): string {
     const record = this.records.get(id);
     if (!record) {
-      throw new Error(`unknown subagent id: ${id}`);
+      throw new Error(`Unknown subagent ID: ${id}`);
     }
     return record.originHistoryEntryId;
   }
@@ -374,7 +374,7 @@ export class SubagentControlPlane {
   private async waitForRecord(id: string): Promise<SubagentRecord> {
     const record = this.records.get(id);
     if (!record) {
-      throw new Error(`unknown subagent id: ${id}`);
+      throw new Error(`Unknown subagent ID: ${id}`);
     }
     if (record.status !== "running") {
       return record;

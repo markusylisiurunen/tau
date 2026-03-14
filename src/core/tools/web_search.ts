@@ -136,7 +136,7 @@ function estimateParallelSearchCostUsd(
 function formatSearchResults(response: ParallelSearchResponse): TruncationResult {
   const results = response.results;
   if (results.length === 0) {
-    const content = "no results";
+    const content = "No results.";
     const bytes = Buffer.byteLength(content, "utf-8");
     return {
       content,
@@ -153,7 +153,7 @@ function formatSearchResults(response: ParallelSearchResponse): TruncationResult
 
   const lines: string[] = [];
   for (const r of results) {
-    const title = r.title?.trim() || "(no title)";
+    const title = r.title?.trim() || "(No title)";
     const date = r.publish_date ? ` (${r.publish_date})` : "";
     lines.push(`- ${title}${date}\n  ${r.url}`);
 
@@ -199,14 +199,14 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
       };
 
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
       const args = parsedArgs.data;
 
       const apiKey = getParallelApiKey(config);
       if (!apiKey) {
-        return blocked("missing Parallel API key.");
+        return blocked("Missing Parallel API key.");
       }
 
       return {
@@ -256,7 +256,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
 
             if (!res.ok) {
               const details =
-                extractParallelErrorMessage(parsed) || res.statusText || "request failed";
+                extractParallelErrorMessage(parsed) || res.statusText || "Request failed.";
               throw new Error(`Parallel API error (${res.status}): ${details}`);
             }
 
@@ -287,7 +287,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
             return { kind: "single", toolResult, uiEvent };
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            const reason = msg.trim() ? msg : "request failed";
+            const reason = msg.trim() ? msg : "Request failed.";
             const toolResult = createToolError(toolCall, reason);
             const uiEvent: ToolUiEvent = {
               type: "web_search_finished",

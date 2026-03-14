@@ -42,7 +42,7 @@ function parseEmitOutputArgs(
     return { ok: false, error: formatZodError(parsed.error) };
   }
   if (!parsed.data.text.trim()) {
-    return { ok: false, error: "text must not be blank" };
+    return { ok: false, error: "Text must not be blank." };
   }
   return { ok: true, data: parsed.data };
 }
@@ -64,20 +64,20 @@ export function createEmitOutputToolDefinition(): ToolDefinition {
       };
 
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
       const { text } = parsedArgs.data;
 
       if (!isSubagentToolDispatchContext(context)) {
-        return blocked("emit_output tool is only available to subagents.");
+        return blocked("The emit_output tool is only available to subagents.");
       }
 
       const { subagentContext } = context;
 
       subagentContext.controlPlane.recordEmitOutput(subagentContext.id, text);
 
-      const toolResult = createToolSuccess(toolCall, "emitted");
+      const toolResult = createToolSuccess(toolCall, "Emitted.");
       return { kind: "single", toolResult };
     },
   };

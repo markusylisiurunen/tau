@@ -163,7 +163,7 @@ async function prepareImageForModel(
   const height = metadata.height;
 
   if (!width || !height) {
-    throw new Error("failed to read image dimensions.");
+    throw new Error("Failed to read image dimensions.");
   }
 
   if (
@@ -204,11 +204,11 @@ async function prepareImageForModel(
   const targetSizeLabel = formatBytes(VIEW_IMAGE_MODEL_MAX_BYTES);
   if (smallest) {
     throw new Error(
-      `image could not be reduced below ${targetSizeLabel} (best effort produced ${formatBytes(smallest.content.byteLength)}).`,
+      `Image could not be reduced below ${targetSizeLabel} (best effort produced ${formatBytes(smallest.content.byteLength)}).`,
     );
   }
 
-  throw new Error(`image could not be reduced below ${targetSizeLabel}.`);
+  throw new Error(`Image could not be reduced below ${targetSizeLabel}.`);
 }
 
 function buildViewImageUiText(args: { mimeType: string; fullText: string }): ToolUiText {
@@ -246,7 +246,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
       };
 
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
       try {
@@ -258,13 +258,13 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
         const mimeType = detected?.mime;
         if (!isSupportedImageType(mimeType)) {
           return blocked(
-            `unsupported image format. supported: ${SUPPORTED_IMAGE_TYPES.join(", ")}.`,
+            `Unsupported image format. Supported formats: ${SUPPORTED_IMAGE_TYPES.join(", ")}.`,
           );
         }
 
         const encodedImage = await prepareImageForModel(content, mimeType);
         const data = encodedImage.content.toString("base64");
-        const resultText = `viewed ${resolvedPath} (${encodedImage.mimeType})`;
+        const resultText = `Viewed ${resolvedPath} (${encodedImage.mimeType})`;
         const toolResult: ToolResultMessage = {
           role: "toolResult",
           toolCallId: toolCall.id,
@@ -294,7 +294,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
         return { kind: "single", toolResult, uiEvent };
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`view_image failed: ${errorMessage}`);
+        return blocked(`Tool view_image failed: ${errorMessage}`);
       }
     },
   };

@@ -177,7 +177,7 @@ export async function* runToolCalls(
     if (!enabledToolNames.has(toolCall.name)) {
       const msg =
         toolErrorMessages?.notEnabled?.(toolCall) ??
-        `tool '${toolCall.name}' is not enabled for this session.`;
+        `Tool '${toolCall.name}' is not enabled for this session.`;
       const toolError = createToolError(toolCall, msg);
       resultsByIndex.set(i, toolError);
       yield { type: "notice", severity: "error", text: msg };
@@ -188,7 +188,7 @@ export async function* runToolCalls(
     if (!def) {
       const msg =
         toolErrorMessages?.unsupported?.(toolCall) ??
-        `tool '${toolCall.name}' is not supported by tau.`;
+        `Tool '${toolCall.name}' is not supported by tau.`;
       const toolError = createToolError(toolCall, msg);
       resultsByIndex.set(i, toolError);
       yield { type: "notice", severity: "error", text: msg };
@@ -208,12 +208,15 @@ export async function* runToolCalls(
       result = await def.dispatch(toolCall, riskLevel, signal, dispatchContext);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      const toolError = createToolError(toolCall, `${toolCall.name} dispatch failed: ${errorMsg}`);
+      const toolError = createToolError(
+        toolCall,
+        `Tool '${toolCall.name}' dispatch failed: ${errorMsg}`,
+      );
       resultsByIndex.set(index, toolError);
       yield {
         type: "notice",
         severity: "error",
-        text: `${toolCall.name} '${toolCall.id}' dispatch failed: ${errorMsg}`,
+        text: `Tool '${toolCall.name}' (${toolCall.id}) dispatch failed: ${errorMsg}`,
       };
       continue;
     }

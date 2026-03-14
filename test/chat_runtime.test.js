@@ -164,7 +164,7 @@ describe("ChatRuntime", () => {
     expect(composition.baseSystemPrompt).toContain("### Project context");
     expect(composition.baseSystemPrompt).toContain("### Available sub-agents");
     expect(composition.baseSystemPrompt).toContain("`researcher`");
-    expect(composition.baseSystemPrompt).toContain("launch models");
+    expect(composition.baseSystemPrompt).toContain("Launch models");
     expect(composition.baseSystemPrompt).toContain("openai/gpt-5.4:high");
     expect(composition.baseSystemPrompt).toContain("<sandbox-info>");
     expect(composition.baseSystemPrompt).toContain("<datetime>2026-01-01T00:00:00.000Z</datetime>");

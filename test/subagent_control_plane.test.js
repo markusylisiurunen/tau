@@ -30,7 +30,7 @@ describe("subagent control plane origin correlation", () => {
 
     expect(spawnResult).toEqual({
       ok: false,
-      reason: "subagent workingDirectory must not be blank.",
+      reason: "Subagent workingDirectory must not be blank.",
     });
   });
 

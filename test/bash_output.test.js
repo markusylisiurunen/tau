@@ -34,7 +34,7 @@ describe("bash output policy", () => {
     expect(truncationInfo.output).toContain("tokens truncated");
     const toolText = formatBashToolResultText({ truncationInfo, exitCode: 0 });
     expect(toolText).toContain("maxOutputTokens");
-    expect(toolText).toContain("user requests are checked");
+    expect(toolText).toContain("User requests are checked");
     expect(toolText).toContain("side effects");
   });
 
@@ -87,7 +87,7 @@ describe("bash output policy", () => {
       exitCode: 0,
     });
 
-    expect(toolText).toBe("command produced no output (exit 0)");
+    expect(toolText).toBe("Command produced no output (exit 0)");
   });
 
   it("omits working directory when it is not provided", () => {

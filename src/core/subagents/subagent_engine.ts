@@ -151,7 +151,7 @@ export async function runSubagent(options: {
   };
 
   const formatIssueSummary = (): string =>
-    issues.length > 0 ? ` (recent issues: ${issues.slice(-3).join("; ")})` : "";
+    issues.length > 0 ? ` (Recent issues: ${issues.slice(-3).join("; ")})` : "";
 
   const sessionId = options.sessionId ?? `tau-subagent-${runtimeConfig.name}-${randomUUID()}`;
 
@@ -257,7 +257,7 @@ export async function runSubagent(options: {
       const finalText = extractAssistantText(finalMessage).trim();
       if (!finalText) {
         throw new Error(
-          `sub-agent produced an empty response (stopReason: ${finalMessage.stopReason ?? "unknown"})${formatIssueSummary()}`,
+          `Sub-agent produced an empty response (stopReason: ${finalMessage.stopReason ?? "unknown"})${formatIssueSummary()}`,
         );
       }
       emitProgress("done");
@@ -313,8 +313,8 @@ export async function runSubagent(options: {
       signal,
       dispatchContext,
       toolErrorMessages: {
-        notEnabled: (toolCall) => `tool '${toolCall.name}' is not available to this sub-agent.`,
-        unsupported: (toolCall) => `tool '${toolCall.name}' is not available to this sub-agent.`,
+        notEnabled: (toolCall) => `Tool '${toolCall.name}' is not available to this sub-agent.`,
+        unsupported: (toolCall) => `Tool '${toolCall.name}' is not available to this sub-agent.`,
       },
     });
 
@@ -332,7 +332,7 @@ export async function runSubagent(options: {
           const firstLine = getToolResultFirstLine(event.message);
           const issue = firstLine
             ? `${event.message.toolName}: ${firstLine}`
-            : `${event.message.toolName}: tool returned an error`;
+            : `${event.message.toolName}: Tool returned an error.`;
           recordIssue(issue);
         }
         continue;
@@ -365,7 +365,7 @@ export async function runSubagent(options: {
   const lastNote = lastAssistantLine ? ` Last output: "${lastAssistantLine}".` : "";
 
   throw new Error(
-    `sub-agent stopped after ${maxSubturns} subturns without producing a final response.${lastNote}${formatIssueSummary()}`,
+    `Sub-agent stopped after ${maxSubturns} subturns without producing a final response.${lastNote}${formatIssueSummary()}`,
   );
 }
 

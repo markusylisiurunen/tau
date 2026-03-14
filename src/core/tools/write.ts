@@ -113,20 +113,20 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
       };
 
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
       const { content } = parsedArgs.data;
 
       if (riskLevel !== "read-write") {
         return blocked(
-          `requires risk level 'read-write', but current level is '${riskLevel}'. ask the user to run /risk:read-write.`,
+          `Requires risk level 'read-write', but the current level is '${riskLevel}'. Ask the user to run /risk:read-write.`,
         );
       }
 
       try {
         const { bytes, lines } = await backend.writeFile(path, content);
-        const resultText = `successfully wrote ${formatBytes(bytes)} (${lines} lines) to ${path}`;
+        const resultText = `Successfully wrote ${formatBytes(bytes)} (${lines} lines) to ${path}`;
 
         const toolResult = createToolSuccess(toolCall, resultText);
         const uiText = buildWriteUiText({ bytes, lines, content, fullText: resultText });
@@ -143,7 +143,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
         return { kind: "single", toolResult, uiEvent };
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`write failed: ${errorMessage}`);
+        return blocked(`Write failed: ${errorMessage}`);
       }
     },
   };

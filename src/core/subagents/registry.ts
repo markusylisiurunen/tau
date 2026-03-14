@@ -96,7 +96,7 @@ export function getSubagentBasePrompt(args: {
   }
 
   if (!args.config.systemPrompt) {
-    throw new Error(`subagent '${args.name}' is missing a system prompt`);
+    throw new Error(`Subagent '${args.name}' is missing a system prompt.`);
   }
 
   return args.config.systemPrompt;
@@ -119,11 +119,11 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
   }
 
   const subagentLines = Object.entries(persona.subagents).map(([name, config]) => {
-    const description = getSubagentDescription(name, config) ?? "(no description)";
+    const description = getSubagentDescription(name, config) ?? "(No description provided.)";
     const launchModels = config.launchModels ?? [];
     const launchModelsText =
       launchModels.length > 0
-        ? `\n  - launch models: ${launchModels.map((entry) => `\`${entry}\``).join(", ")}`
+        ? `\n  - Launch models: ${launchModels.map((entry) => `\`${entry}\``).join(", ")}`
         : "";
     return `- \`${name}\`: ${description}${launchModelsText}`;
   });

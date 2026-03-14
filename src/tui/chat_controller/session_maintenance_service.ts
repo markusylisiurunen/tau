@@ -6,9 +6,9 @@ import { bytesToTokens, formatTokenEstimate, tokensToBytes } from "../../core/ut
 import { truncateToBytesFromStart } from "../../core/utils/truncate.js";
 
 const DEFAULT_PRUNE_FRACTION = 0.25;
-const PRUNED_TOOL_RESULT_PREFIX = "[tool result pruned]";
-const PRUNED_EDIT_RESULT_PREFIX = "[tool result pruned] edit diff";
-const PRUNED_EDIT_ARGUMENT_MARKER = "[content pruned]";
+const PRUNED_TOOL_RESULT_PREFIX = "[Tool result pruned]";
+const PRUNED_EDIT_RESULT_PREFIX = "[Tool result pruned] Edit diff";
+const PRUNED_EDIT_ARGUMENT_MARKER = "[Content pruned]";
 const PRUNE_EDIT_UNCHANGED_CONTEXT_LINES = 4;
 const PRUNE_PREVIEW_MAX_TOKENS = 512;
 const PRUNE_MAX_OVERAGE_RATIO = 0.1;
@@ -630,7 +630,7 @@ export class SessionMaintenanceService {
   private buildPrunedEditDiff(oldText: string, newText: string): string {
     const diff = buildLineDiff(oldText, newText);
     if (diff.added === 0 && diff.removed === 0) {
-      return "(no textual changes)";
+      return "(No textual changes)";
     }
 
     const collapsed = collapseLongUnchangedDiffRuns({
@@ -638,12 +638,12 @@ export class SessionMaintenanceService {
       maxUnchangedLines: PRUNE_EDIT_UNCHANGED_CONTEXT_LINES,
     });
 
-    return collapsed.length > 0 ? collapsed.join("\n") : "(no textual changes)";
+    return collapsed.length > 0 ? collapsed.join("\n") : "(No textual changes)";
   }
 
   private buildPrunedToolResultNotice(toolResult: ToolResultMessage, bytes: number): string {
     const tokenEstimate = formatTokenEstimate(bytes);
-    return `${PRUNED_TOOL_RESULT_PREFIX} ${toolResult.toolName} output removed (${tokenEstimate}). re-run the command if needed.`;
+    return `${PRUNED_TOOL_RESULT_PREFIX} ${toolResult.toolName} output removed (${tokenEstimate}). Re-run the command if needed.`;
   }
 
   private emitToolResultPrunedUiEvent(toolCallId: string, content: string): void {

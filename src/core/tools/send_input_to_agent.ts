@@ -47,7 +47,7 @@ const sendInputArgsSchema = z.object({
 });
 
 function formatSendInputToolResult(args: { id: string; name: string; title: string }): string {
-  return [`id: ${args.id}`, `name: ${args.name}`, `title: ${args.title}`, "status: running"].join(
+  return [`ID: ${args.id}`, `Name: ${args.name}`, `Title: ${args.title}`, "Status: Running"].join(
     "\n",
   );
 }
@@ -90,21 +90,23 @@ export function createSendInputToAgentToolDefinition(
 
       const parsedArgs = parseToolArgs(sendInputArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
       ({ id, prompt } = parsedArgs.data);
       headerTarget = id;
 
       if (!isMainToolDispatchContext(context)) {
-        return blocked("send_input_to_agent tool is only available in the main session.", { id });
+        return blocked("The send_input_to_agent tool is only available in the main session.", {
+          id,
+        });
       }
 
       const controlPlane = context.subagentControlPlane;
 
       const snapshot = controlPlane.getSnapshot(id);
       if (!snapshot) {
-        return blocked(`unknown subagent id: ${id}`, { id, title: id });
+        return blocked(`Unknown subagent ID: ${id}`, { id, title: id });
       }
 
       const config = context.config;
@@ -123,8 +125,8 @@ export function createSendInputToAgentToolDefinition(
         },
         run: (async (): Promise<ToolDispatchResult> => {
           if (signal?.aborted) {
-            const reason = "aborted";
-            const toolResult = createToolError(toolCall, `send_input_to_agent ${reason}`);
+            const reason = "Aborted.";
+            const toolResult = createToolError(toolCall, reason);
             const uiText = buildSubagentUiText({
               output: reason,
               statusText: `${target.name} · ${id}`,

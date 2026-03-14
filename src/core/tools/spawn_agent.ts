@@ -92,17 +92,17 @@ function formatSpawnToolResult(args: {
   title: string;
   workingDirectory?: string;
 }): string {
-  const lines = [`id: ${args.id}`, `name: ${args.name}`, `title: ${args.title}`];
+  const lines = [`ID: ${args.id}`, `Name: ${args.name}`, `Title: ${args.title}`];
   if (args.workingDirectory) {
-    lines.push(`workingDirectory: ${args.workingDirectory}`);
+    lines.push(`Working directory: ${args.workingDirectory}`);
   }
-  lines.push("status: running");
+  lines.push("Status: Running");
   return lines.join("\n");
 }
 
 function formatAllowedLaunchModels(launchModels: string[]): string {
   if (launchModels.length === 0) {
-    return "(none configured)";
+    return "(None configured)";
   }
 
   return launchModels.map((entry) => `'${entry}'`).join(", ");
@@ -138,7 +138,7 @@ async function buildSubagentSystemPrompt(args: {
     },
   });
   if (skillsResult.errors.length > 0) {
-    throw new Error(`failed to load skills for prompt context:\n${skillsResult.errors.join("\n")}`);
+    throw new Error(`Failed to load skills for prompt context:\n${skillsResult.errors.join("\n")}`);
   }
 
   const bootstrap = resolveRuntimePromptBootstrap({
@@ -202,7 +202,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
 
       const parsedArgs = parseToolArgs(spawnArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
       const { prompt, model, workingDirectory } = parsedArgs.data;
@@ -211,7 +211,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       headerTarget = title;
 
       if (!isMainToolDispatchContext(context)) {
-        return blocked("spawn_agent tool is only available in the main session.", {
+        return blocked("The spawn_agent tool is only available in the main session.", {
           name,
           title,
         });
@@ -229,7 +229,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       } = context;
 
       if (!persona.subagents || Object.keys(persona.subagents).length === 0) {
-        return blocked("spawn_agent tool is not enabled for the current persona.", {
+        return blocked("The spawn_agent tool is not enabled for the current persona.", {
           name,
           title,
         });
@@ -237,7 +237,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
 
       const personaConfig = persona.subagents[name];
       if (!personaConfig) {
-        return blocked(`subagent '${name}' is not enabled for the current persona.`, {
+        return blocked(`Subagent '${name}' is not enabled for the current persona.`, {
           name,
           title,
         });
@@ -249,7 +249,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           resolveModel: context.modelResolver,
         });
         if (parsedLaunchModel.error || !parsedLaunchModel.launchModel) {
-          return blocked(`invalid model parameter: ${parsedLaunchModel.error}.`, {
+          return blocked(`Invalid model parameter: ${parsedLaunchModel.error}.`, {
             name,
             title,
           });
@@ -258,7 +258,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         const launchModels = personaConfig.launchModels ?? [];
         if (launchModels.length === 0) {
           return blocked(
-            `subagent '${name}' does not allow launch model overrides. allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
+            `Subagent '${name}' does not allow launch model overrides. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
             {
               name,
               title,
@@ -268,7 +268,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
 
         if (!launchModels.includes(parsedLaunchModel.launchModel.normalized)) {
           return blocked(
-            `model '${parsedLaunchModel.launchModel.normalized}' is not allowed for subagent '${name}'. allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
+            `Model '${parsedLaunchModel.launchModel.normalized}' is not allowed for subagent '${name}'. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
             {
               name,
               title,
@@ -321,7 +321,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           });
         } catch (error) {
           return blocked(
-            `failed to build subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
+            `Failed to build the subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
             {
               name,
               title,
@@ -332,7 +332,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         systemPrompt = subagentPrompts[name];
       }
       if (!systemPrompt) {
-        return blocked(`subagent '${name}' is missing its system prompt.`, {
+        return blocked(`Subagent '${name}' is missing its system prompt.`, {
           name,
           title,
         });
@@ -371,8 +371,8 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         },
         run: (async (): Promise<ToolDispatchResult> => {
           if (signal?.aborted) {
-            const reason = "aborted";
-            const toolResult = createToolError(toolCall, `spawn_agent ${reason}`);
+            const reason = "Aborted.";
+            const toolResult = createToolError(toolCall, reason);
             const uiText = buildSubagentUiText({
               output: reason,
               statusText: [...statusPrefixParts, reason].join(" · "),

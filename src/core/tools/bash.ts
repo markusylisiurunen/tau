@@ -179,7 +179,7 @@ async function writeBashTempFile(
 
 function formatBashOutputFileHint(args: { path?: string }): string {
   if (!args.path) return "";
-  return ` full output saved to ${args.path}. to see more output, either read the file or re-run with a higher maxOutputTokens. if reading the file, be mindful of its size.`;
+  return ` Full output saved to ${args.path}. To see more output, either read the file or re-run with a higher maxOutputTokens. If reading the file, be mindful of its size.`;
 }
 
 export async function prepareBashOutput(
@@ -231,19 +231,19 @@ export function formatBashToolResultText(args: {
   if (gated) {
     const preview = model.content;
     const totalTokenEstimate = bytesToTokens(model.totalBytes);
-    const gateNote = `\n\n[output gated: this command already ran and any side effects have persisted. full output estimate: ~${totalTokenEstimate} tokens.${formatBashOutputFileHint({ path: fullOutputPath })} maxOutputTokens can be set to ${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}; up to ${BASH_MAX_OUTPUT_TOKENS} only when the user explicitly requests it. user requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
+    const gateNote = `\n\n[Output gated: This command already ran and any side effects have persisted. Full output estimate: ~${totalTokenEstimate} tokens.${formatBashOutputFileHint({ path: fullOutputPath })} maxOutputTokens can be set to ${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}; up to ${BASH_MAX_OUTPUT_TOKENS} only when the user explicitly requests it. User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
     const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
     return `${preview}${gateNote}${exitNote}`;
   }
 
   if (hasNoOutput && exitCode === 0) {
-    return "command produced no output (exit 0)";
+    return "Command produced no output (exit 0)";
   }
 
   const outputForContext = model.content;
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
+      ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
       : "";
   const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
   return `${outputForContext}${truncNote}${exitNote}`;
@@ -259,7 +259,7 @@ export function formatBashUserMessageText(args: {
   const outputForContext = model.content.trimEnd() || "(no output)";
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
+      ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
       : "";
   const bashContextText = `$ ${command}\n${outputForContext}${truncNote}`;
   return `Bash command output:\n${bashContextText}`;
@@ -423,7 +423,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
       };
 
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
       const {
@@ -437,7 +437,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
 
       if (riskLevel === "read-only" && safetyLevel === "write") {
         return blocked(
-          "blocked due to risk level being set to 'read-only'. the declared safetyLevel 'write' exceeds the current risk level. ask the user to enable it with /risk:read-write or revise to a read-only command.",
+          "Blocked because the risk level is set to 'read-only'. The declared safetyLevel 'write' exceeds the current risk level. Ask the user to enable it with /risk:read-write or revise to a read-only command.",
         );
       }
 
@@ -503,7 +503,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
             };
             return { kind: "single", toolResult, uiEvent };
           } catch (e) {
-            const msg = `bash tool execution failed: ${e instanceof Error ? e.message : String(e)}`;
+            const msg = `Bash tool execution failed: ${e instanceof Error ? e.message : String(e)}`;
             const toolResult = createToolError(toolCall, msg);
             const uiEvent: ToolUiEvent = {
               type: "bash_blocked",

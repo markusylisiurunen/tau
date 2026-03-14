@@ -55,8 +55,8 @@ function buildSubagentBody(result: SubagentResult): string {
   const errorLine =
     result.status !== "success"
       ? result.error
-        ? `error: ${result.error}`
-        : `status: ${result.status}`
+        ? `Error: ${result.error}`
+        : `Status: ${result.status}`
       : undefined;
   const bodyParts = [errorLine, outputs.join("\n\n")].filter((text) => text?.trim().length);
   return bodyParts.join("\n");
@@ -141,7 +141,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
 
       const parsedArgs = parseToolArgs(waitArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
       ({ ids } = parsedArgs.data);
@@ -158,7 +158,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
       const dedupedTarget = formatHeaderTarget(deduped);
 
       if (!isMainToolDispatchContext(context)) {
-        return blocked("wait_for_agent tool is only available in the main session.");
+        return blocked("The wait_for_agent tool is only available in the main session.");
       }
 
       const controlPlane = context.subagentControlPlane;
@@ -192,14 +192,14 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
               agentIds: deduped,
               headerTarget: dedupedTarget,
               status: hasFailures ? "error" : "success",
-              message: hasFailures ? "one or more subagents reported errors" : undefined,
+              message: hasFailures ? "One or more subagents reported errors." : undefined,
               uiText,
             };
             const toolResult = createToolResult(toolCall, resultText, hasFailures);
             return { kind: "single", toolResult, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            const reason = message.trim() || "wait_for_agent failed";
+            const reason = message.trim() || "The wait_for_agent request failed.";
             const uiText = buildSubagentUiText({
               output: reason,
               statusText: "error",

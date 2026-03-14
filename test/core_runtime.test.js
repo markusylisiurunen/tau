@@ -444,7 +444,7 @@ describe("session prompt composer", () => {
     expect(result.baseSystemPrompt).toContain("### Project context");
     expect(result.baseSystemPrompt).toContain("### Available sub-agents");
     expect(result.baseSystemPrompt).toContain("`researcher`");
-    expect(result.baseSystemPrompt).toContain("launch models");
+    expect(result.baseSystemPrompt).toContain("Launch models");
     expect(result.baseSystemPrompt).toContain("openai/gpt-5.4:high");
     expect(result.baseSystemPrompt).toContain("<sandbox-info>");
 

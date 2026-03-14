@@ -342,7 +342,7 @@ describe("spawn_agent tool", () => {
 
     expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
-    expect(getText(result.toolResult)).toContain("invalid arguments: model:");
+    expect(getText(result.toolResult)).toContain("Invalid arguments: model:");
     expect(spawned).toHaveLength(0);
   });
 
@@ -369,7 +369,7 @@ describe("spawn_agent tool", () => {
 
     expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
-    expect(getText(result.toolResult)).toContain("invalid arguments: workingDirectory:");
+    expect(getText(result.toolResult)).toContain("Invalid arguments: workingDirectory:");
     expect(spawned).toHaveLength(0);
   });
 
@@ -555,8 +555,8 @@ describe("spawn_agent tool", () => {
 
       expect(result.kind).toBe("single");
       expect(result.toolResult.isError).toBe(true);
-      expect(getText(result.toolResult)).toContain("failed to build subagent prompt");
-      expect(getText(result.toolResult)).toContain("failed to load skills for prompt context");
+      expect(getText(result.toolResult)).toContain("Failed to build the subagent prompt");
+      expect(getText(result.toolResult)).toContain("Failed to load skills for prompt context");
       expect(getText(result.toolResult)).toContain("invalid frontmatter");
       expect(spawned).toHaveLength(0);
     } finally {

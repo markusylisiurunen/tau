@@ -1147,12 +1147,12 @@ describe("ChatController prune handling", () => {
     const history = controller.engine.history;
     const assistant = history.find((message) => message.role === "assistant");
     const toolCall = assistant.content.find((block) => block.type === "toolCall");
-    expect(toolCall.arguments.oldText).toBe("[content pruned]");
-    expect(toolCall.arguments.newText).toBe("[content pruned]");
+    expect(toolCall.arguments.oldText).toBe("[Content pruned]");
+    expect(toolCall.arguments.newText).toBe("[Content pruned]");
 
     const toolResult = history.find((message) => message.role === "toolResult");
     const text = toolResult.content[0].text;
-    expect(text).toContain(`[tool result pruned] ${TOOL_NAME_EDIT} diff`);
+    expect(text).toContain("[Tool result pruned] Edit diff");
     expect(text).toContain("… 6 unchanged line(s) omitted …");
     expect(text).toContain("  pre 6");
     expect(text).not.toContain("  pre 0");
@@ -1214,7 +1214,7 @@ describe("ChatController prune handling", () => {
     const toolResult = history.find((message) => message.role === "toolResult");
     const text = toolResult.content[0].text;
 
-    expect(text).toContain("[tool result pruned] bash output removed");
+    expect(text).toContain("[Tool result pruned] bash output removed");
     expect(stub.toolUiEvents).toContainEqual({
       type: "tool_pruned",
       toolCallId: "bash-call-1",
@@ -1261,7 +1261,7 @@ describe("ChatController prune handling", () => {
     const toolResult = history.find((message) => message.role === "toolResult");
     const text = toolResult.content[0].text;
 
-    expect(text).toContain("[tool result pruned] bash output removed");
+    expect(text).toContain("[Tool result pruned] bash output removed");
     expect(stub.toolUiEvents).toContainEqual({
       type: "tool_pruned",
       toolCallId: "bash-call-1",

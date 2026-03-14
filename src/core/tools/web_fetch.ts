@@ -143,7 +143,7 @@ function formatExtractResults(response: ExtractResponse): TruncationResult {
   const errors = response.errors;
 
   if (results.length === 0 && errors.length === 0) {
-    const content = "no extract results";
+    const content = "No extract results.";
     const bytes = Buffer.byteLength(content, "utf-8");
     return {
       content,
@@ -161,7 +161,7 @@ function formatExtractResults(response: ExtractResponse): TruncationResult {
   const lines: string[] = [];
 
   for (const r of results) {
-    const title = r.title?.trim() || "(no title)";
+    const title = r.title?.trim() || "(No title)";
     const date = r.publish_date ? ` (${r.publish_date})` : "";
     lines.push(`${title}${date}\n${r.url}`);
 
@@ -173,7 +173,7 @@ function formatExtractResults(response: ExtractResponse): TruncationResult {
 
     const full = r.full_content?.trim();
     if (full) {
-      if (excerpts.length > 0) lines.push("\n(full content)\n");
+      if (excerpts.length > 0) lines.push("\n(Full content)\n");
       lines.push(full);
     }
 
@@ -181,7 +181,7 @@ function formatExtractResults(response: ExtractResponse): TruncationResult {
   }
 
   if (errors.length > 0) {
-    lines.push("errors:\n");
+    lines.push("Errors:\n");
     for (const err of errors) {
       const status =
         typeof err.http_status_code === "number" ? ` (HTTP ${err.http_status_code})` : "";
@@ -227,14 +227,14 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
       };
 
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
       const args = parsedArgs.data;
 
       const apiKey = getParallelApiKey(config);
       if (!apiKey) {
-        return blocked("missing Parallel API key.");
+        return blocked("Missing Parallel API key.");
       }
 
       return {
@@ -280,7 +280,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
 
             if (!res.ok) {
               const details =
-                extractParallelErrorMessage(parsed) || res.statusText || "request failed";
+                extractParallelErrorMessage(parsed) || res.statusText || "Request failed.";
               throw new Error(`Parallel API error (${res.status}): ${details}`);
             }
 
@@ -310,7 +310,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
             return { kind: "single", toolResult, uiEvent };
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            const reason = msg.trim() ? msg : "request failed";
+            const reason = msg.trim() ? msg : "Request failed.";
             const toolResult = createToolError(toolCall, reason);
             const uiEvent: ToolUiEvent = {
               type: "web_fetch_finished",

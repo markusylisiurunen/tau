@@ -62,7 +62,7 @@ function formatTerminateOutput(result: SubagentResult): string {
   }
 
   if (result.status !== "success") {
-    const errorLine = result.error ? `error: ${result.error}` : `status: ${result.status}`;
+    const errorLine = result.error ? `Error: ${result.error}` : `Status: ${result.status}`;
     return body ? `${errorLine}\n${body}` : errorLine;
   }
 
@@ -100,14 +100,14 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
 
       const parsedArgs = parseToolArgs(terminateArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
       ({ id } = parsedArgs.data);
       headerTarget = id;
 
       if (!isMainToolDispatchContext(context)) {
-        return blocked("terminate_agent tool is only available in the main session.");
+        return blocked("The terminate_agent tool is only available in the main session.");
       }
 
       const controlPlane = context.subagentControlPlane;
@@ -124,7 +124,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
           try {
             const result = await controlPlane.terminate(id, signal);
             if (!result) {
-              const message = `unknown subagent id '${id}'.`;
+              const message = `Unknown subagent ID '${id}'.`;
               const uiText = buildSubagentUiText({
                 output: message,
                 statusText: "error",
@@ -152,7 +152,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
             });
             const statusText = succeeded
               ? baseStatusText
-              : `${baseStatusText} · status ${result.status}`;
+              : `${baseStatusText} · Status ${result.status}`;
             const uiText = buildSubagentUiText({
               output: formatTerminateOutput(result),
               statusText,
@@ -166,14 +166,14 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               headerTarget,
               status: succeeded ? "success" : "error",
               finalStatus: result.status,
-              message: succeeded ? undefined : `subagent finished with status ${result.status}`,
+              message: succeeded ? undefined : `Subagent finished with status ${result.status}.`,
               uiText,
             };
             const toolResult = createToolResult(toolCall, resultText, !succeeded);
             return { kind: "single", toolResult, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            const reason = message.trim() || "terminate_agent failed";
+            const reason = message.trim() || "The terminate_agent request failed.";
             const uiText = buildSubagentUiText({
               output: reason,
               statusText: "error",

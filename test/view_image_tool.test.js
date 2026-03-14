@@ -98,7 +98,7 @@ describe("view_image tool", () => {
       }
 
       expect(result.uiEvent.uiText.statusLine).toBe("image/png");
-      expect(getTextBlock(result.toolResult.content)).toBe(`viewed ${filePath} (image/png)`);
+      expect(getTextBlock(result.toolResult.content)).toBe(`Viewed ${filePath} (image/png)`);
 
       const imageBlock = getImageBlock(result.toolResult.content);
       const outputBuffer = Buffer.from(imageBlock.data, "base64");
@@ -189,7 +189,7 @@ describe("view_image tool", () => {
         2048,
       );
       expect(getTextBlock(result.toolResult.content)).toBe(
-        `viewed ${filePath} (${result.uiEvent.mimeType})`,
+        `Viewed ${filePath} (${result.uiEvent.mimeType})`,
       );
     } finally {
       fx.cleanup();
@@ -220,7 +220,7 @@ describe("view_image tool", () => {
       }
 
       expect(result.uiEvent.type).toBe("view_image_blocked");
-      expect(getTextBlock(result.toolResult.content)).toContain("unsupported image format");
+      expect(getTextBlock(result.toolResult.content)).toContain("Unsupported image format");
     } finally {
       fx.cleanup();
     }

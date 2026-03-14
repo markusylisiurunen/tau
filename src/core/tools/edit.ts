@@ -140,14 +140,14 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
       };
 
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
       const { oldText, newText } = parsedArgs.data;
 
       if (riskLevel !== "read-write") {
         return blocked(
-          `requires risk level 'read-write', but current level is '${riskLevel}'. ask the user to run /risk:read-write.`,
+          `Requires risk level 'read-write', but the current level is '${riskLevel}'. Ask the user to run /risk:read-write.`,
         );
       }
 
@@ -158,9 +158,9 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
         if ((e as NodeJS.ErrnoException).code === "ENOENT") {
-          return blocked(`file not found at '${path}'. verify the path is correct.`);
+          return blocked(`File not found at '${path}'. Verify the path is correct.`);
         }
-        return blocked(`could not read file: ${errorMessage}`);
+        return blocked(`Could not read file: ${errorMessage}`);
       }
 
       const matchCount = countOccurrences(content, oldText);
@@ -173,28 +173,28 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
         let hint = "";
         if (trimmedCount > 0) {
           hint =
-            " hint: found matches when ignoring leading/trailing whitespace. check that your oldText exactly matches the file content including whitespace.";
+            " Hint: Found matches when ignoring leading/trailing whitespace. Check that your oldText exactly matches the file content, including whitespace.";
         } else if (oldText.includes("\n")) {
           hint =
-            " hint: your search contains newlines. ensure line endings match the file (LF vs CRLF) and indentation is exact.";
+            " Hint: Your search contains newlines. Ensure line endings match the file (LF vs CRLF) and indentation is exact.";
         } else {
           // Check for partial matches
           const words = oldText.split(/\s+/).filter((w) => w.length > 3);
           const partialMatches = words.filter((w) => content.includes(w));
           if (partialMatches.length > 0 && partialMatches.length < words.length) {
-            hint = ` hint: some words from oldText were found ('${partialMatches.slice(0, 3).join("', '")}'), but the exact string was not. check for typos or extra whitespace.`;
+            hint = ` Hint: Some words from oldText were found ('${partialMatches.slice(0, 3).join("', '")}'), but the exact string was not. Check for typos or extra whitespace.`;
           }
         }
 
         return blocked(
-          `oldText not found in file.${hint} read the file first to see its current content.`,
+          `No exact match for oldText was found in the file.${hint} Read the file first to see its current content.`,
         );
       }
 
       if (matchCount > 1) {
         const firstMatchContext = findMatchContext(content, oldText);
         return blocked(
-          `found ${matchCount} matches for oldText, but exactly 1 is required. make oldText more specific to match only one location.\n\nfirst match context:\n${firstMatchContext}`,
+          `Found ${matchCount} matches for oldText, but exactly 1 is required. Make oldText more specific to match only one location.\n\nFirst match context:\n${firstMatchContext}`,
         );
       }
 
@@ -207,8 +207,8 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
         const { lines: diffLines, added, removed } = buildLineDiff(oldText, newText);
         const sizeDiff = newText.length - oldText.length;
         const sizeDiffStr =
-          sizeDiff === 0 ? "same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
-        const summaryLine = `successfully edited ${path}: ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
+          sizeDiff === 0 ? "Same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
+        const summaryLine = `Successfully edited ${path}: ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
         const statusLine = `+${added}, -${removed} · ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
 
         const resultText = formatEditToolResultText({ summaryLine });
@@ -229,7 +229,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
         return { kind: "single", toolResult, uiEvent };
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`could not write file: ${errorMessage}`);
+        return blocked(`Could not write file: ${errorMessage}`);
       }
     },
   };

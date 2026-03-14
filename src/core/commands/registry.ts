@@ -1,6 +1,6 @@
-import { homedir } from "node:os";
-import { relative, sep } from "node:path";
+import { dirname } from "node:path";
 import { type RiskLevel, RiskLevelSchema, type Skill } from "../types.js";
+import { formatPathForDisplay } from "../utils/format.js";
 
 export type Command = (
   | { type: "help" }
@@ -100,19 +100,7 @@ export function getRiskLevelAutocompleteOptions(
 }
 
 function formatSkillPath(fullPath: string): string {
-  const cwd = process.cwd();
-  const home = homedir();
-
-  if (fullPath === cwd || fullPath.startsWith(cwd + sep)) {
-    return relative(cwd, fullPath);
-  }
-
-  if (fullPath === home || fullPath.startsWith(home + sep)) {
-    const relPath = relative(home, fullPath);
-    return relPath ? `~/${relPath}` : "~";
-  }
-
-  return fullPath;
+  return formatPathForDisplay(dirname(dirname(fullPath)));
 }
 
 function splitCommandInput(raw: string): { command: string; extra?: string } {
@@ -167,7 +155,7 @@ export class CommandRegistry<Ctx = unknown> {
     if (agentsFiles && agentsFiles.length > 0) {
       lines.push("context:");
       agentsFiles.forEach((agentsFile) => {
-        lines.push(`  ${agentsFile}`);
+        lines.push(`  ${formatPathForDisplay(agentsFile)}`);
       });
     }
     if (skills && skills.length > 0) {

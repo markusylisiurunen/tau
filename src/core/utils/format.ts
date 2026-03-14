@@ -1,5 +1,14 @@
 import { homedir } from "node:os";
 
+export function formatPathForDisplay(path: string): string {
+  const home = homedir();
+  if (path === home) return "~";
+  if (path.startsWith(`${home}/`)) {
+    return `~${path.slice(home.length)}`;
+  }
+  return path;
+}
+
 export function formatTokenWindow(tokens: number): string {
   if (tokens >= 1_000_000) {
     const m = tokens / 1_000_000;
@@ -32,12 +41,7 @@ export function formatAdaptiveNumber(
 }
 
 export function formatCwd(cwd: string): string {
-  const home = homedir();
-  if (cwd === home) return "~";
-  if (cwd.startsWith(`${home}/`)) {
-    return `~${cwd.slice(home.length)}`;
-  }
-  return cwd;
+  return formatPathForDisplay(cwd);
 }
 
 export function formatDurationMs(durationMs: number | null | undefined): string {

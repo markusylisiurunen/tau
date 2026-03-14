@@ -45,7 +45,7 @@ Avoid:
 const BLOCK_TOOL_USE_GUIDELINES = `
 ### Tool use guidelines
 
-**Efficiency**: Make parallel tool calls when independent. Use absolute paths; avoid \`cd\`. This keeps the working directory predictable. If you need to run in a different directory, use the bash tool's \`workingDirectory\` parameter.
+**Efficiency**: Use parallel tool calls selectively. Parallelize only when the work is clearly independent and you already know you need every result. Prefer the smallest useful next step over speculative fan-out. Use absolute paths; avoid \`cd\`. This keeps the working directory predictable. If you need to run in a different directory, use the bash tool's \`workingDirectory\` parameter.
 
 **Tool choices**: Always use ripgrep (rg), never grep. Standard grep is painfully slow on large codebases and can hang for tens of seconds or longer. Prefer fd over find.
 
@@ -57,7 +57,7 @@ const BLOCK_TOOL_USE_GUIDELINES = `
 const BLOCK_TOOL_USE_GUIDELINES_CODER = `
 ### Tool use guidelines
 
-**Efficiency**: Make parallel tool calls when independent. Use absolute paths; avoid \`cd\`. This keeps the working directory predictable. If you need to run in a different directory, use the bash tool's \`workingDirectory\` parameter.
+**Efficiency**: Use parallel tool calls selectively. Parallelize only when the work is clearly independent and you already know you need every result. Prefer the smallest useful next step over speculative fan-out. Use absolute paths; avoid \`cd\`. This keeps the working directory predictable. If you need to run in a different directory, use the bash tool's \`workingDirectory\` parameter.
 
 **Tool choices**: Always use ripgrep (rg), never grep. Standard grep is painfully slow on large codebases and can hang for tens of seconds or longer. Prefer fd over find.
 

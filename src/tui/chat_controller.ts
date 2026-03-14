@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { AssistantMessage, Message, ToolResultMessage } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import { formatCodexAuthError } from "../core/auth/auth_messages.js";
@@ -63,7 +63,12 @@ import {
   formatProjectContextChangeNotice,
   formatRiskLevelChangeNotice,
 } from "../core/utils/context.js";
-import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
+import {
+  formatAdaptiveNumber,
+  formatCwd,
+  formatPathForDisplay,
+  formatTokenWindow,
+} from "../core/utils/format.js";
 import { getGitRoot } from "../core/utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
 import { transcribeMistralAudio } from "../core/utils/mistral_transcription.js";
@@ -386,14 +391,8 @@ export class ChatController {
 
     this.view.addMessage({
       type: "app_intro",
-      appName: "tau",
-      version: APP_VERSION,
-      helpText: this.commandRegistry.buildHelpText({
-        agentsFiles: this.agentsFiles,
-        skills: this.skills,
-        riskLevels: ALLOWED_RISK_LEVELS,
-        themes: this.themes.map((theme) => theme.id),
-      }),
+      title: this.buildStartupIntroTitle(),
+      body: this.buildStartupIntroBody(),
     });
 
     if (this.agentsConfigErrors.length > 0) {
@@ -1751,6 +1750,44 @@ export class ChatController {
   private async handleCommand(raw: string): Promise<void> {
     const cmd = this.commandRegistry.parse(raw);
     await this.commandRegistry.dispatch(cmd, this.commandHandlers);
+  }
+
+  private buildStartupIntroTitle(): string {
+    const parts = [`tau v${APP_VERSION}`];
+
+    if (this.agentsFiles.length > 0) {
+      parts.push(`${this.agentsFiles.length} AGENTS.md`);
+    }
+    if (this.skills.length > 0) {
+      parts.push(`${this.skills.length} skills`);
+    }
+
+    return parts.join(" · ");
+  }
+
+  private buildStartupIntroBody(): string {
+    const lines = [
+      "type `/help` for commands and keybindings",
+      "mention files with `@`, agents and skills with `@@`",
+      "run bash commands with `!` or `!!`",
+    ];
+
+    if (this.skills.length > 0) {
+      lines.push("", "skills:");
+      for (const skill of this.skills) {
+        const skillsRoot = formatPathForDisplay(dirname(dirname(skill.path)));
+        lines.push(`  ${skill.name} (${skillsRoot})`);
+      }
+    }
+
+    if (this.agentsFiles.length > 0) {
+      lines.push("", "context:");
+      for (const agentsFile of this.agentsFiles) {
+        lines.push(`  ${formatPathForDisplay(agentsFile)}`);
+      }
+    }
+
+    return lines.join("\n");
   }
 
   private showHelp(): void {

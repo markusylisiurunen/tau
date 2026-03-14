@@ -50,9 +50,8 @@ export function renderChatMessage(
   switch (model.type) {
     case "app_intro": {
       const component = new AppIntroComponent(theme, {
-        appName: model.appName,
-        version: model.version,
-        helpText: model.helpText,
+        title: model.title,
+        body: model.body,
       });
       return {
         component,
@@ -60,9 +59,8 @@ export function renderChatMessage(
         update: (nextModel) => {
           if (nextModel.type !== "app_intro") return false;
           component.update({
-            appName: nextModel.appName,
-            version: nextModel.version,
-            helpText: nextModel.helpText,
+            title: nextModel.title,
+            body: nextModel.body,
           });
           return true;
         },

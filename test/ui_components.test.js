@@ -33,17 +33,17 @@ function createToolEvent(label) {
   };
 }
 
-test("AppIntroComponent renders header and help text", () => {
+test("AppIntroComponent renders title and body", () => {
   const theme = createTagTheme();
   const component = new AppIntroComponent(theme, {
-    appName: "tau",
-    version: "1.0.0",
-    helpText: "help text",
+    title: "tau v1.0.0 · 2 AGENTS.md · 5 skills",
+    body: "type `/help` for commands and keybindings",
   });
-  const text = renderText(component, 80);
-  expect(text).toContain("<brandAccent>tau</brandAccent>");
-  expect(text).toContain("<textMuted>– terminal chat (v1.0.0)</textMuted>");
-  expect(text).toContain("<textMuted>help text</textMuted>");
+  const text = renderText(component, 120);
+  expect(text).toContain(
+    "<brandAccent>tau</brandAccent> <textMuted>v1.0.0 · 2 AGENTS.md · 5 skills</textMuted>",
+  );
+  expect(text).toContain("<textMuted>type </textMuted><codeInlineText>/help</codeInlineText>");
 });
 
 test("SessionDividerComponent renders a muted divider line", () => {

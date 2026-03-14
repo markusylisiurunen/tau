@@ -27,23 +27,23 @@
     "access": "public"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.56.3",
-    "@mariozechner/pi-tui": "^0.56.3",
+    "@mariozechner/pi-ai": "^0.58.0",
+    "@mariozechner/pi-tui": "^0.58.0",
     "@sinclair/typebox": "^0.34.48",
     "chalk": "^5.6.2",
-    "file-type": "^21.3.0",
+    "file-type": "^21.3.2",
     "sharp": "^0.34.5",
     "strip-ansi": "^7.2.0",
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.6",
-    "@types/node": "^25.3.5",
+    "@biomejs/biome": "2.4.7",
+    "@types/node": "^25.5.0",
     "colorjs.io": "^0.6.1",
     "prettier": "^3.8.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.0"
   },
   "engines": {
     "node": ">=24.0.0"

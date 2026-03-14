@@ -899,6 +899,19 @@ export class ChatController {
   private toggleThinkingVisibility(): void {
     this.showThinking = !this.showThinking;
     this.view.setThinkingVisibility(this.showThinking);
+
+    if (this.showThinking && this.assistantState) {
+      const { model } = this.assistantState;
+      if (
+        !this.assistantState.inserted &&
+        model.type === "assistant_partial" &&
+        model.text.length === 0 &&
+        model.thinking?.trim().length
+      ) {
+        this.ensureAssistantInserted(this.assistantState);
+      }
+    }
+
     const message = this.showThinking ? "thoughts visible" : "thoughts hidden";
     this.view.addSystemMessage(message, "success");
   }

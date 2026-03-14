@@ -24,6 +24,7 @@ function createStubView() {
   const removeMessagesCalls = [];
   const removeMessagesFromCalls = [];
   const finalizeToolUiPendingCalls = [];
+  const thinkingVisibilityCalls = [];
   let clearToolUiTransientStateCallCount = 0;
   let rewindPickerHideCount = 0;
   let editorText = "";
@@ -38,6 +39,7 @@ function createStubView() {
     removeMessagesCalls,
     removeMessagesFromCalls,
     finalizeToolUiPendingCalls,
+    thinkingVisibilityCalls,
     get clearToolUiTransientStateCallCount() {
       return clearToolUiTransientStateCallCount;
     },
@@ -67,7 +69,9 @@ function createStubView() {
       addSystemMessage: (text, kind) => {
         systemMessages.push({ text, kind });
       },
-      setThinkingVisibility: () => {},
+      setThinkingVisibility: (visible) => {
+        thinkingVisibilityCalls.push(visible);
+      },
       setCompactToolUi: () => {},
       updateStatus: () => {},
       startWorkingIcon: () => {},
@@ -252,6 +256,32 @@ describe("ChatController event handling", () => {
 
     const assistantAddsAfter = stub.added.filter((m) => m.type === "assistant_partial");
     expect(assistantAddsAfter.length).toBe(1);
+  });
+
+  it("shows the current assistant thinking immediately when thoughts are toggled on", () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.onEvent({ type: "assistant_start", historyEntryId: "assistant-thinking" });
+    controller.onEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-thinking",
+      snapshot: { text: "", thinking: "hmm", hasTextStarted: false, hasAnyThinking: true },
+    });
+
+    expect(stub.added.filter((m) => m.type === "assistant_partial")).toEqual([]);
+
+    const handlers = controller.getInputHandlers();
+    handlers.onCtrlT?.();
+
+    const assistantAdds = stub.added.filter((m) => m.type === "assistant_partial");
+    expect(stub.thinkingVisibilityCalls.at(-1)).toBe(true);
+    expect(assistantAdds).toHaveLength(1);
+    expect(assistantAdds[0]).toEqual({
+      type: "assistant_partial",
+      text: "",
+      thinking: "hmm",
+    });
   });
 
   it("maps notice severity to system message kinds", () => {

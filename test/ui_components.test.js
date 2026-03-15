@@ -1,6 +1,7 @@
 import { visibleWidth } from "@mariozechner/pi-tui";
 import stripAnsi from "strip-ansi";
 import { expect, test } from "vitest";
+import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
 import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
 import { renderChatMessage } from "../dist/tui/ui/chat_message_model.js";
@@ -14,6 +15,7 @@ import { FooterComponent } from "../dist/tui/ui/footer.js";
 import { QueuedMessagesComponent } from "../dist/tui/ui/queued_messages.js";
 import { RewindPickerComponent } from "../dist/tui/ui/rewind_picker.js";
 import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
+import { SlashAutocompleteProvider } from "../dist/tui/ui/slash_autocomplete.js";
 import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
@@ -29,6 +31,34 @@ function createToolEvent(label) {
     command: label,
     headerTarget: label,
     reason: "blocked",
+  };
+}
+
+function createSlashProvider(options = {}) {
+  return new SlashAutocompleteProvider(
+    createCommandRegistry(),
+    () => options.personas ?? [],
+    () => options.prompts ?? [],
+    () => options.themes ?? [],
+    () => options.bashCommands ?? [],
+    () => options.files ?? [],
+    () => options.skills ?? [],
+    () => options.agents ?? [],
+    () => options.riskLevels ?? ["read-only", "read-write"],
+  );
+}
+
+function applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+  const line = lines[cursorLine] ?? "";
+  const beforePrefix = line.slice(0, cursorCol - prefix.length);
+  const afterCursor = line.slice(cursorCol);
+  const nextLine = beforePrefix + item.value + afterCursor;
+  const nextLines = [...lines];
+  nextLines[cursorLine] = nextLine;
+  return {
+    lines: nextLines,
+    cursorLine,
+    cursorCol: beforePrefix.length + item.value.length,
   };
 }
 
@@ -262,6 +292,152 @@ test("CustomEditor strips ANSI sequences from input", () => {
   const editor = new CustomEditor(theme);
   editor.handleInput("hello \u001b[31mred\u001b[0m");
   expect(editor.getLines()[0]).toBe("hello red");
+});
+
+test("CustomEditor strips ANSI sequences from insertTextAtCursor", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+
+  editor.insertTextAtCursor("hello \u001b[31mred\u001b[0m");
+
+  expect(editor.getText()).toBe("hello red");
+});
+
+test("CustomEditor preserves tabs when restoring text", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+
+  editor.setText("\tcolumn1\tcolumn2");
+
+  expect(editor.getText()).toBe("\tcolumn1\tcolumn2");
+});
+
+test("CustomEditor renders the cursor over an entire paste marker", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  const pasted = Array.from({ length: 33 }, () => "...is $1.75 / $14 for Codex...").join("\n");
+
+  editor.handleInput(`\x1b[200~${pasted}\x1b[201~`);
+  editor.handleInput("\x1b[D");
+
+  const content = editor.render(40).slice(1, -1).join("\n");
+  expect(content).toContain("<cursor>[paste #1 +33 lines]</cursor>");
+  expect(content).not.toContain("<cursor>[</cursor>paste #1 +33 lines]");
+});
+
+test("CustomEditor inserts Kitty CSI-u printable characters", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+
+  editor.handleInput("\u001b[97u");
+
+  expect(editor.getText()).toBe("a");
+});
+
+test("CustomEditor does not trigger slash autocomplete in multiline drafts", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  editor.setAutocompleteProvider(createSlashProvider());
+  editor.setText("\nworld");
+
+  editor.handleInput("\x1b[A");
+  editor.handleInput("/");
+
+  expect(editor.getText()).toBe("/\nworld");
+  expect(editor.isShowingAutocomplete()).toBe(false);
+});
+
+test("CustomEditor refreshes slash autocomplete after insertTextAtCursor", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  let submitted;
+  editor.onSubmit = (text) => {
+    submitted = text;
+  };
+  editor.setAutocompleteProvider(createSlashProvider());
+
+  editor.handleInput("/");
+  expect(editor.isShowingAutocomplete()).toBe(true);
+
+  editor.insertTextAtCursor("zzzz");
+
+  expect(editor.getText()).toBe("/zzzz");
+  expect(editor.isShowingAutocomplete()).toBe(false);
+
+  editor.handleInput("\r");
+
+  expect(submitted).toBe("/zzzz");
+});
+
+test("CustomEditor keeps the exact file mention match from the real provider", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  editor.setAutocompleteProvider(createSlashProvider({ files: ["foo.tsx", "foo.ts"] }));
+
+  for (const char of "@foo.ts") {
+    editor.handleInput(char);
+  }
+
+  const autocomplete = editor.render(40).map(stripTags).join("\n");
+  expect(autocomplete).toContain("foo.tsx");
+  expect(autocomplete).toContain("foo.ts");
+
+  editor.handleInput("\r");
+
+  expect(editor.getText()).toBe("@foo.ts ");
+  expect(editor.isShowingAutocomplete()).toBe(false);
+});
+
+test("CustomEditor applies a single forced file completion on Tab", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  editor.setAutocompleteProvider({
+    getSuggestions: () => null,
+    getForceFileSuggestions: (lines, _cursorLine, cursorCol) => {
+      const text = lines[0] ?? "";
+      const beforeCursor = text.slice(0, cursorCol);
+      if (beforeCursor !== "Work") return null;
+      return {
+        prefix: "Work",
+        items: [{ value: "Workspace/", label: "Workspace/" }],
+      };
+    },
+    applyCompletion,
+  });
+  editor.setText("Work");
+
+  editor.handleInput("\t");
+
+  expect(editor.getText()).toBe("Workspace/");
+  expect(editor.isShowingAutocomplete()).toBe(false);
+});
+
+test("CustomEditor treats large paste markers atomically on wrapped vertical navigation", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  const pasted = Array.from({ length: 33 }, () => "...is $1.75 / $14 for Codex...").join("\n");
+
+  editor.handleInput(`\x1b[200~${pasted}\x1b[201~`);
+  editor.render(10);
+  editor.handleInput("\x1b[A");
+  editor.handleInput("\x7f");
+
+  expect(editor.getText()).toBe("");
+});
+
+test("CustomEditor insertTextAtCursor exits history browsing mode", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+  editor.addToHistory("older");
+  editor.addToHistory("recent");
+
+  editor.handleInput("\x1b[A");
+  expect(editor.getText()).toBe("recent");
+
+  editor.insertTextAtCursor("!");
+  editor.handleInput("\x1b[B");
+
+  expect(editor.getText()).toBe("recent!");
 });
 
 test("CustomEditor expands large paste markers without token interpolation", () => {

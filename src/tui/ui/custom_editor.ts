@@ -302,6 +302,7 @@ export class CustomEditor extends Editor {
     const logicalLine = this.getLines()[targetVL.logicalLine] ?? "";
     this.state.cursorLine = targetVL.logicalLine;
     this.state.cursorCol = Math.min(targetCol, logicalLine.length);
+    this.snapCursorToSegmentBoundary(logicalLine, direction < 0);
   }
 
   private handleCursorVertical(direction: 1 | -1): void {
@@ -351,6 +352,7 @@ export class CustomEditor extends Editor {
 
     this.state.cursorLine = targetVL.logicalLine;
     this.state.cursorCol = Math.min(targetCol, logicalLine.length);
+    this.snapCursorToSegmentBoundary(logicalLine, direction < 0);
   }
 
   private isOnFirstVisualLinePreserveIndent(): boolean {
@@ -713,8 +715,8 @@ export class CustomEditor extends Editor {
     let inWhitespace = false;
     let charIndex = 0;
 
-    for (const seg of this.segmentGraphemes(line)) {
-      const grapheme = seg;
+    for (const seg of this.segment(line)) {
+      const grapheme = seg.segment;
       const graphemeIsWhitespace = this.isWhitespace(grapheme);
       if (currentToken === "") {
         inWhitespace = graphemeIsWhitespace;
@@ -919,20 +921,20 @@ export class CustomEditor extends Editor {
   }
 
   private getFirstGrapheme(text: string): string {
-    const segments = this.segmentGraphemes(text);
-    return segments[0] ?? "";
+    const segments = [...this.segment(text)];
+    return segments[0]?.segment ?? "";
   }
 
   private getLastGrapheme(text: string): string {
-    const segments = this.segmentGraphemes(text);
-    return segments.length > 0 ? (segments[segments.length - 1] ?? "") : "";
+    const segments = [...this.segment(text)];
+    return segments.length > 0 ? (segments[segments.length - 1]?.segment ?? "") : "";
   }
 
   private sliceWithoutLastGrapheme(text: string): string {
-    const segments = this.segmentGraphemes(text);
+    const segments = [...this.segment(text)];
     if (segments.length === 0) return text;
     segments.pop();
-    return segments.join("");
+    return segments.map((segment) => segment.segment).join("");
   }
 
   private isWhitespace(char: string): boolean {

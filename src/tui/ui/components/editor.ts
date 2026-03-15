@@ -2,14 +2,19 @@ import {
   type AutocompleteProvider,
   type CombinedAutocompleteProvider,
   type Component,
+  decodeKittyPrintable,
   getEditorKeybindings,
   matchesKey,
   SelectList,
+  type SelectListLayoutOptions,
   type SelectListTheme,
+  truncateToWidth,
   visibleWidth,
 } from "@mariozechner/pi-tui";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
+const PASTE_MARKER_SINGLE = /^\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]$/;
 const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
 const CSI_PATTERN = "\\x1b\\[[0-9;]*[A-Za-z]";
 const OSC_PATTERN = "\\x1b\\][^\\x07]*(?:\\x07|\\x1b\\\\)";
@@ -26,6 +31,52 @@ function isPunctuationChar(char: string): boolean {
   return PUNCTUATION_REGEX.test(char);
 }
 
+function isPasteMarker(segment: string): boolean {
+  return segment.length >= 10 && PASTE_MARKER_SINGLE.test(segment);
+}
+
+function segmentWithMarkers(text: string, validIds: Set<number>): Iterable<Intl.SegmentData> {
+  if (validIds.size === 0 || !text.includes("[paste #")) {
+    return segmenter.segment(text);
+  }
+
+  const markers: Array<{ start: number; end: number }> = [];
+  for (const match of text.matchAll(PASTE_MARKER_REGEX)) {
+    const id = Number.parseInt(match[1] ?? "", 10);
+    if (!validIds.has(id)) continue;
+    markers.push({ start: match.index ?? 0, end: (match.index ?? 0) + match[0].length });
+  }
+  if (markers.length === 0) {
+    return segmenter.segment(text);
+  }
+
+  const baseSegments = segmenter.segment(text);
+  const result: Intl.SegmentData[] = [];
+  let markerIndex = 0;
+
+  for (const seg of baseSegments) {
+    while (markerIndex < markers.length && (markers[markerIndex]?.end ?? 0) <= seg.index) {
+      markerIndex++;
+    }
+
+    const marker = markerIndex < markers.length ? markers[markerIndex] : null;
+    if (marker && seg.index >= marker.start && seg.index < marker.end) {
+      if (seg.index === marker.start) {
+        result.push({
+          segment: text.slice(marker.start, marker.end),
+          index: marker.start,
+          input: text,
+        });
+      }
+      continue;
+    }
+
+    result.push(seg);
+  }
+
+  return result;
+}
+
 function stripAnsiSequences(text: string): string {
   if (!text.includes("\x1b")) return text;
   return text
@@ -38,6 +89,12 @@ function stripAnsiSequences(text: string): string {
 function sanitizeInputText(text: string): string {
   return text ? stripAnsiSequences(text) : text;
 }
+
+const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
+  minPrimaryColumnWidth: 12,
+  maxPrimaryColumnWidth: 40,
+  truncatePrimary: ({ text, maxWidth }) => truncateToWidth(text, maxWidth, "…"),
+};
 
 /**
  * Represents a chunk of text for word-wrap layout.
@@ -58,7 +115,11 @@ interface TextChunk {
  * @param maxWidth - Maximum visible width per chunk
  * @returns Array of chunks with text and position information
  */
-function wordWrapLine(line: string, maxWidth: number): TextChunk[] {
+function wordWrapLine(
+  line: string,
+  maxWidth: number,
+  preSegmented?: Intl.SegmentData[],
+): TextChunk[] {
   if (!line || maxWidth <= 0) {
     return [{ text: "", startIndex: 0, endIndex: 0 }];
   }
@@ -69,155 +130,74 @@ function wordWrapLine(line: string, maxWidth: number): TextChunk[] {
   }
 
   const chunks: TextChunk[] = [];
+  const segments = preSegmented ?? [...segmenter.segment(line)];
 
-  // Split into tokens (words and whitespace runs)
-  const tokens: { text: string; startIndex: number; endIndex: number; isWhitespace: boolean }[] =
-    [];
-  let currentToken = "";
-  let tokenStart = 0;
-  let inWhitespace = false;
-  let charIndex = 0;
-
-  for (const seg of segmenter.segment(line)) {
-    const grapheme = seg.segment;
-    const graphemeIsWhitespace = isWhitespaceChar(grapheme);
-
-    if (currentToken === "") {
-      inWhitespace = graphemeIsWhitespace;
-      tokenStart = charIndex;
-    } else if (graphemeIsWhitespace !== inWhitespace) {
-      // Token type changed - save current token
-      tokens.push({
-        text: currentToken,
-        startIndex: tokenStart,
-        endIndex: charIndex,
-        isWhitespace: inWhitespace,
-      });
-      currentToken = "";
-      tokenStart = charIndex;
-      inWhitespace = graphemeIsWhitespace;
-    }
-
-    currentToken += grapheme;
-    charIndex += grapheme.length;
-  }
-
-  // Push final token
-  if (currentToken) {
-    tokens.push({
-      text: currentToken,
-      startIndex: tokenStart,
-      endIndex: charIndex,
-      isWhitespace: inWhitespace,
-    });
-  }
-
-  // Build chunks using word wrapping
-  let currentChunk = "";
   let currentWidth = 0;
-  let chunkStartIndex = 0;
-  let atLineStart = true; // Track if we're at the start of a line (for skipping whitespace)
+  let chunkStart = 0;
+  let wrapOppIndex = -1;
+  let wrapOppWidth = 0;
 
-  for (const token of tokens) {
-    const tokenWidth = visibleWidth(token.text);
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (!seg) continue;
 
-    // Skip leading whitespace at line start
-    if (atLineStart && token.isWhitespace) {
-      chunkStartIndex = token.endIndex;
-      continue;
-    }
-    atLineStart = false;
+    const grapheme = seg.segment;
+    const graphemeWidth = visibleWidth(grapheme);
+    const charIndex = seg.index;
+    const isWhitespace = !isPasteMarker(grapheme) && isWhitespaceChar(grapheme);
 
-    // If this single token is wider than maxWidth, we need to break it
-    if (tokenWidth > maxWidth) {
-      // First, push any accumulated chunk
-      if (currentChunk) {
+    if (currentWidth + graphemeWidth > maxWidth) {
+      if (wrapOppIndex >= 0 && currentWidth - wrapOppWidth + graphemeWidth <= maxWidth) {
         chunks.push({
-          text: currentChunk,
-          startIndex: chunkStartIndex,
-          endIndex: token.startIndex,
+          text: line.slice(chunkStart, wrapOppIndex),
+          startIndex: chunkStart,
+          endIndex: wrapOppIndex,
         });
-        currentChunk = "";
+        chunkStart = wrapOppIndex;
+        currentWidth -= wrapOppWidth;
+      } else if (chunkStart < charIndex) {
+        chunks.push({
+          text: line.slice(chunkStart, charIndex),
+          startIndex: chunkStart,
+          endIndex: charIndex,
+        });
+        chunkStart = charIndex;
         currentWidth = 0;
-        chunkStartIndex = token.startIndex;
       }
+      wrapOppIndex = -1;
+    }
 
-      // Break the long token by grapheme
-      let tokenChunk = "";
-      let tokenChunkWidth = 0;
-      let tokenChunkStart = token.startIndex;
-      let tokenCharIndex = token.startIndex;
-
-      for (const seg of segmenter.segment(token.text)) {
-        const grapheme = seg.segment;
-        const graphemeWidth = visibleWidth(grapheme);
-
-        if (tokenChunkWidth + graphemeWidth > maxWidth && tokenChunk) {
-          chunks.push({
-            text: tokenChunk,
-            startIndex: tokenChunkStart,
-            endIndex: tokenCharIndex,
-          });
-          tokenChunk = grapheme;
-          tokenChunkWidth = graphemeWidth;
-          tokenChunkStart = tokenCharIndex;
-        } else {
-          tokenChunk += grapheme;
-          tokenChunkWidth += graphemeWidth;
-        }
-        tokenCharIndex += grapheme.length;
+    if (graphemeWidth > maxWidth) {
+      const subChunks = wordWrapLine(grapheme, maxWidth);
+      for (let j = 0; j < subChunks.length - 1; j++) {
+        const subChunk = subChunks[j];
+        if (!subChunk) continue;
+        chunks.push({
+          text: subChunk.text,
+          startIndex: charIndex + subChunk.startIndex,
+          endIndex: charIndex + subChunk.endIndex,
+        });
       }
-
-      // Keep remainder as start of next chunk
-      if (tokenChunk) {
-        currentChunk = tokenChunk;
-        currentWidth = tokenChunkWidth;
-        chunkStartIndex = tokenChunkStart;
+      const lastSubChunk = subChunks[subChunks.length - 1];
+      if (lastSubChunk) {
+        chunkStart = charIndex + lastSubChunk.startIndex;
+        currentWidth = visibleWidth(lastSubChunk.text);
       }
+      wrapOppIndex = -1;
       continue;
     }
 
-    // Check if adding this token would exceed width
-    if (currentWidth + tokenWidth > maxWidth) {
-      // Push current chunk (trimming trailing whitespace for display)
-      const trimmedChunk = currentChunk.trimEnd();
-      if (trimmedChunk || chunks.length === 0) {
-        chunks.push({
-          text: trimmedChunk,
-          startIndex: chunkStartIndex,
-          endIndex: chunkStartIndex + currentChunk.length,
-        });
-      }
+    currentWidth += graphemeWidth;
 
-      // Start new line - skip leading whitespace
-      atLineStart = true;
-      if (token.isWhitespace) {
-        currentChunk = "";
-        currentWidth = 0;
-        chunkStartIndex = token.endIndex;
-      } else {
-        currentChunk = token.text;
-        currentWidth = tokenWidth;
-        chunkStartIndex = token.startIndex;
-        atLineStart = false;
-      }
-    } else {
-      // Add token to current chunk
-      currentChunk += token.text;
-      currentWidth += tokenWidth;
+    const next = segments[i + 1];
+    if (isWhitespace && next && (isPasteMarker(next.segment) || !isWhitespaceChar(next.segment))) {
+      wrapOppIndex = next.index;
+      wrapOppWidth = currentWidth;
     }
   }
 
-  // Push final chunk
-  if (currentChunk) {
-    chunks.push({
-      text: currentChunk,
-      startIndex: chunkStartIndex,
-      endIndex: line.length,
-    });
-  }
-
-  return chunks.length > 0 ? chunks : [{ text: "", startIndex: 0, endIndex: 0 }];
+  chunks.push({ text: line.slice(chunkStart), startIndex: chunkStart, endIndex: line.length });
+  return chunks;
 }
 
 interface EditorState {
@@ -255,7 +235,7 @@ export class Editor implements Component {
   // Autocomplete support
   private autocompleteProvider?: AutocompleteProvider;
   protected autocompleteList?: SelectList;
-  private isAutocompleting: boolean = false;
+  private autocompleteState: "regular" | "force" | null = null;
   private autocompletePrefix: string = "";
 
   // Paste tracking for large pastes
@@ -277,6 +257,18 @@ export class Editor implements Component {
   constructor(theme: EditorTheme) {
     this.theme = theme;
     this.borderColor = theme.borderColor;
+  }
+
+  private validPasteIds(): Set<number> {
+    return new Set(this.pastes.keys());
+  }
+
+  protected segment(text: string): Iterable<Intl.SegmentData> {
+    return segmentWithMarkers(text, this.validPasteIds());
+  }
+
+  private normalizeText(text: string): string {
+    return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\t/g, "    ");
   }
 
   /** Wraps text in cursor styling (inverse video). Override in subclasses for theme-aware cursor. */
@@ -384,11 +376,11 @@ export class Editor implements Component {
 
         if (after.length > 0) {
           // Cursor is on a character (grapheme) - replace it with highlighted version
-          // Get the first grapheme from 'after'
-          const afterGraphemes = [...segmenter.segment(after)];
-          const firstGrapheme = afterGraphemes[0]?.segment || "";
-          const restAfter = after.slice(firstGrapheme.length);
-          displayText = before + this.cursorStyle(firstGrapheme) + restAfter;
+          // Get the first segment from 'after'
+          const afterSegments = [...this.segment(after)];
+          const firstSegment = afterSegments[0]?.segment || "";
+          const restAfter = after.slice(firstSegment.length);
+          displayText = before + this.cursorStyle(firstSegment) + restAfter;
           // lineVisibleWidth stays the same - we're replacing, not adding
         } else {
           // Cursor is at the end - check if we have room for the space
@@ -398,17 +390,17 @@ export class Editor implements Component {
             // lineVisibleWidth increases by 1 - we're adding a space
             lineVisibleWidth = lineVisibleWidth + 1;
           } else {
-            // Line is at full width - use reverse video on last grapheme if possible
+            // Line is at full width - use reverse video on last segment if possible
             // or just show cursor at the end without adding space
-            const beforeGraphemes = [...segmenter.segment(before)];
-            if (beforeGraphemes.length > 0) {
-              const lastGrapheme = beforeGraphemes[beforeGraphemes.length - 1]?.segment || "";
-              // Rebuild 'before' without the last grapheme
-              const beforeWithoutLast = beforeGraphemes
+            const beforeSegments = [...this.segment(before)];
+            if (beforeSegments.length > 0) {
+              const lastSegment = beforeSegments[beforeSegments.length - 1]?.segment || "";
+              // Rebuild 'before' without the last segment
+              const beforeWithoutLast = beforeSegments
                 .slice(0, -1)
                 .map((g) => g.segment)
                 .join("");
-              displayText = beforeWithoutLast + this.cursorStyle(lastGrapheme);
+              displayText = beforeWithoutLast + this.cursorStyle(lastSegment);
             }
             // lineVisibleWidth stays the same
           }
@@ -426,7 +418,7 @@ export class Editor implements Component {
     result.push(horizontal.repeat(width));
 
     // Add autocomplete list if active
-    if (this.isAutocompleting && this.autocompleteList) {
+    if (this.autocompleteState && this.autocompleteList) {
       const autocompleteResult = this.autocompleteList.render(width);
       result.push(...autocompleteResult);
     }
@@ -474,7 +466,7 @@ export class Editor implements Component {
     }
 
     // Handle autocomplete mode
-    if (this.isAutocompleting && this.autocompleteList) {
+    if (this.autocompleteState && this.autocompleteList) {
       if (kb.matches(data, "selectCancel")) {
         this.cancelAutocomplete();
         return;
@@ -551,7 +543,7 @@ export class Editor implements Component {
     }
 
     // Tab - trigger completion
-    if (kb.matches(data, "tab") && !this.isAutocompleting) {
+    if (kb.matches(data, "tab") && !this.autocompleteState) {
       this.handleTabCompletion();
       return;
     }
@@ -661,6 +653,12 @@ export class Editor implements Component {
       return;
     }
 
+    const kittyPrintable = decodeKittyPrintable(data);
+    if (kittyPrintable !== undefined) {
+      this.insertCharacter(kittyPrintable);
+      return;
+    }
+
     // Regular characters
     if (data.charCodeAt(0) >= 32) {
       this.insertCharacter(data);
@@ -705,7 +703,7 @@ export class Editor implements Component {
         }
       } else {
         // Line needs wrapping - use word-aware wrapping
-        const chunks = wordWrapLine(line, contentWidth);
+        const chunks = wordWrapLine(line, contentWidth, [...this.segment(line)]);
 
         for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
           const chunk = chunks[chunkIndex];
@@ -800,8 +798,44 @@ export class Editor implements Component {
    * Used for programmatic insertion (e.g., clipboard image markers).
    */
   insertTextAtCursor(text: string): void {
-    for (const char of text) {
-      this.insertCharacter(char);
+    this.insertTextAtCursorInternal(text);
+  }
+
+  private insertTextAtCursorInternal(text: string): void {
+    if (!text) return;
+
+    const sanitized = sanitizeInputText(text);
+    if (!sanitized) return;
+
+    this.historyIndex = -1;
+
+    const normalized = this.normalizeText(sanitized);
+    const insertedLines = normalized.split("\n");
+    const currentLine = this.state.lines[this.state.cursorLine] || "";
+    const beforeCursor = currentLine.slice(0, this.state.cursorCol);
+    const afterCursor = currentLine.slice(this.state.cursorCol);
+
+    if (insertedLines.length === 1) {
+      this.state.lines[this.state.cursorLine] = beforeCursor + normalized + afterCursor;
+      this.state.cursorCol += normalized.length;
+    } else {
+      this.state.lines = [
+        ...this.state.lines.slice(0, this.state.cursorLine),
+        beforeCursor + (insertedLines[0] || ""),
+        ...insertedLines.slice(1, -1),
+        (insertedLines[insertedLines.length - 1] || "") + afterCursor,
+        ...this.state.lines.slice(this.state.cursorLine + 1),
+      ];
+      this.state.cursorLine += insertedLines.length - 1;
+      this.state.cursorCol = (insertedLines[insertedLines.length - 1] || "").length;
+    }
+
+    if (this.onChange) {
+      this.onChange(this.getText());
+    }
+
+    if (this.autocompleteState) {
+      this.updateAutocomplete();
     }
   }
 
@@ -825,7 +859,7 @@ export class Editor implements Component {
     }
 
     // Check if we should trigger or update autocomplete
-    if (!this.isAutocompleting) {
+    if (!this.autocompleteState) {
       // Auto-trigger for "/" at the start of a line (slash commands)
       if (sanitized === "/" && this.isAtStartOfMessage()) {
         this.tryTriggerAutocomplete();
@@ -844,12 +878,9 @@ export class Editor implements Component {
       else if (/[a-zA-Z0-9.\-_]/.test(sanitized)) {
         const currentLine = this.state.lines[this.state.cursorLine] || "";
         const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-        // Check if we're in a slash command (with or without space for arguments)
-        if (textBeforeCursor.trimStart().startsWith("/")) {
+        if (this.isInSlashCommandContext(textBeforeCursor)) {
           this.tryTriggerAutocomplete();
-        }
-        // Check if we're in an @ mention context
-        else if (this.isMentionAutocompleteContext(textBeforeCursor)) {
+        } else if (this.isMentionAutocompleteContext(textBeforeCursor)) {
           this.tryTriggerAutocomplete();
         }
       }
@@ -863,13 +894,10 @@ export class Editor implements Component {
 
     // Clean the pasted text
     const sanitizedText = sanitizeInputText(pastedText);
-    const cleanText = sanitizedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-
-    // Convert tabs to spaces (4 spaces per tab)
-    const tabExpandedText = cleanText.replace(/\t/g, "    ");
+    const cleanText = this.normalizeText(sanitizedText);
 
     // Filter out non-printable characters except newlines
-    let filteredText = tabExpandedText
+    let filteredText = cleanText
       .split("")
       .filter((char) => char === "\n" || char.charCodeAt(0) >= 32)
       .join("");
@@ -901,63 +929,11 @@ export class Editor implements Component {
         pastedLines.length > 32
           ? `[paste #${pasteId} +${pastedLines.length} lines]`
           : `[paste #${pasteId} ${totalChars} chars]`;
-      for (const char of marker) {
-        this.insertCharacter(char);
-      }
-
+      this.insertTextAtCursorInternal(marker);
       return;
     }
 
-    if (pastedLines.length === 1) {
-      // Single line - just insert each character
-      const text = pastedLines[0] || "";
-      for (const char of text) {
-        this.insertCharacter(char);
-      }
-
-      return;
-    }
-
-    // Multi-line paste - be very careful with array manipulation
-    const currentLine = this.state.lines[this.state.cursorLine] || "";
-    const beforeCursor = currentLine.slice(0, this.state.cursorCol);
-    const afterCursor = currentLine.slice(this.state.cursorCol);
-
-    // Build the new lines array step by step
-    const newLines: string[] = [];
-
-    // Add all lines before current line
-    for (let i = 0; i < this.state.cursorLine; i++) {
-      newLines.push(this.state.lines[i] || "");
-    }
-
-    // Add the first pasted line merged with before cursor text
-    newLines.push(beforeCursor + (pastedLines[0] || ""));
-
-    // Add all middle pasted lines
-    for (let i = 1; i < pastedLines.length - 1; i++) {
-      newLines.push(pastedLines[i] || "");
-    }
-
-    // Add the last pasted line with after cursor text
-    newLines.push((pastedLines[pastedLines.length - 1] || "") + afterCursor);
-
-    // Add all lines after current line
-    for (let i = this.state.cursorLine + 1; i < this.state.lines.length; i++) {
-      newLines.push(this.state.lines[i] || "");
-    }
-
-    // Replace the entire lines array
-    this.state.lines = newLines;
-
-    // Update cursor position to end of pasted content
-    this.state.cursorLine += pastedLines.length - 1;
-    this.state.cursorCol = (pastedLines[pastedLines.length - 1] || "").length;
-
-    // Notify of change
-    if (this.onChange) {
-      this.onChange(this.getText());
-    }
+    this.insertTextAtCursorInternal(filteredText);
   }
 
   private addNewLine(): void {
@@ -990,7 +966,7 @@ export class Editor implements Component {
       const beforeCursor = line.slice(0, this.state.cursorCol);
 
       // Find the last grapheme in the text before cursor
-      const graphemes = [...segmenter.segment(beforeCursor)];
+      const graphemes = [...this.segment(beforeCursor)];
       const lastGrapheme = graphemes[graphemes.length - 1];
       const graphemeLength = lastGrapheme ? lastGrapheme.segment.length : 1;
 
@@ -1016,18 +992,15 @@ export class Editor implements Component {
     }
 
     // Update or re-trigger autocomplete after backspace
-    if (this.isAutocompleting) {
+    if (this.autocompleteState) {
       this.updateAutocomplete();
     } else {
       // If autocomplete was cancelled (no matches), re-trigger if we're in a completable context
       const currentLine = this.state.lines[this.state.cursorLine] || "";
       const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-      // Slash command context
-      if (textBeforeCursor.trimStart().startsWith("/")) {
+      if (this.isInSlashCommandContext(textBeforeCursor)) {
         this.tryTriggerAutocomplete();
-      }
-      // @ mention context
-      else if (this.isMentionAutocompleteContext(textBeforeCursor)) {
+      } else if (this.isMentionAutocompleteContext(textBeforeCursor)) {
         this.tryTriggerAutocomplete();
       }
     }
@@ -1125,7 +1098,7 @@ export class Editor implements Component {
       const afterCursor = currentLine.slice(this.state.cursorCol);
 
       // Find the first grapheme at cursor
-      const graphemes = [...segmenter.segment(afterCursor)];
+      const graphemes = [...this.segment(afterCursor)];
       const firstGrapheme = graphemes[0];
       const graphemeLength = firstGrapheme ? firstGrapheme.segment.length : 1;
 
@@ -1144,17 +1117,14 @@ export class Editor implements Component {
     }
 
     // Update or re-trigger autocomplete after forward delete
-    if (this.isAutocompleting) {
+    if (this.autocompleteState) {
       this.updateAutocomplete();
     } else {
       const currentLine = this.state.lines[this.state.cursorLine] || "";
       const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-      // Slash command context
-      if (textBeforeCursor.trimStart().startsWith("/")) {
+      if (this.isInSlashCommandContext(textBeforeCursor)) {
         this.tryTriggerAutocomplete();
-      }
-      // @ mention context
-      else if (this.isMentionAutocompleteContext(textBeforeCursor)) {
+      } else if (this.isMentionAutocompleteContext(textBeforeCursor)) {
         this.tryTriggerAutocomplete();
       }
     }
@@ -1182,7 +1152,7 @@ export class Editor implements Component {
         visualLines.push({ logicalLine: i, startCol: 0, length: line.length });
       } else {
         // Line needs wrapping - use word-aware wrapping
-        const chunks = wordWrapLine(line, width);
+        const chunks = wordWrapLine(line, width, [...this.segment(line)]);
         for (const chunk of chunks) {
           visualLines.push({
             logicalLine: i,
@@ -1223,6 +1193,17 @@ export class Editor implements Component {
     return visualLines.length - 1;
   }
 
+  protected snapCursorToSegmentBoundary(logicalLine: string, movingUp: boolean): void {
+    for (const seg of this.segment(logicalLine)) {
+      if (seg.index > this.state.cursorCol) break;
+      if (seg.segment.length <= 1) continue;
+      if (this.state.cursorCol < seg.index + seg.segment.length) {
+        this.state.cursorCol = movingUp ? seg.index : seg.index + seg.segment.length;
+        break;
+      }
+    }
+  }
+
   private moveCursor(deltaLine: number, deltaCol: number): void {
     const width = this.lastWidth;
 
@@ -1246,6 +1227,7 @@ export class Editor implements Component {
           const targetCol = targetVL.startCol + Math.min(visualCol, targetVL.length);
           const logicalLine = this.state.lines[targetVL.logicalLine] || "";
           this.state.cursorCol = Math.min(targetCol, logicalLine.length);
+          this.snapCursorToSegmentBoundary(logicalLine, deltaLine < 0);
         }
       }
     }
@@ -1257,7 +1239,7 @@ export class Editor implements Component {
         // Moving right - move by one grapheme (handles emojis, combining characters, etc.)
         if (this.state.cursorCol < currentLine.length) {
           const afterCursor = currentLine.slice(this.state.cursorCol);
-          const graphemes = [...segmenter.segment(afterCursor)];
+          const graphemes = [...this.segment(afterCursor)];
           const firstGrapheme = graphemes[0];
           this.state.cursorCol += firstGrapheme ? firstGrapheme.segment.length : 1;
         } else if (this.state.cursorLine < this.state.lines.length - 1) {
@@ -1269,7 +1251,7 @@ export class Editor implements Component {
         // Moving left - move by one grapheme (handles emojis, combining characters, etc.)
         if (this.state.cursorCol > 0) {
           const beforeCursor = currentLine.slice(0, this.state.cursorCol);
-          const graphemes = [...segmenter.segment(beforeCursor)];
+          const graphemes = [...this.segment(beforeCursor)];
           const lastGrapheme = graphemes[graphemes.length - 1];
           this.state.cursorCol -= lastGrapheme ? lastGrapheme.segment.length : 1;
         } else if (this.state.cursorLine > 0) {
@@ -1296,12 +1278,13 @@ export class Editor implements Component {
     }
 
     const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-    const graphemes = [...segmenter.segment(textBeforeCursor)];
+    const graphemes = [...this.segment(textBeforeCursor)];
     let newCol = this.state.cursorCol;
 
     // Skip trailing whitespace
     while (
       graphemes.length > 0 &&
+      !isPasteMarker(graphemes[graphemes.length - 1]?.segment || "") &&
       isWhitespaceChar(graphemes[graphemes.length - 1]?.segment || "")
     ) {
       newCol -= graphemes.pop()?.segment.length || 0;
@@ -1309,11 +1292,14 @@ export class Editor implements Component {
 
     if (graphemes.length > 0) {
       const lastGrapheme = graphemes[graphemes.length - 1]?.segment || "";
-      if (isPunctuationChar(lastGrapheme)) {
+      if (isPasteMarker(lastGrapheme)) {
+        newCol -= graphemes.pop()?.segment.length || 0;
+      } else if (isPunctuationChar(lastGrapheme)) {
         // Skip punctuation run
         while (
           graphemes.length > 0 &&
-          isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "")
+          isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "") &&
+          !isPasteMarker(graphemes[graphemes.length - 1]?.segment || "")
         ) {
           newCol -= graphemes.pop()?.segment.length || 0;
         }
@@ -1322,7 +1308,8 @@ export class Editor implements Component {
         while (
           graphemes.length > 0 &&
           !isWhitespaceChar(graphemes[graphemes.length - 1]?.segment || "") &&
-          !isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "")
+          !isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "") &&
+          !isPasteMarker(graphemes[graphemes.length - 1]?.segment || "")
         ) {
           newCol -= graphemes.pop()?.segment.length || 0;
         }
@@ -1345,22 +1332,33 @@ export class Editor implements Component {
     }
 
     const textAfterCursor = currentLine.slice(this.state.cursorCol);
-    const segments = segmenter.segment(textAfterCursor);
+    const segments = this.segment(textAfterCursor);
     const iterator = segments[Symbol.iterator]();
     let next = iterator.next();
+    let newCol = this.state.cursorCol;
 
     // Skip leading whitespace
-    while (!next.done && isWhitespaceChar(next.value.segment)) {
-      this.state.cursorCol += next.value.segment.length;
+    while (
+      !next.done &&
+      !isPasteMarker(next.value.segment) &&
+      isWhitespaceChar(next.value.segment)
+    ) {
+      newCol += next.value.segment.length;
       next = iterator.next();
     }
 
     if (!next.done) {
       const firstGrapheme = next.value.segment;
-      if (isPunctuationChar(firstGrapheme)) {
+      if (isPasteMarker(firstGrapheme)) {
+        newCol += firstGrapheme.length;
+      } else if (isPunctuationChar(firstGrapheme)) {
         // Skip punctuation run
-        while (!next.done && isPunctuationChar(next.value.segment)) {
-          this.state.cursorCol += next.value.segment.length;
+        while (
+          !next.done &&
+          isPunctuationChar(next.value.segment) &&
+          !isPasteMarker(next.value.segment)
+        ) {
+          newCol += next.value.segment.length;
           next = iterator.next();
         }
       } else {
@@ -1368,22 +1366,33 @@ export class Editor implements Component {
         while (
           !next.done &&
           !isWhitespaceChar(next.value.segment) &&
-          !isPunctuationChar(next.value.segment)
+          !isPunctuationChar(next.value.segment) &&
+          !isPasteMarker(next.value.segment)
         ) {
-          this.state.cursorCol += next.value.segment.length;
+          newCol += next.value.segment.length;
           next = iterator.next();
         }
       }
     }
+
+    this.state.cursorCol = newCol;
+  }
+
+  private isSlashMenuAllowed(): boolean {
+    return this.state.lines.length === 1 && this.state.cursorLine === 0;
   }
 
   // Helper method to check if cursor is at start of message (for slash command detection)
   private isAtStartOfMessage(): boolean {
+    if (!this.isSlashMenuAllowed()) return false;
+
     const currentLine = this.state.lines[this.state.cursorLine] || "";
     const beforeCursor = currentLine.slice(0, this.state.cursorCol);
-
-    // At start if line is empty, only contains whitespace, or is just "/"
     return beforeCursor.trim() === "" || beforeCursor.trim() === "/";
+  }
+
+  private isInSlashCommandContext(textBeforeCursor: string): boolean {
+    return this.isSlashMenuAllowed() && textBeforeCursor.trimStart().startsWith("/");
   }
 
   private isMentionAutocompleteContext(textBeforeCursor: string): boolean {
@@ -1400,11 +1409,53 @@ export class Editor implements Component {
     return /(?:^|[\s])@@[a-z-]+:$/.test(beforeCursor);
   }
 
+  private getAutocompleteMatchPrefix(prefix: string): string {
+    if (prefix.startsWith("@@")) {
+      const mentionMatch = prefix.match(/^@@[^:\s]+:(.*)$/);
+      return mentionMatch ? (mentionMatch[1] ?? "") : prefix.slice(2);
+    }
+    if (prefix.startsWith("@") || prefix.startsWith("/")) {
+      return prefix.slice(1);
+    }
+    return prefix;
+  }
+
+  private getBestAutocompleteMatchIndex(
+    items: Array<{ value: string; label: string }>,
+    prefix: string,
+  ): number {
+    const matchPrefix = this.getAutocompleteMatchPrefix(prefix);
+    if (!matchPrefix) return -1;
+
+    let firstPrefixIndex = -1;
+    for (let i = 0; i < items.length; i++) {
+      const value = items[i]?.value;
+      if (!value) continue;
+      if (value === matchPrefix) {
+        return i;
+      }
+      if (firstPrefixIndex === -1 && value.startsWith(matchPrefix)) {
+        firstPrefixIndex = i;
+      }
+    }
+
+    return firstPrefixIndex;
+  }
+
+  private createAutocompleteList(
+    prefix: string,
+    items: Array<{ value: string; label: string; description?: string }>,
+  ): SelectList {
+    const layout = this.isInSlashCommandContext(prefix)
+      ? SLASH_COMMAND_SELECT_LIST_LAYOUT
+      : undefined;
+    return new SelectList(items, 5, this.theme.selectList, layout);
+  }
+
   // Autocomplete methods
   protected tryTriggerAutocomplete(explicitTab: boolean = false): void {
     if (!this.autocompleteProvider) return;
 
-    // Check if we should trigger file completion on Tab
     if (explicitTab) {
       const provider = this.autocompleteProvider as CombinedAutocompleteProvider;
       const shouldTrigger =
@@ -1427,8 +1478,17 @@ export class Editor implements Component {
 
     if (suggestions && suggestions.items.length > 0) {
       this.autocompletePrefix = suggestions.prefix;
-      this.autocompleteList = new SelectList(suggestions.items, 5, this.theme.selectList);
-      this.isAutocompleting = true;
+      this.autocompleteList = this.createAutocompleteList(suggestions.prefix, suggestions.items);
+
+      const bestMatchIndex = this.getBestAutocompleteMatchIndex(
+        suggestions.items,
+        suggestions.prefix,
+      );
+      if (bestMatchIndex >= 0) {
+        this.autocompleteList.setSelectedIndex(bestMatchIndex);
+      }
+
+      this.autocompleteState = "regular";
     } else {
       this.cancelAutocomplete();
     }
@@ -1440,11 +1500,10 @@ export class Editor implements Component {
     const currentLine = this.state.lines[this.state.cursorLine] || "";
     const beforeCursor = currentLine.slice(0, this.state.cursorCol);
 
-    // Check if we're in a slash command context
-    if (beforeCursor.trimStart().startsWith("/") && !beforeCursor.trimStart().includes(" ")) {
+    if (this.isInSlashCommandContext(beforeCursor) && !beforeCursor.trimStart().includes(" ")) {
       this.handleSlashCommandCompletion();
     } else {
-      this.forceFileAutocomplete();
+      this.forceFileAutocomplete(true);
     }
   }
 
@@ -1457,10 +1516,9 @@ https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19536643416/job/
 17 this job fails with https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19
 536643416/job/55932288317 havea  look at .gi
 	 */
-  private forceFileAutocomplete(): void {
+  private forceFileAutocomplete(explicitTab: boolean = false): void {
     if (!this.autocompleteProvider) return;
 
-    // Check if provider supports force file suggestions via runtime check
     const provider = this.autocompleteProvider as {
       getForceFileSuggestions?: CombinedAutocompleteProvider["getForceFileSuggestions"];
     };
@@ -1476,26 +1534,61 @@ https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19536643416/job/
     );
 
     if (suggestions && suggestions.items.length > 0) {
+      if (explicitTab && suggestions.items.length === 1) {
+        const item = suggestions.items[0];
+        if (!item) {
+          this.cancelAutocomplete();
+          return;
+        }
+
+        const result = this.autocompleteProvider.applyCompletion(
+          this.state.lines,
+          this.state.cursorLine,
+          this.state.cursorCol,
+          item,
+          suggestions.prefix,
+        );
+        this.state.lines = result.lines;
+        this.state.cursorLine = result.cursorLine;
+        this.state.cursorCol = result.cursorCol;
+        if (this.onChange) this.onChange(this.getText());
+        return;
+      }
+
       this.autocompletePrefix = suggestions.prefix;
-      this.autocompleteList = new SelectList(suggestions.items, 5, this.theme.selectList);
-      this.isAutocompleting = true;
+      this.autocompleteList = this.createAutocompleteList(suggestions.prefix, suggestions.items);
+
+      const bestMatchIndex = this.getBestAutocompleteMatchIndex(
+        suggestions.items,
+        suggestions.prefix,
+      );
+      if (bestMatchIndex >= 0) {
+        this.autocompleteList.setSelectedIndex(bestMatchIndex);
+      }
+
+      this.autocompleteState = "force";
     } else {
       this.cancelAutocomplete();
     }
   }
 
   private cancelAutocomplete(): void {
-    this.isAutocompleting = false;
+    this.autocompleteState = null;
     this.autocompleteList = undefined;
     this.autocompletePrefix = "";
   }
 
   public isShowingAutocomplete(): boolean {
-    return this.isAutocompleting;
+    return this.autocompleteState !== null;
   }
 
   private updateAutocomplete(): void {
-    if (!this.isAutocompleting || !this.autocompleteProvider) return;
+    if (!this.autocompleteState || !this.autocompleteProvider) return;
+
+    if (this.autocompleteState === "force") {
+      this.forceFileAutocomplete();
+      return;
+    }
 
     const suggestions = this.autocompleteProvider.getSuggestions(
       this.state.lines,
@@ -1505,8 +1598,15 @@ https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19536643416/job/
 
     if (suggestions && suggestions.items.length > 0) {
       this.autocompletePrefix = suggestions.prefix;
-      // Always create new SelectList to ensure update
-      this.autocompleteList = new SelectList(suggestions.items, 5, this.theme.selectList);
+      this.autocompleteList = this.createAutocompleteList(suggestions.prefix, suggestions.items);
+
+      const bestMatchIndex = this.getBestAutocompleteMatchIndex(
+        suggestions.items,
+        suggestions.prefix,
+      );
+      if (bestMatchIndex >= 0) {
+        this.autocompleteList.setSelectedIndex(bestMatchIndex);
+      }
     } else {
       this.cancelAutocomplete();
     }

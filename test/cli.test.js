@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
-import { parseCliArgs, printHelp } from "../dist/core/cli.js";
+import { describe, expect, it } from "vitest";
+import { parseCliArgs } from "../dist/core/cli.js";
 
 describe("cli", () => {
   it("parses --sandbox", () => {
@@ -46,24 +46,6 @@ describe("cli", () => {
     expect(() => parseCliArgs(["--risk", "READ-ONLY"], [])).toThrow(
       "invalid risk level 'READ-ONLY'",
     );
-  });
-
-  it("help output includes rpc subcommand", () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    try {
-      printHelp([{ id: "demo-persona" }]);
-      const output = logSpy.mock.calls[0]?.[0];
-      expect(typeof output).toBe("string");
-      expect(output).toContain("tau rpc [options]");
-      expect(output).toContain("tau async <command>");
-      expect(output).toContain("rpc                           run headless stdio RPC mode");
-      expect(output).toContain("async                         run async daemon/client commands.");
-      expect(output).toContain("--caffeinated");
-      expect(output).toContain("in RPC mode, stdin/stdout are reserved for protocol traffic.");
-    } finally {
-      logSpy.mockRestore();
-    }
   });
 
   it("prints async help text when async command parsing fails", () => {

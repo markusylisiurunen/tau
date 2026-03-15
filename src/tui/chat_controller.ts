@@ -1783,6 +1783,7 @@ export class ChatController {
       "type `/help` for commands and keybindings",
       "mention files with `@`, agents and skills with `@@`",
       "run bash commands with `!` or `!!`",
+      "use `#` to update AGENTS.md",
     ];
 
     if (this.skills.length > 0) {

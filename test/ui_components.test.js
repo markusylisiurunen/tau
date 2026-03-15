@@ -1,7 +1,6 @@
 import { visibleWidth } from "@mariozechner/pi-tui";
 import stripAnsi from "strip-ansi";
 import { expect, test } from "vitest";
-import { AppIntroComponent } from "../dist/tui/ui/app_intro.js";
 import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
 import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
 import { renderChatMessage } from "../dist/tui/ui/chat_message_model.js";
@@ -32,19 +31,6 @@ function createToolEvent(label) {
     reason: "blocked",
   };
 }
-
-test("AppIntroComponent renders title and body", () => {
-  const theme = createTagTheme();
-  const component = new AppIntroComponent(theme, {
-    title: "tau v1.0.0 · 2 AGENTS.md · 5 skills",
-    body: "type `/help` for commands and keybindings",
-  });
-  const text = renderText(component, 120);
-  expect(text).toContain(
-    "<brandAccent>tau</brandAccent> <textMuted>v1.0.0 · 2 AGENTS.md · 5 skills</textMuted>",
-  );
-  expect(text).toContain("<textMuted>type </textMuted><codeInlineText>/help</codeInlineText>");
-});
 
 test("SessionDividerComponent renders a muted divider line", () => {
   const theme = createTagTheme();

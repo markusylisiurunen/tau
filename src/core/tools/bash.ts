@@ -62,7 +62,7 @@ export function getBashOutputPolicy(args: {
     return BASH_USER_POLICY;
   }
 
-  if (args.hasMaxOutputTokens) {
+  if (args.hasMaxOutputTokens && args.maxOutputTokens !== undefined) {
     const maxTokens = clampOutputTokens(args.maxOutputTokens) ?? BASH_MODEL_DEFAULT_MAX_TOKENS;
     return { maxTokens };
   }
@@ -96,7 +96,8 @@ const BASH_TIMEOUT_DESCRIPTION =
 
 const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
   "Optional maximum number of output tokens to return to the model.",
-  `Defaults to ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens if unset. If more output is needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
+  `Defaults to ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens if unset. Most commands should leave this unset. Only set it when you genuinely need more output and expect the command to produce a large result that is worth sending back.`,
+  `When more output is truly needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
   `Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}.`,
   `User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.`,
   `If unset and output exceeds the default ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens, the tool returns a ${BASH_MODEL_DEFAULT_PREVIEW_TOKENS}-token preview with a gating notice.`,

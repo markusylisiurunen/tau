@@ -62,6 +62,17 @@ describe("bash output policy", () => {
     expect(truncationInfo.output).toContain("tokens truncated");
   });
 
+  it("keeps gating when maxOutputTokens is only present without a numeric value", async () => {
+    const policy = getBashOutputPolicy({
+      mode: "model",
+      hasMaxOutputTokens: true,
+    });
+    const output = "d".repeat(tokensToBytes(8192) + 12);
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend);
+
+    expect(truncationInfo.gated).toBe(true);
+  });
+
   it("uses a larger limit for user mode", async () => {
     const policy = getBashOutputPolicy({ mode: "user" });
     const output = "c".repeat(tokensToBytes(policy.maxTokens) - 6);

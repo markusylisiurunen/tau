@@ -147,7 +147,7 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 
-- **Bash (assistant)**: 8,192 token limit. Most commands should leave `maxOutputTokens` unset. Usually it is better to run a more scoped command than to request more output. Set it only when more output is genuinely needed and the command is expected to produce a large result worth returning. If output exceeds the default limit and `maxOutputTokens` is unset, output is middle-truncated to a 2,048-token gated preview. Re-run with `maxOutputTokens` set to 8,192-16,384; if the user explicitly requests more, it may be set up to 65,536 (user requests are checked).
+- **Bash (assistant)**: 8,192 token limit. Leave `maxOutputTokens` unset in most cases and prefer more scoped commands over larger output. If unset and output exceeds the limit, Tau returns a 2,048-token gated preview. Re-run with `maxOutputTokens` set to 8,192-16,384; up to 65,536 only when the user explicitly requests it.
 - **Bash (user/!/@/$)**: 65,536 token limit, middle-truncated when exceeded.
 - **read/grep**: 8,192 token limit (keeps the head, truncates the tail), after 1MB capture.
 - **web_fetch**: 16,384 token limit (middle-truncated).

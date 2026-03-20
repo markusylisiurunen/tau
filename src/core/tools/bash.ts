@@ -96,7 +96,7 @@ const BASH_TIMEOUT_DESCRIPTION =
 
 const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
   "Optional maximum number of output tokens to return to the model.",
-  `Defaults to ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens if unset. Most commands should leave this unset. Only set it when you genuinely need more output and expect the command to produce a large result that is worth sending back.`,
+  `Defaults to ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens if unset. Most commands should leave this unset. Usually it is better to run a more scoped command than to request more output. Only set it when you genuinely need more output and expect the command to produce a large result that is worth sending back.`,
   `When more output is truly needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
   `Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}.`,
   `User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.`,

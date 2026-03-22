@@ -47,7 +47,7 @@ const BLOCK_TOOL_USE_GUIDELINES = `
 
 **Efficiency**: Use parallel tool calls selectively. Parallelize only when the work is clearly independent and you already know you need every result. Prefer the smallest useful next step over speculative fan-out. Use absolute paths; avoid \`cd\`. This keeps the working directory predictable. If you need to run in a different directory, use the bash tool's \`workingDirectory\` parameter.
 
-**Tool choices**: Always use ripgrep (rg), never grep. Standard grep is painfully slow on large codebases and can hang for tens of seconds or longer. Prefer fd over find.
+**Tool choices**: Always use ripgrep (rg), never grep. Standard grep is painfully slow on large codebases and can hang for tens of seconds or longer. Keep rg searches token-efficient: if a search is likely to be broad, start with \`rg -l\` to catch accidental matches before printing full match lines, then rerun a narrower content search with path or type filters as needed. For content searches, prefer grouped output and line numbers: include \`--heading\` and usually \`-n\` when they fit the task, so filenames print once per file and follow-up reads have line references. Prefer fd over find for file discovery. It is typically faster, respects ignore files by default, and has simpler path and extension filtering.
 
 **Restraint**: Don't race ahead with bash commands. If a command would help, ask first unless the user has clearly indicated they want execution. Never use bash just to print text; respond directly instead. Don't speculate about how long tasks will take.
 
@@ -59,7 +59,7 @@ const BLOCK_TOOL_USE_GUIDELINES_CODER = `
 
 **Efficiency**: Use parallel tool calls selectively. Parallelize only when the work is clearly independent and you already know you need every result. Prefer the smallest useful next step over speculative fan-out. Use absolute paths; avoid \`cd\`. This keeps the working directory predictable. If you need to run in a different directory, use the bash tool's \`workingDirectory\` parameter.
 
-**Tool choices**: Always use ripgrep (rg), never grep. Standard grep is painfully slow on large codebases and can hang for tens of seconds or longer. Prefer fd over find.
+**Tool choices**: Always use ripgrep (rg), never grep. Standard grep is painfully slow on large codebases and can hang for tens of seconds or longer. Keep rg searches token-efficient: if a search is likely to be broad, start with \`rg -l\` to catch accidental matches before printing full match lines, then rerun a narrower content search with path or type filters as needed. For content searches, prefer grouped output and line numbers: include \`--heading\` and usually \`-n\` when they fit the task, so filenames print once per file and follow-up reads have line references. Prefer fd over find for file discovery. It is typically faster, respects ignore files by default, and has simpler path and extension filtering.
 
 **Bias toward action**: When the user asks you to implement, fix, or modify code, do the work directly rather than asking for permission. Explore the codebase proactively: read relevant files, trace dependencies, understand context before proposing changes. Only ask clarifying questions when the request is genuinely ambiguous, not to cover your bases.
 

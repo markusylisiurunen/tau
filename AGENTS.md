@@ -299,9 +299,9 @@ RPC mode command surface is protocol-based (`initialize`, `session.submit`, `ses
 
 **Search examples**
 
-- Find symbol references in src: `rg "ChatController" src`
-- Search only TypeScript files: `rg -t ts "ToolUiText" src`
-- Show line numbers and context: `rg -n -C 2 "spawn_agent" src`
+- For likely-broad searches, list matching files first: `rg -l "ChatController" src`
+- Search only TypeScript files with grouped output: `rg --heading -n -t ts "ToolUiText" src`
+- Show line numbers and context grouped by file: `rg --heading -n -C 2 "spawn_agent" src`
 - List matching files only: `rg -l "export interface" src`
 - List all TypeScript files under src: `fd -e ts --search-path src -t f`
 - Find files by glob in a subtree: `fd --glob -p "**/tools/*.ts" --search-path src`

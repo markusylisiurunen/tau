@@ -34,6 +34,7 @@ import type {
 import { TOOL_NAME_BASH } from "./tool_names.js";
 
 const BASH_MODEL_DEFAULT_MAX_TOKENS = 8192;
+const BASH_MODEL_MIN_OUTPUT_TOKENS = 4096;
 const BASH_MODEL_DEFAULT_PREVIEW_TOKENS = 2048;
 const BASH_MODEL_MAX_AUTONOMOUS_TOKENS = 16384;
 const BASH_MAX_OUTPUT_TOKENS = 65536;
@@ -116,7 +117,7 @@ const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
   "Optional maximum number of output tokens to return to the model.",
   "Most commands should leave this unset. Usually it is better to run a more scoped command than to request more output.",
   `If unset, Tau applies its configured bash output gating policy. Without the experimental bashOutputGatekeeper config, outputs above ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens are gated to a ${BASH_MODEL_DEFAULT_PREVIEW_TOKENS}-token preview.`,
-  `When more output is truly needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
+  `When more output is truly needed, set a value between ${BASH_MODEL_MIN_OUTPUT_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
   `Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}.`,
   `User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.`,
 ].join(" ");
@@ -171,7 +172,10 @@ const BASH_TEMP_FILE_TIMEOUT_MS = 2_000;
 
 function clampOutputTokens(value: number | undefined): number | undefined {
   if (value === undefined || !Number.isFinite(value)) return undefined;
-  return Math.min(Math.max(Math.floor(value), 1), BASH_MAX_OUTPUT_TOKENS);
+  return Math.min(
+    Math.max(Math.floor(value), BASH_MODEL_MIN_OUTPUT_TOKENS),
+    BASH_MAX_OUTPUT_TOKENS,
+  );
 }
 
 export function getBashOutputPolicy(args: {
@@ -355,27 +359,29 @@ function createBashGatekeeper(
     return undefined;
   }
 
-  return async ({ command, output, signal, model }) => {
-    const parsedTarget = parseModelReasoningTarget(gatekeeperModel, {
-      resolveModel: context.modelResolver,
+  const parsedTarget = parseModelReasoningTarget(gatekeeperModel, {
+    resolveModel: context.modelResolver,
+  });
+  if (!parsedTarget.target) {
+    return async ({ model }) => ({
+      decision: "gate",
+      note: `the gatekeeper model '${model}' could not be resolved.`,
     });
-    if (!parsedTarget.target) {
-      return {
-        decision: "gate",
-        note: "the configured gatekeeper model could not be resolved.",
-      };
-    }
+  }
 
-    const authStorage = new AuthStorage(context.authPath);
-    const credentialResolver = createCredentialResolver({
-      authStorage,
-      getConfig: () => context.config,
-    });
+  const target = parsedTarget.target;
+  const authStorage = new AuthStorage(context.authPath);
+  const credentialResolver = createCredentialResolver({
+    authStorage,
+    getConfig: () => context.config,
+  });
+
+  return async ({ command, output, signal, model }) => {
     const sessionId = `tau-bash-gatekeeper-${randomUUID()}`;
 
     let apiKey: string | undefined;
     try {
-      apiKey = await credentialResolver.getApiKey(parsedTarget.target.model.provider, {
+      apiKey = await credentialResolver.getApiKey(target.model.provider, {
         sessionId,
       });
     } catch {
@@ -385,7 +391,7 @@ function createBashGatekeeper(
       };
     }
 
-    if (!apiKey && parsedTarget.target.model.provider === "openai-codex") {
+    if (!apiKey && target.model.provider === "openai-codex") {
       return {
         decision: "gate",
         note: `the gatekeeper model '${model}' could not authenticate.`,
@@ -405,14 +411,14 @@ function createBashGatekeeper(
     };
 
     const streamOptions = parseStreamingSettings({
-      reasoning: parsedTarget.target.reasoning,
+      reasoning: target.reasoning,
       maxTokens: BASH_GATEKEEPER_RESPONSE_MAX_TOKENS,
       signal,
       sessionId,
       ...(apiKey ? { apiKey } : {}),
     });
 
-    if (parsedTarget.target.model.provider === "openai-codex") {
+    if (target.model.provider === "openai-codex") {
       streamOptions.headers = {
         ...streamOptions.headers,
         originator: CODEX_ORIGINATOR,
@@ -421,12 +427,12 @@ function createBashGatekeeper(
     }
 
     try {
-      const stream = streamModel(parsedTarget.target.model, modelContext, streamOptions);
+      const stream = streamModel(target.model, modelContext, streamOptions);
       const finalMessage = await stream.result();
       return parseBashGatekeeperResponse(extractAssistantText(finalMessage));
     } catch (error) {
       try {
-        await credentialResolver.noteProviderError?.(parsedTarget.target.model.provider, {
+        await credentialResolver.noteProviderError?.(target.model.provider, {
           sessionId,
           error,
         });

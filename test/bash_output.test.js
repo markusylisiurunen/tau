@@ -57,13 +57,14 @@ describe("bash output policy", () => {
       gatekeeperModel: "openai/gpt-5.4:low",
     });
     const gatekeeper = vi.fn(async () => ({ decision: "gate" }));
-    const output = "b".repeat(tokensToBytes(1024) + 12);
+    const output = "b".repeat(tokensToBytes(4096) + 12);
     const truncationInfo = await prepareBashOutput(output, false, policy, backend, {
       command: "cat big.txt",
       signal: new AbortController().signal,
       gatekeeper,
     });
 
+    expect(policy.maxTokens).toBe(4096);
     expect(gatekeeper).not.toHaveBeenCalled();
     expect(truncationInfo.gated).toBeUndefined();
     expect(truncationInfo.model.truncated).toBe(true);

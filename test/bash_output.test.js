@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildBashUiText,
   formatBashToolResultText,
@@ -33,6 +33,7 @@ describe("bash output policy", () => {
     expect(truncationInfo.gated).toBe(true);
     expect(truncationInfo.output).toContain("tokens truncated");
     const toolText = formatBashToolResultText({ truncationInfo, exitCode: 0 });
+    expect(toolText).toContain("default bash output policy");
     expect(toolText).toContain("maxOutputTokens");
     expect(toolText).toContain("User requests are checked");
     expect(toolText).toContain("side effects");
@@ -48,15 +49,23 @@ describe("bash output policy", () => {
     expect(truncationInfo.output).toBe(output);
   });
 
-  it("truncates without gating when maxOutputTokens is set", async () => {
+  it("respects explicit maxOutputTokens without calling a gatekeeper", async () => {
     const policy = getBashOutputPolicy({
       mode: "model",
-      maxOutputTokens: 12000,
+      maxOutputTokens: 1024,
       hasMaxOutputTokens: true,
+      gatekeeperModel: "openai/gpt-5.4:low",
     });
-    const output = "b".repeat(tokensToBytes(policy.maxTokens) + 12);
-    const truncationInfo = await prepareBashOutput(output, false, policy, backend);
+    const gatekeeper = vi.fn(async () => ({ decision: "gate" }));
+    const output = "b".repeat(tokensToBytes(4096) + 12);
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend, {
+      command: "cat big.txt",
+      signal: new AbortController().signal,
+      gatekeeper,
+    });
 
+    expect(policy.maxTokens).toBe(4096);
+    expect(gatekeeper).not.toHaveBeenCalled();
     expect(truncationInfo.gated).toBeUndefined();
     expect(truncationInfo.model.truncated).toBe(true);
     expect(truncationInfo.output).toContain("tokens truncated");
@@ -71,6 +80,108 @@ describe("bash output policy", () => {
     const truncationInfo = await prepareBashOutput(output, false, policy, backend);
 
     expect(truncationInfo.gated).toBe(true);
+  });
+
+  it("skips gatekeeper calls for experimental mode under 4096 tokens", async () => {
+    const policy = getBashOutputPolicy({
+      mode: "model",
+      gatekeeperModel: "openai/gpt-5.4:low",
+    });
+    const gatekeeper = vi.fn(async () => ({ decision: "gate" }));
+    const output = "e".repeat(tokensToBytes(4000));
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend, {
+      command: "rg needle src",
+      signal: new AbortController().signal,
+      gatekeeper,
+    });
+
+    expect(gatekeeper).not.toHaveBeenCalled();
+    expect(truncationInfo.gated).toBeUndefined();
+    expect(truncationInfo.model.truncated).toBe(false);
+    expect(truncationInfo.output).toBe(output);
+  });
+
+  it("allows reviewed output through when the gatekeeper says allow", async () => {
+    const policy = getBashOutputPolicy({
+      mode: "model",
+      gatekeeperModel: "openai/gpt-5.4:low",
+    });
+    const gatekeeper = vi.fn(async () => ({ decision: "allow" }));
+    const output = "f".repeat(tokensToBytes(5000));
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend, {
+      command: "rg needle src",
+      signal: new AbortController().signal,
+      gatekeeper,
+    });
+
+    expect(gatekeeper).toHaveBeenCalledTimes(1);
+    expect(truncationInfo.gated).toBeUndefined();
+    expect(truncationInfo.model.truncated).toBe(false);
+    expect(truncationInfo.output).toBe(output);
+  });
+
+  it("gates reviewed output when the gatekeeper says gate", async () => {
+    const policy = getBashOutputPolicy({
+      mode: "model",
+      gatekeeperModel: "openai/gpt-5.4:low",
+    });
+    const gatekeeper = vi.fn(async () => ({
+      decision: "gate",
+      note: "the output was judged likely accidental or too noisy.",
+    }));
+    const output = "g".repeat(tokensToBytes(5000));
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend, {
+      command: "rg needle src",
+      signal: new AbortController().signal,
+      gatekeeper,
+    });
+
+    expect(gatekeeper).toHaveBeenCalledTimes(1);
+    expect(truncationInfo.gated).toBe(true);
+    const toolText = formatBashToolResultText({ truncationInfo, exitCode: 0 });
+    expect(toolText).toContain("experimental bashOutputGatekeeper model");
+    expect(toolText).toContain("Full output saved to");
+  });
+
+  it("hard-gates experimental output above 12288 tokens without a gatekeeper call", async () => {
+    const policy = getBashOutputPolicy({
+      mode: "model",
+      gatekeeperModel: "openai/gpt-5.4:low",
+    });
+    const gatekeeper = vi.fn(async () => ({ decision: "allow" }));
+    const output = "h".repeat(tokensToBytes(13000));
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend, {
+      command: "rg needle src",
+      signal: new AbortController().signal,
+      gatekeeper,
+    });
+
+    expect(gatekeeper).not.toHaveBeenCalled();
+    expect(truncationInfo.gated).toBe(true);
+    const toolText = formatBashToolResultText({ truncationInfo, exitCode: 0 });
+    expect(toolText).toContain("hard limit");
+  });
+
+  it("fails closed when the gatekeeper call fails", async () => {
+    const policy = getBashOutputPolicy({
+      mode: "model",
+      gatekeeperModel: "openai/gpt-5.4:low",
+    });
+    const gatekeeper = vi.fn(async () => ({
+      decision: "gate",
+      note: "the gatekeeper model 'openai/gpt-5.4:low' call failed.",
+    }));
+    const output = "i".repeat(tokensToBytes(5000));
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend, {
+      command: "rg needle src",
+      signal: new AbortController().signal,
+      gatekeeper,
+    });
+
+    expect(gatekeeper).toHaveBeenCalledTimes(1);
+    expect(truncationInfo.gated).toBe(true);
+    const toolText = formatBashToolResultText({ truncationInfo, exitCode: 0 });
+    expect(toolText).toContain("call failed");
   });
 
   it("uses a larger limit for user mode", async () => {
@@ -106,6 +217,7 @@ describe("bash output policy", () => {
       truncationInfo: {
         output: "",
         model: {
+          content: "",
           truncated: false,
           totalLines: 0,
           outputLines: 0,
@@ -126,6 +238,7 @@ describe("bash output policy", () => {
       truncationInfo: {
         output: "",
         model: {
+          content: "",
           truncated: false,
           totalLines: 0,
           outputLines: 0,

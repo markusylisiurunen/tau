@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { z } from "zod";
+import { parseModelReasoningTarget } from "../model_target.js";
 import {
   type LoadedModelResolver,
   listProviders,
@@ -17,6 +18,10 @@ import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import { getVirtualConfigDefaults } from "./virtual_defaults.js";
 
+export type BashOutputGatekeeperConfig = {
+  model: string;
+};
+
 export interface Config {
   apiKeys?: Record<string, string>;
   sandbox?: SandboxConfig;
@@ -30,6 +35,7 @@ export interface Config {
   subagents?: {
     defaultLaunchModels?: string[];
   };
+  bashOutputGatekeeper?: BashOutputGatekeeperConfig;
   modelSystemNotices?: Record<string, string>;
   async?: AsyncConfig;
 }
@@ -122,6 +128,11 @@ const SandboxFieldsSchema = z.object({
 const SubagentsConfigSchema = z
   .object({
     defaultLaunchModels: z.array(z.string()).optional(),
+  })
+  .passthrough();
+const BashOutputGatekeeperSchema = z
+  .object({
+    model: z.string(),
   })
   .passthrough();
 const StringRecordSchema = z.object({}).catchall(z.unknown());
@@ -337,6 +348,19 @@ function validateConfigData(
     subagentsResult.errors,
   );
 
+  const bashOutputGatekeeperResult = parseBashOutputGatekeeperConfig(
+    data.bashOutputGatekeeper,
+    sourceLabel,
+    options.resolveModel,
+  );
+  assignParsedConfigValue(
+    config,
+    errors,
+    "bashOutputGatekeeper",
+    bashOutputGatekeeperResult.config,
+    bashOutputGatekeeperResult.errors,
+  );
+
   const modelSystemNoticesResult = parseModelSystemNotices(
     data.modelSystemNotices,
     sourceLabel,
@@ -455,6 +479,46 @@ function parseSubagentsConfig(
   return {
     config: {
       defaultLaunchModels: launchModelsResult.launchModels,
+    },
+    errors: [],
+  };
+}
+
+function parseBashOutputGatekeeperConfig(
+  raw: unknown,
+  sourceLabel: string,
+  modelResolver: ModelResolver,
+): { config?: Config["bashOutputGatekeeper"]; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  const parsed = BashOutputGatekeeperSchema.safeParse(raw);
+  if (!parsed.success) {
+    if (parsed.error.issues.some((issue) => issue.path[0] === "model")) {
+      return {
+        errors: [
+          `${sourceLabel}: bashOutputGatekeeper.model must be a string in format <provider>/<model>:<effort>.`,
+        ],
+      };
+    }
+    return { errors: [`${sourceLabel}: 'bashOutputGatekeeper' must be an object.`] };
+  }
+
+  const parsedTarget = parseModelReasoningTarget(parsed.data.model, {
+    resolveModel: modelResolver,
+  });
+  if (!parsedTarget.target) {
+    return {
+      errors: [
+        `${sourceLabel}: bashOutputGatekeeper.model ${parsedTarget.error}. expected <provider>/<model>:<effort>.`,
+      ],
+    };
+  }
+
+  return {
+    config: {
+      model: parsedTarget.target.normalized,
     },
     errors: [],
   };
@@ -818,6 +882,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let apiKeys: Config["apiKeys"] | undefined;
   let sandbox: SandboxConfig | undefined;
   let subagents: Config["subagents"] | undefined;
+  let bashOutputGatekeeper: Config["bashOutputGatekeeper"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
   let asyncConfig: AsyncConfig | undefined;
   const bashCommands = new Map<string, BashCommand>();
@@ -830,6 +895,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     apiKeys = mergeOptionalObject(apiKeys, config.apiKeys);
     sandbox = mergeOptionalObject(sandbox, config.sandbox);
     subagents = mergeSubagentsConfig(subagents, config.subagents);
+    bashOutputGatekeeper = mergeOptionalObject(bashOutputGatekeeper, config.bashOutputGatekeeper);
     modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
     asyncConfig = mergeAsyncConfig(asyncConfig, config.async);
 
@@ -874,6 +940,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (subagents && Object.keys(subagents).length > 0) {
     merged.subagents = subagents;
+  }
+
+  if (bashOutputGatekeeper && Object.keys(bashOutputGatekeeper).length > 0) {
+    merged.bashOutputGatekeeper = bashOutputGatekeeper;
   }
 
   if (modelSystemNotices && Object.keys(modelSystemNotices).length > 0) {

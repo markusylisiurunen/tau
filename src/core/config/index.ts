@@ -14,6 +14,7 @@ export type {
   AsyncServerConfig,
   AsyncServerTelegramBotConfig,
   AsyncServerTelegramConfig,
+  BashOutputGatekeeperConfig,
   Config,
   SandboxConfig,
 } from "./schema.js";

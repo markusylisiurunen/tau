@@ -98,6 +98,9 @@ describe("config paths", () => {
           subagents: {
             defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
           },
+          bashOutputGatekeeper: {
+            model: "anthropic/claude-haiku-4-5:low",
+          },
           modelSystemNotices: {
             "openai/gpt-5.4": "global codex notice",
             "anthropic/claude-sonnet-4-5": "global anthropic notice",
@@ -118,6 +121,9 @@ describe("config paths", () => {
           agentContextFiles: ["docs/AGENTS.md"],
           subagents: {
             defaultLaunchModels: ["openai/gpt-5.4:high"],
+          },
+          bashOutputGatekeeper: {
+            model: "openai/gpt-5.4:medium",
           },
           modelSystemNotices: {
             "openai/gpt-5.4": "repo codex notice",
@@ -167,6 +173,9 @@ describe("config paths", () => {
       ]);
       expect(config.subagents).toEqual({
         defaultLaunchModels: ["openai/gpt-5.4:high"],
+      });
+      expect(config.bashOutputGatekeeper).toEqual({
+        model: "openai/gpt-5.4:medium",
       });
       expect(config.modelSystemNotices).toEqual({
         "openai/gpt-5.4": "repo codex notice",
@@ -339,6 +348,68 @@ describe("config paths", () => {
       expect(result.config.modelSystemNotices).toBeUndefined();
       expect(result.errors).toContain(
         `${join(fx.repo, ".tau", "config.json")}: modelSystemNotices.openai/gpt-5.9-custom unknown model 'openai/gpt-5.9-custom'.`,
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("normalizes bashOutputGatekeeper model references", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          bashOutputGatekeeper: {
+            model: " OpenAI/gpt-5.4:HIGH ",
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const config = loadConfig(fx.repo, deps);
+      expect(config.bashOutputGatekeeper).toEqual({
+        model: "openai/gpt-5.4:high",
+      });
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects invalid bashOutputGatekeeper models", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          bashOutputGatekeeper: {
+            model: "openai/gpt-5.4:turbo",
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
+      const modelResolver = loadModelResolver({ deps, levels });
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+
+      expect(result.config.bashOutputGatekeeper).toBeUndefined();
+      expect(result.errors).toContain(
+        `${join(fx.repo, ".tau", "config.json")}: bashOutputGatekeeper.model invalid reasoning effort. expected one of: none, minimal, low, medium, high, xhigh. expected <provider>/<model>:<effort>.`,
       );
     } finally {
       fx.cleanup();

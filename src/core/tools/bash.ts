@@ -1,11 +1,18 @@
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
-import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Context, Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import stripAnsi from "strip-ansi";
 import { z } from "zod";
+import { AuthStorage } from "../auth/auth_storage.js";
+import { createCredentialResolver } from "../auth/credential_resolver.js";
+import { parseModelReasoningTarget } from "../model_target.js";
 import type { RiskLevel } from "../types.js";
+import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import { formatCwd } from "../utils/format.js";
-import { createToolError, createToolResult } from "../utils/messages.js";
+import { createToolError, createToolResult, extractAssistantText } from "../utils/messages.js";
+import { streamModel } from "../utils/model_stream.js";
+import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import { bytesToTokens, formatTokenEstimate } from "../utils/token.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import {
@@ -31,44 +38,55 @@ const BASH_MODEL_DEFAULT_PREVIEW_TOKENS = 2048;
 const BASH_MODEL_MAX_AUTONOMOUS_TOKENS = 16384;
 const BASH_MAX_OUTPUT_TOKENS = 65536;
 const BASH_USER_MAX_TOKENS = BASH_MAX_OUTPUT_TOKENS;
+const BASH_GATEKEEPER_PASSTHROUGH_MAX_TOKENS = 4096;
+const BASH_GATEKEEPER_REVIEW_MAX_TOKENS = 12288;
+const BASH_GATEKEEPER_RESPONSE_MAX_TOKENS = 16;
 
-export interface BashOutputPolicy {
-  maxTokens: number;
-  gateOnExcess?: boolean;
-  previewTokens?: number;
-}
+const BASH_GATEKEEPER_SYSTEM_PROMPT = [
+  "You judge whether a bash command's large output should be passed through to a main coding model.",
+  "Respond with exactly one lowercase word: allow or gate.",
+  "Allow only when the output appears intentionally requested and useful for reasoning about the task.",
+  "Gate when the output looks accidental, noisy, repetitive, generated, binary-like, minified, or otherwise likely too large to be useful.",
+  "If uncertain, respond gate.",
+].join(" ");
 
-const BASH_MODEL_DEFAULT_POLICY: BashOutputPolicy = {
-  maxTokens: BASH_MODEL_DEFAULT_MAX_TOKENS,
-  gateOnExcess: true,
-  previewTokens: BASH_MODEL_DEFAULT_PREVIEW_TOKENS,
+type BashOutputPolicy =
+  | {
+      kind: "user";
+      maxTokens: number;
+    }
+  | {
+      kind: "model-explicit-max";
+      maxTokens: number;
+    }
+  | {
+      kind: "model-default";
+      maxTokens: number;
+      previewTokens: number;
+    }
+  | {
+      kind: "model-gatekeeper";
+      maxTokens: number;
+      previewTokens: number;
+      passThroughTokens: number;
+      gatekeeperModel: string;
+    };
+
+type BashGatekeeperDecision = {
+  decision: "allow" | "gate";
+  note?: string;
 };
 
-const BASH_USER_POLICY: BashOutputPolicy = {
-  maxTokens: BASH_USER_MAX_TOKENS,
+type PrepareBashOutputOptions = {
+  command?: string;
+  signal?: AbortSignal;
+  gatekeeper?: (args: {
+    command: string;
+    output: string;
+    signal: AbortSignal;
+    model: string;
+  }) => Promise<BashGatekeeperDecision>;
 };
-
-function clampOutputTokens(value: number | undefined): number | undefined {
-  if (value === undefined || !Number.isFinite(value)) return undefined;
-  return Math.min(Math.max(value, BASH_MODEL_DEFAULT_MAX_TOKENS), BASH_MAX_OUTPUT_TOKENS);
-}
-
-export function getBashOutputPolicy(args: {
-  mode: "model" | "user";
-  maxOutputTokens?: number;
-  hasMaxOutputTokens?: boolean;
-}): BashOutputPolicy {
-  if (args.mode === "user") {
-    return BASH_USER_POLICY;
-  }
-
-  if (args.hasMaxOutputTokens && args.maxOutputTokens !== undefined) {
-    const maxTokens = clampOutputTokens(args.maxOutputTokens) ?? BASH_MODEL_DEFAULT_MAX_TOKENS;
-    return { maxTokens };
-  }
-
-  return BASH_MODEL_DEFAULT_POLICY;
-}
 
 export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -96,11 +114,11 @@ const BASH_TIMEOUT_DESCRIPTION =
 
 const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
   "Optional maximum number of output tokens to return to the model.",
-  `Defaults to ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens if unset. Most commands should leave this unset. Usually it is better to run a more scoped command than to request more output. Only set it when you genuinely need more output and expect the command to produce a large result that is worth sending back.`,
+  "Most commands should leave this unset. Usually it is better to run a more scoped command than to request more output.",
+  `If unset, Tau applies its configured bash output gating policy. Without the experimental bashOutputGatekeeper config, outputs above ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens are gated to a ${BASH_MODEL_DEFAULT_PREVIEW_TOKENS}-token preview.`,
   `When more output is truly needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
   `Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}.`,
   `User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.`,
-  `If unset and output exceeds the default ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens, the tool returns a ${BASH_MODEL_DEFAULT_PREVIEW_TOKENS}-token preview with a gating notice.`,
 ].join(" ");
 
 export const BASH_TOOL: Tool = {
@@ -144,11 +162,52 @@ export interface BashTruncationInfo {
   model: TruncationResult;
   captureTruncated: boolean;
   gated?: boolean;
+  gateNotice?: string;
   fullOutputPath?: string;
 }
 
 const BASH_TEMP_FILE_TEMPLATE = "/tmp/tau-bash-output.XXXXXX";
 const BASH_TEMP_FILE_TIMEOUT_MS = 2_000;
+
+function clampOutputTokens(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  return Math.min(Math.max(Math.floor(value), 1), BASH_MAX_OUTPUT_TOKENS);
+}
+
+export function getBashOutputPolicy(args: {
+  mode: "model" | "user";
+  maxOutputTokens?: number;
+  hasMaxOutputTokens?: boolean;
+  gatekeeperModel?: string;
+}): BashOutputPolicy {
+  if (args.mode === "user") {
+    return { kind: "user", maxTokens: BASH_USER_MAX_TOKENS };
+  }
+
+  if (args.hasMaxOutputTokens && args.maxOutputTokens !== undefined) {
+    return {
+      kind: "model-explicit-max",
+      maxTokens: clampOutputTokens(args.maxOutputTokens) ?? BASH_MODEL_DEFAULT_MAX_TOKENS,
+    };
+  }
+
+  const gatekeeperModel = args.gatekeeperModel?.trim();
+  if (gatekeeperModel) {
+    return {
+      kind: "model-gatekeeper",
+      maxTokens: BASH_GATEKEEPER_REVIEW_MAX_TOKENS,
+      previewTokens: BASH_MODEL_DEFAULT_PREVIEW_TOKENS,
+      passThroughTokens: BASH_GATEKEEPER_PASSTHROUGH_MAX_TOKENS,
+      gatekeeperModel,
+    };
+  }
+
+  return {
+    kind: "model-default",
+    maxTokens: BASH_MODEL_DEFAULT_MAX_TOKENS,
+    previewTokens: BASH_MODEL_DEFAULT_PREVIEW_TOKENS,
+  };
+}
 
 async function createBashTempFilePath(backend: ToolExecutionBackend): Promise<string | undefined> {
   try {
@@ -183,13 +242,272 @@ function formatBashOutputFileHint(args: { path?: string }): string {
   return ` Full output saved to ${args.path}. To see more output, either read the file or re-run with a higher maxOutputTokens. If reading the file, be mindful of its size.`;
 }
 
+function buildUntruncatedBashResult(content: string, maxTokens: number): TruncationResult {
+  if (!content) {
+    return {
+      content: "",
+      truncated: false,
+      truncatedBy: null,
+      totalLines: 0,
+      totalBytes: 0,
+      outputLines: 0,
+      outputBytes: 0,
+      maxLines: 0,
+      maxTokens,
+    };
+  }
+
+  const totalBytes = Buffer.byteLength(content, "utf-8");
+  const totalLines = content.split("\n").length;
+  return {
+    content,
+    truncated: false,
+    truncatedBy: null,
+    totalLines,
+    totalBytes,
+    outputLines: totalLines,
+    outputBytes: totalBytes,
+    maxLines: totalLines,
+    maxTokens,
+  };
+}
+
+function formatBashMaxOutputTokensGuidance(): string {
+  return ` To inspect more output intentionally, re-run with maxOutputTokens set to the desired token budget. Use up to ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously; up to ${BASH_MAX_OUTPUT_TOKENS} only when the user explicitly requests it. User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.`;
+}
+
+function buildBashGateNotice(args: {
+  message: string;
+  totalTokenEstimate: number;
+  fullOutputPath?: string;
+}): string {
+  return `${args.message} This command already ran and any side effects have persisted. Full output estimate: ~${args.totalTokenEstimate} tokens.${formatBashOutputFileHint({ path: args.fullOutputPath })}${formatBashMaxOutputTokensGuidance()}`;
+}
+
+async function createGatedBashOutput(args: {
+  output: string;
+  captureTruncated: boolean;
+  previewTokens: number;
+  backend: ToolExecutionBackend;
+  message: string;
+  totalTokenEstimate: number;
+}): Promise<BashTruncationInfo> {
+  const previewTruncation = truncateForTokens(args.output, {
+    maxTokens: args.previewTokens,
+    strategy: "middle",
+  });
+  const fullOutputPath = await writeBashTempFile(args.backend, args.output);
+  return {
+    output: previewTruncation.content,
+    model: previewTruncation,
+    captureTruncated: args.captureTruncated,
+    gated: true,
+    gateNotice: buildBashGateNotice({
+      message: args.message,
+      totalTokenEstimate: args.totalTokenEstimate,
+      fullOutputPath,
+    }),
+    fullOutputPath,
+  };
+}
+
+function buildBashGatekeeperPrompt(command: string, output: string): string {
+  return [
+    "Decide whether this bash output should be passed through to the main model.",
+    "",
+    "Command:",
+    "```sh",
+    command,
+    "```",
+    "",
+    "Output:",
+    "```text",
+    output,
+    "```",
+  ].join("\n");
+}
+
+function parseBashGatekeeperResponse(text: string): BashGatekeeperDecision {
+  const firstWord = text
+    .trim()
+    .toLowerCase()
+    .match(/[a-z]+/)?.[0];
+  if (firstWord === "allow") {
+    return { decision: "allow" };
+  }
+  if (firstWord === "gate") {
+    return {
+      decision: "gate",
+      note: "the output was judged likely accidental or too noisy.",
+    };
+  }
+  return {
+    decision: "gate",
+    note: "the gatekeeper returned an invalid response.",
+  };
+}
+
+function createBashGatekeeper(
+  context: ToolDispatchContext,
+): PrepareBashOutputOptions["gatekeeper"] {
+  const gatekeeperModel = context.config.bashOutputGatekeeper?.model?.trim();
+  if (!gatekeeperModel) {
+    return undefined;
+  }
+
+  return async ({ command, output, signal, model }) => {
+    const parsedTarget = parseModelReasoningTarget(gatekeeperModel, {
+      resolveModel: context.modelResolver,
+    });
+    if (!parsedTarget.target) {
+      return {
+        decision: "gate",
+        note: "the configured gatekeeper model could not be resolved.",
+      };
+    }
+
+    const authStorage = new AuthStorage(context.authPath);
+    const credentialResolver = createCredentialResolver({
+      authStorage,
+      getConfig: () => context.config,
+    });
+    const sessionId = `tau-bash-gatekeeper-${randomUUID()}`;
+
+    let apiKey: string | undefined;
+    try {
+      apiKey = await credentialResolver.getApiKey(parsedTarget.target.model.provider, {
+        sessionId,
+      });
+    } catch {
+      return {
+        decision: "gate",
+        note: `the gatekeeper model '${model}' could not authenticate.`,
+      };
+    }
+
+    if (!apiKey && parsedTarget.target.model.provider === "openai-codex") {
+      return {
+        decision: "gate",
+        note: `the gatekeeper model '${model}' could not authenticate.`,
+      };
+    }
+
+    const prompt = buildBashGatekeeperPrompt(command, output);
+    const modelContext: Context = {
+      systemPrompt: BASH_GATEKEEPER_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: prompt }],
+          timestamp: Date.now(),
+        },
+      ],
+    };
+
+    const streamOptions = parseStreamingSettings({
+      reasoning: parsedTarget.target.reasoning,
+      maxTokens: BASH_GATEKEEPER_RESPONSE_MAX_TOKENS,
+      signal,
+      sessionId,
+      ...(apiKey ? { apiKey } : {}),
+    });
+
+    if (parsedTarget.target.model.provider === "openai-codex") {
+      streamOptions.headers = {
+        ...streamOptions.headers,
+        originator: CODEX_ORIGINATOR,
+        "User-Agent": CODEX_USER_AGENT,
+      };
+    }
+
+    try {
+      const stream = streamModel(parsedTarget.target.model, modelContext, streamOptions);
+      const finalMessage = await stream.result();
+      return parseBashGatekeeperResponse(extractAssistantText(finalMessage));
+    } catch (error) {
+      try {
+        await credentialResolver.noteProviderError?.(parsedTarget.target.model.provider, {
+          sessionId,
+          error,
+        });
+      } catch {}
+      return {
+        decision: "gate",
+        note: `the gatekeeper model '${model}' call failed.`,
+      };
+    }
+  };
+}
+
 export async function prepareBashOutput(
   output: string,
   captureTruncated: boolean,
   policy: BashOutputPolicy,
   backend: ToolExecutionBackend,
+  options?: PrepareBashOutputOptions,
 ): Promise<BashTruncationInfo> {
   const cleanOutput = stripAnsi(output);
+
+  if (policy.kind === "model-gatekeeper") {
+    const totalBytes = Buffer.byteLength(cleanOutput, "utf-8");
+    const totalTokenEstimate = bytesToTokens(totalBytes);
+
+    if (totalTokenEstimate <= policy.passThroughTokens) {
+      const model = buildUntruncatedBashResult(cleanOutput, policy.maxTokens);
+      return {
+        output: model.content,
+        model,
+        captureTruncated,
+      };
+    }
+
+    if (totalTokenEstimate > policy.maxTokens) {
+      return createGatedBashOutput({
+        output: cleanOutput,
+        captureTruncated,
+        previewTokens: policy.previewTokens,
+        backend,
+        message: `Output gated by experimental bashOutputGatekeeper hard limit because the full output exceeded ${policy.maxTokens} tokens.`,
+        totalTokenEstimate,
+      });
+    }
+
+    if (options?.command && options.signal && options.gatekeeper) {
+      const decision = await options.gatekeeper({
+        command: options.command,
+        output: cleanOutput,
+        signal: options.signal,
+        model: policy.gatekeeperModel,
+      });
+      if (decision.decision === "allow") {
+        const model = buildUntruncatedBashResult(cleanOutput, policy.maxTokens);
+        return {
+          output: model.content,
+          model,
+          captureTruncated,
+        };
+      }
+
+      return createGatedBashOutput({
+        output: cleanOutput,
+        captureTruncated,
+        previewTokens: policy.previewTokens,
+        backend,
+        message: `Output gated by experimental bashOutputGatekeeper model '${policy.gatekeeperModel}' because ${decision.note ?? "the output was judged likely accidental or too noisy."}`,
+        totalTokenEstimate,
+      });
+    }
+
+    return createGatedBashOutput({
+      output: cleanOutput,
+      captureTruncated,
+      previewTokens: policy.previewTokens,
+      backend,
+      message: `Output gated by experimental bashOutputGatekeeper model '${policy.gatekeeperModel}' because the gatekeeper was unavailable.`,
+      totalTokenEstimate,
+    });
+  }
+
   const maxTruncation = truncateForTokens(cleanOutput, {
     maxTokens: policy.maxTokens,
     strategy: "middle",
@@ -198,10 +516,9 @@ export async function prepareBashOutput(
     ? await writeBashTempFile(backend, cleanOutput)
     : undefined;
 
-  if (policy.gateOnExcess && maxTruncation.truncated) {
-    const previewTokens = policy.previewTokens ?? BASH_MODEL_DEFAULT_PREVIEW_TOKENS;
+  if (policy.kind === "model-default" && maxTruncation.truncated) {
     const previewTruncation = truncateForTokens(cleanOutput, {
-      maxTokens: previewTokens,
+      maxTokens: policy.previewTokens,
       strategy: "middle",
     });
     return {
@@ -209,6 +526,11 @@ export async function prepareBashOutput(
       model: previewTruncation,
       captureTruncated,
       gated: true,
+      gateNotice: buildBashGateNotice({
+        message: "Output gated by Tau's default bash output policy.",
+        totalTokenEstimate: bytesToTokens(maxTruncation.totalBytes),
+        fullOutputPath,
+      }),
       fullOutputPath,
     };
   }
@@ -226,13 +548,14 @@ export function formatBashToolResultText(args: {
   exitCode: number | null;
 }): string {
   const { truncationInfo, exitCode } = args;
-  const { model, captureTruncated, gated, fullOutputPath } = truncationInfo;
+  const { model, captureTruncated, gated, gateNotice, fullOutputPath } = truncationInfo;
   const hasNoOutput = model.outputBytes === 0;
 
   if (gated) {
     const preview = model.content;
-    const totalTokenEstimate = bytesToTokens(model.totalBytes);
-    const gateNote = `\n\n[Output gated: This command already ran and any side effects have persisted. Full output estimate: ~${totalTokenEstimate} tokens.${formatBashOutputFileHint({ path: fullOutputPath })} maxOutputTokens can be set to ${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}; up to ${BASH_MAX_OUTPUT_TOKENS} only when the user explicitly requests it. User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
+    const gateNote = gateNotice
+      ? `\n\n[${gateNotice}]`
+      : `\n\n[Output gated: This command already ran and any side effects have persisted. Full output estimate: ~${bytesToTokens(model.totalBytes)} tokens.${formatBashOutputFileHint({ path: fullOutputPath })}${formatBashMaxOutputTokensGuidance()}]`;
     const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
     return `${preview}${gateNote}${exitNote}`;
   }
@@ -447,7 +770,6 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
         workingDirectory,
       });
 
-      // All acceptance checks passed; return two-phase result
       return {
         kind: "phased",
         startedUiEvent: {
@@ -474,12 +796,18 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               mode: "model",
               maxOutputTokens,
               hasMaxOutputTokens,
+              gatekeeperModel: context.config.bashOutputGatekeeper?.model,
             });
             const truncationInfo = await prepareBashOutput(
               output,
               captureTruncated,
               outputPolicy,
               backend,
+              {
+                command,
+                signal,
+                gatekeeper: createBashGatekeeper(context),
+              },
             );
             const toolText = formatBashToolResultText({ truncationInfo, exitCode });
             const isError = exitCode === null || exitCode !== 0;

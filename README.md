@@ -456,6 +456,9 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
       "anthropic/claude-haiku-4-5:low"
     ]
   },
+  "bashOutputGatekeeper": {
+    "model": "openai/gpt-5.4:low"
+  },
   "modelSystemNotices": {
     "openai-codex/gpt-5.3-codex": "avoid apply_patch heredocs, use tau tools directly"
   }
@@ -471,6 +474,8 @@ the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`
 the `defaultTheme` field sets the theme id to load at startup. it must be non-empty, and matching is exact/case-sensitive. if not specified, it defaults to `gold`.
 
 the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launch overrides for the built-in `default` sub-agent. values must use `<provider>/<model>:<effort>`.
+
+the `bashOutputGatekeeper` field enables an experimental bash-output gating mode. `bashOutputGatekeeper.model` must use `<provider>/<model>:<effort>`. when enabled, assistant bash output is passed through directly at `<= 4096` tokens, reviewed by the configured gatekeeper model between `4097` and `12288` tokens, and always gated to a `2048`-token preview above `12288` tokens. if `maxOutputTokens` is explicitly set on the tool call, tau skips the gatekeeper and respects that token budget directly.
 
 the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). when a message is sent to that model, tau prepends the notice as a `<system>...</system>` block before the user content. this applies to main-session user messages and sub-agent prompts, regardless of persona id.
 
@@ -655,7 +660,7 @@ tool calls are displayed in the UI so you can see exactly what the model is doin
 
 tool output is truncated using a `bytes / 6` token heuristic (shown as `…N tokens truncated…`).
 
-- **bash (assistant)**: 8,192 token limit. if output exceeds this and `maxOutputTokens` is unset, output is middle-truncated to a 2,048-token gated preview. re-run with `maxOutputTokens` set to 8,192-16,384; if the user explicitly requests more, it may be set up to 65,536 (user requests are checked). bash captures the last 1MB of output.
+- **bash (assistant)**: by default, output above 8,192 tokens is gated to a 2,048-token preview when `maxOutputTokens` is unset. with experimental `bashOutputGatekeeper` config enabled, output at `<= 4096` tokens passes through directly, output between `4097` and `12288` tokens is reviewed by the configured gatekeeper model, and output above `12288` tokens is always gated to a 2,048-token preview. when `maxOutputTokens` is set explicitly, tau skips the gatekeeper and respects that token budget directly. bash captures the last 1MB of output.
 - **bash (user `!`)**: 65,536 token limit.
 - **web_search/web_fetch**: large responses are middle-truncated to their token limits (8,192 / 16,384 tokens).
 

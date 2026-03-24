@@ -34,6 +34,7 @@ describe("bash output policy", () => {
     expect(truncationInfo.output).toContain("tokens truncated");
     const toolText = formatBashToolResultText({ truncationInfo, exitCode: 0 });
     expect(toolText).toContain("maxOutputTokens");
+    expect(toolText).toContain("If you need more output from this truncated result");
     expect(toolText).toContain("User requests are checked");
     expect(toolText).toContain("side effects");
   });

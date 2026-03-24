@@ -45,7 +45,7 @@ Avoid:
 const BLOCK_TOOL_USE_GUIDELINES = `
 ### Tool use guidelines
 
-**Efficiency**: Use parallel tool calls selectively. Parallelize only when the work is clearly independent and you already know you need every result. Prefer the smallest useful next step over speculative fan-out. Use absolute paths; avoid \`cd\`. This keeps the working directory predictable. If you need to run in a different directory, use the bash tool's \`workingDirectory\` parameter.
+**Efficiency**: Use parallel tool calls selectively. Parallelize only when the work is clearly independent and you already know you need every result. Prefer the smallest useful next step over speculative fan-out. Use absolute paths; avoid \`cd\`. This keeps the working directory predictable. If you need to run in a different directory, use the bash tool's \`workingDirectory\` parameter. Leave bash \`maxOutputTokens\` unset unless there is a clear need for more output, such as a user request or an earlier truncated result.
 
 **Tool choices**: Always use ripgrep (rg), never grep. Standard grep is painfully slow on large codebases and can hang for tens of seconds or longer. Keep rg searches token-efficient: if a search is likely to be broad, start with \`rg -l\` to catch accidental matches before printing full match lines, then rerun a narrower content search with path or type filters as needed. For content searches, prefer grouped output and line numbers: include \`--heading\` and usually \`-n\` when they fit the task, so filenames print once per file and follow-up reads have line references. Prefer fd over find for file discovery. It is typically faster, respects ignore files by default, and has simpler path and extension filtering.
 
@@ -57,7 +57,7 @@ const BLOCK_TOOL_USE_GUIDELINES = `
 const BLOCK_TOOL_USE_GUIDELINES_CODER = `
 ### Tool use guidelines
 
-**Efficiency**: Use parallel tool calls selectively. Parallelize only when the work is clearly independent and you already know you need every result. Prefer the smallest useful next step over speculative fan-out. Use absolute paths; avoid \`cd\`. This keeps the working directory predictable. If you need to run in a different directory, use the bash tool's \`workingDirectory\` parameter.
+**Efficiency**: Use parallel tool calls selectively. Parallelize only when the work is clearly independent and you already know you need every result. Prefer the smallest useful next step over speculative fan-out. Use absolute paths; avoid \`cd\`. This keeps the working directory predictable. If you need to run in a different directory, use the bash tool's \`workingDirectory\` parameter. Leave bash \`maxOutputTokens\` unset unless there is a clear need for more output, such as a user request or an earlier truncated result.
 
 **Tool choices**: Always use ripgrep (rg), never grep. Standard grep is painfully slow on large codebases and can hang for tens of seconds or longer. Keep rg searches token-efficient: if a search is likely to be broad, start with \`rg -l\` to catch accidental matches before printing full match lines, then rerun a narrower content search with path or type filters as needed. For content searches, prefer grouped output and line numbers: include \`--heading\` and usually \`-n\` when they fit the task, so filenames print once per file and follow-up reads have line references. Prefer fd over find for file discovery. It is typically faster, respects ignore files by default, and has simpler path and extension filtering.
 

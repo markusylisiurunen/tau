@@ -11,6 +11,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@mariozechner/pi-tui";
+import { UndoStack } from "./undo_stack.js";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
@@ -250,6 +251,9 @@ export class Editor implements Component {
   private history: string[] = [];
   protected historyIndex: number = -1; // -1 = not browsing, 0 = most recent, 1 = older, etc.
 
+  private lastAction: "type-word" | null = null;
+  private undoStack = new UndoStack<EditorState>();
+
   public onSubmit?: (text: string) => void;
   public onChange?: (text: string) => void;
   public disableSubmit: boolean = false;
@@ -319,10 +323,15 @@ export class Editor implements Component {
   }
 
   protected navigateHistory(direction: 1 | -1): void {
+    this.lastAction = null;
     if (this.history.length === 0) return;
 
     const newIndex = this.historyIndex - direction; // Up(-1) increases index, Down(1) decreases
     if (newIndex < -1 || newIndex >= this.history.length) return;
+
+    if (this.historyIndex === -1 && newIndex >= 0) {
+      this.pushUndoSnapshot();
+    }
 
     this.historyIndex = newIndex;
 
@@ -465,6 +474,11 @@ export class Editor implements Component {
       return;
     }
 
+    if (kb.matches(data, "undo")) {
+      this.undo();
+      return;
+    }
+
     // Handle autocomplete mode
     if (this.autocompleteState && this.autocompleteList) {
       if (kb.matches(data, "selectCancel")) {
@@ -480,6 +494,8 @@ export class Editor implements Component {
       if (kb.matches(data, "tab")) {
         const selected = this.autocompleteList.getSelectedItem();
         if (selected && this.autocompleteProvider) {
+          this.pushUndoSnapshot();
+          this.lastAction = null;
           const result = this.autocompleteProvider.applyCompletion(
             this.state.lines,
             this.state.cursorLine,
@@ -509,6 +525,8 @@ export class Editor implements Component {
       if (kb.matches(data, "selectConfirm")) {
         const selected = this.autocompleteList.getSelectedItem();
         if (selected && this.autocompleteProvider) {
+          this.pushUndoSnapshot();
+          this.lastAction = null;
           const result = this.autocompleteProvider.applyCompletion(
             this.state.lines,
             this.state.cursorLine,
@@ -613,6 +631,8 @@ export class Editor implements Component {
       this.pastes.clear();
       this.pasteCounter = 0;
       this.historyIndex = -1;
+      this.undoStack.clear();
+      this.lastAction = null;
 
       if (this.onChange) this.onChange("");
       if (this.onSubmit) this.onSubmit(result);
@@ -789,8 +809,13 @@ export class Editor implements Component {
   }
 
   setText(text: string): void {
+    this.lastAction = null;
     this.historyIndex = -1; // Exit history browsing mode
-    this.setTextInternal(text);
+    const sanitized = sanitizeInputText(text);
+    if (this.getText() !== sanitized) {
+      this.pushUndoSnapshot();
+    }
+    this.setTextInternal(sanitized);
   }
 
   /**
@@ -798,6 +823,10 @@ export class Editor implements Component {
    * Used for programmatic insertion (e.g., clipboard image markers).
    */
   insertTextAtCursor(text: string): void {
+    if (!text) return;
+    this.pushUndoSnapshot();
+    this.lastAction = null;
+    this.historyIndex = -1;
     this.insertTextAtCursorInternal(text);
   }
 
@@ -846,13 +875,18 @@ export class Editor implements Component {
 
     this.historyIndex = -1; // Exit history browsing mode
 
+    if (isWhitespaceChar(sanitized) || this.lastAction !== "type-word") {
+      this.pushUndoSnapshot();
+    }
+    this.lastAction = "type-word";
+
     const line = this.state.lines[this.state.cursorLine] || "";
 
     const before = line.slice(0, this.state.cursorCol);
     const after = line.slice(this.state.cursorCol);
 
     this.state.lines[this.state.cursorLine] = before + sanitized + after;
-    this.state.cursorCol += sanitized.length; // Fix: increment by the length of the inserted string
+    this.state.cursorCol += sanitized.length;
 
     if (this.onChange) {
       this.onChange(this.getText());
@@ -891,6 +925,8 @@ export class Editor implements Component {
 
   private handlePaste(pastedText: string): void {
     this.historyIndex = -1; // Exit history browsing mode
+    this.lastAction = null;
+    this.pushUndoSnapshot();
 
     // Clean the pasted text
     const sanitizedText = sanitizeInputText(pastedText);
@@ -938,6 +974,8 @@ export class Editor implements Component {
 
   private addNewLine(): void {
     this.historyIndex = -1; // Exit history browsing mode
+    this.lastAction = null;
+    this.pushUndoSnapshot();
 
     const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -959,8 +997,10 @@ export class Editor implements Component {
 
   private handleBackspace(): void {
     this.historyIndex = -1; // Exit history browsing mode
+    this.lastAction = null;
 
     if (this.state.cursorCol > 0) {
+      this.pushUndoSnapshot();
       // Delete grapheme before cursor (handles emojis, combining characters, etc.)
       const line = this.state.lines[this.state.cursorLine] || "";
       const beforeCursor = line.slice(0, this.state.cursorCol);
@@ -976,6 +1016,8 @@ export class Editor implements Component {
       this.state.lines[this.state.cursorLine] = before + after;
       this.state.cursorCol -= graphemeLength;
     } else if (this.state.cursorLine > 0) {
+      this.pushUndoSnapshot();
+
       // Merge with previous line
       const currentLine = this.state.lines[this.state.cursorLine] || "";
       const previousLine = this.state.lines[this.state.cursorLine - 1] || "";
@@ -1007,24 +1049,30 @@ export class Editor implements Component {
   }
 
   private moveToLineStart(): void {
+    this.lastAction = null;
     this.state.cursorCol = 0;
   }
 
   private moveToLineEnd(): void {
+    this.lastAction = null;
     const currentLine = this.state.lines[this.state.cursorLine] || "";
     this.state.cursorCol = currentLine.length;
   }
 
   private deleteToStartOfLine(): void {
     this.historyIndex = -1; // Exit history browsing mode
+    this.lastAction = null;
 
     const currentLine = this.state.lines[this.state.cursorLine] || "";
 
     if (this.state.cursorCol > 0) {
+      this.pushUndoSnapshot();
       // Delete from start of line up to cursor
       this.state.lines[this.state.cursorLine] = currentLine.slice(this.state.cursorCol);
       this.state.cursorCol = 0;
     } else if (this.state.cursorLine > 0) {
+      this.pushUndoSnapshot();
+
       // At start of line - merge with previous line
       const previousLine = this.state.lines[this.state.cursorLine - 1] || "";
       this.state.lines[this.state.cursorLine - 1] = previousLine + currentLine;
@@ -1040,13 +1088,17 @@ export class Editor implements Component {
 
   private deleteToEndOfLine(): void {
     this.historyIndex = -1; // Exit history browsing mode
+    this.lastAction = null;
 
     const currentLine = this.state.lines[this.state.cursorLine] || "";
 
     if (this.state.cursorCol < currentLine.length) {
+      this.pushUndoSnapshot();
       // Delete from cursor to end of line
       this.state.lines[this.state.cursorLine] = currentLine.slice(0, this.state.cursorCol);
     } else if (this.state.cursorLine < this.state.lines.length - 1) {
+      this.pushUndoSnapshot();
+
       // At end of line - merge with next line
       const nextLine = this.state.lines[this.state.cursorLine + 1] || "";
       this.state.lines[this.state.cursorLine] = currentLine + nextLine;
@@ -1060,12 +1112,14 @@ export class Editor implements Component {
 
   private deleteWordBackwards(): void {
     this.historyIndex = -1; // Exit history browsing mode
+    this.lastAction = null;
 
     const currentLine = this.state.lines[this.state.cursorLine] || "";
 
     // If at start of line, behave like backspace at column 0 (merge with previous line)
     if (this.state.cursorCol === 0) {
       if (this.state.cursorLine > 0) {
+        this.pushUndoSnapshot();
         const previousLine = this.state.lines[this.state.cursorLine - 1] || "";
         this.state.lines[this.state.cursorLine - 1] = previousLine + currentLine;
         this.state.lines.splice(this.state.cursorLine, 1);
@@ -1073,6 +1127,7 @@ export class Editor implements Component {
         this.state.cursorCol = previousLine.length;
       }
     } else {
+      this.pushUndoSnapshot();
       const oldCursorCol = this.state.cursorCol;
       this.moveWordBackwards();
       const deleteFrom = this.state.cursorCol;
@@ -1090,10 +1145,12 @@ export class Editor implements Component {
 
   private handleForwardDelete(): void {
     this.historyIndex = -1; // Exit history browsing mode
+    this.lastAction = null;
 
     const currentLine = this.state.lines[this.state.cursorLine] || "";
 
     if (this.state.cursorCol < currentLine.length) {
+      this.pushUndoSnapshot();
       // Delete grapheme at cursor position (handles emojis, combining characters, etc.)
       const afterCursor = currentLine.slice(this.state.cursorCol);
 
@@ -1106,6 +1163,8 @@ export class Editor implements Component {
       const after = currentLine.slice(this.state.cursorCol + graphemeLength);
       this.state.lines[this.state.cursorLine] = before + after;
     } else if (this.state.cursorLine < this.state.lines.length - 1) {
+      this.pushUndoSnapshot();
+
       // At end of line - merge with next line
       const nextLine = this.state.lines[this.state.cursorLine + 1] || "";
       this.state.lines[this.state.cursorLine] = currentLine + nextLine;
@@ -1205,6 +1264,7 @@ export class Editor implements Component {
   }
 
   private moveCursor(deltaLine: number, deltaCol: number): void {
+    this.lastAction = null;
     const width = this.lastWidth;
 
     if (deltaLine !== 0) {
@@ -1265,6 +1325,7 @@ export class Editor implements Component {
   }
 
   private moveWordBackwards(): void {
+    this.lastAction = null;
     const currentLine = this.state.lines[this.state.cursorLine] || "";
 
     // If at start of line, move to end of previous line
@@ -1320,6 +1381,7 @@ export class Editor implements Component {
   }
 
   private moveWordForwards(): void {
+    this.lastAction = null;
     const currentLine = this.state.lines[this.state.cursorLine] || "";
 
     // If at end of line, move to start of next line
@@ -1541,6 +1603,8 @@ https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19536643416/job/
           return;
         }
 
+        this.pushUndoSnapshot();
+        this.lastAction = null;
         const result = this.autocompleteProvider.applyCompletion(
           this.state.lines,
           this.state.cursorLine,
@@ -1609,6 +1673,24 @@ https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19536643416/job/
       }
     } else {
       this.cancelAutocomplete();
+    }
+  }
+
+  private pushUndoSnapshot(): void {
+    this.undoStack.push(this.state);
+  }
+
+  private undo(): void {
+    this.historyIndex = -1;
+    const snapshot = this.undoStack.pop();
+    if (!snapshot) return;
+    this.state = snapshot;
+    this.lastAction = null;
+    if (this.onChange) {
+      this.onChange(this.getText());
+    }
+    if (this.autocompleteState) {
+      this.updateAutocomplete();
     }
   }
 }

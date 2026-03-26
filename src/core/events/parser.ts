@@ -149,7 +149,8 @@ function isSubagentUiEvent(value: unknown): boolean {
         typeof value.text === "string" &&
         isFiniteNumber(value.costTotal) &&
         isFiniteNumber(value.turns) &&
-        isFiniteNumber(value.toolCalls)
+        isFiniteNumber(value.toolCalls) &&
+        isSubagentUsageSnapshot(value.usage)
       );
     case "subagent_emit_output":
       return typeof value.id === "string" && typeof value.text === "string";
@@ -166,7 +167,20 @@ function isSubagentState(value: unknown): boolean {
     typeof value.id === "string" &&
     typeof value.name === "string" &&
     typeof value.title === "string" &&
-    isOneOf(value.status, subagentStatuses)
+    isOneOf(value.status, subagentStatuses) &&
+    isSubagentUsageSnapshot(value.usage)
+  );
+}
+
+function isSubagentUsageSnapshot(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isFiniteNumber(value.input) &&
+    isFiniteNumber(value.output) &&
+    isFiniteNumber(value.cacheRead) &&
+    isFiniteNumber(value.cacheWrite) &&
+    isFiniteNumber(value.promptTokensSent) &&
+    isFiniteNumber(value.contextWindow)
   );
 }
 

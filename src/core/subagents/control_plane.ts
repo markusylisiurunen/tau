@@ -13,6 +13,7 @@ import type {
   SubagentStateSnapshot,
   SubagentStatus,
   SubagentUiEvent,
+  SubagentUsageSnapshot,
 } from "./types.js";
 
 const MAX_ACTIVE_SUBAGENTS = 8;
@@ -57,9 +58,14 @@ type SubagentRecord = {
   costTotal: number;
   turns: number;
   toolCalls: number;
+  usage: SubagentUsageSnapshot;
   costOffset: number;
   turnsOffset: number;
   toolCallsOffset: number;
+  inputOffset: number;
+  outputOffset: number;
+  cacheReadOffset: number;
+  cacheWriteOffset: number;
   startedAt: number;
   finishedAt?: number;
   abortRequested: boolean;
@@ -191,9 +197,21 @@ export class SubagentControlPlane {
       costTotal: 0,
       turns: 0,
       toolCalls: 0,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        promptTokensSent: 0,
+        contextWindow: normalizedRuntimeConfig.model?.contextWindow ?? 0,
+      },
       costOffset: 0,
       turnsOffset: 0,
       toolCallsOffset: 0,
+      inputOffset: 0,
+      outputOffset: 0,
+      cacheReadOffset: 0,
+      cacheWriteOffset: 0,
       startedAt: Date.now(),
       abortRequested: false,
       progress: [],
@@ -319,6 +337,10 @@ export class SubagentControlPlane {
     record.costOffset = record.costTotal;
     record.turnsOffset = record.turns;
     record.toolCallsOffset = record.toolCalls;
+    record.inputOffset = record.usage.input;
+    record.outputOffset = record.usage.output;
+    record.cacheReadOffset = record.usage.cacheRead;
+    record.cacheWriteOffset = record.usage.cacheWrite;
 
     const subagentContext: SubagentDispatchContext = {
       id: record.id,
@@ -389,6 +411,14 @@ export class SubagentControlPlane {
     record.costTotal = record.costOffset + event.costTotal;
     record.turns = record.turnsOffset + event.turns;
     record.toolCalls = record.toolCallsOffset + event.toolCalls;
+    record.usage = {
+      input: record.inputOffset + event.usage.input,
+      output: record.outputOffset + event.usage.output,
+      cacheRead: record.cacheReadOffset + event.usage.cacheRead,
+      cacheWrite: record.cacheWriteOffset + event.usage.cacheWrite,
+      promptTokensSent: event.usage.promptTokensSent,
+      contextWindow: event.usage.contextWindow,
+    };
 
     const text = event.text.trim();
     if (text) {
@@ -405,6 +435,7 @@ export class SubagentControlPlane {
       costTotal: record.costTotal,
       turns: record.turns,
       toolCalls: record.toolCalls,
+      usage: record.usage,
     });
   }
 
@@ -415,6 +446,14 @@ export class SubagentControlPlane {
     record.costTotal = record.costOffset + event.costTotal;
     record.turns = record.turnsOffset + event.turns;
     record.toolCalls = record.toolCallsOffset + event.toolCalls;
+    record.usage = {
+      input: record.inputOffset + event.usage.input,
+      output: record.outputOffset + event.usage.output,
+      cacheRead: record.cacheReadOffset + event.usage.cacheRead,
+      cacheWrite: record.cacheWriteOffset + event.usage.cacheWrite,
+      promptTokensSent: event.usage.promptTokensSent,
+      contextWindow: event.usage.contextWindow,
+    };
 
     const text = formatToolUiEventForProgress(event.uiEvent) ?? "";
     if (text) {
@@ -431,6 +470,7 @@ export class SubagentControlPlane {
       costTotal: record.costTotal,
       turns: record.turns,
       toolCalls: record.toolCalls,
+      usage: record.usage,
     });
   }
 
@@ -444,6 +484,7 @@ export class SubagentControlPlane {
       costTotal: record.costTotal,
       turns: record.turns,
       toolCalls: record.toolCalls,
+      usage: record.usage,
       startedAt: record.startedAt,
       finishedAt: record.finishedAt,
       abortRequested: record.abortRequested,

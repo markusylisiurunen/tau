@@ -239,6 +239,14 @@ describe("rpc_server", () => {
         costTotal: 0,
         turns: 1,
         toolCalls: 0,
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          promptTokensSent: 0,
+          contextWindow: 200000,
+        },
       },
       "history-1",
     );

@@ -138,7 +138,7 @@ export async function runSubagent(options: {
   let output = 0;
   let cacheRead = 0;
   let cacheWrite = 0;
-  let promptTokensSent = 0;
+  let contextWindowUsageTokens = 0;
   const maxSubturns = MAX_SUBAGENT_SUBTURNS;
 
   const getUsageSnapshot = (): SubagentUsageSnapshot => ({
@@ -146,7 +146,7 @@ export async function runSubagent(options: {
     output,
     cacheRead,
     cacheWrite,
-    promptTokensSent,
+    contextWindowUsageTokens,
     contextWindow: runtimeConfig.model.contextWindow,
   });
 
@@ -264,7 +264,8 @@ export async function runSubagent(options: {
     output += usageTotals.output;
     cacheRead += usageTotals.cacheRead;
     cacheWrite += usageTotals.cacheWrite;
-    promptTokensSent = usageTotals.input + usageTotals.cacheRead + usageTotals.cacheWrite;
+    contextWindowUsageTokens =
+      usageTotals.input + usageTotals.cacheRead + usageTotals.cacheWrite + usageTotals.output;
 
     const messageToolCalls = finalMessage.content.filter(isToolCall);
     toolCalls += messageToolCalls.length;

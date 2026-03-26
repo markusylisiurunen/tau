@@ -294,7 +294,7 @@ export class SubagentPanelComponent implements Component {
   private formatContextUsage(usage: SubagentUsageSnapshot): string {
     const stats = `↑${formatTokenWindow(usage.input)} ↓${formatTokenWindow(usage.output)} (r${formatTokenWindow(usage.cacheRead)} w${formatTokenWindow(usage.cacheWrite)})`;
     const percent =
-      usage.contextWindow > 0 ? (usage.promptTokensSent / usage.contextWindow) * 100 : 0;
+      usage.contextWindow > 0 ? (usage.contextWindowUsageTokens / usage.contextWindow) * 100 : 0;
     const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;
     return `${stats} · ${percentStr}/${formatTokenWindow(usage.contextWindow)}`;
   }

@@ -51,7 +51,7 @@ export type SubagentUsageSnapshot = {
   output: number;
   cacheRead: number;
   cacheWrite: number;
-  promptTokensSent: number;
+  contextWindowUsageTokens: number;
   contextWindow: number;
 };
 

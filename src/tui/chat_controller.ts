@@ -711,10 +711,13 @@ export class ChatController {
     const { input, read, write, output } = this.getSessionTotals();
     const stats = `↑${formatTokenWindow(input)} ↓${formatTokenWindow(output)} (r${formatTokenWindow(read)} w${formatTokenWindow(write)})`;
 
-    const promptTokensSent = last
-      ? (last.usage?.input ?? 0) + (last.usage?.cacheRead ?? 0) + (last.usage?.cacheWrite ?? 0)
+    const contextWindowUsageTokens = last
+      ? (last.usage?.input ?? 0) +
+        (last.usage?.cacheRead ?? 0) +
+        (last.usage?.cacheWrite ?? 0) +
+        (last.usage?.output ?? 0)
       : 0;
-    const percent = windowTokens > 0 ? (promptTokensSent / windowTokens) * 100 : 0;
+    const percent = windowTokens > 0 ? (contextWindowUsageTokens / windowTokens) * 100 : 0;
     const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;
 
     return `${stats} · ${percentStr}/${formatTokenWindow(windowTokens)}`;

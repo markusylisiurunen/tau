@@ -46,6 +46,15 @@ export type SubagentConfigMap = Record<SubagentName, SubagentPersonaConfig>;
 
 export type SubagentStatus = "running" | "success" | "error" | "aborted";
 
+export type SubagentUsageSnapshot = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  promptTokensSent: number;
+  contextWindow: number;
+};
+
 export type SubagentStateSnapshot = {
   id: string;
   name: SubagentName;
@@ -55,6 +64,7 @@ export type SubagentStateSnapshot = {
   costTotal: number;
   turns: number;
   toolCalls: number;
+  usage: SubagentUsageSnapshot;
   startedAt: number;
   finishedAt?: number;
   abortRequested: boolean;
@@ -71,6 +81,7 @@ export type SubagentUiEvent =
       costTotal: number;
       turns: number;
       toolCalls: number;
+      usage: SubagentUsageSnapshot;
     }
   | { type: "subagent_emit_output"; id: string; text: string }
   | { type: "subagent_abort_requested"; id: string }

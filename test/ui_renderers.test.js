@@ -83,6 +83,14 @@ test("subagent panel renders progress and emit_output", () => {
       costTotal: 0,
       turns: 0,
       toolCalls: 0,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        promptTokensSent: 0,
+        contextWindow: 200000,
+      },
       startedAt: Date.now(),
     },
   });
@@ -93,6 +101,14 @@ test("subagent panel renders progress and emit_output", () => {
     costTotal: 0.12,
     turns: 1,
     toolCalls: 1,
+    usage: {
+      input: 1234,
+      output: 56,
+      cacheRead: 789,
+      cacheWrite: 0,
+      promptTokensSent: 2023,
+      contextWindow: 200000,
+    },
   });
   panel.handleEvent({
     type: "subagent_emit_output",
@@ -106,5 +122,6 @@ test("subagent panel renders progress and emit_output", () => {
   expect(rendered).toContain("<brandAccent>analysis</brandAccent>");
   expect(rendered).toContain("<actionOutput>  · $ echo ok</actionOutput>");
   expect(rendered).toContain("<actionOutput>  · > done</actionOutput>");
+  expect(rendered).toContain("<textMuted>↑1.2k ↓56 (r789 w0) · 1.0%/200k · $0.12</textMuted>");
   expect(rendered).toContain("<textMuted>(1/1) · ctrl+g to terminate</textMuted>");
 });

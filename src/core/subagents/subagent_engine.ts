@@ -33,13 +33,14 @@ import {
   getToolResultFirstLine,
   normalizeOneLine,
 } from "../utils/subagent_utils.js";
-import type { SubagentRuntimeConfig, SubagentToolName } from "./types.js";
+import type { SubagentRuntimeConfig, SubagentToolName, SubagentUsageSnapshot } from "./types.js";
 
 export type SubagentProgressEvent = {
   text: string;
   costTotal: number;
   turns: number;
   toolCalls: number;
+  usage: SubagentUsageSnapshot;
 };
 
 export type SubagentToolUiEvent = {
@@ -47,6 +48,7 @@ export type SubagentToolUiEvent = {
   costTotal: number;
   turns: number;
   toolCalls: number;
+  usage: SubagentUsageSnapshot;
 };
 
 export type SubagentRunResult = {
@@ -132,14 +134,28 @@ export async function runSubagent(options: {
   let costTotal = 0;
   let turns = 0;
   let toolCalls = 0;
+  let input = 0;
+  let output = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
+  let promptTokensSent = 0;
   const maxSubturns = MAX_SUBAGENT_SUBTURNS;
 
+  const getUsageSnapshot = (): SubagentUsageSnapshot => ({
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    promptTokensSent,
+    contextWindow: runtimeConfig.model.contextWindow,
+  });
+
   const emitProgress = (text: string) => {
-    onProgress?.({ text, costTotal, turns, toolCalls });
+    onProgress?.({ text, costTotal, turns, toolCalls, usage: getUsageSnapshot() });
   };
 
   const emitToolUi = (uiEvent: ToolUiEvent) => {
-    onToolUiEvent?.({ uiEvent, costTotal, turns, toolCalls });
+    onToolUiEvent?.({ uiEvent, costTotal, turns, toolCalls, usage: getUsageSnapshot() });
   };
 
   const issues: string[] = [];
@@ -229,6 +245,7 @@ export async function runSubagent(options: {
     }
 
     messages.push(finalMessage);
+    const usageTotals = getUsageTotals(finalMessage.usage);
     appendUsageLogEntry({
       timestamp: finalMessage.timestamp,
       sessionId,
@@ -237,12 +254,17 @@ export async function runSubagent(options: {
       model: finalMessage.model,
       api: finalMessage.api,
       reasoningEffort: runtimeConfig.settings?.reasoning ?? "none",
-      usage: getUsageTotals(finalMessage.usage),
+      usage: usageTotals,
       cost: { total: getUsageCostTotal(finalMessage.usage) },
       agent: { type: "subagent", name: runtimeConfig.name },
     });
     turns++;
     costTotal += getUsageCostTotal(finalMessage.usage);
+    input += usageTotals.input;
+    output += usageTotals.output;
+    cacheRead += usageTotals.cacheRead;
+    cacheWrite += usageTotals.cacheWrite;
+    promptTokensSent = usageTotals.input + usageTotals.cacheRead + usageTotals.cacheWrite;
 
     const messageToolCalls = finalMessage.content.filter(isToolCall);
     toolCalls += messageToolCalls.length;

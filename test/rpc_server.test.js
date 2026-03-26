@@ -244,7 +244,7 @@ describe("rpc_server", () => {
           output: 0,
           cacheRead: 0,
           cacheWrite: 0,
-          promptTokensSent: 0,
+          contextWindowUsageTokens: 0,
           contextWindow: 200000,
         },
       },

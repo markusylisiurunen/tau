@@ -202,7 +202,7 @@ export class SubagentControlPlane {
         output: 0,
         cacheRead: 0,
         cacheWrite: 0,
-        promptTokensSent: 0,
+        contextWindowUsageTokens: 0,
         contextWindow: normalizedRuntimeConfig.model?.contextWindow ?? 0,
       },
       costOffset: 0,
@@ -416,7 +416,7 @@ export class SubagentControlPlane {
       output: record.outputOffset + event.usage.output,
       cacheRead: record.cacheReadOffset + event.usage.cacheRead,
       cacheWrite: record.cacheWriteOffset + event.usage.cacheWrite,
-      promptTokensSent: event.usage.promptTokensSent,
+      contextWindowUsageTokens: event.usage.contextWindowUsageTokens,
       contextWindow: event.usage.contextWindow,
     };
 
@@ -451,7 +451,7 @@ export class SubagentControlPlane {
       output: record.outputOffset + event.usage.output,
       cacheRead: record.cacheReadOffset + event.usage.cacheRead,
       cacheWrite: record.cacheWriteOffset + event.usage.cacheWrite,
-      promptTokensSent: event.usage.promptTokensSent,
+      contextWindowUsageTokens: event.usage.contextWindowUsageTokens,
       contextWindow: event.usage.contextWindow,
     };
 

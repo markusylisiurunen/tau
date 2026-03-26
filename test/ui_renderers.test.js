@@ -88,7 +88,7 @@ test("subagent panel renders progress and emit_output", () => {
         output: 0,
         cacheRead: 0,
         cacheWrite: 0,
-        promptTokensSent: 0,
+        contextWindowUsageTokens: 0,
         contextWindow: 200000,
       },
       startedAt: Date.now(),
@@ -106,7 +106,7 @@ test("subagent panel renders progress and emit_output", () => {
       output: 56,
       cacheRead: 789,
       cacheWrite: 0,
-      promptTokensSent: 2023,
+      contextWindowUsageTokens: 2079,
       contextWindow: 200000,
     },
   });

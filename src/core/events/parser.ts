@@ -179,7 +179,7 @@ function isSubagentUsageSnapshot(value: unknown): boolean {
     isFiniteNumber(value.output) &&
     isFiniteNumber(value.cacheRead) &&
     isFiniteNumber(value.cacheWrite) &&
-    isFiniteNumber(value.promptTokensSent) &&
+    isFiniteNumber(value.contextWindowUsageTokens) &&
     isFiniteNumber(value.contextWindow)
   );
 }

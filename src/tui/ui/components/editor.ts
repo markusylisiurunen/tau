@@ -6,9 +6,7 @@ import {
   getEditorKeybindings,
   matchesKey,
   SelectList,
-  type SelectListLayoutOptions,
   type SelectListTheme,
-  truncateToWidth,
   visibleWidth,
 } from "@mariozechner/pi-tui";
 
@@ -89,12 +87,6 @@ function stripAnsiSequences(text: string): string {
 function sanitizeInputText(text: string): string {
   return text ? stripAnsiSequences(text) : text;
 }
-
-const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
-  minPrimaryColumnWidth: 12,
-  maxPrimaryColumnWidth: 40,
-  truncatePrimary: ({ text, maxWidth }) => truncateToWidth(text, maxWidth, "…"),
-};
 
 /**
  * Represents a chunk of text for word-wrap layout.
@@ -1443,13 +1435,10 @@ export class Editor implements Component {
   }
 
   private createAutocompleteList(
-    prefix: string,
+    _prefix: string,
     items: Array<{ value: string; label: string; description?: string }>,
   ): SelectList {
-    const layout = this.isInSlashCommandContext(prefix)
-      ? SLASH_COMMAND_SELECT_LIST_LAYOUT
-      : undefined;
-    return new SelectList(items, 5, this.theme.selectList, layout);
+    return new SelectList(items, 5, this.theme.selectList);
   }
 
   // Autocomplete methods

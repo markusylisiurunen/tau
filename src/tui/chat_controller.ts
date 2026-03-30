@@ -23,11 +23,14 @@ import {
   type BashCommand,
   type Config,
   createDefaultConfigDeps,
+  type DiffToolConfig,
   getMistralApiKey,
   loadRuntimeConfig,
   type RuntimeConfigResult,
   type ThemeDefinition,
 } from "../core/config/index.js";
+import type { StartedDiffReviewSession } from "../core/diff_review/index.js";
+import { startDiffReviewSession as startCoreDiffReviewSession } from "../core/diff_review/index.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { ChatRuntime } from "../core/runtime/chat_runtime.js";
@@ -76,6 +79,10 @@ import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 import { APP_VERSION } from "../core/version.js";
+import {
+  type DiffReviewReturnedReview,
+  DiffReviewService,
+} from "./chat_controller/diff_review_service.js";
 import { type BusyTask, InterruptLifecycle } from "./chat_controller/interrupt_lifecycle.js";
 import { QueuedUserMessages } from "./chat_controller/queued_user_messages.js";
 import {
@@ -88,6 +95,7 @@ import { DOUBLE_PRESS_WINDOW_MS } from "./constants.js";
 import type { AssistantMessageModel } from "./ui/chat_message_model.js";
 import { getFileAutocompleteToken } from "./ui/slash_autocomplete.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
+import type { UserMessageKind } from "./ui/user_message.js";
 
 export interface ChatControllerOptions {
   view: ChatView;
@@ -103,6 +111,7 @@ export interface ChatControllerOptions {
   initialHistory?: Message[];
   noAgentContextFiles?: boolean;
   config?: Config;
+  defaultDiffTool?: DiffToolConfig;
   sandboxEnabled: boolean;
   caffeinated?: boolean;
   toolBackend?: ToolExecutionBackend;
@@ -195,6 +204,7 @@ export class ChatController {
   private bashCommands: BashCommand[];
   private readonly initialUserMessage?: string;
   private config: Config;
+  private readonly defaultDiffTool?: DiffToolConfig;
   private activeThemeId?: string;
   private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
@@ -215,6 +225,7 @@ export class ChatController {
   private isStreaming = false;
   private readonly queuedMessageBuffer: QueuedUserMessages;
   private readonly interruptLifecycle: InterruptLifecycle;
+  private readonly diffReviewService: DiffReviewService;
   private readonly maintenanceService: SessionMaintenanceService;
   private isBashMode = false;
   private isBashIncognito = false;
@@ -264,6 +275,7 @@ export class ChatController {
     this.bashCommands = options.bashCommands ?? [];
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
+    this.defaultDiffTool = options.defaultDiffTool;
     this.sandboxEnabled = options.sandboxEnabled;
     this.caffeinated = options.caffeinated ?? false;
     this.sandboxRootReal = this.sandboxEnabled ? this.resolveSandboxRoot(cwd) : undefined;
@@ -352,6 +364,17 @@ export class ChatController {
     this.engine = this.runtime.session;
     this.eventUnsubscribe = this.engine.onEvent((event) => this.onEvent(event));
 
+    this.diffReviewService = new DiffReviewService({
+      view: this.view,
+      interruptLifecycle: this.interruptLifecycle,
+      refreshStatus: () => this.refreshStatus(),
+      startTurnTimer: () => this.startTurnTimer(),
+      stopTurnTimer: () => this.stopTurnTimer(),
+      getDiffToolConfig: () => this.resolveDiffToolConfig(),
+      startSession: (args) => this.startDiffReviewSession(args),
+      onReviewReturned: (review) => this.handleReturnedDiffReview(review),
+    });
+
     this.maintenanceService = new SessionMaintenanceService({
       engine: this.engine,
       view: this.view,
@@ -371,6 +394,7 @@ export class ChatController {
       newSession: () => this.clearSession(),
       rewind: () => this.startRewindFlow(),
       cd: (path) => this.changeDirectory(path),
+      diff: (argsText) => this.startDiffReview(argsText),
       compactSummaryOnly: (extra) => this.compactSessionSummaryOnly(extra),
       compactSummaryAndLast: (extra) => this.compactSessionSummaryAndLast(extra),
       pruneEarliest: (extra) => this.pruneToolResults("earliest", extra),
@@ -474,6 +498,7 @@ export class ChatController {
     if (this.speakTransition) {
       await this.speakTransition;
     }
+    await this.cancelDiffReview();
     await this.cancelSpeakCapture();
     await this.stopTurnCaffeinate();
     if (!this.toolBackendDispose) return;
@@ -680,7 +705,7 @@ export class ChatController {
         duration,
         riskLevel: this.riskLevel,
         sandboxed: this.sandboxEnabled,
-        commandHint: this.commandHint,
+        commandHint: this.getActiveCommandHint(),
       },
       editor: {
         mode: this.getInputMode(),
@@ -698,6 +723,10 @@ export class ChatController {
     if (this.isBashMode) return "bash";
     if (this.isMemoryMode) return "memory";
     return "normal";
+  }
+
+  private getActiveCommandHint(): string | undefined {
+    return this.diffReviewService.getCommandHint(this.commandHint);
   }
 
   // Context & Cost Tracking -----------------------------------------------------------------------
@@ -1073,7 +1102,7 @@ export class ChatController {
   }
 
   private interruptActiveTask(): void {
-    if (!this.interruptLifecycle.interruptActiveTask(this.isStreaming)) {
+    if (!this.interruptLifecycle.interruptActiveTask()) {
       return;
     }
     this.view.addSystemMessage("interrupted", "error");
@@ -1203,6 +1232,8 @@ export class ChatController {
         return "rewind context to a selected prior user message";
       case "cd":
         return "change directory: /cd <path>";
+      case "diff":
+        return "open the external diff review tool: /diff [git diff args...]";
       case "compactSummaryOnly":
         return "summarize session and start new, optional prompt";
       case "compactSummaryAndLast":
@@ -1348,6 +1379,17 @@ export class ChatController {
   private async handleSubmit(text: string): Promise<void> {
     const trimmed = text.trim();
     const isSingleLine = this.isSingleLineInput(text);
+
+    if (this.diffReviewService.isActive()) {
+      if (trimmed) {
+        this.view.addSystemMessage(
+          "diff review is active. finish it in the diff tool or press esc to cancel.",
+          "warn",
+        );
+      }
+      return;
+    }
+
     if (!trimmed) {
       if (this.isStreaming) return;
 
@@ -1414,7 +1456,7 @@ export class ChatController {
 
       const agentsFilePath = this.getMemoryModeFilePath();
       const textForModel = this.formatMemoryModeUserMessage(agentsFilePath, request);
-      await this.sendUserMessage(request, { textForModel, isMemoryMode: true });
+      await this.sendUserMessage(request, { textForModel, kind: "memory" });
       return;
     }
 
@@ -1423,11 +1465,34 @@ export class ChatController {
 
   private async sendUserMessage(
     text: string,
-    opts?: { textForModel?: string; isMemoryMode?: boolean },
+    opts?: { textForModel?: string; kind?: UserMessageKind },
   ): Promise<void> {
+    this.addUserMessageToMainSession(text, opts);
+    await this.runAssistantTurn();
+  }
+
+  private addUserMessageToMainSession(
+    text: string,
+    opts?: { textForModel?: string; kind?: UserMessageKind },
+  ): string {
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
 
+    const textForModel = this.applyPendingUserNotices(opts?.textForModel ?? text);
+    const historyEntryId = this.engine.addUserText(textForModel);
+    this.view.addMessage(
+      {
+        type: "user",
+        text,
+        ...(opts?.kind ? { kind: opts.kind } : {}),
+      },
+      historyEntryId,
+    );
+
+    return historyEntryId;
+  }
+
+  private applyPendingUserNotices(textForModel: string): string {
     const notices: string[] = [];
     if (this.pendingRiskLevelChange) {
       notices.push(formatRiskLevelChangeNotice(this.pendingRiskLevelChange));
@@ -1446,20 +1511,11 @@ export class ChatController {
     this.pendingCwdChange = undefined;
     this.pendingProjectContextChange = undefined;
 
-    const systemNotice = notices.length > 0 ? notices.join("\n") : undefined;
-    const baseTextForModel = opts?.textForModel ?? text;
-    const textForModel = systemNotice ? `${systemNotice}\n\n${baseTextForModel}` : baseTextForModel;
-    const historyEntryId = this.engine.addUserText(textForModel);
-    this.view.addMessage(
-      {
-        type: "user",
-        text,
-        isMemoryMode: opts?.isMemoryMode,
-      },
-      historyEntryId,
-    );
+    if (notices.length === 0) {
+      return textForModel;
+    }
 
-    await this.runAssistantTurn();
+    return `${notices.join("\n")}\n\n${textForModel}`;
   }
 
   private async sendInitialUserMessage(text: string): Promise<void> {
@@ -1758,6 +1814,25 @@ export class ChatController {
     return ["<system>", system, "</system>", "", request].join("\n");
   }
 
+  private formatDiffReviewUserMessage(review: DiffReviewReturnedReview): string {
+    const system = [
+      "Diff review mode: the following user message is returned review feedback from the diff review tool.",
+      `Diff command: ${review.diffCommand}`,
+      "",
+      "Treat the message as review findings and feedback about that diff, not as a generic new request.",
+      "Do not mention this surrounding instruction in your response.",
+    ].join("\n");
+
+    return ["<system>", system, "</system>", "", review.review].join("\n");
+  }
+
+  private handleReturnedDiffReview(review: DiffReviewReturnedReview): void {
+    this.addUserMessageToMainSession(review.review, {
+      textForModel: this.formatDiffReviewUserMessage(review),
+      kind: "review",
+    });
+  }
+
   // Command Handling ------------------------------------------------------------------------------
 
   private async handleCommand(raw: string): Promise<void> {
@@ -1900,6 +1975,76 @@ export class ChatController {
     }
   }
 
+  private async startDiffReview(argsText: string): Promise<void> {
+    if (this.diffReviewService.isActive()) {
+      this.view.addSystemMessage("diff review is already active.", "warn");
+      return;
+    }
+
+    if (!this.isDiffReviewIdle()) {
+      this.view.addSystemMessage("wait for tau to become idle before starting /diff.", "warn");
+      return;
+    }
+
+    await this.diffReviewService.start(argsText);
+  }
+
+  private isDiffReviewIdle(): boolean {
+    return (
+      !this.isStreaming &&
+      !this.speakRecording &&
+      !this.speakTransition &&
+      !this.isTranscribingSpeak &&
+      !this.diffReviewService.isActive()
+    );
+  }
+
+  private resolveDiffToolConfig(): DiffToolConfig | undefined {
+    return this.config.diffTool ?? this.defaultDiffTool;
+  }
+
+  private async startDiffReviewSession(args: {
+    diffArgs: string[];
+    diffTool: DiffToolConfig;
+    signal: AbortSignal;
+  }): Promise<StartedDiffReviewSession> {
+    return await startCoreDiffReviewSession({
+      cwd: this.deps.env.cwd(),
+      diffArgs: args.diffArgs,
+      signal: args.signal,
+      diffTool: args.diffTool,
+      persona: this.currentPersona,
+      config: this.config,
+      discoveredSkills: this.skills,
+      includeAgentContext: this.includeAgentContext,
+      deps: this.deps,
+    });
+  }
+
+  private async resolveCurrentPersonaApiKey(): Promise<string | undefined> {
+    let apiKey: string | undefined;
+    try {
+      apiKey = await this.credentialResolver.getApiKey(this.currentPersona.model.provider, {
+        sessionId: this.engine.sessionId,
+      });
+    } catch (error) {
+      if (this.currentPersona.model.provider === "openai-codex") {
+        throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));
+      }
+      throw error;
+    }
+
+    if (!apiKey && this.currentPersona.model.provider === "openai-codex") {
+      throw new Error(formatCodexAuthError(this.authPath));
+    }
+
+    return apiKey;
+  }
+
+  private async cancelDiffReview(): Promise<void> {
+    await this.diffReviewService.cancel();
+  }
+
   private startRewindFlow(): void {
     const candidates = this.engine.listRewindCandidates().map((candidate) => ({
       id: candidate.historyEntryId,
@@ -2040,22 +2185,7 @@ export class ChatController {
     prompt: string,
     signal?: AbortSignal,
   ): Promise<string[]> {
-    let apiKey: string | undefined;
-    try {
-      apiKey = await this.credentialResolver.getApiKey(this.currentPersona.model.provider, {
-        sessionId: this.engine.sessionId,
-      });
-    } catch (error) {
-      if (this.currentPersona.model.provider === "openai-codex") {
-        throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));
-      }
-      throw error;
-    }
-
-    if (!apiKey && this.currentPersona.model.provider === "openai-codex") {
-      throw new Error(formatCodexAuthError(this.authPath));
-    }
-
+    const apiKey = await this.resolveCurrentPersonaApiKey();
     const reasoning = this.clampPruneReasoning(this.currentPersona.settings.reasoning);
     const stream = streamModel(
       this.currentPersona.model,

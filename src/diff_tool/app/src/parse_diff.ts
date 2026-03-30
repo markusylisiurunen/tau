@@ -11,7 +11,8 @@ export type DiffFile = {
   deletions: number;
 };
 
-type RepoPaths = {
+type ResolvedFileMetadata = {
+  displayPath: string;
   oldRepoPath?: string;
   newRepoPath: string;
 };
@@ -31,14 +32,14 @@ export function parseDiff(
 
   return patches.flatMap((patch) =>
     patch.files.map((file) => {
-      const repoPaths = resolveRepoPaths(file, snapshotRepoPaths);
+      const fileMetadata = resolveFileMetadata(file, snapshotRepoPaths);
 
       return {
         id: file.cacheKey ?? `${file.name}::${counter++}`,
         file,
-        displayPath: file.name,
-        oldRepoPath: repoPaths.oldRepoPath,
-        newRepoPath: repoPaths.newRepoPath,
+        displayPath: fileMetadata.displayPath,
+        oldRepoPath: fileMetadata.oldRepoPath,
+        newRepoPath: fileMetadata.newRepoPath,
         additions: countChanges(file, "additions"),
         deletions: countChanges(file, "deletions"),
       };
@@ -64,31 +65,35 @@ function countChanges(
 
 function buildSnapshotRepoPathIndex(
   snapshotFiles: DiffReviewFile[] | undefined,
-): Map<string, RepoPaths> {
-  const index = new Map<string, RepoPaths>();
+): Map<string, ResolvedFileMetadata> {
+  const index = new Map<string, ResolvedFileMetadata>();
 
   for (const file of snapshotFiles ?? []) {
-    const repoPaths: RepoPaths = {
+    const metadata: ResolvedFileMetadata = {
+      displayPath:
+        file.oldPath && file.newPath && file.oldPath !== file.newPath
+          ? `${file.oldPath} → ${file.newPath}`
+          : file.path,
       oldRepoPath: file.oldPath,
       newRepoPath: file.newPath ?? file.path,
     };
 
-    index.set(file.path, repoPaths);
+    index.set(file.path, metadata);
     if (file.newPath) {
-      index.set(file.newPath, repoPaths);
+      index.set(file.newPath, metadata);
     }
     if (file.oldPath) {
-      index.set(file.oldPath, repoPaths);
+      index.set(file.oldPath, metadata);
     }
   }
 
   return index;
 }
 
-function resolveRepoPaths(
+function resolveFileMetadata(
   file: FileDiffMetadata,
-  snapshotRepoPaths: Map<string, RepoPaths>,
-): RepoPaths {
+  snapshotRepoPaths: Map<string, ResolvedFileMetadata>,
+): ResolvedFileMetadata {
   const matched =
     snapshotRepoPaths.get(file.name) ||
     (file.prevName ? snapshotRepoPaths.get(file.prevName) : undefined);
@@ -98,6 +103,10 @@ function resolveRepoPaths(
   }
 
   return {
+    displayPath:
+      file.prevName && file.prevName !== file.name
+        ? `${file.prevName} → ${file.name}`
+        : file.name,
     oldRepoPath: file.prevName,
     newRepoPath: file.name,
   };

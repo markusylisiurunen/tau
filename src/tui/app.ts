@@ -2,6 +2,7 @@ import type { Message } from "@mariozechner/pi-ai";
 import type {
   BashCommand,
   Config,
+  DiffToolConfig,
   ThemeAppearance,
   ThemeDefinition,
 } from "../core/config/index.js";
@@ -29,6 +30,7 @@ export interface ChatAppOptions {
   initialHistory?: Message[];
   noAgentContextFiles?: boolean;
   config?: Config;
+  defaultDiffTool?: DiffToolConfig;
   sandboxEnabled: boolean;
   caffeinated?: boolean;
   toolBackend?: ToolExecutionBackend;

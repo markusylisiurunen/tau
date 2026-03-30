@@ -63,6 +63,8 @@ export interface Palette {
   userSurface: (text: string) => string;
   userMemorySurface: (text: string) => string;
   userMemoryText: (text: string) => string;
+  userReviewSurface: (text: string) => string;
+  userReviewText: (text: string) => string;
 
   // Risk level indicators
   riskReadOnlyText: (text: string) => string;

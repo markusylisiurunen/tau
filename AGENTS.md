@@ -32,6 +32,8 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Runtime bootstrap resolver** (`src/core/runtime/runtime_bootstrap.ts`): Shared startup resolver for prompt context, AGENTS context, and persona skill filtering used by TUI/RPC/subagent working-directory prompt rebuilds
 - **Model catalog** (`src/core/models/catalog.ts`): Unified provider/model registry (pi-ai + Tau extensions) with layered `models.json` overlays used for model resolution and provider routing metadata
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly and history preparation for `/compact:*` flows (summary-only and summary + last assistant)
+- **Diff review** (`src/core/diff_review/`): Frozen git-diff snapshot capture, local diff-tool protocol server, and read-only review-thread execution for blocking `/diff` sessions
+- **Built-in diff tool** (`src/diff_tool/`): Browser demo launcher used by `/diff` when `diffTool` is not configured
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface plus RPC protocol/server wiring for alternate front-ends
 - **SDK client** (`src/sdk/`): Node SDK facade that drives Tau through the same RPC subprocess protocol (`tau rpc`)
@@ -65,6 +67,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `config/deps.ts` - Config loader dependencies
   - `config/paths.ts` - Config level discovery
   - `config/bash_commands.ts` - Bash command parsing and merge rules
+  - `config/diff_tool.ts` - Diff-tool config parsing and config-root command resolution
   - `config/runtime.ts` - Runtime config loader (config + content)
   - `config/virtual_bundle.ts` - Built-in content bundling
   - `config/virtual_defaults.ts` - Built-in default content
@@ -79,6 +82,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `auth/auth_paths.ts` - Auth file path resolution
   - `auth/auth_messages.ts` - Auth error messaging
   - `auth/codex_prompt.ts` - Codex system prompt handling
+  - `diff_review/` - Blocking diff-review subsystem (frozen snapshots, local protocol server, review threads)
   - `events/` - Core event protocol types and serialization
   - `session/` - Turn processing, streaming, tool dispatch, and manual compaction
   - `session/compaction.ts` - Core compaction preparation/prompt building and synthetic summary message construction
@@ -106,6 +110,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `utils/format.ts` - Display formatting
   - `utils/git.ts` - Git helpers
   - `utils/messages.ts` - Message helpers
+- `src/diff_tool/` - Built-in browser diff review demo tool (`tau diff-tool`) used as the default `/diff` fallback
 - `src/tui/`
   - `app.ts` - ChatApp wiring
   - `chat_controller.ts` - UI-agnostic controller composition/wiring
@@ -183,7 +188,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `bashCommands`, `agentContextFiles`, `sandbox`, `subagents`, `modelSystemNotices`, `async`). This level is only included when cwd is inside home.
+- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `bashCommands`, `agentContextFiles`, `sandbox`, `subagents`, `modelSystemNotices`, `async`). This level is only included when cwd is inside home.
   - `apiKeys` (optional): Map of provider id to API key (`apiKeys.<provider>`). Keys merge by provider id across config levels.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
   - `apiKeys.mistral` (optional): Mistral API key for `/speak` and Telegram audio transcription.
@@ -193,15 +198,17 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.
   - `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.
   - `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Must be non-empty and matches are exact/case-sensitive. Defaults to `gold`.
+  - `diffTool` (optional): Override launcher for `/diff` (`command`, optional `args`, optional `env`). When omitted, `/diff` uses Tau's built-in `tau diff-tool` browser demo. Relative `command` paths resolve from the config level root.
   - `subagents.defaultLaunchModels` (optional): Allowlisted `spawn_agent` launch overrides for the built-in `default` subagent (`<provider>/<model>:<effort>` entries).
   - `modelSystemNotices` (optional): Map of `<provider>/<model>` to notice text. Provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). Tau prepends the notice as a `<system>` block before each user message sent to that model (main session and subagents).
   - `async.client` (optional): Async client config (`defaultTarget`, `defaultProjectId`, `targets.<id>.url`, `targets.<id>.token`, `targets.<id>.timeoutMs`).
   - daemon-side async settings are loaded from a separate JSON file passed via `tau async daemon --config-file <path>` (`host`, `port`, `authToken`, `maxSessions`, `telegram` (map keyed by bot id, with optional `allowedProjectIds`; sessions are chat-scoped within each bot), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `systemMessage`, and project fields like `workingDirectory`, `description`, `bootstrapCommands`, and `backgroundBootstrapCommands`). On daemon startup, Tau removes existing entries under configured async workspace roots (`workspaceRoot` plus any per-project overrides) before adapters start, and the Telegram adapter prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Assume zero or one async daemon process per host; concurrent daemons are unsupported.
 
-- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `sandbox`, `modelSystemNotices`, and `async.client` merge per field; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
+- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `sandbox`, `modelSystemNotices`, and `async.client` merge per field; `diffTool` is selected from the most specific level, overrides the built-in `tau diff-tool` fallback when present, and its relative `command` is resolved from that level root; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
 - **Model overrides**: `~/.config/tau/models.json` (global, only when cwd is under home) and `.tau/models.json` (project) are discovered using the same level resolution as `config.json`. Entries overlay bundled model definitions by `provider + model id` (most specific wins). Known providers only.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`). Each command runs with cwd set to the config level root (same root used to resolve `agentContextFiles`).
+- **Diff review**: `/diff [git diff args...]` only starts when the main TUI session is idle. Tau freezes the resolved `git diff` output at launch time, starts the built-in `tau diff-tool` browser demo when `diffTool` is not configured, lets `diffTool` override that fallback when it is configured, shows diff-review status in the chat stream, keeps the editor usable while blocking normal TUI submission, and appends returned review text as a review-styled user message without auto-running the assistant. The model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that frozen snapshot. If the tool never connects or disconnects before returning a result, Tau cancels the review and unblocks the session.
 
 **Sandbox config fields** (used when starting tau with `--sandbox`):
 
@@ -268,6 +275,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau install [--global] [--force] [--prompt <id> | --skill <name>]` - Install starter prompts and skills (or one selected item)
 - `tau async daemon --config-file <path>` - Run async daemon HTTP API (plus optional Telegram DM adapter)
 - `tau async --project <id> <prompt...> | <prompt...> | -- <prompt...> | list | status <id> | logs <id> | send <id> <text...> | interrupt <id> | cron list | cron runs [jobId] | cron run <jobId>` - Async client commands (`<prompt...>` uses `async.client.defaultProjectId` when set).
+- `tau diff-tool [--help]` - Built-in browser diff review demo tool used as the default `/diff` fallback
 - `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for daemon-file `authToken` in daemon mode
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 - `PARALLEL_API_KEY` (env var) - Optional override for `apiKeys.parallel` used by `web_search`/`web_fetch`
@@ -275,7 +283,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 ## Commands
 
-- `/help`, `/new`, `/rewind`, `/cd`, `/copy:text`, `/copy:code`, `/checkpoint`, `/reload`, `/speak` (macOS only; warns on Linux)
+- `/help`, `/new`, `/rewind`, `/cd`, `/diff [git diff args...]`, `/copy:text`, `/copy:code`, `/checkpoint`, `/reload`, `/speak` (macOS only; warns on Linux)
 - `/compact:summary-only`, `/compact:summary-and-last` - Compact history into a single synthetic user summary message (optionally includes last assistant message verbatim when available)
 - `/prune:earliest`, `/prune:largest`, `/prune:smart` - Prune tool results and compact edit call payloads/results
 - `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
@@ -283,17 +291,18 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `!!<cmd>` - Direct bash execution without adding output to the model context
 - `#<request>` - Memory mode for updating AGENTS.md (single-line only)
 
-Slash commands only trigger on single-line inputs. Unknown slash-prefixed text is sent as a normal prompt.
+Slash commands only trigger on single-line inputs. `/diff` treats its payload as raw `git diff` args, defaults to plain `git diff` when no args are provided, and uses the built-in `tau diff-tool` browser demo unless `diffTool` is configured. Unknown slash-prefixed text is sent as a normal prompt.
 
 RPC mode command surface is protocol-based (`initialize`, `session.submit`, `session.interrupt`, `session.snapshot`, `session.reset`, `session.shutdown`) over NDJSON stdin/stdout.
 
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @<file> and @@skill:<name> mentions), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording), `Ctrl+G` (terminate selected subagent), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+Down` (cycle active subagents), `Escape` (interrupt), `Ctrl+C` (press twice to exit)
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @<file> and @@skill:<name> mentions), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording), `Ctrl+G` (terminate selected subagent), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work, including cancelling `/diff`), `Ctrl+C` (press twice to exit)
 
 ## Development
 
-- `npm run check` - Format (Biome) + typecheck
-- `npm run build` - Compile to dist/ (TypeScript emits `.d.ts` files, then `postbuild` removes every declaration outside `dist/sdk/` via `find dist -name '*.d.ts' ! -path 'dist/sdk/*' -delete`)
+- `npm run check` - Format (Biome) + typecheck, including `src/diff_tool/app`
+- `npm run build` - Build `src/diff_tool/app`, then compile to dist/ (TypeScript emits `.d.ts` files, then `postbuild` removes every declaration outside `dist/sdk/` via `find dist -name '*.d.ts' ! -path 'dist/sdk/*' -delete`)
 - `npm test` - Build + run UI tests
+- fresh clones also need `npm ci` in `src/diff_tool/app` because the built-in diff tool app has its own package.json
 
 **Testing focus**: Prefer high-impact tests that cover critical paths and regression-prone behavior. Avoid low-value test churn for non-critical code.
 
@@ -363,6 +372,8 @@ Before any release:
 
 - Never run a release flow unless the user explicitly asks for a release.
 - Ensure you are on `main` with a clean working tree. Unpushed commits are fine because the release flow pushes commits and tags. If either condition is not true, ask the user what to do.
+- Install dependencies for both package roots when starting from a clean checkout:
+  - `npm ci && (cd src/diff_tool/app && npm ci)`
 - Run verification, build, and tests:
   - `npm run check && npm run build && npm test`
 

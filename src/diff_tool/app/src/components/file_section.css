@@ -1,0 +1,93 @@
+.file-section {
+  border-bottom: 1px solid var(--border);
+  scroll-margin-top: var(--bar-height);
+}
+
+.file-header {
+  position: sticky;
+  top: var(--bar-height);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  height: 32px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.file-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  min-width: 0;
+  padding: 0;
+}
+
+.file-toggle:hover {
+  color: var(--text);
+}
+
+.file-path {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.viewed-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+  white-space: nowrap;
+}
+
+.viewed-btn:hover {
+  color: var(--text);
+}
+
+.viewed-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+}
+
+.viewed-btn.checked .viewed-check {
+  background: var(--accent-add);
+  border-color: var(--accent-add);
+  color: #000;
+}
+
+.file-body {
+  background: var(--bg);
+}
+
+.diff-view {
+  display: block;
+  width: 100%;
+}

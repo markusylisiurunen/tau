@@ -179,6 +179,7 @@ for development from source:
 
 ```sh
 npm install
+(cd src/diff_tool/app && npm install)
 npm run build
 npm start
 ```
@@ -384,6 +385,7 @@ tau supports slash commands for common actions:
 | `/reload` | reload personas, model overrides, prompts, skills, themes, bash commands, and AGENTS.md |
 | `/speak` | toggle microphone recording and transcribe into the editor (macOS only) |
 | `/cd` | change the working directory |
+| `/diff [git diff args...]` | open the diff review tool for a frozen git diff snapshot (built-in browser demo by default, `diffTool` overrides it) |
 | `/compact:summary-only` | compress history into one synthetic user summary message |
 | `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present |
 | `/prune:earliest` | prune bash tool results from oldest to newest and compact edit payloads/results |
@@ -408,6 +410,8 @@ the prune commands drop bash tool results from the active context without summar
 
 `/rewind` opens a picker over prior user messages in the current context. it truncates history from the selected message onward (including the selected message) and prefills the editor with that message so you can retry from there.
 
+`/diff` only starts when tau is idle. it freezes the requested `git diff` output at launch time, opens tau's built-in browser diff review demo when `diffTool` is not configured, and lets `diffTool` override that launcher when it is configured. tau shows review status in the chat stream, keeps the editor usable for drafting, but blocks normal submission until the tool returns review text or cancels. returned review text is appended as a review-styled user message without auto-running the assistant, and the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that frozen snapshot. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session. press `esc` to cancel locally.
+
 ## keyboard shortcuts
 
 | key         | action                                     |
@@ -425,7 +429,7 @@ the prune commands drop bash tool results from the active context without summar
 | `esc x2`    | clear current prompt                       |
 | `alt+up`    | pop queued message                         |
 | `alt+down`  | cycle active sub-agents                    |
-| `esc`       | interrupt active task                      |
+| `esc`       | interrupt active task or cancel `/diff`    |
 | `ctrl+c`    | press twice to exit                        |
 
 ## configuration
@@ -450,6 +454,11 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
   "disableBuiltinPersonas": false,
   "disableBuiltinThemes": false,
   "defaultTheme": "solarized",
+  "diffTool": {
+    "command": "./scripts/my-diff-tool",
+    "args": ["--browser"],
+    "env": { "TAU_DIFF_UI": "browser" }
+  },
   "subagents": {
     "defaultLaunchModels": [
       "openai/gpt-5.4:high",
@@ -469,6 +478,8 @@ the `defaultPersona` field specifies which persona to use when starting the app.
 the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 
 the `defaultTheme` field sets the theme id to load at startup. it must be non-empty, and matching is exact/case-sensitive. if not specified, it defaults to `gold`.
+
+tau ships a built-in browser diff review demo tool, so `/diff` works without any `diffTool` config. set `diffTool` only when you want to override that default launcher. `command` is required when `diffTool` is present. `args` and `env` are optional. relative `command` paths resolve from the config level root (directory containing `.tau`, or home for the global config).
 
 the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launch overrides for the built-in `default` sub-agent. values must use `<provider>/<model>:<effort>`.
 
@@ -533,6 +544,26 @@ define shortcuts for common shell commands in any in-scope config file (`~/.conf
 run them with `/bash:check` or `/bash:test`.
 
 commands run with cwd set to the config level root (directory containing `.tau`, or home for the global config).
+
+### diff review tool
+
+tau ships `tau diff-tool`, a built-in browser diff review demo tool. `/diff` launches it by default when `diffTool` is not configured.
+
+if you want a different launcher, configure `diffTool` in any in-scope config file. when present, it overrides the built-in fallback:
+
+```json
+{
+  "diffTool": {
+    "command": "./scripts/my-diff-tool",
+    "args": ["--browser"],
+    "env": { "TAU_DIFF_UI": "browser" }
+  }
+}
+```
+
+`tau diff-tool --help` shows the built-in demo tool's standalone help text.
+
+`/diff [git diff args...]` passes raw arguments to `git diff`, so `/diff`, `/diff --staged`, and `/diff -- src/foo.ts` all work. tau freezes the diff content before launch, shows diff-review status in the chat stream, keeps the editor usable while blocking submission, and appends returned review text as a review-styled user message without auto-running the assistant. the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that frozen snapshot. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session.
 
 ### additional agents context
 
@@ -664,6 +695,13 @@ tool output is truncated using a `bytes / 6` token heuristic (shown as `…N tok
 publishing to npm happens automatically via GitHub Actions when a GitHub release is published.
 
 release steps:
+
+- install dependencies for the root package and the built-in diff tool app:
+
+```sh
+npm ci
+(cd src/diff_tool/app && npm ci)
+```
 
 - run checks and build:
 

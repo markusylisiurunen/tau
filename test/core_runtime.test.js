@@ -41,6 +41,7 @@ describe("command registry", () => {
       newSession: () => calls.push({ type: "new" }),
       rewind: () => calls.push({ type: "rewind" }),
       cd: () => calls.push({ type: "cd" }),
+      diff: (argsText) => calls.push({ type: "diff", argsText }),
       compactSummaryOnly: async () => calls.push({ type: "compactSummaryOnly" }),
       compactSummaryAndLast: async () => calls.push({ type: "compactSummaryAndLast" }),
       pruneEarliest: () => calls.push({ type: "pruneEarliest" }),
@@ -72,6 +73,14 @@ describe("command registry", () => {
     expect(compactSummaryOnly).toEqual({ type: "compactSummaryOnly" });
     await registry.dispatch(compactSummaryOnly, ctx);
 
+    const diff = registry.parse('/diff --staged -- "src/file.ts"');
+    expect(diff).toEqual({
+      type: "diff",
+      argsText: '--staged -- "src/file.ts"',
+      extra: '--staged -- "src/file.ts"',
+    });
+    await registry.dispatch(diff, ctx);
+
     const pruneSmart = registry.parse("/prune:smart");
     expect(pruneSmart).toEqual({ type: "pruneSmart" });
     await registry.dispatch(pruneSmart, ctx);
@@ -87,6 +96,7 @@ describe("command registry", () => {
     expect(calls).toContainEqual({ type: "rewind" });
     expect(calls).toContainEqual({ type: "copyText" });
     expect(calls).toContainEqual({ type: "compactSummaryOnly" });
+    expect(calls).toContainEqual({ type: "diff", argsText: '--staged -- "src/file.ts"' });
     expect(calls).toContainEqual({ type: "pruneSmart" });
     expect(calls).toContainEqual({ type: "speak" });
     expect(calls).toContainEqual({ type: "unknown", raw: "/not-a-command" });

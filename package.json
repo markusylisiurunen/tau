@@ -15,9 +15,9 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "postbuild": "node scripts/copy-starter.js && node scripts/copy-static-prompts.js && find dist -name '*.d.ts' ! -path 'dist/sdk/*' -delete",
-    "check": "prettier -w .tau/**/*.md docs/**/*.md src/core/static/**/*.md starter/**/*.md *.md && biome check --write . && tsc -p tsconfig.json --noEmit",
+    "build": "(cd src/diff_tool/app && npm run build) && tsc -p tsconfig.json",
+    "postbuild": "node scripts/copy-starter.js && node scripts/copy-static-prompts.js && node scripts/copy-diff-tool-app.js && find dist -name '*.d.ts' ! -path 'dist/sdk/*' -delete",
+    "check": "prettier -w .tau/**/*.md docs/**/*.md src/core/static/**/*.md starter/**/*.md *.md && biome check --write . && tsc -p tsconfig.json --noEmit && (cd src/diff_tool/app && npm run check)",
     "precheck": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "prebuild": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "start": "node dist/main.js",

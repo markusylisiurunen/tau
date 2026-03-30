@@ -94,6 +94,11 @@ describe("config paths", () => {
           apiKeys: { openai: "global", anthropic: "anthropic-key", mistral: "mistral-key" },
           sandbox: { image: "sandbox-base" },
           bashCommands: [{ id: "check", cmd: "npm run check" }],
+          diffTool: {
+            command: "./scripts/global-diff-tool",
+            args: ["--global"],
+            env: { GLOBAL_ONLY: "1" },
+          },
           agentContextFiles: ["AGENTS.md"],
           subagents: {
             defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
@@ -115,6 +120,11 @@ describe("config paths", () => {
             { id: "check", cmd: "repo check" },
             { id: "test", cmd: "repo test" },
           ],
+          diffTool: {
+            command: "./scripts/repo-diff-tool",
+            args: ["--repo"],
+            env: { REPO_ONLY: "1" },
+          },
           agentContextFiles: ["docs/AGENTS.md"],
           subagents: {
             defaultLaunchModels: ["openai/gpt-5.4:high"],
@@ -160,6 +170,11 @@ describe("config paths", () => {
         { id: "check", cmd: "repo check", cwd: repo },
         { id: "test", cmd: "nested test", cwd: nested },
       ]);
+      expect(config.diffTool).toEqual({
+        command: join(repo, "scripts", "repo-diff-tool"),
+        args: ["--repo"],
+        env: { REPO_ONLY: "1" },
+      });
       expect(config.agentContextFiles).toEqual([
         join(fx.home, "AGENTS.md"),
         join(repo, "docs", "AGENTS.md"),

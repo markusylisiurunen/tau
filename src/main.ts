@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 import type {
   AuthPromptFn,
   BashCommand,
@@ -36,6 +37,7 @@ import {
   parsePersonaString,
   printAsyncHelp,
   printDebugInfo,
+  printDiffToolHelp,
   printHelp,
   printInstallHelp,
   printUsageHelp,
@@ -51,6 +53,11 @@ import {
   UsageCliError,
 } from "./core/index.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
+import {
+  createBuiltInDiffToolConfig,
+  DiffToolLaunchEnvironmentError,
+  runBuiltInDiffToolCommand,
+} from "./diff_tool/index.js";
 import { ChatApp } from "./tui/index.js";
 import { detectTerminalAppearance } from "./tui/terminal_appearance.js";
 
@@ -58,6 +65,7 @@ const cwd = process.cwd();
 const configDeps = createDefaultConfigDeps();
 const argv = process.argv.slice(2);
 const isRpcSubcommand = argv[0] === "rpc";
+const isDiffToolSubcommand = argv[0] === "diff-tool";
 
 const startupPlatformError = getStartupPlatformError(process.platform);
 if (startupPlatformError) {
@@ -77,7 +85,7 @@ function registerTerminalExitCleanup(): void {
   });
 }
 
-if (!isRpcSubcommand) {
+if (!isRpcSubcommand && !isDiffToolSubcommand) {
   registerTerminalExitCleanup();
 }
 
@@ -329,6 +337,44 @@ if (argv[0] === "async") {
   }
 }
 
+if (isDiffToolSubcommand) {
+  const diffToolArgs = argv.slice(1);
+  if (diffToolArgs.length > 0) {
+    const wantsHelp = diffToolArgs.includes("--help") || diffToolArgs.includes("-h");
+    if (wantsHelp) {
+      printDiffToolHelp();
+      process.exit(0);
+    }
+
+    // eslint-disable-next-line no-console
+    console.error(`unknown option: ${diffToolArgs[0]}`);
+    // eslint-disable-next-line no-console
+    console.error("");
+    printDiffToolHelp();
+    process.exit(1);
+  }
+
+  try {
+    await runBuiltInDiffToolCommand();
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof DiffToolLaunchEnvironmentError) {
+      // eslint-disable-next-line no-console
+      console.error("tau diff-tool must be launched by Tau during /diff.");
+      // eslint-disable-next-line no-console
+      console.error(err.message);
+      // eslint-disable-next-line no-console
+      console.error("");
+      printDiffToolHelp();
+      process.exit(1);
+    }
+
+    // eslint-disable-next-line no-console
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+}
+
 function requireSandboxConfig(config: Config): NonNullable<Config["sandbox"]> {
   const sandbox = config.sandbox;
   if (!sandbox?.image) {
@@ -559,6 +605,10 @@ const initialUserMessage = await readPipedStdin();
 
 const sandboxBackend = cli.sandbox ? await createSandboxBackend(config) : undefined;
 const terminalAppearance = await detectTerminalAppearance();
+const defaultDiffTool = createBuiltInDiffToolConfig({
+  nodeExecutablePath: process.execPath,
+  cliEntryPath: fileURLToPath(import.meta.url),
+});
 
 const app = new ChatApp({
   personas,
@@ -574,6 +624,7 @@ const app = new ChatApp({
   initialHistory: checkpointHistory,
   noAgentContextFiles: cli.noAgentContextFiles,
   config,
+  defaultDiffTool,
   sandboxEnabled: cli.sandbox,
   caffeinated: cli.caffeinated,
   toolBackend: sandboxBackend?.backend,

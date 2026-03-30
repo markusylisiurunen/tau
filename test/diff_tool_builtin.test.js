@@ -139,10 +139,15 @@ describe("built-in diff tool", () => {
       ]);
       expect(bootstrap.state).toEqual({
         diffStyle: "split",
+        overflowMode: "wrap",
         sidebarOpen: false,
         collapsedFileIds: [],
         viewedFileIds: [],
         threads: [],
+        brief: {
+          content: "",
+          loading: false,
+        },
       });
 
       const wholeDiff = await fetchJson(`${started.url}/api/diff`);
@@ -165,14 +170,14 @@ describe("built-in diff tool", () => {
           sidebarOpen: true,
           viewedFileIds: ["src/a.ts::0"],
           collapsedFileIds: ["src/a.ts::0"],
-          diffStyle: "unified",
+          diffStyle: "stacked",
         }),
       });
       expect(updatedState.state).toMatchObject({
         sidebarOpen: true,
         viewedFileIds: ["src/a.ts::0"],
         collapsedFileIds: ["src/a.ts::0"],
-        diffStyle: "unified",
+        diffStyle: "stacked",
       });
 
       const createdThread = await fetchJson(`${started.url}/api/thread`, {
@@ -230,6 +235,8 @@ describe("built-in diff tool", () => {
           },
         ],
         loading: false,
+        resolved: false,
+        collapsed: false,
       });
       expect(threadMessages.get(askedThread.state.threads[0].threadId)).toEqual([
         "[src/a.ts:1 (new)]\n\nWhat changed?\n\nAny risks?",

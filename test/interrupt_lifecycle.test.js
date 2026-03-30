@@ -12,7 +12,7 @@ describe("InterruptLifecycle", () => {
     expect(busyTask.requestInterrupt()).toBe(false);
   });
 
-  it("interrupts only with an active busy task", () => {
+  it("interrupts only while streaming and with an active busy task", () => {
     const lifecycle = new InterruptLifecycle();
     let interrupts = 0;
     const task = {
@@ -22,14 +22,15 @@ describe("InterruptLifecycle", () => {
       },
     };
 
-    expect(lifecycle.interruptActiveTask()).toBe(false);
+    expect(lifecycle.interruptActiveTask(true)).toBe(false);
 
     lifecycle.beginBusyTask(task);
-    expect(lifecycle.interruptActiveTask()).toBe(true);
-    expect(lifecycle.interruptActiveTask()).toBe(false);
+    expect(lifecycle.interruptActiveTask(false)).toBe(false);
+    expect(lifecycle.interruptActiveTask(true)).toBe(true);
+    expect(lifecycle.interruptActiveTask(true)).toBe(false);
 
     lifecycle.endBusyTask(task);
-    expect(lifecycle.interruptActiveTask()).toBe(false);
+    expect(lifecycle.interruptActiveTask(true)).toBe(false);
     expect(interrupts).toBe(2);
   });
 });

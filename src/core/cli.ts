@@ -222,7 +222,6 @@ export function printHelp(personas: Persona[]): void {
       "  tau usage [options]",
       "  tau install [options]",
       "  tau async <command>",
-      "  tau diff-tool [--help]",
       "",
       "options:",
       "  --help                        show this help and exit.",
@@ -243,7 +242,6 @@ export function printHelp(personas: Persona[]): void {
       "  usage                         summarize usage logs.",
       "  install                       install starter prompts and skills.",
       "  async                         run async daemon/client commands.",
-      "  diff-tool                     built-in browser diff review demo tool.",
       "",
       "examples:",
       "  tau --persona gpt-5.4-chat:high",
@@ -257,30 +255,12 @@ export function printHelp(personas: Persona[]): void {
       "  use `tau auth logout codex --account <email>` to remove stored OAuth credentials.",
       "  use `tau usage` to view daily usage totals from ~/.config/tau/logs.",
       "  use `tau install` to install starter prompts and skills.",
-      "  /diff uses Tau's built-in browser diff tool by default; config.diffTool overrides it.",
       "  you can switch persona during a session with /persona:<id>.",
       "  insert prompt templates with /prompt:<id>.",
       "  you can change model risk level during a session with /risk:read-only or /risk:read-write.",
       "  if stdin is piped, its contents are sent as the first message automatically in TUI mode.",
       "  in RPC mode, stdin/stdout are reserved for protocol traffic.",
       "  reasoning only affects providers that support it.",
-    ].join("\n"),
-  );
-}
-
-export function printDiffToolHelp(): void {
-  console.log(
-    [
-      "usage:",
-      "  tau diff-tool [--help]",
-      "",
-      "the built-in browser diff review demo tool used by /diff when config.diffTool is not set.",
-      "tau launches this automatically during an active diff review session.",
-      "it expects TAU_DIFF_* environment variables from Tau and is not meant to be launched directly.",
-      "",
-      "examples:",
-      "  tau diff-tool --help",
-      "  /diff --staged    # launches tau diff-tool automatically unless diffTool is configured",
     ].join("\n"),
   );
 }

@@ -2,11 +2,9 @@ import { Container, Markdown } from "@mariozechner/pi-tui";
 import type { UiComponent } from "./components/ui_component.js";
 import type { Theme } from "./theme/index.js";
 
-export type UserMessageKind = "memory" | "review";
-
 export type UserMessageModel = {
   text: string;
-  kind?: UserMessageKind;
+  isMemoryMode?: boolean;
 };
 
 export class UserMessageComponent extends Container implements UiComponent<UserMessageModel> {
@@ -19,18 +17,12 @@ export class UserMessageComponent extends Container implements UiComponent<UserM
   }
 
   update(model: UserMessageModel): void {
-    const bgColor =
-      model.kind === "memory"
-        ? this.theme.palette.userMemorySurface
-        : model.kind === "review"
-          ? this.theme.palette.userReviewSurface
-          : this.theme.palette.userSurface;
-    const color =
-      model.kind === "memory"
-        ? this.theme.palette.userMemoryText
-        : model.kind === "review"
-          ? this.theme.palette.userReviewText
-          : this.theme.palette.textDefault;
+    const bgColor = model.isMemoryMode
+      ? this.theme.palette.userMemorySurface
+      : this.theme.palette.userSurface;
+    const color = model.isMemoryMode
+      ? this.theme.palette.userMemoryText
+      : this.theme.palette.textDefault;
 
     this.clear();
     this.addChild(

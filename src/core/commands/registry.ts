@@ -10,7 +10,6 @@ export type Command = (
   | { type: "new" }
   | { type: "rewind" }
   | { type: "cd"; path: string }
-  | { type: "diff"; argsText: string }
   | { type: "compactSummaryOnly" }
   | { type: "compactSummaryAndLast" }
   | { type: "pruneEarliest" }
@@ -54,7 +53,6 @@ export interface CommandDispatchContext {
   newSession: () => Promise<void>;
   rewind: () => void;
   cd: (path: string) => void;
-  diff: (argsText: string) => Promise<void> | void;
   compactSummaryOnly: (extra?: string) => Promise<void>;
   compactSummaryAndLast: (extra?: string) => Promise<void>;
   pruneEarliest: (extra?: string) => void;
@@ -287,21 +285,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "cd", path: extra ?? "", extra };
     },
     run: (ctx, command) => ctx.cd(command.path),
-  });
-
-  registry.register({
-    id: "diff",
-    usage: "/diff [git diff args...]",
-    description: "review a git diff with the external diff tool",
-    autocompleteDescription: "review a git diff with the external diff tool",
-    argument: "none",
-    section: "base",
-    parse: (raw) => {
-      const { command, extra } = splitCommandInput(raw);
-      if (command !== "/diff") return null;
-      return { type: "diff", argsText: extra ?? "", extra };
-    },
-    run: (ctx, command) => ctx.diff(command.argsText),
   });
 
   registry.register({

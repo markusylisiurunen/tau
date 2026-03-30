@@ -49,7 +49,6 @@ const generatePalette = (brandHue, appearance) => {
   const HUE_EDITOR_SUBAGENT_BORDER = wrapHue(HUE_BRAND - 32);
   const HUE_EDITOR_RECORDING_BORDER = HUE_ERROR;
   const HUE_MEMORY = wrapHue(280);
-  const HUE_REVIEW = wrapHue(132);
   const HUE_BASH = wrapHue(92);
 
   const isDark = appearance === "dark";
@@ -110,16 +109,6 @@ const generatePalette = (brandHue, appearance) => {
     scaleC(0.76),
     setL(isDark ? 84 : 28),
   ]);
-  const userReviewSurface = transform(brandAccent, [
-    setH(HUE_REVIEW),
-    scaleC(isDark ? 0.16 : 0.03),
-    setL(isDark ? 22 : 95),
-  ]);
-  const userReviewText = transform(brandAccent, [
-    setH(HUE_REVIEW),
-    scaleC(0.56),
-    setL(isDark ? 83 : 29),
-  ]);
 
   const statusWarn = transform(brandAccent, [setH(HUE_WARN), scaleC(0.92), setL(isDark ? 68 : 44)]);
   const statusError = transform(statusWarn, [setH(HUE_ERROR)]);
@@ -163,8 +152,6 @@ const generatePalette = (brandHue, appearance) => {
     userSurface: toHex(userSurface),
     userMemorySurface: toHex(userMemorySurface),
     userMemoryText: toHex(userMemoryText),
-    userReviewSurface: toHex(userReviewSurface),
-    userReviewText: toHex(userReviewText),
 
     riskReadOnlyText: toHex(textMuted),
     riskReadWriteText: toHex(textMuted),

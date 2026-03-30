@@ -1,8 +1,6 @@
 .tau/config.json
 dist/
 node_modules/
-references/docs/
 references/repos/
 src/core/version.ts
-src/diff_tool/app/dist/
 *.tsbuildinfo

@@ -5,9 +5,9 @@
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  border-radius: 6px;
+  border-radius: 0;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -23,13 +23,13 @@
 
 .btn.primary {
   background: var(--accent-primary);
-  color: #0a0a0a;
+  color: var(--text-inverse);
   border-color: transparent;
   font-weight: 500;
 }
 
 .btn.primary:hover {
-  background: #f0f0f0;
+  background: var(--accent-primary-hover);
 }
 
 .btn.ghost {

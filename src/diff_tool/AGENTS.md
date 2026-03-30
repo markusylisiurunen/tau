@@ -19,7 +19,8 @@ The HTTP server (`http_server.ts`) serves these endpoints, which the React app c
 | --- | --- | --- |
 | GET | `/api/bootstrap` | Session context, changed files, and threads |
 | GET | `/api/diff[?path=<file>]` | Full diff or single-file diff patch |
-| POST | `/api/thread-message` | Send `{ message, threadId? }`, get `{ thread }` back |
+| POST | `/api/thread-message` | Send the pending thread messages to the review agent and store the reply |
+| POST | `/api/brief/generate` | Ask the review agent for a diff-wide reviewer brief |
 | POST | `/api/review` | Send `{ review }` to return the review text to Tau |
 | POST | `/api/cancel` | Cancel the review session |
 

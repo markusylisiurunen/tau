@@ -22,18 +22,29 @@ export type DiffToolCommentThread = {
   side: DiffToolLineSide;
   messages: DiffToolThreadMessage[];
   loading: boolean;
+  resolved: boolean;
+  collapsed: boolean;
+};
+
+export type DiffToolBrief = {
+  threadId?: string;
+  content: string;
+  loading: boolean;
 };
 
 export type DiffToolReviewState = {
-  diffStyle: "unified" | "split";
+  diffStyle: "stacked" | "split";
+  overflowMode: "wrap" | "scroll";
   sidebarOpen: boolean;
   collapsedFileIds: string[];
   viewedFileIds: string[];
   threads: DiffToolCommentThread[];
+  brief: DiffToolBrief;
 };
 
 export type DiffToolStatePatch = {
   diffStyle?: DiffToolReviewState["diffStyle"];
+  overflowMode?: DiffToolReviewState["overflowMode"];
   sidebarOpen?: boolean;
   collapsedFileIds?: string[];
   viewedFileIds?: string[];

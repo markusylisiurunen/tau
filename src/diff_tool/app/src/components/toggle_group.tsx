@@ -1,8 +1,13 @@
 import "./toggle_group.css";
 
+type ToggleGroupOption<T extends string> = {
+  value: T;
+  label: string;
+};
+
 type ToggleGroupProps<T extends string> = {
   value: T;
-  options: T[];
+  options: ToggleGroupOption<T>[];
   onChange: (value: T) => void;
 };
 
@@ -15,14 +20,14 @@ export function ToggleGroup<T extends string>({
     <div className="toggle-group" role="radiogroup">
       {options.map((option) => (
         <button
-          key={option}
+          key={option.value}
           type="button"
           role="radio"
-          aria-checked={value === option}
-          className={`toggle-group-item${value === option ? " active" : ""}`}
-          onClick={() => onChange(option)}
+          aria-checked={value === option.value}
+          className={`toggle-group-item${value === option.value ? " active" : ""}`}
+          onClick={() => onChange(option.value)}
         >
-          {option}
+          {option.label}
         </button>
       ))}
     </div>

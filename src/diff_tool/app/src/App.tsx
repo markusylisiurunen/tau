@@ -1,21 +1,41 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import "./App.css";
 import {
   cancelReview,
+  collapseThread,
   createThread,
-  deleteThread,
   fetchBootstrap,
   fetchDiff,
+  generateBrief,
   replyToThread,
   requestThreadMessage,
+  resolveThread,
   returnReview,
   updateReviewState,
 } from "./api.js";
+import { type CommentDraft, type LineAnnotation } from "./comments.js";
 import {
-  type CommentDraft,
-  type LineAnnotation,
-  type LineSide,
-} from "./comments.js";
+  buildThreadsByFileId,
+  emptyReviewState,
+  getAdjacentFileId,
+  normalizeReviewState,
+  resolveDraftFilePath,
+  sumFileChanges,
+  toLookup,
+  toggleId,
+  uniqueIds,
+  withBriefLoading,
+  withDraftAnnotation,
+  withThreadLoading,
+} from "./review_state_utils.js";
+import { BriefDialog } from "./components/brief_dialog.js";
 import { FileSection } from "./components/file_section.js";
 import { Sidebar } from "./components/sidebar.js";
 import { TopBar } from "./components/top_bar.js";
@@ -24,16 +44,10 @@ import type {
   BootstrapPayload,
   DiffReviewGetDiffResult,
   DiffToolReviewState,
+  ReviewStatePatch,
 } from "./types.js";
 
 const emptyAnnotations: LineAnnotation[] = [];
-const emptyReviewState: DiffToolReviewState = {
-  diffStyle: "split",
-  sidebarOpen: false,
-  collapsedFileIds: [],
-  viewedFileIds: [],
-  threads: [],
-};
 
 export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapPayload | null>(null);
@@ -43,9 +57,11 @@ export function App() {
   const [draft, setDraft] = useState<CommentDraft | null>(null);
   const [finished, setFinished] = useState(false);
   const [status, setStatus] = useState("");
+  const [briefOpen, setBriefOpen] = useState(false);
+  const pendingCollapsedScrollTargetRef = useRef<string | null>(null);
 
   const applyReviewState = useCallback((state: DiffToolReviewState) => {
-    setReviewState(state);
+    setReviewState(normalizeReviewState(state));
   }, []);
 
   const syncState = useCallback(
@@ -64,22 +80,55 @@ export function App() {
     [applyReviewState],
   );
 
+  const applyStatePatch = useCallback(
+    (patch: ReviewStatePatch, options?: { onError?: () => void }) => {
+      void syncState(updateReviewState(patch), options);
+    },
+    [syncState],
+  );
+
+  const setThreadLoading = useCallback((threadId: string, loading: boolean) => {
+    setReviewState((prev) => withThreadLoading(prev, threadId, loading));
+  }, []);
+
+  const setBriefLoading = useCallback((loading: boolean) => {
+    setReviewState((prev) => withBriefLoading(prev, loading));
+  }, []);
+
   useEffect(() => {
-    fetchBootstrap()
-      .then((data) => {
+    let active = true;
+
+    const load = async () => {
+      try {
+        const data = await fetchBootstrap();
         if (!data.state) {
           throw new Error(
             "diff tool bootstrap response did not include review state",
           );
         }
+        if (!active) {
+          return;
+        }
+
         setBootstrap(data);
         applyReviewState(data.state);
-        return fetchDiff();
-      })
-      .then((result) => setDiff(result))
-      .catch((error) =>
-        setStatus(error instanceof Error ? error.message : String(error)),
-      );
+
+        const result = await fetchDiff();
+        if (active) {
+          setDiff(result);
+        }
+      } catch (error) {
+        if (active) {
+          setStatus(error instanceof Error ? error.message : String(error));
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
   }, [applyReviewState]);
 
   const patch = diff && "patch" in diff ? diff.patch : "";
@@ -96,33 +145,32 @@ export function App() {
     () => toLookup(reviewState.viewedFileIds),
     [reviewState.viewedFileIds],
   );
+  const unresolvedThreadCount = useMemo(
+    () => reviewState.threads.filter((thread) => !thread.resolved).length,
+    [reviewState.threads],
+  );
+  const hasBrief = reviewState.brief.content.trim().length > 0;
 
   const totals = useMemo(
-    () =>
-      files.reduce(
-        (acc, file) => ({
-          additions: acc.additions + file.additions,
-          deletions: acc.deletions + file.deletions,
-        }),
-        { additions: 0, deletions: 0 },
-      ),
+    () => files.reduce(sumFileChanges, { additions: 0, deletions: 0 }),
     [files],
   );
 
-  const jumpToFile = useCallback((fileId: string) => {
-    const element = document.getElementById(`file-${fileId}`);
-    element?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
+  const scrollToFile = useCallback(
+    (fileId: string, behavior: ScrollBehavior = "smooth") => {
+      const element = document.getElementById(`file-${fileId}`);
+      element?.scrollIntoView({ behavior, block: "start" });
+    },
+    [],
+  );
 
   const toggleCollapsed = useCallback(
     (fileId: string) => {
-      void syncState(
-        updateReviewState({
-          collapsedFileIds: toggleId(reviewState.collapsedFileIds, fileId),
-        }),
-      );
+      applyStatePatch({
+        collapsedFileIds: toggleId(reviewState.collapsedFileIds, fileId),
+      });
     },
-    [reviewState.collapsedFileIds, syncState],
+    [applyStatePatch, reviewState.collapsedFileIds],
   );
 
   const toggleViewed = useCallback(
@@ -133,39 +181,64 @@ export function App() {
         ? uniqueIds([...reviewState.collapsedFileIds, fileId])
         : reviewState.collapsedFileIds;
 
-      void syncState(
-        updateReviewState({
+      pendingCollapsedScrollTargetRef.current =
+        isViewed && !reviewState.collapsedFileIds.includes(fileId)
+          ? getAdjacentFileId(files, fileId)
+          : null;
+
+      applyStatePatch(
+        {
           viewedFileIds: nextViewed,
           collapsedFileIds: nextCollapsed,
-        }),
+        },
+        {
+          onError: () => {
+            pendingCollapsedScrollTargetRef.current = null;
+          },
+        },
       );
     },
-    [reviewState.collapsedFileIds, reviewState.viewedFileIds, syncState],
+    [
+      applyStatePatch,
+      files,
+      reviewState.collapsedFileIds,
+      reviewState.viewedFileIds,
+    ],
   );
 
   const expandAll = useCallback(() => {
-    void syncState(updateReviewState({ collapsedFileIds: [] }));
-  }, [syncState]);
+    applyStatePatch({ collapsedFileIds: [] });
+  }, [applyStatePatch]);
 
   const collapseAll = useCallback(() => {
-    void syncState(
-      updateReviewState({ collapsedFileIds: files.map((file) => file.id) }),
-    );
-  }, [files, syncState]);
+    applyStatePatch({ collapsedFileIds: files.map((file) => file.id) });
+  }, [applyStatePatch, files]);
 
   const collapseViewed = useCallback(() => {
-    void syncState(
-      updateReviewState({
-        collapsedFileIds: uniqueIds([
-          ...reviewState.collapsedFileIds,
-          ...reviewState.viewedFileIds,
-        ]),
-      }),
-    );
-  }, [reviewState.collapsedFileIds, reviewState.viewedFileIds, syncState]);
+    applyStatePatch({
+      collapsedFileIds: uniqueIds([
+        ...reviewState.collapsedFileIds,
+        ...reviewState.viewedFileIds,
+      ]),
+    });
+  }, [
+    applyStatePatch,
+    reviewState.collapsedFileIds,
+    reviewState.viewedFileIds,
+  ]);
+
+  useLayoutEffect(() => {
+    const targetFileId = pendingCollapsedScrollTargetRef.current;
+    if (!targetFileId) {
+      return;
+    }
+
+    pendingCollapsedScrollTargetRef.current = null;
+    scrollToFile(targetFileId, "auto");
+  }, [reviewState.collapsedFileIds, scrollToFile]);
 
   const activateLine = useCallback(
-    (fileId: string, lineNumber: number, side: LineSide) => {
+    (fileId: string, lineNumber: number, side: CommentDraft["side"]) => {
       setDraft((prev) => {
         if (
           prev &&
@@ -196,15 +269,10 @@ export function App() {
       return;
     }
 
-    const file = files.find((entry) => entry.id === draft.fileId);
-    const filePath =
-      draft.side === "deletions"
-        ? (file?.oldRepoPath ?? file?.newRepoPath ?? draft.fileId)
-        : (file?.newRepoPath ?? file?.oldRepoPath ?? draft.fileId);
     void syncState(
       createThread({
         fileId: draft.fileId,
-        filePath,
+        filePath: resolveDraftFilePath(draft, files),
         lineNumber: draft.lineNumber,
         side: draft.side,
         body,
@@ -217,13 +285,6 @@ export function App() {
 
   const cancelDraft = useCallback(() => setDraft(null), []);
 
-  const removeThread = useCallback(
-    (threadId: string) => {
-      void syncState(deleteThread(threadId));
-    },
-    [syncState],
-  );
-
   const addReply = useCallback(
     (threadId: string, text: string) => {
       void syncState(replyToThread({ id: threadId, text }));
@@ -234,43 +295,44 @@ export function App() {
   const requestAgent = useCallback(
     (threadId: string) => {
       setStatus("");
-      setReviewState((prev) => ({
-        ...prev,
-        threads: prev.threads.map((thread) =>
-          thread.id === threadId ? { ...thread, loading: true } : thread,
-        ),
-      }));
+      setThreadLoading(threadId, true);
       void syncState(requestThreadMessage(threadId), {
         onError: () => {
-          setReviewState((prev) => ({
-            ...prev,
-            threads: prev.threads.map((thread) =>
-              thread.id === threadId ? { ...thread, loading: false } : thread,
-            ),
-          }));
+          setThreadLoading(threadId, false);
         },
       });
+    },
+    [setThreadLoading, syncState],
+  );
+
+  const requestBrief = useCallback(() => {
+    setStatus("");
+    setBriefLoading(true);
+    void syncState(generateBrief(), {
+      onError: () => {
+        setBriefLoading(false);
+      },
+    });
+  }, [setBriefLoading, syncState]);
+
+  const toggleResolved = useCallback(
+    (threadId: string, resolved: boolean) => {
+      void syncState(resolveThread({ id: threadId, resolved }));
     },
     [syncState],
   );
 
-  const threadsByFileId = useMemo(() => {
-    const byFile = new Map<string, LineAnnotation[]>();
-    for (const thread of reviewState.threads) {
-      const annotation: LineAnnotation = {
-        lineNumber: thread.lineNumber,
-        side: thread.side,
-        metadata: { type: "thread", thread },
-      };
-      const entry = byFile.get(thread.fileId);
-      if (entry) {
-        entry.push(annotation);
-      } else {
-        byFile.set(thread.fileId, [annotation]);
-      }
-    }
-    return byFile;
-  }, [reviewState.threads]);
+  const toggleThreadCollapsed = useCallback(
+    (threadId: string, collapsed: boolean) => {
+      void syncState(collapseThread({ id: threadId, collapsed }));
+    },
+    [syncState],
+  );
+
+  const threadsByFileId = useMemo(
+    () => buildThreadsByFileId(reviewState.threads),
+    [reviewState.threads],
+  );
 
   const draftAnnotation = useMemo<LineAnnotation | null>(() => {
     if (!draft) {
@@ -283,7 +345,7 @@ export function App() {
     };
   }, [draft]);
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     setFinished(true);
     setStatus("Returning review…");
     try {
@@ -293,9 +355,9 @@ export function App() {
       setFinished(false);
       setStatus(error instanceof Error ? error.message : String(error));
     }
-  };
+  }, []);
 
-  const handleCancel = async () => {
+  const handleCancel = useCallback(async () => {
     setFinished(true);
     setStatus("Cancelling…");
     try {
@@ -305,85 +367,99 @@ export function App() {
       setFinished(false);
       setStatus(error instanceof Error ? error.message : String(error));
     }
-  };
+  }, []);
+
+  const handleBriefClick = useCallback(() => {
+    if (hasBrief) {
+      setBriefOpen(true);
+      return;
+    }
+    requestBrief();
+  }, [hasBrief, requestBrief]);
 
   return (
-    <div className={`app${reviewState.sidebarOpen ? " sidebar-open" : ""}`}>
-      <TopBar
-        fileCount={files.length}
-        viewedCount={reviewState.viewedFileIds.length}
-        additions={totals.additions}
-        deletions={totals.deletions}
-        commentCount={reviewState.threads.length}
-        diffCommand={bootstrap?.context.diffCommand}
-        diffStyle={reviewState.diffStyle}
-        sidebarOpen={reviewState.sidebarOpen}
-        finished={finished}
-        status={status}
-        onToggleSidebar={() => {
-          void syncState(
-            updateReviewState({ sidebarOpen: !reviewState.sidebarOpen }),
-          );
-        }}
-        onExpandAll={expandAll}
-        onCollapseViewed={collapseViewed}
-        onCollapseAll={collapseAll}
-        onDiffStyleChange={(diffStyle) => {
-          void syncState(updateReviewState({ diffStyle }));
-        }}
-        onSubmit={handleSubmit}
-        onCancel={handleCancel}
-      />
-      <Sidebar
-        open={reviewState.sidebarOpen}
-        files={files}
-        viewed={viewed}
-        onJumpToFile={jumpToFile}
-      />
-      <main className="content">
-        {files.length === 0 && (
-          <div className="empty">{status || "loading…"}</div>
-        )}
-        {files.map((file) => {
-          const fileThreads = threadsByFileId.get(file.id) ?? emptyAnnotations;
-          const annotations =
-            draft && draft.fileId === file.id && draftAnnotation
-              ? [...fileThreads, draftAnnotation]
-              : fileThreads;
+    <>
+      <div className={`app${reviewState.sidebarOpen ? " sidebar-open" : ""}`}>
+        <TopBar
+          fileCount={files.length}
+          viewedCount={reviewState.viewedFileIds.length}
+          additions={totals.additions}
+          deletions={totals.deletions}
+          commentCount={unresolvedThreadCount}
+          diffCommand={bootstrap?.context.diffCommand}
+          diffStyle={reviewState.diffStyle}
+          overflowMode={reviewState.overflowMode}
+          sidebarOpen={reviewState.sidebarOpen}
+          finished={finished}
+          status={status}
+          briefLoading={reviewState.brief.loading}
+          hasBrief={hasBrief}
+          onBriefClick={handleBriefClick}
+          onToggleSidebar={() => {
+            applyStatePatch({ sidebarOpen: !reviewState.sidebarOpen });
+          }}
+          onExpandAll={expandAll}
+          onCollapseViewed={collapseViewed}
+          onCollapseAll={collapseAll}
+          onDiffStyleChange={(diffStyle) => {
+            applyStatePatch({ diffStyle });
+          }}
+          onOverflowModeChange={(overflowMode) => {
+            applyStatePatch({ overflowMode });
+          }}
+          onSubmit={handleSubmit}
+          onCancel={handleCancel}
+        />
+        <Sidebar
+          open={reviewState.sidebarOpen}
+          files={files}
+          viewed={viewed}
+          onJumpToFile={scrollToFile}
+        />
+        <main className="content">
+          {files.length === 0 && (
+            <div className="empty">{status || "loading…"}</div>
+          )}
+          {files.map((file) => {
+            const fileThreads =
+              threadsByFileId.get(file.id) ?? emptyAnnotations;
+            const annotations = withDraftAnnotation(
+              fileThreads,
+              file.id,
+              draft,
+              draftAnnotation,
+            );
 
-          return (
-            <FileSection
-              key={file.id}
-              file={file}
-              diffStyle={reviewState.diffStyle}
-              collapsed={collapsed[file.id] ?? false}
-              viewed={viewed[file.id] ?? false}
-              annotations={annotations}
-              onToggleCollapsed={toggleCollapsed}
-              onToggleViewed={toggleViewed}
-              onLineActivate={activateLine}
-              onDraftChange={updateDraft}
-              onSaveDraft={saveDraft}
-              onCancelDraft={cancelDraft}
-              onDeleteThread={removeThread}
-              onAddReply={addReply}
-              onRequestAgent={requestAgent}
-            />
-          );
-        })}
-      </main>
-    </div>
+            return (
+              <FileSection
+                key={file.id}
+                file={file}
+                diffStyle={reviewState.diffStyle}
+                overflowMode={reviewState.overflowMode}
+                collapsed={collapsed[file.id] ?? false}
+                viewed={viewed[file.id] ?? false}
+                annotations={annotations}
+                onToggleCollapsed={toggleCollapsed}
+                onToggleViewed={toggleViewed}
+                onLineActivate={activateLine}
+                onDraftChange={updateDraft}
+                onSaveDraft={saveDraft}
+                onCancelDraft={cancelDraft}
+                onAddReply={addReply}
+                onRequestAgent={requestAgent}
+                onToggleResolved={toggleResolved}
+                onToggleThreadCollapsed={toggleThreadCollapsed}
+              />
+            );
+          })}
+        </main>
+      </div>
+      <BriefDialog
+        open={briefOpen}
+        content={reviewState.brief.content}
+        loading={reviewState.brief.loading}
+        onClose={() => setBriefOpen(false)}
+      />
+    </>
   );
-}
-
-function toLookup(ids: string[]): Record<string, boolean> {
-  return Object.fromEntries(ids.map((id) => [id, true]));
-}
-
-function toggleId(ids: string[], id: string): string[] {
-  return ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id];
-}
-
-function uniqueIds(ids: string[]): string[] {
-  return [...new Set(ids)];
 }

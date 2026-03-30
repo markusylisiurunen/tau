@@ -1,36 +1,78 @@
 @font-face {
-  font-family: "Geist Mono";
-  font-weight: 400;
+  font-family: "Geist Sans";
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
-  src: url("/fonts/GeistMono-Regular.woff2") format("woff2");
+  src: url("/fonts/Geist[wght].woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Sans";
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+  src: url("/fonts/Geist-Italic[wght].woff2") format("woff2");
 }
 
 @font-face {
   font-family: "Geist Mono";
-  font-weight: 500;
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
-  src: url("/fonts/GeistMono-Medium.woff2") format("woff2");
+  src: url("/fonts/GeistMono[wght].woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+  src: url("/fonts/GeistMono-Italic[wght].woff2") format("woff2");
 }
 
 :root {
   color-scheme: dark;
-  --bg: #0e0e0e;
-  --surface: #111;
-  --surface-hover: #191919;
-  --border: #1e1e1e;
-  --border-focus: #444;
-  --text: #d4d4d4;
-  --text-muted: #737373;
-  --accent-add: #4ade80;
-  --accent-del: #f87171;
-  --accent-primary: #e0e0e0;
-  --bar-height: 42px;
-  --sidebar-width: 280px;
-  --diffs-font-family: "Geist Mono", monospace;
-  font-family: "Geist Mono", monospace;
-  font-size: 13px;
+  --bg: hsl(0 0% 5.2%);
+  --surface: hsl(0 0% 6.8%);
+  --surface-hover: hsl(0 0% 9.6%);
+  --border: hsl(0 0% 14%);
+  --border-focus: hsl(0 0% 24%);
+  --text: hsl(0 0% 86%);
+  --text-muted: hsl(0 0% 48%);
+  --accent-add: hsl(142 70% 62%);
+  --accent-del: hsl(0 91% 68%);
+  --accent-del-muted: hsl(0 91% 71% / 0.72);
+  --accent-del-subtle: hsl(0 91% 71% / 0.08);
+  --accent-del-subtle-hover: hsl(0 91% 71% / 0.14);
+  --accent-primary: hsl(0 0% 88%);
+  --text-inverse: hsl(0 0% 3.6%);
+  --accent-primary-hover: hsl(0 0% 94%);
+  --thread-border-muted: hsl(0 0% 84% / 0.15);
+  --thread-border-strong: hsl(0 0% 84% / 0.2);
+  --thread-border-subtle: hsl(0 0% 84% / 0.08);
+  --thread-surface-subtle: hsl(0 0% 100% / 0.02);
+  --code-inline-bg: hsl(142 68% 56% / 0.07);
+  --code-inline-text: hsl(142 74% 68%);
+  --bar-height: 48px;
+  --sidebar-width: 300px;
+  --content-padding-x: 12px;
+  --file-gap: 1rem;
+  --font-size-ui: 1rem;
+  --font-size-lg: 1.071429rem;
+  --font-size-sm: 0.928571rem;
+  --font-size-xs: 0.857143rem;
+  --font-size-code: 0.928571rem;
+  --font-weight-ui: 450;
+  --font-weight-code: 400;
+  --letter-spacing-ui: 0;
+  --letter-spacing-code: 0;
+  --font-family-ui: "Geist Sans", sans-serif;
+  --font-family-code: "Geist Mono", monospace;
+  --diffs-font-family: var(--font-family-code);
+  font-family: var(--font-family-ui);
+  font-size: 14px;
+  font-weight: var(--font-weight-ui);
+  letter-spacing: var(--letter-spacing-ui);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -43,16 +85,16 @@
 }
 
 body {
-  min-height: 100vh;
   background: var(--bg);
   color: var(--text);
+  min-height: 100vh;
 }
 
 button,
 input,
 textarea {
-  font: inherit;
   color: inherit;
+  font: inherit;
 }
 
 .app {
@@ -61,6 +103,7 @@ textarea {
 
 .content {
   min-height: calc(100vh - var(--bar-height));
+  padding: var(--content-padding-x);
 }
 
 .app.sidebar-open .content {
@@ -68,8 +111,14 @@ textarea {
 }
 
 .empty {
-  padding: 32px 16px;
   color: var(--text-muted);
+  padding: 32px 16px;
+}
+
+.diff-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .stat-add {

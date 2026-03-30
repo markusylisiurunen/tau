@@ -1,7 +1,7 @@
 .toggle-group {
   display: inline-flex;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 0;
   overflow: hidden;
 }
 
@@ -10,7 +10,7 @@
   background: transparent;
   color: var(--text-muted);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   cursor: pointer;
 }
 

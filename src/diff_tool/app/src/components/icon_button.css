@@ -5,9 +5,10 @@
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
-  border-radius: 5px;
+  border-radius: 0;
   width: 28px;
   height: 28px;
+  aspect-ratio: 1;
   cursor: pointer;
 }
 

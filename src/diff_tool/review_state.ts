@@ -1,33 +1,47 @@
 import { randomUUID } from "node:crypto";
 import type {
+  DiffToolBrief,
   DiffToolCommentThread,
   DiffToolCreateThreadPayload,
   DiffToolReviewState,
   DiffToolStatePatch,
 } from "./shared_types.js";
 
+const emptyBrief: DiffToolBrief = {
+  content: "",
+  loading: false,
+};
+
 export class DiffToolReviewStateStore {
   private readonly state: DiffToolReviewState = {
     diffStyle: "split",
+    overflowMode: "wrap",
     sidebarOpen: false,
     collapsedFileIds: [],
     viewedFileIds: [],
     threads: [],
+    brief: { ...emptyBrief },
   };
 
   getState(): DiffToolReviewState {
     return {
       diffStyle: this.state.diffStyle,
+      overflowMode: this.state.overflowMode,
       sidebarOpen: this.state.sidebarOpen,
       collapsedFileIds: [...this.state.collapsedFileIds],
       viewedFileIds: [...this.state.viewedFileIds],
       threads: this.state.threads.map(cloneThread),
+      brief: cloneBrief(this.state.brief),
     };
   }
 
   updateState(patch: DiffToolStatePatch): void {
-    if (patch.diffStyle === "split" || patch.diffStyle === "unified") {
+    if (patch.diffStyle === "split" || patch.diffStyle === "stacked") {
       this.state.diffStyle = patch.diffStyle;
+    }
+
+    if (patch.overflowMode === "wrap" || patch.overflowMode === "scroll") {
+      this.state.overflowMode = patch.overflowMode;
     }
 
     if (typeof patch.sidebarOpen === "boolean") {
@@ -61,6 +75,8 @@ export class DiffToolReviewStateStore {
       side: payload.side,
       messages: [{ role: "user", text: payload.body }],
       loading: false,
+      resolved: false,
+      collapsed: false,
     });
   }
 
@@ -71,6 +87,8 @@ export class DiffToolReviewStateStore {
     }
 
     thread.messages.push({ role: "user", text });
+    thread.resolved = false;
+    thread.collapsed = false;
     return true;
   }
 
@@ -92,6 +110,50 @@ export class DiffToolReviewStateStore {
 
     thread.loading = loading;
     return true;
+  }
+
+  setThreadResolved(id: string, resolved: boolean): boolean {
+    const thread = this.findThreadInternal(id);
+    if (!thread) {
+      return false;
+    }
+
+    thread.resolved = resolved;
+    thread.collapsed = resolved;
+    return true;
+  }
+
+  setThreadCollapsed(id: string, collapsed: boolean): boolean {
+    const thread = this.findThreadInternal(id);
+    if (!thread) {
+      return false;
+    }
+
+    thread.collapsed = collapsed;
+    return true;
+  }
+
+  startBriefGeneration(): void {
+    this.state.brief = {
+      content: this.state.brief.content,
+      loading: true,
+    };
+  }
+
+  applyBriefResult(result: { threadId: string; response: string }): void {
+    this.state.brief = {
+      threadId: result.threadId,
+      content: result.response,
+      loading: false,
+    };
+  }
+
+  setBriefLoading(loading: boolean): void {
+    this.state.brief = {
+      ...(this.state.brief.threadId ? { threadId: this.state.brief.threadId } : {}),
+      content: this.state.brief.content,
+      loading,
+    };
   }
 
   applyThreadResponse(id: string, result: { threadId: string; response: string }): boolean {
@@ -124,11 +186,12 @@ export class DiffToolReviewStateStore {
   }
 
   buildReviewText(): string {
-    if (this.state.threads.length === 0) {
+    const unresolvedThreads = this.state.threads.filter((thread) => !thread.resolved);
+    if (unresolvedThreads.length === 0) {
       return "(no comments)";
     }
 
-    return this.state.threads
+    return unresolvedThreads
       .map((thread, index) => {
         const location = `${thread.filePath}:${thread.lineNumber} (${thread.side === "additions" ? "new" : "old"})`;
         const body = thread.messages
@@ -147,6 +210,14 @@ export class DiffToolReviewStateStore {
   }
 }
 
+function cloneBrief(brief: DiffToolBrief): DiffToolBrief {
+  return {
+    ...(brief.threadId ? { threadId: brief.threadId } : {}),
+    content: brief.content,
+    loading: brief.loading,
+  };
+}
+
 function cloneThread(thread: DiffToolCommentThread): DiffToolCommentThread {
   return {
     id: thread.id,
@@ -157,6 +228,8 @@ function cloneThread(thread: DiffToolCommentThread): DiffToolCommentThread {
     side: thread.side,
     messages: thread.messages.map((message) => ({ ...message })),
     loading: thread.loading,
+    resolved: thread.resolved,
+    collapsed: thread.collapsed,
   };
 }
 

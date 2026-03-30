@@ -1,7 +1,11 @@
 import type {
   BootstrapPayload,
+  CollapseThreadPayload,
   CreateThreadPayload,
   DiffReviewGetDiffResult,
+  GenerateBriefResponse,
+  ResolveThreadPayload,
+  ReviewStatePatch,
   StateResponse,
   ThreadReplyPayload,
 } from "./types.js";
@@ -11,16 +15,30 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers: { "content-type": "application/json", ...options.headers },
     ...options,
   });
-  const raw = await response.text();
-  const payload = raw ? JSON.parse(raw) : {};
+  const payload = await parseJsonResponse(response);
+
   if (!response.ok) {
     throw new Error(
       (payload as { error?: string }).error ||
         response.statusText ||
-        "request failed",
+        `request to ${path} failed`,
     );
   }
+
   return payload as T;
+}
+
+async function parseJsonResponse(response: Response): Promise<unknown> {
+  const raw = await response.text();
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error("server returned an invalid JSON response");
+  }
 }
 
 export async function fetchBootstrap(): Promise<BootstrapPayload> {
@@ -34,12 +52,9 @@ export async function fetchDiff(
   return request<DiffReviewGetDiffResult>(`/api/diff${suffix}`);
 }
 
-export async function updateReviewState(payload: {
-  diffStyle?: "unified" | "split";
-  sidebarOpen?: boolean;
-  collapsedFileIds?: string[];
-  viewedFileIds?: string[];
-}): Promise<StateResponse> {
+export async function updateReviewState(
+  payload: ReviewStatePatch,
+): Promise<StateResponse> {
   return request<StateResponse>("/api/state", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -64,17 +79,34 @@ export async function replyToThread(
   });
 }
 
-export async function deleteThread(id: string): Promise<StateResponse> {
-  return request<StateResponse>("/api/thread/delete", {
+export async function requestThreadMessage(id: string): Promise<StateResponse> {
+  return request<StateResponse>("/api/thread-message", {
     method: "POST",
     body: JSON.stringify({ id }),
   });
 }
 
-export async function requestThreadMessage(id: string): Promise<StateResponse> {
-  return request<StateResponse>("/api/thread-message", {
+export async function resolveThread(
+  payload: ResolveThreadPayload,
+): Promise<StateResponse> {
+  return request<StateResponse>("/api/thread/resolve", {
     method: "POST",
-    body: JSON.stringify({ id }),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function collapseThread(
+  payload: CollapseThreadPayload,
+): Promise<StateResponse> {
+  return request<StateResponse>("/api/thread/collapse", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function generateBrief(): Promise<GenerateBriefResponse> {
+  return request<GenerateBriefResponse>("/api/brief/generate", {
+    method: "POST",
   });
 }
 

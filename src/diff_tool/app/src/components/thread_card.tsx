@@ -1,111 +1,155 @@
-import { Loader, MessageSquarePlus, Sparkles, Trash2 } from "lucide-react";
+import {
+  CheckCheck,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  MessageSquarePlus,
+  Sparkles,
+} from "lucide-react";
 import { useCallback, useState } from "react";
-import Markdown from "react-markdown";
 import type { CommentThread } from "../comments.js";
-import "./button.css";
+import { MarkdownContent } from "./markdown_content.js";
 import "./thread_card.css";
 
 type ThreadCardProps = {
   thread: CommentThread;
-  onDelete: () => void;
   onAddReply: (text: string) => void;
   onRequestAgent: () => void;
+  onToggleResolved: (resolved: boolean) => void;
+  onToggleCollapsed: (collapsed: boolean) => void;
 };
 
 export function ThreadCard({
   thread,
-  onDelete,
   onAddReply,
   onRequestAgent,
+  onToggleResolved,
+  onToggleCollapsed,
 }: ThreadCardProps) {
   const [replyBody, setReplyBody] = useState("");
-  const lastMsg = thread.messages[thread.messages.length - 1];
-  const lastIsUser = lastMsg?.role === "user";
-  const hasAgentResponse = thread.messages.some((m) => m.role === "assistant");
-  const canAsk = lastIsUser && !thread.loading;
-  const showReplyInput =
-    hasAgentResponse && lastMsg?.role === "assistant" && !thread.loading;
+  const lastMessage = thread.messages[thread.messages.length - 1];
+  const canAsk =
+    lastMessage?.role === "user" && !thread.loading && !thread.resolved;
+  const count = thread.messages.length;
+  const summary = `${thread.resolved ? "Resolved thread" : "Thread"} with ${count} comment${count === 1 ? "" : "s"}`;
+  const resolveLabel = thread.resolved ? "reopen" : "resolve";
 
   const handleAddReply = useCallback(() => {
     const text = replyBody.trim();
-    if (!text) return;
+    if (!text) {
+      return;
+    }
     setReplyBody("");
     onAddReply(text);
-  }, [replyBody, onAddReply]);
+  }, [onAddReply, replyBody]);
 
   const handleReplyKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
+    (event: React.KeyboardEvent) => {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
         handleAddReply();
       }
     },
     [handleAddReply],
   );
 
-  return (
-    <div className="thread-card">
-      <button
-        type="button"
-        className="icon-btn ghost thread-delete"
-        aria-label="Delete thread"
-        onClick={onDelete}
+  const handleToggleResolved = useCallback(() => {
+    onToggleResolved(!thread.resolved);
+  }, [onToggleResolved, thread.resolved]);
+
+  if (thread.collapsed) {
+    return (
+      <div
+        className={`thread-card collapsed${thread.resolved ? " resolved" : ""}`}
       >
-        <Trash2 size={11} />
-      </button>
+        <div className="thread-collapsed-row">
+          <button
+            type="button"
+            className="thread-toggle"
+            onClick={() => onToggleCollapsed(false)}
+            aria-label="Expand thread"
+            aria-expanded={false}
+          >
+            <ChevronsUpDown size={14} />
+            <span className="thread-summary">{summary}</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`thread-card${thread.resolved ? " resolved" : ""}`}>
+      <div className="thread-header-row">
+        <button
+          type="button"
+          className="thread-toggle"
+          onClick={() => onToggleCollapsed(true)}
+          aria-label="Collapse thread"
+          aria-expanded
+        >
+          <ChevronsDownUp size={14} />
+          <span className="thread-summary">{summary}</span>
+        </button>
+      </div>
       <div className="thread-messages">
-        {thread.messages.map((msg, i) => (
-          <div key={i} className={`thread-msg thread-msg-${msg.role}`}>
+        {thread.messages.map((message, index) => (
+          <div
+            key={`${message.role}:${index}:${message.text}`}
+            className={`thread-msg thread-msg-${message.role}`}
+          >
             <span className="thread-msg-role">
-              {msg.role === "user" ? "you" : "agent"}
+              {message.role === "user" ? "you" : "agent"}
             </span>
-            <div className="thread-msg-text">
-              <Markdown>{msg.text}</Markdown>
-            </div>
+            <MarkdownContent
+              content={message.text}
+              className="thread-msg-text"
+              variant="thread"
+            />
           </div>
         ))}
         {thread.loading && (
           <div className="thread-msg thread-msg-assistant">
             <span className="thread-msg-role">agent</span>
-            <span className="thread-msg-text thread-loading">
-              <Loader size={11} className="spin" />
-              thinking…
-            </span>
+            <span className="thread-msg-thinking">thinking…</span>
           </div>
         )}
       </div>
-      {showReplyInput && (
+      {canAsk && (
+        <div className="thread-ask">
+          <button type="button" className="btn" onClick={onRequestAgent}>
+            <Sparkles size={14} />
+            ask agent
+          </button>
+        </div>
+      )}
+      <div className="thread-footer">
         <textarea
-          className="thread-reply-input"
+          className="text-input-area thread-reply-input"
           value={replyBody}
-          onChange={(e) => setReplyBody(e.target.value)}
+          onChange={(event) => setReplyBody(event.target.value)}
           onKeyDown={handleReplyKeyDown}
           placeholder="Reply…"
-          rows={1}
+          rows={3}
         />
-      )}
-      <div className="thread-actions">
-        {showReplyInput && (
+        <div className="thread-actions">
           <button
             type="button"
             className="btn ghost"
+            onClick={handleToggleResolved}
+          >
+            <CheckCheck size={14} />
+            {resolveLabel}
+          </button>
+          <button
+            type="button"
+            className="btn"
             disabled={!replyBody.trim()}
             onClick={handleAddReply}
           >
-            <MessageSquarePlus size={12} />
+            <MessageSquarePlus size={14} />
             reply
           </button>
-        )}
-        {canAsk && (
-          <button
-            type="button"
-            className="btn primary"
-            onClick={onRequestAgent}
-          >
-            <Sparkles size={12} />
-            ask agent
-          </button>
-        )}
+        </div>
       </div>
     </div>
   );

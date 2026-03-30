@@ -1,6 +1,12 @@
 .file-section {
-  border-bottom: 1px solid var(--border);
-  scroll-margin-top: var(--bar-height);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface);
+  scroll-margin-top: calc(var(--bar-height) + var(--file-gap));
+}
+
+.file-section + .file-section {
+  margin-top: var(--file-gap);
 }
 
 .file-header {
@@ -11,9 +17,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 12px;
-  height: 32px;
-  background: var(--surface);
+  padding: 0 var(--content-padding-x);
+  height: 36px;
+  background: var(--surface-hover);
   border-bottom: 1px solid var(--border);
 }
 
@@ -34,7 +40,7 @@
 }
 
 .file-path {
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -46,17 +52,17 @@
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--font-size-ui);
 }
 
 .viewed-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   cursor: pointer;
   padding: 2px 0;
   white-space: nowrap;
@@ -72,22 +78,32 @@
   justify-content: center;
   width: 14px;
   height: 14px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
+  border: 1px solid var(--text-muted);
+  border-radius: 0;
   background: transparent;
+  color: var(--text-inverse);
+}
+
+.viewed-btn:hover .viewed-check {
+  border-color: var(--text);
 }
 
 .viewed-btn.checked .viewed-check {
   background: var(--accent-add);
   border-color: var(--accent-add);
-  color: #000;
+  color: var(--text-inverse);
 }
 
 .file-body {
   background: var(--bg);
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
 }
 
 .diff-view {
   display: block;
   width: 100%;
+  font-size: var(--font-size-code);
+  font-weight: var(--font-weight-code);
+  letter-spacing: var(--letter-spacing-code);
 }

@@ -3,13 +3,13 @@ import { Check, ChevronDown, ChevronRight } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import type {
   CommentAnnotation,
-  CommentDraft,
-  CommentThread,
   LineAnnotation,
   LineSide,
 } from "../comments.js";
 import type { DiffFile } from "../parse_diff.js";
+import type { DiffStyle, OverflowMode } from "../types.js";
 import { CommentEditor } from "./comment_editor.js";
+import { DiffStats } from "./diff_stats.js";
 import { ThreadCard } from "./thread_card.js";
 import "./file_section.css";
 
@@ -18,16 +18,23 @@ const baseDiffOptions = {
   themeType: "dark",
   diffStyle: "unified",
   diffIndicators: "none",
-  lineDiffType: "none",
+  lineDiffType: "word-alt",
   disableFileHeader: true,
   overflow: "wrap",
-  unsafeCSS:
-    ":host { --diffs-dark-bg: #0e0e0e; --diffs-bg: #0e0e0e; } pre { background-color: #0e0e0e !important; --diffs-bg: #0e0e0e !important; }",
+  unsafeCSS: [
+    ":host { --diffs-dark-bg: var(--bg); --diffs-bg: var(--bg); font-weight: var(--font-weight-code); }",
+    "pre { background-color: var(--bg) !important; --diffs-bg: var(--bg) !important; }",
+    "[data-annotation-slot], [data-annotation-content] { font-family: var(--font-family-ui); }",
+    "[data-annotation-slot] code, [data-annotation-slot] pre, [data-annotation-content] code, [data-annotation-content] pre { font-family: var(--font-family-code); }",
+    "[data-overflow='wrap'] [data-code] { overflow-x: hidden; }",
+    "[data-overflow='wrap'] [data-annotation-content] { width: auto; }",
+  ].join(" "),
 } as const;
 
 type FileSectionProps = {
   file: DiffFile;
-  diffStyle: "unified" | "split";
+  diffStyle: DiffStyle;
+  overflowMode: OverflowMode;
   collapsed: boolean;
   viewed: boolean;
   annotations: LineAnnotation[];
@@ -37,14 +44,16 @@ type FileSectionProps = {
   onDraftChange: (body: string) => void;
   onSaveDraft: () => void;
   onCancelDraft: () => void;
-  onDeleteThread: (threadId: string) => void;
   onAddReply: (threadId: string, text: string) => void;
   onRequestAgent: (threadId: string) => void;
+  onToggleResolved: (threadId: string, resolved: boolean) => void;
+  onToggleThreadCollapsed: (threadId: string, collapsed: boolean) => void;
 };
 
 export function FileSection({
   file,
   diffStyle,
+  overflowMode,
   collapsed,
   viewed,
   annotations,
@@ -54,14 +63,20 @@ export function FileSection({
   onDraftChange,
   onSaveDraft,
   onCancelDraft,
-  onDeleteThread,
   onAddReply,
   onRequestAgent,
+  onToggleResolved,
+  onToggleThreadCollapsed,
 }: FileSectionProps) {
-  const options = useMemo(
-    () => ({
+  const options = useMemo(() => {
+    const resolvedDiffStyle = (diffStyle === "split" ? "split" : "unified") as
+      | "split"
+      | "unified";
+
+    return {
       ...baseDiffOptions,
-      diffStyle,
+      diffStyle: resolvedDiffStyle,
+      overflow: overflowMode,
       onLineNumberClick: ({
         lineNumber,
         annotationSide,
@@ -71,39 +86,43 @@ export function FileSection({
       }) => {
         onLineActivate(file.id, lineNumber, annotationSide);
       },
-    }),
-    [diffStyle, file.id, onLineActivate],
-  );
+    };
+  }, [diffStyle, file.id, onLineActivate, overflowMode]);
 
   const renderAnnotation = useCallback(
     (annotation: LineAnnotation) => {
-      const meta = annotation.metadata;
-      if (meta.type === "draft") {
+      if (annotation.metadata.type === "draft") {
         return (
           <CommentEditor
-            body={meta.draft.body}
+            body={annotation.metadata.draft.body}
             onChange={onDraftChange}
             onSave={onSaveDraft}
             onCancel={onCancelDraft}
           />
         );
       }
+
+      const { thread } = annotation.metadata;
       return (
         <ThreadCard
-          thread={meta.thread}
-          onDelete={() => onDeleteThread(meta.thread.id)}
-          onAddReply={(text) => onAddReply(meta.thread.id, text)}
-          onRequestAgent={() => onRequestAgent(meta.thread.id)}
+          thread={thread}
+          onAddReply={(text) => onAddReply(thread.id, text)}
+          onRequestAgent={() => onRequestAgent(thread.id)}
+          onToggleResolved={(resolved) => onToggleResolved(thread.id, resolved)}
+          onToggleCollapsed={(nextCollapsed) =>
+            onToggleThreadCollapsed(thread.id, nextCollapsed)
+          }
         />
       );
     },
     [
-      onDraftChange,
-      onSaveDraft,
-      onCancelDraft,
-      onDeleteThread,
       onAddReply,
+      onCancelDraft,
+      onDraftChange,
       onRequestAgent,
+      onSaveDraft,
+      onToggleResolved,
+      onToggleThreadCollapsed,
     ],
   );
 
@@ -120,8 +139,7 @@ export function FileSection({
           <span className="file-path">{file.displayPath}</span>
         </button>
         <div className="file-meta">
-          <span className="stat-add">+{file.additions}</span>
-          <span className="stat-del">-{file.deletions}</span>
+          <DiffStats additions={file.additions} deletions={file.deletions} />
           <button
             type="button"
             className={`viewed-btn${viewed ? " checked" : ""}`}

@@ -34,6 +34,26 @@ export type StartedDiffToolHttpServer = {
 
 const JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 
+const REVIEW_BRIEF_PROMPT = [
+  "Read through the full diff, then write a reviewer brief.",
+  "",
+  "The brief orients a technically competent reviewer before they start reading code. A good brief compresses review time without compressing judgment: the reviewer should finish reading it with an architectural mental model of the change, a sense of where risk lives, and a short list of things to consciously verify.",
+  "",
+  "Use exactly these headings:",
+  "",
+  "## Summary",
+  "## Behavior changes",
+  "## Verify",
+  "",
+  "**Summary** builds the big-picture mental model. Not what each file does, but the architectural shape of the change: what design decisions were made, how components interact differently now, which areas carry risk, and what can be safely skimmed. When the diff spans multiple concerns, group by concern. The reader should feel oriented before they touch any code.",
+  "",
+  "**Behavior changes** translates code into runtime consequences. Reviewers are good at reading syntax but unreliable at inferring behavioral impact across a large diff. Bridge that gap. Show before/after sketches or pseudo-code when that communicates faster than prose. Focus on contract shifts, failure modes, defaults, ordering, and side effects.",
+  "",
+  "**Verify** surfaces the questions worth stopping for. Not obvious issues, but assumptions that may be intentional yet deserve conscious confirmation: scope boundaries, compatibility expectations, failure semantics, rollout risk. Phrase as direct questions.",
+  "",
+  "Keep the brief readable in under a minute. Mix prose, bullets, and code naturally. Be dense and specific. Do not pad thin sections or restate every file. The reviewer will read the code, so the brief should complement the diff rather than re-explain what is already clear from reading it. Focus on what code alone does not communicate well: intent, architectural reasoning, non-obvious consequences, and cross-cutting concerns.",
+].join("\n");
+
 const CONTENT_TYPE_BY_EXT: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -250,6 +270,40 @@ export class DiffToolHttpServer {
       return;
     }
 
+    if (method === "POST" && requestUrl.pathname === "/api/thread/resolve") {
+      const payload = await this.readJsonBody(request);
+      const id = typeof payload.id === "string" ? payload.id.trim() : "";
+      if (!this.reviewState.findThread(id)) {
+        this.sendJson(response, 404, { error: "thread not found" });
+        return;
+      }
+      if (typeof payload.resolved !== "boolean") {
+        this.sendJson(response, 400, { error: "resolved flag is required" });
+        return;
+      }
+
+      this.reviewState.setThreadResolved(id, payload.resolved);
+      this.sendJson(response, 200, { state: this.reviewState.getState() });
+      return;
+    }
+
+    if (method === "POST" && requestUrl.pathname === "/api/thread/collapse") {
+      const payload = await this.readJsonBody(request);
+      const id = typeof payload.id === "string" ? payload.id.trim() : "";
+      if (!this.reviewState.findThread(id)) {
+        this.sendJson(response, 404, { error: "thread not found" });
+        return;
+      }
+      if (typeof payload.collapsed !== "boolean") {
+        this.sendJson(response, 400, { error: "collapsed flag is required" });
+        return;
+      }
+
+      this.reviewState.setThreadCollapsed(id, payload.collapsed);
+      this.sendJson(response, 200, { state: this.reviewState.getState() });
+      return;
+    }
+
     if (method === "POST" && requestUrl.pathname === "/api/thread-message") {
       const payload = await this.readJsonBody(request);
       const id = typeof payload.id === "string" ? payload.id.trim() : "";
@@ -274,6 +328,25 @@ export class DiffToolHttpServer {
         this.sendJson(response, 200, { state: this.reviewState.getState() });
       } catch (error) {
         this.reviewState.setThreadLoading(id, false);
+        throw error;
+      }
+      return;
+    }
+
+    if (method === "POST" && requestUrl.pathname === "/api/brief/generate") {
+      const currentState = this.reviewState.getState();
+      if (currentState.brief.loading) {
+        this.sendJson(response, 409, { error: "brief generation already in progress" });
+        return;
+      }
+
+      this.reviewState.startBriefGeneration();
+      try {
+        const result = await this.client.submitThreadMessage({ message: REVIEW_BRIEF_PROMPT });
+        this.reviewState.applyBriefResult(result);
+        this.sendJson(response, 200, { state: this.reviewState.getState() });
+      } catch (error) {
+        this.reviewState.setBriefLoading(false);
         throw error;
       }
       return;
@@ -391,8 +464,11 @@ export class DiffToolHttpServer {
 
 function parseStatePatch(payload: Record<string, unknown>): DiffToolStatePatch {
   return {
-    ...(payload.diffStyle === "split" || payload.diffStyle === "unified"
+    ...(payload.diffStyle === "split" || payload.diffStyle === "stacked"
       ? { diffStyle: payload.diffStyle }
+      : {}),
+    ...(payload.overflowMode === "wrap" || payload.overflowMode === "scroll"
+      ? { overflowMode: payload.overflowMode }
       : {}),
     ...(typeof payload.sidebarOpen === "boolean" ? { sidebarOpen: payload.sidebarOpen } : {}),
     ...(Array.isArray(payload.collapsedFileIds)

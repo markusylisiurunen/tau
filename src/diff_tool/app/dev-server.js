@@ -30,6 +30,10 @@ const files = [
   { path: "src/auth/jwt.ts", status: "added" },
   { path: "src/auth/session.ts", status: "deleted" },
   { path: "src/auth/types.ts", status: "modified" },
+  {
+    path: "src/features/account/security/audit-log/components/audit-log-row.tsx",
+    status: "modified",
+  },
   { path: "README.md", status: "modified" },
   {
     path: "src/routes/index.ts",
@@ -130,6 +134,27 @@ const sessionPatch = [
   "+  token: string;",
   "+  expiresIn: number;",
   "+};",
+  "diff --git a/src/features/account/security/audit-log/components/audit-log-row.tsx b/src/features/account/security/audit-log/components/audit-log-row.tsx",
+  "index 7a7a7a7..8b8b8b8 100644",
+  "--- a/src/features/account/security/audit-log/components/audit-log-row.tsx",
+  "+++ b/src/features/account/security/audit-log/components/audit-log-row.tsx",
+  "@@ -18,11 +18,15 @@ export function AuditLogRow({ entry }: AuditLogRowProps) {",
+  "   return (",
+  '     <div className="audit-log-row">',
+  '       <span className="audit-log-action">{entry.action}</span>',
+  '-      <span className="audit-log-meta">{entry.actorName}</span>',
+  '+      <span className="audit-log-meta">',
+  "+        {entry.actorName} · {formatRelativeTime(entry.createdAt)}",
+  "+      </span>",
+  "       {entry.ipAddress && (",
+  '         <span className="audit-log-ip">{entry.ipAddress}</span>',
+  "       )}",
+  "+      {entry.location && (",
+  '+        <span className="audit-log-location">{entry.location}</span>',
+  "+      )}",
+  "     </div>",
+  "   );",
+  " }",
   "diff --git a/src/routes/main.ts b/src/routes/index.ts",
   "similarity index 88%",
   "rename from src/routes/main.ts",
@@ -156,12 +181,101 @@ for (const chunk of sessionPatch.split(/(?=^diff --git )/m)) {
   }
 }
 
+const mockThreads = [
+  {
+    id: "thread-dev-001",
+    fileId: "dev-session-001-0-0",
+    filePath: "src/auth/login.ts",
+    lineNumber: 9,
+    side: "additions",
+    messages: [
+      {
+        role: "user",
+        text: "Should we avoid returning `expiresIn` as a bare number and use a named constant instead?",
+      },
+    ],
+    loading: false,
+    resolved: false,
+    collapsed: false,
+  },
+  {
+    id: "thread-dev-002",
+    threadId: "thread-mock-002",
+    fileId: "dev-session-001-0-1",
+    filePath: "src/auth/middleware.ts",
+    lineNumber: 6,
+    side: "additions",
+    messages: [
+      {
+        role: "user",
+        text: [
+          "I think the `Authorization` parsing is moving in the right direction, but I want to sanity-check a few details:",
+          "",
+          "- do we want to accept lowercase `bearer` too?",
+          "- should we split token extraction from validation?",
+          "- can `verifyToken()` throw for malformed input, or is the null fallback enough?",
+        ].join("\n"),
+      },
+      {
+        role: "assistant",
+        text: [
+          "A few thoughts:",
+          "",
+          "1. **Case sensitivity**: RFC 6750 examples use `Bearer`, but many servers accept case-insensitive schemes. If the rest of the stack does not care, allowing both can reduce surprises.",
+          "2. **Separation of concerns**: extracting the token in a tiny helper would make this middleware easier to scan and easier to unit test.",
+          "3. **Malformed input**: given the current `verifyToken()` implementation, returning `null` is probably enough for now.",
+          "",
+          "> I would keep the middleware strict unless we already know clients send inconsistent casing.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        text: [
+          "Makes sense. I also worry that we silently lose context when auth fails.",
+          "",
+          "Could we keep the external response as `401`, but still make the code path a bit clearer? Maybe something like:",
+          "",
+          "```ts",
+          "const token = readBearerToken(req.headers.authorization);",
+          'if (!token) return res.status(401).json({ error: "unauthorized" });',
+          "",
+          "const claims = verifyToken(token);",
+          'if (!claims) return res.status(401).json({ error: "unauthorized" });',
+          "```",
+        ].join("\n"),
+      },
+      {
+        role: "assistant",
+        text: [
+          "Yes, that reads better.",
+          "",
+          "It gives you:",
+          "",
+          "- a clear parsing step",
+          "- a clear verification step",
+          "- an obvious place to add logging later without changing the response contract",
+          "",
+          "I would probably also name the verified value `auth` or `session` only if downstream code actually uses it. Otherwise `claims` is accurate and keeps the JWT boundary explicit.",
+        ].join("\n"),
+      },
+    ],
+    loading: false,
+    resolved: true,
+    collapsed: true,
+  },
+];
+
 const state = {
   diffStyle: "split",
+  overflowMode: "wrap",
   sidebarOpen: false,
   collapsedFileIds: [],
-  viewedFileIds: [],
-  threads: [],
+  viewedFileIds: ["dev-session-001-0-0"],
+  threads: mockThreads,
+  brief: {
+    content: "",
+    loading: false,
+  },
 };
 
 // --- server ---
@@ -220,8 +334,11 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/state") {
       const body = await readBody(req);
-      if (body.diffStyle === "split" || body.diffStyle === "unified") {
+      if (body.diffStyle === "split" || body.diffStyle === "stacked") {
         state.diffStyle = body.diffStyle;
+      }
+      if (body.overflowMode === "wrap" || body.overflowMode === "scroll") {
+        state.overflowMode = body.overflowMode;
       }
       if (typeof body.sidebarOpen === "boolean") {
         state.sidebarOpen = body.sidebarOpen;
@@ -256,6 +373,8 @@ const server = createServer(async (req, res) => {
         side: body.side,
         messages: [{ role: "user", text: message }],
         loading: false,
+        resolved: false,
+        collapsed: false,
       });
       sendJson(res, 200, { state });
       return;
@@ -276,6 +395,8 @@ const server = createServer(async (req, res) => {
       }
 
       thread.messages.push({ role: "user", text });
+      thread.resolved = false;
+      thread.collapsed = false;
       sendJson(res, 200, { state });
       return;
     }
@@ -289,6 +410,41 @@ const server = createServer(async (req, res) => {
       }
 
       state.threads.splice(index, 1);
+      sendJson(res, 200, { state });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/thread/resolve") {
+      const body = await readBody(req);
+      const thread = state.threads.find((entry) => entry.id === body.id);
+      if (!thread) {
+        sendJson(res, 404, { error: "thread not found" });
+        return;
+      }
+      if (typeof body.resolved !== "boolean") {
+        sendJson(res, 400, { error: "resolved flag is required" });
+        return;
+      }
+
+      thread.resolved = body.resolved;
+      thread.collapsed = body.resolved;
+      sendJson(res, 200, { state });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/thread/collapse") {
+      const body = await readBody(req);
+      const thread = state.threads.find((entry) => entry.id === body.id);
+      if (!thread) {
+        sendJson(res, 404, { error: "thread not found" });
+        return;
+      }
+      if (typeof body.collapsed !== "boolean") {
+        sendJson(res, 400, { error: "collapsed flag is required" });
+        return;
+      }
+
+      thread.collapsed = body.collapsed;
       sendJson(res, 200, { state });
       return;
     }
@@ -329,9 +485,48 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/brief/generate") {
+      state.brief.loading = true;
+      state.brief = {
+        threadId: `brief-${randomUUID().slice(0, 8)}`,
+        loading: false,
+        content: [
+          "## Summary",
+          "",
+          "Replaces cookie-based sessions with JWT bearer tokens. The change touches login, request middleware, types, and removes the in-memory session store entirely. Risk is in the auth contract shift and deployment assumptions, not the route rename (safe to skim).",
+          "",
+          "## Behavior changes",
+          "",
+          "Login now returns a token instead of setting a cookie:",
+          "",
+          "```",
+          "// before: res.cookie('sid', sessionId)",
+          "// after:",
+          "return { token: jwt.sign(payload, secret), expiresIn: 3600 }",
+          "```",
+          "",
+          "Requests without `Authorization: Bearer <token>` now fail with 401. Previously a valid `sessionId` cookie was enough, so this is a client-facing contract break.",
+          "",
+          "Deleting `session.ts` also removes server-side revocation. Tokens are now valid until expiry — there is no way to force-logout a user.",
+          "",
+          "## Verify",
+          "",
+          "- Existing cookie clients will break — intentional for this release?",
+          "- Secret rotation and forced revocation are out of scope — confirmed?",
+          "- Auth failures return a bare 401 with no logging — acceptable?",
+          "- Are malformed/expired token paths tested end-to-end?",
+        ].join("\n"),
+      };
+      sendJson(res, 200, { state });
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/review") {
-      const review = state.threads.length
-        ? state.threads
+      const unresolvedThreads = state.threads.filter(
+        (thread) => !thread.resolved,
+      );
+      const review = unresolvedThreads.length
+        ? unresolvedThreads
             .map((thread, index) => {
               const location = `${thread.filePath}:${thread.lineNumber} (${thread.side === "additions" ? "new" : "old"})`;
               const body = thread.messages

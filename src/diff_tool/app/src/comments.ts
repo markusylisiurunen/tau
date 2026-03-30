@@ -1,22 +1,14 @@
 import type { DiffLineAnnotation } from "@pierre/diffs/react";
+import type {
+  DiffToolCommentThread,
+  DiffToolThreadMessage,
+  LineSide,
+} from "./types.js";
 
-export type LineSide = "additions" | "deletions";
+export type { LineSide };
 
-export type ThreadMessage = {
-  role: "user" | "assistant";
-  text: string;
-};
-
-export type CommentThread = {
-  id: string;
-  threadId?: string;
-  fileId: string;
-  filePath: string;
-  lineNumber: number;
-  side: LineSide;
-  messages: ThreadMessage[];
-  loading: boolean;
-};
+export type ThreadMessage = DiffToolThreadMessage;
+export type CommentThread = DiffToolCommentThread;
 
 export type CommentDraft = {
   fileId: string;

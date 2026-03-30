@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import "./button.css";
 import "./comment_editor.css";
 
 type CommentEditorProps = {
@@ -21,13 +20,13 @@ export function CommentEditor({
     ref.current?.focus();
   }, []);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
       onSave();
     }
-    if (e.key === "Escape") {
-      e.preventDefault();
+    if (event.key === "Escape") {
+      event.preventDefault();
       onCancel();
     }
   };
@@ -36,9 +35,9 @@ export function CommentEditor({
     <div className="comment-editor">
       <textarea
         ref={ref}
-        className="comment-input"
+        className="text-input-area comment-input"
         value={body}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(event) => onChange(event.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Add a comment…"
         rows={2}

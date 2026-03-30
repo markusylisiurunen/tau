@@ -2,12 +2,11 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   EyeOff,
-  MessageSquarePlus,
   PanelLeft,
-  Send,
+  ScrollText,
   X,
 } from "lucide-react";
-import "./button.css";
+import { DiffStats } from "./diff_stats.js";
 import "./top_bar.css";
 import { IconButton } from "./icon_button.js";
 import { ToggleGroup } from "./toggle_group.js";
@@ -19,15 +18,20 @@ type TopBarProps = {
   deletions: number;
   commentCount: number;
   diffCommand?: string;
-  diffStyle: "unified" | "split";
+  diffStyle: "stacked" | "split";
+  overflowMode: "wrap" | "scroll";
   sidebarOpen: boolean;
   finished: boolean;
   status: string;
+  briefLoading: boolean;
+  hasBrief: boolean;
+  onBriefClick: () => void;
   onToggleSidebar: () => void;
   onExpandAll: () => void;
   onCollapseViewed: () => void;
   onCollapseAll: () => void;
-  onDiffStyleChange: (style: "unified" | "split") => void;
+  onDiffStyleChange: (style: "stacked" | "split") => void;
+  onOverflowModeChange: (mode: "wrap" | "scroll") => void;
   onSubmit: () => void;
   onCancel: () => void;
 };
@@ -40,17 +44,27 @@ export function TopBar({
   commentCount,
   diffCommand,
   diffStyle,
+  overflowMode,
   sidebarOpen,
   finished,
   status,
+  briefLoading,
+  hasBrief,
+  onBriefClick,
   onToggleSidebar,
   onExpandAll,
   onCollapseViewed,
   onCollapseAll,
   onDiffStyleChange,
+  onOverflowModeChange,
   onSubmit,
   onCancel,
 }: TopBarProps) {
+  const resolvedDiffStyle = diffStyle === "split" ? "split" : "stacked";
+  const resolvedOverflowMode = overflowMode === "scroll" ? "scroll" : "wrap";
+  const viewedProgress =
+    fileCount > 0 ? Math.round((viewedCount / fileCount) * 100) : 0;
+
   return (
     <header className="top-bar">
       <div className="top-bar-left">
@@ -60,21 +74,52 @@ export function TopBar({
           className={sidebarOpen ? "active" : ""}
           onClick={onToggleSidebar}
         />
-        <span className="meta">
-          {viewedCount}/{fileCount}
-        </span>
-        <span className="stat-add">+{additions}</span>
-        <span className="stat-del">-{deletions}</span>
-        {commentCount > 0 && (
-          <span className="meta comment-count">
-            <MessageSquarePlus size={12} />
-            {commentCount}
-          </span>
-        )}
-        {diffCommand && <span className="meta dim">{diffCommand}</span>}
+        <button
+          type="button"
+          className="btn top-bar-action top-bar-brief-action"
+          onClick={onBriefClick}
+          disabled={briefLoading}
+        >
+          <ScrollText size={14} />
+          {briefLoading
+            ? "generating brief…"
+            : hasBrief
+              ? "view brief"
+              : "brief"}
+        </button>
+        <div
+          className="top-bar-diff-meta"
+          aria-label={`${additions} additions and ${deletions} deletions${diffCommand ? `, ${diffCommand}` : ""}`}
+        >
+          <DiffStats additions={additions} deletions={deletions} />
+          {diffCommand && (
+            <span className="top-bar-meta top-bar-meta-dim top-bar-diff-command">
+              {diffCommand}
+            </span>
+          )}
+        </div>
       </div>
       <div className="top-bar-right">
-        {status && <span className="meta status-text">{status}</span>}
+        <div
+          className="top-bar-viewed"
+          aria-label={`${viewedCount} of ${fileCount} viewed, ${commentCount} unresolved comments`}
+        >
+          <span
+            className="top-bar-viewed-ring"
+            style={{
+              background: `conic-gradient(var(--accent-add) ${viewedProgress}%, var(--border) ${viewedProgress}% 100%)`,
+            }}
+            aria-hidden="true"
+          >
+            <span className="top-bar-viewed-ring-inner" />
+          </span>
+          <span className="top-bar-viewed-text">
+            {viewedCount} of {fileCount} viewed
+          </span>
+        </div>
+        {status && (
+          <span className="top-bar-meta top-bar-status">{status}</span>
+        )}
         <div className="btn-group">
           <IconButton
             icon={ChevronsUpDown}
@@ -92,28 +137,46 @@ export function TopBar({
             onClick={onCollapseAll}
           />
         </div>
+        <button
+          type="button"
+          className={`top-bar-toggle${resolvedOverflowMode === "wrap" ? " active" : ""}`}
+          onClick={() =>
+            onOverflowModeChange(
+              resolvedOverflowMode === "wrap" ? "scroll" : "wrap",
+            )
+          }
+          aria-pressed={resolvedOverflowMode === "wrap"}
+          aria-label="Toggle wrapped diff lines"
+        >
+          <span className="top-bar-toggle-switch" aria-hidden="true">
+            <span className="top-bar-toggle-thumb" />
+          </span>
+          <span className="top-bar-toggle-label">wrap</span>
+        </button>
         <ToggleGroup
-          value={diffStyle}
-          options={["split", "unified"]}
+          value={resolvedDiffStyle}
+          options={[
+            { value: "split", label: "split" },
+            { value: "stacked", label: "stacked" },
+          ]}
           onChange={onDiffStyleChange}
         />
         <button
           type="button"
-          className="btn primary"
+          className="btn top-bar-action top-bar-action-primary"
           onClick={onSubmit}
           disabled={finished}
         >
-          <Send size={12} />
           submit
         </button>
         <button
           type="button"
-          className="btn ghost"
+          className="btn top-bar-action top-bar-action-cancel"
           onClick={onCancel}
           disabled={finished}
+          aria-label="cancel"
         >
-          <X size={12} />
-          cancel
+          <X size={14} strokeWidth={2.25} />
         </button>
       </div>
     </header>

@@ -1,6 +1,5 @@
 import type { LucideIcon } from "lucide-react";
 import type { ButtonHTMLAttributes } from "react";
-import "./icon_button.css";
 
 type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   icon: LucideIcon;

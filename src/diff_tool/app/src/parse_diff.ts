@@ -11,6 +11,11 @@ export type DiffFile = {
   deletions: number;
 };
 
+type RepoPaths = {
+  oldRepoPath?: string;
+  newRepoPath: string;
+};
+
 export function parseDiff(
   raw: string,
   snapshotFiles?: DiffReviewFile[],
@@ -21,81 +26,79 @@ export function parseDiff(
   }
 
   const patches = parsePatchFiles(raw, cacheKeyPrefix);
+  const snapshotRepoPaths = buildSnapshotRepoPathIndex(snapshotFiles);
   let counter = 0;
 
   return patches.flatMap((patch) =>
     patch.files.map((file) => {
-      const additions = file.hunks.reduce(
-        (sum, hunk) =>
-          sum +
-          hunk.hunkContent.reduce(
-            (hunkSum, block) =>
-              hunkSum + (block.type === "change" ? block.additions : 0),
-            0,
-          ),
-        0,
-      );
-      const deletions = file.hunks.reduce(
-        (sum, hunk) =>
-          sum +
-          hunk.hunkContent.reduce(
-            (hunkSum, block) =>
-              hunkSum + (block.type === "change" ? block.deletions : 0),
-            0,
-          ),
-        0,
-      );
-      const displayPath =
-        file.prevName && file.prevName !== file.name
-          ? `${file.prevName} → ${file.name}`
-          : file.name;
-      const repoPaths = resolveRepoPaths(file, snapshotFiles);
+      const repoPaths = resolveRepoPaths(file, snapshotRepoPaths);
 
       return {
         id: file.cacheKey ?? `${file.name}::${counter++}`,
         file,
-        displayPath,
+        displayPath: file.name,
         oldRepoPath: repoPaths.oldRepoPath,
         newRepoPath: repoPaths.newRepoPath,
-        additions,
-        deletions,
+        additions: countChanges(file, "additions"),
+        deletions: countChanges(file, "deletions"),
       };
     }),
   );
 }
 
+function countChanges(
+  file: FileDiffMetadata,
+  changeType: "additions" | "deletions",
+): number {
+  return file.hunks.reduce(
+    (fileTotal, hunk) =>
+      fileTotal +
+      hunk.hunkContent.reduce(
+        (hunkTotal, block) =>
+          hunkTotal + (block.type === "change" ? block[changeType] : 0),
+        0,
+      ),
+    0,
+  );
+}
+
+function buildSnapshotRepoPathIndex(
+  snapshotFiles: DiffReviewFile[] | undefined,
+): Map<string, RepoPaths> {
+  const index = new Map<string, RepoPaths>();
+
+  for (const file of snapshotFiles ?? []) {
+    const repoPaths: RepoPaths = {
+      oldRepoPath: file.oldPath,
+      newRepoPath: file.newPath ?? file.path,
+    };
+
+    index.set(file.path, repoPaths);
+    if (file.newPath) {
+      index.set(file.newPath, repoPaths);
+    }
+    if (file.oldPath) {
+      index.set(file.oldPath, repoPaths);
+    }
+  }
+
+  return index;
+}
+
 function resolveRepoPaths(
   file: FileDiffMetadata,
-  snapshotFiles: DiffReviewFile[] | undefined,
-): { oldRepoPath?: string; newRepoPath: string } {
-  const matched = snapshotFiles?.find((entry) =>
-    matchesSnapshotFile(entry, file),
-  );
-  if (!matched) {
-    return {
-      oldRepoPath: file.prevName,
-      newRepoPath: file.name,
-    };
+  snapshotRepoPaths: Map<string, RepoPaths>,
+): RepoPaths {
+  const matched =
+    snapshotRepoPaths.get(file.name) ||
+    (file.prevName ? snapshotRepoPaths.get(file.prevName) : undefined);
+
+  if (matched) {
+    return matched;
   }
 
   return {
-    oldRepoPath: matched.oldPath,
-    newRepoPath: matched.newPath ?? matched.path,
+    oldRepoPath: file.prevName,
+    newRepoPath: file.name,
   };
-}
-
-function matchesSnapshotFile(
-  entry: DiffReviewFile,
-  file: FileDiffMetadata,
-): boolean {
-  if (entry.path === file.name) {
-    return true;
-  }
-  if (entry.newPath === file.name) {
-    return true;
-  }
-  if (entry.oldPath && entry.oldPath === file.prevName) {
-    return true;
-  }
-  return entry.path === file.prevName;
 }

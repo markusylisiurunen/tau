@@ -17,6 +17,7 @@ vi.mock("../dist/tui/clipboard.js", () => ({
 function createStubView() {
   const added = [];
   const updated = [];
+  const updatedMessages = [];
   const systemMessages = [];
   const toolUiEvents = [];
   const editorTextUpdates = [];
@@ -25,6 +26,7 @@ function createStubView() {
   const removeMessagesFromCalls = [];
   const finalizeToolUiPendingCalls = [];
   const thinkingVisibilityCalls = [];
+  const editorInputEnabledCalls = [];
   let clearToolUiTransientStateCallCount = 0;
   let rewindPickerHideCount = 0;
   let editorText = "";
@@ -32,6 +34,7 @@ function createStubView() {
   return {
     added,
     updated,
+    updatedMessages,
     systemMessages,
     toolUiEvents,
     editorTextUpdates,
@@ -40,6 +43,7 @@ function createStubView() {
     removeMessagesFromCalls,
     finalizeToolUiPendingCalls,
     thinkingVisibilityCalls,
+    editorInputEnabledCalls,
     get clearToolUiTransientStateCallCount() {
       return clearToolUiTransientStateCallCount;
     },
@@ -62,6 +66,9 @@ function createStubView() {
       addMessage: (model, id) => {
         added.push(model);
         return id ?? `msg-${added.length}`;
+      },
+      updateMessage: (id, model) => {
+        updatedMessages.push({ id, model });
       },
       updateAssistantMessage: (id, model) => {
         updated.push({ id, model });
@@ -97,6 +104,13 @@ function createStubView() {
         editorText = text;
         editorTextUpdates.push(text);
       },
+      insertEditorTextAtCursor: (text) => {
+        editorText += text;
+        editorTextUpdates.push(editorText);
+      },
+      setEditorInputEnabled: (enabled) => {
+        editorInputEnabledCalls.push(enabled);
+      },
       showRewindPicker: (options) => {
         rewindPickerShows.push(options);
       },
@@ -123,12 +137,23 @@ function createController(view, options = {}) {
     queuedUserMessages: options.queuedUserMessages ?? [],
     initialPersonaId: options.initialPersonaId,
     config: options.config ?? {},
+    defaultDiffTool: options.defaultDiffTool,
     sandboxEnabled: options.sandboxEnabled ?? false,
     caffeinated: options.caffeinated ?? false,
     toolBackend: options.toolBackend,
     noAgentContextFiles: options.noAgentContextFiles ?? true,
     deps: options.deps,
   });
+}
+
+function getUserText(controller, index) {
+  const message = controller.engine.history[index];
+  if (message?.role !== "user") {
+    return "";
+  }
+
+  const textBlock = message.content.find((block) => block.type === "text");
+  return textBlock?.text ?? "";
 }
 
 function createMockDeps(spawn, platform = "darwin") {
@@ -515,6 +540,334 @@ describe("ChatController streaming command handling", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(stub.editorTextUpdates).toEqual(["hello there"]);
+  });
+});
+
+describe("ChatController diff review", () => {
+  const createDiffReviewSession = (overrides = {}) => ({
+    cancel: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    getUiState: () => ({ reviewAgent: { status: "idle" } }),
+    onUiStateChange: vi.fn(() => () => {}),
+    ...overrides,
+  });
+
+  it("requires diffTool configuration for /diff when no fallback is available", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    await controller.onUserInput("/diff");
+
+    expect(stub.systemMessages).toContainEqual({
+      text: "configure diffTool in config.json before using /diff.",
+      kind: "error",
+    });
+  });
+
+  it("uses the built-in diff tool fallback when config does not override it", async () => {
+    const stub = createStubView();
+    const defaultDiffTool = {
+      command: process.execPath,
+      args: ["/tmp/tau-main.js", "diff-tool"],
+    };
+    const controller = createController(stub.view, {
+      defaultDiffTool,
+    });
+
+    const startDiffReviewSessionSpy = vi
+      .spyOn(controller, "startDiffReviewSession")
+      .mockResolvedValue({
+        session: createDiffReviewSession(),
+        result: Promise.resolve({
+          status: "cancelled",
+          reason: "tool_cancelled",
+        }),
+      });
+
+    await controller.onUserInput("/diff");
+
+    expect(startDiffReviewSessionSpy).toHaveBeenCalledWith({
+      diffArgs: [],
+      diffTool: defaultDiffTool,
+      signal: expect.any(AbortSignal),
+    });
+    expect(stub.added).toContainEqual(
+      expect.objectContaining({ type: "diff_review", status: "preparing", command: "git diff" }),
+    );
+    expect(stub.updatedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: expect.objectContaining({ type: "diff_review", status: "active" }),
+        }),
+        expect.objectContaining({
+          model: expect.objectContaining({
+            type: "diff_review",
+            status: "cancelled",
+            detail: "cancelled in the diff tool",
+          }),
+        }),
+      ]),
+    );
+    expect(stub.systemMessages).toContainEqual({ text: "diff review cancelled.", kind: "warn" });
+  });
+
+  it("shows diff review progress in the chat stream while keeping the editor usable", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view, {
+      config: {
+        diffTool: {
+          command: "tau-diff-tool",
+        },
+      },
+    });
+
+    let emitUiState = () => {};
+    let resolveResult;
+    const result = new Promise((resolve) => {
+      resolveResult = resolve;
+    });
+    const session = createDiffReviewSession({
+      onUiStateChange: vi.fn((listener) => {
+        emitUiState = listener;
+        return () => {};
+      }),
+    });
+    vi.spyOn(controller, "startDiffReviewSession").mockResolvedValue({ session, result });
+
+    const diffPromise = controller.onUserInput("/diff --staged");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    emitUiState({
+      diffToolUiText: "browser diff tool: http://127.0.0.1:4321",
+      reviewAgent: {
+        status: "running",
+        threadId: "thread-1234567890abcdef",
+      },
+    });
+    resolveResult({
+      status: "returned",
+      review: "Reviewed the staged changes.",
+    });
+    await diffPromise;
+
+    expect(stub.added).toContainEqual(
+      expect.objectContaining({
+        type: "diff_review",
+        status: "preparing",
+        command: "git diff --staged",
+      }),
+    );
+    expect(stub.updatedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: expect.objectContaining({
+            type: "diff_review",
+            status: "active",
+            uiText: "browser diff tool: http://127.0.0.1:4321",
+            reviewAgent: {
+              status: "running",
+              threadId: "thread-1234567890abcdef",
+            },
+          }),
+        }),
+        expect.objectContaining({
+          model: expect.objectContaining({
+            type: "diff_review",
+            status: "returned",
+            detail: "review added to the conversation",
+          }),
+        }),
+      ]),
+    );
+    expect(stub.editorInputEnabledCalls).toEqual([]);
+  });
+
+  it("appends returned diff review text without auto-running the assistant", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view, {
+      config: {
+        diffTool: {
+          command: "tau-diff-tool",
+        },
+      },
+    });
+
+    controller.engine.addUserText("existing context");
+
+    const runAssistantTurnSpy = vi
+      .spyOn(controller, "runAssistantTurn")
+      .mockResolvedValue(undefined);
+    const startDiffReviewSessionSpy = vi
+      .spyOn(controller, "startDiffReviewSession")
+      .mockResolvedValue({
+        session: createDiffReviewSession(),
+        result: Promise.resolve({
+          status: "returned",
+          review: "Reviewed the staged changes.",
+        }),
+      });
+
+    await controller.onUserInput('/diff -- "src/file name.ts"');
+
+    expect(startDiffReviewSessionSpy).toHaveBeenCalledWith({
+      diffArgs: ["--", "src/file name.ts"],
+      diffTool: {
+        command: "tau-diff-tool",
+      },
+      signal: expect.any(AbortSignal),
+    });
+    expect(runAssistantTurnSpy).not.toHaveBeenCalled();
+    expect(controller.engine.history.filter((message) => message.role === "user")).toHaveLength(2);
+    expect(getUserText(controller, 1)).toBe(
+      [
+        "<system>",
+        "Diff review mode: the following user message is returned review feedback from the diff review tool.",
+        "Diff command: git diff -- src/file name.ts",
+        "",
+        "Treat the message as review findings and feedback about that diff, not as a generic new request.",
+        "Do not mention this surrounding instruction in your response.",
+        "</system>",
+        "",
+        "Reviewed the staged changes.",
+      ].join("\n"),
+    );
+    expect(stub.added).toContainEqual(
+      expect.objectContaining({
+        type: "user",
+        text: "Reviewed the staged changes.",
+        kind: "review",
+      }),
+    );
+    expect(stub.updatedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: expect.objectContaining({
+            type: "diff_review",
+            status: "returned",
+            detail: "review added to the conversation",
+          }),
+        }),
+      ]),
+    );
+    expect(stub.editorInputEnabledCalls).toEqual([]);
+  });
+
+  it("cancels an active diff review from escape without appending a message", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view, {
+      config: {
+        diffTool: {
+          command: "tau-diff-tool",
+        },
+      },
+    });
+
+    let resolveResult;
+    const result = new Promise((resolve) => {
+      resolveResult = resolve;
+    });
+    const session = createDiffReviewSession({
+      cancel: vi.fn(async () => {
+        resolveResult({
+          status: "cancelled",
+          reason: "controller_cancelled",
+        });
+      }),
+    });
+    vi.spyOn(controller, "startDiffReviewSession").mockResolvedValue({ session, result });
+
+    const diffPromise = controller.onUserInput("/diff");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    controller.onInterrupt();
+    await diffPromise;
+
+    expect(session.cancel).toHaveBeenCalledWith("controller_cancelled");
+    expect(controller.engine.history).toHaveLength(0);
+    expect(stub.updatedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: expect.objectContaining({
+            type: "diff_review",
+            status: "cancelled",
+            detail: "cancelled in Tau",
+          }),
+        }),
+      ]),
+    );
+    expect(stub.systemMessages).toContainEqual({ text: "interrupted", kind: "error" });
+    expect(stub.editorInputEnabledCalls).toEqual([]);
+  });
+
+  it("does not finish startup after diff review is cancelled during preparing", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view, {
+      config: {
+        diffTool: {
+          command: "tau-diff-tool",
+        },
+      },
+    });
+
+    const session = createDiffReviewSession();
+    const startDiffReviewSessionSpy = vi
+      .spyOn(controller, "startDiffReviewSession")
+      .mockImplementation(
+        ({ signal }) =>
+          new Promise((resolve, reject) => {
+            if (signal.aborted) {
+              reject(new Error("diff review start aborted"));
+              return;
+            }
+            signal.addEventListener(
+              "abort",
+              () => {
+                reject(new Error("diff review start aborted"));
+              },
+              { once: true },
+            );
+            setTimeout(() => {
+              if (signal.aborted) {
+                return;
+              }
+              resolve({
+                session,
+                result: Promise.resolve({
+                  status: "returned",
+                  review: "should never be returned",
+                }),
+              });
+            }, 20);
+          }),
+      );
+
+    const diffPromise = controller.onUserInput("/diff");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    controller.onInterrupt();
+    await diffPromise;
+
+    expect(startDiffReviewSessionSpy).toHaveBeenCalledWith({
+      diffArgs: [],
+      diffTool: {
+        command: "tau-diff-tool",
+      },
+      signal: expect.any(AbortSignal),
+    });
+    expect(session.cancel).not.toHaveBeenCalled();
+    expect(controller.engine.history).toHaveLength(0);
+    expect(stub.updatedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: expect.objectContaining({
+            type: "diff_review",
+            status: "cancelled",
+            detail: "cancelled in Tau",
+          }),
+        }),
+      ]),
+    );
+    expect(stub.systemMessages).toContainEqual({ text: "interrupted", kind: "error" });
   });
 });
 

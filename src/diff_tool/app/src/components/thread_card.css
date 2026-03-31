@@ -1,0 +1,106 @@
+.thread-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: var(--font-size-lg);
+  margin: 0.5rem;
+  max-width: 800px;
+}
+
+.thread-card.resolved {
+  border-color: var(--thread-border-strong);
+}
+
+.thread-header-row,
+.thread-collapsed-row {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding-block: 1rem;
+  padding-inline: 1rem;
+}
+
+.thread-toggle {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  gap: 0.5rem;
+  margin-block: 0;
+  margin-inline: -0.5rem;
+  padding-block: 0.25rem;
+  padding-inline: 0.5rem;
+  text-align: left;
+}
+
+.thread-toggle:hover {
+  color: var(--text);
+}
+
+.thread-msg {
+  padding-block: 1rem;
+  padding-inline: 2rem 1rem;
+}
+
+.thread-messages > :first-child {
+  padding-block-start: 0;
+  padding-inline: 1rem;
+}
+
+.thread-msg + .thread-msg {
+  border-top: 1px solid var(--border);
+}
+
+.thread-msg-assistant {
+  background: hsl(142 72% 72% / 0.02);
+}
+
+.thread-msg-role {
+  color: var(--text);
+  display: inline-block;
+  font-weight: 600;
+  margin-block-end: 0.75rem;
+}
+
+.thread-msg-thinking {
+  color: var(--text-muted);
+  display: block;
+}
+
+.thread-ask {
+  border-block-start: 1px solid var(--border);
+  padding-block: 1rem;
+  padding-inline: 1rem;
+}
+
+.thread-ask button {
+  display: flex;
+  justify-content: center;
+  padding-block: 0.75rem;
+  width: 100%;
+}
+
+.thread-footer {
+  background: var(--bg);
+  border-block-start: 1px solid var(--border);
+  padding-block: 1rem;
+  padding-inline: 1rem;
+}
+
+.thread-reply-input {
+  height: calc(1.5em * 3 + 0.75rem * 2);
+  padding: 0.75rem;
+  resize: none;
+}
+
+.thread-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  justify-content: flex-end;
+  margin-block-start: 1rem;
+}

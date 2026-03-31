@@ -73,11 +73,53 @@ test("UserMessageComponent applies memory mode styling", () => {
   const theme = createTagTheme();
   const component = new UserMessageComponent(theme, {
     text: "remember this",
-    isMemoryMode: true,
+    kind: "memory",
   });
   const text = renderText(component, 60);
   expect(text).toContain("<userMemorySurface>");
   expect(text).toContain("<userMemoryText>remember this</userMemoryText>");
+});
+
+test("UserMessageComponent applies review styling", () => {
+  const theme = createTagTheme();
+  const component = new UserMessageComponent(theme, {
+    text: "reviewed the staged changes",
+    kind: "review",
+  });
+  const text = renderText(component, 60);
+  expect(text).toContain("<userReviewSurface>");
+  expect(text).toContain("<userReviewText>reviewed the staged");
+  expect(text).toContain("changes</userReviewText>");
+});
+
+test("renderChatMessage renders diff review status as a bordered block", () => {
+  const theme = createTagTheme();
+  const rendered = renderChatMessage(
+    {
+      type: "diff_review",
+      status: "active",
+      command: "git diff --staged",
+      uiText: "browser diff tool: http://127.0.0.1:4321",
+      reviewAgent: {
+        status: "running",
+        threadId: "thread-1234567890abcdef1234567890",
+      },
+    },
+    {
+      theme,
+      thoughtsVisible: false,
+      compactToolUi: true,
+      toolUiRegistry: createToolUiRegistry(),
+    },
+  );
+
+  const text = renderText(rendered.component, 80);
+  expect(text).toContain("diff review active");
+  expect(text).toContain("command: git diff --staged");
+  expect(text).toContain("browser diff tool: http://127.0.0.1:4321");
+  expect(text).toContain("review agent: answering");
+  expect(text).toContain("thread-");
+  expect(text).toContain("...");
 });
 
 test("AssistantMessageComponent toggles thinking visibility", () => {

@@ -13,6 +13,8 @@ import { normalizeModelNoticeKey, parseModelNoticeKey } from "../utils/model_not
 import type { BashCommand } from "./bash_commands.js";
 import { parseBashCommands } from "./bash_commands.js";
 import type { ConfigDeps } from "./deps.js";
+import type { DiffToolConfig } from "./diff_tool.js";
+import { parseDiffToolConfig, resolveDiffToolConfig } from "./diff_tool.js";
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import { getVirtualConfigDefaults } from "./virtual_defaults.js";
@@ -26,6 +28,7 @@ export interface Config {
   disableBuiltinThemes?: boolean;
   defaultTheme?: string;
   bashCommands?: BashCommand[];
+  diffTool?: DiffToolConfig;
   agentContextFiles?: string[];
   subagents?: {
     defaultLaunchModels?: string[];
@@ -318,6 +321,9 @@ function validateConfigData(
     bashResult.commands.length > 0 ? bashResult.commands : undefined,
     bashResult.errors,
   );
+
+  const diffToolResult = parseDiffToolConfig(data.diffTool, sourceLabel);
+  assignParsedConfigValue(config, errors, "diffTool", diffToolResult.config, diffToolResult.errors);
 
   const agentResult = parseAgentContextFiles(data.agentContextFiles, sourceLabel);
   assignParsedConfigValue(
@@ -817,6 +823,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   const merged: Config = getVirtualConfigDefaults();
   let apiKeys: Config["apiKeys"] | undefined;
   let sandbox: SandboxConfig | undefined;
+  let diffTool: DiffToolConfig | undefined;
   let subagents: Config["subagents"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
   let asyncConfig: AsyncConfig | undefined;
@@ -829,6 +836,9 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
     apiKeys = mergeOptionalObject(apiKeys, config.apiKeys);
     sandbox = mergeOptionalObject(sandbox, config.sandbox);
+    if (config.diffTool !== undefined) {
+      diffTool = resolveDiffToolConfig(level, config.diffTool);
+    }
     subagents = mergeSubagentsConfig(subagents, config.subagents);
     modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
     asyncConfig = mergeAsyncConfig(asyncConfig, config.async);
@@ -870,6 +880,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (sandbox && Object.keys(sandbox).length > 0) {
     merged.sandbox = sandbox;
+  }
+
+  if (diffTool) {
+    merged.diffTool = diffTool;
   }
 
   if (subagents && Object.keys(subagents).length > 0) {

@@ -10,7 +10,8 @@
       "*.{ts,json,md}",
       "!**/node_modules/**/*",
       "!dist/**/*",
-      "!references/repos/**/*"
+      "!references/repos/**/*",
+      "!src/diff_tool/app/**/*"
     ]
   },
   "formatter": {

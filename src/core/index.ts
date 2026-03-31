@@ -18,7 +18,7 @@ export {
   SUPPORTED_OAUTH_PROVIDERS,
 } from "./auth/index.js";
 export type { CliOptions } from "./cli.js";
-export { CliError, parseCliArgs, parsePersonaString, printHelp } from "./cli.js";
+export { CliError, parseCliArgs, parsePersonaString, printDiffToolHelp, printHelp } from "./cli.js";
 export type {
   AsyncClientConfig,
   AsyncClientTargetConfig,
@@ -30,6 +30,7 @@ export type {
   BashCommand,
   Config,
   ConfigDeps,
+  DiffToolConfig,
   SandboxConfig,
   ThemeAppearance,
   ThemeDefinition,
@@ -47,6 +48,7 @@ export {
   resolveThemeTokensForAppearance,
 } from "./config/index.js";
 export { printDebugInfo } from "./debug.js";
+export * from "./diff_review/index.js";
 export type {
   CoreEvent,
   CoreEventEnvelope,

@@ -2,6 +2,7 @@ import type { Component } from "@mariozechner/pi-tui";
 import type { ToolUiEvent } from "../../core/tools/registry.js";
 import { AppIntroComponent, type AppIntroModel } from "./app_intro.js";
 import { AssistantMessageComponent, type AssistantMessageModel } from "./assistant_message.js";
+import { buildDiffReviewMessageView, type DiffReviewMessageModel } from "./diff_review_message.js";
 import { SessionDividerComponent, type SessionDividerModel } from "./session_divider.js";
 import type { SystemMessageModel } from "./system_message.js";
 import { SystemMessageComponent } from "./system_message.js";
@@ -13,6 +14,7 @@ import { UserMessageComponent, type UserMessageModel } from "./user_message.js";
 export type ChatMessageModel =
   | (AppIntroModel & { type: "app_intro" })
   | AssistantMessageModel
+  | (DiffReviewMessageModel & { type: "diff_review" })
   | (SystemMessageModel & { type: "system" })
   | (UserMessageModel & { type: "user" })
   | {
@@ -94,6 +96,20 @@ export function renderChatMessage(
         hasVisibleText: () => component.hasVisibleText,
       };
     }
+    case "diff_review": {
+      const component = renderToolOutput(buildDiffReviewMessageView(theme, model), false);
+      return {
+        component,
+        isAssistant: false,
+        update: (nextModel, nextOptions) => {
+          if (nextModel.type !== "diff_review") return false;
+          component.update(
+            buildToolOutputProps(buildDiffReviewMessageView(nextOptions.theme, nextModel), false),
+          );
+          return true;
+        },
+      };
+    }
     case "system": {
       const component = new SystemMessageComponent(theme, {
         text: model.text,
@@ -112,14 +128,14 @@ export function renderChatMessage(
     case "user": {
       const component = new UserMessageComponent(theme, {
         text: model.text,
-        isMemoryMode: model.isMemoryMode,
+        kind: model.kind,
       });
       return {
         component,
         isAssistant: false,
         update: (nextModel) => {
           if (nextModel.type !== "user") return false;
-          component.update({ text: nextModel.text, isMemoryMode: nextModel.isMemoryMode });
+          component.update({ text: nextModel.text, kind: nextModel.kind });
           return true;
         },
       };

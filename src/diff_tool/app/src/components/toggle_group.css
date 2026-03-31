@@ -1,0 +1,24 @@
+.toggle-group {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.toggle-group-item {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 4px 10px;
+  font-size: var(--font-size-ui);
+  cursor: pointer;
+}
+
+.toggle-group-item.active {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.toggle-group-item:hover:not(.active) {
+  color: var(--text);
+}

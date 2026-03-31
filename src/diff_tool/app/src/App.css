@@ -1,33 +1,41 @@
 @font-face {
-  font-family: "Geist Sans";
-  font-weight: 100 900;
+  font-family: "JetBrains Mono";
+  font-weight: 400;
   font-style: normal;
   font-display: swap;
-  src: url("/fonts/Geist[wght].woff2") format("woff2");
+  src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
 }
 
 @font-face {
-  font-family: "Geist Sans";
-  font-weight: 100 900;
-  font-style: italic;
-  font-display: swap;
-  src: url("/fonts/Geist-Italic[wght].woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Geist Mono";
-  font-weight: 100 900;
+  font-family: "JetBrains Mono";
+  font-weight: 500;
   font-style: normal;
   font-display: swap;
-  src: url("/fonts/GeistMono[wght].woff2") format("woff2");
+  src: url("/fonts/JetBrainsMono-Medium.woff2") format("woff2");
 }
 
 @font-face {
-  font-family: "Geist Mono";
-  font-weight: 100 900;
+  font-family: "JetBrains Mono";
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-SemiBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-Bold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 400;
   font-style: italic;
   font-display: swap;
-  src: url("/fonts/GeistMono-Italic[wght].woff2") format("woff2");
+  src: url("/fonts/JetBrainsMono-Italic.woff2") format("woff2");
 }
 
 :root {
@@ -62,19 +70,19 @@
   --font-size-sm: 0.928571rem;
   --font-size-xs: 0.857143rem;
   --font-size-code: 0.928571rem;
-  --font-weight-ui: 450;
+  --font-weight-ui: 400;
   --font-weight-code: 400;
   --letter-spacing-ui: 0;
   --letter-spacing-code: 0;
-  --font-family-ui: "Geist Sans", sans-serif;
-  --font-family-code: "Geist Mono", monospace;
+  --font-family-ui: system-ui, sans-serif;
+  --font-family-code: "JetBrains Mono", monospace;
   --diffs-font-family: var(--font-family-code);
+  --diffs-line-height: 1.75;
   font-family: var(--font-family-ui);
   font-size: 14px;
   font-weight: var(--font-weight-ui);
   letter-spacing: var(--letter-spacing-ui);
   line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
 }
 
 *,

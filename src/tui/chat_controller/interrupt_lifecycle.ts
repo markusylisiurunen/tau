@@ -31,7 +31,8 @@ export class InterruptLifecycle {
     }
   }
 
-  interruptActiveTask(): boolean {
+  interruptActiveTask(isStreaming: boolean): boolean {
+    if (!isStreaming) return false;
     if (!this.activeBusyTask) return false;
     return this.activeBusyTask.requestInterrupt();
   }

@@ -61,30 +61,4 @@ describe("cli", () => {
     expect(result.stdout).toContain("usage:");
     expect(result.stdout).toContain("tau async daemon");
   });
-
-  it("prints diff-tool help", () => {
-    const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, "diff-tool", "--help"], {
-      encoding: "utf8",
-      env: process.env,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("tau diff-tool [--help]");
-    expect(result.stdout).toContain("built-in browser diff review demo tool");
-    expect(result.stderr).toBe("");
-  });
-
-  it("shows a clear error when diff-tool is launched outside a Tau diff review session", () => {
-    const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, "diff-tool"], {
-      encoding: "utf8",
-      env: {},
-    });
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("tau diff-tool must be launched by Tau during /diff.");
-    expect(result.stderr).toContain("missing TAU_DIFF_SOCKET");
-    expect(result.stdout).toContain("tau diff-tool [--help]");
-  });
 });

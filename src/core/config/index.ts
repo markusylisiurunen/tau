@@ -3,7 +3,6 @@ export type { ThemeAppearance, ThemeDefinition, ThemeVariantTokens } from "./con
 export { loadAllContent } from "./content_loader.js";
 export type { ConfigDeps } from "./deps.js";
 export { createDefaultConfigDeps } from "./deps.js";
-export type { DiffToolConfig } from "./diff_tool.js";
 export { resolveConfigLevels } from "./paths.js";
 export type { RuntimeConfigResult } from "./runtime.js";
 export { loadRuntimeConfig } from "./runtime.js";

@@ -6,7 +6,6 @@ import type { BashCommand } from "./bash_commands.js";
 import type { ThemeDefinition } from "./content_loader.js";
 import { loadAllContent } from "./content_loader.js";
 import type { ConfigDeps } from "./deps.js";
-import type { DiffToolConfig } from "./diff_tool.js";
 import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
 import { loadConfigWithDiagnostics } from "./schema.js";
@@ -18,7 +17,6 @@ export interface RuntimeConfigResult {
   skills: Skill[];
   themes: ThemeDefinition[];
   bashCommands: BashCommand[];
-  diffTool?: DiffToolConfig;
   warnings: string[];
 }
 
@@ -65,7 +63,6 @@ export async function loadRuntimeConfig(
     skills: content.skills,
     themes: content.themes,
     bashCommands: config.bashCommands ?? [],
-    diffTool: config.diffTool,
     warnings,
   };
 }

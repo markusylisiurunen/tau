@@ -24,11 +24,6 @@ function getMentionValues(provider, text) {
   return suggestions ? suggestions.items.map((item) => item.value) : null;
 }
 
-function getSlashValues(provider, text) {
-  const suggestions = provider.getSuggestions([text], 0, text.length);
-  return suggestions ? suggestions.items.map((item) => item.value) : null;
-}
-
 describe("slash mention autocomplete", () => {
   it("uses @ as the default file mention syntax", () => {
     const provider = createProvider({ files: ["src/core.ts", "src/tui/app.ts"] });
@@ -90,14 +85,6 @@ describe("slash mention autocomplete", () => {
     expect(getMentionValues(provider, "@skill:foo-skill")).toBeNull();
     expect(getMentionValues(provider, "@agent:default")).toBeNull();
     expect(getMentionValues(provider, "@file:src/core.ts")).toBeNull();
-  });
-});
-
-describe("slash command autocomplete", () => {
-  it("suggests the first-class /diff command", () => {
-    const provider = createProvider();
-
-    expect(getSlashValues(provider, "/di")).toContain("diff");
   });
 });
 

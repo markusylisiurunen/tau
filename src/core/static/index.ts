@@ -5,7 +5,6 @@ const TEMPLATE_PLACEHOLDER_PATTERN = /\{\{([a-zA-Z0-9_]+)\}\}/g;
 
 const STATIC_PROMPT_PATHS = {
   "default-subagent-wrapper": "./prompts/default-subagent-wrapper.md",
-  "diff-review-wrapper": "./prompts/diff-review-wrapper.md",
 } as const;
 
 export type StaticPromptId = keyof typeof STATIC_PROMPT_PATHS;
@@ -42,14 +41,9 @@ function interpolateTemplate(template: string, values: Record<string, string>): 
 }
 
 const DEFAULT_SUBAGENT_WRAPPER_PROMPT = loadStaticPrompt("default-subagent-wrapper").trim();
-const DIFF_REVIEW_WRAPPER_PROMPT = loadStaticPrompt("diff-review-wrapper").trim();
 
 export function loadDefaultSubagentWrapperPrompt(): string {
   return DEFAULT_SUBAGENT_WRAPPER_PROMPT;
-}
-
-export function loadDiffReviewWrapperPrompt(): string {
-  return DIFF_REVIEW_WRAPPER_PROMPT;
 }
 
 export function renderDefaultSubagentWrapperPrompt(args: {
@@ -57,15 +51,5 @@ export function renderDefaultSubagentWrapperPrompt(args: {
 }): string {
   return interpolateTemplate(DEFAULT_SUBAGENT_WRAPPER_PROMPT, {
     inherited_instructions: args.inheritedInstructions.trim(),
-  });
-}
-
-export function renderDiffReviewWrapperPrompt(args: {
-  inheritedInstructions: string;
-  reviewContext: string;
-}): string {
-  return interpolateTemplate(DIFF_REVIEW_WRAPPER_PROMPT, {
-    inherited_instructions: args.inheritedInstructions.trim(),
-    review_context: args.reviewContext.trim(),
   });
 }

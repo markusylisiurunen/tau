@@ -20,7 +20,7 @@ export type UsageLogEntry = {
   cost: {
     total: number;
   };
-  agent: { type: "main" } | { type: "subagent"; name: string } | { type: "review" };
+  agent: { type: "main" } | { type: "subagent"; name: string };
 };
 
 export function formatUsageDateKey(date: Date): string {

@@ -12,11 +12,8 @@
 
 .thread-header-row,
 .thread-collapsed-row {
-  align-items: center;
-  display: flex;
-  gap: 1rem;
-  justify-content: space-between;
-  padding-block: 1rem;
+  font-size: var(--font-size-sm);
+  padding-block: 0.5rem;
   padding-inline: 1rem;
 }
 
@@ -28,7 +25,7 @@
   color: var(--text-muted);
   cursor: pointer;
   display: inline-flex;
-  gap: 0.5rem;
+  gap: 0.25rem;
   margin-block: 0;
   margin-inline: -0.5rem;
   padding-block: 0.25rem;
@@ -42,7 +39,7 @@
 
 .thread-msg {
   padding-block: 1rem;
-  padding-inline: 2rem 1rem;
+  padding-inline: 1rem;
 }
 
 .thread-messages > :first-child {
@@ -62,7 +59,7 @@
   color: var(--text);
   display: inline-block;
   font-weight: 600;
-  margin-block-end: 0.75rem;
+  margin-block-end: 0.5rem;
 }
 
 .thread-msg-thinking {
@@ -70,23 +67,14 @@
   display: block;
 }
 
-.thread-ask {
-  border-block-start: 1px solid var(--border);
-  padding-block: 1rem;
-  padding-inline: 1rem;
-}
-
-.thread-ask button {
-  display: flex;
-  justify-content: center;
-  padding-block: 0.75rem;
-  width: 100%;
+.thread-msg-actions {
+  margin-block-start: 0.75rem;
 }
 
 .thread-footer {
   background: var(--bg);
   border-block-start: 1px solid var(--border);
-  padding-block: 1rem;
+  padding-block: 0.75rem;
   padding-inline: 1rem;
 }
 
@@ -102,5 +90,8 @@
   flex-wrap: wrap;
   gap: 0.25rem;
   justify-content: flex-end;
-  margin-block-start: 1rem;
+}
+
+.thread-reply-input + .thread-actions {
+  margin-block-start: 0.75rem;
 }

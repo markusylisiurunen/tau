@@ -10,8 +10,8 @@
   --markdown-inline-code-font-size: 0.9375em;
   --markdown-inline-code-padding-x: 5px;
   --markdown-inline-code-padding-y: 1px;
-  --markdown-list-item-gap: 0.25em;
-  --markdown-list-margin-block: 1.5em;
+  --markdown-list-item-gap: 0.125em;
+  --markdown-list-margin-block: 1em;
   --markdown-list-nested-gap: 0.25em;
   --markdown-list-padding: 1.5em;
   --markdown-paragraph-margin-block: 1em;
@@ -116,10 +116,13 @@
   margin: 0;
 }
 
-.markdown-content li > p + p,
+.markdown-content li > p + p {
+  margin-top: var(--markdown-list-nested-gap);
+}
+
 .markdown-content li > ul,
 .markdown-content li > ol {
-  margin-top: var(--markdown-list-nested-gap);
+  margin-block: var(--markdown-list-nested-gap) 0;
 }
 
 .markdown-content blockquote {

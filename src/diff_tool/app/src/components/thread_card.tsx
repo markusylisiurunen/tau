@@ -1,11 +1,5 @@
-import {
-  CheckCheck,
-  ChevronsDownUp,
-  ChevronsUpDown,
-  MessageSquarePlus,
-  Sparkles,
-} from "lucide-react";
-import { useCallback, useState } from "react";
+import { ChevronsDownUp, ChevronsUpDown, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CommentThread } from "../comments.js";
 import { MarkdownContent } from "./markdown_content.js";
 import "./thread_card.css";
@@ -25,7 +19,9 @@ export function ThreadCard({
   onToggleResolved,
   onToggleCollapsed,
 }: ThreadCardProps) {
+  const [isReplying, setIsReplying] = useState(false);
   const [replyBody, setReplyBody] = useState("");
+  const replyInputRef = useRef<HTMLTextAreaElement>(null);
   const lastMessage = thread.messages[thread.messages.length - 1];
   const canAsk =
     lastMessage?.role === "user" && !thread.loading && !thread.resolved;
@@ -33,12 +29,20 @@ export function ThreadCard({
   const summary = `${thread.resolved ? "Resolved thread" : "Thread"} with ${count} comment${count === 1 ? "" : "s"}`;
   const resolveLabel = thread.resolved ? "reopen" : "resolve";
 
+  useEffect(() => {
+    if (!isReplying) {
+      return;
+    }
+    replyInputRef.current?.focus();
+  }, [isReplying]);
+
   const handleAddReply = useCallback(() => {
     const text = replyBody.trim();
     if (!text) {
       return;
     }
     setReplyBody("");
+    setIsReplying(false);
     onAddReply(text);
   }, [onAddReply, replyBody]);
 
@@ -55,6 +59,11 @@ export function ThreadCard({
   const handleToggleResolved = useCallback(() => {
     onToggleResolved(!thread.resolved);
   }, [onToggleResolved, thread.resolved]);
+
+  const handleCancelReply = useCallback(() => {
+    setReplyBody("");
+    setIsReplying(false);
+  }, []);
 
   if (thread.collapsed) {
     return (
@@ -92,21 +101,40 @@ export function ThreadCard({
         </button>
       </div>
       <div className="thread-messages">
-        {thread.messages.map((message, index) => (
-          <div
-            key={`${message.role}:${index}:${message.text}`}
-            className={`thread-msg thread-msg-${message.role}`}
-          >
-            <span className="thread-msg-role">
-              {message.role === "user" ? "you" : "agent"}
-            </span>
-            <MarkdownContent
-              content={message.text}
-              className="thread-msg-text"
-              variant="thread"
-            />
-          </div>
-        ))}
+        {thread.messages.map((message, index) => {
+          const showAskAgent =
+            canAsk &&
+            message.role === "user" &&
+            index === thread.messages.length - 1;
+
+          return (
+            <div
+              key={`${message.role}:${index}:${message.text}`}
+              className={`thread-msg thread-msg-${message.role}`}
+            >
+              <span className="thread-msg-role">
+                {message.role === "user" ? "you" : "agent"}
+              </span>
+              <MarkdownContent
+                content={message.text}
+                className="thread-msg-text"
+                variant="thread"
+              />
+              {showAskAgent && (
+                <div className="thread-msg-actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={onRequestAgent}
+                  >
+                    <Sparkles size={14} />
+                    ask agent
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
         {thread.loading && (
           <div className="thread-msg thread-msg-assistant">
             <span className="thread-msg-role">agent</span>
@@ -114,42 +142,54 @@ export function ThreadCard({
           </div>
         )}
       </div>
-      {canAsk && (
-        <div className="thread-ask">
-          <button type="button" className="btn" onClick={onRequestAgent}>
-            <Sparkles size={14} />
-            ask agent
-          </button>
-        </div>
-      )}
       <div className="thread-footer">
-        <textarea
-          className="text-input-area thread-reply-input"
-          value={replyBody}
-          onChange={(event) => setReplyBody(event.target.value)}
-          onKeyDown={handleReplyKeyDown}
-          placeholder="Reply…"
-          rows={3}
-        />
-        <div className="thread-actions">
-          <button
-            type="button"
-            className="btn ghost"
-            onClick={handleToggleResolved}
-          >
-            <CheckCheck size={14} />
-            {resolveLabel}
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={!replyBody.trim()}
-            onClick={handleAddReply}
-          >
-            <MessageSquarePlus size={14} />
-            reply
-          </button>
-        </div>
+        {isReplying ? (
+          <>
+            <textarea
+              ref={replyInputRef}
+              className="text-input-area thread-reply-input"
+              value={replyBody}
+              onChange={(event) => setReplyBody(event.target.value)}
+              onKeyDown={handleReplyKeyDown}
+              placeholder="Reply…"
+              rows={3}
+            />
+            <div className="thread-actions">
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={handleCancelReply}
+              >
+                cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!replyBody.trim()}
+                onClick={handleAddReply}
+              >
+                comment
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="thread-actions">
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={handleToggleResolved}
+            >
+              {resolveLabel}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setIsReplying(true)}
+            >
+              reply
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

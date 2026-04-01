@@ -1473,12 +1473,20 @@ export class ChatController {
 
   private addUserMessageToMainSession(
     text: string,
-    opts?: { textForModel?: string; kind?: UserMessageKind },
+    opts?: {
+      textForModel?: string;
+      kind?: UserMessageKind;
+      includePendingNotices?: boolean;
+    },
   ): string {
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
 
-    const textForModel = this.applyPendingUserNotices(opts?.textForModel ?? text);
+    const rawTextForModel = opts?.textForModel ?? text;
+    const textForModel =
+      opts?.includePendingNotices === false
+        ? rawTextForModel
+        : this.applyPendingUserNotices(rawTextForModel);
     const historyEntryId = this.engine.addUserText(textForModel);
     this.view.addMessage(
       {
@@ -1830,6 +1838,7 @@ export class ChatController {
     this.addUserMessageToMainSession(review.review, {
       textForModel: this.formatDiffReviewUserMessage(review),
       kind: "review",
+      includePendingNotices: false,
     });
   }
 

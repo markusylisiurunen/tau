@@ -752,6 +752,80 @@ describe("ChatController diff review", () => {
     expect(stub.editorInputEnabledCalls).toEqual([]);
   });
 
+  it("preserves pending risk/cwd/project notices after returned diff review feedback", async () => {
+    const originalCwd = process.cwd();
+    const home = await mkdtemp(join(tmpdir(), "tau-diff-review-context-"));
+    const dirA = join(home, "dir-a");
+    const dirB = join(home, "dir-b");
+    await mkdir(dirA, { recursive: true });
+    await mkdir(dirB, { recursive: true });
+    await writeFile(join(dirA, "AGENTS.md"), "# A\n\ncontext from dir-a\n");
+    await writeFile(join(dirB, "AGENTS.md"), "# B\n\ncontext from dir-b\n");
+
+    let controller;
+    try {
+      process.chdir(dirA);
+
+      const stub = createStubView();
+      controller = createController(stub.view, {
+        noAgentContextFiles: false,
+        deps: createProjectContextDeps(home),
+        config: {
+          diffTool: {
+            command: "tau-diff-tool",
+          },
+        },
+      });
+      const userMessages = [];
+      controller.engine.addUserText = (text) => {
+        userMessages.push(text);
+        return `user-${userMessages.length}`;
+      };
+      controller.runAssistantTurn = async () => {};
+      vi.spyOn(controller, "startDiffReviewSession").mockResolvedValue({
+        session: createDiffReviewSession(),
+        result: Promise.resolve({
+          status: "returned",
+          review: "Reviewed the staged changes.",
+        }),
+      });
+
+      await controller.onUserInput("/risk:read-write");
+      await controller.onUserInput(`/cd ${dirB}`);
+      await controller.onUserInput("/diff --staged");
+      await controller.onUserInput("hello");
+
+      expect(userMessages).toHaveLength(2);
+      expect(userMessages[0]).toBe(
+        [
+          "<system>",
+          "Diff review mode: the following user message is returned review feedback from the diff review tool.",
+          "Diff command: git diff --staged",
+          "",
+          "Treat the message as review findings and feedback about that diff, not as a generic new request.",
+          "Do not mention this surrounding instruction in your response.",
+          "</system>",
+          "",
+          "Reviewed the staged changes.",
+        ].join("\n"),
+      );
+      expect(userMessages[0]).not.toContain("Risk level changed by user");
+      expect(userMessages[0]).not.toContain("Working directory changed by user");
+      expect(userMessages[0]).not.toContain("Project context changed by user after '/cd'.");
+
+      expect(userMessages[1]).toContain("Risk level changed by user");
+      expect(userMessages[1]).toContain("Working directory changed by user");
+      expect(userMessages[1]).toContain("Project context changed by user after '/cd'.");
+      expect(userMessages[1]).toContain("dir-b/AGENTS.md");
+      expect(userMessages[1]).toContain("context from dir-b");
+      expect(userMessages[1]).toContain("hello");
+    } finally {
+      await controller?.dispose();
+      process.chdir(originalCwd);
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("cancels an active diff review from escape without appending a message", async () => {
     const stub = createStubView();
     const controller = createController(stub.view, {

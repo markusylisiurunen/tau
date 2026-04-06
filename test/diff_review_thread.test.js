@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { appendUsageLogEntryMock } = vi.hoisted(() => ({
+const { appendUsageLogEntryMock, coreSessionOptions } = vi.hoisted(() => ({
   appendUsageLogEntryMock: vi.fn(),
+  coreSessionOptions: [],
 }));
 
 vi.mock("../src/core/runtime/deps.ts", () => ({
@@ -34,17 +35,28 @@ vi.mock("../src/core/runtime/runtime_bootstrap.ts", () => ({
 }));
 
 vi.mock("../src/core/runtime/session_prompt_composer.ts", () => ({
-  composeSessionPrompts: () => ({
-    environmentTag: "<environment></environment>",
-    baseSystemPrompt: "review system prompt",
-    subagentPrompts: {},
+  composeSessionPrompts: (args) => ({
+    environmentTag: `<environment datetime="${args.datetime}"></environment>`,
+    baseSystemPrompt: `review system prompt ${args.datetime}`,
+    subagentPrompts: { reviewer: `subagent prompt ${args.datetime}` },
   }),
 }));
 
 vi.mock("../src/core/session/core_session.ts", () => ({
   CoreSession: class CoreSession {
     historyEntries = [];
+
+    constructor(options) {
+      coreSessionOptions.push(options);
+    }
+
     addUserText() {}
+    addMessage(message, options) {
+      this.historyEntries.push({
+        id: options?.historyEntryId ?? `history-${this.historyEntries.length}`,
+        message,
+      });
+    }
     get sessionId() {
       return "review-session-1";
     }
@@ -59,24 +71,37 @@ vi.mock("../src/core/runtime/conversation_turn_runtime.ts", () => ({
       this.session = session;
     }
 
-    async run() {
-      this.session.historyEntries.push({
-        message: {
-          role: "assistant",
-          api: "anthropic-messages",
-          provider: "anthropic",
-          model: "claude-opus-4-6",
-          timestamp: 999,
-          usage: {
-            input: 10,
-            output: 4,
-            cacheRead: 2,
-            cacheWrite: 1,
-            totalTokens: 17,
-            cost: { total: 0.42 },
-          },
-          content: [{ type: "text", text: "review answer" }],
+    async run(options) {
+      options?.onEvent?.({
+        type: "tool_ui",
+        uiEvent: {
+          type: "bash_started",
+          toolCallId: "tool-1",
+          command: "git diff --staged",
+          headerTarget: "git diff --staged",
         },
+      });
+      const message = {
+        role: "assistant",
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: "claude-opus-4-6",
+        timestamp: 999,
+        usage: {
+          input: 10,
+          output: 4,
+          cacheRead: 2,
+          cacheWrite: 1,
+          totalTokens: 17,
+          cost: { total: 0.42 },
+        },
+        content: [{ type: "text", text: "review answer" }],
+      };
+      this.session.historyEntries.push({ message });
+      options?.onEvent?.({
+        type: "assistant_final",
+        historyEntryId: "assistant-1",
+        message,
       });
       return { aborted: false };
     }
@@ -148,7 +173,7 @@ describe("diff_review thread", () => {
       persona: {
         id: "coder",
         label: "coder",
-        model: { provider: "anthropic", id: "claude-opus-4-6" },
+        model: { provider: "anthropic", id: "claude-opus-4-6", contextWindow: 200000 },
         systemPrompt: "main system prompt",
         settings: { reasoning: "high" },
         skills: "*",
@@ -176,5 +201,164 @@ describe("diff_review thread", () => {
       cost: { total: 0.42 },
       agent: { type: "review" },
     });
+  });
+
+  it("emits cumulative review agent updates", async () => {
+    const updates = [];
+    const snapshot = new DiffReviewSnapshot({
+      repoRoot: "/repo",
+      cwd: "/repo",
+      diffArgs: [],
+      patch: "diff --git a/src/a.ts b/src/a.ts",
+      files: [{ path: "src/a.ts", status: "modified", newPath: "src/a.ts" }],
+      patchByPath: new Map([["src/a.ts", "diff --git a/src/a.ts b/src/a.ts"]]),
+    });
+
+    const thread = new DiffReviewThread({
+      threadId: "thread-1",
+      snapshot,
+      persona: {
+        id: "coder",
+        label: "coder",
+        model: { provider: "anthropic", id: "claude-opus-4-6", contextWindow: 200000 },
+        systemPrompt: "main system prompt",
+        settings: { reasoning: "high" },
+        skills: "*",
+        source: "builtin",
+      },
+      config: {},
+      onUpdate: (update) => {
+        updates.push(update);
+      },
+    });
+
+    await thread.submitMessage("what changed?");
+
+    expect(updates).toEqual(
+      expect.arrayContaining([
+        {
+          costTotal: 0,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 0,
+            contextWindow: 200000,
+          },
+          lastActivityText: "bash running: git diff --staged",
+        },
+        {
+          costTotal: 0.42,
+          usage: {
+            input: 10,
+            output: 4,
+            cacheRead: 2,
+            cacheWrite: 1,
+            contextWindowUsageTokens: 17,
+            contextWindow: 200000,
+          },
+          lastActivityText: "agent: review answer",
+        },
+      ]),
+    );
+  });
+
+  it("inherits usage baselines when forking while resetting cost", async () => {
+    coreSessionOptions.length = 0;
+    const snapshot = new DiffReviewSnapshot({
+      repoRoot: "/repo",
+      cwd: "/repo",
+      diffArgs: [],
+      patch: "diff --git a/src/a.ts b/src/a.ts",
+      files: [{ path: "src/a.ts", status: "modified", newPath: "src/a.ts" }],
+      patchByPath: new Map([["src/a.ts", "diff --git a/src/a.ts b/src/a.ts"]]),
+    });
+
+    const parent = new DiffReviewThread({
+      threadId: "thread-parent",
+      snapshot,
+      persona: {
+        id: "coder",
+        label: "coder",
+        model: { provider: "anthropic", id: "claude-opus-4-6", contextWindow: 200000 },
+        systemPrompt: "main system prompt",
+        settings: { reasoning: "high" },
+        skills: "*",
+        source: "builtin",
+      },
+      config: {},
+    });
+    await parent.submitMessage("bootstrap");
+
+    const childUpdates = [];
+    const child = new DiffReviewThread({
+      threadId: "thread-child",
+      snapshot,
+      persona: {
+        id: "coder",
+        label: "coder",
+        model: { provider: "anthropic", id: "claude-opus-4-6", contextWindow: 200000 },
+        systemPrompt: "main system prompt",
+        settings: { reasoning: "high" },
+        skills: "*",
+        source: "builtin",
+      },
+      config: {},
+      forkFrom: parent.createForkSource(),
+      onUpdate: (update) => {
+        childUpdates.push(update);
+      },
+    });
+
+    expect(coreSessionOptions).toHaveLength(2);
+    expect(coreSessionOptions[1]).toMatchObject({
+      systemPrompt: coreSessionOptions[0].systemPrompt,
+      subagentPrompts: coreSessionOptions[0].subagentPrompts,
+    });
+    expect(coreSessionOptions[1].systemPrompt).toBe(coreSessionOptions[0].systemPrompt);
+    expect(coreSessionOptions[1].subagentPrompts).toEqual(coreSessionOptions[0].subagentPrompts);
+
+    expect(childUpdates[0]).toEqual({
+      costTotal: 0,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        contextWindowUsageTokens: 17,
+        contextWindow: 200000,
+      },
+    });
+
+    await child.submitMessage("thread question");
+
+    expect(childUpdates).toEqual(
+      expect.arrayContaining([
+        {
+          costTotal: 0,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 17,
+            contextWindow: 200000,
+          },
+        },
+        {
+          costTotal: 0.42,
+          usage: {
+            input: 10,
+            output: 4,
+            cacheRead: 2,
+            cacheWrite: 1,
+            contextWindowUsageTokens: 17,
+            contextWindow: 200000,
+          },
+          lastActivityText: "agent: review answer",
+        },
+      ]),
+    );
   });
 });

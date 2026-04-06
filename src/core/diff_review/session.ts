@@ -26,7 +26,13 @@ import {
   parseDiffReviewRequestLine,
   serializeDiffReviewMessage,
 } from "./protocol.js";
-import { DiffReviewThread, type DiffReviewThreadSession } from "./review_thread.js";
+import {
+  type DiffReviewAgentUsageSnapshot,
+  DiffReviewThread,
+  type DiffReviewThreadForkSource,
+  type DiffReviewThreadSession,
+  type DiffReviewThreadUpdate,
+} from "./review_thread.js";
 import { captureDiffReviewSnapshot, type DiffReviewSnapshot } from "./snapshot.js";
 
 export type DiffReviewCancelledReason =
@@ -45,6 +51,12 @@ export type DiffReviewResult =
       reason: DiffReviewCancelledReason;
     };
 
+export type CreateDiffReviewThreadSessionOptions = {
+  threadId: string;
+  forkFrom?: DiffReviewThreadForkSource;
+  onUpdate?: (update: DiffReviewThreadUpdate) => void;
+};
+
 export type DiffReviewSessionOptions = {
   snapshot: DiffReviewSnapshot;
   persona: Persona;
@@ -53,7 +65,7 @@ export type DiffReviewSessionOptions = {
   includeAgentContext?: boolean;
   deps?: CoreDeps;
   toolExecutionBackend?: ToolExecutionBackend;
-  createThread?: (threadId: string) => DiffReviewThreadSession;
+  createThread?: (options: CreateDiffReviewThreadSessionOptions) => DiffReviewThreadSession;
 };
 
 export type StartDiffReviewSessionOptions = {
@@ -74,18 +86,19 @@ export type StartedDiffReviewSession = {
   result: Promise<DiffReviewResult>;
 };
 
-export type DiffReviewAgentActivityState =
-  | {
-      status: "idle";
-    }
-  | {
-      status: "running";
-      threadId: string;
-    };
+export type DiffReviewAgentStatus = "running" | "idle";
+
+export type DiffReviewAgentActivity = {
+  threadId: string;
+  status: DiffReviewAgentStatus;
+  costTotal: number;
+  usage: DiffReviewAgentUsageSnapshot;
+  lastActivityText?: string;
+};
 
 export type DiffReviewSessionUiState = {
   diffToolUiText?: string;
-  reviewAgent: DiffReviewAgentActivityState;
+  reviewAgents: DiffReviewAgentActivity[];
 };
 
 export type DiffReviewSessionUiStateListener = (state: DiffReviewSessionUiState) => void;
@@ -94,8 +107,22 @@ type DiffReviewClientConnection = {
   socket: Socket;
   readline: Interface;
   initialized: boolean;
-  queue: Promise<void>;
+  writeQueue: Promise<void>;
 };
+
+type DiffReviewAgentRecord = DiffReviewAgentActivity & {
+  activeRequestCount: number;
+};
+
+class DiffReviewRequestError extends Error {
+  readonly code: keyof typeof DIFF_REVIEW_ERROR_CODES;
+
+  constructor(code: keyof typeof DIFF_REVIEW_ERROR_CODES, message: string) {
+    super(message);
+    this.name = "DiffReviewRequestError";
+    this.code = code;
+  }
+}
 
 const DIFF_REVIEW_INITIALIZE_TIMEOUT_MS = 10_000;
 
@@ -106,15 +133,18 @@ export class DiffReviewSession {
   private readonly config: Config;
   private readonly deps: CoreDeps;
   private readonly toolExecutionBackend?: ToolExecutionBackend;
-  private readonly createThreadSession: (threadId: string) => DiffReviewThreadSession;
+  private readonly createThreadSession: (
+    options: CreateDiffReviewThreadSessionOptions,
+  ) => DiffReviewThreadSession;
   private readonly socketPath: string;
   private readonly authToken: string;
   private server?: Server;
   private readonly threads = new Map<string, DiffReviewThreadSession>();
+  private readonly reviewAgentRecords = new Map<string, DiffReviewAgentRecord>();
   private readonly connections = new Set<DiffReviewClientConnection>();
   private readonly uiStateListeners = new Set<DiffReviewSessionUiStateListener>();
   private uiState: DiffReviewSessionUiState = {
-    reviewAgent: { status: "idle" },
+    reviewAgents: [],
   };
   private initializedConnection?: DiffReviewClientConnection;
   private initializeTimeout?: ReturnType<typeof setTimeout>;
@@ -134,9 +164,9 @@ export class DiffReviewSession {
     this.authToken = randomBytes(24).toString("hex");
     this.createThreadSession =
       options.createThread ??
-      ((threadId) =>
+      ((threadOptions) =>
         new DiffReviewThread({
-          threadId,
+          threadId: threadOptions.threadId,
           snapshot: this.snapshot,
           persona: this.persona,
           config: this.config,
@@ -144,6 +174,8 @@ export class DiffReviewSession {
           includeAgentContext: options.includeAgentContext,
           deps: this.deps,
           toolExecutionBackend: this.toolExecutionBackend,
+          onUpdate: threadOptions.onUpdate,
+          forkFrom: threadOptions.forkFrom,
         }));
     this.completionPromise = new Promise<DiffReviewResult>((resolve) => {
       this.completionResolver = resolve;
@@ -246,10 +278,6 @@ export class DiffReviewSession {
       return;
     }
 
-    for (const thread of this.threads.values()) {
-      thread.interrupt();
-    }
-
     await this.complete({ status: "cancelled", reason });
   }
 
@@ -273,18 +301,16 @@ export class DiffReviewSession {
       socket,
       readline,
       initialized: false,
-      queue: Promise.resolve(),
+      writeQueue: Promise.resolve(),
     };
     this.connections.add(connection);
 
     readline.on("line", (line) => {
-      connection.queue = connection.queue
-        .then(() => this.handleLine(connection, line))
-        .catch((error) => {
-          this.sendError(connection.socket, null, "internalError", "diff review request failed", {
-            cause: error instanceof Error ? error.message : String(error),
-          });
+      void this.handleLine(connection, line).catch((error) => {
+        void this.sendError(connection, null, "internalError", "diff review request failed", {
+          cause: error instanceof Error ? error.message : String(error),
         });
+      });
     });
 
     socket.on("close", () => {
@@ -312,8 +338,8 @@ export class DiffReviewSession {
   private async handleLine(connection: DiffReviewClientConnection, line: string): Promise<void> {
     const parsed = parseDiffReviewRequestLine(line);
     if (!parsed.ok) {
-      this.sendMessage(
-        connection.socket,
+      await this.sendMessage(
+        connection,
         createDiffReviewErrorResponse(
           parsed.id,
           parsed.error.code,
@@ -326,8 +352,8 @@ export class DiffReviewSession {
 
     const request = parsed.request;
     if (this.completedResult && request.method !== "initialize") {
-      this.sendError(
-        connection.socket,
+      await this.sendError(
+        connection,
         request.id,
         "sessionClosed",
         "diff review session is closed",
@@ -336,8 +362,8 @@ export class DiffReviewSession {
     }
 
     if (request.method !== "initialize" && !connection.initialized) {
-      this.sendError(
-        connection.socket,
+      await this.sendError(
+        connection,
         request.id,
         "notInitialized",
         "call initialize before other diff review methods",
@@ -347,10 +373,10 @@ export class DiffReviewSession {
 
     switch (request.method) {
       case "initialize":
-        this.handleInitialize(connection, request);
+        await this.handleInitialize(connection, request);
         return;
       case "session.get_context":
-        this.respond(connection.socket, request.id, request.method, {
+        await this.respond(connection, request.id, request.method, {
           sessionId: this.sessionId,
           repoRoot: this.snapshot.repoRoot,
           cwd: this.snapshot.cwd,
@@ -359,43 +385,43 @@ export class DiffReviewSession {
         });
         return;
       case "session.list_files":
-        this.respond(connection.socket, request.id, request.method, {
+        await this.respond(connection, request.id, request.method, {
           files: this.snapshot.files.map((file) => ({ ...file })),
         });
         return;
       case "session.get_diff":
-        this.handleGetDiff(connection.socket, request);
+        await this.handleGetDiff(connection, request);
         return;
       case "session.set_ui_text":
         this.updateDiffToolUiText(request.params.text);
-        this.respond(connection.socket, request.id, request.method, { status: "updated" });
+        await this.respond(connection, request.id, request.method, { status: "updated" });
         return;
       case "thread.submit_message":
-        await this.handleThreadSubmit(connection.socket, request);
+        await this.handleThreadSubmit(connection, request);
         return;
       case "session.return_review":
-        this.respond(connection.socket, request.id, request.method, { status: "returned" });
+        await this.respond(connection, request.id, request.method, { status: "returned" });
         await this.complete({ status: "returned", review: request.params.review });
         return;
       case "session.cancel":
-        this.respond(connection.socket, request.id, request.method, { status: "cancelled" });
+        await this.respond(connection, request.id, request.method, { status: "cancelled" });
         await this.cancel("tool_cancelled");
         return;
     }
   }
 
-  private handleInitialize(
+  private async handleInitialize(
     connection: DiffReviewClientConnection,
     request: Extract<DiffReviewRequestMessage, { method: "initialize" }>,
-  ): void {
+  ): Promise<void> {
     if (request.params.token !== this.authToken) {
-      this.sendError(connection.socket, request.id, "unauthorized", "invalid diff review token");
+      await this.sendError(connection, request.id, "unauthorized", "invalid diff review token");
       return;
     }
 
     if (this.initializedConnection && this.initializedConnection !== connection) {
-      this.sendError(
-        connection.socket,
+      await this.sendError(
+        connection,
         request.id,
         "invalidRequest",
         "diff review session already has an active client",
@@ -412,15 +438,15 @@ export class DiffReviewSession {
     connection.initialized = true;
     this.initializedConnection = connection;
     this.clearInitializeTimeout();
-    this.sendMessage(connection.socket, createDiffReviewSuccessResponse(request.id, result));
+    await this.sendMessage(connection, createDiffReviewSuccessResponse(request.id, result));
   }
 
-  private handleGetDiff(
-    socket: Socket,
+  private async handleGetDiff(
+    connection: DiffReviewClientConnection,
     request: Extract<DiffReviewRequestMessage, { method: "session.get_diff" }>,
-  ): void {
+  ): Promise<void> {
     if (!request.params.path) {
-      this.respond(socket, request.id, request.method, {
+      await this.respond(connection, request.id, request.method, {
         scope: "session",
         patch: this.snapshot.patch,
       });
@@ -429,8 +455,8 @@ export class DiffReviewSession {
 
     const patch = this.snapshot.getFilePatch(request.params.path);
     if (patch === undefined) {
-      this.sendError(
-        socket,
+      await this.sendError(
+        connection,
         request.id,
         "invalidParams",
         `unknown diff file '${request.params.path}'`,
@@ -438,7 +464,7 @@ export class DiffReviewSession {
       return;
     }
 
-    this.respond(socket, request.id, request.method, {
+    await this.respond(connection, request.id, request.method, {
       scope: "file",
       path: request.params.path,
       patch,
@@ -446,43 +472,84 @@ export class DiffReviewSession {
   }
 
   private async handleThreadSubmit(
-    socket: Socket,
+    connection: DiffReviewClientConnection,
     request: Extract<DiffReviewRequestMessage, { method: "thread.submit_message" }>,
   ): Promise<void> {
-    const threadId = request.params.threadId ?? `thread-${randomUUID()}`;
-    const thread = this.getOrCreateThread(threadId);
-
-    this.updateReviewAgentActivity({ status: "running", threadId });
+    let acquired:
+      | {
+          threadId: string;
+          thread: DiffReviewThreadSession;
+        }
+      | undefined;
     try {
-      const response = await thread.submitMessage(request.params.message);
-      if (this.completedResult || socket.destroyed) {
+      acquired = this.acquireThreadForSubmit(request.params);
+      const response = await acquired.thread.submitMessage(request.params.message);
+      if (this.completedResult || connection.socket.destroyed) {
         return;
       }
-      this.respond(socket, request.id, request.method, { threadId, response });
+      await this.respond(connection, request.id, request.method, {
+        threadId: acquired.threadId,
+        response,
+      });
     } catch (error) {
-      if (this.completedResult || socket.destroyed) {
+      if (this.completedResult || connection.socket.destroyed) {
         return;
       }
-      this.sendError(
-        socket,
+      if (error instanceof DiffReviewRequestError) {
+        await this.sendError(connection, request.id, error.code, error.message);
+        return;
+      }
+      await this.sendError(
+        connection,
         request.id,
         "internalError",
         error instanceof Error ? error.message : String(error),
       );
     } finally {
-      this.updateReviewAgentActivity({ status: "idle" });
+      if (acquired) {
+        this.markReviewAgentIdle(acquired.threadId);
+      }
     }
   }
 
-  private getOrCreateThread(threadId: string): DiffReviewThreadSession {
-    const existing = this.threads.get(threadId);
-    if (existing) {
-      return existing;
+  private acquireThreadForSubmit(params: { threadId?: string; forkFromThreadId?: string }): {
+    threadId: string;
+    thread: DiffReviewThreadSession;
+  } {
+    if (params.threadId) {
+      const existing = this.threads.get(params.threadId);
+      if (!existing) {
+        throw new DiffReviewRequestError("invalidParams", `unknown thread '${params.threadId}'`);
+      }
+      this.markReviewAgentRunning(params.threadId);
+      return { threadId: params.threadId, thread: existing };
     }
 
-    const created = this.createThreadSession(threadId);
+    const threadId = randomUUID();
+    const forkSource = params.forkFromThreadId
+      ? this.threads.get(params.forkFromThreadId)
+      : undefined;
+    if (params.forkFromThreadId && !forkSource) {
+      throw new DiffReviewRequestError(
+        "invalidParams",
+        `unknown fork source thread '${params.forkFromThreadId}'`,
+      );
+    }
+    if (params.forkFromThreadId && this.hasActiveReviewAgentRequest(params.forkFromThreadId)) {
+      throw new DiffReviewRequestError(
+        "invalidRequest",
+        `thread '${params.forkFromThreadId}' already has an active request and cannot be used as a fork source`,
+      );
+    }
+
+    const created = this.createThreadSession({
+      threadId,
+      ...(forkSource ? { forkFrom: forkSource.createForkSource() } : {}),
+      onUpdate: (update) => this.applyReviewAgentUpdate(threadId, update),
+    });
     this.threads.set(threadId, created);
-    return created;
+    this.markReviewAgentRunning(threadId);
+    return { threadId, thread: created };
   }
 
   private updateDiffToolUiText(text: string): void {
@@ -493,24 +560,98 @@ export class DiffReviewSession {
 
     this.uiState = {
       ...(nextText ? { diffToolUiText: nextText } : {}),
-      reviewAgent: this.uiState.reviewAgent,
+      reviewAgents: this.uiState.reviewAgents,
     };
     this.emitUiState();
   }
 
-  private updateReviewAgentActivity(activity: DiffReviewAgentActivityState): void {
-    const current = this.uiState.reviewAgent;
-    const isUnchanged =
-      current.status === activity.status &&
-      (current.status !== "running" ||
-        (activity.status === "running" && current.threadId === activity.threadId));
-    if (isUnchanged) {
-      return;
+  private ensureReviewAgentRecord(threadId: string): DiffReviewAgentRecord {
+    const existing = this.reviewAgentRecords.get(threadId);
+    if (existing) {
+      return existing;
     }
 
+    const created: DiffReviewAgentRecord = {
+      threadId,
+      status: "idle",
+      activeRequestCount: 0,
+      costTotal: 0,
+      usage: createEmptyReviewAgentUsage(this.persona.model.contextWindow),
+    };
+    this.reviewAgentRecords.set(threadId, created);
+    return created;
+  }
+
+  private markReviewAgentRunning(threadId: string): void {
+    const record = this.ensureReviewAgentRecord(threadId);
+    if (record.activeRequestCount > 0) {
+      throw new DiffReviewRequestError(
+        "invalidRequest",
+        `thread '${threadId}' already has an active request`,
+      );
+    }
+    record.activeRequestCount = 1;
+    if (record.status !== "running") {
+      record.status = "running";
+      this.syncReviewAgents();
+    }
+  }
+
+  private markReviewAgentIdle(threadId: string): void {
+    const record = this.ensureReviewAgentRecord(threadId);
+    if (record.activeRequestCount > 0) {
+      record.activeRequestCount -= 1;
+    }
+    if (record.activeRequestCount === 0 && record.status !== "idle") {
+      record.status = "idle";
+      this.syncReviewAgents();
+    }
+  }
+
+  private applyReviewAgentUpdate(threadId: string, update: DiffReviewThreadUpdate): void {
+    const record = this.ensureReviewAgentRecord(threadId);
+    let changed = false;
+
+    if (record.costTotal !== update.costTotal) {
+      record.costTotal = update.costTotal;
+      changed = true;
+    }
+
+    if (!isSameUsageSnapshot(record.usage, update.usage)) {
+      record.usage = { ...update.usage };
+      changed = true;
+    }
+
+    if (record.lastActivityText !== update.lastActivityText) {
+      record.lastActivityText = update.lastActivityText;
+      changed = true;
+    }
+
+    if (changed) {
+      this.syncReviewAgents();
+    }
+  }
+
+  private hasActiveReviewAgentRequest(threadId: string): boolean {
+    return (this.reviewAgentRecords.get(threadId)?.activeRequestCount ?? 0) > 0;
+  }
+
+  private interruptAllReviewAgents(): void {
+    for (const thread of this.threads.values()) {
+      thread.interrupt();
+    }
+  }
+
+  private syncReviewAgents(): void {
     this.uiState = {
       ...this.uiState,
-      reviewAgent: activity,
+      reviewAgents: [...this.reviewAgentRecords.values()].map((agent) => ({
+        threadId: agent.threadId,
+        status: agent.status,
+        costTotal: agent.costTotal,
+        usage: { ...agent.usage },
+        ...(agent.lastActivityText ? { lastActivityText: agent.lastActivityText } : {}),
+      })),
     };
     this.emitUiState();
   }
@@ -552,6 +693,7 @@ export class DiffReviewSession {
 
     this.clearInitializeTimeout();
     this.completedResult = result;
+    this.interruptAllReviewAgents();
     this.completionResolver?.(result);
     this.completionResolver = undefined;
     await this.close();
@@ -580,41 +722,101 @@ export class DiffReviewSession {
     }
   }
 
-  private respond<M extends DiffReviewMethod>(
-    socket: Socket,
+  private async respond<M extends DiffReviewMethod>(
+    connection: DiffReviewClientConnection,
     id: DiffReviewRequestId,
     _method: M,
     result: DiffReviewResultByMethod[M],
-  ): void {
-    this.sendMessage(socket, createDiffReviewSuccessResponse(id, result));
+  ): Promise<void> {
+    await this.sendMessage(connection, createDiffReviewSuccessResponse(id, result));
   }
 
-  private sendError(
-    socket: Socket,
+  private async sendError(
+    connection: DiffReviewClientConnection,
     id: DiffReviewRequestId | null,
     code: keyof typeof DIFF_REVIEW_ERROR_CODES,
     message: string,
     data?: unknown,
-  ): void {
+  ): Promise<void> {
     const resolvedCode = DIFF_REVIEW_ERROR_CODES[code];
-    this.sendMessage(socket, createDiffReviewErrorResponse(id, resolvedCode, message, data));
+    await this.sendMessage(
+      connection,
+      createDiffReviewErrorResponse(id, resolvedCode, message, data),
+    );
   }
 
-  private sendMessage(socket: Socket, message: DiffReviewResponseMessage): void {
-    if (socket.destroyed) {
+  private async sendMessage(
+    connection: DiffReviewClientConnection,
+    message: DiffReviewResponseMessage,
+  ): Promise<void> {
+    if (connection.socket.destroyed) {
       return;
     }
-    socket.write(serializeDiffReviewMessage(message));
+
+    const payload = serializeDiffReviewMessage(message);
+    const writePromise = connection.writeQueue.then(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          if (connection.socket.destroyed) {
+            resolve();
+            return;
+          }
+          connection.socket.write(payload, (error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        }),
+    );
+    connection.writeQueue = writePromise.catch(() => {});
+
+    try {
+      await writePromise;
+    } catch {
+      if (!connection.socket.destroyed) {
+        connection.socket.destroy();
+      }
+    }
   }
+}
+
+function createEmptyReviewAgentUsage(contextWindow: number): DiffReviewAgentUsageSnapshot {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    contextWindowUsageTokens: 0,
+    contextWindow,
+  };
+}
+
+function isSameUsageSnapshot(
+  left: DiffReviewAgentUsageSnapshot,
+  right: DiffReviewAgentUsageSnapshot,
+): boolean {
+  return (
+    left.input === right.input &&
+    left.output === right.output &&
+    left.cacheRead === right.cacheRead &&
+    left.cacheWrite === right.cacheWrite &&
+    left.contextWindowUsageTokens === right.contextWindowUsageTokens &&
+    left.contextWindow === right.contextWindow
+  );
 }
 
 function cloneDiffReviewUiState(state: DiffReviewSessionUiState): DiffReviewSessionUiState {
   return {
     ...(state.diffToolUiText ? { diffToolUiText: state.diffToolUiText } : {}),
-    reviewAgent:
-      state.reviewAgent.status === "running"
-        ? { status: "running", threadId: state.reviewAgent.threadId }
-        : { status: "idle" },
+    reviewAgents: state.reviewAgents.map((agent) => ({
+      threadId: agent.threadId,
+      status: agent.status,
+      costTotal: agent.costTotal,
+      usage: { ...agent.usage },
+      ...(agent.lastActivityText ? { lastActivityText: agent.lastActivityText } : {}),
+    })),
   };
 }
 

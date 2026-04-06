@@ -56,6 +56,31 @@ function createSnapshot() {
   });
 }
 
+function createThreadSession(overrides = {}, contextWindow = 200_000) {
+  return {
+    async submitMessage() {
+      return "review reply";
+    },
+    interrupt() {
+      return false;
+    },
+    createForkSource() {
+      return {
+        historyEntries: [],
+        usageBaseline: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          contextWindowUsageTokens: 0,
+          contextWindow,
+        },
+      };
+    },
+    ...overrides,
+  };
+}
+
 async function fetchJson(url, init) {
   const response = await fetch(url, init);
   const payload = await response.json();
@@ -76,6 +101,10 @@ function createClientStub(overrides = {}) {
     })),
     listFiles: vi.fn(async () => ({ files: [] })),
     setUiText: vi.fn(async () => ({ status: "updated" })),
+    submitThreadMessage: vi.fn(async () => ({
+      threadId: "bootstrap-thread",
+      response: "bootstrap",
+    })),
     close: vi.fn(async () => {
       for (const listener of closeListeners) {
         listener();
@@ -95,21 +124,22 @@ function createClientStub(overrides = {}) {
 describe("built-in diff tool", () => {
   it("persists review state on the server and returns the composed review to Tau", async () => {
     const threadMessages = new Map();
+    const createdThreads = [];
     const session = new DiffReviewSession({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
-      createThread: (threadId) => ({
-        async submitMessage(message) {
-          const messages = threadMessages.get(threadId) ?? [];
-          messages.push(message);
-          threadMessages.set(threadId, messages);
-          return `reply ${threadId} #${messages.length}: ${message}`;
-        },
-        interrupt() {
-          return false;
-        },
-      }),
+      createThread: ({ threadId, forkFrom }) => {
+        createdThreads.push({ threadId, forkFrom });
+        return createThreadSession({
+          async submitMessage(message) {
+            const messages = threadMessages.get(threadId) ?? [];
+            messages.push(message);
+            threadMessages.set(threadId, messages);
+            return `reply ${threadId} #${messages.length}: ${message}`;
+          },
+        });
+      },
     });
 
     await session.start();
@@ -120,10 +150,7 @@ describe("built-in diff tool", () => {
 
     try {
       const started = await server.start();
-      expect(session.getUiState()).toEqual({
-        diffToolUiText: `browser diff tool: ${started.url}`,
-        reviewAgent: { status: "idle" },
-      });
+      expect(session.getUiState().diffToolUiText).toBe(started.url);
 
       const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
       expect(bootstrap.context).toEqual({
@@ -221,7 +248,7 @@ describe("built-in diff tool", () => {
       });
       expect(askedThread.state.threads[0]).toEqual({
         id: thread.id,
-        threadId: expect.stringMatching(/^thread-/),
+        threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         fileId: "src/a.ts::0",
         filePath: "src/a.ts",
         lineNumber: 1,
@@ -231,7 +258,9 @@ describe("built-in diff tool", () => {
           { role: "user", text: "Any risks?" },
           {
             role: "assistant",
-            text: expect.stringMatching(/^reply thread-.* #1: \[src\/a\.ts:1 \(new\)\]/),
+            text: expect.stringMatching(
+              /^reply [0-9a-f-]{36} #1: <system>[\s\S]*\[src\/a\.ts:1 \(new\)\]/,
+            ),
           },
         ],
         loading: false,
@@ -239,8 +268,47 @@ describe("built-in diff tool", () => {
         collapsed: false,
       });
       expect(threadMessages.get(askedThread.state.threads[0].threadId)).toEqual([
-        "[src/a.ts:1 (new)]\n\nWhat changed?\n\nAny risks?",
+        expect.stringMatching(
+          /^<system>[\s\S]*<\/system>\n\[src\/a\.ts:1 \(new\)\]\n\nWhat changed\?\n\nAny risks\?$/,
+        ),
       ]);
+      expect(createdThreads).toHaveLength(2);
+      expect(createdThreads[0].forkFrom).toBeUndefined();
+      expect(createdThreads[1]).toEqual({
+        threadId: askedThread.state.threads[0].threadId,
+        forkFrom: expect.any(Object),
+      });
+      expect(session.getUiState()).toEqual({
+        diffToolUiText: started.url,
+        reviewAgents: [
+          {
+            threadId: createdThreads[0].threadId,
+            status: "idle",
+            costTotal: 0,
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              contextWindowUsageTokens: 0,
+              contextWindow: personas[0].model.contextWindow,
+            },
+          },
+          {
+            threadId: askedThread.state.threads[0].threadId,
+            status: "idle",
+            costTotal: 0,
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              contextWindowUsageTokens: 0,
+              contextWindow: personas[0].model.contextWindow,
+            },
+          },
+        ],
+      });
 
       const refreshedBootstrap = await fetchJson(`${started.url}/api/bootstrap`);
       expect(refreshedBootstrap.state).toEqual(askedThread.state);
@@ -263,19 +331,136 @@ describe("built-in diff tool", () => {
     }
   });
 
+  it("retries bootstrap after a transient failure", async () => {
+    let callCount = 0;
+    const client = createClientStub({
+      submitThreadMessage: vi.fn(async ({ forkFromThreadId }) => {
+        callCount += 1;
+        if (callCount === 1) {
+          throw new Error("bootstrap failed");
+        }
+        return {
+          threadId: forkFromThreadId ? "brief-thread" : "bootstrap-thread",
+          response: forkFromThreadId ? "brief ready" : "bootstrap",
+        };
+      }),
+    });
+    const server = new DiffToolHttpServer({ client });
+
+    try {
+      const started = await server.start();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const result = await fetchJson(`${started.url}/api/brief/generate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      expect(result.state.brief).toEqual({
+        threadId: "brief-thread",
+        content: "brief ready",
+        loading: false,
+      });
+      expect(client.submitThreadMessage).toHaveBeenNthCalledWith(1, {
+        message: expect.any(String),
+      });
+      expect(client.submitThreadMessage).toHaveBeenNthCalledWith(2, {
+        message: expect.any(String),
+      });
+      expect(client.submitThreadMessage).toHaveBeenNthCalledWith(3, {
+        forkFromThreadId: "bootstrap-thread",
+        message: expect.any(String),
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("starts bootstrap eagerly without blocking diff fetches", async () => {
+    let releaseBootstrapStarted;
+    const bootstrapStarted = new Promise((resolve) => {
+      releaseBootstrapStarted = resolve;
+    });
+    let continueBootstrap;
+    const bootstrapCompletion = new Promise((resolve) => {
+      continueBootstrap = resolve;
+    });
+    let threadCount = 0;
+    const session = new DiffReviewSession({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: ({ threadId }) =>
+        createThreadSession({
+          async submitMessage(message) {
+            threadCount += 1;
+            releaseBootstrapStarted();
+            await bootstrapCompletion;
+            return `bootstrap ${threadId}: ${message}`;
+          },
+          interrupt() {
+            continueBootstrap();
+            return true;
+          },
+        }),
+    });
+
+    await session.start();
+    const client = new DiffReviewProtocolClient(
+      parseDiffToolLaunchEnvironment(session.launchEnvironment),
+    );
+    const server = new DiffToolHttpServer({ client });
+
+    try {
+      const started = await server.start();
+      await bootstrapStarted;
+
+      const diff = await Promise.race([
+        fetchJson(`${started.url}/api/diff`),
+        new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
+      ]);
+      expect(diff).not.toBe("timeout");
+      expect(diff).toEqual({
+        scope: "session",
+        patch: createSnapshot().patch,
+      });
+      expect(threadCount).toBe(1);
+      expect(session.getUiState().reviewAgents).toEqual([
+        {
+          threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+          status: "running",
+          costTotal: 0,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 0,
+            contextWindow: personas[0].model.contextWindow,
+          },
+        },
+      ]);
+
+      continueBootstrap();
+      await server.close();
+      await session.close();
+    } finally {
+      continueBootstrap?.();
+      await server.close();
+      await session.close();
+    }
+  });
+
   it("shuts down the browser demo when Tau cancels the session externally", async () => {
     const session = new DiffReviewSession({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
-      createThread: () => ({
-        async submitMessage(message) {
-          return message;
-        },
-        interrupt() {
-          return false;
-        },
-      }),
+      createThread: () =>
+        createThreadSession({
+          async submitMessage(message) {
+            return message;
+          },
+        }),
     });
 
     await session.start();

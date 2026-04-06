@@ -3,6 +3,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DiffReviewFile, DiffReviewSessionContextResult } from "../core/diff_review/index.js";
+import {
+  buildDiffReviewBootstrapPrompt,
+  buildDiffReviewBriefPrompt,
+  buildDiffReviewCommentThreadPrompt,
+} from "../core/diff_review/review_tool_prompts.js";
 import type { DiffReviewProtocolClient } from "./protocol_client.js";
 import { DiffToolReviewStateStore } from "./review_state.js";
 import type {
@@ -34,26 +39,6 @@ export type StartedDiffToolHttpServer = {
 
 const JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 
-const REVIEW_BRIEF_PROMPT = [
-  "Read through the full diff, then write a reviewer brief.",
-  "",
-  "The brief orients a technically competent reviewer before they start reading code. A good brief compresses review time without compressing judgment: the reviewer should finish reading it with an architectural mental model of the change, a sense of where risk lives, and a short list of things to consciously verify.",
-  "",
-  "Use exactly these headings:",
-  "",
-  "## Summary",
-  "## Behavior changes",
-  "## Verify",
-  "",
-  "**Summary** builds the big-picture mental model. Not what each file does, but the architectural shape of the change: what design decisions were made, how components interact differently now, which areas carry risk, and what can be safely skimmed. When the diff spans multiple concerns, group by concern. The reader should feel oriented before they touch any code.",
-  "",
-  "**Behavior changes** translates code into runtime consequences. Reviewers are good at reading syntax but unreliable at inferring behavioral impact across a large diff. Bridge that gap. Show before/after sketches or pseudo-code when that communicates faster than prose. Focus on contract shifts, failure modes, defaults, ordering, and side effects.",
-  "",
-  "**Verify** surfaces the questions worth stopping for. Not obvious issues, but assumptions that may be intentional yet deserve conscious confirmation: scope boundaries, compatibility expectations, failure semantics, rollout risk. Phrase as direct questions.",
-  "",
-  "Keep the brief readable in under a minute. Mix prose, bullets, and code naturally. Be dense and specific. Do not pad thin sections or restate every file. The reviewer will read the code, so the brief should complement the diff rather than re-explain what is already clear from reading it. Focus on what code alone does not communicate well: intent, architectural reasoning, non-obvious consequences, and cross-cutting concerns.",
-].join("\n");
-
 const CONTENT_TYPE_BY_EXT: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -78,6 +63,7 @@ export class DiffToolHttpServer {
   private readonly reviewState = new DiffToolReviewStateStore();
   private context?: DiffReviewSessionContextResult;
   private files: DiffReviewFile[] = [];
+  private bootstrapThreadPromise?: Promise<string>;
   private server = createServer((request, response) => {
     void this.handleRequest(request, response).catch((error) => {
       this.sendJson(response, 500, {
@@ -117,7 +103,10 @@ export class DiffToolHttpServer {
       }
 
       const url = `http://${this.host}:${String(address.port)}`;
-      await this.client.setUiText({ text: `browser diff tool: ${url}` });
+      await this.client.setUiText({ text: url });
+      setTimeout(() => {
+        void this.startBootstrapThread().catch(() => {});
+      }, 0);
 
       return {
         url,
@@ -193,6 +182,36 @@ export class DiffToolHttpServer {
         resolve();
       });
     });
+  }
+
+  private async bootstrapReviewContext(): Promise<string> {
+    const result = await this.client.submitThreadMessage({
+      message: buildDiffReviewBootstrapPrompt(),
+    });
+    return result.threadId;
+  }
+
+  private startBootstrapThread(): Promise<string> {
+    if (this.bootstrapThreadPromise) {
+      return this.bootstrapThreadPromise;
+    }
+    if (this.closed) {
+      return Promise.reject(new Error("diff tool http server is closed"));
+    }
+
+    const promise = this.bootstrapReviewContext().catch((error) => {
+      if (this.bootstrapThreadPromise === promise) {
+        this.bootstrapThreadPromise = undefined;
+      }
+      throw error;
+    });
+    this.bootstrapThreadPromise = promise;
+    void promise.catch(() => {});
+    return promise;
+  }
+
+  private async getBootstrapThreadId(): Promise<string> {
+    return await this.startBootstrapThread();
   }
 
   private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -322,7 +341,12 @@ export class DiffToolHttpServer {
       this.reviewState.setThreadLoading(id, true);
       try {
         const result = await this.client.submitThreadMessage(
-          thread.threadId ? { threadId: thread.threadId, message } : { message },
+          thread.threadId
+            ? { threadId: thread.threadId, message }
+            : {
+                forkFromThreadId: await this.getBootstrapThreadId(),
+                message: buildDiffReviewCommentThreadPrompt(message),
+              },
         );
         this.reviewState.applyThreadResponse(id, result);
         this.sendJson(response, 200, { state: this.reviewState.getState() });
@@ -342,7 +366,10 @@ export class DiffToolHttpServer {
 
       this.reviewState.startBriefGeneration();
       try {
-        const result = await this.client.submitThreadMessage({ message: REVIEW_BRIEF_PROMPT });
+        const result = await this.client.submitThreadMessage({
+          forkFromThreadId: await this.getBootstrapThreadId(),
+          message: buildDiffReviewBriefPrompt(),
+        });
         this.reviewState.applyBriefResult(result);
         this.sendJson(response, 200, { state: this.reviewState.getState() });
       } catch (error) {

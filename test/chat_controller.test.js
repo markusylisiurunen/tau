@@ -18,6 +18,7 @@ function createStubView() {
   const added = [];
   const updated = [];
   const updatedMessages = [];
+  const replacedMessages = [];
   const systemMessages = [];
   const toolUiEvents = [];
   const editorTextUpdates = [];
@@ -35,6 +36,7 @@ function createStubView() {
     added,
     updated,
     updatedMessages,
+    replacedMessages,
     systemMessages,
     toolUiEvents,
     editorTextUpdates,
@@ -69,6 +71,9 @@ function createStubView() {
       },
       updateMessage: (id, model) => {
         updatedMessages.push({ id, model });
+      },
+      replaceMessage: (id, model) => {
+        replacedMessages.push({ id, model });
       },
       updateAssistantMessage: (id, model) => {
         updated.push({ id, model });
@@ -547,7 +552,7 @@ describe("ChatController diff review", () => {
   const createDiffReviewSession = (overrides = {}) => ({
     cancel: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
-    getUiState: () => ({ reviewAgent: { status: "idle" } }),
+    getUiState: () => ({ reviewAgents: [] }),
     onUiStateChange: vi.fn(() => () => {}),
     ...overrides,
   });
@@ -603,7 +608,6 @@ describe("ChatController diff review", () => {
           model: expect.objectContaining({
             type: "diff_review",
             status: "cancelled",
-            detail: "cancelled in the diff tool",
           }),
         }),
       ]),
@@ -638,11 +642,37 @@ describe("ChatController diff review", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     emitUiState({
-      diffToolUiText: "browser diff tool: http://127.0.0.1:4321",
-      reviewAgent: {
-        status: "running",
-        threadId: "thread-1234567890abcdef",
-      },
+      diffToolUiText: "http://127.0.0.1:4321",
+      reviewAgents: [
+        {
+          threadId: "12345678-90ab-cdef-1234-567890abcdef",
+          status: "running",
+          costTotal: 0.12,
+          usage: {
+            input: 1200,
+            output: 320,
+            cacheRead: 64,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 1584,
+            contextWindow: 200000,
+          },
+          lastActivityText: "bash running: git diff --staged",
+        },
+        {
+          threadId: "abcdef12-3456-7890-abcd-ef1234567890",
+          status: "idle",
+          costTotal: 0.08,
+          usage: {
+            input: 900,
+            output: 220,
+            cacheRead: 40,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 1160,
+            contextWindow: 200000,
+          },
+          lastActivityText: "agent: reviewer brief ready",
+        },
+      ],
     });
     resolveResult({
       status: "returned",
@@ -663,18 +693,32 @@ describe("ChatController diff review", () => {
           model: expect.objectContaining({
             type: "diff_review",
             status: "active",
-            uiText: "browser diff tool: http://127.0.0.1:4321",
-            reviewAgent: {
-              status: "running",
-              threadId: "thread-1234567890abcdef",
-            },
+            uiText: "http://127.0.0.1:4321",
+            reviewAgents: [
+              expect.objectContaining({
+                threadId: "12345678-90ab-cdef-1234-567890abcdef",
+                status: "running",
+                costTotal: 0.12,
+                lastActivityText: "bash running: git diff --staged",
+              }),
+              expect.objectContaining({
+                threadId: "abcdef12-3456-7890-abcd-ef1234567890",
+                status: "idle",
+                costTotal: 0.08,
+                lastActivityText: "agent: reviewer brief ready",
+              }),
+            ],
           }),
         }),
+      ]),
+    );
+    expect(stub.replacedMessages).toEqual(
+      expect.arrayContaining([
         expect.objectContaining({
           model: expect.objectContaining({
-            type: "diff_review",
-            status: "returned",
-            detail: "review added to the conversation",
+            type: "user",
+            text: "Reviewed the staged changes.",
+            kind: "review",
           }),
         }),
       ]),
@@ -731,20 +775,20 @@ describe("ChatController diff review", () => {
         "Reviewed the staged changes.",
       ].join("\n"),
     );
-    expect(stub.added).toContainEqual(
+    expect(stub.added).not.toContainEqual(
       expect.objectContaining({
         type: "user",
         text: "Reviewed the staged changes.",
         kind: "review",
       }),
     );
-    expect(stub.updatedMessages).toEqual(
+    expect(stub.replacedMessages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           model: expect.objectContaining({
-            type: "diff_review",
-            status: "returned",
-            detail: "review added to the conversation",
+            type: "user",
+            text: "Reviewed the staged changes.",
+            kind: "review",
           }),
         }),
       ]),
@@ -864,7 +908,6 @@ describe("ChatController diff review", () => {
           model: expect.objectContaining({
             type: "diff_review",
             status: "cancelled",
-            detail: "cancelled in Tau",
           }),
         }),
       ]),
@@ -936,7 +979,6 @@ describe("ChatController diff review", () => {
           model: expect.objectContaining({
             type: "diff_review",
             status: "cancelled",
-            detail: "cancelled in Tau",
           }),
         }),
       ]),

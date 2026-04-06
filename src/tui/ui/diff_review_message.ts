@@ -1,19 +1,16 @@
-import type { Theme } from "./theme/index.js";
+import type { Component } from "@mariozechner/pi-tui";
+import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import type { DiffReviewAgentActivity } from "../../core/diff_review/index.js";
+import { formatUsageSnapshot, formatUsdCost } from "../../core/utils/format.js";
+import { formatToolActivityText } from "./agent_activity_format.js";
 import {
-  buildSection,
-  buildToolHeaderLine,
-  inlineText,
-  type ToolOutputViewModel,
-} from "./tool_output.js";
+  type OneLineSegment,
+  truncateFromEndByWidthPreserveAnsi,
+} from "./components/one_line_segments.js";
+import type { UiComponent } from "./components/ui_component.js";
+import type { Theme } from "./theme/index.js";
 
-export type DiffReviewMessageReviewAgent =
-  | {
-      status: "idle";
-    }
-  | {
-      status: "running";
-      threadId: string;
-    };
+export type DiffReviewMessageReviewAgent = DiffReviewAgentActivity;
 
 export type DiffReviewMessageStatus = "preparing" | "active" | "returned" | "cancelled" | "failed";
 
@@ -22,87 +19,159 @@ export type DiffReviewMessageModel = {
   command: string;
   uiText?: string;
   detail?: string;
-  reviewAgent?: DiffReviewMessageReviewAgent;
+  reviewAgents?: DiffReviewMessageReviewAgent[];
 };
 
-export function buildDiffReviewMessageView(
-  theme: Theme,
-  model: DiffReviewMessageModel,
-): ToolOutputViewModel {
-  const { palette, text } = theme;
-  const statusMeta = getStatusMeta(theme, model.status);
-  const title = statusMeta.color(text.bold(`diff review ${statusMeta.label}`));
-  const commandSection = buildSection([palette.textMuted(`command: ${model.command}`)]);
-  const uiSection = buildSection(
-    splitUiText(model.uiText).map((line) => palette.actionOutput(line)),
-  );
-  const reviewAgentSection = buildSection([
-    model.reviewAgent?.status === "running"
-      ? palette.actionRunning(
-          `review agent: answering ${formatThreadId(model.reviewAgent.threadId)}`,
-        )
-      : undefined,
-  ]);
-  const detailSection = buildSection([
-    model.detail?.trim() ? statusMeta.color(model.detail.trim()) : undefined,
-  ]);
-  const sections = [commandSection, uiSection, reviewAgentSection, detailSection].filter(
-    (section): section is string => Boolean(section),
-  );
+type DiffReviewLine = OneLineSegment[];
 
+export class DiffReviewMessageComponent implements Component, UiComponent<DiffReviewMessageModel> {
+  private theme: Theme;
+  private model: DiffReviewMessageModel;
+
+  constructor(theme: Theme, model: DiffReviewMessageModel) {
+    this.theme = theme;
+    this.model = model;
+  }
+
+  setTheme(theme: Theme): void {
+    this.theme = theme;
+  }
+
+  update(model: DiffReviewMessageModel): void {
+    this.model = model;
+  }
+
+  invalidate() {}
+
+  render(width: number): string[] {
+    if (width <= 0) {
+      return [""];
+    }
+
+    const lines = buildDiffReviewLines(this.theme, this.model);
+    const contentWidth = Math.max(0, width - 2);
+    return [
+      this.renderBlankLine(width),
+      ...lines.map((line) => this.renderLine(line, width, contentWidth)),
+      this.renderBlankLine(width),
+    ];
+  }
+
+  private renderBlankLine(width: number): string {
+    if (width < 2) {
+      return "";
+    }
+    return this.theme.palette.userReviewSurface(" ".repeat(width));
+  }
+
+  private renderLine(line: DiffReviewLine, width: number, contentWidth: number): string {
+    const truncatedLine = truncateLineSegments(line, contentWidth);
+    const usedWidth = truncatedLine.reduce((sum, segment) => sum + visibleWidth(segment.text), 0);
+    const body = truncatedLine.map((segment) => segment.style(segment.text)).join("");
+
+    if (width < 2) {
+      return truncateFromEndByWidthPreserveAnsi(body, width);
+    }
+
+    const rightPad = this.theme.palette.userReviewSurface(
+      " ".repeat(Math.max(0, contentWidth - usedWidth) + 1),
+    );
+    return `${this.theme.palette.userReviewSurface(" ")}${body}${rightPad}`;
+  }
+}
+
+function buildDiffReviewLines(theme: Theme, model: DiffReviewMessageModel): DiffReviewLine[] {
+  const lines: DiffReviewLine[] = [
+    [
+      reviewMain(theme, `diff tool ${getStatusLabel(model.status)}`),
+      reviewMuted(theme, ` (${model.command})`),
+    ],
+  ];
+
+  if (model.status === "active" || model.status === "preparing") {
+    const diffToolLines = splitUiText(model.uiText).map((line) => [reviewDim(theme, line)]);
+    if (diffToolLines.length > 0) {
+      lines.push(...diffToolLines);
+    }
+
+    const reviewAgentLines = buildReviewAgentLines(theme, model.reviewAgents);
+    if (reviewAgentLines.length > 0) {
+      if (diffToolLines.length > 0) {
+        lines.push([]);
+      }
+      lines.push(...reviewAgentLines);
+    }
+  } else if (model.status === "failed" && model.detail?.trim()) {
+    lines.push([reviewMuted(theme, model.detail.trim())]);
+  }
+
+  return trimTrailingBlankLines(lines);
+}
+
+function buildReviewAgentLines(
+  theme: Theme,
+  reviewAgents: DiffReviewMessageReviewAgent[] | undefined,
+): DiffReviewLine[] {
+  if (!reviewAgents || reviewAgents.length === 0) {
+    return [];
+  }
+
+  const lines: DiffReviewLine[] = [];
+  reviewAgents.forEach((agent, index) => {
+    lines.push([reviewMain(theme, agent.threadId), reviewMuted(theme, ` (${agent.status})`)]);
+
+    const activityText = formatToolActivityText(agent.lastActivityText ?? "");
+    if (activityText) {
+      lines.push([reviewDim(theme, activityText)]);
+    }
+
+    lines.push([
+      reviewMuted(theme, `${formatUsageSnapshot(agent.usage)} · ${formatUsdCost(agent.costTotal)}`),
+    ]);
+
+    if (index < reviewAgents.length - 1) {
+      lines.push([]);
+    }
+  });
+
+  return lines;
+}
+
+function reviewMain(theme: Theme, text: string): OneLineSegment {
+  return createReviewSegment(theme, theme.palette.userReviewText, text);
+}
+
+function reviewMuted(theme: Theme, text: string): OneLineSegment {
+  return createReviewSegment(theme, theme.palette.userReviewTextMuted, text);
+}
+
+function reviewDim(theme: Theme, text: string): OneLineSegment {
+  return createReviewSegment(theme, theme.palette.userReviewTextDim, text);
+}
+
+function createReviewSegment(
+  theme: Theme,
+  textColor: (text: string) => string,
+  text: string,
+): OneLineSegment {
   return {
-    borderColor: statusMeta.color,
-    expanded: {
-      title,
-      sections,
-    },
-    compact: {
-      header: buildToolHeaderLine({
-        bulletStyle: statusMeta.color,
-        bullet: "◈",
-        label: "diff review",
-        labelStyle: palette.textMuted,
-        accent: inlineText(statusMeta.label),
-        accentStyle: statusMeta.color,
-      }),
-      extraText: sections.join("\n"),
-    },
+    text,
+    style: (value) => theme.palette.userReviewSurface(textColor(value)),
   };
 }
 
-function getStatusMeta(
-  theme: Theme,
-  status: DiffReviewMessageStatus,
-): {
-  label: string;
-  color: (text: string) => string;
-} {
+function getStatusLabel(status: DiffReviewMessageStatus): string {
   switch (status) {
     case "preparing":
-      return {
-        label: "preparing",
-        color: theme.palette.actionRunning,
-      };
+      return "preparing";
     case "active":
-      return {
-        label: "active",
-        color: theme.palette.actionRunning,
-      };
+      return "active";
     case "returned":
-      return {
-        label: "completed",
-        color: theme.palette.actionSuccess,
-      };
+      return "completed";
     case "cancelled":
-      return {
-        label: "cancelled",
-        color: theme.palette.statusWarn,
-      };
+      return "cancelled";
     case "failed":
-      return {
-        label: "failed",
-        color: theme.palette.actionError,
-      };
+      return "failed";
   }
 }
 
@@ -112,16 +181,51 @@ function splitUiText(text: string | undefined): string[] {
     return [];
   }
 
-  return trimmed
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0);
+  return trimmed.split(/\r?\n/).map((line) => line.trimEnd());
 }
 
-function formatThreadId(threadId: string): string {
-  const trimmed = threadId.trim();
-  if (trimmed.length <= 24) {
-    return trimmed;
+function truncateLineSegments(segments: DiffReviewLine, maxWidth: number): DiffReviewLine {
+  if (maxWidth <= 0 || segments.length === 0) {
+    return [];
   }
-  return `${trimmed.slice(0, 21)}...`;
+
+  const totalWidth = segments.reduce((sum, segment) => sum + visibleWidth(segment.text), 0);
+  if (totalWidth <= maxWidth) {
+    return segments;
+  }
+
+  const contentWidth = Math.max(0, maxWidth - 1);
+  const truncated: DiffReviewLine = [];
+  let usedWidth = 0;
+
+  for (const segment of segments) {
+    if (usedWidth >= contentWidth) {
+      break;
+    }
+
+    const remainingWidth = contentWidth - usedWidth;
+    const segmentWidth = visibleWidth(segment.text);
+    if (segmentWidth <= remainingWidth) {
+      truncated.push(segment);
+      usedWidth += segmentWidth;
+      continue;
+    }
+
+    const partial = truncateToWidth(segment.text, remainingWidth, "");
+    if (partial.length > 0) {
+      truncated.push({ ...segment, text: partial });
+    }
+    break;
+  }
+
+  const ellipsisSegment = truncated[truncated.length - 1] ?? segments[0];
+  return ellipsisSegment ? [...truncated, { ...ellipsisSegment, text: "…" }] : [];
+}
+
+function trimTrailingBlankLines(lines: DiffReviewLine[]): DiffReviewLine[] {
+  let end = lines.length;
+  while (end > 0 && lines[end - 1]?.length === 0) {
+    end -= 1;
+  }
+  return lines.slice(0, end);
 }

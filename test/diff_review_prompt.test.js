@@ -22,14 +22,17 @@ describe("diff_review prompt", () => {
       "<inherited-instructions>\nBe careful and precise.\n</inherited-instructions>",
     );
     expect(prompt).toContain(
-      "Treat the review context below as relevant background, not as a hard boundary.",
+      "Treat the review context below as the starting point for the review, not as a hard boundary.",
+    );
+    expect(prompt).toContain(
+      "The review context reflects the initial diff Tau captured when `/diff` opened.",
     );
     expect(prompt).toContain(
       "Keep answers concise unless the user asks for more. Prefer dense, direct, prose-style responses",
     );
     expect(prompt).toContain("### Review context");
     expect(prompt).toContain("Repo root: /repo");
-    expect(prompt).toContain("Diff command: git diff --staged");
+    expect(prompt).toContain("Initial diff command: git diff --staged");
     expect(prompt).toContain("- src/old.ts -> src/new.ts (renamed)");
   });
 });

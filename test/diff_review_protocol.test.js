@@ -18,7 +18,7 @@ describe("diff_review protocol", () => {
         type: "request",
         id: "req-1",
         method: "thread.submit_message",
-        params: { message: "Review this file" },
+        params: { message: "Review this file", forkFromThreadId: "thread-0" },
       }),
     );
 
@@ -29,7 +29,7 @@ describe("diff_review protocol", () => {
         type: "request",
         id: "req-1",
         method: "thread.submit_message",
-        params: { message: "Review this file" },
+        params: { message: "Review this file", forkFromThreadId: "thread-0" },
       },
     });
   });
@@ -101,7 +101,31 @@ describe("diff_review protocol", () => {
     });
 
     expect(
+      validateDiffReviewParams("thread.submit_message", {
+        forkFromThreadId: "thread-1",
+        message: "hi",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        forkFromThreadId: "thread-1",
+        message: "hi",
+      },
+    });
+
+    expect(
       validateDiffReviewParams("thread.submit_message", { threadId: "", message: "hi" }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: DIFF_REVIEW_ERROR_CODES.invalidParams }),
+    });
+
+    expect(
+      validateDiffReviewParams("thread.submit_message", {
+        threadId: "thread-1",
+        forkFromThreadId: "thread-0",
+        message: "hi",
+      }),
     ).toEqual({
       ok: false,
       error: expect.objectContaining({ code: DIFF_REVIEW_ERROR_CODES.invalidParams }),

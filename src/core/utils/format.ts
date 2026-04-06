@@ -40,6 +40,25 @@ export function formatAdaptiveNumber(
   return formatted;
 }
 
+export function formatUsageSnapshot(usage: {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  contextWindowUsageTokens: number;
+  contextWindow: number;
+}): string {
+  const stats = `↑${formatTokenWindow(usage.input)} ↓${formatTokenWindow(usage.output)} (r${formatTokenWindow(usage.cacheRead)} w${formatTokenWindow(usage.cacheWrite)})`;
+  const percent =
+    usage.contextWindow > 0 ? (usage.contextWindowUsageTokens / usage.contextWindow) * 100 : 0;
+  const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;
+  return `${stats} · ${percentStr}/${formatTokenWindow(usage.contextWindow)}`;
+}
+
+export function formatUsdCost(costTotal: number): string {
+  return `$${formatAdaptiveNumber(costTotal, 2, 5)}`;
+}
+
 export function formatCwd(cwd: string): string {
   return formatPathForDisplay(cwd);
 }

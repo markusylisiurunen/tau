@@ -1480,6 +1480,8 @@ export class ChatController {
       textForModel?: string;
       kind?: UserMessageKind;
       includePendingNotices?: boolean;
+      historyEntryId?: string;
+      renderInView?: boolean;
     },
   ): string {
     this.expandedFilesInCurrentPrompt.clear();
@@ -1490,15 +1492,19 @@ export class ChatController {
       opts?.includePendingNotices === false
         ? rawTextForModel
         : this.applyPendingUserNotices(rawTextForModel);
-    const historyEntryId = this.engine.addUserText(textForModel);
-    this.view.addMessage(
-      {
-        type: "user",
-        text,
-        ...(opts?.kind ? { kind: opts.kind } : {}),
-      },
-      historyEntryId,
-    );
+    const historyEntryId = this.engine.addUserText(textForModel, {
+      historyEntryId: opts?.historyEntryId,
+    });
+    if (opts?.renderInView !== false) {
+      this.view.addMessage(
+        {
+          type: "user",
+          text,
+          ...(opts?.kind ? { kind: opts.kind } : {}),
+        },
+        historyEntryId,
+      );
+    }
 
     return historyEntryId;
   }
@@ -1842,6 +1848,8 @@ export class ChatController {
       textForModel: this.formatDiffReviewUserMessage(review),
       kind: "review",
       includePendingNotices: false,
+      historyEntryId: review.historyEntryId,
+      renderInView: false,
     });
   }
 

@@ -385,7 +385,7 @@ tau supports slash commands for common actions:
 | `/reload` | reload personas, model overrides, prompts, skills, themes, bash commands, and AGENTS.md |
 | `/speak` | toggle microphone recording and transcribe into the editor (macOS only) |
 | `/cd` | change the working directory |
-| `/diff [git diff args...]` | open the diff review tool for a frozen git diff snapshot (built-in browser demo by default, `diffTool` overrides it) |
+| `/diff [git diff args...]` | open the diff review tool for a captured git diff starting point (built-in browser demo by default, `diffTool` overrides it) |
 | `/compact:summary-only` | compress history into one synthetic user summary message |
 | `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present |
 | `/prune:earliest` | prune bash tool results from oldest to newest and compact edit payloads/results |
@@ -410,7 +410,7 @@ the prune commands drop bash tool results from the active context without summar
 
 `/rewind` opens a picker over prior user messages in the current context. it truncates history from the selected message onward (including the selected message) and prefills the editor with that message so you can retry from there.
 
-`/diff` only starts when tau is idle. it freezes the requested `git diff` output at launch time, opens tau's built-in browser diff review demo when `diffTool` is not configured, and lets `diffTool` override that launcher when it is configured. tau shows review status in the chat stream, keeps the editor usable for drafting, but blocks normal submission until the tool returns review text or cancels. returned review text is appended as a review-styled user message without auto-running the assistant, and the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that frozen snapshot. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session. press `esc` to cancel locally.
+`/diff` only starts when tau is idle. it captures the requested `git diff` output at launch time as the initial review context, opens tau's built-in browser diff review demo when `diffTool` is not configured, and lets `diffTool` override that launcher when it is configured. the built-in browser shows that captured diff, but review agents inspect the live repo state while using the captured diff context as their starting point. tau shows review status in the chat stream, keeps the editor usable for drafting, but blocks normal submission until the tool returns review text or cancels. returned review text is appended as a review-styled user message without auto-running the assistant, and the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that review context. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session. press `esc` to cancel locally.
 
 ## keyboard shortcuts
 
@@ -563,7 +563,7 @@ if you want a different launcher, configure `diffTool` in any in-scope config fi
 
 `tau diff-tool --help` shows the built-in demo tool's standalone help text.
 
-`/diff [git diff args...]` passes raw arguments to `git diff`, so `/diff`, `/diff --staged`, and `/diff -- src/foo.ts` all work. tau freezes the diff content before launch, shows diff-review status in the chat stream, keeps the editor usable while blocking submission, and appends returned review text as a review-styled user message without auto-running the assistant. the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that frozen snapshot. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session.
+`/diff [git diff args...]` passes raw arguments to `git diff`, so `/diff`, `/diff --staged`, and `/diff -- src/foo.ts` all work. tau captures the diff content before launch as the initial review context, shows diff-review status in the chat stream, keeps the editor usable while blocking submission, and appends returned review text as a review-styled user message without auto-running the assistant. the built-in browser shows that captured diff, but review agents inspect the live repo state while using the captured diff context as their starting point. the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that review context. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session.
 
 ### additional agents context
 

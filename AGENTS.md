@@ -32,7 +32,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Runtime bootstrap resolver** (`src/core/runtime/runtime_bootstrap.ts`): Shared startup resolver for prompt context, AGENTS context, and persona skill filtering used by TUI/RPC/subagent working-directory prompt rebuilds
 - **Model catalog** (`src/core/models/catalog.ts`): Unified provider/model registry (pi-ai + Tau extensions) with layered `models.json` overlays used for model resolution and provider routing metadata
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly and history preparation for `/compact:*` flows (summary-only and summary + last assistant)
-- **Diff review** (`src/core/diff_review/`): Frozen git-diff snapshot capture, local diff-tool protocol server, and read-only review-thread execution for blocking `/diff` sessions
+- **Diff review** (`src/core/diff_review/`): Initial git-diff context capture, local diff-tool protocol server, and read-only review-thread execution for blocking `/diff` sessions
 - **Built-in diff tool** (`src/diff_tool/`): Browser demo launcher used by `/diff` when `diffTool` is not configured
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface plus RPC protocol/server wiring for alternate front-ends
@@ -82,7 +82,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `auth/auth_paths.ts` - Auth file path resolution
   - `auth/auth_messages.ts` - Auth error messaging
   - `auth/codex_prompt.ts` - Codex system prompt handling
-  - `diff_review/` - Blocking diff-review subsystem (frozen snapshots, local protocol server, review threads)
+  - `diff_review/` - Blocking diff-review subsystem (initial review-context capture, local protocol server, review threads)
   - `events/` - Core event protocol types and serialization
   - `session/` - Turn processing, streaming, tool dispatch, and manual compaction
   - `session/compaction.ts` - Core compaction preparation/prompt building and synthetic summary message construction
@@ -208,7 +208,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 - **Model overrides**: `~/.config/tau/models.json` (global, only when cwd is under home) and `.tau/models.json` (project) are discovered using the same level resolution as `config.json`. Entries overlay bundled model definitions by `provider + model id` (most specific wins). Known providers only.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`). Each command runs with cwd set to the config level root (same root used to resolve `agentContextFiles`).
-- **Diff review**: `/diff [git diff args...]` only starts when the main TUI session is idle. Tau freezes the resolved `git diff` output at launch time, starts the built-in `tau diff-tool` browser demo when `diffTool` is not configured, lets `diffTool` override that fallback when it is configured, shows diff-review status in the chat stream, keeps the editor usable while blocking normal TUI submission, and appends returned review text as a review-styled user message without auto-running the assistant. The model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that frozen snapshot. If the tool never connects or disconnects before returning a result, Tau cancels the review and unblocks the session.
+- **Diff review**: `/diff [git diff args...]` only starts when the main TUI session is idle. Tau captures the resolved `git diff` output at launch time as the initial review context, starts the built-in `tau diff-tool` browser demo when `diffTool` is not configured, lets `diffTool` override that fallback when it is configured, shows diff-review status in the chat stream, keeps the editor usable while blocking normal TUI submission, and appends returned review text as a review-styled user message without auto-running the assistant. The built-in browser shows that captured diff, but review agents inspect the live repo state while using the captured diff context as their starting point. The model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that review context. If the tool never connects or disconnects before returning a result, Tau cancels the review and unblocks the session.
 
 **Sandbox config fields** (used when starting tau with `--sandbox`):
 

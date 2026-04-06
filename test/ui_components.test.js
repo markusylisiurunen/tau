@@ -92,18 +92,58 @@ test("UserMessageComponent applies review styling", () => {
   expect(text).toContain("changes</userReviewText>");
 });
 
-test("renderChatMessage renders diff review status as a bordered block", () => {
+test("renderChatMessage renders diff review status with review styling", () => {
   const theme = createTagTheme();
   const rendered = renderChatMessage(
     {
       type: "diff_review",
       status: "active",
       command: "git diff --staged",
-      uiText: "browser diff tool: http://127.0.0.1:4321",
-      reviewAgent: {
-        status: "running",
-        threadId: "thread-1234567890abcdef1234567890",
-      },
+      uiText: "http://127.0.0.1:4321",
+      reviewAgents: [
+        {
+          threadId: "12345678-90ab-cdef-1234-567890abcdef",
+          status: "running",
+          costTotal: 0.12,
+          usage: {
+            input: 1200,
+            output: 320,
+            cacheRead: 64,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 1584,
+            contextWindow: 200000,
+          },
+          lastActivityText: "bash running: git diff --staged",
+        },
+        {
+          threadId: "fedcba98-7654-3210-fedc-ba9876543210",
+          status: "idle",
+          costTotal: 0.09,
+          usage: {
+            input: 950,
+            output: 210,
+            cacheRead: 24,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 1184,
+            contextWindow: 200000,
+          },
+          lastActivityText: "bash: permission denied",
+        },
+        {
+          threadId: "abcdef12-3456-7890-abcd-ef1234567890",
+          status: "idle",
+          costTotal: 0.08,
+          usage: {
+            input: 900,
+            output: 220,
+            cacheRead: 40,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 1160,
+            contextWindow: 200000,
+          },
+          lastActivityText: "agent: reviewer brief ready",
+        },
+      ],
     },
     {
       theme,
@@ -113,13 +153,21 @@ test("renderChatMessage renders diff review status as a bordered block", () => {
     },
   );
 
-  const text = renderText(rendered.component, 80);
-  expect(text).toContain("diff review active");
-  expect(text).toContain("command: git diff --staged");
-  expect(text).toContain("browser diff tool: http://127.0.0.1:4321");
-  expect(text).toContain("review agent: answering");
-  expect(text).toContain("thread-");
-  expect(text).toContain("...");
+  const text = renderText(rendered.component, 140);
+  const plainText = stripTags(text).replace(/\s+/g, " ");
+  expect(text).toContain("<userReviewSurface>");
+  expect(text).toContain("<userReviewTextMuted>");
+  expect(text).toContain("<userReviewTextDim>");
+  expect(plainText).toContain("diff tool active (git diff --staged)");
+  expect(plainText).toContain("http://127.0.0.1:4321");
+  expect(plainText).toContain("12345678-90ab-cdef-1234-567890abcdef (running)");
+  expect(plainText).toContain("fedcba98-7654-3210-fedc-ba9876543210 (idle)");
+  expect(plainText).toContain("abcdef12-3456-7890-abcd-ef1234567890 (idle)");
+  expect(plainText).toContain("↑1.2k ↓320 (r64 w0)");
+  expect(plainText).toContain("$0.12");
+  expect(plainText).toContain("$ git diff --staged");
+  expect(plainText).toContain("$ (error): permission denied");
+  expect(plainText).not.toContain("reviewer brief ready");
 });
 
 test("AssistantMessageComponent toggles thinking visibility", () => {

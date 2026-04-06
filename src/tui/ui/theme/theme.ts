@@ -65,6 +65,8 @@ export interface Palette {
   userMemoryText: (text: string) => string;
   userReviewSurface: (text: string) => string;
   userReviewText: (text: string) => string;
+  userReviewTextMuted: (text: string) => string;
+  userReviewTextDim: (text: string) => string;
 
   // Risk level indicators
   riskReadOnlyText: (text: string) => string;

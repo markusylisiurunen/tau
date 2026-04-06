@@ -55,8 +55,8 @@ const generatePalette = (brandHue, appearance) => {
   const isDark = appearance === "dark";
 
   const brandAccent = makeColor(isDark ? 72 : 48, isDark ? 0.1 : 0.2, HUE_BRAND);
-  const textMuted = transform(brandAccent, [scaleC(0.12), shiftL(isDark ? -4 : 4)]);
-  const textDim = transform(brandAccent, [scaleC(0.08), shiftL(isDark ? -14 : 14)]);
+  const textMuted = transform(brandAccent, [scaleC(0.1), shiftL(isDark ? -8 : 8)]);
+  const textDim = transform(brandAccent, [scaleC(0.05), shiftL(isDark ? -22 : 22)]);
   const codeText = transform(brandAccent, [setH(HUE_CODE)]);
 
   const editorBorder = transform(brandAccent, [
@@ -120,6 +120,8 @@ const generatePalette = (brandHue, appearance) => {
     scaleC(0.56),
     setL(isDark ? 83 : 29),
   ]);
+  const userReviewTextMuted = transform(userReviewText, [scaleC(0.36), shiftL(isDark ? -12 : 12)]);
+  const userReviewTextDim = transform(userReviewText, [scaleC(0.16), shiftL(isDark ? -24 : 24)]);
 
   const statusWarn = transform(brandAccent, [setH(HUE_WARN), scaleC(0.92), setL(isDark ? 68 : 44)]);
   const statusError = transform(statusWarn, [setH(HUE_ERROR)]);
@@ -165,6 +167,8 @@ const generatePalette = (brandHue, appearance) => {
     userMemoryText: toHex(userMemoryText),
     userReviewSurface: toHex(userReviewSurface),
     userReviewText: toHex(userReviewText),
+    userReviewTextMuted: toHex(userReviewTextMuted),
+    userReviewTextDim: toHex(userReviewTextDim),
 
     riskReadOnlyText: toHex(textMuted),
     riskReadWriteText: toHex(textMuted),

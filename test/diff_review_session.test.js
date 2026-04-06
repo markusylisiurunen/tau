@@ -17,6 +17,35 @@ function request(id, method, params) {
   });
 }
 
+function createEmptyUsage(contextWindow = 200_000) {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    contextWindowUsageTokens: 0,
+    contextWindow,
+  };
+}
+
+function createThreadSession(overrides = {}, contextWindow = 200_000) {
+  return {
+    async submitMessage() {
+      return "review reply";
+    },
+    interrupt() {
+      return false;
+    },
+    createForkSource() {
+      return {
+        historyEntries: [],
+        usageBaseline: createEmptyUsage(contextWindow),
+      };
+    },
+    ...overrides,
+  };
+}
+
 function createSnapshot() {
   return new DiffReviewSnapshot({
     repoRoot: "/repo",
@@ -99,17 +128,15 @@ describe("diff_review session", () => {
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
-      createThread: (threadId) => ({
-        async submitMessage(message) {
-          const messages = threadMessages.get(threadId) ?? [];
-          messages.push(message);
-          threadMessages.set(threadId, messages);
-          return `reply ${threadId} #${messages.length}: ${message}`;
-        },
-        interrupt() {
-          return false;
-        },
-      }),
+      createThread: ({ threadId }) =>
+        createThreadSession({
+          async submitMessage(message) {
+            const messages = threadMessages.get(threadId) ?? [];
+            messages.push(message);
+            threadMessages.set(threadId, messages);
+            return `reply ${threadId} #${messages.length}: ${message}`;
+          },
+        }),
     });
 
     await session.start();
@@ -165,7 +192,7 @@ describe("diff_review session", () => {
       const firstThread = await client.send("thread-1", "thread.submit_message", {
         message: "What changed?",
       });
-      expect(firstThread.result.threadId).toMatch(/^thread-/);
+      expect(firstThread.result.threadId).toMatch(/^[0-9a-f-]{36}$/);
       expect(firstThread.result.response).toBe(
         `reply ${firstThread.result.threadId} #1: What changed?`,
       );
@@ -186,6 +213,312 @@ describe("diff_review session", () => {
       await expect(session.result).resolves.toEqual({
         status: "returned",
         review: "Looks good overall.",
+      });
+    } finally {
+      client.rl.close();
+      client.socket.destroy();
+      await session.close();
+    }
+  });
+
+  it("forks new threads from existing context", async () => {
+    const createdThreads = [];
+    const session = new DiffReviewSession({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: ({ threadId, forkFrom }) => {
+        createdThreads.push({ threadId, forkFrom });
+        return createThreadSession({
+          async submitMessage(message) {
+            return `${forkFrom ? "fork" : "root"} ${threadId}: ${message}`;
+          },
+        });
+      },
+    });
+
+    await session.start();
+    const client = await connectClient(session);
+
+    try {
+      await client.send("init", "initialize", {
+        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+      });
+
+      const bootstrap = await client.send("bootstrap", "thread.submit_message", {
+        message: "build context",
+      });
+      expect(bootstrap.result).toEqual({
+        threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        response: `root ${bootstrap.result.threadId}: build context`,
+      });
+      expect(session.getUiState().reviewAgents).toEqual([
+        {
+          threadId: bootstrap.result.threadId,
+          status: "idle",
+          costTotal: 0,
+          usage: createEmptyUsage(personas[0].model.contextWindow),
+        },
+      ]);
+
+      const forked = await client.send("forked", "thread.submit_message", {
+        forkFromThreadId: bootstrap.result.threadId,
+        message: "review this file",
+      });
+      expect(forked.result).toEqual({
+        threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        response: `fork ${forked.result.threadId}: review this file`,
+      });
+      expect(createdThreads).toHaveLength(2);
+      expect(createdThreads[1]).toEqual({
+        threadId: forked.result.threadId,
+        forkFrom: expect.any(Object),
+      });
+      expect(session.getUiState().reviewAgents).toEqual([
+        {
+          threadId: bootstrap.result.threadId,
+          status: "idle",
+          costTotal: 0,
+          usage: createEmptyUsage(personas[0].model.contextWindow),
+        },
+        {
+          threadId: forked.result.threadId,
+          status: "idle",
+          costTotal: 0,
+          usage: createEmptyUsage(personas[0].model.contextWindow),
+        },
+      ]);
+
+      const invalidFork = await client.send("invalid-fork", "thread.submit_message", {
+        forkFromThreadId: "missing-thread",
+        message: "review this file",
+      });
+      expect(invalidFork).toEqual({
+        version: DIFF_REVIEW_PROTOCOL_VERSION,
+        type: "response",
+        id: "invalid-fork",
+        ok: false,
+        error: {
+          code: "invalid_params",
+          message: "unknown fork source thread 'missing-thread'",
+        },
+      });
+    } finally {
+      client.rl.close();
+      client.socket.destroy();
+      await session.close();
+    }
+  });
+
+  it("rejects forks from threads that are still running", async () => {
+    let createdThreadId;
+    let releaseThreadStarted;
+    const threadStarted = new Promise((resolve) => {
+      releaseThreadStarted = resolve;
+    });
+    let continueThread;
+    const threadCompletion = new Promise((resolve) => {
+      continueThread = resolve;
+    });
+    const session = new DiffReviewSession({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: ({ threadId }) => {
+        createdThreadId = threadId;
+        return createThreadSession({
+          async submitMessage(message) {
+            releaseThreadStarted();
+            await threadCompletion;
+            return `reply ${threadId}: ${message}`;
+          },
+          interrupt() {
+            continueThread();
+            return true;
+          },
+        });
+      },
+    });
+
+    await session.start();
+    const client = await connectClient(session);
+
+    try {
+      await client.send("init", "initialize", {
+        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+      });
+
+      const activePromise = client.send("active", "thread.submit_message", {
+        message: "build context",
+      });
+      await threadStarted;
+
+      await expect(
+        client.send("forked", "thread.submit_message", {
+          forkFromThreadId: createdThreadId,
+          message: "review this file",
+        }),
+      ).resolves.toEqual({
+        version: DIFF_REVIEW_PROTOCOL_VERSION,
+        type: "response",
+        id: "forked",
+        ok: false,
+        error: {
+          code: "invalid_request",
+          message: `thread '${createdThreadId}' already has an active request and cannot be used as a fork source`,
+        },
+      });
+
+      continueThread();
+      await expect(activePromise).resolves.toMatchObject({
+        result: {
+          threadId: createdThreadId,
+          response: `reply ${createdThreadId}: build context`,
+        },
+      });
+    } finally {
+      client.rl.close();
+      client.socket.destroy();
+      await session.close();
+    }
+  });
+
+  it("does not block session requests behind long-running thread submits", async () => {
+    let releaseThreadStarted;
+    const threadStarted = new Promise((resolve) => {
+      releaseThreadStarted = resolve;
+    });
+    let continueThread;
+    const threadCompletion = new Promise((resolve) => {
+      continueThread = resolve;
+    });
+    const session = new DiffReviewSession({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: ({ threadId }) =>
+        createThreadSession({
+          async submitMessage(message) {
+            releaseThreadStarted();
+            await threadCompletion;
+            return `reply ${threadId}: ${message}`;
+          },
+          interrupt() {
+            continueThread();
+            return true;
+          },
+        }),
+    });
+
+    await session.start();
+    const client = await connectClient(session);
+
+    try {
+      await client.send("init", "initialize", {
+        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+      });
+
+      const submitPromise = client.send("thread", "thread.submit_message", {
+        message: "What changed?",
+      });
+      await threadStarted;
+
+      const diffPromise = client.send("diff", "session.get_diff", {});
+      const diff = await Promise.race([
+        diffPromise,
+        new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
+      ]);
+      expect(diff).not.toBe("timeout");
+      expect(diff.result).toEqual({
+        scope: "session",
+        patch: createSnapshot().patch,
+      });
+
+      continueThread();
+      await expect(submitPromise).resolves.toMatchObject({
+        result: {
+          threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+          response: expect.stringContaining("What changed?"),
+        },
+      });
+    } finally {
+      client.rl.close();
+      client.socket.destroy();
+      await session.close();
+    }
+  });
+
+  it("rejects simultaneous submits to the same thread", async () => {
+    let releaseThread;
+    const threadStarted = new Promise((resolve) => {
+      releaseThread = resolve;
+    });
+    let continueThread;
+    const threadCompletion = new Promise((resolve) => {
+      continueThread = resolve;
+    });
+    const session = new DiffReviewSession({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: ({ threadId }) =>
+        createThreadSession({
+          async submitMessage(message) {
+            if (message === "create") {
+              return `reply ${threadId}: ${message}`;
+            }
+            releaseThread();
+            await threadCompletion;
+            return `reply ${threadId}: ${message}`;
+          },
+          interrupt() {
+            continueThread();
+            return true;
+          },
+        }),
+    });
+
+    await session.start();
+    const client = await connectClient(session);
+
+    try {
+      await client.send("init", "initialize", {
+        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+      });
+
+      const created = await client.send("create", "thread.submit_message", {
+        message: "create",
+      });
+      const threadId = created.result.threadId;
+
+      const activePromise = client.send("active", "thread.submit_message", {
+        threadId,
+        message: "slow",
+      });
+      await threadStarted;
+
+      await expect(
+        client.send("rejected", "thread.submit_message", {
+          threadId,
+          message: "second",
+        }),
+      ).resolves.toEqual({
+        version: DIFF_REVIEW_PROTOCOL_VERSION,
+        type: "response",
+        id: "rejected",
+        ok: false,
+        error: {
+          code: "invalid_request",
+          message: `thread '${threadId}' already has an active request`,
+        },
+      });
+
+      continueThread();
+      await expect(activePromise).resolves.toMatchObject({
+        result: {
+          threadId,
+          response: `reply ${threadId}: slow`,
+        },
       });
     } finally {
       client.rl.close();
@@ -216,14 +549,7 @@ describe("diff_review session", () => {
       snapshot,
       persona: personas[0],
       config: {},
-      createThread: () => ({
-        async submitMessage() {
-          return "review reply";
-        },
-        interrupt() {
-          return false;
-        },
-      }),
+      createThread: () => createThreadSession(),
     });
 
     await session.start();
@@ -261,7 +587,7 @@ describe("diff_review session", () => {
     }
   });
 
-  it("tracks diff tool ui text and review agent activity", async () => {
+  it("tracks diff tool ui text and active review agents", async () => {
     let releaseThread;
     const threadStarted = new Promise((resolve) => {
       releaseThread = resolve;
@@ -276,17 +602,18 @@ describe("diff_review session", () => {
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
-      createThread: () => ({
-        async submitMessage() {
-          releaseThread();
-          await threadCompletion;
-          return "review reply";
-        },
-        interrupt() {
-          continueThread();
-          return true;
-        },
-      }),
+      createThread: () =>
+        createThreadSession({
+          async submitMessage() {
+            releaseThread();
+            await threadCompletion;
+            return "review reply";
+          },
+          interrupt() {
+            continueThread();
+            return true;
+          },
+        }),
     });
 
     const removeUiStateListener = session.onUiStateChange((state) => {
@@ -302,12 +629,12 @@ describe("diff_review session", () => {
       });
 
       const uiText = await client.send("ui-text", "session.set_ui_text", {
-        text: "browser diff tool: http://127.0.0.1:4321",
+        text: "http://127.0.0.1:4321",
       });
       expect(uiText.result).toEqual({ status: "updated" });
       expect(session.getUiState()).toEqual({
-        diffToolUiText: "browser diff tool: http://127.0.0.1:4321",
-        reviewAgent: { status: "idle" },
+        diffToolUiText: "http://127.0.0.1:4321",
+        reviewAgents: [],
       });
 
       const threadPromise = client.send("thread", "thread.submit_message", {
@@ -315,38 +642,122 @@ describe("diff_review session", () => {
       });
       await threadStarted;
 
-      expect(session.getUiState().reviewAgent).toEqual({
-        status: "running",
-        threadId: expect.stringMatching(/^thread-/),
-      });
+      expect(session.getUiState().reviewAgents).toEqual([
+        {
+          threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+          status: "running",
+          costTotal: 0,
+          usage: createEmptyUsage(personas[0].model.contextWindow),
+        },
+      ]);
 
       continueThread();
       const thread = await threadPromise;
       expect(thread.result).toEqual({
-        threadId: expect.stringMatching(/^thread-/),
+        threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         response: "review reply",
       });
       expect(session.getUiState()).toEqual({
-        diffToolUiText: "browser diff tool: http://127.0.0.1:4321",
-        reviewAgent: { status: "idle" },
+        diffToolUiText: "http://127.0.0.1:4321",
+        reviewAgents: [
+          {
+            threadId: thread.result.threadId,
+            status: "idle",
+            costTotal: 0,
+            usage: createEmptyUsage(personas[0].model.contextWindow),
+          },
+        ],
       });
       expect(stateUpdates).toEqual(
         expect.arrayContaining([
           {
-            diffToolUiText: "browser diff tool: http://127.0.0.1:4321",
-            reviewAgent: { status: "idle" },
+            diffToolUiText: "http://127.0.0.1:4321",
+            reviewAgents: [],
           },
           {
-            diffToolUiText: "browser diff tool: http://127.0.0.1:4321",
-            reviewAgent: {
-              status: "running",
-              threadId: expect.stringMatching(/^thread-/),
-            },
+            diffToolUiText: "http://127.0.0.1:4321",
+            reviewAgents: [
+              {
+                threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+                status: "running",
+                costTotal: 0,
+                usage: createEmptyUsage(personas[0].model.contextWindow),
+              },
+            ],
+          },
+          {
+            diffToolUiText: "http://127.0.0.1:4321",
+            reviewAgents: [
+              {
+                threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+                status: "idle",
+                costTotal: 0,
+                usage: createEmptyUsage(personas[0].model.contextWindow),
+              },
+            ],
           },
         ]),
       );
     } finally {
       removeUiStateListener();
+      client.rl.close();
+      client.socket.destroy();
+      await session.close();
+    }
+  });
+
+  it("interrupts active review agents before returning a review", async () => {
+    let releaseThreadStarted;
+    const threadStarted = new Promise((resolve) => {
+      releaseThreadStarted = resolve;
+    });
+    let releaseThreadCompletion;
+    const threadCompletion = new Promise((resolve) => {
+      releaseThreadCompletion = resolve;
+    });
+    let interruptCount = 0;
+    const session = new DiffReviewSession({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: () =>
+        createThreadSession({
+          async submitMessage() {
+            releaseThreadStarted();
+            await threadCompletion;
+            return "review reply";
+          },
+          interrupt() {
+            interruptCount += 1;
+            releaseThreadCompletion();
+            return true;
+          },
+        }),
+    });
+
+    await session.start();
+    const client = await connectClient(session);
+
+    try {
+      await client.send("init", "initialize", {
+        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+      });
+
+      void client.send("thread", "thread.submit_message", {
+        message: "What changed?",
+      });
+      await threadStarted;
+
+      const review = await client.send("return", "session.return_review", {
+        review: "Looks good overall.",
+      });
+      expect(review.result).toEqual({ status: "returned" });
+      await expect(session.result).resolves.toEqual({
+        status: "returned",
+        review: "Looks good overall.",
+      });
+      expect(interruptCount).toBe(1);
+    } finally {
       client.rl.close();
       client.socket.destroy();
       await session.close();
@@ -360,14 +771,15 @@ describe("diff_review session", () => {
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
-      createThread: () => ({
-        async submitMessage(message) {
-          return message;
-        },
-        interrupt() {
-          return true;
-        },
-      }),
+      createThread: () =>
+        createThreadSession({
+          async submitMessage(message) {
+            return message;
+          },
+          interrupt() {
+            return true;
+          },
+        }),
     });
 
     await session.start();
@@ -390,14 +802,15 @@ describe("diff_review session", () => {
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
-      createThread: () => ({
-        async submitMessage(message) {
-          return message;
-        },
-        interrupt() {
-          return true;
-        },
-      }),
+      createThread: () =>
+        createThreadSession({
+          async submitMessage(message) {
+            return message;
+          },
+          interrupt() {
+            return true;
+          },
+        }),
     });
 
     await session.start();
@@ -424,14 +837,15 @@ describe("diff_review session", () => {
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
-      createThread: () => ({
-        async submitMessage(message) {
-          return message;
-        },
-        interrupt() {
-          return true;
-        },
-      }),
+      createThread: () =>
+        createThreadSession({
+          async submitMessage(message) {
+            return message;
+          },
+          interrupt() {
+            return true;
+          },
+        }),
     });
 
     await session.start();
@@ -461,14 +875,15 @@ describe("diff_review session", () => {
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
-      createThread: () => ({
-        async submitMessage(message) {
-          return message;
-        },
-        interrupt() {
-          return true;
-        },
-      }),
+      createThread: () =>
+        createThreadSession({
+          async submitMessage(message) {
+            return message;
+          },
+          interrupt() {
+            return true;
+          },
+        }),
     });
 
     await session.start();

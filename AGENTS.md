@@ -33,7 +33,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Model catalog** (`src/core/models/catalog.ts`): Unified provider/model registry (pi-ai + Tau extensions) with layered `models.json` overlays used for model resolution and provider routing metadata
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly and history preparation for `/compact:*` flows (summary-only and summary + last assistant)
 - **Diff review** (`src/core/diff_review/`): Initial git-diff context capture, local diff-tool protocol server, and read-only review-thread execution for blocking `/diff` sessions
-- **Built-in diff tool** (`src/diff_tool/`): Browser demo launcher used by `/diff` when `diffTool` is not configured
+- **Built-in diff tool** (`src/diff_tool/`): Browser demo launcher used by `/diff` when `diffTool` is not configured. Treat this subtree as an isolated island: keep diff-tool-specific prompts, HTTP handlers, state, and UI code inside `src/diff_tool/`; only share narrow protocol/types with `src/core/diff_review/`.
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
 - **Mode adapters** (`src/core/modes/`): ModeAdapter interface plus RPC protocol/server wiring for alternate front-ends
 - **SDK client** (`src/sdk/`): Node SDK facade that drives Tau through the same RPC subprocess protocol (`tau rpc`)

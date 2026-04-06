@@ -2,6 +2,8 @@
 
 Built-in browser-based diff review tool for `/diff`. Launched as a child process by Tau when no external `diffTool` is configured.
 
+Keep `src/diff_tool/` as an isolated island. Diff-tool-specific prompts, HTTP handlers, review state, and browser UI code stay here. Shared contracts with Tau core should stay narrow and explicit: the diff-review protocol client plus shared protocol/types. Do not import diff-tool-only logic from `src/core/`.
+
 ## Architecture
 
 - `index.ts` — entry point (`runBuiltInDiffToolCommand`): parses launch env vars, connects the protocol client, starts the HTTP server, opens a browser, waits for close

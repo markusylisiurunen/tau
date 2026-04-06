@@ -3,12 +3,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DiffReviewFile, DiffReviewSessionContextResult } from "../core/diff_review/index.js";
+import type { DiffReviewProtocolClient } from "./protocol_client.js";
 import {
   buildDiffReviewBootstrapPrompt,
   buildDiffReviewBriefPrompt,
   buildDiffReviewCommentThreadPrompt,
-} from "../core/diff_review/review_tool_prompts.js";
-import type { DiffReviewProtocolClient } from "./protocol_client.js";
+} from "./review_prompts.js";
 import { DiffToolReviewStateStore } from "./review_state.js";
 import type {
   DiffToolBootstrapPayload,

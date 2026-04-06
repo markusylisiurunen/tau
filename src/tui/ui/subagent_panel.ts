@@ -4,7 +4,8 @@ import type {
   SubagentUiEvent,
   SubagentUsageSnapshot,
 } from "../../core/subagents/types.js";
-import { formatAdaptiveNumber, formatTokenWindow } from "../../core/utils/format.js";
+import { formatUsageSnapshot, formatUsdCost } from "../../core/utils/format.js";
+import { formatAgentActivityText, formatAgentOutputText } from "./agent_activity_format.js";
 import { truncateFromEndByWidthPreserveAnsi } from "./components/one_line_segments.js";
 import type { Theme } from "./theme/index.js";
 
@@ -199,8 +200,12 @@ export class SubagentPanelComponent implements Component {
   private buildOutputLines(entry: SubagentPanelEntry): string[] {
     const { palette } = this.theme;
     const formattedLines = entry.lines
-      .map((line) => this.formatOutputText(line))
-      .filter((line) => line.length > 0);
+      .map((line) =>
+        line.kind === "output"
+          ? formatAgentOutputText(line.text)
+          : formatAgentActivityText(line.text),
+      )
+      .filter((line): line is string => Boolean(line?.length));
     const recentLines = formattedLines.slice(-MAX_PANEL_LINES);
     const output: string[] = [];
 
@@ -215,63 +220,10 @@ export class SubagentPanelComponent implements Component {
     return output;
   }
 
-  private formatOutputText(line: SubagentPanelLine): string {
-    const trimmed = line.text.trim();
-    if (!trimmed) return "";
-
-    if (line.kind === "output") {
-      const firstLine = trimmed.split(/\r?\n/, 1)[0]?.trim() ?? "";
-      return firstLine ? `> ${firstLine}` : "";
-    }
-
-    if (trimmed.startsWith("agent: ")) {
-      const line = trimmed.slice("agent: ".length).trim();
-      return line ? `> ${line}` : "";
-    }
-    if (trimmed.startsWith("bash running: ")) {
-      return `$ ${trimmed.slice("bash running: ".length)}`;
-    }
-    if (trimmed.startsWith("bash failed: ")) {
-      return trimmed.replace(/^bash failed:\s*/, "$ (failed): ");
-    }
-    if (trimmed.startsWith("bash blocked: ")) {
-      return trimmed.replace(/^bash blocked:\s*/, "$ (blocked): ");
-    }
-    if (trimmed.startsWith("bash aborted: ")) {
-      return trimmed.replace(/^bash aborted:\s*/, "$ (aborted): ");
-    }
-    if (trimmed.startsWith("edit: ")) {
-      return `edit ${trimmed.slice("edit: ".length)}`;
-    }
-    if (trimmed.startsWith("write: ")) {
-      return `write ${trimmed.slice("write: ".length)}`;
-    }
-    if (trimmed.startsWith("tool blocked: write ")) {
-      return `write blocked ${trimmed.slice("tool blocked: write ".length)}`;
-    }
-    if (trimmed.startsWith("tool blocked: edit ")) {
-      return `edit blocked ${trimmed.slice("tool blocked: edit ".length)}`;
-    }
-    if (trimmed.startsWith("web search failed: ")) {
-      return trimmed.replace(/^web search failed:\s*\?\s*/, "web search failed: ");
-    }
-    if (trimmed.startsWith("web search: ")) {
-      return `web search ${trimmed.slice("web search: ".length)}`;
-    }
-    if (trimmed.startsWith("web fetch failed: ")) {
-      return trimmed.replace(/^web fetch failed:\s*\?\s*/, "web fetch failed: ");
-    }
-    if (trimmed.startsWith("web fetch: ")) {
-      return `web fetch ${trimmed.slice("web fetch: ".length)}`;
-    }
-
-    return "";
-  }
-
   private buildStatusLine(entry: SubagentPanelEntry): string {
     const { palette } = this.theme;
-    const contextUsage = this.formatContextUsage(entry.usage);
-    const cost = `$${formatAdaptiveNumber(entry.costTotal, 2, 5)}`;
+    const contextUsage = formatUsageSnapshot(entry.usage);
+    const cost = formatUsdCost(entry.costTotal);
     return palette.textMuted(`${contextUsage} · ${cost}`);
   }
 
@@ -289,14 +241,6 @@ export class SubagentPanelComponent implements Component {
     const truncated = truncateFromEndByWidthPreserveAnsi(line, width);
     const pad = Math.max(0, width - visibleWidth(truncated));
     return `${truncated}${" ".repeat(pad)}`;
-  }
-
-  private formatContextUsage(usage: SubagentUsageSnapshot): string {
-    const stats = `↑${formatTokenWindow(usage.input)} ↓${formatTokenWindow(usage.output)} (r${formatTokenWindow(usage.cacheRead)} w${formatTokenWindow(usage.cacheWrite)})`;
-    const percent =
-      usage.contextWindow > 0 ? (usage.contextWindowUsageTokens / usage.contextWindow) * 100 : 0;
-    const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;
-    return `${stats} · ${percentStr}/${formatTokenWindow(usage.contextWindow)}`;
   }
 
   private getRunningEntries(): SubagentPanelEntry[] {

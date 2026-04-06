@@ -46,6 +46,7 @@ export type DiffReviewSessionSetUiTextParams = {
 };
 export type DiffReviewThreadSubmitMessageParams = {
   threadId?: string;
+  forkFromThreadId?: string;
   message: string;
 };
 export type DiffReviewSessionReturnReviewParams = {
@@ -213,9 +214,19 @@ const sessionSetUiTextParamsSchema = z
 const threadSubmitMessageParamsSchema = z
   .object({
     threadId: z.string().trim().min(1).optional(),
+    forkFromThreadId: z.string().trim().min(1).optional(),
     message: z.string().trim().min(1),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.threadId && value.forkFromThreadId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["forkFromThreadId"],
+        message: "forkFromThreadId can only be used when creating a new thread",
+      });
+    }
+  });
 const sessionReturnReviewParamsSchema = z
   .object({
     review: z.string().trim().min(1),
@@ -427,7 +438,7 @@ function formatParamsError(method: DiffReviewMethod, _error: z.ZodError): string
     case "session.set_ui_text":
       return "session.set_ui_text.text must be a string";
     case "thread.submit_message":
-      return "thread.submit_message requires a non-empty message and optional non-empty threadId";
+      return "thread.submit_message requires a non-empty message, optional threadId, and optional forkFromThreadId when creating a new thread";
     case "session.return_review":
       return "session.return_review.review must be a non-empty string";
   }

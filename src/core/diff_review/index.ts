@@ -41,10 +41,17 @@ export {
   serializeDiffReviewMessage,
   validateDiffReviewParams,
 } from "./protocol.js";
-export type { DiffReviewThreadSession } from "./review_thread.js";
+export type {
+  DiffReviewAgentUsageSnapshot,
+  DiffReviewThreadForkSource,
+  DiffReviewThreadSession,
+  DiffReviewThreadUpdate,
+} from "./review_thread.js";
 export { DiffReviewThread } from "./review_thread.js";
 export type {
-  DiffReviewAgentActivityState,
+  CreateDiffReviewThreadSessionOptions,
+  DiffReviewAgentActivity,
+  DiffReviewAgentStatus,
   DiffReviewCancelledReason,
   DiffReviewResult,
   DiffReviewSessionOptions,

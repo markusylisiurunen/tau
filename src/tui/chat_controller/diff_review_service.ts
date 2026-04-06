@@ -12,6 +12,7 @@ import type { BusyTask, InterruptLifecycle } from "./interrupt_lifecycle.js";
 export type DiffReviewReturnedReview = {
   diffCommand: string;
   review: string;
+  historyEntryId: string;
 };
 
 export type DiffReviewServiceOptions = {
@@ -37,7 +38,7 @@ type DiffReviewState = {
   session?: DiffReviewSession;
   cancelRequested: boolean;
   diffToolUiText?: string;
-  reviewAgentActivity: DiffReviewSessionUiState["reviewAgent"];
+  reviewAgents: DiffReviewSessionUiState["reviewAgents"];
   removeUiStateListener?: () => void;
   messageFinalized: boolean;
 };
@@ -108,7 +109,7 @@ export class DiffReviewService {
       diffCommand: formatDiffReviewCommand(diffArgs),
       abortController: new AbortController(),
       cancelRequested: false,
-      reviewAgentActivity: { status: "idle" },
+      reviewAgents: [],
       messageFinalized: false,
     };
     state.messageId = this.view.addMessage(buildDiffReviewMessage(state));
@@ -150,7 +151,7 @@ export class DiffReviewService {
       });
       if (state.abortController.signal.aborted) {
         await started.session.cancel("controller_cancelled");
-        finalizeDiffReviewMessage(state, this.view, "cancelled", "cancelled in Tau");
+        finalizeDiffReviewMessage(state, this.view, "cancelled");
         return;
       }
 
@@ -169,7 +170,7 @@ export class DiffReviewService {
       this.handleResult(state, result);
     } catch (error) {
       if (state.abortController.signal.aborted) {
-        finalizeDiffReviewMessage(state, this.view, "cancelled", "cancelled in Tau");
+        finalizeDiffReviewMessage(state, this.view, "cancelled");
       } else {
         const message = (error as Error).message;
         finalizeDiffReviewMessage(state, this.view, "failed", message);
@@ -177,7 +178,7 @@ export class DiffReviewService {
       }
     } finally {
       if (!state.messageFinalized && state.abortController.signal.aborted) {
-        finalizeDiffReviewMessage(state, this.view, "cancelled", "cancelled in Tau");
+        finalizeDiffReviewMessage(state, this.view, "cancelled");
       }
       state.removeUiStateListener?.();
       state.removeUiStateListener = undefined;
@@ -208,10 +209,16 @@ export class DiffReviewService {
 
   private handleResult(state: DiffReviewState, result: DiffReviewResult): void {
     if (result.status === "returned") {
-      finalizeDiffReviewMessage(state, this.view, "returned", "review added to the conversation");
+      state.messageFinalized = true;
+      this.view.replaceMessage(state.messageId, {
+        type: "user",
+        text: result.review,
+        kind: "review",
+      });
       this.onReviewReturned({
         diffCommand: state.diffCommand,
         review: result.review,
+        historyEntryId: state.messageId,
       });
       this.view.addSystemMessage(
         "diff review added to the conversation. tau did not run yet.",
@@ -221,7 +228,7 @@ export class DiffReviewService {
     }
 
     if (result.reason === "tool_disconnected") {
-      finalizeDiffReviewMessage(state, this.view, "cancelled", "diff tool disconnected");
+      finalizeDiffReviewMessage(state, this.view, "cancelled");
       this.view.addSystemMessage(
         "diff review tool disconnected or never connected before returning a review.",
         "warn",
@@ -230,12 +237,12 @@ export class DiffReviewService {
     }
 
     if (result.reason === "tool_cancelled") {
-      finalizeDiffReviewMessage(state, this.view, "cancelled", "cancelled in the diff tool");
+      finalizeDiffReviewMessage(state, this.view, "cancelled");
       this.view.addSystemMessage("diff review cancelled.", "warn");
       return;
     }
 
-    finalizeDiffReviewMessage(state, this.view, "cancelled", "cancelled in Tau");
+    finalizeDiffReviewMessage(state, this.view, "cancelled");
   }
 }
 
@@ -256,7 +263,7 @@ function buildDiffReviewMessage(
     status,
     command: state.diffCommand,
     ...(status === "active" && state.diffToolUiText ? { uiText: state.diffToolUiText } : {}),
-    ...(status === "active" ? { reviewAgent: state.reviewAgentActivity } : {}),
+    ...(status === "active" ? { reviewAgents: state.reviewAgents } : {}),
     ...(args?.detail ? { detail: args.detail } : {}),
   };
 }
@@ -276,14 +283,14 @@ function finalizeDiffReviewMessage(
   state: DiffReviewState,
   view: ChatView,
   status: Exclude<DiffReviewMessageModel["status"], "preparing" | "active">,
-  detail: string,
+  detail?: string,
 ): void {
   if (state.messageFinalized) {
     return;
   }
 
   state.messageFinalized = true;
-  updateDiffReviewMessage(state, view, { status, detail });
+  updateDiffReviewMessage(state, view, { status, ...(detail ? { detail } : {}) });
 }
 
 function updateDiffReviewUiState(
@@ -292,7 +299,7 @@ function updateDiffReviewUiState(
   view: ChatView,
 ): void {
   state.diffToolUiText = uiState.diffToolUiText;
-  state.reviewAgentActivity = uiState.reviewAgent;
+  state.reviewAgents = uiState.reviewAgents;
   if (!state.messageFinalized) {
     updateDiffReviewMessage(state, view);
   }

@@ -72,6 +72,8 @@ const PALETTE_TEXT_TOKENS = [
   "toastError",
   "userMemoryText",
   "userReviewText",
+  "userReviewTextMuted",
+  "userReviewTextDim",
   "riskReadOnlyText",
   "riskReadWriteText",
 ] as const satisfies readonly PaletteColorToken[];

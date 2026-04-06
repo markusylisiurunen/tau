@@ -54,6 +54,7 @@ export class DiffReviewProtocolClient {
   private readonly pendingRequests = new Map<DiffReviewRequestId, PendingRequest>();
   private readonly closeListeners = new Set<CloseListener>();
   private connectPromise?: Promise<void>;
+  private writeQueue: Promise<void> = Promise.resolve();
   private requestCounter = 0;
   private closed = false;
   private closeNotified = false;
@@ -98,6 +99,7 @@ export class DiffReviewProtocolClient {
     this.socket = undefined;
     this.readline = undefined;
     this.connectPromise = undefined;
+    this.writeQueue = Promise.resolve();
 
     readline?.close();
     if (!socket) {
@@ -174,18 +176,42 @@ export class DiffReviewProtocolClient {
         reject,
       });
 
-      socket.write(requestLine, (error) => {
-        if (!error) {
-          return;
-        }
+      const writePromise = this.writeQueue.then(
+        () =>
+          new Promise<void>((resolveWrite, rejectWrite) => {
+            if (
+              this.closed ||
+              this.socket !== socket ||
+              socket.destroyed ||
+              socket.writableEnded ||
+              !socket.writable
+            ) {
+              rejectWrite(new Error("diff review protocol socket is not available"));
+              return;
+            }
 
+            try {
+              socket.write(requestLine, (error) => {
+                if (error) {
+                  rejectWrite(error);
+                  return;
+                }
+                resolveWrite();
+              });
+            } catch (error) {
+              rejectWrite(error instanceof Error ? error : new Error(String(error)));
+            }
+          }),
+      );
+      this.writeQueue = writePromise.catch(() => {});
+      void writePromise.catch((error) => {
         const pending = this.pendingRequests.get(id);
         if (!pending) {
           return;
         }
 
         this.pendingRequests.delete(id);
-        pending.reject(error);
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
       });
     });
   }
@@ -205,6 +231,7 @@ export class DiffReviewProtocolClient {
       this.socket = undefined;
       this.readline = undefined;
       this.connectPromise = undefined;
+      this.writeQueue = Promise.resolve();
       this.notifyCloseListeners();
     });
 

@@ -1,3 +1,4 @@
+import type { CoreEvent } from "../events/types.js";
 import type { CoreSession } from "../session/core_session.js";
 
 export type ConversationTurnResult = {
@@ -16,7 +17,7 @@ export class ConversationTurnRuntime {
     return this.abortController !== undefined;
   }
 
-  async run(): Promise<ConversationTurnResult> {
+  async run(options?: { onEvent?: (event: CoreEvent) => void }): Promise<ConversationTurnResult> {
     if (this.abortController) {
       throw new Error("conversation turn is already running");
     }
@@ -26,7 +27,8 @@ export class ConversationTurnRuntime {
 
     try {
       try {
-        for await (const _event of this.session.events(abortController.signal)) {
+        for await (const event of this.session.events(abortController.signal)) {
+          options?.onEvent?.(event);
           if (abortController.signal.aborted) {
             break;
           }

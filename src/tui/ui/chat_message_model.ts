@@ -2,7 +2,7 @@ import type { Component } from "@mariozechner/pi-tui";
 import type { ToolUiEvent } from "../../core/tools/registry.js";
 import { AppIntroComponent, type AppIntroModel } from "./app_intro.js";
 import { AssistantMessageComponent, type AssistantMessageModel } from "./assistant_message.js";
-import { buildDiffReviewMessageView, type DiffReviewMessageModel } from "./diff_review_message.js";
+import { DiffReviewMessageComponent, type DiffReviewMessageModel } from "./diff_review_message.js";
 import { SessionDividerComponent, type SessionDividerModel } from "./session_divider.js";
 import type { SystemMessageModel } from "./system_message.js";
 import { SystemMessageComponent } from "./system_message.js";
@@ -97,15 +97,14 @@ export function renderChatMessage(
       };
     }
     case "diff_review": {
-      const component = renderToolOutput(buildDiffReviewMessageView(theme, model), false);
+      const component = new DiffReviewMessageComponent(theme, model);
       return {
         component,
         isAssistant: false,
         update: (nextModel, nextOptions) => {
           if (nextModel.type !== "diff_review") return false;
-          component.update(
-            buildToolOutputProps(buildDiffReviewMessageView(nextOptions.theme, nextModel), false),
-          );
+          component.setTheme(nextOptions.theme);
+          component.update(nextModel);
           return true;
         },
       };

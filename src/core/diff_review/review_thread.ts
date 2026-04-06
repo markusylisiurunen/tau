@@ -1,11 +1,12 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { Config } from "../config/index.js";
+import type { CoreEvent } from "../events/types.js";
 import { ConversationTurnRuntime } from "../runtime/conversation_turn_runtime.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { resolveRuntimePromptBootstrap } from "../runtime/runtime_bootstrap.js";
 import { composeSessionPrompts } from "../runtime/session_prompt_composer.js";
-import { CoreSession } from "../session/core_session.js";
+import { CoreSession, type HistoryEntry } from "../session/core_session.js";
 import { renderDiffReviewWrapperPrompt } from "../static/index.js";
 import { BASH_TOOL } from "../tools/bash.js";
 import { ToolCatalog } from "../tools/catalog.js";
@@ -18,11 +19,37 @@ import { VIEW_IMAGE_TOOL } from "../tools/view_image.js";
 import type { Persona, Skill } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { extractAssistantText } from "../utils/messages.js";
+import {
+  extractAssistantTextForProgress,
+  formatToolUiEventForProgress,
+  getToolResultFirstLine,
+} from "../utils/subagent_utils.js";
 import type { DiffReviewSnapshot } from "./snapshot.js";
+
+export type DiffReviewAgentUsageSnapshot = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  contextWindowUsageTokens: number;
+  contextWindow: number;
+};
+
+export type DiffReviewThreadUpdate = {
+  costTotal: number;
+  usage: DiffReviewAgentUsageSnapshot;
+  lastActivityText?: string;
+};
+
+export type DiffReviewThreadForkSource = {
+  historyEntries: readonly HistoryEntry[];
+  usageBaseline: DiffReviewAgentUsageSnapshot;
+};
 
 export type DiffReviewThreadSession = {
   submitMessage(message: string): Promise<string>;
   interrupt(): boolean;
+  createForkSource(): DiffReviewThreadForkSource;
 };
 
 export type CreateDiffReviewThreadOptions = {
@@ -34,6 +61,8 @@ export type CreateDiffReviewThreadOptions = {
   includeAgentContext?: boolean;
   deps?: CoreDeps;
   toolExecutionBackend?: ToolExecutionBackend;
+  onUpdate?: (update: DiffReviewThreadUpdate) => void;
+  forkFrom?: DiffReviewThreadForkSource;
 };
 
 export class DiffReviewThread implements DiffReviewThreadSession {
@@ -41,6 +70,10 @@ export class DiffReviewThread implements DiffReviewThreadSession {
   private readonly runtime: ConversationTurnRuntime;
   private readonly personaId: string;
   private readonly reasoningEffort: string;
+  private readonly onUpdate?: (update: DiffReviewThreadUpdate) => void;
+  private costTotal = 0;
+  private usage: DiffReviewAgentUsageSnapshot;
+  private lastActivityText?: string;
 
   constructor(options: CreateDiffReviewThreadOptions) {
     const deps = options.deps ?? createDefaultCoreDeps();
@@ -52,6 +85,15 @@ export class DiffReviewThread implements DiffReviewThreadSession {
       });
     this.personaId = options.persona.id;
     this.reasoningEffort = options.persona.settings.reasoning ?? "none";
+    this.onUpdate = options.onUpdate;
+    this.usage = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      contextWindowUsageTokens: 0,
+      contextWindow: options.persona.model.contextWindow,
+    };
     const persona = createDiffReviewPersona(options.persona, options.snapshot);
     const promptBootstrap = resolveRuntimePromptBootstrap({
       persona,
@@ -94,12 +136,24 @@ export class DiffReviewThread implements DiffReviewThreadSession {
       includeAgentContext: promptBootstrap.promptContext.includeAgentContext,
       sandboxEnabled: false,
     });
+    if (options.forkFrom) {
+      this.usage = { ...options.forkFrom.usageBaseline };
+      for (const entry of options.forkFrom.historyEntries) {
+        this.session.addMessage(entry.message, {
+          historyEntryId: entry.id,
+        });
+      }
+      this.emitUpdate();
+    }
+
     this.runtime = new ConversationTurnRuntime(this.session);
   }
 
   async submitMessage(message: string): Promise<string> {
     this.session.addUserText(message);
-    const result = await this.runtime.run();
+    const result = await this.runtime.run({
+      onEvent: (event) => this.handleEvent(event),
+    });
     if (result.aborted) {
       throw new Error("diff review thread was interrupted");
     }
@@ -132,6 +186,74 @@ export class DiffReviewThread implements DiffReviewThreadSession {
 
   interrupt(): boolean {
     return this.runtime.interrupt();
+  }
+
+  createForkSource(): DiffReviewThreadForkSource {
+    return {
+      historyEntries: this.session.historyEntries.map((entry) => ({
+        id: entry.id,
+        message: structuredClone(entry.message),
+      })),
+      usageBaseline: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        contextWindowUsageTokens: this.usage.contextWindowUsageTokens,
+        contextWindow: this.usage.contextWindow,
+      },
+    };
+  }
+
+  private handleEvent(event: CoreEvent): void {
+    switch (event.type) {
+      case "tool_ui": {
+        const progressText = formatToolUiEventForProgress(event.uiEvent);
+        if (progressText) {
+          this.lastActivityText = progressText;
+          this.emitUpdate();
+        }
+        return;
+      }
+      case "tool_result": {
+        if (!event.message.isError) {
+          return;
+        }
+        const firstLine = getToolResultFirstLine(event.message);
+        this.lastActivityText = firstLine
+          ? `${event.message.toolName}: ${firstLine}`
+          : `${event.message.toolName}: tool returned an error`;
+        this.emitUpdate();
+        return;
+      }
+      case "assistant_final": {
+        const usageTotals = getUsageTotals(event.message.usage);
+        this.costTotal += getUsageCostTotal(event.message.usage);
+        this.usage = {
+          ...this.usage,
+          input: this.usage.input + usageTotals.input,
+          output: this.usage.output + usageTotals.output,
+          cacheRead: this.usage.cacheRead + usageTotals.cacheRead,
+          cacheWrite: this.usage.cacheWrite + usageTotals.cacheWrite,
+          contextWindowUsageTokens:
+            usageTotals.input + usageTotals.output + usageTotals.cacheRead + usageTotals.cacheWrite,
+        };
+        this.lastActivityText =
+          extractAssistantTextForProgress(event.message) ?? this.lastActivityText;
+        this.emitUpdate();
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  private emitUpdate(): void {
+    this.onUpdate?.({
+      costTotal: this.costTotal,
+      usage: { ...this.usage },
+      ...(this.lastActivityText ? { lastActivityText: this.lastActivityText } : {}),
+    });
   }
 }
 
@@ -175,12 +297,13 @@ function buildReviewContextBlock(snapshot: DiffReviewSnapshot): string {
   return [
     `Repo root: ${snapshot.repoRoot}`,
     `Cwd: ${snapshot.cwd}`,
-    `Diff command: ${snapshot.toDiffCommand()}`,
+    `Initial diff command: ${snapshot.toDiffCommand()}`,
     "",
-    "Changed files:",
+    "Initial changed files:",
     changedFiles,
     "",
-    "The full diff is not embedded in this prompt. Use read-only tools to inspect relevant repo context when needed.",
+    "This review context is the starting point captured when /diff opened.",
+    "The current repo state is authoritative. Use read-only tools to inspect relevant repo context when needed.",
   ].join("\n");
 }
 

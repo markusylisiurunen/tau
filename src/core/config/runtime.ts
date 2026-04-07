@@ -1,7 +1,11 @@
+import { getAuthPath } from "../auth/auth_paths.js";
+import { AuthStorage } from "../auth/auth_storage.js";
+import { createCredentialResolver } from "../auth/credential_resolver.js";
 import { loadModelResolver } from "../models/catalog.js";
 import { parsePersonaReference } from "../persona_reference.js";
 import type { PromptTemplate } from "../prompts.js";
 import type { Persona, Skill } from "../types.js";
+import { validateTokenCounterConfiguration } from "../utils/token_counting.js";
 import type { BashCommand } from "./bash_commands.js";
 import type { ThemeDefinition } from "./content_loader.js";
 import { loadAllContent } from "./content_loader.js";
@@ -20,6 +24,21 @@ export interface RuntimeConfigResult {
   bashCommands: BashCommand[];
   diffTool?: DiffToolConfig;
   warnings: string[];
+  fatalErrors: string[];
+}
+
+async function validateRuntimeConfig(config: Config, deps: ConfigDeps): Promise<string[]> {
+  const authStorage = new AuthStorage(getAuthPath(deps.env.home()));
+  const credentialResolver = createCredentialResolver({
+    authStorage,
+    getConfig: () => config,
+  });
+  const tokenCounterError = await validateTokenCounterConfiguration({
+    method: config.tokenCounting,
+    getAnthropicApiKey: () => credentialResolver.getApiKey("anthropic"),
+  });
+
+  return tokenCounterError ? [tokenCounterError] : [];
 }
 
 export async function loadRuntimeConfig(
@@ -58,6 +77,8 @@ export async function loadRuntimeConfig(
     }
   }
 
+  const fatalErrors = await validateRuntimeConfig(config, deps);
+
   return {
     config,
     personas: content.personas,
@@ -67,5 +88,6 @@ export async function loadRuntimeConfig(
     bashCommands: config.bashCommands ?? [],
     diffTool: config.diffTool,
     warnings,
+    fatalErrors,
   };
 }

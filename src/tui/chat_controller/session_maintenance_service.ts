@@ -2,8 +2,7 @@ import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@ma
 import type { CoreSession } from "../../core/session/core_session.js";
 import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../../core/tools/tool_names.js";
 import { buildLineDiff, collapseLongUnchangedDiffRuns } from "../../core/utils/line_diff.js";
-import { bytesToTokens, formatTokenEstimate, tokensToBytes } from "../../core/utils/token.js";
-import { truncateToBytesFromStart } from "../../core/utils/truncate.js";
+import { formatTokenCountEstimate, formatTokenEstimate } from "../../core/utils/token.js";
 
 const DEFAULT_PRUNE_FRACTION = 0.25;
 const PRUNED_TOOL_RESULT_PREFIX = "[Tool result pruned]";
@@ -147,7 +146,7 @@ export class SessionMaintenanceService {
     }
   }
 
-  pruneToolResults(strategy: "earliest" | "largest", extra?: string): void {
+  async pruneToolResults(strategy: "earliest" | "largest", extra?: string): Promise<void> {
     const fraction = this.parsePruneFraction(extra);
     if (fraction === null) {
       this.view.addSystemMessage("invalid prune fraction. use a number between 0 and 1.", "error");
@@ -173,28 +172,32 @@ export class SessionMaintenanceService {
       return;
     }
 
-    const prune = this.preparePruneCandidates(history, fraction);
-    if (prune.candidates.length === 0 || prune.totalTokens === 0) {
-      this.reportPruneNoop(editSummary, "no bash tool results or edit tool calls to prune.");
-      return;
-    }
+    try {
+      const prune = await this.preparePruneCandidates(history, fraction);
+      if (prune.candidates.length === 0 || prune.totalTokens === 0) {
+        this.reportPruneNoop(editSummary, "no bash tool results or edit tool calls to prune.");
+        return;
+      }
 
-    if (prune.targetTokens <= 0) {
-      this.reportPruneNoop(editSummary, "prune fraction is too small to remove anything.");
-      return;
-    }
+      if (prune.targetTokens <= 0) {
+        this.reportPruneNoop(editSummary, "prune fraction is too small to remove anything.");
+        return;
+      }
 
-    const toPrune = this.selectPruneCandidatesByStrategy(prune, strategy);
-    if (toPrune.length === 0) {
-      this.reportPruneNoop(editSummary, "no bash tool results or edit tool calls to prune.");
-      return;
-    }
+      const toPrune = this.selectPruneCandidatesByStrategy(prune, strategy);
+      if (toPrune.length === 0) {
+        this.reportPruneNoop(editSummary, "no bash tool results or edit tool calls to prune.");
+        return;
+      }
 
-    const applied = this.applyBashPruneCandidates(toPrune);
-    this.view.addSystemMessage(
-      this.buildPruneSummaryMessage(editSummary, applied.resultsPruned, applied.bytesPruned),
-      "success",
-    );
+      const applied = this.applyBashPruneCandidates(toPrune);
+      this.view.addSystemMessage(
+        this.buildPruneSummaryMessage(editSummary, applied.resultsPruned, applied.tokensPruned),
+        "success",
+      );
+    } catch (error) {
+      this.view.addSystemMessage(`prune failed: ${(error as Error).message}`, "error");
+    }
   }
 
   async pruneToolResultsSmart(extra?: string): Promise<void> {
@@ -217,7 +220,7 @@ export class SessionMaintenanceService {
     }
 
     try {
-      const prune = this.preparePruneCandidates(history, fraction);
+      const prune = await this.preparePruneCandidates(history, fraction);
       let editSummary: EditPruneSummary | undefined;
       const getEditSummary = (): EditPruneSummary => {
         if (!editSummary) {
@@ -241,7 +244,7 @@ export class SessionMaintenanceService {
       let handledFailure = false;
       const selectionOutcome = await this.runStreamingTask(
         async (signal) => {
-          const prompt = this.buildSmartPrunePrompt({
+          const prompt = await this.buildSmartPrunePrompt({
             history,
             targetTokens: prune.targetTokens,
             guidance: parsed.guidance,
@@ -271,7 +274,7 @@ export class SessionMaintenanceService {
             this.buildPruneSummaryMessage(
               getEditSummary(),
               applied.resultsPruned,
-              applied.bytesPruned,
+              applied.tokensPruned,
             ),
             "success",
           );
@@ -348,7 +351,10 @@ export class SessionMaintenanceService {
     return { fraction: DEFAULT_PRUNE_FRACTION, guidance: trimmed };
   }
 
-  private preparePruneCandidates(history: readonly Message[], fraction: number): PrunePreparation {
+  private async preparePruneCandidates(
+    history: readonly Message[],
+    fraction: number,
+  ): Promise<PrunePreparation> {
     const candidates: ToolResultPruneCandidate[] = [];
     let totalTokens = 0;
 
@@ -368,7 +374,7 @@ export class SessionMaintenanceService {
         continue;
       }
 
-      const tokens = bytesToTokens(inspection.textBytes);
+      const tokens = await this.engine.tokenCounter.countTextTokens(inspection.text);
       candidates.push({
         index,
         toolResult,
@@ -413,13 +419,13 @@ export class SessionMaintenanceService {
 
   private applyBashPruneCandidates(candidates: ToolResultPruneCandidate[]): {
     resultsPruned: number;
-    bytesPruned: number;
+    tokensPruned: number;
   } {
-    let bytesPruned = 0;
+    let tokensPruned = 0;
 
     for (const candidate of candidates) {
-      bytesPruned += candidate.bytes;
-      const noticeText = this.buildPrunedToolResultNotice(candidate.toolResult, candidate.bytes);
+      tokensPruned += candidate.tokens;
+      const noticeText = this.buildPrunedToolResultNotice(candidate.toolResult, candidate.tokens);
       const prunedResult: ToolResultMessage = {
         ...candidate.toolResult,
         content: [{ type: "text", text: noticeText }],
@@ -428,7 +434,7 @@ export class SessionMaintenanceService {
       this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, noticeText);
     }
 
-    return { resultsPruned: candidates.length, bytesPruned };
+    return { resultsPruned: candidates.length, tokensPruned };
   }
 
   private reportPruneNoop(editSummary: EditPruneSummary, fallbackMessage: string): void {
@@ -447,7 +453,7 @@ export class SessionMaintenanceService {
   private buildPruneSummaryMessage(
     editSummary: EditPruneSummary,
     bashResultsPruned: number = 0,
-    bashBytesPruned: number = 0,
+    bashTokensPruned: number = 0,
   ): string {
     const editSummaryText = this.formatPrunedEditSummary(editSummary);
 
@@ -458,7 +464,7 @@ export class SessionMaintenanceService {
       return `pruned ${editSummaryText}.`;
     }
 
-    const bashLabel = formatTokenEstimate(bashBytesPruned);
+    const bashLabel = formatTokenCountEstimate(bashTokensPruned);
     const bashNoun = bashResultsPruned === 1 ? "result" : "results";
     if (!editSummaryText) {
       return `pruned ${bashResultsPruned} bash tool ${bashNoun} (${bashLabel}).`;
@@ -641,8 +647,8 @@ export class SessionMaintenanceService {
     return collapsed.length > 0 ? collapsed.join("\n") : "(No textual changes)";
   }
 
-  private buildPrunedToolResultNotice(toolResult: ToolResultMessage, bytes: number): string {
-    const tokenEstimate = formatTokenEstimate(bytes);
+  private buildPrunedToolResultNotice(toolResult: ToolResultMessage, tokens: number): string {
+    const tokenEstimate = formatTokenCountEstimate(tokens);
     return `${PRUNED_TOOL_RESULT_PREFIX} ${toolResult.toolName} output removed (${tokenEstimate}). Re-run the command if needed.`;
   }
 
@@ -683,11 +689,11 @@ export class SessionMaintenanceService {
     };
   }
 
-  private buildSmartPrunePrompt(args: {
+  private async buildSmartPrunePrompt(args: {
     history: readonly Message[];
     targetTokens: number;
     guidance?: string;
-  }): string {
+  }): Promise<string> {
     const lines: string[] = [];
     lines.push(`Target pruning token budget: ${args.targetTokens}`);
     lines.push(
@@ -708,12 +714,12 @@ export class SessionMaintenanceService {
     lines.push("");
     lines.push("Conversation history:");
     lines.push("<conversation>");
-    lines.push(...this.formatPruneConversationHistory(args.history));
+    lines.push(...(await this.formatPruneConversationHistory(args.history)));
     lines.push("</conversation>");
     return lines.join("\n");
   }
 
-  private formatPruneConversationHistory(history: readonly Message[]): string[] {
+  private async formatPruneConversationHistory(history: readonly Message[]): Promise<string[]> {
     const lines: string[] = [];
 
     for (const message of history) {
@@ -751,7 +757,7 @@ export class SessionMaintenanceService {
 
       if (message.role === "toolResult") {
         const toolResult = message as ToolResultMessage;
-        lines.push(...this.buildPruneToolResultLines(toolResult));
+        lines.push(...(await this.buildPruneToolResultLines(toolResult)));
         lines.push("");
       }
     }
@@ -796,7 +802,7 @@ export class SessionMaintenanceService {
     return `<tool-call name="${name}" id="${id}" args="${args}" />`;
   }
 
-  private buildPruneToolResultLines(toolResult: ToolResultMessage): string[] {
+  private async buildPruneToolResultLines(toolResult: ToolResultMessage): Promise<string[]> {
     const lines: string[] = [];
     const name = this.escapeXmlAttribute(toolResult.toolName);
     const toolCallId = this.escapeXmlAttribute(toolResult.toolCallId);
@@ -809,7 +815,7 @@ export class SessionMaintenanceService {
       return lines;
     }
 
-    const preview = this.buildPruneToolResultPreview(inspection.text);
+    const preview = await this.buildPruneToolResultPreview(inspection.text);
     lines.push(
       `<tool-result name="${name}" tool_call_id="${toolCallId}" total_tokens="${preview.totalTokens}">`,
     );
@@ -820,13 +826,12 @@ export class SessionMaintenanceService {
     return lines;
   }
 
-  private buildPruneToolResultPreview(text: string): {
+  private async buildPruneToolResultPreview(text: string): Promise<{
     lines: string[];
     totalTokens: number;
-  } {
+  }> {
     const normalized = text.trimEnd();
-    const totalBytes = Buffer.byteLength(normalized, "utf8");
-    const totalTokens = bytesToTokens(totalBytes);
+    const totalTokens = await this.engine.tokenCounter.countTextTokens(normalized);
 
     if (totalTokens <= PRUNE_PREVIEW_MAX_TOKENS) {
       const escaped = this.escapeXml(normalized);
@@ -834,12 +839,11 @@ export class SessionMaintenanceService {
       return { lines, totalTokens };
     }
 
-    const head = truncateToBytesFromStart(normalized, tokensToBytes(PRUNE_PREVIEW_MAX_TOKENS));
-    const remainingTokens = Math.max(0, totalTokens - PRUNE_PREVIEW_MAX_TOKENS);
-    const suffix = `…${remainingTokens} more tokens…`;
-    const previewText =
-      head.endsWith("\n") || head === "" ? `${head}${suffix}` : `${head}\n${suffix}`;
-    const escaped = this.escapeXml(previewText);
+    const preview = await this.engine.tokenCounter.truncateTextToTokens(normalized, {
+      maxTokens: PRUNE_PREVIEW_MAX_TOKENS,
+      strategy: "head",
+    });
+    const escaped = this.escapeXml(preview.content);
     const lines = escaped ? escaped.split(/\r?\n/) : [""];
     return { lines, totalTokens };
   }

@@ -4,7 +4,6 @@ import { z } from "zod";
 import type { SubagentResult } from "../subagents/control_plane.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { truncateForTokens } from "../utils/truncate.js";
 import { parseToolArgs } from "../utils/zod.js";
 import {
   isMainToolDispatchContext,
@@ -71,26 +70,37 @@ function formatSubagentOutputLines(result: SubagentResult): string[] {
   return [header, ...body.split("\n")];
 }
 
-function formatSubagentOutputLinesForUi(result: SubagentResult, maxTokens: number): string[] {
+async function formatSubagentOutputLinesForUi(
+  result: SubagentResult,
+  maxTokens: number,
+  context: ToolDispatchContext,
+): Promise<string[]> {
   const header = `**${result.id}**`;
   const body = buildSubagentBody(result);
   if (!body.trim()) {
     return [header];
   }
-  const truncated = truncateForTokens(body, { maxTokens, strategy: "head" }).content.trimEnd();
-  const bodyLines = truncated ? truncated.split("\n") : [];
-  return [header, ...bodyLines];
+  const truncated = await context.tokenCounter.truncateTextToTokens(body, {
+    maxTokens,
+    strategy: "head",
+  });
+  const bodyLines = truncated.content.trimEnd();
+  return [header, ...(bodyLines ? bodyLines.split("\n") : [])];
 }
 
-function formatWaitOutput(results: SubagentResult[], maxTokensPerSubagent?: number): string {
+async function formatWaitOutput(
+  results: SubagentResult[],
+  context: ToolDispatchContext,
+  maxTokensPerSubagent?: number,
+): Promise<string> {
   const output: string[] = [];
-  results.forEach((result, index) => {
+  for (const [index, result] of results.entries()) {
     if (index > 0) output.push("");
     const lines = maxTokensPerSubagent
-      ? formatSubagentOutputLinesForUi(result, maxTokensPerSubagent)
+      ? await formatSubagentOutputLinesForUi(result, maxTokensPerSubagent, context)
       : formatSubagentOutputLines(result);
     output.push(...lines);
-  });
+  }
   return output.join("\n");
 }
 
@@ -174,8 +184,12 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
         run: (async (): Promise<ToolDispatchResult> => {
           try {
             const results = await controlPlane.waitFor(deduped, signal);
-            const resultText = formatWaitOutput(results);
-            const outputText = formatWaitOutput(results, WAIT_FOR_AGENT_OUTPUT_MAX_TOKENS);
+            const resultText = await formatWaitOutput(results, context);
+            const outputText = await formatWaitOutput(
+              results,
+              context,
+              WAIT_FOR_AGENT_OUTPUT_MAX_TOKENS,
+            );
             const hasFailures = results.some((result) => result.status !== "success");
             const statusText = formatSubagentStatusLine({
               costTotal: getWaitCostTotal(results),

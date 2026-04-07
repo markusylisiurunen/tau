@@ -17,6 +17,7 @@ export type {
   AsyncServerTelegramConfig,
   Config,
   SandboxConfig,
+  TokenCountingMethod,
 } from "./schema.js";
 export { getApiKeyForProvider, getMistralApiKey, getParallelApiKey, loadConfig } from "./schema.js";
 export { resolveThemeTokensById, resolveThemeTokensForAppearance } from "./theme_variants.js";

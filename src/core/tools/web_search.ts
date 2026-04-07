@@ -10,10 +10,12 @@ import {
   PARALLEL_API_BASE_URL,
   PARALLEL_BETA_HEADER,
 } from "../utils/parallel_api.js";
-import { TRUNCATION_MARKER, type TruncationResult, truncateForTokens } from "../utils/truncate.js";
+import type { TokenCountedTruncationResult } from "../utils/token_counting.js";
+import { TRUNCATION_MARKER } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type {
   ToolDefinition,
+  ToolDispatchContext,
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
   ToolUiEvent,
@@ -133,7 +135,10 @@ function estimateParallelSearchCostUsd(
   return 0.005 + 0.001 * additionalResults;
 }
 
-function formatSearchResults(response: ParallelSearchResponse): TruncationResult {
+async function formatSearchResults(
+  response: ParallelSearchResponse,
+  context: ToolDispatchContext,
+): Promise<TokenCountedTruncationResult> {
   const results = response.results;
   if (results.length === 0) {
     const content = "No results.";
@@ -148,6 +153,9 @@ function formatSearchResults(response: ParallelSearchResponse): TruncationResult
       outputBytes: bytes,
       maxLines: 1,
       maxTokens: 8192,
+      totalTokens: await context.tokenCounter.countTextTokens(content),
+      outputTokens: await context.tokenCounter.countTextTokens(content),
+      truncatedTokens: 0,
     };
   }
 
@@ -167,7 +175,7 @@ function formatSearchResults(response: ParallelSearchResponse): TruncationResult
   }
 
   const formatted = lines.join("\n");
-  return truncateForTokens(formatted, {
+  return await context.tokenCounter.truncateTextToTokens(formatted, {
     maxTokens: 8192,
     strategy: "middle",
   });
@@ -179,7 +187,8 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
     async dispatch(
       toolCall: ToolCall,
       _riskLevel: RiskLevel,
-      signal?: AbortSignal,
+      signal: AbortSignal,
+      context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const parsedArgs = parseArgs(toolCall.arguments);
       const objective = parsedArgs.ok ? parsedArgs.data.objective : "";
@@ -269,7 +278,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
 
             const response = responseParsed.data;
 
-            const resultText = formatSearchResults(response);
+            const resultText = await formatSearchResults(response, context);
             const toolResult: ToolResultMessage = createToolResult(
               toolCall,
               resultText.content,

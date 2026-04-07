@@ -4,6 +4,7 @@ import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
+import type { TokenCounter } from "../utils/token_counting.js";
 import {
   type HistoryEntry,
   type RewindCandidate,
@@ -113,6 +114,10 @@ export class CoreSession {
 
   get sessionId(): string {
     return this.engine.sessionIdValue;
+  }
+
+  get tokenCounter(): TokenCounter {
+    return this.engine.tokenCounter;
   }
 
   async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {

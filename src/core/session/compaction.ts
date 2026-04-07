@@ -5,6 +5,7 @@ import {
   partitionHistoryForCompaction,
 } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
+import type { TokenCounter } from "../utils/token_counting.js";
 
 export type SessionCompactionMode = "only-summary" | "with-last-assistant";
 
@@ -104,11 +105,12 @@ Rules:
 - Collapse tangents, retries, and pleasantries unless they materially affect decisions, blockers, or next steps.
 - Preserve exact file paths, function names, commands, and error messages.`;
 
-export function prepareSessionCompaction(
+export async function prepareSessionCompaction(
   history: readonly Message[],
-): SessionCompactionPreparation | undefined {
+  tokenCounter: TokenCounter,
+): Promise<SessionCompactionPreparation | undefined> {
   const { previousSummary, messagesToSummarize } = partitionHistoryForCompaction(history);
-  const formattedHistory = formatHistoryForCompaction(messagesToSummarize);
+  const formattedHistory = await formatHistoryForCompaction(messagesToSummarize, tokenCounter);
   if (!formattedHistory) {
     return undefined;
   }

@@ -188,12 +188,13 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `bashCommands`, `agentContextFiles`, `sandbox`, `subagents`, `modelSystemNotices`, `async`). This level is only included when cwd is inside home.
+- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `tokenCounting`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `bashCommands`, `agentContextFiles`, `sandbox`, `subagents`, `modelSystemNotices`, `async`). This level is only included when cwd is inside home.
   - `apiKeys` (optional): Map of provider id to API key (`apiKeys.<provider>`). Keys merge by provider id across config levels.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
   - `apiKeys.mistral` (optional): Mistral API key for `/speak` and Telegram audio transcription.
   - `defaultPersona` (optional): String persona reference used by default when starting the app. Accepts `<id>` or `<id>:<reasoning>` and matches are exact/case-sensitive. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
+  - `tokenCounting` (optional): Token counting backend for token-bounded truncation and tool-result sizing. Allowed values: `heuristic` (default) or `anthropic`. When set to `anthropic`, Tau uses Anthropic's `messages/count_tokens` endpoint and fails early if no Anthropic API key can be resolved.
   - `sandbox` (optional): Docker sandbox settings (see below).
   - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.
   - `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.

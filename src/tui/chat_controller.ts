@@ -2406,6 +2406,9 @@ export class ChatController {
     const plan = RELOAD_PLANS[scope];
     const configDeps = createDefaultConfigDeps();
     const runtime = await loadRuntimeConfig(this.deps.env.cwd(), configDeps);
+    if (runtime.fatalErrors.length > 0) {
+      throw new Error(runtime.fatalErrors.join(" "));
+    }
     const report = this.applyReloadPlan(plan, runtime);
 
     if (plan.projectContext) {
@@ -2716,6 +2719,7 @@ export class ChatController {
         captureTruncated,
         getBashOutputPolicy({ mode: "user" }),
         this.toolBackend,
+        this.engine.tokenCounter,
       );
 
       const userMessageText = formatBashUserMessageText({ command, truncationInfo });

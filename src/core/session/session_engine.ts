@@ -23,6 +23,7 @@ import { prependModelNotice, resolveModelNotice } from "../utils/model_notices.j
 import { streamModel } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
+import { createTokenCounter, type TokenCounter } from "../utils/token_counting.js";
 import {
   buildSessionCompactionMessage,
   buildSessionCompactionPrompt,
@@ -86,6 +87,7 @@ export class SessionEngine {
   private readonly deps: CoreDeps;
   private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
+  private tokenCounterInstance: TokenCounter;
   private cwd: string;
   private hostCwd: string;
   private home: string;
@@ -117,6 +119,7 @@ export class SessionEngine {
       authStorage,
       getConfig: () => this.config,
     });
+    this.tokenCounterInstance = this.createTokenCounter();
     this.subagentControlPlane = new SubagentControlPlane({
       onEvent: (event) => this.emitSubagentEvent(event),
     });
@@ -145,6 +148,7 @@ export class SessionEngine {
   setConfig(config: Config): void {
     this.config = config;
     this.modelResolver = this.createDispatchModelResolver();
+    this.tokenCounterInstance = this.createTokenCounter();
   }
 
   setPromptContext(context: {
@@ -261,8 +265,12 @@ export class SessionEngine {
     return this.sessionId;
   }
 
+  get tokenCounter(): TokenCounter {
+    return this.tokenCounterInstance;
+  }
+
   async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {
-    const preparation = prepareSessionCompaction(this.history);
+    const preparation = await prepareSessionCompaction(this.history, this.tokenCounter);
     if (!preparation) {
       throw new Error("no conversation to compact.");
     }
@@ -424,6 +432,14 @@ export class SessionEngine {
     return this.toolRegistry.getEnabledToolSchemas(this.persona.tools);
   }
 
+  private createTokenCounter(): TokenCounter {
+    return createTokenCounter({
+      method: this.config.tokenCounting,
+      getAnthropicApiKey: () =>
+        this.credentialResolver.getApiKey("anthropic", { sessionId: this.sessionId }),
+    });
+  }
+
   private createDispatchModelResolver(): ModelResolver {
     const cwd = this.hostCwd || this.cwd || this.deps.env.cwd();
     const home = this.home || this.deps.env.home() || cwd;
@@ -502,6 +518,7 @@ export class SessionEngine {
         toolRegistry: this.toolRegistry,
         modelResolver: this.modelResolver,
         authPath: this.authPath,
+        tokenCounter: this.tokenCounter,
         subagentControlPlane: this.subagentControlPlane,
       };
 

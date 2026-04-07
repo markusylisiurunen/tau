@@ -19,11 +19,14 @@ import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import { getVirtualConfigDefaults } from "./virtual_defaults.js";
 
+export type TokenCountingMethod = "heuristic" | "anthropic";
+
 export interface Config {
   apiKeys?: Record<string, string>;
   sandbox?: SandboxConfig;
   defaultPersona?: string;
   defaultRisk?: RiskLevel;
+  tokenCounting?: TokenCountingMethod;
   disableBuiltinPersonas?: boolean;
   disableBuiltinThemes?: boolean;
   defaultTheme?: string;
@@ -103,6 +106,7 @@ type ConfigDiagnostics = {
 
 const NonEmptyStringSchema = z.string().trim().min(1);
 const BooleanSchema = z.boolean();
+const TokenCountingMethodSchema = z.enum(["heuristic", "anthropic"]);
 const AgentContextFilesSchema = z.array(NonEmptyStringSchema);
 const ApiKeyProviderSchema = z.string();
 const ApiKeysSchema = z.object({}).catchall(z.unknown());
@@ -306,6 +310,11 @@ function validateConfigData(
 
   const scalarResult = parseOptionalFields(data, sourceLabel, [
     ["defaultRisk", RiskLevelSchema, "'defaultRisk' must be a valid risk level."],
+    [
+      "tokenCounting",
+      TokenCountingMethodSchema,
+      "'tokenCounting' must be one of: heuristic, anthropic.",
+    ],
     ["disableBuiltinPersonas", BooleanSchema, "'disableBuiltinPersonas' must be a boolean."],
     ["disableBuiltinThemes", BooleanSchema, "'disableBuiltinThemes' must be a boolean."],
     ["defaultTheme", NonEmptyStringSchema, "'defaultTheme' must be a non-empty string."],
@@ -849,6 +858,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
     if (config.defaultRisk !== undefined) {
       merged.defaultRisk = config.defaultRisk;
+    }
+
+    if (config.tokenCounting !== undefined) {
+      merged.tokenCounting = config.tokenCounting;
     }
 
     if (config.disableBuiltinPersonas !== undefined) {

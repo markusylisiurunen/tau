@@ -6,14 +6,10 @@ import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { formatCwd } from "../utils/format.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import { bytesToTokens, formatTokenEstimate } from "../utils/token.js";
+import { formatTokenCountEstimate } from "../utils/token.js";
+import type { TokenCountedTruncationResult, TokenCounter } from "../utils/token_counting.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
-import {
-  formatBytes,
-  TRUNCATION_MARKER,
-  type TruncationResult,
-  truncateForTokens,
-} from "../utils/truncate.js";
+import { formatBytes, TRUNCATION_MARKER } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
@@ -141,7 +137,7 @@ export type BashSafetyLevel = "read" | "write";
 
 export interface BashTruncationInfo {
   output: string;
-  model: TruncationResult;
+  model: TokenCountedTruncationResult;
   captureTruncated: boolean;
   gated?: boolean;
   fullOutputPath?: string;
@@ -188,9 +184,10 @@ export async function prepareBashOutput(
   captureTruncated: boolean,
   policy: BashOutputPolicy,
   backend: ToolExecutionBackend,
+  tokenCounter: TokenCounter,
 ): Promise<BashTruncationInfo> {
   const cleanOutput = stripAnsi(output);
-  const maxTruncation = truncateForTokens(cleanOutput, {
+  const maxTruncation = await tokenCounter.truncateTextToTokens(cleanOutput, {
     maxTokens: policy.maxTokens,
     strategy: "middle",
   });
@@ -200,7 +197,7 @@ export async function prepareBashOutput(
 
   if (policy.gateOnExcess && maxTruncation.truncated) {
     const previewTokens = policy.previewTokens ?? BASH_MODEL_DEFAULT_PREVIEW_TOKENS;
-    const previewTruncation = truncateForTokens(cleanOutput, {
+    const previewTruncation = await tokenCounter.truncateTextToTokens(cleanOutput, {
       maxTokens: previewTokens,
       strategy: "middle",
     });
@@ -231,8 +228,7 @@ export function formatBashToolResultText(args: {
 
   if (gated) {
     const preview = model.content;
-    const totalTokenEstimate = bytesToTokens(model.totalBytes);
-    const gateNote = `\n\n[Output gated: This command already ran and any side effects have persisted. Full output estimate: ~${totalTokenEstimate} tokens.${formatBashOutputFileHint({ path: fullOutputPath })} If you need more output from this truncated result, either read the saved file or re-run with maxOutputTokens set to ${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}. Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}. User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
+    const gateNote = `\n\n[Output gated: This command already ran and any side effects have persisted. Full output estimate: ${formatTokenCountEstimate(model.totalTokens)}.${formatBashOutputFileHint({ path: fullOutputPath })} If you need more output from this truncated result, either read the saved file or re-run with maxOutputTokens set to ${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}. Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}. User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
     const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
     return `${preview}${gateNote}${exitNote}`;
   }
@@ -244,7 +240,7 @@ export function formatBashToolResultText(args: {
   const outputForContext = model.content;
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
+      ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ${formatTokenCountEstimate(model.totalTokens)}).${formatBashOutputFileHint({ path: fullOutputPath })}]`
       : "";
   const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
   return `${outputForContext}${truncNote}${exitNote}`;
@@ -260,7 +256,7 @@ export function formatBashUserMessageText(args: {
   const outputForContext = model.content.trimEnd() || "(no output)";
   const truncNote =
     model.truncated || captureTruncated
-      ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
+      ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ${formatTokenCountEstimate(model.totalTokens)}).${formatBashOutputFileHint({ path: fullOutputPath })}]`
       : "";
   const bashContextText = `$ ${command}\n${outputForContext}${truncNote}`;
   return `Bash command output:\n${bashContextText}`;
@@ -310,7 +306,7 @@ export function buildBashUiText(args: {
   const durationLabel = formatDurationMs(durationMs);
   const lineLabel = hasOutput ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "no output";
   const bytesLabel = hasOutput ? formatBytes(outputBytes) : undefined;
-  const tokenLabel = hasOutput ? formatTokenEstimate(outputBytes) : undefined;
+  const tokenLabel = hasOutput ? formatTokenCountEstimate(model.outputTokens) : undefined;
   const summaryParts: string[] = [];
   if (model.truncated || captureTruncated) {
     summaryParts.push(TRUNCATION_MARKER);
@@ -480,6 +476,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               captureTruncated,
               outputPolicy,
               backend,
+              context.tokenCounter,
             );
             const toolText = formatBashToolResultText({ truncationInfo, exitCode });
             const isError = exitCode === null || exitCode !== 0;

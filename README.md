@@ -451,6 +451,7 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
   },
   "defaultPersona": "gpt-5.4-chat",
   "defaultRisk": "read-write",
+  "tokenCounting": "heuristic",
   "disableBuiltinPersonas": false,
   "disableBuiltinThemes": false,
   "defaultTheme": "solarized",
@@ -476,6 +477,8 @@ for built-in providers and features, the `apiKeys` field uses these keys: `anthr
 the `defaultPersona` field specifies which persona to use when starting the app. it accepts `<id>` or `<id>:<reasoning>`, and matching is exact/case-sensitive. the `--persona` flag overrides this setting.
 
 the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
+
+the `tokenCounting` field selects how tau estimates token usage for token-bounded truncation and tool-result sizing. use `"heuristic"` (default) to keep the existing byte heuristic, or `"anthropic"` to use Anthropic's `messages/count_tokens` endpoint through a minimal `fetch()` request. when set to `"anthropic"`, tau requires an Anthropic API key and fails startup or reload early if none can be resolved.
 
 the `defaultTheme` field sets the theme id to load at startup. it must be non-empty, and matching is exact/case-sensitive. if not specified, it defaults to `gold`.
 

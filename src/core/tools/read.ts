@@ -3,17 +3,14 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
+import type { TokenCountedTruncationResult } from "../utils/token_counting.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
-import {
-  TRUNCATION_MARKER,
-  type TruncationResult,
-  truncateForTokens,
-  truncateToBytesFromStart,
-} from "../utils/truncate.js";
+import { TRUNCATION_MARKER, truncateToBytesFromStart } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
+  ToolDispatchContext,
   ToolDispatchResult,
   ToolUiEvent,
   ToolUiLine,
@@ -77,7 +74,7 @@ function formatRange(startLine: number, endLine: number | undefined): string {
 
 function formatReadToolResultText(args: {
   content: string;
-  truncation: TruncationResult;
+  truncation: TokenCountedTruncationResult;
   captureTruncated: boolean;
   totalLines: number;
 }): string {
@@ -101,7 +98,7 @@ function formatReadToolResultText(args: {
 }
 
 function buildReadUiText(args: {
-  modelTruncation: TruncationResult;
+  modelTruncation: TokenCountedTruncationResult;
   startLine: number;
   endLine?: number;
   fullText: string;
@@ -135,7 +132,12 @@ function buildReadUiText(args: {
 export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: READ_TOOL,
-    async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+    async dispatch(
+      toolCall: ToolCall,
+      _riskLevel: RiskLevel,
+      _signal: AbortSignal,
+      context: ToolDispatchContext,
+    ): Promise<ToolDispatchResult> {
       const parsedArgs = parseReadArgs(toolCall.arguments);
       const path = parsedArgs.ok ? parsedArgs.data.path : "";
       const headerTarget = path || "(invalid arguments)";
@@ -187,7 +189,7 @@ export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDef
           ? truncateToBytesFromStart(selected, READ_MAX_CAPTURE_BYTES)
           : selected;
 
-        const modelTruncation = truncateForTokens(captured, {
+        const modelTruncation = await context.tokenCounter.truncateTextToTokens(captured, {
           maxTokens: READ_TOOL_MAX_TOKENS,
           strategy: "head",
         });

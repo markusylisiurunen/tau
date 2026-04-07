@@ -57,8 +57,8 @@ export interface CommandDispatchContext {
   diff: (argsText: string) => Promise<void> | void;
   compactSummaryOnly: (extra?: string) => Promise<void>;
   compactSummaryAndLast: (extra?: string) => Promise<void>;
-  pruneEarliest: (extra?: string) => void;
-  pruneLargest: (extra?: string) => void;
+  pruneEarliest: (extra?: string) => Promise<void> | void;
+  pruneLargest: (extra?: string) => Promise<void> | void;
   pruneSmart: (extra?: string) => Promise<void> | void;
   reload: () => Promise<void>;
   speak: () => Promise<void> | void;

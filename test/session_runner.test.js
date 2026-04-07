@@ -47,11 +47,30 @@ describe("session runner tool dispatch context", () => {
     };
 
     const toolRegistry = new ToolRegistry([definition]);
+    const tokenCounter = {
+      method: "heuristic",
+      countTextTokens: async () => 0,
+      truncateTextToTokens: async (content, options) => ({
+        content,
+        truncated: false,
+        truncatedBy: null,
+        totalLines: content ? content.split("\n").length : 0,
+        totalBytes: Buffer.byteLength(content, "utf-8"),
+        outputLines: content ? content.split("\n").length : 0,
+        outputBytes: Buffer.byteLength(content, "utf-8"),
+        maxLines: content ? content.split("\n").length : 0,
+        maxTokens: options.maxTokens,
+        totalTokens: 0,
+        outputTokens: 0,
+        truncatedTokens: 0,
+      }),
+    };
     const dispatchContext = {
       scope: "subagent",
       config: {},
       toolRegistry,
       authPath: "/tmp/auth.json",
+      tokenCounter,
       turnUserHistoryEntryId: "history-1",
       cwd: "/repo/subagent",
       subagentContext: {

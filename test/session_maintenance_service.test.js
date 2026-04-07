@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../dist/core/tools/tool_names.js";
+import { createTokenCounter } from "../dist/core/utils/token_counting.js";
 import { SessionMaintenanceService } from "../dist/tui/chat_controller/session_maintenance_service.js";
+
+const tokenCounter = createTokenCounter({
+  method: "heuristic",
+  getAnthropicApiKey: async () => undefined,
+});
 
 function createService(options = {}) {
   const history = options.history ?? [];
@@ -11,6 +17,7 @@ function createService(options = {}) {
     compact:
       options.compact ??
       (async () => ({ compactionMessage: "summary", includedLastAssistant: false })),
+    tokenCounter,
     replaceMessage: (index, message) => {
       history[index] = message;
     },
@@ -209,7 +216,7 @@ describe("SessionMaintenanceService", () => {
     });
   });
 
-  it("prunes largest bash result first", () => {
+  it("prunes largest bash result first", async () => {
     const history = [
       {
         role: "toolResult",
@@ -231,7 +238,7 @@ describe("SessionMaintenanceService", () => {
 
     const { service } = createService({ history });
 
-    service.pruneToolResults("largest", "0.5");
+    await service.pruneToolResults("largest", "0.5");
 
     expect(history[0].content[0].text).toBe("tiny");
     expect(history[1].content[0].text).toContain("[Tool result pruned] bash output removed");

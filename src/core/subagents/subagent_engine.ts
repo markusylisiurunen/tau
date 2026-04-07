@@ -33,6 +33,7 @@ import {
   getToolResultFirstLine,
   normalizeOneLine,
 } from "../utils/subagent_utils.js";
+import { createTokenCounter } from "../utils/token_counting.js";
 import type { SubagentRuntimeConfig, SubagentToolName, SubagentUsageSnapshot } from "./types.js";
 
 export type SubagentProgressEvent = {
@@ -116,6 +117,12 @@ export async function runSubagent(options: {
     throw new Error("sub-agent aborted");
   }
 
+  const sessionId = options.sessionId ?? `tau-subagent-${runtimeConfig.name}-${randomUUID()}`;
+  const tokenCounter = createTokenCounter({
+    method: config.tokenCounting,
+    getAnthropicApiKey: () => credentialResolver.getApiKey("anthropic", { sessionId }),
+  });
+
   const baseBackend = options.backend ?? createLocalToolExecutionBackend();
   const backend = scopeToolExecutionBackend(baseBackend, runtimeConfig.workingDirectory);
   const allowedTools = runtimeConfig.tools;
@@ -168,8 +175,6 @@ export async function runSubagent(options: {
 
   const formatIssueSummary = (): string =>
     issues.length > 0 ? ` (Recent issues: ${issues.slice(-3).join("; ")})` : "";
-
-  const sessionId = options.sessionId ?? `tau-subagent-${runtimeConfig.name}-${randomUUID()}`;
 
   for (let subturn = 1; subturn <= maxSubturns && !signal.aborted; subturn++) {
     emitProgress("assistant: thinking");
@@ -322,6 +327,7 @@ export async function runSubagent(options: {
       config,
       toolRegistry,
       authPath,
+      tokenCounter,
       turnUserHistoryEntryId,
       cwd: runtimeConfig.workingDirectory,
       modelResolver,

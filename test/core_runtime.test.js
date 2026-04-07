@@ -23,10 +23,16 @@ import {
   formatHistoryForCompaction,
   partitionHistoryForCompaction,
 } from "../dist/core/utils/compact.js";
+import { createTokenCounter } from "../dist/core/utils/token_counting.js";
 import {
   buildEnvironmentTag,
   buildProjectContextBlock,
 } from "../dist/core/utils/context_builder.js";
+
+const tokenCounter = createTokenCounter({
+  method: "heuristic",
+  getAnthropicApiKey: async () => undefined,
+});
 
 describe("command registry", () => {
   it("parses and dispatches commands", async () => {
@@ -536,7 +542,7 @@ describe("session prompt composer", () => {
 });
 
 describe("summary formatting", () => {
-  it("omits thinking, uses marker-newline format, and compacts edit calls", () => {
+  it("omits thinking, uses marker-newline format, and compacts edit calls", async () => {
     const history = [
       {
         role: "user",
@@ -577,7 +583,7 @@ describe("summary formatting", () => {
       },
     ];
 
-    const summary = formatHistoryForCompaction(history);
+    const summary = await formatHistoryForCompaction(history, tokenCounter);
 
     expect(summary).toContain("[User]:\nhello");
     expect(summary).toContain("[Assistant]:\nhi");
@@ -593,7 +599,7 @@ describe("summary formatting", () => {
     expect(summary).not.toContain('newText="const after = 2;"');
   });
 
-  it("omits unchanged edit regions only when they are long", () => {
+  it("omits unchanged edit regions only when they are long", async () => {
     const unchangedPrefix = Array.from({ length: 12 }, (_, index) => `pre ${index}`);
     const unchangedSuffix = Array.from({ length: 12 }, (_, index) => `post ${index}`);
     const history = [
@@ -615,7 +621,7 @@ describe("summary formatting", () => {
       },
     ];
 
-    const summary = formatHistoryForCompaction(history);
+    const summary = await formatHistoryForCompaction(history, tokenCounter);
 
     expect(summary).toContain("… 4 unchanged line(s) omitted …");
     expect(summary).toContain("  pre 4");
@@ -624,7 +630,7 @@ describe("summary formatting", () => {
     expect(summary).not.toContain("  post 11");
   });
 
-  it("limits unchanged lines between edit hunks to at most 8", () => {
+  it("limits unchanged lines between edit hunks to at most 8", async () => {
     const middle = Array.from({ length: 14 }, (_, index) => `middle ${index}`);
     const oldText = ["before 1", ...middle, "before 2"].join("\n");
     const newText = ["after 1", ...middle, "after 2"].join("\n");
@@ -648,7 +654,7 @@ describe("summary formatting", () => {
       },
     ];
 
-    const summary = formatHistoryForCompaction(history);
+    const summary = await formatHistoryForCompaction(history, tokenCounter);
 
     expect(summary).toContain("  middle 0");
     expect(summary).toContain("  middle 3");
@@ -659,7 +665,7 @@ describe("summary formatting", () => {
     expect(summary).not.toContain("  middle 9");
   });
 
-  it("middle-truncates bash tool results to 4096 tokens", () => {
+  it("middle-truncates bash tool results to 4096 tokens", async () => {
     const longOutput = "a".repeat(30000);
     const history = [
       {
@@ -672,7 +678,7 @@ describe("summary formatting", () => {
       },
     ];
 
-    const summary = formatHistoryForCompaction(history);
+    const summary = await formatHistoryForCompaction(history, tokenCounter);
 
     expect(summary).toContain(`[Tool result]: ${TOOL_NAME_BASH} (ok)`);
     expect(summary).toContain("tokens truncated");

@@ -91,6 +91,7 @@ describe("config paths", () => {
         join(fx.home, ".config", "tau", "config.json"),
         JSON.stringify({
           defaultRisk: "read-only",
+          tokenCounting: "heuristic",
           apiKeys: { openai: "global", anthropic: "anthropic-key", mistral: "mistral-key" },
           sandbox: { image: "sandbox-base" },
           bashCommands: [{ id: "check", cmd: "npm run check" }],
@@ -114,6 +115,7 @@ describe("config paths", () => {
         join(repo, ".tau", "config.json"),
         JSON.stringify({
           defaultRisk: "read-write",
+          tokenCounting: "anthropic",
           apiKeys: { openai: "repo", google: "google-key" },
           sandbox: { pruneAfterHours: 12 },
           bashCommands: [
@@ -153,6 +155,7 @@ describe("config paths", () => {
 
       const config = loadConfig(nested, deps);
       expect(config.defaultRisk).toBe("read-write");
+      expect(config.tokenCounting).toBe("anthropic");
       expect(config.defaultPersona).toBe("custom-persona");
       expect(config.apiKeys).toEqual({
         openai: "repo",
@@ -247,6 +250,7 @@ describe("config paths", () => {
         join(fx.repo, ".tau", "config.json"),
         JSON.stringify({
           defaultRisk: "invalid",
+          tokenCounting: "bad-value",
           disableBuiltinPersonas: true,
           disableBuiltinThemes: "yes",
           defaultTheme: " midnight ",
@@ -263,11 +267,15 @@ describe("config paths", () => {
       const modelResolver = loadModelResolver({ deps, levels });
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
       expect(result.config.defaultRisk).toBe("read-only");
+      expect(result.config.tokenCounting).toBeUndefined();
       expect(result.config.disableBuiltinPersonas).toBe(true);
       expect(result.config.disableBuiltinThemes).toBeUndefined();
       expect(result.config.defaultTheme).toBe("midnight");
       expect(result.errors).toContain(
         `${join(fx.repo, ".tau", "config.json")}: 'defaultRisk' must be a valid risk level.`,
+      );
+      expect(result.errors).toContain(
+        `${join(fx.repo, ".tau", "config.json")}: 'tokenCounting' must be one of: heuristic, anthropic.`,
       );
       expect(result.errors).toContain(
         `${join(fx.repo, ".tau", "config.json")}: 'disableBuiltinThemes' must be a boolean.`,

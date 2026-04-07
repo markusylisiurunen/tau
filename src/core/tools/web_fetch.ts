@@ -10,10 +10,12 @@ import {
   PARALLEL_API_BASE_URL,
   PARALLEL_BETA_HEADER,
 } from "../utils/parallel_api.js";
-import { TRUNCATION_MARKER, type TruncationResult, truncateForTokens } from "../utils/truncate.js";
+import type { TokenCountedTruncationResult } from "../utils/token_counting.js";
+import { TRUNCATION_MARKER } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type {
   ToolDefinition,
+  ToolDispatchContext,
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
   ToolUiEvent,
@@ -138,7 +140,10 @@ function estimateParallelExtractCostUsd(urlCount: number): number {
   return 0.001 * urlCount;
 }
 
-function formatExtractResults(response: ExtractResponse): TruncationResult {
+async function formatExtractResults(
+  response: ExtractResponse,
+  context: ToolDispatchContext,
+): Promise<TokenCountedTruncationResult> {
   const results = response.results;
   const errors = response.errors;
 
@@ -155,6 +160,9 @@ function formatExtractResults(response: ExtractResponse): TruncationResult {
       outputBytes: bytes,
       maxLines: 1,
       maxTokens: 16384,
+      totalTokens: await context.tokenCounter.countTextTokens(content),
+      outputTokens: await context.tokenCounter.countTextTokens(content),
+      truncatedTokens: 0,
     };
   }
 
@@ -195,7 +203,7 @@ function formatExtractResults(response: ExtractResponse): TruncationResult {
   }
 
   const formatted = lines.join("\n");
-  return truncateForTokens(formatted, {
+  return await context.tokenCounter.truncateTextToTokens(formatted, {
     maxTokens: 16384,
     strategy: "middle",
   });
@@ -207,7 +215,8 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
     async dispatch(
       toolCall: ToolCall,
       _riskLevel: RiskLevel,
-      signal?: AbortSignal,
+      signal: AbortSignal,
+      context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const parsedArgs = parseArgs(toolCall.arguments);
       const url = parsedArgs.ok ? parsedArgs.data.url : "";
@@ -292,7 +301,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
             }
 
             const response = responseParsed.data;
-            const resultText = formatExtractResults(response);
+            const resultText = await formatExtractResults(response, context);
             const toolResult: ToolResultMessage = createToolResult(
               toolCall,
               resultText.content,

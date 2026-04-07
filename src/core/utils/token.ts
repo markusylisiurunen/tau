@@ -4,6 +4,11 @@
 // see: https://cookbook.openai.com/examples/gpt-5/gpt-5-1-codex-max_prompting_guide
 export const BYTES_PER_TOKEN = 6;
 
+export type TokenEstimate = {
+  tokens: number;
+  text: string;
+};
+
 export function tokensToBytes(tokens: number): number {
   return tokens * BYTES_PER_TOKEN;
 }
@@ -12,8 +17,12 @@ export function bytesToTokens(bytes: number): number {
   return Math.floor(bytes / BYTES_PER_TOKEN);
 }
 
+export function formatTokenCountEstimate(tokens: number): string {
+  const normalized = Math.max(0, tokens);
+  const label = normalized === 1 ? "token" : "tokens";
+  return `~${normalized} ${label}`;
+}
+
 export function formatTokenEstimate(bytes: number): string {
-  const tokens = Math.max(0, bytesToTokens(bytes));
-  const label = tokens === 1 ? "token" : "tokens";
-  return `~${tokens} ${label}`;
+  return formatTokenCountEstimate(bytesToTokens(bytes));
 }

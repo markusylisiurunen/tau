@@ -6,6 +6,12 @@ import {
   prepareBashOutput,
 } from "../dist/core/tools/bash.js";
 import { tokensToBytes } from "../dist/core/utils/token.js";
+import { createTokenCounter } from "../dist/core/utils/token_counting.js";
+
+const tokenCounter = createTokenCounter({
+  method: "heuristic",
+  getAnthropicApiKey: async () => undefined,
+});
 
 const backend = {
   async runBash() {
@@ -28,7 +34,7 @@ describe("bash output policy", () => {
   it("gates default output and includes maxOutputTokens instructions", async () => {
     const policy = getBashOutputPolicy({ mode: "model" });
     const output = "a".repeat(tokensToBytes(policy.maxTokens) + 12);
-    const truncationInfo = await prepareBashOutput(output, false, policy, backend);
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend, tokenCounter);
 
     expect(truncationInfo.gated).toBe(true);
     expect(truncationInfo.output).toContain("tokens truncated");
@@ -42,7 +48,7 @@ describe("bash output policy", () => {
   it("skips gating when output is under the default limit", async () => {
     const policy = getBashOutputPolicy({ mode: "model" });
     const output = "ok".repeat(10);
-    const truncationInfo = await prepareBashOutput(output, false, policy, backend);
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend, tokenCounter);
 
     expect(truncationInfo.gated).toBeUndefined();
     expect(truncationInfo.model.truncated).toBe(false);
@@ -56,7 +62,7 @@ describe("bash output policy", () => {
       hasMaxOutputTokens: true,
     });
     const output = "b".repeat(tokensToBytes(policy.maxTokens) + 12);
-    const truncationInfo = await prepareBashOutput(output, false, policy, backend);
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend, tokenCounter);
 
     expect(truncationInfo.gated).toBeUndefined();
     expect(truncationInfo.model.truncated).toBe(true);
@@ -69,7 +75,7 @@ describe("bash output policy", () => {
       hasMaxOutputTokens: true,
     });
     const output = "d".repeat(tokensToBytes(8192) + 12);
-    const truncationInfo = await prepareBashOutput(output, false, policy, backend);
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend, tokenCounter);
 
     expect(truncationInfo.gated).toBe(true);
   });
@@ -77,7 +83,7 @@ describe("bash output policy", () => {
   it("uses a larger limit for user mode", async () => {
     const policy = getBashOutputPolicy({ mode: "user" });
     const output = "c".repeat(tokensToBytes(policy.maxTokens) - 6);
-    const truncationInfo = await prepareBashOutput(output, false, policy, backend);
+    const truncationInfo = await prepareBashOutput(output, false, policy, backend, tokenCounter);
 
     expect(truncationInfo.model.truncated).toBe(false);
   });

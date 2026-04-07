@@ -35,6 +35,7 @@ export type {
   ThemeAppearance,
   ThemeDefinition,
   ThemeVariantTokens,
+  TokenCountingMethod,
   VirtualBundle,
 } from "./config/index.js";
 export {

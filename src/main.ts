@@ -226,6 +226,7 @@ let personas: Persona[];
 let prompts: PromptTemplate[];
 let skills: Skill[];
 let themes: ThemeDefinition[] = [];
+let runtimeFatalErrors: string[] = [];
 
 if (argv[0] === "auth") {
   if (argv.includes("--help") || argv.includes("-h")) {
@@ -403,6 +404,7 @@ try {
   skills = runtime.skills;
   themes = runtime.themes;
   bashCommands = runtime.bashCommands;
+  runtimeFatalErrors = runtime.fatalErrors;
   if (runtime.warnings.length > 0) {
     // eslint-disable-next-line no-console
     console.error("config warnings:");
@@ -461,6 +463,18 @@ try {
 if (cli.help) {
   printHelp(personas);
   process.exit(0);
+}
+
+if (runtimeFatalErrors.length > 0) {
+  // eslint-disable-next-line no-console
+  console.error("config errors:");
+  for (const error of runtimeFatalErrors) {
+    // eslint-disable-next-line no-console
+    console.error(`- ${error}`);
+  }
+  // eslint-disable-next-line no-console
+  console.error("");
+  process.exit(1);
 }
 
 if (isRpcSubcommand && cli.caffeinated) {

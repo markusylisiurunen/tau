@@ -3,12 +3,14 @@ import { Type } from "@sinclair/typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
+import type { TokenCountedTruncationResult } from "../utils/token_counting.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
-import { TRUNCATION_MARKER, type TruncationResult, truncateForTokens } from "../utils/truncate.js";
+import { TRUNCATION_MARKER } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
+  ToolDispatchContext,
   ToolDispatchResult,
   ToolDispatchResultWithPhases,
   ToolUiEvent,
@@ -165,7 +167,7 @@ function buildGrepArgs(raw: z.infer<typeof grepArgsSchema>): {
 }
 
 function formatGrepToolResultText(args: {
-  output: TruncationResult;
+  output: TokenCountedTruncationResult;
   exitCode: number | null;
   captureTruncated: boolean;
 }): string {
@@ -200,7 +202,7 @@ function formatGrepToolResultText(args: {
 }
 
 function buildGrepUiText(args: {
-  modelTruncation: TruncationResult;
+  modelTruncation: TokenCountedTruncationResult;
   fullText: string;
   captureTruncated: boolean;
 }): ToolUiText {
@@ -233,7 +235,8 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
     async dispatch(
       toolCall: ToolCall,
       _riskLevel: RiskLevel,
-      signal?: AbortSignal,
+      signal: AbortSignal,
+      context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const parsedArgs = parseGrepArgs(toolCall.arguments);
       const pattern = parsedArgs.ok ? parsedArgs.data.pattern : "";
@@ -295,7 +298,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
 
           const { output, exitCode, captureTruncated } = result;
 
-          const outputModel = truncateForTokens(output, {
+          const outputModel = await context.tokenCounter.truncateTextToTokens(output, {
             maxTokens: GREP_TOOL_MAX_TOKENS,
             strategy: "head",
           });

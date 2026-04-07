@@ -4,6 +4,7 @@ import type { ModelResolver } from "../models/catalog.js";
 import type { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentName, SubagentStatus } from "../subagents/types.js";
 import type { Persona, RiskLevel } from "../types.js";
+import type { TokenCounter } from "../utils/token_counting.js";
 import type { BashTruncationInfo } from "./bash.js";
 
 type ToolUiEventWithHeaderTarget = {
@@ -272,6 +273,7 @@ type ToolDispatchBaseContext = {
   toolRegistry: ToolRegistry;
   modelResolver: ModelResolver;
   authPath: string;
+  tokenCounter: TokenCounter;
 };
 
 export type MainToolDispatchContext = ToolDispatchBaseContext & {

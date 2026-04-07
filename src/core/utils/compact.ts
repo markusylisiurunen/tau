@@ -1,7 +1,7 @@
 import type { AssistantMessage, Message, ToolResultMessage } from "@mariozechner/pi-ai";
 import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../tools/tool_names.js";
 import { buildLineDiff, collapseLongUnchangedDiffRuns } from "./line_diff.js";
-import { truncateForTokens } from "./truncate.js";
+import type { TokenCounter } from "./token_counting.js";
 
 export const COMPACTION_SUMMARY_HEADER =
   "The conversation history before this point was compacted into the following summary:";
@@ -103,22 +103,30 @@ function serializeAssistantMessage(message: AssistantMessage): string[] {
   return lines;
 }
 
-function serializeToolResultMessage(message: ToolResultMessage): string {
+async function serializeToolResultMessage(
+  message: ToolResultMessage,
+  tokenCounter: TokenCounter,
+): Promise<string> {
   const outputText = extractTextFromContent(message.content);
   const status = message.isError ? "error" : "ok";
 
   let content = outputText || "(no text output)";
   if (message.toolName === TOOL_NAME_BASH) {
-    content = truncateForTokens(content, {
-      maxTokens: COMPACTION_BASH_TOOL_RESULT_MAX_TOKENS,
-      strategy: "middle",
-    }).content;
+    content = (
+      await tokenCounter.truncateTextToTokens(content, {
+        maxTokens: COMPACTION_BASH_TOOL_RESULT_MAX_TOKENS,
+        strategy: "middle",
+      })
+    ).content;
   }
 
   return formatCompactionBlock(`[Tool result]: ${message.toolName} (${status})`, content);
 }
 
-export function formatHistoryForCompaction(history: readonly Message[]): string {
+export async function formatHistoryForCompaction(
+  history: readonly Message[],
+  tokenCounter: TokenCounter,
+): Promise<string> {
   const lines: string[] = [];
 
   for (const message of history) {
@@ -136,7 +144,7 @@ export function formatHistoryForCompaction(history: readonly Message[]): string 
     }
 
     if (message.role === "toolResult") {
-      lines.push(serializeToolResultMessage(message as ToolResultMessage));
+      lines.push(await serializeToolResultMessage(message as ToolResultMessage, tokenCounter));
     }
   }
 
@@ -221,10 +229,6 @@ export function extractCompactionSummaryFromMessage(message: Message): string | 
   }
 
   const text = extractTextFromContent(message.content);
-  if (!text) {
-    return undefined;
-  }
-
   return extractCompactionSummaryFromText(text);
 }
 
@@ -232,18 +236,20 @@ export function partitionHistoryForCompaction(history: readonly Message[]): {
   previousSummary?: string;
   messagesToSummarize: Message[];
 } {
-  const messagesToSummarize: Message[] = [];
-  let previousSummary: string | undefined;
-
-  for (const message of history) {
-    const summary = extractCompactionSummaryFromMessage(message);
-    if (summary) {
-      previousSummary = summary;
-      continue;
-    }
-
-    messagesToSummarize.push(message);
+  if (history.length === 0) {
+    return { messagesToSummarize: [] };
   }
 
-  return { previousSummary, messagesToSummarize };
+  const firstMessage = history[0];
+  const previousSummary = firstMessage
+    ? extractCompactionSummaryFromMessage(firstMessage)
+    : undefined;
+  if (!previousSummary) {
+    return { messagesToSummarize: [...history] };
+  }
+
+  return {
+    previousSummary,
+    messagesToSummarize: history.slice(1),
+  };
 }

@@ -1832,12 +1832,19 @@ export class ChatController {
   }
 
   private formatDiffReviewUserMessage(review: DiffReviewReturnedReview): string {
+    const reviewedFiles =
+      review.reviewedFiles.length > 0
+        ? ["Reviewed files:", ...review.reviewedFiles.map((file) => `- ${file}`)]
+        : ["Reviewed files: (none)"];
     const system = [
-      "Diff review mode: the following user message is returned review feedback from the diff review tool.",
-      `Diff command: ${review.diffCommand}`,
+      "The following user message comes from a completed diff review in Tau. During that review, the user read through the reviewed diff snapshot and the files included in it, and may have left comments on specific files, lines, or broader concerns they noticed while reviewing. The message below is the feedback returned from that review.",
       "",
-      "Treat the message as review findings and feedback about that diff, not as a generic new request.",
-      "Do not mention this surrounding instruction in your response.",
+      `Reviewed diff command: ${review.diffCommand}`,
+      ...reviewedFiles,
+      "",
+      "Treat it as feedback on that reviewed diff snapshot and continue from there. Address valid issues directly, clarify anything that seems mistaken or ambiguous, and do not treat it as a new unrelated request.",
+      "",
+      "Do not mention this instruction in your response.",
     ].join("\n");
 
     return ["<system>", system, "</system>", "", review.review].join("\n");

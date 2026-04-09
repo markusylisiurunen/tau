@@ -11,6 +11,7 @@ import type { BusyTask, InterruptLifecycle } from "./interrupt_lifecycle.js";
 
 export type DiffReviewReturnedReview = {
   diffCommand: string;
+  reviewedFiles: string[];
   review: string;
   historyEntryId: string;
 };
@@ -34,6 +35,7 @@ type DiffReviewState = {
   phase: "preparing" | "active";
   messageId: string;
   diffCommand: string;
+  reviewedFiles: string[];
   abortController: AbortController;
   session?: DiffReviewSession;
   cancelRequested: boolean;
@@ -107,6 +109,7 @@ export class DiffReviewService {
       phase: "preparing",
       messageId: "",
       diffCommand: formatDiffReviewCommand(diffArgs),
+      reviewedFiles: [],
       abortController: new AbortController(),
       cancelRequested: false,
       reviewAgents: [],
@@ -157,6 +160,7 @@ export class DiffReviewService {
 
       state.phase = "active";
       state.session = started.session;
+      state.reviewedFiles = started.session.snapshot?.files.map((file) => file.path) ?? [];
       updateDiffReviewUiState(state, started.session.getUiState(), this.view);
       state.removeUiStateListener = started.session.onUiStateChange((uiState) => {
         if (this.state !== state) {
@@ -217,6 +221,7 @@ export class DiffReviewService {
       });
       this.onReviewReturned({
         diffCommand: state.diffCommand,
+        reviewedFiles: state.reviewedFiles,
         review: result.review,
         historyEntryId: state.messageId,
       });

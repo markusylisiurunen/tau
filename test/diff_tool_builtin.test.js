@@ -321,7 +321,7 @@ describe("built-in diff tool", () => {
       await expect(session.result).resolves.toEqual({
         status: "returned",
         review:
-          "## thread 1\n\n`src/a.ts:1 (new)`\n\n**user**\n\nWhat changed?\n\n**user**\n\nAny risks?\n\n**agent**\n\n" +
+          "The notes below include thread transcripts from the review. In those transcripts:\n\n- **user** is a comment written by the reviewer\n- **agent** is a generated reply within that review thread\n\nTreat thread dialogue as supporting review context, not automatically as a final conclusion.\n\n---\n\n## thread 1\n\n`src/a.ts:1 (new)`\n\n**user**\n\nWhat changed?\n\n**user**\n\nAny risks?\n\n**agent**\n\n" +
           askedThread.state.threads[0].messages[2].text,
       });
       await server.waitUntilClosed();

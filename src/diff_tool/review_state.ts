@@ -191,7 +191,16 @@ export class DiffToolReviewStateStore {
       return "(no comments)";
     }
 
-    return unresolvedThreads
+    const guidance = [
+      "The notes below include thread transcripts from the review. In those transcripts:",
+      "",
+      "- **user** is a comment written by the reviewer",
+      "- **agent** is a generated reply within that review thread",
+      "",
+      "Treat thread dialogue as supporting review context, not automatically as a final conclusion.",
+    ].join("\n");
+
+    const threads = unresolvedThreads
       .map((thread, index) => {
         const location = `${thread.filePath}:${thread.lineNumber} (${thread.side === "additions" ? "new" : "old"})`;
         const body = thread.messages
@@ -203,6 +212,8 @@ export class DiffToolReviewStateStore {
         return `## thread ${index + 1}\n\n\`${location}\`\n\n${body}`;
       })
       .join("\n\n---\n\n");
+
+    return `${guidance}\n\n---\n\n${threads}`;
   }
 
   private findThreadInternal(id: string): DiffToolCommentThread | undefined {

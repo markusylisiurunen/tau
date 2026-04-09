@@ -1,5 +1,5 @@
 import { ChevronsDownUp, ChevronsUpDown, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { CommentThread } from "../comments.js";
 import { MarkdownContent } from "./markdown_content.js";
 import "./thread_card.css";
@@ -12,7 +12,7 @@ type ThreadCardProps = {
   onToggleCollapsed: (collapsed: boolean) => void;
 };
 
-export function ThreadCard({
+export const ThreadCard = memo(function ThreadCard({
   thread,
   onAddReply,
   onRequestAgent,
@@ -193,4 +193,4 @@ export function ThreadCard({
       </div>
     </div>
   );
-}
+});

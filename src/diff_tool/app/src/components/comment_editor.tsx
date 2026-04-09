@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import "./comment_editor.css";
 
 type CommentEditorProps = {
@@ -8,7 +8,7 @@ type CommentEditorProps = {
   onCancel: () => void;
 };
 
-export function CommentEditor({
+export const CommentEditor = memo(function CommentEditor({
   body,
   onChange,
   onSave,
@@ -52,4 +52,4 @@ export function CommentEditor({
       </div>
     </div>
   );
-}
+});

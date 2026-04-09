@@ -91,6 +91,21 @@ export function buildThreadsByFileId(
   return annotationsByFileId;
 }
 
+export function countThreadsByFileId(
+  threads: DiffToolReviewState["threads"],
+): Map<string, number> {
+  const countsByFileId = new Map<string, number>();
+
+  for (const thread of threads) {
+    countsByFileId.set(
+      thread.fileId,
+      (countsByFileId.get(thread.fileId) ?? 0) + 1,
+    );
+  }
+
+  return countsByFileId;
+}
+
 export function withDraftAnnotation(
   annotations: LineAnnotation[],
   fileId: string,

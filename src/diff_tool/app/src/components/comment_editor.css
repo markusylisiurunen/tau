@@ -5,7 +5,9 @@
   border: 1px solid var(--border);
   border-left: 2px solid var(--thread-border-muted);
   background: var(--surface);
+  box-sizing: border-box;
   font-size: var(--font-size-ui);
+  max-width: 800px;
 }
 
 .comment-input {

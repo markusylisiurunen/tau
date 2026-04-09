@@ -23,6 +23,7 @@ import {
 import { type CommentDraft, type LineAnnotation } from "./comments.js";
 import {
   buildThreadsByFileId,
+  countThreadsByFileId,
   emptyReviewState,
   getAdjacentFileId,
   normalizeReviewState,
@@ -145,9 +146,18 @@ export function App() {
     () => toLookup(reviewState.viewedFileIds),
     [reviewState.viewedFileIds],
   );
-  const unresolvedThreadCount = useMemo(
-    () => reviewState.threads.filter((thread) => !thread.resolved).length,
+  const unresolvedThreads = useMemo(
+    () => reviewState.threads.filter((thread) => !thread.resolved),
     [reviewState.threads],
+  );
+  const unresolvedThreadCount = unresolvedThreads.length;
+  const filesWithUnresolvedThreads = useMemo(
+    () => uniqueIds(unresolvedThreads.map((thread) => thread.fileId)),
+    [unresolvedThreads],
+  );
+  const unresolvedThreadCountsByFileId = useMemo(
+    () => countThreadsByFileId(unresolvedThreads),
+    [unresolvedThreads],
   );
   const hasBrief = reviewState.brief.content.trim().length > 0;
 
@@ -213,6 +223,23 @@ export function App() {
   const collapseAll = useCallback(() => {
     applyStatePatch({ collapsedFileIds: files.map((file) => file.id) });
   }, [applyStatePatch, files]);
+
+  const expandUnresolved = useCallback(() => {
+    if (filesWithUnresolvedThreads.length === 0) {
+      return;
+    }
+
+    const unresolvedFileIds = new Set(filesWithUnresolvedThreads);
+    applyStatePatch({
+      collapsedFileIds: reviewState.collapsedFileIds.filter(
+        (fileId) => !unresolvedFileIds.has(fileId),
+      ),
+    });
+  }, [
+    applyStatePatch,
+    filesWithUnresolvedThreads,
+    reviewState.collapsedFileIds,
+  ]);
 
   const collapseViewed = useCallback(() => {
     applyStatePatch({
@@ -399,6 +426,7 @@ export function App() {
             applyStatePatch({ sidebarOpen: !reviewState.sidebarOpen });
           }}
           onExpandAll={expandAll}
+          onExpandUnresolved={expandUnresolved}
           onCollapseViewed={collapseViewed}
           onCollapseAll={collapseAll}
           onDiffStyleChange={(diffStyle) => {
@@ -439,6 +467,9 @@ export function App() {
                 collapsed={collapsed[file.id] ?? false}
                 viewed={viewed[file.id] ?? false}
                 annotations={annotations}
+                unresolvedThreadCount={
+                  unresolvedThreadCountsByFileId.get(file.id) ?? 0
+                }
                 onToggleCollapsed={toggleCollapsed}
                 onToggleViewed={toggleViewed}
                 onLineActivate={activateLine}

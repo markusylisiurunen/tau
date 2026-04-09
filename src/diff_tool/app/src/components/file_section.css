@@ -47,6 +47,16 @@
   text-overflow: ellipsis;
 }
 
+.file-thread-count {
+  align-items: center;
+  color: var(--text-muted);
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  gap: 4px;
+  margin-left: 4px;
+}
+
 .file-meta {
   display: flex;
   align-items: center;

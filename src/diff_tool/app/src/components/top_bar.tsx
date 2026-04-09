@@ -2,6 +2,7 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   EyeOff,
+  MessageSquare,
   PanelLeft,
   ScrollText,
   X,
@@ -28,6 +29,7 @@ type TopBarProps = {
   onBriefClick: () => void;
   onToggleSidebar: () => void;
   onExpandAll: () => void;
+  onExpandUnresolved: () => void;
   onCollapseViewed: () => void;
   onCollapseAll: () => void;
   onDiffStyleChange: (style: "stacked" | "split") => void;
@@ -53,6 +55,7 @@ export function TopBar({
   onBriefClick,
   onToggleSidebar,
   onExpandAll,
+  onExpandUnresolved,
   onCollapseViewed,
   onCollapseAll,
   onDiffStyleChange,
@@ -125,6 +128,12 @@ export function TopBar({
             icon={ChevronsUpDown}
             label="Expand all files"
             onClick={onExpandAll}
+          />
+          <IconButton
+            icon={MessageSquare}
+            label="Expand files with unresolved threads"
+            onClick={onExpandUnresolved}
+            disabled={commentCount === 0}
           />
           <IconButton
             icon={EyeOff}

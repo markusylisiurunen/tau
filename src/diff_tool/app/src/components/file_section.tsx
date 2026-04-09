@@ -1,6 +1,6 @@
 import { FileDiff } from "@pierre/diffs/react";
-import { Check, ChevronDown, ChevronRight } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { Check, ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
+import { memo, useCallback, useMemo } from "react";
 import type {
   CommentAnnotation,
   LineAnnotation,
@@ -38,6 +38,7 @@ type FileSectionProps = {
   collapsed: boolean;
   viewed: boolean;
   annotations: LineAnnotation[];
+  unresolvedThreadCount: number;
   onToggleCollapsed: (id: string) => void;
   onToggleViewed: (id: string) => void;
   onLineActivate: (fileId: string, lineNumber: number, side: LineSide) => void;
@@ -50,13 +51,14 @@ type FileSectionProps = {
   onToggleThreadCollapsed: (threadId: string, collapsed: boolean) => void;
 };
 
-export function FileSection({
+export const FileSection = memo(function FileSection({
   file,
   diffStyle,
   overflowMode,
   collapsed,
   viewed,
   annotations,
+  unresolvedThreadCount,
   onToggleCollapsed,
   onToggleViewed,
   onLineActivate,
@@ -137,6 +139,16 @@ export function FileSection({
         >
           {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
           <span className="file-path">{file.displayPath}</span>
+          {unresolvedThreadCount > 0 && (
+            <span
+              className="file-thread-count"
+              aria-label={`${unresolvedThreadCount} unresolved comment thread${unresolvedThreadCount === 1 ? "" : "s"}`}
+              title={`${unresolvedThreadCount} unresolved comment thread${unresolvedThreadCount === 1 ? "" : "s"}`}
+            >
+              <MessageSquare size={12} />
+              <span>{unresolvedThreadCount}</span>
+            </span>
+          )}
         </button>
         <div className="file-meta">
           <DiffStats additions={file.additions} deletions={file.deletions} />
@@ -166,4 +178,4 @@ export function FileSection({
       )}
     </section>
   );
-}
+});

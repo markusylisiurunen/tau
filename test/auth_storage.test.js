@@ -174,7 +174,7 @@ describe("CredentialResolver", () => {
                           name: "primary",
                           usedPercent: 100,
                           resetAt: 4102444800,
-                          windowSeconds: 3600,
+                          windowSeconds: 18000,
                         },
                       ],
                     },
@@ -192,7 +192,7 @@ describe("CredentialResolver", () => {
                           name: "primary",
                           usedPercent: 100,
                           resetAt: 4102444800,
-                          windowSeconds: 3600,
+                          windowSeconds: 18000,
                         },
                       ],
                     },
@@ -249,7 +249,7 @@ describe("CredentialResolver", () => {
                 primary_window: {
                   used_percent: usedPercent,
                   reset_at: 4102444800,
-                  limit_window_seconds: 3600,
+                  limit_window_seconds: 18000,
                 },
               },
             }),
@@ -265,6 +265,73 @@ describe("CredentialResolver", () => {
 
       const apiKey = await resolver.getApiKey("openai-codex", { sessionId: "session-1" });
       expect(apiKey).toBe("api-next");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("fails early when codex usage windows change unexpectedly", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify(
+          {
+            providers: {
+              "openai-codex": {
+                accounts: [
+                  {
+                    type: "oauth",
+                    accountId: "acct-old",
+                    providerAccountId: "provider-old",
+                    access: "old-access",
+                    refresh: "old-refresh",
+                    expires: 0,
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      getOAuthApiKey.mockResolvedValue({
+        apiKey: "new-access",
+        newCredentials: {
+          access: "old-access",
+          refresh: "old-refresh",
+          expires: 0,
+          accountId: "provider-old",
+        },
+      });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: true,
+          json: async () => ({
+            rate_limit: {
+              primary_window: {
+                used_percent: 12,
+                reset_at: 4102444800,
+                limit_window_seconds: 3600,
+              },
+            },
+          }),
+        })),
+      );
+
+      const storage = new AuthStorage(fx.authPath);
+      const resolver = createCredentialResolver({
+        authStorage: storage,
+        getConfig: () => ({}),
+      });
+
+      await expect(resolver.getApiKey("openai-codex", { sessionId: "session-1" })).rejects.toThrow(
+        "unexpected ChatGPT Codex primary usage window: 3600 seconds (expected 18000 for 5h or 604800 for 7d)",
+      );
     } finally {
       fx.cleanup();
     }

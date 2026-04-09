@@ -15,6 +15,16 @@ const PROVIDER_ID = "openai-codex";
 const PROVIDER_LABEL = "OpenAI Codex";
 const USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
 const FORCED_ACCOUNT_ENV = "TAU_CODEX_ACCOUNT";
+const ALLOWED_USAGE_WINDOW_SECONDS = new Set([5 * 60 * 60, 7 * 24 * 60 * 60]);
+
+class UnexpectedUsageWindowError extends Error {
+  constructor(name: "primary" | "secondary", windowSeconds: number) {
+    super(
+      `unexpected ChatGPT Codex ${name} usage window: ${windowSeconds} seconds ` +
+        "(expected 18000 for 5h or 604800 for 7d)",
+    );
+  }
+}
 
 type CodexAccount = StoredOAuthAccount;
 type UnknownRecord = Record<string, unknown>;
@@ -244,7 +254,10 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         usage: refreshedUsage,
       }));
       return usage;
-    } catch {
+    } catch (error) {
+      if (error instanceof UnexpectedUsageWindowError) {
+        throw error;
+      }
       return usage;
     }
   }
@@ -420,11 +433,16 @@ function parseUsageWindow(
   const window = asRecord(value);
   if (!window) return undefined;
 
+  const windowSeconds = normalizeNumber(window.limit_window_seconds);
+  if (!ALLOWED_USAGE_WINDOW_SECONDS.has(windowSeconds)) {
+    throw new UnexpectedUsageWindowError(name, windowSeconds);
+  }
+
   return {
     name,
     usedPercent: clampPercent(window.used_percent),
     resetAt: normalizeNumber(window.reset_at),
-    windowSeconds: normalizeNumber(window.limit_window_seconds),
+    windowSeconds,
   };
 }
 

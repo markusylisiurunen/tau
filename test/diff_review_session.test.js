@@ -4,7 +4,7 @@ import { createInterface } from "node:readline";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DIFF_REVIEW_PROTOCOL_VERSION } from "../src/core/diff_review/protocol.ts";
 import { DiffReviewSession } from "../src/core/diff_review/session.ts";
-import { DiffReviewSnapshot } from "../src/core/diff_review/snapshot.ts";
+import { DiffReviewSnapshot, formatDiffReviewScope } from "../src/core/diff_review/snapshot.ts";
 import { personas } from "../src/core/personas.ts";
 
 function request(id, method, params) {
@@ -89,6 +89,7 @@ function createSnapshot() {
         ].join("\n"),
       ],
     ]),
+    scopeLabel: formatDiffReviewScope(["--staged"]),
   });
 }
 
@@ -544,6 +545,7 @@ describe("diff_review session", () => {
       patch,
       files: [{ path: exactPath, status: "modified", newPath: exactPath }],
       patchByPath: new Map([[exactPath, patch]]),
+      scopeLabel: formatDiffReviewScope([]),
     });
     const session = new DiffReviewSession({
       snapshot,

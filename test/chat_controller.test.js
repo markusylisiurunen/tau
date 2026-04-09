@@ -597,7 +597,11 @@ describe("ChatController diff review", () => {
       signal: expect.any(AbortSignal),
     });
     expect(stub.added).toContainEqual(
-      expect.objectContaining({ type: "diff_review", status: "preparing", command: "git diff" }),
+      expect.objectContaining({
+        type: "diff_review",
+        status: "preparing",
+        command: "current working tree",
+      }),
     );
     expect(stub.updatedMessages).toEqual(
       expect.arrayContaining([
@@ -767,7 +771,7 @@ describe("ChatController diff review", () => {
         "<system>",
         "The following user message comes from a completed diff review in Tau. During that review, the user read through the reviewed diff snapshot and the files included in it, and may have left comments on specific files, lines, or broader concerns they noticed while reviewing. The message below is the feedback returned from that review.",
         "",
-        "Reviewed diff command: git diff -- src/file name.ts",
+        "Reviewed scope: git diff -- src/file name.ts",
         "Reviewed files: (none)",
         "",
         "Treat it as feedback on that reviewed diff snapshot and continue from there. Address valid issues directly, clarify anything that seems mistaken or ambiguous, and do not treat it as a new unrelated request.",
@@ -848,7 +852,7 @@ describe("ChatController diff review", () => {
           "<system>",
           "The following user message comes from a completed diff review in Tau. During that review, the user read through the reviewed diff snapshot and the files included in it, and may have left comments on specific files, lines, or broader concerns they noticed while reviewing. The message below is the feedback returned from that review.",
           "",
-          "Reviewed diff command: git diff --staged",
+          "Reviewed scope: git diff --staged",
           "Reviewed files: (none)",
           "",
           "Treat it as feedback on that reviewed diff snapshot and continue from there. Address valid issues directly, clarify anything that seems mistaken or ambiguous, and do not treat it as a new unrelated request.",

@@ -297,7 +297,7 @@ function buildReviewContextBlock(snapshot: DiffReviewSnapshot): string {
   return [
     `Repo root: ${snapshot.repoRoot}`,
     `Cwd: ${snapshot.cwd}`,
-    `Initial diff command: ${snapshot.toDiffCommand()}`,
+    `Initial review scope: ${snapshot.toDiffCommand()}`,
     "",
     "Initial changed files:",
     changedFiles,

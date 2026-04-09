@@ -2,7 +2,7 @@ import { once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { DiffReviewSession } from "../src/core/diff_review/session.ts";
-import { DiffReviewSnapshot } from "../src/core/diff_review/snapshot.ts";
+import { DiffReviewSnapshot, formatDiffReviewScope } from "../src/core/diff_review/snapshot.ts";
 import { personas } from "../src/core/personas.ts";
 import {
   DiffReviewProtocolClient,
@@ -53,6 +53,7 @@ function createSnapshot() {
         ].join("\n"),
       ],
     ]),
+    scopeLabel: formatDiffReviewScope(["--staged"]),
   });
 }
 
@@ -97,7 +98,7 @@ function createClientStub(overrides = {}) {
       repoRoot: "/repo",
       cwd: "/repo",
       diffArgs: [],
-      diffCommand: "git diff",
+      diffCommand: "current working tree",
     })),
     listFiles: vi.fn(async () => ({ files: [] })),
     setUiText: vi.fn(async () => ({ status: "updated" })),

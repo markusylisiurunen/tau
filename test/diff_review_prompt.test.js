@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildDiffReviewSystemPrompt } from "../src/core/diff_review/review_thread.ts";
-import { DiffReviewSnapshot } from "../src/core/diff_review/snapshot.ts";
+import { DiffReviewSnapshot, formatDiffReviewScope } from "../src/core/diff_review/snapshot.ts";
 
 describe("diff_review prompt", () => {
   it("wraps the main persona prompt and embeds review context in the system prompt", () => {
@@ -14,6 +14,7 @@ describe("diff_review prompt", () => {
         { path: "src/old.ts", status: "renamed", oldPath: "src/old.ts", newPath: "src/new.ts" },
       ],
       patchByPath: new Map([["src/a.ts", "diff --git a/src/a.ts b/src/a.ts"]]),
+      scopeLabel: formatDiffReviewScope(["--staged"]),
     });
     const prompt = buildDiffReviewSystemPrompt("Be careful and precise.", snapshot);
 
@@ -32,7 +33,7 @@ describe("diff_review prompt", () => {
     );
     expect(prompt).toContain("### Review context");
     expect(prompt).toContain("Repo root: /repo");
-    expect(prompt).toContain("Initial diff command: git diff --staged");
+    expect(prompt).toContain("Initial review scope: git diff --staged");
     expect(prompt).toContain("- src/old.ts -> src/new.ts (renamed)");
   });
 });

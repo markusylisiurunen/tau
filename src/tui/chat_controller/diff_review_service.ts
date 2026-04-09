@@ -5,6 +5,7 @@ import type {
   DiffReviewSessionUiState,
   StartedDiffReviewSession,
 } from "../../core/diff_review/index.js";
+import { formatDiffReviewScope } from "../../core/diff_review/snapshot.js";
 import type { ChatView } from "../chat_view.js";
 import type { DiffReviewMessageModel } from "../ui/diff_review_message.js";
 import type { BusyTask, InterruptLifecycle } from "./interrupt_lifecycle.js";
@@ -252,7 +253,7 @@ export class DiffReviewService {
 }
 
 function formatDiffReviewCommand(diffArgs: string[]): string {
-  return diffArgs.length > 0 ? `git diff ${diffArgs.join(" ")}` : "git diff";
+  return formatDiffReviewScope(diffArgs);
 }
 
 function buildDiffReviewMessage(

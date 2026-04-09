@@ -152,7 +152,7 @@ vi.mock("../src/core/usage/logs.ts", () => ({
 }));
 
 import { DiffReviewThread } from "../src/core/diff_review/review_thread.ts";
-import { DiffReviewSnapshot } from "../src/core/diff_review/snapshot.ts";
+import { DiffReviewSnapshot, formatDiffReviewScope } from "../src/core/diff_review/snapshot.ts";
 
 describe("diff_review thread", () => {
   it("records review agent usage", async () => {
@@ -165,6 +165,7 @@ describe("diff_review thread", () => {
       patch: "diff --git a/src/a.ts b/src/a.ts",
       files: [{ path: "src/a.ts", status: "modified", newPath: "src/a.ts" }],
       patchByPath: new Map([["src/a.ts", "diff --git a/src/a.ts b/src/a.ts"]]),
+      scopeLabel: formatDiffReviewScope([]),
     });
 
     const thread = new DiffReviewThread({
@@ -212,6 +213,7 @@ describe("diff_review thread", () => {
       patch: "diff --git a/src/a.ts b/src/a.ts",
       files: [{ path: "src/a.ts", status: "modified", newPath: "src/a.ts" }],
       patchByPath: new Map([["src/a.ts", "diff --git a/src/a.ts b/src/a.ts"]]),
+      scopeLabel: formatDiffReviewScope([]),
     });
 
     const thread = new DiffReviewThread({
@@ -273,6 +275,7 @@ describe("diff_review thread", () => {
       patch: "diff --git a/src/a.ts b/src/a.ts",
       files: [{ path: "src/a.ts", status: "modified", newPath: "src/a.ts" }],
       patchByPath: new Map([["src/a.ts", "diff --git a/src/a.ts b/src/a.ts"]]),
+      scopeLabel: formatDiffReviewScope([]),
     });
 
     const parent = new DiffReviewThread({

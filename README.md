@@ -385,7 +385,7 @@ tau supports slash commands for common actions:
 | `/reload` | reload personas, model overrides, prompts, skills, themes, bash commands, and AGENTS.md |
 | `/speak` | toggle microphone recording and transcribe into the editor (macOS only) |
 | `/cd` | change the working directory |
-| `/diff [git diff args...]` | open the diff review tool for a captured git diff starting point (built-in browser demo by default, `diffTool` overrides it) |
+| `/diff [git diff args...]` | open the diff review tool for a captured review snapshot: plain `/diff` uses the current working tree, while `/diff ...` uses the requested `git diff` args (built-in browser demo by default, `diffTool` overrides it) |
 | `/compact:summary-only` | compress history into one synthetic user summary message |
 | `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present |
 | `/prune:earliest` | prune bash tool results from oldest to newest and compact edit payloads/results |
@@ -563,7 +563,7 @@ if you want a different launcher, configure `diffTool` in any in-scope config fi
 
 `tau diff-tool --help` shows the built-in demo tool's standalone help text.
 
-`/diff [git diff args...]` passes raw arguments to `git diff`, so `/diff`, `/diff --staged`, and `/diff -- src/foo.ts` all work. tau captures the diff content before launch as the initial review context, shows diff-review status in the chat stream, keeps the editor usable while blocking submission, and appends returned review text as a review-styled user message without auto-running the assistant. the built-in browser shows that captured diff, but review agents inspect the live repo state while using the captured diff context as their starting point. the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that review context. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session.
+plain `/diff` captures the current working-tree review scope before launch, including tracked staged + unstaged changes plus untracked text files that fit within tau's snapshot limits. `/diff [git diff args...]` with arguments passes those raw arguments to `git diff`, so `/diff --staged` and `/diff -- src/foo.ts` still work. tau shows diff-review status in the chat stream, keeps the editor usable while blocking submission, and appends returned review text as a review-styled user message without auto-running the assistant. the built-in browser shows that captured review snapshot, but review agents inspect the live repo state while using the captured snapshot as their starting point. the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that review context. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session.
 
 ### additional agents context
 

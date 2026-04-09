@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
@@ -28,7 +29,9 @@ export type CaptureDiffReviewSnapshotOptions = {
 };
 
 const GIT_TIMEOUT_MS = 30_000;
-const GIT_MAX_CAPTURE_BYTES = 1024 * 1024;
+const GIT_MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
+const MAX_UNTRACKED_TEXT_BYTES = 512 * 1024;
+const WORKING_TREE_SCOPE_LABEL = "current working tree";
 
 export class DiffReviewSnapshot {
   readonly id: string;
@@ -37,6 +40,7 @@ export class DiffReviewSnapshot {
   readonly diffArgs: string[];
   readonly patch: string;
   readonly files: readonly DiffReviewFile[];
+  private readonly scopeLabel: string;
   private readonly patchByPath: ReadonlyMap<string, string>;
 
   constructor(args: {
@@ -46,6 +50,7 @@ export class DiffReviewSnapshot {
     patch: string;
     files: DiffReviewFile[];
     patchByPath: ReadonlyMap<string, string>;
+    scopeLabel: string;
     id?: string;
   }) {
     this.id = args.id ?? `tau-diff-${randomUUID()}`;
@@ -54,6 +59,7 @@ export class DiffReviewSnapshot {
     this.diffArgs = [...args.diffArgs];
     this.patch = args.patch;
     this.files = args.files.map((file) => ({ ...file }));
+    this.scopeLabel = args.scopeLabel;
     this.patchByPath = new Map(args.patchByPath);
   }
 
@@ -65,8 +71,12 @@ export class DiffReviewSnapshot {
   }
 
   toDiffCommand(): string {
-    return this.diffArgs.length > 0 ? `git diff ${this.diffArgs.join(" ")}` : "git diff";
+    return this.scopeLabel;
   }
+}
+
+export function formatDiffReviewScope(diffArgs: string[]): string {
+  return diffArgs.length > 0 ? `git diff ${diffArgs.join(" ")}` : WORKING_TREE_SCOPE_LABEL;
 }
 
 export async function captureDiffReviewSnapshot(
@@ -77,24 +87,27 @@ export async function captureDiffReviewSnapshot(
   const diffArgs = [...(options.diffArgs ?? [])];
   const signal = options.signal;
   const repoRoot = await resolveGitRepoRoot(cwd, deps, signal);
-  const patch = await runGitCommand(cwd, ["diff", ...diffArgs], deps, {}, signal);
-  const files = parseNameStatusOutput(
-    await runGitCommand(cwd, ["diff", "--name-status", "-z", ...diffArgs], deps, {}, signal),
-  );
-  const patchSections = splitPatchSections(
-    await runGitCommand(cwd, ["diff", ...withForcedPatch(diffArgs)], deps, {}, signal),
-  );
-  const patchByPath = pairFilePatches(files, patchSections);
+  const captured =
+    diffArgs.length > 0
+      ? await captureExplicitDiffSnapshot(cwd, diffArgs, deps, signal)
+      : await captureWorkingTreeSnapshot(repoRoot, cwd, deps, signal);
 
   return new DiffReviewSnapshot({
     repoRoot,
     cwd,
     diffArgs,
-    patch,
-    files,
-    patchByPath,
+    patch: captured.patch,
+    files: captured.files,
+    patchByPath: captured.patchByPath,
+    scopeLabel: formatDiffReviewScope(diffArgs),
   });
 }
+
+type CapturedSnapshotData = {
+  patch: string;
+  files: DiffReviewFile[];
+  patchByPath: ReadonlyMap<string, string>;
+};
 
 function createDiffSnapshotDeps(
   deps?: Partial<Pick<CoreDeps, "spawn" | "env">>,
@@ -127,6 +140,273 @@ async function resolveGitRepoRoot(
   return resolve(repoRoot);
 }
 
+async function captureExplicitDiffSnapshot(
+  cwd: string,
+  diffArgs: string[],
+  deps: Pick<CoreDeps, "spawn" | "env">,
+  signal?: AbortSignal,
+): Promise<CapturedSnapshotData> {
+  const patch = await runGitCommand(cwd, ["diff", ...diffArgs], deps, {}, signal);
+  const files = parseNameStatusOutput(
+    await runGitCommand(cwd, ["diff", "--name-status", "-z", ...diffArgs], deps, {}, signal),
+  );
+  const patchSections = splitPatchSections(
+    await runGitCommand(cwd, ["diff", ...withForcedPatch(diffArgs)], deps, {}, signal),
+  );
+
+  return {
+    patch,
+    files,
+    patchByPath: pairFilePatches(files, patchSections),
+  };
+}
+
+async function captureWorkingTreeSnapshot(
+  repoRoot: string,
+  cwd: string,
+  deps: Pick<CoreDeps, "spawn" | "env">,
+  signal?: AbortSignal,
+): Promise<CapturedSnapshotData> {
+  const hasHead = await gitRefExists(cwd, "HEAD", deps, signal);
+  const tracked = hasHead
+    ? await captureTrackedWorkingTreeSnapshot(cwd, deps, signal)
+    : await captureTrackedWorkingTreeSnapshotWithoutHead(cwd, deps, signal);
+  const untracked = await captureUntrackedFilePatches(repoRoot, cwd, deps, signal);
+  const patchByPath = new Map(tracked.patchByPath);
+  for (const [path, patch] of untracked.patchByPath) {
+    patchByPath.set(path, patch);
+  }
+
+  return {
+    patch: joinPatchSections([tracked.patch, ...untracked.patches]),
+    files: dedupeFilesByPath([...tracked.files, ...untracked.files]),
+    patchByPath,
+  };
+}
+
+async function captureTrackedWorkingTreeSnapshot(
+  cwd: string,
+  deps: Pick<CoreDeps, "spawn" | "env">,
+  signal?: AbortSignal,
+): Promise<CapturedSnapshotData> {
+  const patch = await runGitCommand(cwd, ["diff", "HEAD"], deps, {}, signal);
+  const files = parseNameStatusOutput(
+    await runGitCommand(cwd, ["diff", "--name-status", "-z", "HEAD"], deps, {}, signal),
+  );
+  const patchSections = splitPatchSections(
+    await runGitCommand(cwd, ["diff", "HEAD", "--patch"], deps, {}, signal),
+  );
+
+  return {
+    patch,
+    files,
+    patchByPath: pairFilePatches(files, patchSections),
+  };
+}
+
+async function captureTrackedWorkingTreeSnapshotWithoutHead(
+  cwd: string,
+  deps: Pick<CoreDeps, "spawn" | "env">,
+  signal?: AbortSignal,
+): Promise<CapturedSnapshotData> {
+  const unstagedPatch = await runGitCommand(cwd, ["diff"], deps, {}, signal);
+  const stagedPatch = await runGitCommand(cwd, ["diff", "--cached", "--root"], deps, {}, signal);
+  const unstagedFiles = parseNameStatusOutput(
+    await runGitCommand(cwd, ["diff", "--name-status", "-z"], deps, {}, signal),
+  );
+  const stagedFiles = parseNameStatusOutput(
+    await runGitCommand(
+      cwd,
+      ["diff", "--cached", "--name-status", "-z", "--root"],
+      deps,
+      {},
+      signal,
+    ),
+  );
+  const patch = joinPatchSections([unstagedPatch, stagedPatch]);
+  const files = dedupeFilesByPath([...unstagedFiles, ...stagedFiles]);
+
+  return {
+    patch,
+    files,
+    patchByPath: pairFilePatches(files, splitPatchSections(patch)),
+  };
+}
+
+async function captureUntrackedFilePatches(
+  repoRoot: string,
+  cwd: string,
+  deps: Pick<CoreDeps, "spawn" | "env">,
+  signal?: AbortSignal,
+): Promise<{
+  files: DiffReviewFile[];
+  patches: string[];
+  patchByPath: ReadonlyMap<string, string>;
+}> {
+  const paths = parseNullSeparatedPaths(
+    await runGitCommand(
+      cwd,
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      deps,
+      {},
+      signal,
+    ),
+  );
+  const files: DiffReviewFile[] = [];
+  const patches: string[] = [];
+  const patchByPath = new Map<string, string>();
+
+  for (const path of paths) {
+    const filePath = resolveSnapshotFilePath(repoRoot, cwd, path);
+    if (!existsSync(filePath)) {
+      continue;
+    }
+
+    const content = readFileSync(filePath);
+    if (content.length > MAX_UNTRACKED_TEXT_BYTES || content.includes(0)) {
+      continue;
+    }
+
+    const patch = createUntrackedFilePatch(path, content.toString("utf-8"));
+    files.push({
+      path,
+      status: "added",
+      newPath: path,
+    });
+    patches.push(patch);
+    patchByPath.set(path, patch);
+  }
+
+  return {
+    files,
+    patches,
+    patchByPath,
+  };
+}
+
+function resolveSnapshotFilePath(repoRoot: string, cwd: string, path: string): string {
+  const fromCwd = resolve(cwd, path);
+  if (existsSync(fromCwd)) {
+    return fromCwd;
+  }
+  return resolve(repoRoot, path);
+}
+
+function createUntrackedFilePatch(path: string, content: string): string {
+  const lines = splitPatchContentLines(content);
+  const patch = [
+    `diff --git ${formatPatchPath(`a/${path}`)} ${formatPatchPath(`b/${path}`)}`,
+    "new file mode 100644",
+    "--- /dev/null",
+    `+++ ${formatPatchPath(`b/${path}`)}`,
+  ];
+
+  if (lines.length === 0) {
+    return patch.join("\n");
+  }
+
+  patch.push(`@@ -0,0 +1,${lines.length} @@`);
+  patch.push(...lines.map((line) => `+${line}`));
+
+  if (!content.endsWith("\n")) {
+    patch.push("\\ No newline at end of file");
+  }
+
+  return patch.join("\n");
+}
+
+function splitPatchContentLines(content: string): string[] {
+  if (content.length === 0) {
+    return [];
+  }
+
+  const normalized = content.replaceAll("\r\n", "\n");
+  const withoutTrailingNewline = normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
+  if (withoutTrailingNewline.length === 0) {
+    return [];
+  }
+  return withoutTrailingNewline.split("\n");
+}
+
+function formatPatchPath(path: string): string {
+  return pathNeedsQuoting(path) ? JSON.stringify(path) : path;
+}
+
+function pathNeedsQuoting(path: string): boolean {
+  for (let index = 0; index < path.length; index += 1) {
+    const code = path.charCodeAt(index);
+    if (code <= 0x20 || code === 0x22 || code === 0x5c || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function joinPatchSections(sections: string[]): string {
+  return sections.filter((section) => section.trim().length > 0).join("\n");
+}
+
+function dedupeFilesByPath(files: DiffReviewFile[]): DiffReviewFile[] {
+  const byPath = new Map<string, DiffReviewFile>();
+  for (const file of files) {
+    if (!byPath.has(file.path)) {
+      byPath.set(file.path, file);
+    }
+  }
+  return [...byPath.values()];
+}
+
+function parseNullSeparatedPaths(output: string): string[] {
+  if (!output) {
+    return [];
+  }
+
+  const tokens = output.split("\0");
+  if (tokens[tokens.length - 1] === "") {
+    tokens.pop();
+  }
+
+  return tokens.filter((value) => value.length > 0);
+}
+
+async function gitRefExists(
+  cwd: string,
+  ref: string,
+  deps: Pick<CoreDeps, "spawn" | "env">,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const result = await deps.spawn("git", ["rev-parse", "--verify", ref], {
+    cwd,
+    env: buildGitEnv(deps),
+    timeoutMs: GIT_TIMEOUT_MS,
+    signal,
+    captureOutput: "combined",
+    maxCaptureBytes: GIT_MAX_CAPTURE_BYTES,
+    maxCaptureMode: "ignore",
+  });
+
+  if (result.captureLimitExceeded) {
+    throw new Error(
+      `git rev-parse --verify ${ref} output exceeded ${GIT_MAX_CAPTURE_BYTES} bytes while capturing diff review snapshot`,
+    );
+  }
+
+  if (result.exitCode === 0) {
+    return true;
+  }
+
+  if (result.aborted) {
+    throw new Error("diff review start aborted");
+  }
+
+  const message = (result.output ?? "").trim();
+  if (/not a git repository/i.test(message)) {
+    throw new Error("diff review requires a git repository");
+  }
+
+  return false;
+}
+
 async function runGitCommand(
   cwd: string,
   args: string[],
@@ -136,15 +416,7 @@ async function runGitCommand(
 ): Promise<string> {
   const result = await deps.spawn("git", args, {
     cwd,
-    env: {
-      ...deps.env.env(),
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_EDITOR: "true",
-      GIT_SEQUENCE_EDITOR: "true",
-      GIT_PAGER: "cat",
-      GIT_ASKPASS: "true",
-      GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
-    },
+    env: buildGitEnv(deps),
     timeoutMs: GIT_TIMEOUT_MS,
     signal,
     captureOutput: "combined",
@@ -172,6 +444,18 @@ async function runGitCommand(
   }
 
   throw new Error(message || `git ${args.join(" ")} failed`);
+}
+
+function buildGitEnv(deps: Pick<CoreDeps, "env">): Record<string, string> {
+  return {
+    ...deps.env.env(),
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_EDITOR: "true",
+    GIT_SEQUENCE_EDITOR: "true",
+    GIT_PAGER: "cat",
+    GIT_ASKPASS: "true",
+    GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+  };
 }
 
 function withForcedPatch(diffArgs: string[]): string[] {

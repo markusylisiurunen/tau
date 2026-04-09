@@ -21,7 +21,7 @@ const context = {
   repoRoot: "/Users/dev/projects/example-app",
   cwd: "/Users/dev/projects/example-app",
   diffArgs: [],
-  diffCommand: "git diff",
+  diffCommand: "current working tree",
 };
 
 const files = [

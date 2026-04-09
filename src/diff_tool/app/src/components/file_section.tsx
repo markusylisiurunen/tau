@@ -129,7 +129,10 @@ export const FileSection = memo(function FileSection({
   );
 
   return (
-    <section className="file-section" id={`file-${file.id}`}>
+    <section
+      className={`file-section${collapsed ? " collapsed" : ""}`}
+      id={`file-${file.id}`}
+    >
       <div className="file-header">
         <button
           type="button"

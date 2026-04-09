@@ -19,8 +19,16 @@
   gap: 12px;
   padding: 0 var(--content-padding-x);
   height: 36px;
-  background: var(--surface-hover);
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
+}
+
+.file-header:hover {
+  background: var(--surface-hover);
+}
+
+.file-section.collapsed .file-header {
+  border-bottom: none;
 }
 
 .file-toggle {

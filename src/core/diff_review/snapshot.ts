@@ -177,11 +177,11 @@ async function captureWorkingTreeSnapshot(
     patchByPath.set(path, patch);
   }
 
-  return {
+  return sortCapturedSnapshotDataByPath({
     patch: joinPatchSections([tracked.patch, ...untracked.patches]),
     files: dedupeFilesByPath([...tracked.files, ...untracked.files]),
     patchByPath,
-  };
+  });
 }
 
 async function captureTrackedWorkingTreeSnapshot(
@@ -344,6 +344,37 @@ function pathNeedsQuoting(path: string): boolean {
 
 function joinPatchSections(sections: string[]): string {
   return sections.filter((section) => section.trim().length > 0).join("\n");
+}
+
+function sortCapturedSnapshotDataByPath(data: CapturedSnapshotData): CapturedSnapshotData {
+  const files = [...data.files].sort((left, right) => left.path.localeCompare(right.path));
+  const orderedPatches: string[] = [];
+  const patchByPath = new Map<string, string>();
+
+  for (const file of files) {
+    const patch =
+      data.patchByPath.get(file.path) ??
+      (file.oldPath ? data.patchByPath.get(file.oldPath) : undefined) ??
+      (file.newPath ? data.patchByPath.get(file.newPath) : undefined);
+    if (!patch) {
+      continue;
+    }
+
+    orderedPatches.push(patch);
+    patchByPath.set(file.path, patch);
+    if (file.oldPath) {
+      patchByPath.set(file.oldPath, patch);
+    }
+    if (file.newPath) {
+      patchByPath.set(file.newPath, patch);
+    }
+  }
+
+  return {
+    patch: joinPatchSections(orderedPatches),
+    files,
+    patchByPath,
+  };
 }
 
 function dedupeFilesByPath(files: DiffReviewFile[]): DiffReviewFile[] {

@@ -108,35 +108,31 @@ describe("diff_review snapshot", () => {
       expect(snapshot.cwd).toBe(fx.repo);
       expect(snapshot.diffArgs).toEqual([]);
       expect(snapshot.toDiffCommand()).toBe("current working tree");
-      expect(snapshot.files).toEqual(
-        expect.arrayContaining([
-          {
-            path: "src/bar.ts",
-            status: "deleted",
-            oldPath: "src/bar.ts",
-          },
-          {
-            path: "src/baz.ts",
-            status: "modified",
-            newPath: "src/baz.ts",
-          },
-          {
-            path: "src/foo.ts",
-            status: "modified",
-            newPath: "src/foo.ts",
-          },
-          {
-            path: "src/qux.ts",
-            status: "added",
-            newPath: "src/qux.ts",
-          },
-        ]),
+      expect(snapshot.files).toEqual([
+        {
+          path: "src/bar.ts",
+          status: "deleted",
+          oldPath: "src/bar.ts",
+        },
+        {
+          path: "src/baz.ts",
+          status: "modified",
+          newPath: "src/baz.ts",
+        },
+        {
+          path: "src/foo.ts",
+          status: "modified",
+          newPath: "src/foo.ts",
+        },
+        {
+          path: "src/qux.ts",
+          status: "added",
+          newPath: "src/qux.ts",
+        },
+      ]);
+      expect(snapshot.patch).toMatch(
+        /diff --git a\/src\/bar\.ts b\/src\/bar\.ts[\s\S]*diff --git a\/src\/baz\.ts b\/src\/baz\.ts[\s\S]*diff --git a\/src\/foo\.ts b\/src\/foo\.ts[\s\S]*diff --git a\/src\/qux\.ts b\/src\/qux\.ts/,
       );
-      expect(snapshot.files).toHaveLength(4);
-      expect(snapshot.patch).toContain("diff --git a/src/foo.ts b/src/foo.ts");
-      expect(snapshot.patch).toContain("diff --git a/src/bar.ts b/src/bar.ts");
-      expect(snapshot.patch).toContain("diff --git a/src/baz.ts b/src/baz.ts");
-      expect(snapshot.patch).toContain("diff --git a/src/qux.ts b/src/qux.ts");
       expect(snapshot.getFilePatch("src/baz.ts")).toContain("+export const draft = true;");
       expect(snapshot.getFilePatch("src/qux.ts")).toContain("new file mode 100644");
       expect(snapshot.getFilePatch("src/qux.ts")).toContain("+export const untracked = true;");

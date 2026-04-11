@@ -176,33 +176,7 @@ export class DiffReviewProtocolClient {
         reject,
       });
 
-      const writePromise = this.writeQueue.then(
-        () =>
-          new Promise<void>((resolveWrite, rejectWrite) => {
-            if (
-              this.closed ||
-              this.socket !== socket ||
-              socket.destroyed ||
-              socket.writableEnded ||
-              !socket.writable
-            ) {
-              rejectWrite(new Error("diff review protocol socket is not available"));
-              return;
-            }
-
-            try {
-              socket.write(requestLine, (error) => {
-                if (error) {
-                  rejectWrite(error);
-                  return;
-                }
-                resolveWrite();
-              });
-            } catch (error) {
-              rejectWrite(error instanceof Error ? error : new Error(String(error)));
-            }
-          }),
-      );
+      const writePromise = this.writeQueue.then(() => this.writeRequestLine(socket, requestLine));
       this.writeQueue = writePromise.catch(() => {});
       void writePromise.catch((error) => {
         const pending = this.pendingRequests.get(id);
@@ -213,6 +187,59 @@ export class DiffReviewProtocolClient {
         this.pendingRequests.delete(id);
         pending.reject(error instanceof Error ? error : new Error(String(error)));
       });
+    });
+  }
+
+  private async writeRequestLine(socket: Socket, requestLine: string): Promise<void> {
+    if (
+      this.closed ||
+      this.socket !== socket ||
+      socket.destroyed ||
+      socket.writableEnded ||
+      !socket.writable
+    ) {
+      throw new Error("diff review protocol socket is not available");
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (callback: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        socket.off("close", onClose);
+        socket.off("drain", onDrain);
+        socket.off("error", onError);
+        callback();
+      };
+      const onClose = () => {
+        finish(() => {
+          reject(new Error("diff review protocol connection closed"));
+        });
+      };
+      const onDrain = () => {
+        finish(resolve);
+      };
+      const onError = (error: Error) => {
+        finish(() => {
+          reject(error);
+        });
+      };
+
+      socket.once("close", onClose);
+      socket.once("drain", onDrain);
+      socket.once("error", onError);
+
+      try {
+        if (socket.write(requestLine)) {
+          finish(resolve);
+        }
+      } catch (error) {
+        finish(() => {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        });
+      }
     });
   }
 

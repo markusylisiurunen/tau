@@ -20,10 +20,13 @@ import type {
 export type {
   DiffToolBootstrapPayload,
   DiffToolCommentThread,
+  DiffToolDetachedThreadAnchor,
   DiffToolLineSide,
+  DiffToolLineThreadAnchor,
   DiffToolReviewState,
   DiffToolStatePatch,
   DiffToolStateResponse,
+  DiffToolThreadAnchor,
   DiffToolThreadMessage,
 } from "./shared_types.js";
 
@@ -519,22 +522,47 @@ function parseCreateThreadPayload(
   payload: Record<string, unknown>,
 ): DiffToolCreateThreadPayload | undefined {
   const body = typeof payload.body === "string" ? payload.body.trim() : "";
-  const fileId = typeof payload.fileId === "string" ? payload.fileId.trim() : "";
-  const filePath = typeof payload.filePath === "string" ? payload.filePath.trim() : "";
+  const anchor =
+    payload.anchor && typeof payload.anchor === "object" && !Array.isArray(payload.anchor)
+      ? (payload.anchor as Record<string, unknown>)
+      : null;
+  if (!body || !anchor) {
+    return undefined;
+  }
+
+  if (anchor.kind === "detached") {
+    return {
+      body,
+      anchor: { kind: "detached" },
+    };
+  }
+
+  const fileId = typeof anchor.fileId === "string" ? anchor.fileId.trim() : "";
+  const filePath = typeof anchor.filePath === "string" ? anchor.filePath.trim() : "";
   const lineNumber =
-    typeof payload.lineNumber === "number" && Number.isInteger(payload.lineNumber)
-      ? payload.lineNumber
+    typeof anchor.lineNumber === "number" && Number.isInteger(anchor.lineNumber)
+      ? anchor.lineNumber
       : NaN;
-  const side = payload.side === "additions" || payload.side === "deletions" ? payload.side : null;
-  if (!body || !fileId || !filePath || !Number.isInteger(lineNumber) || lineNumber < 0 || !side) {
+  const side = anchor.side === "additions" || anchor.side === "deletions" ? anchor.side : null;
+  if (
+    anchor.kind !== "line" ||
+    !fileId ||
+    !filePath ||
+    !Number.isInteger(lineNumber) ||
+    lineNumber < 0 ||
+    !side
+  ) {
     return undefined;
   }
 
   return {
     body,
-    fileId,
-    filePath,
-    lineNumber,
-    side,
+    anchor: {
+      kind: "line",
+      fileId,
+      filePath,
+      lineNumber,
+      side,
+    },
   };
 }

@@ -4,10 +4,13 @@ import { DiffReviewProtocolClient, parseDiffToolLaunchEnvironment } from "./prot
 export type {
   DiffToolBootstrapPayload,
   DiffToolCommentThread,
+  DiffToolDetachedThreadAnchor,
   DiffToolLineSide,
+  DiffToolLineThreadAnchor,
   DiffToolReviewState,
   DiffToolStatePatch,
   DiffToolStateResponse,
+  DiffToolThreadAnchor,
   DiffToolThreadMessage,
   StartDiffToolHttpServerOptions,
   StartedDiffToolHttpServer,

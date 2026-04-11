@@ -4,11 +4,14 @@ import type {
   DiffToolBrief,
   DiffToolCommentThread,
   DiffToolCreateThreadPayload,
+  DiffToolDetachedThreadAnchor,
   DiffToolGetDiffResult,
   DiffToolLineSide,
+  DiffToolLineThreadAnchor,
   DiffToolReviewState,
   DiffToolStatePatch,
   DiffToolStateResponse,
+  DiffToolThreadAnchor,
   DiffToolThreadMessage,
   DiffToolThreadReplyPayload,
 } from "../../shared_types.js";
@@ -17,7 +20,10 @@ export type {
   DiffReviewFile,
   DiffToolBrief,
   DiffToolCommentThread,
+  DiffToolDetachedThreadAnchor,
+  DiffToolLineThreadAnchor,
   DiffToolReviewState,
+  DiffToolThreadAnchor,
   DiffToolThreadMessage,
 };
 

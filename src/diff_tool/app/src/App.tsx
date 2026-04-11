@@ -25,7 +25,8 @@ import {
   buildThreadsByFileId,
   countThreadsByFileId,
   emptyReviewState,
-  getAdjacentFileId,
+  isDetachedThread,
+  isLineThread,
   normalizeReviewState,
   resolveDraftFilePath,
   sumFileChanges,
@@ -37,6 +38,7 @@ import {
   withThreadLoading,
 } from "./review_state_utils.js";
 import { BriefDialog } from "./components/brief_dialog.js";
+import { DetachedThreadDialog } from "./components/detached_thread_dialog.js";
 import { FileSection } from "./components/file_section.js";
 import { Sidebar } from "./components/sidebar.js";
 import { TopBar } from "./components/top_bar.js";
@@ -50,16 +52,26 @@ import type {
 
 const emptyAnnotations: LineAnnotation[] = [];
 
+type DetachedThreadDialogState =
+  | { mode: "new" }
+  | { mode: "thread"; threadId: string };
+
 export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapPayload | null>(null);
   const [diff, setDiff] = useState<DiffReviewGetDiffResult | null>(null);
   const [reviewState, setReviewState] =
     useState<DiffToolReviewState>(emptyReviewState);
   const [draft, setDraft] = useState<CommentDraft | null>(null);
+  const [detachedDraftBody, setDetachedDraftBody] = useState("");
+  const [detachedSkipAgentResponse, setDetachedSkipAgentResponse] =
+    useState(false);
+  const [detachedThreadDialog, setDetachedThreadDialog] =
+    useState<DetachedThreadDialogState | null>(null);
   const [finished, setFinished] = useState(false);
   const [status, setStatus] = useState("");
   const [briefOpen, setBriefOpen] = useState(false);
   const pendingCollapsedScrollTargetRef = useRef<string | null>(null);
+  const detachedThreadDialogVersionRef = useRef(0);
 
   const applyReviewState = useCallback((state: DiffToolReviewState) => {
     setReviewState(normalizeReviewState(state));
@@ -151,8 +163,28 @@ export function App() {
     [reviewState.threads],
   );
   const unresolvedThreadCount = unresolvedThreads.length;
+  const detachedThreads = useMemo(
+    () => [...reviewState.threads.filter(isDetachedThread)].reverse(),
+    [reviewState.threads],
+  );
+  const selectedDetachedThread = useMemo(() => {
+    if (detachedThreadDialog?.mode !== "thread") {
+      return null;
+    }
+
+    return (
+      detachedThreads.find(
+        (thread) => thread.id === detachedThreadDialog.threadId,
+      ) ?? null
+    );
+  }, [detachedThreadDialog, detachedThreads]);
   const filesWithUnresolvedThreads = useMemo(
-    () => uniqueIds(unresolvedThreads.map((thread) => thread.fileId)),
+    () =>
+      uniqueIds(
+        unresolvedThreads
+          .filter(isLineThread)
+          .map((thread) => thread.anchor.fileId),
+      ),
     [unresolvedThreads],
   );
   const unresolvedThreadCountsByFileId = useMemo(
@@ -193,7 +225,7 @@ export function App() {
 
       pendingCollapsedScrollTargetRef.current =
         isViewed && !reviewState.collapsedFileIds.includes(fileId)
-          ? getAdjacentFileId(files, fileId)
+          ? fileId
           : null;
 
       applyStatePatch(
@@ -208,12 +240,7 @@ export function App() {
         },
       );
     },
-    [
-      applyStatePatch,
-      files,
-      reviewState.collapsedFileIds,
-      reviewState.viewedFileIds,
-    ],
+    [applyStatePatch, reviewState.collapsedFileIds, reviewState.viewedFileIds],
   );
 
   const expandAll = useCallback(() => {
@@ -298,11 +325,14 @@ export function App() {
 
     void syncState(
       createThread({
-        fileId: draft.fileId,
-        filePath: resolveDraftFilePath(draft, files),
-        lineNumber: draft.lineNumber,
-        side: draft.side,
         body,
+        anchor: {
+          kind: "line",
+          fileId: draft.fileId,
+          filePath: resolveDraftFilePath(draft, files),
+          lineNumber: draft.lineNumber,
+          side: draft.side,
+        },
       }).then((result) => {
         setDraft(null);
         return result;
@@ -311,6 +341,121 @@ export function App() {
   }, [draft, files, syncState]);
 
   const cancelDraft = useCallback(() => setDraft(null), []);
+
+  const openDetachedThreadDraft = useCallback(() => {
+    detachedThreadDialogVersionRef.current += 1;
+    setDetachedDraftBody("");
+    setDetachedSkipAgentResponse(false);
+    setDetachedThreadDialog({ mode: "new" });
+  }, []);
+
+  const openDetachedThread = useCallback((threadId: string) => {
+    detachedThreadDialogVersionRef.current += 1;
+    setDetachedDraftBody("");
+    setDetachedSkipAgentResponse(false);
+    setDetachedThreadDialog({ mode: "thread", threadId });
+  }, []);
+
+  const closeDetachedThreadDialog = useCallback(() => {
+    detachedThreadDialogVersionRef.current += 1;
+    setDetachedDraftBody("");
+    setDetachedSkipAgentResponse(false);
+    setDetachedThreadDialog(null);
+  }, []);
+
+  const updateDetachedDraft = useCallback((body: string) => {
+    setDetachedDraftBody(body);
+  }, []);
+
+  const resetDetachedDraftIfCurrent = useCallback((dialogVersion: number) => {
+    if (detachedThreadDialogVersionRef.current !== dialogVersion) {
+      return false;
+    }
+
+    setDetachedDraftBody("");
+    setDetachedSkipAgentResponse(false);
+    return true;
+  }, []);
+
+  const submitDetachedDraft = useCallback(async () => {
+    const body = detachedDraftBody.trim();
+    if (!body) {
+      return;
+    }
+
+    const shouldTriggerAgent = !detachedSkipAgentResponse;
+    const dialogVersion = detachedThreadDialogVersionRef.current;
+    setStatus("");
+
+    try {
+      if (detachedThreadDialog?.mode === "thread") {
+        const replyResult = await replyToThread({
+          id: detachedThreadDialog.threadId,
+          text: body,
+        });
+        applyReviewState(replyResult.state);
+        if (!resetDetachedDraftIfCurrent(dialogVersion)) {
+          return;
+        }
+
+        if (!shouldTriggerAgent) {
+          return;
+        }
+
+        setThreadLoading(detachedThreadDialog.threadId, true);
+        try {
+          const agentResult = await requestThreadMessage(
+            detachedThreadDialog.threadId,
+          );
+          applyReviewState(agentResult.state);
+        } catch (error) {
+          setThreadLoading(detachedThreadDialog.threadId, false);
+          setStatus(error instanceof Error ? error.message : String(error));
+        }
+        return;
+      }
+
+      const createResult = await createThread({
+        body,
+        anchor: { kind: "detached" },
+      });
+      applyReviewState(createResult.state);
+
+      const newestDetachedThread = [...createResult.state.threads]
+        .filter((thread) => thread.anchor.kind === "detached")
+        .at(-1);
+      if (!resetDetachedDraftIfCurrent(dialogVersion)) {
+        return;
+      }
+      setDetachedThreadDialog(
+        newestDetachedThread
+          ? { mode: "thread", threadId: newestDetachedThread.id }
+          : null,
+      );
+
+      if (!shouldTriggerAgent || !newestDetachedThread) {
+        return;
+      }
+
+      setThreadLoading(newestDetachedThread.id, true);
+      try {
+        const agentResult = await requestThreadMessage(newestDetachedThread.id);
+        applyReviewState(agentResult.state);
+      } catch (error) {
+        setThreadLoading(newestDetachedThread.id, false);
+        setStatus(error instanceof Error ? error.message : String(error));
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }, [
+    applyReviewState,
+    detachedDraftBody,
+    detachedSkipAgentResponse,
+    detachedThreadDialog,
+    resetDetachedDraftIfCurrent,
+    setThreadLoading,
+  ]);
 
   const addReply = useCallback(
     (threadId: string, text: string) => {
@@ -421,6 +566,7 @@ export function App() {
           status={status}
           briefLoading={reviewState.brief.loading}
           hasBrief={hasBrief}
+          hasUnresolvedFileThreads={filesWithUnresolvedThreads.length > 0}
           onBriefClick={handleBriefClick}
           onToggleSidebar={() => {
             applyStatePatch({ sidebarOpen: !reviewState.sidebarOpen });
@@ -442,7 +588,15 @@ export function App() {
           open={reviewState.sidebarOpen}
           files={files}
           viewed={viewed}
+          detachedThreads={detachedThreads}
+          selectedDetachedThreadId={
+            detachedThreadDialog?.mode === "thread"
+              ? detachedThreadDialog.threadId
+              : null
+          }
           onJumpToFile={scrollToFile}
+          onCreateDetachedThread={openDetachedThreadDraft}
+          onOpenDetachedThread={openDetachedThread}
         />
         <main className="content">
           {files.length === 0 && (
@@ -490,6 +644,22 @@ export function App() {
         content={reviewState.brief.content}
         loading={reviewState.brief.loading}
         onClose={() => setBriefOpen(false)}
+      />
+      <DetachedThreadDialog
+        open={detachedThreadDialog !== null}
+        thread={selectedDetachedThread}
+        body={detachedDraftBody}
+        skipAgentResponse={detachedSkipAgentResponse}
+        onBodyChange={updateDetachedDraft}
+        onSkipAgentResponseChange={setDetachedSkipAgentResponse}
+        onSubmit={submitDetachedDraft}
+        onClose={closeDetachedThreadDialog}
+        onToggleResolved={(resolved) => {
+          if (!selectedDetachedThread) {
+            return;
+          }
+          toggleResolved(selectedDetachedThread.id, resolved);
+        }}
       />
     </>
   );

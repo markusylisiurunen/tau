@@ -1,0 +1,81 @@
+.detached-thread-dialog-body-wrap {
+  display: flex;
+  flex: 1 1 auto;
+  font-size: 15px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.detached-thread-dialog-layout {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.detached-thread-dialog-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.detached-thread-dialog-message {
+  padding: 1rem;
+}
+
+.detached-thread-dialog-message + .detached-thread-dialog-message {
+  border-top: 1px solid var(--border);
+}
+
+.detached-thread-dialog-message-assistant {
+  background: hsl(142 72% 72% / 0.02);
+}
+
+.detached-thread-dialog-role {
+  color: var(--text);
+  display: inline-block;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.detached-thread-dialog-thinking {
+  color: var(--text-muted);
+  display: block;
+}
+
+.detached-thread-dialog-composer {
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  flex: 0 0 auto;
+  padding: 1rem;
+}
+
+.detached-thread-dialog-composer .btn,
+.detached-thread-dialog-composer .checkbox-btn {
+  font-size: 15px;
+}
+
+.detached-thread-dialog-input {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.detached-thread-dialog-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
+}
+
+.detached-thread-dialog-secondary {
+  border-color: var(--thread-border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.detached-thread-dialog-secondary:hover {
+  border-color: var(--border);
+  background: var(--surface-hover);
+  color: var(--text);
+}

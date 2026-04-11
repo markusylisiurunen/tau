@@ -5,6 +5,7 @@ import type {
   DiffToolCreateThreadPayload,
   DiffToolReviewState,
   DiffToolStatePatch,
+  DiffToolThreadAnchor,
 } from "./shared_types.js";
 
 const emptyBrief: DiffToolBrief = {
@@ -69,10 +70,7 @@ export class DiffToolReviewStateStore {
   createThread(payload: DiffToolCreateThreadPayload): void {
     this.state.threads.push({
       id: randomUUID(),
-      fileId: payload.fileId,
-      filePath: payload.filePath,
-      lineNumber: payload.lineNumber,
-      side: payload.side,
+      anchor: cloneAnchor(payload.anchor),
       messages: [{ role: "user", text: payload.body }],
       loading: false,
       resolved: false,
@@ -179,9 +177,10 @@ export class DiffToolReviewStateStore {
       return "";
     }
 
-    const locationPrefix = thread.threadId
-      ? ""
-      : `[${thread.filePath}:${thread.lineNumber} (${thread.side === "additions" ? "new" : "old"})]\n\n`;
+    const locationPrefix =
+      thread.threadId || thread.anchor.kind !== "line"
+        ? ""
+        : `[${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})]\n\n`;
     return `${locationPrefix}${userText}`;
   }
 
@@ -202,7 +201,10 @@ export class DiffToolReviewStateStore {
 
     const threads = unresolvedThreads
       .map((thread, index) => {
-        const location = `${thread.filePath}:${thread.lineNumber} (${thread.side === "additions" ? "new" : "old"})`;
+        const location =
+          thread.anchor.kind === "line"
+            ? `${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})`
+            : "general discussion";
         const body = thread.messages
           .map(
             (message) =>
@@ -233,15 +235,16 @@ function cloneThread(thread: DiffToolCommentThread): DiffToolCommentThread {
   return {
     id: thread.id,
     ...(thread.threadId ? { threadId: thread.threadId } : {}),
-    fileId: thread.fileId,
-    filePath: thread.filePath,
-    lineNumber: thread.lineNumber,
-    side: thread.side,
+    anchor: cloneAnchor(thread.anchor),
     messages: thread.messages.map((message) => ({ ...message })),
     loading: thread.loading,
     resolved: thread.resolved,
     collapsed: thread.collapsed,
   };
+}
+
+function cloneAnchor(anchor: DiffToolThreadAnchor): DiffToolThreadAnchor {
+  return anchor.kind === "line" ? { ...anchor } : { kind: "detached" };
 }
 
 function pendingUserText(thread: DiffToolCommentThread): string {

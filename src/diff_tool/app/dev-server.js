@@ -184,10 +184,13 @@ for (const chunk of sessionPatch.split(/(?=^diff --git )/m)) {
 const mockThreads = [
   {
     id: "thread-dev-001",
-    fileId: "dev-session-001-0-0",
-    filePath: "src/auth/login.ts",
-    lineNumber: 9,
-    side: "additions",
+    anchor: {
+      kind: "line",
+      fileId: "dev-session-001-0-0",
+      filePath: "src/auth/login.ts",
+      lineNumber: 9,
+      side: "additions",
+    },
     messages: [
       {
         role: "user",
@@ -201,10 +204,13 @@ const mockThreads = [
   {
     id: "thread-dev-002",
     threadId: "thread-mock-002",
-    fileId: "dev-session-001-0-1",
-    filePath: "src/auth/middleware.ts",
-    lineNumber: 6,
-    side: "additions",
+    anchor: {
+      kind: "line",
+      fileId: "dev-session-001-0-1",
+      filePath: "src/auth/middleware.ts",
+      lineNumber: 6,
+      side: "additions",
+    },
     messages: [
       {
         role: "user",
@@ -367,10 +373,7 @@ const server = createServer(async (req, res) => {
 
       state.threads.push({
         id: randomUUID(),
-        fileId: body.fileId,
-        filePath: body.filePath,
-        lineNumber: body.lineNumber,
-        side: body.side,
+        anchor: body.anchor,
         messages: [{ role: "user", text: message }],
         loading: false,
         resolved: false,
@@ -473,9 +476,10 @@ const server = createServer(async (req, res) => {
 
       thread.loading = true;
       const threadId = thread.threadId || `thread-${randomUUID().slice(0, 8)}`;
-      const locationPrefix = thread.threadId
-        ? ""
-        : `[${thread.filePath}:${thread.lineNumber} (${thread.side === "additions" ? "new" : "old"})]\n\n`;
+      const locationPrefix =
+        thread.threadId || thread.anchor.kind !== "line"
+          ? ""
+          : `[${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})]\n\n`;
       const message = `${locationPrefix}${pendingText}`;
       const response = `[mock response] You asked: "${message}"\n\nThis is a simulated review thread response. The real Tau diff review would run an AI model to answer questions about the diff.`;
       thread.threadId = threadId;
@@ -528,7 +532,10 @@ const server = createServer(async (req, res) => {
       const review = unresolvedThreads.length
         ? unresolvedThreads
             .map((thread, index) => {
-              const location = `${thread.filePath}:${thread.lineNumber} (${thread.side === "additions" ? "new" : "old"})`;
+              const location =
+                thread.anchor.kind === "line"
+                  ? `${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})`
+                  : "general discussion";
               const body = thread.messages
                 .map(
                   (message) =>

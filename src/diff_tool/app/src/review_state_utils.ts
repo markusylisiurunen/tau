@@ -1,4 +1,8 @@
-import type { CommentDraft, LineAnnotation } from "./comments.js";
+import type {
+  CommentDraft,
+  CommentThread,
+  LineAnnotation,
+} from "./comments.js";
 import type { DiffFile } from "./parse_diff.js";
 import type { DiffToolReviewState } from "./types.js";
 
@@ -24,6 +28,10 @@ export function normalizeReviewState(
     overflowMode: state.overflowMode === "scroll" ? "scroll" : "wrap",
     threads: state.threads.map((thread) => ({
       ...thread,
+      anchor:
+        thread.anchor.kind === "line"
+          ? { ...thread.anchor }
+          : { kind: "detached" as const },
       resolved: Boolean(thread.resolved),
       collapsed: Boolean(thread.collapsed),
     })),
@@ -33,6 +41,20 @@ export function normalizeReviewState(
       loading: Boolean(state.brief.loading),
     },
   };
+}
+
+export function isLineThread(thread: CommentThread): thread is CommentThread & {
+  anchor: Extract<CommentThread["anchor"], { kind: "line" }>;
+} {
+  return thread.anchor.kind === "line";
+}
+
+export function isDetachedThread(
+  thread: CommentThread,
+): thread is CommentThread & {
+  anchor: Extract<CommentThread["anchor"], { kind: "detached" }>;
+} {
+  return thread.anchor.kind === "detached";
 }
 
 export function toLookup(ids: string[]): Record<string, boolean> {
@@ -45,18 +67,6 @@ export function toggleId(ids: string[], id: string): string[] {
 
 export function uniqueIds(ids: string[]): string[] {
   return [...new Set(ids)];
-}
-
-export function getAdjacentFileId(
-  files: DiffFile[],
-  fileId: string,
-): string | null {
-  const index = files.findIndex((file) => file.id === fileId);
-  if (index === -1) {
-    return null;
-  }
-
-  return files[index + 1]?.id ?? files[index - 1]?.id ?? null;
 }
 
 export function sumFileChanges(
@@ -75,16 +85,20 @@ export function buildThreadsByFileId(
   const annotationsByFileId = new Map<string, LineAnnotation[]>();
 
   for (const thread of threads) {
+    if (!isLineThread(thread)) {
+      continue;
+    }
+
     const annotation: LineAnnotation = {
-      lineNumber: thread.lineNumber,
-      side: thread.side,
+      lineNumber: thread.anchor.lineNumber,
+      side: thread.anchor.side,
       metadata: { type: "thread", thread },
     };
-    const fileAnnotations = annotationsByFileId.get(thread.fileId);
+    const fileAnnotations = annotationsByFileId.get(thread.anchor.fileId);
     if (fileAnnotations) {
       fileAnnotations.push(annotation);
     } else {
-      annotationsByFileId.set(thread.fileId, [annotation]);
+      annotationsByFileId.set(thread.anchor.fileId, [annotation]);
     }
   }
 
@@ -97,9 +111,13 @@ export function countThreadsByFileId(
   const countsByFileId = new Map<string, number>();
 
   for (const thread of threads) {
+    if (!isLineThread(thread)) {
+      continue;
+    }
+
     countsByFileId.set(
-      thread.fileId,
-      (countsByFileId.get(thread.fileId) ?? 0) + 1,
+      thread.anchor.fileId,
+      (countsByFileId.get(thread.anchor.fileId) ?? 0) + 1,
     );
   }
 

@@ -5,6 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { CommentThread } from "../comments.js";
 import type { DiffFile } from "../parse_diff.js";
 import { DiffStats } from "./diff_stats.js";
 import "./sidebar.css";
@@ -13,31 +14,95 @@ type SidebarProps = {
   open: boolean;
   files: DiffFile[];
   viewed: Record<string, boolean>;
+  detachedThreads: CommentThread[];
+  selectedDetachedThreadId: string | null;
   onJumpToFile: (fileId: string) => void;
+  onCreateDetachedThread: () => void;
+  onOpenDetachedThread: (threadId: string) => void;
 };
 
-export function Sidebar({ open, files, viewed, onJumpToFile }: SidebarProps) {
+export function Sidebar({
+  open,
+  files,
+  viewed,
+  detachedThreads,
+  selectedDetachedThreadId,
+  onJumpToFile,
+  onCreateDetachedThread,
+  onOpenDetachedThread,
+}: SidebarProps) {
   return (
     <aside className={`sidebar${open ? " open" : ""}`}>
-      {files.map((file) => (
-        <button
-          key={file.id}
-          type="button"
-          className={`sidebar-item${viewed[file.id] ? " viewed" : ""}`}
-          onClick={() => onJumpToFile(file.id)}
-        >
-          <SidebarPathLabel
-            path={file.displayPath}
-            stats={
-              <DiffStats
-                additions={file.additions}
-                deletions={file.deletions}
-                className="sidebar-stats"
+      <section className="sidebar-section">
+        <div className="sidebar-section-header">
+          <h2 className="sidebar-section-title">conversations</h2>
+          <button
+            type="button"
+            className="btn sidebar-action"
+            onClick={onCreateDetachedThread}
+          >
+            new thread
+          </button>
+        </div>
+        <div className="sidebar-conversations">
+          {detachedThreads.length === 0 ? (
+            <p className="sidebar-empty">no conversations yet</p>
+          ) : (
+            detachedThreads.map((thread) => {
+              const name = getThreadName(thread);
+              const status = thread.loading ? "active" : "idle";
+
+              return (
+                <button
+                  key={thread.id}
+                  type="button"
+                  className={`sidebar-thread-item${
+                    selectedDetachedThreadId === thread.id ? " selected" : ""
+                  }${thread.resolved ? " resolved" : ""}`}
+                  onClick={() => onOpenDetachedThread(thread.id)}
+                  title={name}
+                >
+                  <span className="sidebar-thread-row">
+                    <span className="sidebar-thread-name">{name}</span>
+                    <span
+                      className={`sidebar-thread-status-dot ${status}`}
+                      aria-label={status}
+                      title={status}
+                    />
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </section>
+      <div className="sidebar-divider" />
+      <section className="sidebar-section">
+        <div className="sidebar-section-header">
+          <h2 className="sidebar-section-title">files</h2>
+        </div>
+        <div className="sidebar-file-list">
+          {files.map((file) => (
+            <button
+              key={file.id}
+              type="button"
+              className={`sidebar-item${viewed[file.id] ? " viewed" : ""}`}
+              onClick={() => onJumpToFile(file.id)}
+            >
+              <SidebarPathLabel
+                path={file.displayPath}
+                stats={
+                  <DiffStats
+                    additions={file.additions}
+                    deletions={file.deletions}
+                    className="sidebar-stats"
+                  />
+                }
               />
-            }
-          />
-        </button>
-      ))}
+            </button>
+          ))}
+        </div>
+      </section>
     </aside>
   );
 }
@@ -186,4 +251,22 @@ function shortenFileName(name: string): string {
   }
 
   return `${stem.slice(0, 14)}…${ext}`;
+}
+
+function getThreadName(thread: CommentThread): string {
+  const firstUserMessage = thread.messages.find(
+    (message) => message.role === "user",
+  );
+  const normalized = collapseWhitespace(firstUserMessage?.text ?? "");
+  if (!normalized) {
+    return "new conversation";
+  }
+
+  return normalized.length <= 128
+    ? normalized
+    : `${normalized.slice(0, 125).trimEnd()}…`;
+}
+
+function collapseWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }

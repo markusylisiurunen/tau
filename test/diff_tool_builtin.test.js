@@ -212,19 +212,25 @@ describe("built-in diff tool", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          fileId: "src/a.ts::0",
-          filePath: "src/a.ts",
-          lineNumber: 1,
-          side: "additions",
+          anchor: {
+            kind: "line",
+            fileId: "src/a.ts::0",
+            filePath: "src/a.ts",
+            lineNumber: 1,
+            side: "additions",
+          },
           body: "What changed?",
         }),
       });
       const thread = createdThread.state.threads[0];
       expect(thread).toMatchObject({
-        fileId: "src/a.ts::0",
-        filePath: "src/a.ts",
-        lineNumber: 1,
-        side: "additions",
+        anchor: {
+          kind: "line",
+          fileId: "src/a.ts::0",
+          filePath: "src/a.ts",
+          lineNumber: 1,
+          side: "additions",
+        },
         messages: [{ role: "user", text: "What changed?" }],
         loading: false,
       });
@@ -250,10 +256,13 @@ describe("built-in diff tool", () => {
       expect(askedThread.state.threads[0]).toEqual({
         id: thread.id,
         threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
-        fileId: "src/a.ts::0",
-        filePath: "src/a.ts",
-        lineNumber: 1,
-        side: "additions",
+        anchor: {
+          kind: "line",
+          fileId: "src/a.ts::0",
+          filePath: "src/a.ts",
+          lineNumber: 1,
+          side: "additions",
+        },
         messages: [
           { role: "user", text: "What changed?" },
           { role: "user", text: "Any risks?" },
@@ -273,10 +282,56 @@ describe("built-in diff tool", () => {
           /^<system>[\s\S]*<\/system>\n\[src\/a\.ts:1 \(new\)\]\n\nWhat changed\?\n\nAny risks\?$/,
         ),
       ]);
-      expect(createdThreads).toHaveLength(2);
+
+      const createdDetachedThread = await fetchJson(`${started.url}/api/thread`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          anchor: { kind: "detached" },
+          body: "Anything else worth checking?",
+        }),
+      });
+      const detachedThread = createdDetachedThread.state.threads[1];
+      expect(detachedThread).toMatchObject({
+        anchor: { kind: "detached" },
+        messages: [{ role: "user", text: "Anything else worth checking?" }],
+        loading: false,
+      });
+
+      const askedDetachedThread = await fetchJson(`${started.url}/api/thread-message`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: detachedThread.id }),
+      });
+      expect(askedDetachedThread.state.threads[1]).toEqual({
+        id: detachedThread.id,
+        threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        anchor: { kind: "detached" },
+        messages: [
+          { role: "user", text: "Anything else worth checking?" },
+          {
+            role: "assistant",
+            text: expect.stringMatching(
+              /^reply [0-9a-f-]{36} #1: <system>[\s\S]*Anything else worth checking\?$/,
+            ),
+          },
+        ],
+        loading: false,
+        resolved: false,
+        collapsed: false,
+      });
+      expect(threadMessages.get(askedDetachedThread.state.threads[1].threadId)).toEqual([
+        expect.stringMatching(/^<system>[\s\S]*<\/system>\nAnything else worth checking\?$/),
+      ]);
+
+      expect(createdThreads).toHaveLength(3);
       expect(createdThreads[0].forkFrom).toBeUndefined();
       expect(createdThreads[1]).toEqual({
         threadId: askedThread.state.threads[0].threadId,
+        forkFrom: expect.any(Object),
+      });
+      expect(createdThreads[2]).toEqual({
+        threadId: askedDetachedThread.state.threads[1].threadId,
         forkFrom: expect.any(Object),
       });
       expect(session.getUiState()).toEqual({
@@ -308,11 +363,24 @@ describe("built-in diff tool", () => {
               contextWindow: personas[0].model.contextWindow,
             },
           },
+          {
+            threadId: askedDetachedThread.state.threads[1].threadId,
+            status: "idle",
+            costTotal: 0,
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              contextWindowUsageTokens: 0,
+              contextWindow: personas[0].model.contextWindow,
+            },
+          },
         ],
       });
 
       const refreshedBootstrap = await fetchJson(`${started.url}/api/bootstrap`);
-      expect(refreshedBootstrap.state).toEqual(askedThread.state);
+      expect(refreshedBootstrap.state).toEqual(askedDetachedThread.state);
 
       const reviewResult = await fetchJson(`${started.url}/api/review`, {
         method: "POST",
@@ -323,7 +391,9 @@ describe("built-in diff tool", () => {
         status: "returned",
         review:
           "The notes below include thread transcripts from the review. In those transcripts:\n\n- **user** is a comment written by the reviewer\n- **agent** is a generated reply within that review thread\n\nTreat thread dialogue as supporting review context, not automatically as a final conclusion.\n\n---\n\n## thread 1\n\n`src/a.ts:1 (new)`\n\n**user**\n\nWhat changed?\n\n**user**\n\nAny risks?\n\n**agent**\n\n" +
-          askedThread.state.threads[0].messages[2].text,
+          askedThread.state.threads[0].messages[2].text +
+          "\n\n---\n\n## thread 2\n\n`general discussion`\n\n**user**\n\nAnything else worth checking?\n\n**agent**\n\n" +
+          askedDetachedThread.state.threads[1].messages[1].text,
       });
       await server.waitUntilClosed();
     } finally {

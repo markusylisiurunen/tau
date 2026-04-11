@@ -1,5 +1,5 @@
 import { FileDiff } from "@pierre/diffs/react";
-import { Check, ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
+import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { memo, useCallback, useMemo } from "react";
 import type {
   CommentAnnotation,
@@ -8,6 +8,7 @@ import type {
 } from "../comments.js";
 import type { DiffFile } from "../parse_diff.js";
 import type { DiffStyle, OverflowMode } from "../types.js";
+import { Checkbox } from "./checkbox.js";
 import { CommentEditor } from "./comment_editor.js";
 import { DiffStats } from "./diff_stats.js";
 import { ThreadCard } from "./thread_card.js";
@@ -155,17 +156,12 @@ export const FileSection = memo(function FileSection({
         </button>
         <div className="file-meta">
           <DiffStats additions={file.additions} deletions={file.deletions} />
-          <button
-            type="button"
-            className={`viewed-btn${viewed ? " checked" : ""}`}
-            onClick={() => onToggleViewed(file.id)}
-            aria-label={viewed ? "Mark as not viewed" : "Mark as viewed"}
-          >
-            <span className="viewed-check">
-              {viewed && <Check size={10} strokeWidth={3} />}
-            </span>
-            viewed
-          </button>
+          <Checkbox
+            checked={viewed}
+            label="viewed"
+            className="viewed-checkbox"
+            onChange={() => onToggleViewed(file.id)}
+          />
         </div>
       </div>
       {!collapsed && (

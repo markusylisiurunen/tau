@@ -13,13 +13,24 @@ export type DiffToolThreadMessage = {
 
 export type DiffToolLineSide = "additions" | "deletions";
 
-export type DiffToolCommentThread = {
-  id: string;
-  threadId?: string;
+export type DiffToolDetachedThreadAnchor = {
+  kind: "detached";
+};
+
+export type DiffToolLineThreadAnchor = {
+  kind: "line";
   fileId: string;
   filePath: string;
   lineNumber: number;
   side: DiffToolLineSide;
+};
+
+export type DiffToolThreadAnchor = DiffToolDetachedThreadAnchor | DiffToolLineThreadAnchor;
+
+export type DiffToolCommentThread = {
+  id: string;
+  threadId?: string;
+  anchor: DiffToolThreadAnchor;
   messages: DiffToolThreadMessage[];
   loading: boolean;
   resolved: boolean;
@@ -63,10 +74,7 @@ export type DiffToolStateResponse = {
 };
 
 export type DiffToolCreateThreadPayload = {
-  fileId: string;
-  filePath: string;
-  lineNumber: number;
-  side: DiffToolLineSide;
+  anchor: DiffToolThreadAnchor;
   body: string;
 };
 

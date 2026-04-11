@@ -26,6 +26,7 @@ type TopBarProps = {
   status: string;
   briefLoading: boolean;
   hasBrief: boolean;
+  hasUnresolvedFileThreads: boolean;
   onBriefClick: () => void;
   onToggleSidebar: () => void;
   onExpandAll: () => void;
@@ -52,6 +53,7 @@ export function TopBar({
   status,
   briefLoading,
   hasBrief,
+  hasUnresolvedFileThreads,
   onBriefClick,
   onToggleSidebar,
   onExpandAll,
@@ -73,7 +75,7 @@ export function TopBar({
       <div className="top-bar-left">
         <IconButton
           icon={PanelLeft}
-          label="Toggle file list"
+          label="Toggle sidebar"
           className={sidebarOpen ? "active" : ""}
           onClick={onToggleSidebar}
         />
@@ -133,7 +135,7 @@ export function TopBar({
             icon={MessageSquare}
             label="Expand files with unresolved threads"
             onClick={onExpandUnresolved}
-            disabled={commentCount === 0}
+            disabled={!hasUnresolvedFileThreads}
           />
           <IconButton
             icon={EyeOff}

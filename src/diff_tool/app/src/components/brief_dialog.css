@@ -1,75 +1,17 @@
-.brief-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 40px 20px 20px;
-  background: hsl(0 0% 0% / 0.72);
-}
-
-.brief-dialog {
-  width: min(760px, 100%);
-  max-height: calc(100vh - 60px);
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: 0 0 0 1px hsl(0 0% 0% / 0.4);
-}
-
-.brief-dialog-header {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.brief-dialog-heading {
-  min-width: 0;
-}
-
-.brief-dialog-title {
-  font-size: 16px;
-  color: var(--text);
-}
-
-.brief-dialog-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.brief-dialog-close {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-}
-
-.brief-dialog-close svg {
-  width: 14px;
-  height: 14px;
-}
-
 .brief-dialog-body-wrap {
+  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
 }
 
 .brief-dialog-empty {
-  padding: 1rem;
   color: var(--text-muted);
   font-size: 16px;
+  padding: 1rem;
 }
 
 .brief-dialog-body {
-  padding: 1rem;
   font-size: 16px;
+  padding: 1rem;
 }

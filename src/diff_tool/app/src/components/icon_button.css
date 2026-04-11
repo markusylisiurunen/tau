@@ -1,15 +1,15 @@
 .icon-btn {
-  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-muted);
-  border-radius: 0;
-  width: 28px;
-  height: 28px;
   aspect-ratio: 1;
+  background: transparent;
+  border-radius: 0;
+  border: 1px solid transparent;
+  color: var(--text-muted);
   cursor: pointer;
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
 }
 
 .icon-btn:hover {
@@ -19,8 +19,8 @@
 
 .icon-btn.active {
   background: var(--surface-hover);
-  color: var(--text);
   border-color: var(--border);
+  color: var(--text);
 }
 
 .icon-btn.ghost {

@@ -107,9 +107,7 @@ export class DiffToolHttpServer {
 
       const url = `http://${this.host}:${String(address.port)}`;
       await this.client.setUiText({ text: url });
-      setTimeout(() => {
-        void this.startBootstrapThread().catch(() => {});
-      }, 0);
+      void this.startBootstrapThread().catch(() => {});
 
       return {
         url,

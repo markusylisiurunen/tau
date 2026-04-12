@@ -209,7 +209,6 @@ export class DiffReviewProtocolClient {
         }
         settled = true;
         socket.off("close", onClose);
-        socket.off("drain", onDrain);
         socket.off("error", onError);
         callback();
       };
@@ -218,26 +217,28 @@ export class DiffReviewProtocolClient {
           reject(new Error("diff review protocol connection closed"));
         });
       };
-      const onDrain = () => {
-        finish(resolve);
-      };
       const onError = (error: Error) => {
         finish(() => {
-          reject(error);
+          reject(normalizeSocketWriteError(error));
         });
       };
 
       socket.once("close", onClose);
-      socket.once("drain", onDrain);
       socket.once("error", onError);
 
       try {
-        if (socket.write(requestLine)) {
+        socket.write(requestLine, (error) => {
+          if (error) {
+            finish(() => {
+              reject(normalizeSocketWriteError(error));
+            });
+            return;
+          }
           finish(resolve);
-        }
+        });
       } catch (error) {
         finish(() => {
-          reject(error instanceof Error ? error : new Error(String(error)));
+          reject(normalizeSocketWriteError(error));
         });
       }
     });
@@ -348,6 +349,19 @@ export class DiffReviewProtocolClient {
       listener();
     }
   }
+}
+
+function normalizeSocketWriteError(error: unknown): Error {
+  if (
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error.code === "EPIPE" || error.code === "ECONNRESET")
+  ) {
+    return new Error("diff review protocol connection closed");
+  }
+
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 export function parseDiffToolLaunchEnvironment(

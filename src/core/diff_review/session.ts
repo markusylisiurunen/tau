@@ -706,7 +706,8 @@ export class DiffReviewSession {
 
     for (const connection of this.connections) {
       connection.readline.close();
-      connection.socket.destroy();
+      connection.socket.end();
+      connection.socket.destroySoon();
     }
     this.connections.clear();
     this.initializedConnection = undefined;

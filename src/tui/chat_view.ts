@@ -165,6 +165,7 @@ export class TuiChatView implements ChatView {
     this.queuedMessages = new QueuedMessagesComponent(this.uiTheme, options.queuedUserMessages);
     this.subagentPanel = new SubagentPanelComponent(this.uiTheme);
     this.editor = new CustomEditor(this.uiTheme);
+    this.editor.onUiChange = () => this.ui.requestRender();
     this.editorPane = new SubagentEditorPaneComponent(
       this.uiTheme,
       this.subagentPanel,

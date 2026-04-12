@@ -4,20 +4,46 @@ import type {
   Context,
   Model,
   ProviderStreamOptions,
+  SimpleStreamOptions,
   ThinkingLevel,
 } from "@mariozechner/pi-ai";
 import { stream, streamSimple, supportsXhigh } from "@mariozechner/pi-ai";
+import type { ReasoningEffort } from "../types.js";
 import type { TauStreamOptions } from "./streaming_settings.js";
 
 type BedrockStreamOptions = ProviderStreamOptions & {
-  reasoning?: TauStreamOptions["reasoning"];
+  reasoning?: ThinkingLevel;
   thinkingBudgets?: TauStreamOptions["thinkingBudgets"];
   interleavedThinking?: boolean;
 };
 
 type CodexStreamOptions = ProviderStreamOptions & {
-  reasoningEffort?: ThinkingLevel;
+  reasoningEffort?: ReasoningEffort;
 };
+
+function normalizeSimpleReasoning(
+  reasoning: TauStreamOptions["reasoning"],
+): ThinkingLevel | undefined {
+  if (reasoning === undefined || reasoning === "none") {
+    return undefined;
+  }
+
+  return reasoning;
+}
+
+export function resolveSimpleStreamOptions(options: TauStreamOptions): SimpleStreamOptions {
+  const { reasoning, ...baseOptions } = options;
+  const normalizedReasoning = normalizeSimpleReasoning(reasoning);
+
+  if (normalizedReasoning === undefined) {
+    return baseOptions;
+  }
+
+  return {
+    ...baseOptions,
+    reasoning: normalizedReasoning,
+  };
+}
 
 function isBedrockModel(model: Model<Api>): model is Model<"bedrock-converse-stream"> {
   return model.api === "bedrock-converse-stream" || model.provider === "amazon-bedrock";
@@ -35,19 +61,23 @@ function resolveBedrockOptions(
   model: Model<"bedrock-converse-stream">,
   options: TauStreamOptions,
 ): BedrockStreamOptions {
+  const { reasoning, ...baseOptions } = options;
+  const normalizedReasoning = normalizeSimpleReasoning(reasoning);
+
   return {
-    ...options,
+    ...baseOptions,
+    ...(normalizedReasoning !== undefined ? { reasoning: normalizedReasoning } : {}),
     maxTokens: options.maxTokens || Math.min(model.maxTokens, 32000),
     ...(isBedrockAnthropicModel(model) ? { interleavedThinking: true } : {}),
   };
 }
 
-function resolveCodexReasoningEffort(
+export function resolveCodexReasoningEffort(
   model: Model<"openai-codex-responses">,
   reasoning: TauStreamOptions["reasoning"],
-): ThinkingLevel | undefined {
-  if (reasoning === undefined) {
-    return undefined;
+): ReasoningEffort | undefined {
+  if (reasoning === undefined || reasoning === "none") {
+    return reasoning;
   }
 
   if (supportsXhigh(model) || reasoning !== "xhigh") {
@@ -80,5 +110,5 @@ export function streamModel<TApi extends Api>(
     return stream(model, context, providerOptions);
   }
 
-  return streamSimple(model, context, options);
+  return streamSimple(model, context, resolveSimpleStreamOptions(options));
 }

@@ -62,6 +62,10 @@ function applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
   };
 }
 
+async function waitForAutocomplete(ms = 0) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 test("SessionDividerComponent renders a muted divider line", () => {
   const theme = createTagTheme();
   const component = new SessionDividerComponent(theme, { label: "new session" });
@@ -437,7 +441,7 @@ test("CustomEditor does not trigger slash autocomplete in multiline drafts", () 
   expect(editor.isShowingAutocomplete()).toBe(false);
 });
 
-test("CustomEditor refreshes slash autocomplete after insertTextAtCursor", () => {
+test("CustomEditor refreshes slash autocomplete after insertTextAtCursor", async () => {
   const theme = createTagTheme();
   const editor = new CustomEditor(theme);
   let submitted;
@@ -447,9 +451,11 @@ test("CustomEditor refreshes slash autocomplete after insertTextAtCursor", () =>
   editor.setAutocompleteProvider(createSlashProvider());
 
   editor.handleInput("/");
+  await waitForAutocomplete();
   expect(editor.isShowingAutocomplete()).toBe(true);
 
   editor.insertTextAtCursor("zzzz");
+  await waitForAutocomplete();
 
   expect(editor.getText()).toBe("/zzzz");
   expect(editor.isShowingAutocomplete()).toBe(false);
@@ -459,7 +465,7 @@ test("CustomEditor refreshes slash autocomplete after insertTextAtCursor", () =>
   expect(submitted).toBe("/zzzz");
 });
 
-test("CustomEditor keeps the exact file mention match from the real provider", () => {
+test("CustomEditor keeps the exact file mention match from the real provider", async () => {
   const theme = createTagTheme();
   const editor = new CustomEditor(theme);
   editor.setAutocompleteProvider(createSlashProvider({ files: ["foo.tsx", "foo.ts"] }));
@@ -467,6 +473,7 @@ test("CustomEditor keeps the exact file mention match from the real provider", (
   for (const char of "@foo.ts") {
     editor.handleInput(char);
   }
+  await waitForAutocomplete(25);
 
   const autocomplete = editor.render(40).map(stripTags).join("\n");
   expect(autocomplete).toContain("foo.tsx");
@@ -478,15 +485,14 @@ test("CustomEditor keeps the exact file mention match from the real provider", (
   expect(editor.isShowingAutocomplete()).toBe(false);
 });
 
-test("CustomEditor applies a single forced file completion on Tab", () => {
+test("CustomEditor applies a single forced file completion on Tab", async () => {
   const theme = createTagTheme();
   const editor = new CustomEditor(theme);
   editor.setAutocompleteProvider({
-    getSuggestions: () => null,
-    getForceFileSuggestions: (lines, _cursorLine, cursorCol) => {
+    getSuggestions: async (lines, _cursorLine, cursorCol, options) => {
       const text = lines[0] ?? "";
       const beforeCursor = text.slice(0, cursorCol);
-      if (beforeCursor !== "Work") return null;
+      if (!options.force || beforeCursor !== "Work") return null;
       return {
         prefix: "Work",
         items: [{ value: "Workspace/", label: "Workspace/" }],
@@ -497,6 +503,7 @@ test("CustomEditor applies a single forced file completion on Tab", () => {
   editor.setText("Work");
 
   editor.handleInput("\t");
+  await waitForAutocomplete();
 
   expect(editor.getText()).toBe("Workspace/");
   expect(editor.isShowingAutocomplete()).toBe(false);

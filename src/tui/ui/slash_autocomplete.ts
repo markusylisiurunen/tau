@@ -77,11 +77,12 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     this.getRiskLevels = riskLevels;
   }
 
-  getSuggestions(
+  async getSuggestions(
     lines: string[],
     cursorLine: number,
     cursorCol: number,
-  ): { items: AutocompleteItem[]; prefix: string } | null {
+    _options: { signal: AbortSignal; force?: boolean },
+  ): Promise<{ items: AutocompleteItem[]; prefix: string } | null> {
     const line = lines[cursorLine] ?? "";
     const beforeCursor = line.slice(0, cursorCol);
 

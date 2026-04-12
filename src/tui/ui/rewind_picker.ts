@@ -1,7 +1,17 @@
-import { type Component, type SelectItem, SelectList, visibleWidth } from "@mariozechner/pi-tui";
+import {
+  type Component,
+  type SelectItem,
+  SelectList,
+  type SelectListLayoutOptions,
+  visibleWidth,
+} from "@mariozechner/pi-tui";
 import type { Theme } from "./theme/index.js";
 
 const REWIND_PICKER_MAX_VISIBLE = 8;
+const SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
+  minPrimaryColumnWidth: 12,
+  maxPrimaryColumnWidth: 32,
+};
 
 export type RewindPickerItem = {
   id: string;
@@ -71,6 +81,7 @@ export class RewindPickerComponent implements Component {
       selectItems,
       REWIND_PICKER_MAX_VISIBLE,
       this.theme.editorTheme.selectList,
+      SELECT_LIST_LAYOUT,
     );
     list.setSelectedIndex(Math.max(0, selectItems.length - 1));
     list.onSelect = (item) => this.onSelect?.(item.value);

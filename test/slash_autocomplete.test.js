@@ -19,35 +19,39 @@ function createProvider(options = {}) {
   );
 }
 
-function getMentionValues(provider, text) {
-  const suggestions = provider.getSuggestions([text], 0, text.length);
+async function getMentionValues(provider, text) {
+  const suggestions = await provider.getSuggestions([text], 0, text.length, {
+    signal: new AbortController().signal,
+  });
   return suggestions ? suggestions.items.map((item) => item.value) : null;
 }
 
-function getSlashValues(provider, text) {
-  const suggestions = provider.getSuggestions([text], 0, text.length);
+async function getSlashValues(provider, text) {
+  const suggestions = await provider.getSuggestions([text], 0, text.length, {
+    signal: new AbortController().signal,
+  });
   return suggestions ? suggestions.items.map((item) => item.value) : null;
 }
 
 describe("slash mention autocomplete", () => {
-  it("uses @ as the default file mention syntax", () => {
+  it("uses @ as the default file mention syntax", async () => {
     const provider = createProvider({ files: ["src/core.ts", "src/tui/app.ts"] });
 
-    expect(getMentionValues(provider, "@")).toEqual(["src/core.ts", "src/tui/app.ts"]);
-    expect(getMentionValues(provider, "@src/tui")).toEqual(["src/tui/app.ts"]);
+    expect(await getMentionValues(provider, "@")).toEqual(["src/core.ts", "src/tui/app.ts"]);
+    expect(await getMentionValues(provider, "@src/tui")).toEqual(["src/tui/app.ts"]);
   });
 
-  it("uses @@ to suggest mention kinds and @@kind: to suggest entries", () => {
+  it("uses @@ to suggest mention kinds and @@kind: to suggest entries", async () => {
     const provider = createProvider({
       files: ["src/core.ts"],
       skills: ["foo-skill", "bar-skill"],
       agents: ["default", "reviewer"],
     });
 
-    expect(getMentionValues(provider, "@@")).toEqual(["skill:", "agent:"]);
-    expect(getMentionValues(provider, "@@sk")).toEqual(["skill:"]);
-    expect(getMentionValues(provider, "@@skill:")).toEqual(["foo-skill", "bar-skill"]);
-    expect(getMentionValues(provider, "@@agent:d")).toEqual(["default"]);
+    expect(await getMentionValues(provider, "@@")).toEqual(["skill:", "agent:"]);
+    expect(await getMentionValues(provider, "@@sk")).toEqual(["skill:"]);
+    expect(await getMentionValues(provider, "@@skill:")).toEqual(["foo-skill", "bar-skill"]);
+    expect(await getMentionValues(provider, "@@agent:d")).toEqual(["default"]);
   });
 
   it("inserts mentions using @path and @@kind:name", () => {
@@ -79,25 +83,25 @@ describe("slash mention autocomplete", () => {
     expect(entry.lines[0]).toBe("@@skill:foo-skill ");
   });
 
-  it("does not treat removed @file:/@skill:/@agent: forms as typed mentions", () => {
+  it("does not treat removed @file:/@skill:/@agent: forms as typed mentions", async () => {
     const provider = createProvider({
       files: ["src/core.ts"],
       skills: ["foo-skill"],
       agents: ["default"],
     });
 
-    expect(getMentionValues(provider, "@@file:")).toBeNull();
-    expect(getMentionValues(provider, "@skill:foo-skill")).toBeNull();
-    expect(getMentionValues(provider, "@agent:default")).toBeNull();
-    expect(getMentionValues(provider, "@file:src/core.ts")).toBeNull();
+    expect(await getMentionValues(provider, "@@file:")).toBeNull();
+    expect(await getMentionValues(provider, "@skill:foo-skill")).toBeNull();
+    expect(await getMentionValues(provider, "@agent:default")).toBeNull();
+    expect(await getMentionValues(provider, "@file:src/core.ts")).toBeNull();
   });
 });
 
 describe("slash command autocomplete", () => {
-  it("suggests the first-class /diff command", () => {
+  it("suggests the first-class /diff command", async () => {
     const provider = createProvider();
 
-    expect(getSlashValues(provider, "/di")).toContain("diff");
+    expect(await getSlashValues(provider, "/di")).toContain("diff");
   });
 });
 

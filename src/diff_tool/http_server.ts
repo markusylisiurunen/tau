@@ -62,6 +62,7 @@ export class DiffToolHttpServer {
   private readonly host: string;
   private readonly port: number;
   private readonly removeClientCloseListener: () => void;
+  private readonly removeSessionCloseListener: () => void;
   private readonly staticDir: string;
   private readonly reviewState = new DiffToolReviewStateStore();
   private context?: DiffReviewSessionContextResult;
@@ -89,7 +90,10 @@ export class DiffToolHttpServer {
       if (this.closed) {
         return;
       }
-      void this.close();
+      void this.closeFromProtocol();
+    });
+    this.removeSessionCloseListener = this.client.onSessionClose(async () => {
+      await this.closeFromProtocol();
     });
   }
 
@@ -119,6 +123,18 @@ export class DiffToolHttpServer {
   }
 
   async close(): Promise<void> {
+    await this.closeInternal({ closeClient: true });
+  }
+
+  async waitUntilClosed(): Promise<void> {
+    await this.closePromise;
+  }
+
+  private async closeFromProtocol(): Promise<void> {
+    await this.closeInternal({ closeClient: false });
+  }
+
+  private async closeInternal(options: { closeClient: boolean }): Promise<void> {
     if (this.closed) {
       await this.closePromise;
       return;
@@ -126,14 +142,13 @@ export class DiffToolHttpServer {
 
     this.closed = true;
     this.removeClientCloseListener();
+    this.removeSessionCloseListener();
     await this.closeHttpServer();
-    await this.client.close();
+    if (options.closeClient) {
+      await this.client.close();
+    }
     this.closeResolver?.();
     this.closeResolver = undefined;
-  }
-
-  async waitUntilClosed(): Promise<void> {
-    await this.closePromise;
   }
 
   async cancel(): Promise<void> {

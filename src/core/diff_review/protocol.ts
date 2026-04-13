@@ -3,7 +3,7 @@ import type { DiffReviewFile } from "./snapshot.js";
 
 export const DIFF_REVIEW_PROTOCOL_VERSION = 1 as const;
 
-export const DIFF_REVIEW_METHODS = [
+export const DIFF_REVIEW_CLIENT_METHODS = [
   "initialize",
   "session.get_context",
   "session.list_files",
@@ -14,6 +14,15 @@ export const DIFF_REVIEW_METHODS = [
   "session.cancel",
 ] as const;
 
+export const DIFF_REVIEW_SERVER_METHODS = ["session.close"] as const;
+
+export const DIFF_REVIEW_METHODS = [
+  ...DIFF_REVIEW_CLIENT_METHODS,
+  ...DIFF_REVIEW_SERVER_METHODS,
+] as const;
+
+export type DiffReviewClientMethod = (typeof DIFF_REVIEW_CLIENT_METHODS)[number];
+export type DiffReviewServerMethod = (typeof DIFF_REVIEW_SERVER_METHODS)[number];
 export type DiffReviewMethod = (typeof DIFF_REVIEW_METHODS)[number];
 
 export const DIFF_REVIEW_ERROR_CODES = {
@@ -53,6 +62,7 @@ export type DiffReviewSessionReturnReviewParams = {
   review: string;
 };
 export type DiffReviewSessionCancelParams = Record<string, never>;
+export type DiffReviewSessionCloseParams = Record<string, never>;
 
 export type DiffReviewParamsByMethod = {
   initialize: DiffReviewInitializeParams;
@@ -63,6 +73,7 @@ export type DiffReviewParamsByMethod = {
   "thread.submit_message": DiffReviewThreadSubmitMessageParams;
   "session.return_review": DiffReviewSessionReturnReviewParams;
   "session.cancel": DiffReviewSessionCancelParams;
+  "session.close": DiffReviewSessionCloseParams;
 };
 
 export type DiffReviewResultStatus = "returned" | "cancelled";
@@ -70,7 +81,7 @@ export type DiffReviewResultStatus = "returned" | "cancelled";
 export type DiffReviewInitializeResult = {
   protocolVersion: typeof DIFF_REVIEW_PROTOCOL_VERSION;
   sessionId: string;
-  methods: DiffReviewMethod[];
+  methods: DiffReviewClientMethod[];
   alreadyInitialized: boolean;
 };
 
@@ -114,6 +125,10 @@ export type DiffReviewSessionCancelResult = {
   status: Extract<DiffReviewResultStatus, "cancelled">;
 };
 
+export type DiffReviewSessionCloseResult = {
+  status: "closed";
+};
+
 export type DiffReviewResultByMethod = {
   initialize: DiffReviewInitializeResult;
   "session.get_context": DiffReviewSessionContextResult;
@@ -123,6 +138,7 @@ export type DiffReviewResultByMethod = {
   "thread.submit_message": DiffReviewThreadSubmitMessageResult;
   "session.return_review": DiffReviewSessionReturnReviewResult;
   "session.cancel": DiffReviewSessionCancelResult;
+  "session.close": DiffReviewSessionCloseResult;
 };
 
 export type DiffReviewRequestMessage = {
@@ -161,6 +177,8 @@ export type DiffReviewResponseMessage =
   | DiffReviewSuccessResponseMessage
   | DiffReviewErrorResponseMessage;
 
+export type DiffReviewMessage = DiffReviewRequestMessage | DiffReviewResponseMessage;
+
 export type DiffReviewParseFailure = {
   ok: false;
   id: DiffReviewRequestId | null;
@@ -172,7 +190,13 @@ export type DiffReviewParseSuccess = {
   request: DiffReviewRequestMessage;
 };
 
+export type DiffReviewMessageParseSuccess = {
+  ok: true;
+  message: DiffReviewMessage;
+};
+
 export type DiffReviewParseResult = DiffReviewParseFailure | DiffReviewParseSuccess;
+export type DiffReviewMessageParseResult = DiffReviewParseFailure | DiffReviewMessageParseSuccess;
 
 export type DiffReviewParamsValidationResult<T> =
   | { ok: true; value: T }
@@ -191,6 +215,35 @@ const diffReviewRequestEnvelopeSchema = z
     params: z.unknown().optional(),
   })
   .strict();
+const diffReviewErrorSchema = z
+  .object({
+    code: z.string().trim().min(1),
+    message: z.string(),
+    data: z.unknown().optional(),
+  })
+  .strict();
+const diffReviewSuccessResponseSchema = z
+  .object({
+    version: z.literal(DIFF_REVIEW_PROTOCOL_VERSION),
+    type: z.literal("response"),
+    id: diffReviewRequestIdSchema,
+    ok: z.literal(true),
+    result: z.unknown(),
+  })
+  .strict();
+const diffReviewErrorResponseSchema = z
+  .object({
+    version: z.literal(DIFF_REVIEW_PROTOCOL_VERSION),
+    type: z.literal("response"),
+    id: z.union([diffReviewRequestIdSchema, z.null()]),
+    ok: z.literal(false),
+    error: diffReviewErrorSchema,
+  })
+  .strict();
+const diffReviewResponseSchema = z.union([
+  diffReviewSuccessResponseSchema,
+  diffReviewErrorResponseSchema,
+]);
 const diffReviewIdFieldSchema = z.object({ id: z.unknown() }).passthrough();
 const diffReviewVersionFieldSchema = z.object({ version: z.unknown() }).passthrough();
 const diffReviewTypeFieldSchema = z.object({ type: z.unknown() }).passthrough();
@@ -269,7 +322,7 @@ export function createDiffReviewErrorResponse(
   };
 }
 
-export function serializeDiffReviewMessage(message: DiffReviewResponseMessage): string {
+export function serializeDiffReviewMessage(message: DiffReviewMessage): string {
   return `${JSON.stringify(message)}\n`;
 }
 
@@ -284,6 +337,7 @@ export function validateDiffReviewParams<M extends DiffReviewMethod>(
       case "session.get_context":
       case "session.list_files":
       case "session.cancel":
+      case "session.close":
         return emptyObjectSchema.safeParse(raw ?? EMPTY_OBJECT);
       case "session.get_diff":
         return sessionGetDiffParamsSchema.safeParse(raw ?? EMPTY_OBJECT);
@@ -312,7 +366,7 @@ export function validateDiffReviewParams<M extends DiffReviewMethod>(
   };
 }
 
-export function parseDiffReviewRequestLine(line: string): DiffReviewParseResult {
+export function parseDiffReviewMessageLine(line: string): DiffReviewMessageParseResult {
   const trimmed = line.trim();
   if (!trimmed) {
     return {
@@ -361,10 +415,37 @@ export function parseDiffReviewRequestLine(line: string): DiffReviewParseResult 
   }
 
   const typeField = diffReviewTypeFieldSchema.safeParse(decoded);
-  if (!typeField.success || typeField.data.type !== "request") {
+  if (
+    !typeField.success ||
+    (typeField.data.type !== "request" && typeField.data.type !== "response")
+  ) {
     return {
       ok: false,
       id: null,
+      error: createDiffReviewError(
+        DIFF_REVIEW_ERROR_CODES.invalidRequest,
+        "message type must be 'request' or 'response'",
+      ),
+    };
+  }
+
+  if (typeField.data.type === "request") {
+    return parseDecodedDiffReviewRequest(decoded);
+  }
+
+  return parseDecodedDiffReviewResponse(decoded);
+}
+
+export function parseDiffReviewRequestLine(line: string): DiffReviewParseResult {
+  const parsed = parseDiffReviewMessageLine(line);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  if (parsed.message.type !== "request") {
+    return {
+      ok: false,
+      id: parsed.message.id,
       error: createDiffReviewError(
         DIFF_REVIEW_ERROR_CODES.invalidRequest,
         "message type must be 'request'",
@@ -372,6 +453,13 @@ export function parseDiffReviewRequestLine(line: string): DiffReviewParseResult 
     };
   }
 
+  return {
+    ok: true,
+    request: parsed.message,
+  };
+}
+
+function parseDecodedDiffReviewRequest(decoded: unknown): DiffReviewMessageParseResult {
   const idField = diffReviewIdFieldSchema.safeParse(decoded);
   const parsedId = idField.success ? diffReviewRequestIdSchema.safeParse(idField.data.id) : null;
   const requestId = parsedId?.success ? parsedId.data : null;
@@ -415,13 +503,38 @@ export function parseDiffReviewRequestLine(line: string): DiffReviewParseResult 
 
   return {
     ok: true,
-    request: {
+    message: {
       version: DIFF_REVIEW_PROTOCOL_VERSION,
       type: "request",
       id: envelope.data.id,
       method: parsedMethod.data,
       params: paramsResult.value,
     } as DiffReviewRequestMessage,
+  };
+}
+
+function parseDecodedDiffReviewResponse(decoded: unknown): DiffReviewMessageParseResult {
+  const envelope = diffReviewResponseSchema.safeParse(decoded);
+  if (!envelope.success) {
+    const idField = diffReviewIdFieldSchema.safeParse(decoded);
+    const parsedId = idField.success
+      ? z.union([diffReviewRequestIdSchema, z.null()]).safeParse(idField.data.id)
+      : null;
+    const responseId = parsedId?.success ? parsedId.data : null;
+
+    return {
+      ok: false,
+      id: responseId,
+      error: createDiffReviewError(
+        DIFF_REVIEW_ERROR_CODES.invalidRequest,
+        "response contains unsupported or invalid top-level fields",
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    message: envelope.data as DiffReviewResponseMessage,
   };
 }
 
@@ -432,6 +545,7 @@ function formatParamsError(method: DiffReviewMethod, _error: z.ZodError): string
     case "session.get_context":
     case "session.list_files":
     case "session.cancel":
+    case "session.close":
       return `${method} does not accept parameters`;
     case "session.get_diff":
       return "session.get_diff.path must be a non-empty string when provided";

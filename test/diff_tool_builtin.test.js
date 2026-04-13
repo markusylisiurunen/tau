@@ -91,6 +91,7 @@ async function fetchJson(url, init) {
 
 function createClientStub(overrides = {}) {
   const closeListeners = new Set();
+  const sessionCloseListeners = new Set();
   return {
     connect: vi.fn(async () => {}),
     getContext: vi.fn(async () => ({
@@ -116,6 +117,12 @@ function createClientStub(overrides = {}) {
       closeListeners.add(listener);
       return () => {
         closeListeners.delete(listener);
+      };
+    }),
+    onSessionClose: vi.fn((listener) => {
+      sessionCloseListeners.add(listener);
+      return () => {
+        sessionCloseListeners.delete(listener);
       };
     }),
     ...overrides,

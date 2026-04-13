@@ -208,7 +208,7 @@ export class DiffReviewService {
     }
 
     if (state.session) {
-      await state.session.close();
+      await state.session.cancel("controller_cancelled");
     }
   }
 

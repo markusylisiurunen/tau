@@ -10,20 +10,23 @@ import { createDefaultCoreDeps } from "../runtime/deps.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { Persona, Skill } from "../types.js";
 import type {
+  DiffReviewMessage,
   DiffReviewMethod,
+  DiffReviewParamsByMethod,
   DiffReviewRequestId,
   DiffReviewRequestMessage,
+  DiffReviewResponseMessage,
   DiffReviewResultByMethod,
+  DiffReviewServerMethod,
 } from "./protocol.js";
 import {
   createDiffReviewErrorResponse,
   createDiffReviewSuccessResponse,
+  DIFF_REVIEW_CLIENT_METHODS,
   DIFF_REVIEW_ERROR_CODES,
-  DIFF_REVIEW_METHODS,
   DIFF_REVIEW_PROTOCOL_VERSION,
   type DiffReviewInitializeResult,
-  type DiffReviewResponseMessage,
-  parseDiffReviewRequestLine,
+  parseDiffReviewMessageLine,
   serializeDiffReviewMessage,
 } from "./protocol.js";
 import {
@@ -103,11 +106,19 @@ export type DiffReviewSessionUiState = {
 
 export type DiffReviewSessionUiStateListener = (state: DiffReviewSessionUiState) => void;
 
+type PendingToolResponse = {
+  method: DiffReviewServerMethod;
+  resolve: (message: DiffReviewResponseMessage) => void;
+  reject: (error: Error) => void;
+};
+
 type DiffReviewClientConnection = {
   socket: Socket;
   readline: Interface;
   initialized: boolean;
   writeQueue: Promise<void>;
+  pendingResponses: Map<DiffReviewRequestId, PendingToolResponse>;
+  requestCounter: number;
 };
 
 type DiffReviewAgentRecord = DiffReviewAgentActivity & {
@@ -125,6 +136,7 @@ class DiffReviewRequestError extends Error {
 }
 
 const DIFF_REVIEW_INITIALIZE_TIMEOUT_MS = 10_000;
+const DIFF_REVIEW_CLOSE_TIMEOUT_MS = 1_000;
 
 export class DiffReviewSession {
   readonly sessionId: string;
@@ -282,11 +294,6 @@ export class DiffReviewSession {
   }
 
   async close(): Promise<void> {
-    if (!this.completedResult) {
-      await this.cancel("controller_cancelled");
-      return;
-    }
-
     if (this.closed) {
       return;
     }
@@ -302,6 +309,8 @@ export class DiffReviewSession {
       readline,
       initialized: false,
       writeQueue: Promise.resolve(),
+      pendingResponses: new Map(),
+      requestCounter: 0,
     };
     this.connections.add(connection);
 
@@ -315,6 +324,10 @@ export class DiffReviewSession {
 
     socket.on("close", () => {
       readline.close();
+      this.rejectPendingToolResponses(
+        connection,
+        new Error("diff review protocol connection closed"),
+      );
       this.connections.delete(connection);
 
       const lostInitializedConnection = this.initializedConnection === connection;
@@ -336,7 +349,7 @@ export class DiffReviewSession {
   }
 
   private async handleLine(connection: DiffReviewClientConnection, line: string): Promise<void> {
-    const parsed = parseDiffReviewRequestLine(line);
+    const parsed = parseDiffReviewMessageLine(line);
     if (!parsed.ok) {
       await this.sendMessage(
         connection,
@@ -350,7 +363,12 @@ export class DiffReviewSession {
       return;
     }
 
-    const request = parsed.request;
+    if (parsed.message.type === "response") {
+      this.handleToolResponse(connection, parsed.message);
+      return;
+    }
+
+    const request = parsed.message;
     if (this.completedResult && request.method !== "initialize") {
       await this.sendError(
         connection,
@@ -407,7 +425,37 @@ export class DiffReviewSession {
         await this.respond(connection, request.id, request.method, { status: "cancelled" });
         await this.cancel("tool_cancelled");
         return;
+      case "session.close":
+        await this.sendError(
+          connection,
+          request.id,
+          "invalidRequest",
+          "session.close is sent by Tau, not the diff tool",
+        );
+        return;
     }
+  }
+
+  private handleToolResponse(
+    connection: DiffReviewClientConnection,
+    message: DiffReviewResponseMessage,
+  ): void {
+    if (message.id === null) {
+      return;
+    }
+
+    const pending = connection.pendingResponses.get(message.id);
+    if (!pending) {
+      return;
+    }
+
+    connection.pendingResponses.delete(message.id);
+    if (message.ok) {
+      pending.resolve(message);
+      return;
+    }
+
+    pending.reject(new Error(message.error.message));
   }
 
   private async handleInitialize(
@@ -432,7 +480,7 @@ export class DiffReviewSession {
     const result: DiffReviewInitializeResult = {
       protocolVersion: DIFF_REVIEW_PROTOCOL_VERSION,
       sessionId: this.sessionId,
-      methods: [...DIFF_REVIEW_METHODS],
+      methods: [...DIFF_REVIEW_CLIENT_METHODS],
       alreadyInitialized: connection.initialized,
     };
     connection.initialized = true;
@@ -696,7 +744,75 @@ export class DiffReviewSession {
     this.interruptAllReviewAgents();
     this.completionResolver?.(result);
     this.completionResolver = undefined;
+    await this.requestToolShutdown();
     await this.close();
+  }
+
+  private async requestToolShutdown(): Promise<void> {
+    const connection = this.initializedConnection;
+    if (!connection || connection.socket.destroyed) {
+      return;
+    }
+
+    try {
+      await Promise.race([
+        this.requestTool(connection, "session.close", {}),
+        new Promise<DiffReviewResultByMethod["session.close"]>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error("diff review tool close request timed out"));
+          }, DIFF_REVIEW_CLOSE_TIMEOUT_MS);
+        }),
+      ]);
+    } catch {
+      // ignore
+    }
+  }
+
+  private async requestTool<M extends DiffReviewServerMethod>(
+    connection: DiffReviewClientConnection,
+    method: M,
+    params: DiffReviewParamsByMethod[M],
+  ): Promise<DiffReviewResultByMethod[M]> {
+    if (
+      connection.socket.destroyed ||
+      connection.socket.writableEnded ||
+      !connection.socket.writable
+    ) {
+      throw new Error("diff review protocol socket is not available");
+    }
+
+    const id = `tau-${++connection.requestCounter}`;
+    const request = {
+      version: DIFF_REVIEW_PROTOCOL_VERSION,
+      type: "request",
+      id,
+      method,
+      params,
+    } as DiffReviewRequestMessage;
+
+    return await new Promise<DiffReviewResultByMethod[M]>((resolve, reject) => {
+      connection.pendingResponses.set(id, {
+        method,
+        resolve: (message) => {
+          if (!message.ok) {
+            reject(new Error(message.error.message));
+            return;
+          }
+          resolve(message.result as DiffReviewResultByMethod[M]);
+        },
+        reject,
+      });
+
+      void this.sendMessage(connection, request).catch((error) => {
+        const pending = connection.pendingResponses.get(id);
+        if (!pending) {
+          return;
+        }
+
+        connection.pendingResponses.delete(id);
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
+      });
+    });
   }
 
   private async closeServer(): Promise<void> {
@@ -704,13 +820,35 @@ export class DiffReviewSession {
     this.server = undefined;
     this.clearInitializeTimeout();
 
+    const connectionClosePromises: Promise<void>[] = [];
     for (const connection of this.connections) {
       connection.readline.close();
-      connection.socket.end();
-      connection.socket.destroySoon();
+      this.rejectPendingToolResponses(
+        connection,
+        new Error("diff review protocol connection closed"),
+      );
+
+      if (!connection.socket.destroyed) {
+        connectionClosePromises.push(
+          new Promise<void>((resolve) => {
+            const socket = connection.socket;
+            const destroyTimeout = setTimeout(() => {
+              socket.destroy();
+            }, 100);
+
+            socket.once("close", () => {
+              clearTimeout(destroyTimeout);
+              resolve();
+            });
+            socket.end();
+          }),
+        );
+      }
     }
     this.connections.clear();
     this.initializedConnection = undefined;
+
+    await Promise.all(connectionClosePromises);
 
     if (server) {
       await new Promise<void>((resolve) => {
@@ -720,6 +858,13 @@ export class DiffReviewSession {
 
     if (existsSync(this.socketPath)) {
       rmSync(this.socketPath, { force: true });
+    }
+  }
+
+  private rejectPendingToolResponses(connection: DiffReviewClientConnection, error: Error): void {
+    for (const [id, pending] of connection.pendingResponses) {
+      connection.pendingResponses.delete(id);
+      pending.reject(error);
     }
   }
 
@@ -748,9 +893,13 @@ export class DiffReviewSession {
 
   private async sendMessage(
     connection: DiffReviewClientConnection,
-    message: DiffReviewResponseMessage,
+    message: DiffReviewMessage,
   ): Promise<void> {
-    if (connection.socket.destroyed) {
+    if (
+      connection.socket.destroyed ||
+      connection.socket.writableEnded ||
+      !connection.socket.writable
+    ) {
       return;
     }
 
@@ -758,17 +907,53 @@ export class DiffReviewSession {
     const writePromise = connection.writeQueue.then(
       () =>
         new Promise<void>((resolve, reject) => {
-          if (connection.socket.destroyed) {
+          if (
+            connection.socket.destroyed ||
+            connection.socket.writableEnded ||
+            !connection.socket.writable
+          ) {
             resolve();
             return;
           }
-          connection.socket.write(payload, (error) => {
-            if (error) {
-              reject(error);
+
+          let settled = false;
+          const finish = (callback: () => void) => {
+            if (settled) {
               return;
             }
-            resolve();
-          });
+            settled = true;
+            connection.socket.off("close", onClose);
+            connection.socket.off("drain", onDrain);
+            connection.socket.off("error", onError);
+            callback();
+          };
+          const onClose = () => {
+            finish(resolve);
+          };
+          const onDrain = () => {
+            finish(resolve);
+          };
+          const onError = (error: Error) => {
+            finish(() => {
+              reject(error);
+            });
+          };
+
+          connection.socket.once("close", onClose);
+          connection.socket.once("error", onError);
+
+          try {
+            if (connection.socket.write(payload)) {
+              finish(resolve);
+              return;
+            }
+
+            connection.socket.once("drain", onDrain);
+          } catch (error) {
+            finish(() => {
+              reject(error instanceof Error ? error : new Error(String(error)));
+            });
+          }
         }),
     );
     connection.writeQueue = writePromise.catch(() => {});

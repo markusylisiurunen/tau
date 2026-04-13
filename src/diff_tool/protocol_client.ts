@@ -2,14 +2,22 @@ import { once } from "node:events";
 import { createConnection, type Socket } from "node:net";
 import { createInterface, type Interface } from "node:readline";
 import type {
+  DiffReviewClientMethod,
   DiffReviewErrorCode,
-  DiffReviewMethod,
+  DiffReviewMessage,
   DiffReviewParamsByMethod,
   DiffReviewRequestId,
+  DiffReviewRequestMessage,
   DiffReviewResponseMessage,
   DiffReviewResultByMethod,
 } from "../core/diff_review/index.js";
-import { DIFF_REVIEW_PROTOCOL_VERSION } from "../core/diff_review/index.js";
+import {
+  createDiffReviewErrorResponse,
+  createDiffReviewSuccessResponse,
+  DIFF_REVIEW_PROTOCOL_VERSION,
+  parseDiffReviewMessageLine,
+  serializeDiffReviewMessage,
+} from "../core/diff_review/index.js";
 
 export type DiffToolLaunchEnvironment = {
   protocolVersion: number;
@@ -34,6 +42,7 @@ type PendingRequest = {
 };
 
 type CloseListener = () => void;
+type SessionCloseListener = () => void | Promise<void>;
 
 export class DiffReviewProtocolClientError extends Error {
   readonly code: DiffReviewErrorCode;
@@ -53,10 +62,12 @@ export class DiffReviewProtocolClient {
   private readline?: Interface;
   private readonly pendingRequests = new Map<DiffReviewRequestId, PendingRequest>();
   private readonly closeListeners = new Set<CloseListener>();
+  private readonly sessionCloseListeners = new Set<SessionCloseListener>();
   private connectPromise?: Promise<void>;
   private writeQueue: Promise<void> = Promise.resolve();
   private requestCounter = 0;
   private closed = false;
+  private sessionClosing = false;
   private closeNotified = false;
 
   constructor(launchEnvironment: DiffToolLaunchEnvironment) {
@@ -66,6 +77,9 @@ export class DiffReviewProtocolClient {
   async connect(): Promise<void> {
     if (this.closed) {
       throw new Error("diff review protocol client is closed");
+    }
+    if (this.sessionClosing) {
+      throw new Error("diff review protocol client is closing");
     }
 
     if (!this.connectPromise) {
@@ -85,12 +99,20 @@ export class DiffReviewProtocolClient {
     };
   }
 
+  onSessionClose(listener: SessionCloseListener): () => void {
+    this.sessionCloseListeners.add(listener);
+    return () => {
+      this.sessionCloseListeners.delete(listener);
+    };
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;
     }
 
     this.closed = true;
+    this.sessionClosing = true;
     this.rejectAllPending(new Error("diff review protocol client closed"));
     this.notifyCloseListeners();
 
@@ -147,11 +169,18 @@ export class DiffReviewProtocolClient {
     return await this.call("session.cancel", {});
   }
 
-  private async call<M extends DiffReviewMethod>(
+  private async call<M extends DiffReviewClientMethod>(
     method: M,
     params: DiffReviewParamsByMethod[M],
     options: { skipConnect?: boolean } = {},
   ): Promise<DiffReviewResultByMethod[M]> {
+    if (this.closed) {
+      throw new Error("diff review protocol client is closed");
+    }
+    if (this.sessionClosing) {
+      throw new Error("diff review protocol client is closing");
+    }
+
     if (!options.skipConnect) {
       await this.connect();
     }
@@ -162,13 +191,13 @@ export class DiffReviewProtocolClient {
     }
 
     const id = `req-${++this.requestCounter}`;
-    const requestLine = `${JSON.stringify({
+    const request = {
       version: DIFF_REVIEW_PROTOCOL_VERSION,
       type: "request",
       id,
       method,
       params,
-    })}\n`;
+    } as DiffReviewRequestMessage;
 
     return await new Promise<DiffReviewResultByMethod[M]>((resolve, reject) => {
       this.pendingRequests.set(id, {
@@ -176,7 +205,7 @@ export class DiffReviewProtocolClient {
         reject,
       });
 
-      const writePromise = this.writeQueue.then(() => this.writeRequestLine(socket, requestLine));
+      const writePromise = this.writeQueue.then(() => this.writeMessage(socket, request));
       this.writeQueue = writePromise.catch(() => {});
       void writePromise.catch((error) => {
         const pending = this.pendingRequests.get(id);
@@ -190,7 +219,7 @@ export class DiffReviewProtocolClient {
     });
   }
 
-  private async writeRequestLine(socket: Socket, requestLine: string): Promise<void> {
+  private async writeMessage(socket: Socket, message: DiffReviewMessage): Promise<void> {
     if (
       this.closed ||
       this.socket !== socket ||
@@ -201,6 +230,7 @@ export class DiffReviewProtocolClient {
       throw new Error("diff review protocol socket is not available");
     }
 
+    const payload = serializeDiffReviewMessage(message);
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       const finish = (callback: () => void) => {
@@ -227,7 +257,7 @@ export class DiffReviewProtocolClient {
       socket.once("error", onError);
 
       try {
-        socket.write(requestLine, (error) => {
+        socket.write(payload, (error) => {
           if (error) {
             finish(() => {
               reject(normalizeSocketWriteError(error));
@@ -251,7 +281,7 @@ export class DiffReviewProtocolClient {
     this.readline = readline;
 
     readline.on("line", (line) => {
-      this.handleResponseLine(line);
+      void this.handleLine(line);
     });
 
     socket.on("close", () => {
@@ -264,7 +294,7 @@ export class DiffReviewProtocolClient {
     });
 
     socket.on("error", (error) => {
-      this.rejectAllPending(error);
+      this.rejectAllPending(normalizeSocketWriteError(error));
     });
 
     await new Promise<void>((resolve, reject) => {
@@ -296,17 +326,22 @@ export class DiffReviewProtocolClient {
     }
   }
 
-  private handleResponseLine(line: string): void {
-    let message: DiffReviewResponseMessage;
-    try {
-      message = JSON.parse(line) as DiffReviewResponseMessage;
-    } catch (error) {
-      this.rejectAllPending(
-        error instanceof Error ? error : new Error("failed to parse diff review response"),
-      );
+  private async handleLine(line: string): Promise<void> {
+    const parsed = parseDiffReviewMessageLine(line);
+    if (!parsed.ok) {
+      this.rejectAllPending(new Error(parsed.error.message));
       return;
     }
 
+    if (parsed.message.type === "response") {
+      this.handleResponse(parsed.message);
+      return;
+    }
+
+    await this.handleRequest(parsed.message);
+  }
+
+  private handleResponse(message: DiffReviewResponseMessage): void {
     if (message.id === null) {
       this.rejectAllPending(new Error("diff review response did not include a request id"));
       return;
@@ -332,10 +367,66 @@ export class DiffReviewProtocolClient {
     );
   }
 
+  private async handleRequest(message: DiffReviewRequestMessage): Promise<void> {
+    if (message.method !== "session.close") {
+      await this.sendResponse(
+        createDiffReviewErrorResponse(
+          message.id,
+          "method_not_found",
+          `unsupported diff review method '${message.method}'`,
+        ),
+      );
+      return;
+    }
+
+    if (!this.sessionClosing) {
+      this.sessionClosing = true;
+      try {
+        await this.notifySessionCloseListeners();
+      } catch (error) {
+        await this.sendResponse(
+          createDiffReviewErrorResponse(
+            message.id,
+            "internal_error",
+            error instanceof Error ? error.message : String(error),
+          ),
+        );
+        await this.close();
+        return;
+      }
+    }
+
+    await this.sendResponse(createDiffReviewSuccessResponse(message.id, { status: "closed" }));
+    await this.close();
+  }
+
+  private async sendResponse(message: DiffReviewResponseMessage): Promise<void> {
+    const socket = this.socket;
+    if (!socket || socket.destroyed) {
+      return;
+    }
+
+    try {
+      const writePromise = this.writeQueue.then(() => this.writeMessage(socket, message));
+      this.writeQueue = writePromise.catch(() => {});
+      await writePromise;
+    } catch {
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+    }
+  }
+
   private rejectAllPending(error: Error): void {
     for (const [id, pending] of this.pendingRequests) {
       this.pendingRequests.delete(id);
       pending.reject(error);
+    }
+  }
+
+  private async notifySessionCloseListeners(): Promise<void> {
+    for (const listener of this.sessionCloseListeners) {
+      await listener();
     }
   }
 

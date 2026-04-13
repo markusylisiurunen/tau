@@ -93,13 +93,30 @@ function createSnapshot() {
   });
 }
 
-async function connectClient(session) {
+async function connectClient(session, options = {}) {
   const socket = createConnection(session.launchEnvironment.TAU_DIFF_SOCKET);
   const rl = createInterface({ input: socket, crlfDelay: Number.POSITIVE_INFINITY });
   const pending = new Map();
+  const serverRequests = [];
 
   rl.on("line", (line) => {
     const message = JSON.parse(line);
+    if (message.type === "request") {
+      serverRequests.push(message);
+      if (message.method === "session.close" && options.ackSessionClose !== false) {
+        socket.write(
+          `${JSON.stringify({
+            version: DIFF_REVIEW_PROTOCOL_VERSION,
+            type: "response",
+            id: message.id,
+            ok: true,
+            result: { status: "closed" },
+          })}\n`,
+        );
+      }
+      return;
+    }
+
     const handler = pending.get(message.id);
     if (handler) {
       pending.delete(message.id);
@@ -115,7 +132,7 @@ async function connectClient(session) {
       socket.write(`${request(id, method, params)}\n`);
     });
 
-  return { socket, rl, send };
+  return { socket, rl, send, serverRequests };
 }
 
 afterEach(() => {
@@ -759,6 +776,49 @@ describe("diff_review session", () => {
         review: "Looks good overall.",
       });
       expect(interruptCount).toBe(1);
+    } finally {
+      client.rl.close();
+      client.socket.destroy();
+      await session.close();
+    }
+  });
+
+  it("asks the diff tool to close before tearing down an externally cancelled session", async () => {
+    const session = new DiffReviewSession({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: () =>
+        createThreadSession({
+          async submitMessage(message) {
+            return message;
+          },
+        }),
+    });
+
+    await session.start();
+    const client = await connectClient(session);
+
+    try {
+      await client.send("init", "initialize", {
+        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+      });
+
+      await session.cancel("controller_cancelled");
+      await expect(session.result).resolves.toEqual({
+        status: "cancelled",
+        reason: "controller_cancelled",
+      });
+      expect(client.serverRequests).toContainEqual({
+        version: DIFF_REVIEW_PROTOCOL_VERSION,
+        type: "request",
+        id: expect.any(String),
+        method: "session.close",
+        params: {},
+      });
+      if (!client.socket.destroyed) {
+        await once(client.socket, "close");
+      }
     } finally {
       client.rl.close();
       client.socket.destroy();

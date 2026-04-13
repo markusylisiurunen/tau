@@ -113,6 +113,7 @@ function createClientStub(overrides = {}) {
       }
     }),
     cancelSession: vi.fn(async () => ({ status: "cancelled" })),
+    returnReview: vi.fn(async () => ({ status: "returned" })),
     onClose: vi.fn((listener) => {
       closeListeners.add(listener);
       return () => {
@@ -125,6 +126,19 @@ function createClientStub(overrides = {}) {
         sessionCloseListeners.delete(listener);
       };
     }),
+    emitClose: () => {
+      for (const listener of closeListeners) {
+        listener();
+      }
+    },
+    emitSessionClose: async () => {
+      for (const listener of sessionCloseListeners) {
+        await listener();
+      }
+      for (const listener of closeListeners) {
+        listener();
+      }
+    },
     ...overrides,
   };
 }
@@ -556,6 +570,158 @@ describe("built-in diff tool", () => {
       await server.close();
       await session.close();
     }
+  });
+
+  it("acks session.close promptly even with an in-flight browser request", async () => {
+    let releaseBootstrapStarted;
+    const bootstrapStarted = new Promise((resolve) => {
+      releaseBootstrapStarted = resolve;
+    });
+    let continueBootstrap;
+    const bootstrapCompletion = new Promise((resolve) => {
+      continueBootstrap = resolve;
+    });
+    const session = new DiffReviewSession({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: () =>
+        createThreadSession({
+          async submitMessage(message) {
+            releaseBootstrapStarted();
+            await bootstrapCompletion;
+            return message;
+          },
+          interrupt() {
+            continueBootstrap();
+            return true;
+          },
+        }),
+    });
+
+    await session.start();
+    const client = new DiffReviewProtocolClient(
+      parseDiffToolLaunchEnvironment(session.launchEnvironment),
+    );
+    const server = new DiffToolHttpServer({ client });
+
+    try {
+      const started = await server.start();
+      await bootstrapStarted;
+
+      const briefRequest = fetch(`${started.url}/api/brief/generate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      await expect(
+        Promise.race([
+          session.cancel("controller_cancelled"),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 250)),
+        ]),
+      ).resolves.toBeUndefined();
+      await server.waitUntilClosed();
+
+      const briefResponse = await briefRequest;
+      expect(briefResponse.ok).toBe(false);
+      await expect(briefResponse.json()).resolves.toEqual({
+        error: expect.stringContaining("diff review protocol client closed"),
+      });
+    } finally {
+      continueBootstrap?.();
+      await server.close();
+      await session.close();
+    }
+  });
+
+  it("waits for Tau's session.close after returning a review", async () => {
+    const client = createClientStub();
+    const server = new DiffToolHttpServer({ client });
+
+    try {
+      const started = await server.start();
+
+      const result = await fetchJson(`${started.url}/api/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      expect(result).toEqual({ status: "returned" });
+      expect(client.returnReview).toHaveBeenCalledTimes(1);
+      expect(client.close).not.toHaveBeenCalled();
+
+      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      expect(bootstrap.context.sessionId).toBe("session-1");
+
+      await client.emitSessionClose();
+      await server.waitUntilClosed();
+      expect(client.close).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("waits for Tau's session.close after tool-initiated cancel", async () => {
+    const client = createClientStub();
+    const server = new DiffToolHttpServer({ client });
+
+    try {
+      const started = await server.start();
+
+      const result = await fetchJson(`${started.url}/api/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      expect(result).toEqual({ status: "cancelled" });
+      expect(client.cancelSession).toHaveBeenCalledTimes(1);
+      expect(client.close).not.toHaveBeenCalled();
+
+      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      expect(bootstrap.context.sessionId).toBe("session-1");
+
+      await client.emitSessionClose();
+      await server.waitUntilClosed();
+      expect(client.close).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("waits for Tau's session.close after local process cancellation", async () => {
+    const client = createClientStub();
+    const server = new DiffToolHttpServer({ client });
+
+    try {
+      const started = await server.start();
+
+      await server.cancel();
+      expect(client.cancelSession).toHaveBeenCalledTimes(1);
+      expect(client.close).not.toHaveBeenCalled();
+
+      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      expect(bootstrap.context.sessionId).toBe("session-1");
+
+      await client.emitSessionClose();
+      await server.waitUntilClosed();
+      expect(client.close).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("closes locally when process cancellation cannot reach Tau", async () => {
+    const client = createClientStub({
+      cancelSession: vi.fn(async () => {
+        throw new Error("cancel failed");
+      }),
+    });
+    const server = new DiffToolHttpServer({ client });
+
+    await server.start();
+    await server.cancel();
+    expect(client.cancelSession).toHaveBeenCalledTimes(1);
+    expect(client.close).toHaveBeenCalledTimes(1);
+    await server.waitUntilClosed();
   });
 
   it("closes the protocol client when startup fails after the protocol connection is open", async () => {

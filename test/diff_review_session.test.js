@@ -121,6 +121,10 @@ async function connectClient(session, options = {}) {
     if (handler) {
       pending.delete(message.id);
       handler(message);
+      if (message.id === options.closeAfterResponseId) {
+        rl.close();
+        socket.destroy();
+      }
     }
   });
 
@@ -890,6 +894,51 @@ describe("diff_review session", () => {
         reason: "tool_disconnected",
       });
     } finally {
+      await session.close();
+    }
+  });
+
+  it("cancels cleanly when the tool disconnects right after session.cancel", async () => {
+    const session = new DiffReviewSession({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: () =>
+        createThreadSession({
+          async submitMessage(message) {
+            return message;
+          },
+          interrupt() {
+            return true;
+          },
+        }),
+    });
+
+    await session.start();
+    const client = await connectClient(session, {
+      ackSessionClose: false,
+      closeAfterResponseId: "cancel",
+    });
+
+    try {
+      await client.send("init", "initialize", {
+        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+      });
+
+      await expect(client.send("cancel", "session.cancel")).resolves.toEqual({
+        version: DIFF_REVIEW_PROTOCOL_VERSION,
+        type: "response",
+        id: "cancel",
+        ok: true,
+        result: { status: "cancelled" },
+      });
+      await expect(session.result).resolves.toEqual({
+        status: "cancelled",
+        reason: "tool_cancelled",
+      });
+    } finally {
+      client.rl.close();
+      client.socket.destroy();
       await session.close();
     }
   });

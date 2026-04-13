@@ -283,6 +283,7 @@ export class DiffReviewProtocolClient {
     readline.on("line", (line) => {
       void this.handleLine(line);
     });
+    readline.on("error", () => {});
 
     socket.on("close", () => {
       this.rejectAllPending(new Error("diff review protocol connection closed"));
@@ -381,23 +382,15 @@ export class DiffReviewProtocolClient {
 
     if (!this.sessionClosing) {
       this.sessionClosing = true;
-      try {
-        await this.notifySessionCloseListeners();
-      } catch (error) {
-        await this.sendResponse(
-          createDiffReviewErrorResponse(
-            message.id,
-            "internal_error",
-            error instanceof Error ? error.message : String(error),
-          ),
-        );
-        await this.close();
-        return;
-      }
     }
 
     await this.sendResponse(createDiffReviewSuccessResponse(message.id, { status: "closed" }));
-    await this.close();
+
+    try {
+      await this.notifySessionCloseListeners();
+    } finally {
+      await this.close();
+    }
   }
 
   private async sendResponse(message: DiffReviewResponseMessage): Promise<void> {

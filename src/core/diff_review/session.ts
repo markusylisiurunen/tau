@@ -321,6 +321,7 @@ export class DiffReviewSession {
         });
       });
     });
+    readline.on("error", () => {});
 
     socket.on("close", () => {
       readline.close();

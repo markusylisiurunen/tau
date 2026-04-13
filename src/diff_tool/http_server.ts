@@ -68,6 +68,8 @@ export class DiffToolHttpServer {
   private context?: DiffReviewSessionContextResult;
   private files: DiffReviewFile[] = [];
   private bootstrapThreadPromise?: Promise<string>;
+  private httpServerClosePromise?: Promise<void>;
+  private sessionClosing = false;
   private server = createServer((request, response) => {
     void this.handleRequest(request, response).catch((error) => {
       this.sendJson(response, 500, {
@@ -92,8 +94,9 @@ export class DiffToolHttpServer {
       }
       void this.closeFromProtocol();
     });
-    this.removeSessionCloseListener = this.client.onSessionClose(async () => {
-      await this.closeFromProtocol();
+    this.removeSessionCloseListener = this.client.onSessionClose(() => {
+      this.sessionClosing = true;
+      void this.closeHttpServer();
     });
   }
 
@@ -154,10 +157,10 @@ export class DiffToolHttpServer {
   async cancel(): Promise<void> {
     try {
       await this.client.cancelSession();
+      return;
     } catch {
-      // ignore
+      await this.close();
     }
-    await this.close();
   }
 
   private async listen(): Promise<void> {
@@ -185,19 +188,25 @@ export class DiffToolHttpServer {
   }
 
   private async closeHttpServer(): Promise<void> {
+    if (this.httpServerClosePromise) {
+      await this.httpServerClosePromise;
+      return;
+    }
     if (!this.server.listening) {
       return;
     }
 
-    await new Promise<void>((resolve, reject) => {
+    this.httpServerClosePromise = new Promise<void>((resolve, reject) => {
       this.server.close((error) => {
         if (error) {
+          this.httpServerClosePromise = undefined;
           reject(error);
           return;
         }
         resolve();
       });
     });
+    await this.httpServerClosePromise;
   }
 
   private async bootstrapReviewContext(): Promise<string> {
@@ -233,6 +242,11 @@ export class DiffToolHttpServer {
   private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const method = request.method ?? "GET";
     const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? this.host}`);
+
+    if (this.sessionClosing && requestUrl.pathname.startsWith("/api/")) {
+      this.sendJson(response, 409, { error: "diff review session is closing" });
+      return;
+    }
 
     if (method === "GET" && requestUrl.pathname === "/api/bootstrap") {
       const context = this.context;
@@ -399,18 +413,12 @@ export class DiffToolHttpServer {
       const result = await this.client.returnReview({
         review: this.reviewState.buildReviewText(),
       });
-      response.once("finish", () => {
-        void this.close();
-      });
       this.sendJson(response, 200, result);
       return;
     }
 
     if (method === "POST" && requestUrl.pathname === "/api/cancel") {
       const result = await this.client.cancelSession();
-      response.once("finish", () => {
-        void this.close();
-      });
       this.sendJson(response, 200, result);
       return;
     }

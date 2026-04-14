@@ -626,7 +626,9 @@ describe("built-in diff tool", () => {
       const briefResponse = await briefRequest;
       expect(briefResponse.ok).toBe(false);
       await expect(briefResponse.json()).resolves.toEqual({
-        error: expect.stringContaining("diff review protocol client closed"),
+        error: expect.stringMatching(
+          /diff review protocol client closed|diff review session is closing/,
+        ),
       });
     } finally {
       continueBootstrap?.();

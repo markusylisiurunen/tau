@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
-  resolveCodexReasoningEffort,
+  resolveOpenAIReasoningEffort,
+  resolveOpenAIServiceTier,
   resolveSimpleStreamOptions,
 } from "../dist/core/utils/model_stream.js";
 
@@ -20,7 +21,7 @@ describe("model stream reasoning normalization", () => {
 
   test("preserves explicit none for codex reasoning disable", () => {
     expect(
-      resolveCodexReasoningEffort(
+      resolveOpenAIReasoningEffort(
         {
           api: "openai-codex-responses",
           provider: "openai-codex",
@@ -31,9 +32,22 @@ describe("model stream reasoning normalization", () => {
     ).toBe("none");
   });
 
-  test("clamps unsupported codex xhigh reasoning to high", () => {
+  test("drops explicit none for openai responses reasoning disable", () => {
     expect(
-      resolveCodexReasoningEffort(
+      resolveOpenAIReasoningEffort(
+        {
+          api: "openai-responses",
+          provider: "openai",
+          id: "gpt-5.4",
+        },
+        "none",
+      ),
+    ).toBeUndefined();
+  });
+
+  test("clamps unsupported openai xhigh reasoning to high", () => {
+    expect(
+      resolveOpenAIReasoningEffort(
         {
           api: "openai-codex-responses",
           provider: "openai-codex",
@@ -42,5 +56,16 @@ describe("model stream reasoning normalization", () => {
         "xhigh",
       ),
     ).toBe("high");
+  });
+
+  test("preserves service tiers in simple stream options", () => {
+    expect(resolveSimpleStreamOptions({ serviceTier: "priority" })).toEqual({
+      serviceTier: "priority",
+    });
+  });
+
+  test("passes through supported openai service tiers", () => {
+    expect(resolveOpenAIServiceTier("priority")).toBe("priority");
+    expect(resolveOpenAIServiceTier("flex")).toBe("flex");
   });
 });

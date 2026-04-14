@@ -33,6 +33,7 @@ function formatPersona(p: Persona): string {
   ];
   if (p.description) lines.push(`  description: ${p.description}`);
   if (p.settings.reasoning) lines.push(`  reasoning: ${p.settings.reasoning}`);
+  if (p.settings.serviceTier) lines.push(`  serviceTier: ${p.settings.serviceTier}`);
   if (p.allowedReasoningLevels) {
     lines.push(`  allowedReasoningLevels: ${p.allowedReasoningLevels.join(", ")}`);
   }

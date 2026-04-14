@@ -246,9 +246,7 @@ function parseSubagentConfig(
     const settings =
       specRaw.reasoning !== undefined || specRaw.serviceTier !== undefined
         ? {
-            ...(specRaw.reasoning !== undefined && specRaw.reasoning !== "none"
-              ? { reasoning: specRaw.reasoning }
-              : {}),
+            ...(specRaw.reasoning !== undefined ? { reasoning: specRaw.reasoning } : {}),
             ...(specRaw.serviceTier !== undefined ? { serviceTier: specRaw.serviceTier } : {}),
           }
         : undefined;

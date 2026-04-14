@@ -73,7 +73,6 @@ export function resolveSubagentEffectiveSettings(args: {
     : { ...baseSettings };
   if (args.launchModel) {
     mergedSettings.reasoning = args.launchModel.reasoning;
-    delete mergedSettings.serviceTier;
   }
   const tools = args.config.tools
     ? normalizeTools(args.config.tools)

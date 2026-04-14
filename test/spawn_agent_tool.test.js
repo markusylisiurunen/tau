@@ -137,7 +137,7 @@ describe("spawn_agent tool", () => {
     expect(spawned[0].model.provider).toBe(openai.provider);
     expect(spawned[0].model.id).toBe(openai.id);
     expect(spawned[0].settings.reasoning).toBe("high");
-    expect(spawned[0].settings.serviceTier).toBeUndefined();
+    expect(spawned[0].settings.serviceTier).toBe("priority");
   });
 
   it("shows the launch model override in status when it matches the persona model", async () => {
@@ -319,7 +319,7 @@ describe("spawn_agent tool", () => {
     expect(spawned[0].model.provider).toBe(openai.provider);
     expect(spawned[0].model.id).toBe(openai.id);
     expect(spawned[0].settings.reasoning).toBe("high");
-    expect(spawned[0].settings.serviceTier).toBeUndefined();
+    expect(spawned[0].settings.serviceTier).toBe("priority");
   });
 
   it("rejects an explicitly provided but empty model parameter", async () => {

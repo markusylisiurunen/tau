@@ -1,11 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
-  resolveOpenAIReasoningEffort,
-  resolveOpenAIServiceTier,
+  resolveOpenAIResponsesOptions,
   resolveSimpleStreamOptions,
 } from "../dist/core/utils/model_stream.js";
 
-describe("model stream reasoning normalization", () => {
+describe("model stream option resolution", () => {
   test("drops disabled reasoning for simple stream options", () => {
     expect(
       resolveSimpleStreamOptions({
@@ -19,53 +18,64 @@ describe("model stream reasoning normalization", () => {
     });
   });
 
-  test("preserves explicit none for codex reasoning disable", () => {
+  test("builds openai responses options with disabled reasoning and service tier", () => {
     expect(
-      resolveOpenAIReasoningEffort(
-        {
-          api: "openai-codex-responses",
-          provider: "openai-codex",
-          id: "gpt-5.4",
-        },
-        "none",
-      ),
-    ).toBe("none");
-  });
-
-  test("preserves explicit none for openai responses reasoning disable", () => {
-    expect(
-      resolveOpenAIReasoningEffort(
+      resolveOpenAIResponsesOptions(
         {
           api: "openai-responses",
           provider: "openai",
           id: "gpt-5.4",
         },
-        "none",
+        {
+          reasoning: "none",
+          serviceTier: "priority",
+          maxTokens: 123,
+        },
       ),
-    ).toBe("none");
+    ).toEqual({
+      reasoningEffort: "none",
+      serviceTier: "priority",
+      maxTokens: 123,
+    });
   });
 
-  test("clamps unsupported openai xhigh reasoning to high", () => {
+  test("builds openai codex options with disabled reasoning and service tier", () => {
     expect(
-      resolveOpenAIReasoningEffort(
+      resolveOpenAIResponsesOptions(
+        {
+          api: "openai-codex-responses",
+          provider: "openai-codex",
+          id: "gpt-5.4",
+        },
+        {
+          reasoning: "none",
+          serviceTier: "flex",
+          maxTokens: 456,
+        },
+      ),
+    ).toEqual({
+      reasoningEffort: "none",
+      serviceTier: "flex",
+      maxTokens: 456,
+    });
+  });
+
+  test("clamps unsupported openai xhigh reasoning in response options", () => {
+    expect(
+      resolveOpenAIResponsesOptions(
         {
           api: "openai-codex-responses",
           provider: "openai-codex",
           id: "gpt-5-mini",
         },
-        "xhigh",
+        {
+          reasoning: "xhigh",
+          serviceTier: "priority",
+        },
       ),
-    ).toBe("high");
-  });
-
-  test("preserves service tiers in simple stream options", () => {
-    expect(resolveSimpleStreamOptions({ serviceTier: "priority" })).toEqual({
+    ).toEqual({
+      reasoningEffort: "high",
       serviceTier: "priority",
     });
-  });
-
-  test("passes through supported openai service tiers", () => {
-    expect(resolveOpenAIServiceTier("priority")).toBe("priority");
-    expect(resolveOpenAIServiceTier("flex")).toBe("flex");
   });
 });

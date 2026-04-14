@@ -235,6 +235,22 @@ const PERSONA_SPECS: PersonaSpec[] = [
     skills: "*",
   },
   {
+    id: "gpt-5.3-codex-fast-chatgpt",
+    description: "GPT-5.3-Codex Fast (ChatGPT)",
+    model: resolveModelOrThrow("openai-codex", "gpt-5.3-codex"),
+    allowedReasoningLevels: ["medium", "high", "xhigh"],
+    settings: { reasoning: "medium", serviceTier: "priority" },
+    skills: "*",
+  },
+  {
+    id: "gpt-5.4-chatgpt-fast",
+    description: "GPT-5.4 Fast (ChatGPT)",
+    model: resolveModelOrThrow("openai-codex", "gpt-5.4"),
+    allowedReasoningLevels: ["medium", "high", "xhigh"],
+    settings: { reasoning: "medium", serviceTier: "priority" },
+    skills: "*",
+  },
+  {
     id: "gemini-3.1-pro",
     description: "Gemini 3.1 Pro",
     model: resolveModelOrThrow("google", "gemini-3.1-pro-preview"),

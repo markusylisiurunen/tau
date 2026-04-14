@@ -64,7 +64,7 @@ function createContext(overrides = {}) {
       label: "test persona",
       model: anthropic,
       systemPrompt: "main",
-      settings: { reasoning: "low" },
+      settings: { reasoning: "low", serviceTier: "priority" },
       skills: "*",
       source: "project",
       subagents: {
@@ -137,6 +137,7 @@ describe("spawn_agent tool", () => {
     expect(spawned[0].model.provider).toBe(openai.provider);
     expect(spawned[0].model.id).toBe(openai.id);
     expect(spawned[0].settings.reasoning).toBe("high");
+    expect(spawned[0].settings.serviceTier).toBeUndefined();
   });
 
   it("shows the launch model override in status when it matches the persona model", async () => {
@@ -288,6 +289,7 @@ describe("spawn_agent tool", () => {
     expect(spawned[0].model.provider).toBe(anthropic.provider);
     expect(spawned[0].model.id).toBe(anthropic.id);
     expect(spawned[0].settings.reasoning).toBe("medium");
+    expect(spawned[0].settings.serviceTier).toBe("priority");
   });
 
   it("supports launch model overrides on the default subagent", async () => {
@@ -317,6 +319,7 @@ describe("spawn_agent tool", () => {
     expect(spawned[0].model.provider).toBe(openai.provider);
     expect(spawned[0].model.id).toBe(openai.id);
     expect(spawned[0].settings.reasoning).toBe("high");
+    expect(spawned[0].settings.serviceTier).toBeUndefined();
   });
 
   it("rejects an explicitly provided but empty model parameter", async () => {

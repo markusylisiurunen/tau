@@ -104,6 +104,33 @@ describe("custom personas", () => {
     }
   });
 
+  it("loads built-in fast codex personas with priority service tier", async () => {
+    const fx = setupFixture();
+
+    try {
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.3-codex-fast-chatgpt")?.settings
+          .serviceTier,
+      ).toBe("priority");
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-chat")?.settings
+          .serviceTier,
+      ).toBe("priority");
+      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-chat")).toBeTruthy();
+      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-coder")).toBeTruthy();
+      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-chat")).toBeTruthy();
+      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-coder")).toBeTruthy();
+      expect(personas.find((persona) => persona.id === "gpt-5.4-fast-chatgpt")).toBeUndefined();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("can disable built-in personas and still load custom personas (including builtin ids)", async () => {
     const fx = setupFixture();
 
@@ -196,6 +223,73 @@ describe("custom personas", () => {
       const persona = personas.find((p) => p.id === "subset-skills");
       expect(persona).toBeTruthy();
       expect(persona.skills).toEqual(["alpha", "beta"]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("parses custom persona service tiers", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "personas", "flex-tier.md"),
+        [
+          "---",
+          "id: flex-tier",
+          "provider: openai",
+          "model: gpt-5.4",
+          "serviceTier: flex",
+          "---",
+          "custom prompt",
+          "",
+        ].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      const persona = personas.find((p) => p.id === "flex-tier");
+      expect(persona).toBeTruthy();
+      expect(persona.settings.serviceTier).toBe("flex");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("parses custom subagent service tiers", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "personas", "subagent-service-tier.md"),
+        [
+          "---",
+          "id: subagent-service-tier",
+          "provider: anthropic",
+          "model: claude-haiku-4-5",
+          "subagents:",
+          "  analyst:",
+          "    systemPrompt: analyze repository state",
+          "    reasoning: medium",
+          "    serviceTier: flex",
+          "---",
+          "persona with subagent service tier",
+          "",
+        ].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      const persona = personas.find((entry) => entry.id === "subagent-service-tier");
+      expect(persona).toBeTruthy();
+      expect(persona.subagents?.analyst?.settings?.reasoning).toBe("medium");
+      expect(persona.subagents?.analyst?.settings?.serviceTier).toBe("flex");
     } finally {
       fx.cleanup();
     }

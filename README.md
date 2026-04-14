@@ -285,12 +285,13 @@ tau uses `caffeinate -i` and only holds the sleep assertion during active assist
 
 tau comes with several built-in personas across different models:
 
-- **Claude Opus 4.6** (Anthropic): chat and coder variants
-- **GPT-5.3-Codex** (OpenAI): chat and coder variants
-- **GPT-5.4** (OpenAI): chat and coder variants
-- **GPT-5.3-Codex (ChatGPT)** (OpenAI Codex): chat and coder variants (`gpt-5.3-codex-chatgpt`)
-- **GPT-5.4 (ChatGPT)** (OpenAI Codex): chat and coder variants (`gpt-5.4-chatgpt`)
-- **Gemini 3.1 Pro** and **Gemini 3 Flash** (Google): chat and coder variants
+- **Claude Opus 4.6** (Anthropic): `opus-4.6-chat`, `opus-4.6-coder`
+- **GPT-5.3-Codex** (OpenAI): `gpt-5.3-codex`
+- **GPT-5.4** (OpenAI): `gpt-5.4-chat`, `gpt-5.4-coder`
+- **GPT-5.3-Codex (ChatGPT)** (OpenAI Codex): `gpt-5.3-codex-chatgpt`
+- **GPT-5.4 (ChatGPT)** (OpenAI Codex): `gpt-5.4-chatgpt-chat`, `gpt-5.4-chatgpt-coder`
+- **GPT-5.3-Codex Fast (ChatGPT)** and **GPT-5.4 Fast (ChatGPT)** (OpenAI Codex, priority tier): `gpt-5.3-codex-fast-chatgpt`, `gpt-5.4-chatgpt-fast-chat`, `gpt-5.4-chatgpt-fast-coder`
+- **Gemini 3.1 Pro** and **Gemini 3 Flash** (Google): `gemini-3.1-pro-chat`, `gemini-3-flash-chat`
 
 chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.
 
@@ -605,9 +606,10 @@ optional frontmatter fields:
 - `description`: human-readable description used in lists/autocomplete
 - `extends`: inherit optional fields from a built-in persona id (for example `gpt-5.4-coder`). `provider` and `model` are still required. if the markdown body is empty, the base persona's system prompt is used.
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
+- `serviceTier`: `priority` or `flex` for providers that support service tiers (currently `openai` and `openai-codex`)
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.
-- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `tools`, `riskLevel`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
+- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `serviceTier`, `tools`, `riskLevel`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
   ```yaml
   subagents:
     default: false

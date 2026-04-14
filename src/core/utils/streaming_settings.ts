@@ -1,10 +1,11 @@
 import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { z } from "zod";
-import type { ReasoningEffort } from "../types.js";
+import type { ReasoningEffort, ServiceTier } from "../types.js";
 
 export type TauStreamOptions = Omit<SimpleStreamOptions, "reasoning"> & {
   reasoning?: ReasoningEffort;
   interleavedThinking?: boolean;
+  serviceTier?: ServiceTier;
 };
 
 const StreamingSettingsSchema = z

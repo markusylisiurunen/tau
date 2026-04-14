@@ -6,12 +6,14 @@ export const RiskLevelSchema = z.enum(["read-only", "read-write"]);
 export type RiskLevel = z.infer<typeof RiskLevelSchema>;
 
 export type ReasoningEffort = ThinkingLevel | "none";
+export type ServiceTier = "priority" | "flex";
 
 export type PersonaSource = "builtin" | "user" | "project";
 
 export type PersonaSettings = Omit<SimpleStreamOptions, "reasoning"> & {
   reasoning?: ReasoningEffort;
   interleavedThinking?: boolean;
+  serviceTier?: ServiceTier;
 };
 
 export const REASONING_LEVELS_TUPLE = [
@@ -24,6 +26,7 @@ export const REASONING_LEVELS_TUPLE = [
 ] as const;
 
 export const ReasoningEffortSchema = z.enum(REASONING_LEVELS_TUPLE);
+export const ServiceTierSchema = z.enum(["priority", "flex"]);
 
 export const REASONING_LEVELS: ReasoningEffort[] = [...REASONING_LEVELS_TUPLE];
 

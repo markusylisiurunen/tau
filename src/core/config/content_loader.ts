@@ -30,7 +30,7 @@ import { VIEW_IMAGE_TOOL } from "../tools/view_image.js";
 import { WAIT_FOR_AGENT_TOOL } from "../tools/wait_for_agent.js";
 import { WRITE_TOOL } from "../tools/write.js";
 import type { Persona, Skill } from "../types.js";
-import { ReasoningEffortSchema, RiskLevelSchema } from "../types.js";
+import { ReasoningEffortSchema, RiskLevelSchema, ServiceTierSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
 import { parseMarkdownFrontMatter } from "./markdown_frontmatter.js";
@@ -84,6 +84,7 @@ const SubagentSpecSchema = z
     provider: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),
     reasoning: ReasoningEffortSchema.optional(),
+    serviceTier: ServiceTierSchema.optional(),
     tools: z.array(z.string()).optional(),
     riskLevel: RiskLevelSchema.optional(),
     launchModels: z.array(z.string()).optional(),
@@ -243,8 +244,13 @@ function parseSubagentConfig(
     const launchModels = launchModelsResult.launchModels;
     const riskLevel = specRaw.riskLevel;
     const settings =
-      specRaw.reasoning !== undefined && specRaw.reasoning !== "none"
-        ? { reasoning: specRaw.reasoning }
+      specRaw.reasoning !== undefined || specRaw.serviceTier !== undefined
+        ? {
+            ...(specRaw.reasoning !== undefined && specRaw.reasoning !== "none"
+              ? { reasoning: specRaw.reasoning }
+              : {}),
+            ...(specRaw.serviceTier !== undefined ? { serviceTier: specRaw.serviceTier } : {}),
+          }
         : undefined;
 
     let modelObj: Persona["model"] | undefined;
@@ -495,6 +501,7 @@ const personaFrontMatterSchema = z
     model: z.string().trim().min(1),
     description: z.string().trim().optional(),
     reasoning: ReasoningEffortSchema.optional(),
+    serviceTier: ServiceTierSchema.optional(),
     allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
     skills: z.unknown().optional(),
     subagents: z.unknown().optional(),
@@ -556,6 +563,7 @@ function parsePersona(
     };
   }
   const reasoning = parsedFrontMatter.data.reasoning;
+  const serviceTier = parsedFrontMatter.data.serviceTier;
   const allowedReasoningLevels = parsedFrontMatter.data.allowedReasoningLevels;
   const skillsRaw = parsedFrontMatter.data.skills;
   const subagentsRaw = parsedFrontMatter.data.subagents;
@@ -575,6 +583,9 @@ function parsePersona(
   const settings: Persona["settings"] = basePersona ? { ...basePersona.settings } : {};
   if (reasoning) {
     settings.reasoning = reasoning;
+  }
+  if (serviceTier) {
+    settings.serviceTier = serviceTier;
   }
 
   let skills: Persona["skills"];

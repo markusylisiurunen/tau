@@ -8,7 +8,7 @@ import type {
   ThinkingLevel,
 } from "@mariozechner/pi-ai";
 import { stream, streamSimple, supportsXhigh } from "@mariozechner/pi-ai";
-import type { ReasoningEffort } from "../types.js";
+import type { ReasoningEffort, ServiceTier } from "../types.js";
 import type { TauStreamOptions } from "./streaming_settings.js";
 
 type BedrockStreamOptions = ProviderStreamOptions & {
@@ -17,8 +17,9 @@ type BedrockStreamOptions = ProviderStreamOptions & {
   interleavedThinking?: boolean;
 };
 
-type CodexStreamOptions = ProviderStreamOptions & {
+type OpenAIResponsesStreamOptions = ProviderStreamOptions & {
   reasoningEffort?: ReasoningEffort;
+  serviceTier?: ServiceTier;
 };
 
 function normalizeSimpleReasoning(
@@ -53,8 +54,22 @@ function isBedrockAnthropicModel(model: Model<Api>): boolean {
   return isBedrockModel(model) && model.id.includes("anthropic.");
 }
 
+function isOpenAIResponsesModel(model: Model<Api>): model is Model<"openai-responses"> {
+  return model.api === "openai-responses" && model.provider === "openai";
+}
+
 function isOpenAICodexModel(model: Model<Api>): model is Model<"openai-codex-responses"> {
   return model.api === "openai-codex-responses" && model.provider === "openai-codex";
+}
+
+export function resolveOpenAIServiceTier(
+  serviceTier: TauStreamOptions["serviceTier"],
+): ServiceTier | undefined {
+  if (serviceTier === undefined) {
+    return undefined;
+  }
+
+  return serviceTier;
 }
 
 function resolveBedrockOptions(
@@ -72,12 +87,16 @@ function resolveBedrockOptions(
   };
 }
 
-export function resolveCodexReasoningEffort(
-  model: Model<"openai-codex-responses">,
+export function resolveOpenAIReasoningEffort(
+  model: Model<"openai-responses"> | Model<"openai-codex-responses">,
   reasoning: TauStreamOptions["reasoning"],
 ): ReasoningEffort | undefined {
-  if (reasoning === undefined || reasoning === "none") {
-    return reasoning;
+  if (reasoning === undefined) {
+    return undefined;
+  }
+
+  if (reasoning === "none") {
+    return model.api === "openai-codex-responses" ? reasoning : undefined;
   }
 
   if (supportsXhigh(model) || reasoning !== "xhigh") {
@@ -85,6 +104,23 @@ export function resolveCodexReasoningEffort(
   }
 
   return "high";
+}
+
+function resolveOpenAIResponsesOptions(
+  model: Model<"openai-responses"> | Model<"openai-codex-responses">,
+  options: TauStreamOptions,
+): OpenAIResponsesStreamOptions {
+  const reasoningEffort = resolveOpenAIReasoningEffort(model, options.reasoning);
+  const serviceTier = resolveOpenAIServiceTier(options.serviceTier);
+  const { reasoning: _reasoning, serviceTier: _serviceTier, ...baseOptions } = options;
+
+  return {
+    ...baseOptions,
+    // TODO: Enable websocket transport by default once pi-ai fixes the WebSocket transport bug.
+    // ...(options.transport === undefined ? { transport: "websocket" as const } : {}),
+    ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+    ...(serviceTier !== undefined ? { serviceTier } : {}),
+  } satisfies OpenAIResponsesStreamOptions;
 }
 
 export function streamModel<TApi extends Api>(
@@ -97,17 +133,12 @@ export function streamModel<TApi extends Api>(
     return stream(model, context, providerOptions);
   }
 
-  if (isOpenAICodexModel(model)) {
-    const reasoningEffort = resolveCodexReasoningEffort(model, options.reasoning);
-    const { reasoning: _reasoning, ...baseOptions } = options;
-    const providerOptions = {
-      ...baseOptions,
-      // TODO: Enable websocket transport by default once pi-ai fixes the WebSocket transport bug.
-      // ...(options.transport === undefined ? { transport: "websocket" as const } : {}),
-      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
-    } satisfies CodexStreamOptions;
+  if (isOpenAIResponsesModel(model)) {
+    return stream(model, context, resolveOpenAIResponsesOptions(model, options));
+  }
 
-    return stream(model, context, providerOptions);
+  if (isOpenAICodexModel(model)) {
+    return stream(model, context, resolveOpenAIResponsesOptions(model, options));
   }
 
   return streamSimple(model, context, resolveSimpleStreamOptions(options));

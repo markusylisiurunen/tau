@@ -62,16 +62,6 @@ function isOpenAICodexModel(model: Model<Api>): model is Model<"openai-codex-res
   return model.api === "openai-codex-responses" && model.provider === "openai-codex";
 }
 
-export function resolveOpenAIServiceTier(
-  serviceTier: TauStreamOptions["serviceTier"],
-): ServiceTier | undefined {
-  if (serviceTier === undefined) {
-    return undefined;
-  }
-
-  return serviceTier;
-}
-
 function resolveBedrockOptions(
   model: Model<"bedrock-converse-stream">,
   options: TauStreamOptions,
@@ -106,12 +96,11 @@ export function resolveOpenAIReasoningEffort(
   return "high";
 }
 
-function resolveOpenAIResponsesOptions(
+export function resolveOpenAIResponsesOptions(
   model: Model<"openai-responses"> | Model<"openai-codex-responses">,
   options: TauStreamOptions,
 ): OpenAIResponsesStreamOptions {
   const reasoningEffort = resolveOpenAIReasoningEffort(model, options.reasoning);
-  const serviceTier = resolveOpenAIServiceTier(options.serviceTier);
   const { reasoning: _reasoning, serviceTier: _serviceTier, ...baseOptions } = options;
 
   return {
@@ -119,7 +108,7 @@ function resolveOpenAIResponsesOptions(
     // TODO: Enable websocket transport by default once pi-ai fixes the WebSocket transport bug.
     // ...(options.transport === undefined ? { transport: "websocket" as const } : {}),
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
-    ...(serviceTier !== undefined ? { serviceTier } : {}),
+    ...(options.serviceTier !== undefined ? { serviceTier: options.serviceTier } : {}),
   } satisfies OpenAIResponsesStreamOptions;
 }
 

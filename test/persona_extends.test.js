@@ -295,6 +295,41 @@ describe("custom personas", () => {
     }
   });
 
+  it("preserves custom subagent reasoning none", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "personas", "subagent-no-reasoning.md"),
+        [
+          "---",
+          "id: subagent-no-reasoning",
+          "provider: anthropic",
+          "model: claude-haiku-4-5",
+          "reasoning: medium",
+          "subagents:",
+          "  analyst:",
+          "    systemPrompt: analyze repository state",
+          "    reasoning: none",
+          "---",
+          "persona with subagent reasoning override",
+          "",
+        ].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      const persona = personas.find((entry) => entry.id === "subagent-no-reasoning");
+      expect(persona).toBeTruthy();
+      expect(persona.subagents?.analyst?.settings?.reasoning).toBe("none");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("parses custom subagent launch models and applies config launch models for default", async () => {
     const fx = setupFixture();
 

@@ -32,7 +32,7 @@ describe("model stream reasoning normalization", () => {
     ).toBe("none");
   });
 
-  test("drops explicit none for openai responses reasoning disable", () => {
+  test("preserves explicit none for openai responses reasoning disable", () => {
     expect(
       resolveOpenAIReasoningEffort(
         {
@@ -42,7 +42,7 @@ describe("model stream reasoning normalization", () => {
         },
         "none",
       ),
-    ).toBeUndefined();
+    ).toBe("none");
   });
 
   test("clamps unsupported openai xhigh reasoning to high", () => {

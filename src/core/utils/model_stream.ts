@@ -96,7 +96,7 @@ export function resolveOpenAIReasoningEffort(
   }
 
   if (reasoning === "none") {
-    return model.api === "openai-codex-responses" ? reasoning : undefined;
+    return reasoning;
   }
 
   if (supportsXhigh(model) || reasoning !== "xhigh") {

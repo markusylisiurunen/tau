@@ -27,8 +27,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.67.1",
-    "@mariozechner/pi-tui": "^0.67.1",
+    "@mariozechner/pi-ai": "^0.67.2",
+    "@mariozechner/pi-tui": "^0.67.2",
     "@sinclair/typebox": "^0.34.49",
     "chalk": "^5.6.2",
     "file-type": "^21.3.4",
@@ -38,7 +38,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.11",
+    "@biomejs/biome": "2.4.12",
     "@types/node": "^25.6.0",
     "colorjs.io": "^0.6.1",
     "prettier": "^3.8.2",

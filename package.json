@@ -27,8 +27,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.67.4",
-    "@mariozechner/pi-tui": "^0.67.4",
+    "@mariozechner/pi-ai": "^0.67.5",
+    "@mariozechner/pi-tui": "^0.67.5",
     "@sinclair/typebox": "^0.34.49",
     "chalk": "^5.6.2",
     "file-type": "^21.3.4",

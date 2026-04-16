@@ -285,7 +285,7 @@ tau uses `caffeinate -i` and only holds the sleep assertion during active assist
 
 tau comes with several built-in personas across different models:
 
-- **Claude Opus 4.6** (Anthropic): `opus-4.6-chat`, `opus-4.6-coder`
+- **Claude Opus 4.7** (Anthropic): `opus-4.7-chat`, `opus-4.7-coder`
 - **GPT-5.3-Codex** (OpenAI): `gpt-5.3-codex`
 - **GPT-5.4** (OpenAI): `gpt-5.4-chat`, `gpt-5.4-coder`
 - **GPT-5.3-Codex (ChatGPT)** (OpenAI Codex): `gpt-5.3-codex-chatgpt`
@@ -300,7 +300,7 @@ switch personas at startup with `--persona` or mid-session with `/persona:<id>`:
 persona id matching is exact/case-sensitive.
 
 ```sh
-tau --persona opus-4.6-coder
+tau --persona opus-4.7-coder
 ```
 
 ## sub-agents
@@ -330,7 +330,7 @@ when you write custom skills, you can specify trigger sensitivity in the skill d
 some models support extended thinking, where they reason through problems before responding. cycle through reasoning levels with `shift+tab`, or set one at startup:
 
 ```sh
-tau --persona opus-4.6-chat:high
+tau --persona opus-4.7-chat:high
 ```
 
 toggle visibility of the model's thinking with `ctrl+t`.
@@ -346,7 +346,7 @@ to explicitly target a sub-agent, use `@@agent:<name>` (for example, `@@agent:de
 you can also pipe content directly:
 
 ```sh
-cat src/tui/app.ts | tau --persona opus-4.6-chat
+cat src/tui/app.ts | tau --persona opus-4.7-chat
 ```
 
 by default, tau injects your AGENTS.md into the system prompt. use `--no-agent-context-files` to disable this behavior. tau searches for AGENTS.md in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home).
@@ -584,7 +584,7 @@ create your own personas by adding markdown files to `~/.config/tau/personas/` (
 ---
 id: my-assistant
 provider: anthropic
-model: claude-opus-4-5
+model: claude-opus-4-7
 ---
 
 you are a helpful assistant specialized in my workflow. focus on clarity and efficiency.
@@ -594,7 +594,7 @@ the frontmatter defines the persona. required fields:
 
 - `id`: unique id used by `--persona` and `/persona:<id>`
 - `provider`: model provider id (for example `openai`, `anthropic`, `google`)
-- `model`: model id for the provider (for example `gpt-5.4`, `claude-opus-4-5`)
+- `model`: model id for the provider (for example `gpt-5.4`, `claude-opus-4-7`)
 
 custom personas/subagents can reference model ids that are not bundled yet, as long as the provider is known. configure model metadata in `models.json` files or let tau derive defaults. see [docs/models.md](docs/models.md).
 

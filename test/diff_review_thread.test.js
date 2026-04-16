@@ -85,7 +85,7 @@ vi.mock("../src/core/runtime/conversation_turn_runtime.ts", () => ({
         role: "assistant",
         api: "anthropic-messages",
         provider: "anthropic",
-        model: "claude-opus-4-6",
+        model: "claude-opus-4-7",
         timestamp: 999,
         usage: {
           input: 10,
@@ -174,7 +174,7 @@ describe("diff_review thread", () => {
       persona: {
         id: "coder",
         label: "coder",
-        model: { provider: "anthropic", id: "claude-opus-4-6", contextWindow: 200000 },
+        model: { provider: "anthropic", id: "claude-opus-4-7", contextWindow: 200000 },
         systemPrompt: "main system prompt",
         settings: { reasoning: "high" },
         skills: "*",
@@ -189,7 +189,7 @@ describe("diff_review thread", () => {
       sessionId: "review-session-1",
       personaId: "coder",
       provider: "anthropic",
-      model: "claude-opus-4-6",
+      model: "claude-opus-4-7",
       api: "anthropic-messages",
       reasoningEffort: "high",
       usage: {
@@ -222,7 +222,7 @@ describe("diff_review thread", () => {
       persona: {
         id: "coder",
         label: "coder",
-        model: { provider: "anthropic", id: "claude-opus-4-6", contextWindow: 200000 },
+        model: { provider: "anthropic", id: "claude-opus-4-7", contextWindow: 200000 },
         systemPrompt: "main system prompt",
         settings: { reasoning: "high" },
         skills: "*",
@@ -284,7 +284,7 @@ describe("diff_review thread", () => {
       persona: {
         id: "coder",
         label: "coder",
-        model: { provider: "anthropic", id: "claude-opus-4-6", contextWindow: 200000 },
+        model: { provider: "anthropic", id: "claude-opus-4-7", contextWindow: 200000 },
         systemPrompt: "main system prompt",
         settings: { reasoning: "high" },
         skills: "*",
@@ -301,7 +301,7 @@ describe("diff_review thread", () => {
       persona: {
         id: "coder",
         label: "coder",
-        model: { provider: "anthropic", id: "claude-opus-4-6", contextWindow: 200000 },
+        model: { provider: "anthropic", id: "claude-opus-4-7", contextWindow: 200000 },
         systemPrompt: "main system prompt",
         settings: { reasoning: "high" },
         skills: "*",

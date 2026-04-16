@@ -195,9 +195,9 @@ type PersonaSpec = {
 
 const PERSONA_SPECS: PersonaSpec[] = [
   {
-    id: "opus-4.6",
-    description: "Claude Opus 4.6",
-    model: resolveModelOrThrow("anthropic", "claude-opus-4-6"),
+    id: "opus-4.7",
+    description: "Claude Opus 4.7",
+    model: resolveModelOrThrow("anthropic", "claude-opus-4-7"),
     allowedReasoningLevels: ["low", "high", "xhigh"],
     settings: { reasoning: "high" },
     skills: "*",

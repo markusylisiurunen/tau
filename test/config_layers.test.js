@@ -204,7 +204,7 @@ describe("config paths", () => {
 
       const config = loadConfig(fx.repo, deps);
       expect(config).toMatchObject({
-        defaultPersona: "opus-4.6-chat",
+        defaultPersona: "opus-4.7-chat",
         defaultRisk: "read-only",
       });
     } finally {
@@ -229,7 +229,7 @@ describe("config paths", () => {
       const modelResolver = loadModelResolver({ deps, levels });
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
       expect(result.config).toMatchObject({
-        defaultPersona: "opus-4.6-chat",
+        defaultPersona: "opus-4.7-chat",
         defaultRisk: "read-only",
       });
       expect(result.errors.length).toBeGreaterThan(0);

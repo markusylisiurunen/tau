@@ -10,6 +10,7 @@ export const emptyReviewState: DiffToolReviewState = {
   diffStyle: "split",
   overflowMode: "wrap",
   sidebarOpen: false,
+  sidebarWidth: "narrow",
   collapsedFileIds: [],
   viewedFileIds: [],
   threads: [],
@@ -26,6 +27,7 @@ export function normalizeReviewState(
     ...state,
     diffStyle: state.diffStyle === "split" ? "split" : "stacked",
     overflowMode: state.overflowMode === "scroll" ? "scroll" : "wrap",
+    sidebarWidth: state.sidebarWidth === "wide" ? "wide" : "narrow",
     threads: state.threads.map((thread) => ({
       ...thread,
       anchor:

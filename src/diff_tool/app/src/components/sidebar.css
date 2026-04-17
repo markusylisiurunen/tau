@@ -19,6 +19,41 @@
   transform: translateX(0);
 }
 
+.sidebar-width-toggle {
+  background: transparent;
+  border: none;
+  bottom: 0;
+  cursor: pointer;
+  padding: 0;
+  position: absolute;
+  right: -3px;
+  top: 0;
+  width: 5px;
+}
+
+.sidebar-width-toggle::before {
+  background: transparent;
+  bottom: 0;
+  content: "";
+  left: 2px;
+  position: absolute;
+  top: 0;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+  width: 1px;
+}
+
+.sidebar-width-toggle:hover::before,
+.sidebar-width-toggle:focus-visible::before {
+  background: var(--border-focus);
+  box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.02);
+}
+
+.sidebar-width-toggle:focus-visible {
+  outline: none;
+}
+
 .sidebar-section {
   display: flex;
   flex-direction: column;

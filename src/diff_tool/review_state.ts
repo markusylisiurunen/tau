@@ -18,6 +18,7 @@ export class DiffToolReviewStateStore {
     diffStyle: "split",
     overflowMode: "wrap",
     sidebarOpen: false,
+    sidebarWidth: "narrow",
     collapsedFileIds: [],
     viewedFileIds: [],
     threads: [],
@@ -29,6 +30,7 @@ export class DiffToolReviewStateStore {
       diffStyle: this.state.diffStyle,
       overflowMode: this.state.overflowMode,
       sidebarOpen: this.state.sidebarOpen,
+      sidebarWidth: this.state.sidebarWidth,
       collapsedFileIds: [...this.state.collapsedFileIds],
       viewedFileIds: [...this.state.viewedFileIds],
       threads: this.state.threads.map(cloneThread),
@@ -47,6 +49,10 @@ export class DiffToolReviewStateStore {
 
     if (typeof patch.sidebarOpen === "boolean") {
       this.state.sidebarOpen = patch.sidebarOpen;
+    }
+
+    if (patch.sidebarWidth === "narrow" || patch.sidebarWidth === "wide") {
+      this.state.sidebarWidth = patch.sidebarWidth;
     }
 
     if (Array.isArray(patch.collapsedFileIds)) {

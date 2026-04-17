@@ -62,7 +62,9 @@
   --code-inline-bg: hsl(142 68% 56% / 0.07);
   --code-inline-text: hsl(142 74% 68%);
   --bar-height: 48px;
-  --sidebar-width: 300px;
+  --sidebar-width-narrow: 300px;
+  --sidebar-width-wide: 480px;
+  --sidebar-width: var(--sidebar-width-narrow);
   --content-padding-x: 12px;
   --file-gap: 1rem;
   --font-size-ui: 1rem;
@@ -107,6 +109,10 @@ textarea {
 
 .app {
   min-height: 100vh;
+}
+
+.app.sidebar-wide {
+  --sidebar-width: var(--sidebar-width-wide);
 }
 
 .content {

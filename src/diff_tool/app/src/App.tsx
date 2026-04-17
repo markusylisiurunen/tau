@@ -551,7 +551,9 @@ export function App() {
 
   return (
     <>
-      <div className={`app${reviewState.sidebarOpen ? " sidebar-open" : ""}`}>
+      <div
+        className={`app${reviewState.sidebarOpen ? " sidebar-open" : ""}${reviewState.sidebarWidth === "wide" ? " sidebar-wide" : ""}`}
+      >
         <TopBar
           fileCount={files.length}
           viewedCount={reviewState.viewedFileIds.length}
@@ -586,6 +588,7 @@ export function App() {
         />
         <Sidebar
           open={reviewState.sidebarOpen}
+          widthMode={reviewState.sidebarWidth}
           files={files}
           viewed={viewed}
           detachedThreads={detachedThreads}
@@ -597,6 +600,12 @@ export function App() {
           onJumpToFile={scrollToFile}
           onCreateDetachedThread={openDetachedThreadDraft}
           onOpenDetachedThread={openDetachedThread}
+          onToggleWidth={() => {
+            applyStatePatch({
+              sidebarWidth:
+                reviewState.sidebarWidth === "wide" ? "narrow" : "wide",
+            });
+          }}
         />
         <main className="content">
           {files.length === 0 && (

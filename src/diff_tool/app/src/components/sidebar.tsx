@@ -7,11 +7,13 @@ import {
 } from "react";
 import type { CommentThread } from "../comments.js";
 import type { DiffFile } from "../parse_diff.js";
+import type { SidebarWidth } from "../types.js";
 import { DiffStats } from "./diff_stats.js";
 import "./sidebar.css";
 
 type SidebarProps = {
   open: boolean;
+  widthMode: SidebarWidth;
   files: DiffFile[];
   viewed: Record<string, boolean>;
   detachedThreads: CommentThread[];
@@ -19,10 +21,12 @@ type SidebarProps = {
   onJumpToFile: (fileId: string) => void;
   onCreateDetachedThread: () => void;
   onOpenDetachedThread: (threadId: string) => void;
+  onToggleWidth: () => void;
 };
 
 export function Sidebar({
   open,
+  widthMode,
   files,
   viewed,
   detachedThreads,
@@ -30,9 +34,20 @@ export function Sidebar({
   onJumpToFile,
   onCreateDetachedThread,
   onOpenDetachedThread,
+  onToggleWidth,
 }: SidebarProps) {
+  const widthLabel =
+    widthMode === "wide" ? "Use narrow sidebar" : "Use wide sidebar";
+
   return (
     <aside className={`sidebar${open ? " open" : ""}`}>
+      <button
+        type="button"
+        className="sidebar-width-toggle"
+        aria-label={widthLabel}
+        title={widthLabel}
+        onClick={onToggleWidth}
+      />
       <section className="sidebar-section">
         <div className="sidebar-section-header">
           <h2 className="sidebar-section-title">conversations</h2>

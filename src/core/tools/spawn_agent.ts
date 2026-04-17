@@ -53,7 +53,8 @@ const SPAWN_AGENT_PROMPT_DESCRIPTION = [
 
 const SPAWN_AGENT_MODEL_DESCRIPTION = [
   "Optional launch override in format <provider>/<model>:<effort>.",
-  "The value must match one of the selected subagent's configured launch models.",
+  "By default, omit this field unless the user explicitly asks to use a specific model.",
+  "When provided, the value must match one of the selected subagent's configured launch models.",
 ].join(" ");
 
 const SPAWN_AGENT_WORKING_DIRECTORY_DESCRIPTION = [

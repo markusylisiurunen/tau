@@ -123,7 +123,7 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
     const launchModels = config.launchModels ?? [];
     const launchModelsText =
       launchModels.length > 0
-        ? `\n  - Launch models: ${launchModels.map((entry) => `\`${entry}\``).join(", ")}`
+        ? `\n  - Launch model overrides: ${launchModels.map((entry) => `\`${entry}\``).join(", ")}\n    By default, launch the subagent without a model override unless the user explicitly asks to use a specific model.`
         : "";
     return `- \`${name}\`: ${description}${launchModelsText}`;
   });

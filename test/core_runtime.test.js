@@ -454,8 +454,11 @@ describe("session prompt composer", () => {
     expect(result.baseSystemPrompt).toContain("### Project context");
     expect(result.baseSystemPrompt).toContain("### Available sub-agents");
     expect(result.baseSystemPrompt).toContain("`researcher`");
-    expect(result.baseSystemPrompt).toContain("Launch models");
+    expect(result.baseSystemPrompt).toContain("Launch model overrides");
     expect(result.baseSystemPrompt).toContain("openai/gpt-5.4:high");
+    expect(result.baseSystemPrompt).toContain(
+      "By default, launch the subagent without a model override unless the user explicitly asks to use a specific model.",
+    );
     expect(result.baseSystemPrompt).toContain("<sandbox-info>");
 
     expect(result.subagentPrompts.default).toContain('<risk-level level="read-only">');

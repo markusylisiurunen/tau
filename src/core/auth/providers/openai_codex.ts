@@ -1,5 +1,5 @@
 import type { OAuthCredentials, OAuthProvider } from "@mariozechner/pi-ai";
-import { getOAuthApiKey } from "@mariozechner/pi-ai/oauth";
+import { getOAuthApiKey, refreshOpenAICodexToken } from "@mariozechner/pi-ai/oauth";
 import type { AuthStorage } from "../auth_storage.js";
 import { decodeJwtPayload } from "../jwt.js";
 import type { AuthProviderAdapter, AuthProviderSelection } from "../provider_adapter.js";
@@ -87,11 +87,17 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
 
     return Promise.all(
       accounts.map(async (account) => {
-        const identity = decodeIdentity(account.access);
-        const usage = await this.getUsageSnapshot(authStorage, account, { forceRefresh: true });
+        const refreshedAccount = await this.refreshAccountIdentity(authStorage, account);
+        const usage = await this.getUsageSnapshot(authStorage, refreshedAccount, {
+          forceRefresh: true,
+        });
+        const currentAccount =
+          getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ??
+          refreshedAccount;
+        const identity = decodeIdentity(currentAccount.access);
         return {
           provider: PROVIDER_ID,
-          accountId: account.accountId,
+          accountId: currentAccount.accountId,
           email: identity.email,
           plan: identity.plan,
           usage,
@@ -218,6 +224,29 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     }
 
     return true;
+  }
+
+  private async refreshAccountIdentity(
+    authStorage: AuthStorage,
+    account: CodexAccount,
+  ): Promise<CodexAccount> {
+    try {
+      const refreshedCredentials = await refreshOpenAICodexToken(account.refresh);
+      const refreshedAccount = mergeUpdatedCredentials(account, refreshedCredentials);
+      if (shouldUpdateAccount(account, refreshedCredentials)) {
+        updateStoredOAuthAccount(authStorage, account.accountId, (current) =>
+          mergeUpdatedCredentials(current, refreshedCredentials),
+        );
+      }
+      return (
+        getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ??
+        refreshedAccount
+      );
+    } catch {
+      return (
+        getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ?? account
+      );
+    }
   }
 
   private async getUsageSnapshot(

@@ -8,6 +8,7 @@ vi.mock("@mariozechner/pi-ai/oauth", async (importOriginal) => {
   return {
     ...actual,
     getOAuthApiKey: vi.fn(),
+    refreshOpenAICodexToken: vi.fn(),
   };
 });
 
@@ -19,11 +20,36 @@ vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
   };
 });
 
-const { getOAuthApiKey } = await import("@mariozechner/pi-ai/oauth");
+const { getOAuthApiKey, refreshOpenAICodexToken } = await import("@mariozechner/pi-ai/oauth");
 const { getEnvApiKey } = await import("@mariozechner/pi-ai");
 
+import { AuthManager } from "../dist/core/auth/auth_manager.js";
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
 import { createCredentialResolver } from "../dist/core/auth/credential_resolver.js";
+
+function toBase64Url(value) {
+  return Buffer.from(value, "utf-8")
+    .toString("base64")
+    .replace(/=+$/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
+
+function createAccessToken({ accountId, email, plan }) {
+  const header = toBase64Url(JSON.stringify({ alg: "none", typ: "JWT" }));
+  const payload = toBase64Url(
+    JSON.stringify({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: accountId,
+        chatgpt_plan_type: plan,
+      },
+      "https://api.openai.com/profile": {
+        email,
+      },
+    }),
+  );
+  return `${header}.${payload}.sig`;
+}
 
 function createTempAuthPath() {
   const dir = mkdtempSync(join(tmpdir(), "tau-auth-"));
@@ -146,6 +172,84 @@ describe("CredentialResolver", () => {
       const account = saved.providers["openai-codex"].accounts[0];
       expect(account.access).toBe("new-access");
       expect(account.refresh).toBe("new-refresh");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("refreshes codex account identity before listing plans", async () => {
+    const fx = createTempAuthPath();
+    try {
+      const originalAccess = createAccessToken({
+        accountId: "acct-plan",
+        email: "user@example.com",
+        plan: "plus",
+      });
+      const refreshedAccess = createAccessToken({
+        accountId: "acct-plan",
+        email: "user@example.com",
+        plan: "pro",
+      });
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify(
+          {
+            providers: {
+              "openai-codex": {
+                accounts: [
+                  {
+                    type: "oauth",
+                    accountId: "acct-plan",
+                    providerAccountId: "acct-plan",
+                    access: originalAccess,
+                    refresh: "refresh-plan",
+                    expires: Number.MAX_SAFE_INTEGER,
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      refreshOpenAICodexToken.mockResolvedValue({
+        access: refreshedAccess,
+        refresh: "refresh-plan-next",
+        expires: Number.MAX_SAFE_INTEGER,
+        accountId: "acct-plan",
+      });
+      getOAuthApiKey.mockImplementation(async (_provider, providers) => ({
+        apiKey: providers["openai-codex"].access,
+        newCredentials: providers["openai-codex"],
+      }));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: true,
+          json: async () => ({
+            rate_limit: {
+              primary_window: {
+                used_percent: 12,
+                reset_at: 4102444800,
+                limit_window_seconds: 18000,
+              },
+            },
+          }),
+        })),
+      );
+
+      const storage = new AuthStorage(fx.authPath);
+      const authManager = new AuthManager(storage);
+
+      const providers = await authManager.listProviderAccounts();
+      expect(providers[0]?.accounts[0]?.plan).toBe("pro");
+
+      const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
+      const account = saved.providers["openai-codex"].accounts[0];
+      expect(account.access).toBe(refreshedAccess);
+      expect(account.refresh).toBe("refresh-plan-next");
     } finally {
       fx.cleanup();
     }

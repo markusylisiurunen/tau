@@ -98,7 +98,10 @@ export function TopBar({
         >
           <DiffStats additions={additions} deletions={deletions} />
           {diffCommand && (
-            <span className="top-bar-meta top-bar-meta-dim top-bar-diff-command">
+            <span
+              className="top-bar-meta top-bar-meta-dim top-bar-diff-command"
+              title={diffCommand}
+            >
               {diffCommand}
             </span>
           )}

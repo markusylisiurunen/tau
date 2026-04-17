@@ -90,7 +90,7 @@ export async function captureDiffReviewSnapshot(
   const captured =
     diffArgs.length > 0
       ? await captureExplicitDiffSnapshot(cwd, diffArgs, deps, signal)
-      : await captureWorkingTreeSnapshot(repoRoot, cwd, deps, signal);
+      : await captureWorkingTreeSnapshot(repoRoot, deps, signal);
 
   return new DiffReviewSnapshot({
     repoRoot,
@@ -163,15 +163,14 @@ async function captureExplicitDiffSnapshot(
 
 async function captureWorkingTreeSnapshot(
   repoRoot: string,
-  cwd: string,
   deps: Pick<CoreDeps, "spawn" | "env">,
   signal?: AbortSignal,
 ): Promise<CapturedSnapshotData> {
-  const hasHead = await gitRefExists(cwd, "HEAD", deps, signal);
+  const hasHead = await gitRefExists(repoRoot, "HEAD", deps, signal);
   const tracked = hasHead
-    ? await captureTrackedWorkingTreeSnapshot(cwd, deps, signal)
-    : await captureTrackedWorkingTreeSnapshotWithoutHead(cwd, deps, signal);
-  const untracked = await captureUntrackedFilePatches(repoRoot, cwd, deps, signal);
+    ? await captureTrackedWorkingTreeSnapshot(repoRoot, deps, signal)
+    : await captureTrackedWorkingTreeSnapshotWithoutHead(repoRoot, deps, signal);
+  const untracked = await captureUntrackedFilePatches(repoRoot, deps, signal);
   const patchByPath = new Map(tracked.patchByPath);
   for (const [path, patch] of untracked.patchByPath) {
     patchByPath.set(path, patch);
@@ -185,16 +184,16 @@ async function captureWorkingTreeSnapshot(
 }
 
 async function captureTrackedWorkingTreeSnapshot(
-  cwd: string,
+  repoRoot: string,
   deps: Pick<CoreDeps, "spawn" | "env">,
   signal?: AbortSignal,
 ): Promise<CapturedSnapshotData> {
-  const patch = await runGitCommand(cwd, ["diff", "HEAD"], deps, {}, signal);
+  const patch = await runGitCommand(repoRoot, ["diff", "HEAD"], deps, {}, signal);
   const files = parseNameStatusOutput(
-    await runGitCommand(cwd, ["diff", "--name-status", "-z", "HEAD"], deps, {}, signal),
+    await runGitCommand(repoRoot, ["diff", "--name-status", "-z", "HEAD"], deps, {}, signal),
   );
   const patchSections = splitPatchSections(
-    await runGitCommand(cwd, ["diff", "HEAD", "--patch"], deps, {}, signal),
+    await runGitCommand(repoRoot, ["diff", "HEAD", "--patch"], deps, {}, signal),
   );
 
   return {
@@ -205,18 +204,24 @@ async function captureTrackedWorkingTreeSnapshot(
 }
 
 async function captureTrackedWorkingTreeSnapshotWithoutHead(
-  cwd: string,
+  repoRoot: string,
   deps: Pick<CoreDeps, "spawn" | "env">,
   signal?: AbortSignal,
 ): Promise<CapturedSnapshotData> {
-  const unstagedPatch = await runGitCommand(cwd, ["diff"], deps, {}, signal);
-  const stagedPatch = await runGitCommand(cwd, ["diff", "--cached", "--root"], deps, {}, signal);
+  const unstagedPatch = await runGitCommand(repoRoot, ["diff"], deps, {}, signal);
+  const stagedPatch = await runGitCommand(
+    repoRoot,
+    ["diff", "--cached", "--root"],
+    deps,
+    {},
+    signal,
+  );
   const unstagedFiles = parseNameStatusOutput(
-    await runGitCommand(cwd, ["diff", "--name-status", "-z"], deps, {}, signal),
+    await runGitCommand(repoRoot, ["diff", "--name-status", "-z"], deps, {}, signal),
   );
   const stagedFiles = parseNameStatusOutput(
     await runGitCommand(
-      cwd,
+      repoRoot,
       ["diff", "--cached", "--name-status", "-z", "--root"],
       deps,
       {},
@@ -235,7 +240,6 @@ async function captureTrackedWorkingTreeSnapshotWithoutHead(
 
 async function captureUntrackedFilePatches(
   repoRoot: string,
-  cwd: string,
   deps: Pick<CoreDeps, "spawn" | "env">,
   signal?: AbortSignal,
 ): Promise<{
@@ -245,7 +249,7 @@ async function captureUntrackedFilePatches(
 }> {
   const paths = parseNullSeparatedPaths(
     await runGitCommand(
-      cwd,
+      repoRoot,
       ["ls-files", "--others", "--exclude-standard", "-z"],
       deps,
       {},
@@ -257,7 +261,7 @@ async function captureUntrackedFilePatches(
   const patchByPath = new Map<string, string>();
 
   for (const path of paths) {
-    const filePath = resolveSnapshotFilePath(repoRoot, cwd, path);
+    const filePath = resolve(repoRoot, path);
     if (!existsSync(filePath)) {
       continue;
     }
@@ -282,14 +286,6 @@ async function captureUntrackedFilePatches(
     patches,
     patchByPath,
   };
-}
-
-function resolveSnapshotFilePath(repoRoot: string, cwd: string, path: string): string {
-  const fromCwd = resolve(cwd, path);
-  if (existsSync(fromCwd)) {
-    return fromCwd;
-  }
-  return resolve(repoRoot, path);
 }
 
 function createUntrackedFilePatch(path: string, content: string): string {

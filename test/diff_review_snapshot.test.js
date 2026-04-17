@@ -22,6 +22,7 @@ function runGit(cwd, args) {
 function createRepoFixture() {
   const repo = mkdtempSync(join(tmpdir(), "tau-diff-review-"));
   mkdirSync(join(repo, "src"), { recursive: true });
+  mkdirSync(join(repo, "packages", "app"), { recursive: true });
   writeFileSync(join(repo, "src", "foo.ts"), "export const value = 1;\n", "utf-8");
   writeFileSync(join(repo, "src", "bar.ts"), "export const removed = true;\n", "utf-8");
   writeFileSync(join(repo, "src", "baz.ts"), "export const draft = false;\n", "utf-8");
@@ -136,6 +137,29 @@ describe("diff_review snapshot", () => {
       expect(snapshot.getFilePatch("src/baz.ts")).toContain("+export const draft = true;");
       expect(snapshot.getFilePatch("src/qux.ts")).toContain("new file mode 100644");
       expect(snapshot.getFilePatch("src/qux.ts")).toContain("+export const untracked = true;");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("keeps plain /diff file paths repo-root relative when launched from a subdirectory", async () => {
+    const fx = createRepoFixture();
+
+    try {
+      const snapshot = await captureDiffReviewSnapshot({
+        cwd: join(fx.repo, "packages", "app"),
+      });
+
+      expect(snapshot.cwd).toBe(join(fx.repo, "packages", "app"));
+      expect(snapshot.files.map((file) => file.path)).toEqual([
+        "src/bar.ts",
+        "src/baz.ts",
+        "src/foo.ts",
+        "src/qux.ts",
+      ]);
+      expect(snapshot.patch).toContain("diff --git a/src/foo.ts b/src/foo.ts");
+      expect(snapshot.patch).not.toContain("diff --git a/../");
+      expect(snapshot.getFilePatch("src/qux.ts")).toContain("+++ b/src/qux.ts");
     } finally {
       fx.cleanup();
     }

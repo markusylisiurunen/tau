@@ -20,7 +20,9 @@
 }
 
 .top-bar-left {
+  flex: 1 1 auto;
   gap: 12px;
+  overflow: hidden;
 }
 
 .top-bar-meta {
@@ -53,10 +55,14 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
   font-size: var(--font-size-sm);
 }
 
 .top-bar-diff-command {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   opacity: 0.4;
 }

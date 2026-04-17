@@ -275,6 +275,7 @@ const state = {
   diffStyle: "split",
   overflowMode: "wrap",
   sidebarOpen: false,
+  sidebarWidth: "narrow",
   collapsedFileIds: [],
   viewedFileIds: ["dev-session-001-0-0"],
   threads: mockThreads,
@@ -348,6 +349,9 @@ const server = createServer(async (req, res) => {
       }
       if (typeof body.sidebarOpen === "boolean") {
         state.sidebarOpen = body.sidebarOpen;
+      }
+      if (body.sidebarWidth === "narrow" || body.sidebarWidth === "wide") {
+        state.sidebarWidth = body.sidebarWidth;
       }
       if (Array.isArray(body.collapsedFileIds)) {
         state.collapsedFileIds = body.collapsedFileIds.filter(

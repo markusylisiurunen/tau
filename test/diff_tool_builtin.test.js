@@ -190,6 +190,7 @@ describe("built-in diff tool", () => {
         diffStyle: "split",
         overflowMode: "wrap",
         sidebarOpen: false,
+        sidebarWidth: "narrow",
         collapsedFileIds: [],
         viewedFileIds: [],
         threads: [],

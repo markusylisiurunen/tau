@@ -522,6 +522,9 @@ function parseStatePatch(payload: Record<string, unknown>): DiffToolStatePatch {
       ? { overflowMode: payload.overflowMode }
       : {}),
     ...(typeof payload.sidebarOpen === "boolean" ? { sidebarOpen: payload.sidebarOpen } : {}),
+    ...(payload.sidebarWidth === "narrow" || payload.sidebarWidth === "wide"
+      ? { sidebarWidth: payload.sidebarWidth }
+      : {}),
     ...(Array.isArray(payload.collapsedFileIds)
       ? {
           collapsedFileIds: payload.collapsedFileIds.flatMap((value) =>

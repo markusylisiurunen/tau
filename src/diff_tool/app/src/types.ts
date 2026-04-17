@@ -36,6 +36,7 @@ export type ThreadReplyPayload = DiffToolThreadReplyPayload;
 export type LineSide = DiffToolLineSide;
 export type DiffStyle = DiffToolReviewState["diffStyle"];
 export type OverflowMode = DiffToolReviewState["overflowMode"];
+export type SidebarWidth = DiffToolReviewState["sidebarWidth"];
 
 export type ResolveThreadPayload = {
   id: string;

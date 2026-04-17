@@ -47,6 +47,7 @@ export type DiffToolReviewState = {
   diffStyle: "stacked" | "split";
   overflowMode: "wrap" | "scroll";
   sidebarOpen: boolean;
+  sidebarWidth: "narrow" | "wide";
   collapsedFileIds: string[];
   viewedFileIds: string[];
   threads: DiffToolCommentThread[];
@@ -57,6 +58,7 @@ export type DiffToolStatePatch = {
   diffStyle?: DiffToolReviewState["diffStyle"];
   overflowMode?: DiffToolReviewState["overflowMode"];
   sidebarOpen?: boolean;
+  sidebarWidth?: DiffToolReviewState["sidebarWidth"];
   collapsedFileIds?: string[];
   viewedFileIds?: string[];
 };

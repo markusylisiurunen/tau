@@ -56,7 +56,7 @@ function createApiHarness(updateBatches) {
       return await new Promise(() => {});
     }),
     sendMessage: vi.fn(async (chatId, text, options) => {
-      sendMessages.push({ chatId, text, options });
+      sendMessages.push({ chatId, text, options, sentAt: Date.now() });
     }),
     downloadFile: vi.fn(async (fileId) => {
       downloadFileCalls.push(fileId);
@@ -708,6 +708,96 @@ describe("async telegram adapter", () => {
       expect(
         apiHarness.sendMessages.some((entry) => entry.text.includes("(s12) assistant message")),
       ).toBe(false);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("splits oversized quiet-mode replies into multiple telegram messages", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 471, type: "private" },
+            from: { id: 7 },
+            text: "/use s13",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s13",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(471) },
+    );
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    const finalAnswer = "🙂".repeat(1500);
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length >= 1);
+
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s13",
+        projectId: "demo",
+        previousState: "waiting-input",
+        state: "running",
+        updatedAt: "2024-01-01T00:01:00.000Z",
+      });
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s13",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:02:00.000Z",
+        progress: {
+          type: "assistant-message",
+          text: finalAnswer,
+        },
+      });
+
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s13",
+        projectId: "demo",
+        previousState: "running",
+        state: "waiting-input",
+        updatedAt: "2024-01-01T00:03:00.000Z",
+      });
+
+      await waitFor(
+        () =>
+          apiHarness.sendMessages.filter((entry) => String(entry.text).startsWith("🙂")).length ===
+          2,
+        4000,
+      );
+
+      const chunks = apiHarness.sendMessages.filter((entry) => String(entry.text).startsWith("🙂"));
+      expect(chunks.map((entry) => entry.text).join("")).toBe(finalAnswer);
+      for (const chunk of chunks) {
+
+        expect(Buffer.byteLength(chunk.text, "utf8")).toBeLessThanOrEqual(3891);
+      }
+      expect(chunks[1].sentAt - chunks[0].sentAt).toBeGreaterThanOrEqual(900);
     } finally {
       await adapter.close();
     }

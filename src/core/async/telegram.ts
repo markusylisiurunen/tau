@@ -180,6 +180,13 @@ const DEFAULT_TELEGRAM_PHOTO_MIME_TYPE = "image/jpeg";
 const DEFAULT_TELEGRAM_DOCUMENT_MIME_TYPE = "application/octet-stream";
 const MESSAGE_QUEUED_REACTION_EMOJI = "👀";
 const MESSAGE_QUEUED_REACTION_DELAY_MS = 1000;
+const TELEGRAM_MAX_MESSAGE_BYTES = 4096;
+
+const TELEGRAM_MESSAGE_BYTE_BUFFER_RATIO = 0.95;
+const TELEGRAM_SAFE_MESSAGE_BYTES = Math.floor(
+  TELEGRAM_MAX_MESSAGE_BYTES * TELEGRAM_MESSAGE_BYTE_BUFFER_RATIO,
+);
+const TELEGRAM_MESSAGE_SPLIT_DELAY_MS = 1000;
 const ABORTED = Symbol("aborted");
 const CALLBACK_ACTION_PREFIX = "tau:action:";
 const CALLBACK_USE_PREFIX = "tau:use:";
@@ -312,6 +319,38 @@ function truncateText(text: string, maxChars: number): string {
   }
 
   return `${trimmed.slice(0, maxChars - 1)}…`;
+}
+
+function splitTelegramMessage(text: string): string[] {
+
+  if (Buffer.byteLength(text, "utf8") <= TELEGRAM_SAFE_MESSAGE_BYTES) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let currentChunk = "";
+
+  for (const character of text) {
+    const nextChunk = `${currentChunk}${character}`;
+    if (Buffer.byteLength(nextChunk, "utf8") <= TELEGRAM_SAFE_MESSAGE_BYTES) {
+      currentChunk = nextChunk;
+      continue;
+    }
+
+    if (currentChunk) {
+      chunks.push(currentChunk);
+      currentChunk = character;
+      continue;
+    }
+
+    chunks.push(character);
+  }
+
+  if (currentChunk) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
 }
 
 function normalizeSizeBytes(value: number | undefined): number | undefined {
@@ -2304,13 +2343,24 @@ class AsyncTelegramAdapterImpl {
       replyMarkup?: TelegramInlineKeyboardMarkup;
     },
   ): Promise<void> {
-    try {
-      await this.api.sendMessage(chatId, text, options);
-    } catch (error) {
-      this.log("warn", "failed to send telegram message", {
-        chatId,
-        cause: error instanceof Error ? error.message : String(error),
-      });
+    const chunks = splitTelegramMessage(text);
+
+    for (const [index, chunk] of chunks.entries()) {
+      try {
+        await this.api.sendMessage(chatId, chunk, {
+          replyMarkup: index === chunks.length - 1 ? options?.replyMarkup : undefined,
+        });
+      } catch (error) {
+        this.log("warn", "failed to send telegram message", {
+          chatId,
+          cause: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+
+      if (index < chunks.length - 1) {
+        await this.wait(TELEGRAM_MESSAGE_SPLIT_DELAY_MS);
+      }
     }
   }
 

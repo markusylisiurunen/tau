@@ -104,6 +104,31 @@ describe("custom personas", () => {
     }
   });
 
+  it("keeps both built-in opus personas available", async () => {
+    const fx = setupFixture();
+
+    try {
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      expect(personas.find((persona) => persona.id === "opus-4.6-chat")?.model.id).toBe(
+        "claude-opus-4-6",
+      );
+      expect(personas.find((persona) => persona.id === "opus-4.6-coder")?.model.id).toBe(
+        "claude-opus-4-6",
+      );
+      expect(personas.find((persona) => persona.id === "opus-4.7-chat")?.model.id).toBe(
+        "claude-opus-4-7",
+      );
+      expect(personas.find((persona) => persona.id === "opus-4.7-coder")?.model.id).toBe(
+        "claude-opus-4-7",
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("loads built-in fast codex personas with priority service tier", async () => {
     const fx = setupFixture();
 

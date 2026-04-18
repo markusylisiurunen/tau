@@ -285,6 +285,7 @@ tau uses `caffeinate -i` and only holds the sleep assertion during active assist
 
 tau comes with several built-in personas across different models:
 
+- **Claude Opus 4.6** (Anthropic): `opus-4.6-chat`, `opus-4.6-coder`
 - **Claude Opus 4.7** (Anthropic): `opus-4.7-chat`, `opus-4.7-coder`
 - **GPT-5.3-Codex** (OpenAI): `gpt-5.3-codex`
 - **GPT-5.4** (OpenAI): `gpt-5.4-chat`, `gpt-5.4-coder`

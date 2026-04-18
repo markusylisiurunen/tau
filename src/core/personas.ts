@@ -203,6 +203,14 @@ const PERSONA_SPECS: PersonaSpec[] = [
     skills: "*",
   },
   {
+    id: "opus-4.6",
+    description: "Claude Opus 4.6",
+    model: resolveModelOrThrow("anthropic", "claude-opus-4-6"),
+    allowedReasoningLevels: ["low", "high", "xhigh"],
+    settings: { reasoning: "high" },
+    skills: "*",
+  },
+  {
     id: "gpt-5.3-codex",
     description: "GPT-5.3-Codex",
     model: resolveModelOrThrow("openai", "gpt-5.3-codex"),

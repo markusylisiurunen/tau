@@ -69,7 +69,7 @@ function getImageBlock(content) {
 }
 
 describe("view_image tool", () => {
-  it("downscales images to fit inside a 2048x2048 square", async () => {
+  it("downscales images to fit inside a 2000x2000 square", async () => {
     const fx = setupFixture();
 
     try {
@@ -103,8 +103,8 @@ describe("view_image tool", () => {
       const imageBlock = getImageBlock(result.toolResult.content);
       const outputBuffer = Buffer.from(imageBlock.data, "base64");
       const outputMetadata = await sharp(outputBuffer).metadata();
-      expect(outputMetadata.width).toBe(2048);
-      expect(outputMetadata.height).toBe(1536);
+      expect(outputMetadata.width).toBe(2000);
+      expect(outputMetadata.height).toBe(1500);
     } finally {
       fx.cleanup();
     }
@@ -186,7 +186,7 @@ describe("view_image tool", () => {
       expect(result.uiEvent.bytes).toBe(outputBuffer.byteLength);
       expect(result.uiEvent.mimeType).toBe(imageBlock.mimeType);
       expect(Math.max(outputMetadata.width ?? 0, outputMetadata.height ?? 0)).toBeLessThanOrEqual(
-        2048,
+        2000,
       );
       expect(getTextBlock(result.toolResult.content)).toBe(
         `Viewed ${filePath} (${result.uiEvent.mimeType})`,

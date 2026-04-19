@@ -20,9 +20,9 @@ const VIEW_IMAGE_PATH_DESCRIPTION = "Path to the image file to view.";
 
 const VIEW_IMAGE_READ_MAX_BYTES = 50 * 1024 * 1024;
 const VIEW_IMAGE_MODEL_MAX_BYTES = 2.5 * 1024 * 1024;
-const VIEW_IMAGE_MAX_DIMENSION_PX = 2048;
+const VIEW_IMAGE_MAX_DIMENSION_PX = 2000;
 const VIEW_IMAGE_DIMENSION_STEPS = [
-  2048, 1920, 1792, 1664, 1536, 1408, 1280, 1152, 1024, 896, 768, 640, 512,
+  2000, 1920, 1792, 1664, 1536, 1408, 1280, 1152, 1024, 896, 768, 640, 512,
 ] as const;
 const VIEW_IMAGE_LOSSY_QUALITY_STEPS = [95, 90, 85, 80, 75] as const;
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;

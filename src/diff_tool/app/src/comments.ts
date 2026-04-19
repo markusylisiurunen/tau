@@ -14,7 +14,6 @@ export type CommentDraft = {
   fileId: string;
   lineNumber: number;
   side: LineSide;
-  body: string;
 };
 
 export type CommentAnnotation =

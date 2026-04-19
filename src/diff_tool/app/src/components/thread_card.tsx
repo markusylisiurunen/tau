@@ -20,7 +20,7 @@ export const ThreadCard = memo(function ThreadCard({
   onToggleCollapsed,
 }: ThreadCardProps) {
   const [isReplying, setIsReplying] = useState(false);
-  const [replyBody, setReplyBody] = useState("");
+  const [hasReplyText, setHasReplyText] = useState(false);
   const replyInputRef = useRef<HTMLTextAreaElement>(null);
   const lastMessage = thread.messages[thread.messages.length - 1];
   const canAsk =
@@ -37,14 +37,17 @@ export const ThreadCard = memo(function ThreadCard({
   }, [isReplying]);
 
   const handleAddReply = useCallback(() => {
-    const text = replyBody.trim();
+    const text = replyInputRef.current?.value.trim() ?? "";
     if (!text) {
       return;
     }
-    setReplyBody("");
+    if (replyInputRef.current) {
+      replyInputRef.current.value = "";
+    }
+    setHasReplyText(false);
     setIsReplying(false);
     onAddReply(text);
-  }, [onAddReply, replyBody]);
+  }, [onAddReply]);
 
   const handleReplyKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -61,7 +64,10 @@ export const ThreadCard = memo(function ThreadCard({
   }, [onToggleResolved, thread.resolved]);
 
   const handleCancelReply = useCallback(() => {
-    setReplyBody("");
+    if (replyInputRef.current) {
+      replyInputRef.current.value = "";
+    }
+    setHasReplyText(false);
     setIsReplying(false);
   }, []);
 
@@ -148,8 +154,12 @@ export const ThreadCard = memo(function ThreadCard({
             <textarea
               ref={replyInputRef}
               className="text-input-area thread-reply-input"
-              value={replyBody}
-              onChange={(event) => setReplyBody(event.target.value)}
+              onChange={(event) => {
+                const nextHasReplyText = event.target.value.trim().length > 0;
+                setHasReplyText((prev) =>
+                  prev === nextHasReplyText ? prev : nextHasReplyText,
+                );
+              }}
               onKeyDown={handleReplyKeyDown}
               placeholder="Reply…"
               rows={3}
@@ -165,7 +175,7 @@ export const ThreadCard = memo(function ThreadCard({
               <button
                 type="button"
                 className="btn primary"
-                disabled={!replyBody.trim()}
+                disabled={!hasReplyText}
                 onClick={handleAddReply}
               >
                 comment

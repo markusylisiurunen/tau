@@ -62,8 +62,8 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `commands/registry.ts` - Slash command parsing and dispatch
   - `cli.ts` - CLI argument parsing and help text
   - `async/` - Async daemon/client modules (`cli.ts`, `cron.ts`, `http_protocol.ts`, `http_server.ts`, `server_config.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
-
     - `telegram.ts` handles DM commands, voice/audio transcription, immediate attachment materialization/queueing for text/voice-triggered turns, and splits oversized Telegram replies into 95%-of-limit chunks sent 1 second apart
+
   - `debug.ts` - `--debug` output
   - `config/deps.ts` - Config loader dependencies
   - `config/paths.ts` - Config level discovery
@@ -111,6 +111,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `utils/format.ts` - Display formatting
   - `utils/git.ts` - Git helpers
   - `utils/messages.ts` - Message helpers
+
 - `src/diff_tool/` - Built-in browser diff review demo tool (`tau diff-tool`) used as the default `/diff` fallback
 - `src/tui/`
   - `app.ts` - ChatApp wiring

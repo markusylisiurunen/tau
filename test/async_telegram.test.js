@@ -794,7 +794,6 @@ describe("async telegram adapter", () => {
       const chunks = apiHarness.sendMessages.filter((entry) => String(entry.text).startsWith("🙂"));
       expect(chunks.map((entry) => entry.text).join("")).toBe(finalAnswer);
       for (const chunk of chunks) {
-
         expect(Buffer.byteLength(chunk.text, "utf8")).toBeLessThanOrEqual(3891);
       }
       expect(chunks[1].sentAt - chunks[0].sentAt).toBeGreaterThanOrEqual(900);

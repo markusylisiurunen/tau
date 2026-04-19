@@ -205,8 +205,8 @@ Supported DM commands:
 - `/close all` (closes sessions in `waiting-input` or `failed`, and deletes their workspaces)
 - `/verbose` (for the selected session, streams run lifecycle + progress updates)
 - `/quiet` (for the selected session, default mode, send only the run's final assistant message)
-
   - oversized Telegram replies are split into 95%-of-limit chunks (3891 bytes) and sent 1 second apart
+
 - plain text sends to the selected session (if no active session is selected and exactly one session exists, it is auto-selected)
 - Telegram `voice` and `audio` messages are downloaded, transcribed with Mistral, and then sent to the selected session
 - attachments (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`) are downloaded to local temp files immediately, queued per session, and prepended to the next text/voice turn as local temp paths with mime, size, and caption metadata

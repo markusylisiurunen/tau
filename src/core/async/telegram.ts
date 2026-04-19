@@ -322,7 +322,6 @@ function truncateText(text: string, maxChars: number): string {
 }
 
 function splitTelegramMessage(text: string): string[] {
-
   if (Buffer.byteLength(text, "utf8") <= TELEGRAM_SAFE_MESSAGE_BYTES) {
     return [text];
   }

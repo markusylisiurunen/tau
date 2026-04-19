@@ -43,8 +43,7 @@ type FileSectionProps = {
   onToggleCollapsed: (id: string) => void;
   onToggleViewed: (id: string) => void;
   onLineActivate: (fileId: string, lineNumber: number, side: LineSide) => void;
-  onDraftChange: (body: string) => void;
-  onSaveDraft: () => void;
+  onSaveDraft: (body: string) => void;
   onCancelDraft: () => void;
   onAddReply: (threadId: string, text: string) => void;
   onRequestAgent: (threadId: string) => void;
@@ -63,7 +62,6 @@ export const FileSection = memo(function FileSection({
   onToggleCollapsed,
   onToggleViewed,
   onLineActivate,
-  onDraftChange,
   onSaveDraft,
   onCancelDraft,
   onAddReply,
@@ -95,14 +93,7 @@ export const FileSection = memo(function FileSection({
   const renderAnnotation = useCallback(
     (annotation: LineAnnotation) => {
       if (annotation.metadata.type === "draft") {
-        return (
-          <CommentEditor
-            body={annotation.metadata.draft.body}
-            onChange={onDraftChange}
-            onSave={onSaveDraft}
-            onCancel={onCancelDraft}
-          />
-        );
+        return <CommentEditor onSave={onSaveDraft} onCancel={onCancelDraft} />;
       }
 
       const { thread } = annotation.metadata;
@@ -121,7 +112,6 @@ export const FileSection = memo(function FileSection({
     [
       onAddReply,
       onCancelDraft,
-      onDraftChange,
       onRequestAgent,
       onSaveDraft,
       onToggleResolved,

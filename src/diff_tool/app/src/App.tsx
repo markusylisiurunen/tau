@@ -302,43 +302,42 @@ export function App() {
         ) {
           return prev;
         }
-        return { fileId, lineNumber, side, body: "" };
+        return { fileId, lineNumber, side };
       });
     },
     [],
   );
 
-  const updateDraft = useCallback((body: string) => {
-    setDraft((prev) => (prev ? { ...prev, body } : prev));
-  }, []);
+  const saveDraft = useCallback(
+    (body: string) => {
+      if (!draft) {
+        return;
+      }
 
-  const saveDraft = useCallback(() => {
-    if (!draft) {
-      return;
-    }
-
-    const body = draft.body.trim();
-    if (!body) {
-      setDraft(null);
-      return;
-    }
-
-    void syncState(
-      createThread({
-        body,
-        anchor: {
-          kind: "line",
-          fileId: draft.fileId,
-          filePath: resolveDraftFilePath(draft, files),
-          lineNumber: draft.lineNumber,
-          side: draft.side,
-        },
-      }).then((result) => {
+      const trimmedBody = body.trim();
+      if (!trimmedBody) {
         setDraft(null);
-        return result;
-      }),
-    );
-  }, [draft, files, syncState]);
+        return;
+      }
+
+      void syncState(
+        createThread({
+          body: trimmedBody,
+          anchor: {
+            kind: "line",
+            fileId: draft.fileId,
+            filePath: resolveDraftFilePath(draft, files),
+            lineNumber: draft.lineNumber,
+            side: draft.side,
+          },
+        }).then((result) => {
+          setDraft(null);
+          return result;
+        }),
+      );
+    },
+    [draft, files, syncState],
+  );
 
   const cancelDraft = useCallback(() => setDraft(null), []);
 
@@ -636,7 +635,6 @@ export function App() {
                 onToggleCollapsed={toggleCollapsed}
                 onToggleViewed={toggleViewed}
                 onLineActivate={activateLine}
-                onDraftChange={updateDraft}
                 onSaveDraft={saveDraft}
                 onCancelDraft={cancelDraft}
                 onAddReply={addReply}

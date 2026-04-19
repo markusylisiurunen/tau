@@ -2,15 +2,11 @@ import { memo, useEffect, useRef } from "react";
 import "./comment_editor.css";
 
 type CommentEditorProps = {
-  body: string;
-  onChange: (body: string) => void;
-  onSave: () => void;
+  onSave: (body: string) => void;
   onCancel: () => void;
 };
 
 export const CommentEditor = memo(function CommentEditor({
-  body,
-  onChange,
   onSave,
   onCancel,
 }: CommentEditorProps) {
@@ -20,10 +16,15 @@ export const CommentEditor = memo(function CommentEditor({
     ref.current?.focus();
   }, []);
 
+  const submit = () => {
+    const body = ref.current?.value ?? "";
+    onSave(body);
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      onSave();
+      submit();
     }
     if (event.key === "Escape") {
       event.preventDefault();
@@ -36,8 +37,6 @@ export const CommentEditor = memo(function CommentEditor({
       <textarea
         ref={ref}
         className="text-input-area comment-input"
-        value={body}
-        onChange={(event) => onChange(event.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Add a comment…"
         rows={2}
@@ -46,7 +45,7 @@ export const CommentEditor = memo(function CommentEditor({
         <button type="button" className="btn ghost" onClick={onCancel}>
           cancel
         </button>
-        <button type="button" className="btn primary" onClick={onSave}>
+        <button type="button" className="btn primary" onClick={submit}>
           comment
         </button>
       </div>

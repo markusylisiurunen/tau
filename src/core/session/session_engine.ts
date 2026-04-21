@@ -43,10 +43,8 @@ export type SessionEngineOptions = {
   config?: Config;
   deps?: CoreDeps;
   cwd?: string;
-  hostCwd?: string;
   home?: string;
   includeAgentContext?: boolean;
-  sandboxEnabled?: boolean;
 };
 
 export type SessionCompactionOptions = {
@@ -87,10 +85,8 @@ export class SessionEngine {
   private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
   private cwd: string;
-  private hostCwd: string;
   private home: string;
   private includeAgentContext: boolean;
-  private sandboxEnabled: boolean;
   private modelResolver: ModelResolver;
   private readonly subagentControlPlane: SubagentControlPlane;
   private readonly eventListeners = new Set<(event: CoreEvent) => void>();
@@ -106,10 +102,8 @@ export class SessionEngine {
     this.config = options.config ?? {};
     this.deps = options.deps ?? createDefaultCoreDeps();
     this.cwd = options.cwd ?? this.deps.env.cwd();
-    this.hostCwd = options.hostCwd ?? this.deps.env.cwd();
     this.home = options.home ?? this.deps.env.home();
     this.includeAgentContext = options.includeAgentContext ?? true;
-    this.sandboxEnabled = options.sandboxEnabled ?? false;
     this.modelResolver = this.createDispatchModelResolver();
     this.authPath = getAuthPath(this.deps.env.home());
     const authStorage = new AuthStorage(this.authPath);
@@ -147,27 +141,15 @@ export class SessionEngine {
     this.modelResolver = this.createDispatchModelResolver();
   }
 
-  setPromptContext(context: {
-    cwd?: string;
-    hostCwd?: string;
-    home?: string;
-    includeAgentContext?: boolean;
-    sandboxEnabled?: boolean;
-  }): void {
+  setPromptContext(context: { cwd?: string; home?: string; includeAgentContext?: boolean }): void {
     if (context.cwd !== undefined) {
       this.cwd = context.cwd;
-    }
-    if (context.hostCwd !== undefined) {
-      this.hostCwd = context.hostCwd;
     }
     if (context.home !== undefined) {
       this.home = context.home;
     }
     if (context.includeAgentContext !== undefined) {
       this.includeAgentContext = context.includeAgentContext;
-    }
-    if (context.sandboxEnabled !== undefined) {
-      this.sandboxEnabled = context.sandboxEnabled;
     }
 
     this.modelResolver = this.createDispatchModelResolver();
@@ -425,7 +407,7 @@ export class SessionEngine {
   }
 
   private createDispatchModelResolver(): ModelResolver {
-    const cwd = this.hostCwd || this.cwd || this.deps.env.cwd();
+    const cwd = this.cwd || this.deps.env.cwd();
     const home = this.home || this.deps.env.home() || cwd;
 
     const deps = {
@@ -494,10 +476,8 @@ export class SessionEngine {
         config: this.config,
         turnUserHistoryEntryId,
         cwd: this.cwd,
-        hostCwd: this.hostCwd,
         home: this.home,
         includeAgentContext: this.includeAgentContext,
-        sandboxEnabled: this.sandboxEnabled,
         subagentPrompts: this.subagentPrompts,
         toolRegistry: this.toolRegistry,
         modelResolver: this.modelResolver,

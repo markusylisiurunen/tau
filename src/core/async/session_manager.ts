@@ -571,9 +571,6 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     if (entry.project.riskLevel) {
       options.riskLevel = entry.project.riskLevel;
     }
-    if (entry.project.sandbox !== undefined) {
-      options.sandbox = entry.project.sandbox;
-    }
     if (entry.project.noAgentContextFiles !== undefined) {
       options.noAgentContextFiles = entry.project.noAgentContextFiles;
     }

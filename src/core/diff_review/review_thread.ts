@@ -101,20 +101,17 @@ export class DiffReviewThread implements DiffReviewThreadSession {
       cwd: options.snapshot.cwd,
       home: deps.env.home(),
       includeAgentContext: options.includeAgentContext ?? true,
-      sandboxEnabled: false,
       readFile: deps.fs.readFile,
     });
     const promptComposition = composeSessionPrompts({
       persona,
       riskLevel: "read-only",
       cwd: promptBootstrap.promptContext.cwd,
-      hostCwd: promptBootstrap.promptContext.hostCwd,
       datetime: new Date(deps.clock.now()).toISOString(),
       platform: deps.env.platform(),
       nodeVersion: deps.env.nodeVersion(),
       skillsBlock: promptBootstrap.promptContext.skillsBlock,
       projectContextBlock: promptBootstrap.promptContext.projectContextBlock,
-      sandboxEnabled: false,
     });
     const toolRegistry = ToolCatalog.createSubagentRegistry(
       [TOOL_NAME_BASH, TOOL_NAME_VIEW_IMAGE],
@@ -131,10 +128,8 @@ export class DiffReviewThread implements DiffReviewThreadSession {
       config: options.config,
       deps,
       cwd: promptBootstrap.promptContext.cwd,
-      hostCwd: promptBootstrap.promptContext.hostCwd,
       home: promptBootstrap.promptContext.home,
       includeAgentContext: promptBootstrap.promptContext.includeAgentContext,
-      sandboxEnabled: false,
     });
     if (options.forkFrom) {
       this.usage = { ...options.forkFrom.usageBaseline };

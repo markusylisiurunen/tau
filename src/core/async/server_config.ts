@@ -129,7 +129,6 @@ function createProjectSchema(configDir: string) {
         .optional(),
       persona: z.string().optional(),
       riskLevel: z.enum(["read-only", "read-write"]).optional(),
-      sandbox: z.boolean().optional(),
       noAgentContextFiles: z.boolean().optional(),
     })
     .strict();

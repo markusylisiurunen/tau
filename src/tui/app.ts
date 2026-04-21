@@ -31,10 +31,8 @@ export interface ChatAppOptions {
   noAgentContextFiles?: boolean;
   config?: Config;
   defaultDiffTool?: DiffToolConfig;
-  sandboxEnabled: boolean;
   caffeinated?: boolean;
   toolBackend?: ToolExecutionBackend;
-  toolBackendDispose?: () => Promise<void> | void;
 }
 
 export class ChatApp implements ModeAdapter {

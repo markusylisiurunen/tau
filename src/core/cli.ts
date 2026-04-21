@@ -14,7 +14,6 @@ export type CliOptions = {
   personaId?: string;
   reasoningOverride?: ReasoningEffort;
   riskLevel?: RiskLevel;
-  sandbox: boolean;
   caffeinated: boolean;
   noAgentContextFiles: boolean;
 };
@@ -126,7 +125,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let personaId: string | undefined;
   let reasoningOverride: ReasoningEffort | undefined;
   let riskLevel: RiskLevel | undefined;
-  let sandbox = false;
   let caffeinated = false;
   let noAgentContextFiles = false;
 
@@ -152,11 +150,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
 
     if (arg === "--no-agent-context-files") {
       noAgentContextFiles = true;
-      continue;
-    }
-
-    if (arg === "--sandbox") {
-      sandbox = true;
       continue;
     }
 
@@ -200,7 +193,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     personaId,
     reasoningOverride,
     riskLevel,
-    sandbox,
     caffeinated,
     noAgentContextFiles,
   };
@@ -230,10 +222,9 @@ export function printHelp(personas: Persona[]): void {
       "  --load, -l <file>             load a checkpoint file.",
       `  --persona, -p <id>[:<level>]  start with a persona. available: ${personaList}.`,
       `                                optionally specify reasoning level. levels: ${reasoningList}.`,
-      `                                if not specified, uses defaultPersona from ~/.config/tau/config.json.`,
+      `                                if not specified, uses resolved config defaultPersona.`,
       `  --risk, -r <level>            set initial model risk level. levels: ${riskList}.`,
-      `                                if not specified, uses defaultRisk from ~/.config/tau/config.json (default: read-only).`,
-      "  --sandbox                     run all tool execution inside a session docker container.",
+      `                                if not specified, uses resolved config defaultRisk (default: read-only).`,
       "  --caffeinated                 keep macOS awake during active assistant turns in TUI mode (no-op on Linux).",
       "  --no-agent-context-files      disable AGENTS.md injection into the system prompt.",
       "",

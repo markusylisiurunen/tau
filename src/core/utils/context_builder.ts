@@ -59,7 +59,6 @@ export function buildBaseSystemPrompt(args: {
   personaSystemPrompt: string;
   skillsBlock?: string;
   projectContextBlock?: string;
-  sandboxInfoBlock?: string;
   environmentTag: string;
   subagentsBlock?: string;
 }): string {
@@ -73,17 +72,8 @@ export function buildBaseSystemPrompt(args: {
   if (args.subagentsBlock?.trim()) {
     parts.push(args.subagentsBlock.trim());
   }
-  if (args.sandboxInfoBlock?.trim()) {
-    parts.push(args.sandboxInfoBlock.trim());
-  }
   parts.push(args.environmentTag.trim());
   return parts.join("\n\n");
-}
-
-export function buildSandboxInfoBlock(info?: string): string | undefined {
-  const trimmed = info?.trim();
-  if (!trimmed) return undefined;
-  return ["### Sandbox environment", "", "<sandbox-info>", trimmed, "</sandbox-info>"].join("\n");
 }
 
 export function buildProjectContextBlock(args: {
@@ -91,7 +81,6 @@ export function buildProjectContextBlock(args: {
   home: string;
   agentsFiles?: string[];
   readFile: (path: string) => string;
-  pathForPrompt?: (path: string) => string;
 }): string | undefined {
   const agentsFiles = args.agentsFiles ?? findAgentsFilesInScope(args.cwd, args.home);
   if (agentsFiles.length === 0) return undefined;
@@ -106,8 +95,7 @@ export function buildProjectContextBlock(args: {
     } catch {
       continue;
     }
-    const promptPath = args.pathForPrompt?.(filePath) ?? filePath;
-    lines.push(`<file path="${escapeXml(promptPath)}">`);
+    lines.push(`<file path="${escapeXml(filePath)}">`);
     lines.push(content.trimEnd());
     lines.push("</file>");
     lines.push("");

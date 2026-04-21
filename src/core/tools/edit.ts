@@ -153,7 +153,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
 
       let content: string;
       try {
-        const result = await backend.readFile(path, { restricted: false });
+        const result = await backend.readFile(path);
         content = result.content;
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);

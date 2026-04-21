@@ -100,7 +100,6 @@ Daemon-side settings are loaded from a separate JSON file.
       "backgroundBootstrapCommands": ["npm run build"],
       "persona": "gpt-5.4-coder",
       "riskLevel": "read-only",
-      "sandbox": false,
       "noAgentContextFiles": false
     }
   }

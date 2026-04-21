@@ -81,7 +81,7 @@ tau can run without the TUI via NDJSON RPC over stdin/stdout:
 tau rpc --persona gpt-5.4-coder --risk read-only
 ```
 
-RPC mode reuses the same startup config/persona/risk/sandbox loading as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message). `--caffeinated` is a macOS-only TUI flag and is rejected in RPC mode.
+RPC mode reuses the same startup config, persona loading, and risk handling as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message). `--caffeinated` is a macOS-only TUI flag and is rejected in RPC mode.
 
 for protocol details and examples, see [docs/rpc.md](docs/rpc.md).
 
@@ -165,9 +165,9 @@ this writes prompts and skills into `.tau/` under your current working directory
 
 - **model trust**: the bash tool relies on the model honestly declaring whether a command is a read or write. there's no runtime validation that the command actually matches the declared intent. a model could declare `safetyLevel="read"` while running `rm -rf /`.
 - **no command analysis**: the system doesn't inspect command content. it trusts the declared safety level without verifying what the command actually does.
-- **full system access (by default)**: without sandboxing, the model can access any file on your system that your user account can read or write, not just the current working directory. use `--sandbox` to run tool calls inside a Docker container with the project mounted.
+- **full system access**: Tau does not sandbox tool execution. the model can access any file on your system that your user account can read or write, not just the current working directory. if you need stronger isolation, run Tau inside a VM or container.
 - **no tty / non-interactive tools**: tool commands run with stdin ignored and no TTY. anything that prompts for input or opens an editor can hang or fail (for example `sudo`, `ssh` password prompts, `git` credential prompts). tau also forces git into non-interactive mode (no prompt/editor/pager, batch-mode ssh).
-- **user bypasses**: the `!` prefix executes shell commands directly and completely bypasses risk level checks. this is intentional for direct use, but means risk levels only constrain the model, not the user. when `--sandbox` is enabled, these commands still run inside the sandbox.
+- **user bypasses**: the `!` prefix executes shell commands directly and completely bypasses risk level checks. this is intentional for direct use, but means risk levels only constrain the model, not the user.
 
 note that there is no confirmation step before tool execution. the model runs commands immediately, and you can only observe the results after the fact.
 
@@ -244,32 +244,6 @@ tau --risk read-write
 or change it during a session with `/risk:read-only` or `/risk:read-write`.
 
 the default is read-only because it lets the model investigate your code and answer questions without risk of unintended changes. bump it to read-write when you're ready to let the model make edits.
-
-## sandboxing
-
-when started with `--sandbox`, tau runs all tool calls inside a session-scoped Docker container. the project root (git root or cwd) is mounted into the container, and the working directory matches your current subdirectory. only `/workspace` is bound to the host; absolute paths outside `/workspace` refer to the container filesystem. prompt-injected AGENTS and skills entries are restricted to files under that mounted host root, and their paths are rewritten to sandbox paths.
-
-requirements:
-
-- Docker must be available on the host
-- config must include `sandbox.image`
-- sandboxing is only enabled at startup with `--sandbox` (no runtime toggle)
-
-example config:
-
-```json
-{
-  "sandbox": {
-    "image": "ghcr.io/your-org/tau-sandbox:latest",
-    "mountPath": "/workspace",
-    "pruneAfterHours": 72,
-    "extraDockerArgs": ["--network=none"],
-    "environmentInfo": "tools run inside a container. project mounted at /workspace."
-  }
-}
-```
-
-note: when `--sandbox` is enabled, `!` commands also run inside the container.
 
 ## power management (macOS)
 
@@ -358,7 +332,7 @@ you can also include additional `AGENTS.md` files via config (when that config i
 { "agentContextFiles": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored). in sandbox mode, AGENTS entries outside the mounted host root are excluded, and included file paths are shown as sandbox paths in the prompt.
+paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
 
 run `tau --help` to see all available options, or `tau --debug` to inspect loaded personas, prompts, skills, and the full system prompt for debugging configuration issues.
 
@@ -399,7 +373,7 @@ tau supports slash commands for common actions:
 | `/bash:<id>` | run a saved shell command |
 | `/risk:read-only` | allow read-only tool calls |
 | `/risk:read-write` | allow all tools |
-| `!<cmd>` | run a shell command directly (bypasses risk checks; uses sandbox if enabled) |
+| `!<cmd>` | run a shell command directly (bypasses risk checks) |
 | `!!<cmd>` | run a shell command without adding output to the model context |
 
 use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
@@ -488,8 +462,6 @@ the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launc
 the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). when a message is sent to that model, tau prepends the notice as a `<system>...</system>` block before the user content. this applies to main-session user messages and sub-agent prompts, regardless of persona id.
 
 if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinThemes` is set to `true`, tau will not load built-in themes. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
-
-the `sandbox` field configures Docker sandboxing. `sandbox.image` is required when you start tau with `--sandbox`. `sandbox.mountPath` defaults to `/workspace`. `sandbox.pruneAfterHours` controls when old containers are auto-pruned (default `72`). `sandbox.extraDockerArgs` lets you pass additional `docker run` flags. `sandbox.environmentInfo` (optional) is injected into the system prompt to describe the container environment to the model.
 
 the `async` field in normal tau config is client-side only:
 
@@ -673,7 +645,7 @@ skills are optional directories discovered at `~/.config/tau/skills/` and `~/.ag
 
 optional fields: `license`, `compatibility` (<=500 chars), `metadata` (string map), `allowed-tools` (validated, currently ignored by tau).
 
-enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), use `"*"` to enable all discovered skills, or set `skills: []` to disable skills completely. built-in personas and custom personas with omitted `skills` default to `skills: "*"`. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and file path. in sandbox mode, skills outside the mounted host root are excluded and included paths are rewritten to sandbox paths.
+enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), use `"*"` to enable all discovered skills, or set `skills: []` to disable skills completely. built-in personas and custom personas with omitted `skills` default to `skills: "*"`. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and file path.
 
 use `/reload` to pick up changes to personas, model overrides, prompts, skills, themes, bash commands, and AGENTS.md without restarting.
 

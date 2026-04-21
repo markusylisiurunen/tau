@@ -143,7 +143,6 @@ function createController(view, options = {}) {
     initialPersonaId: options.initialPersonaId,
     config: options.config ?? {},
     defaultDiffTool: options.defaultDiffTool,
-    sandboxEnabled: options.sandboxEnabled ?? false,
     caffeinated: options.caffeinated ?? false,
     toolBackend: options.toolBackend,
     noAgentContextFiles: options.noAgentContextFiles ?? true,
@@ -1276,7 +1275,6 @@ describe("ChatController startup bootstrap", () => {
       cwd: repo,
       home,
       includeAgentContext: true,
-      sandboxEnabled: false,
       readFile: (path) => readFileSync(path, "utf8"),
     });
 

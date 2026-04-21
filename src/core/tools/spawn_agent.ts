@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { z } from "zod";
@@ -11,10 +12,6 @@ import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/ty
 import type { Persona, RiskLevel } from "../types.js";
 import { formatCwd } from "../utils/format.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
-import {
-  resolveSandboxHostRoot,
-  resolveSandboxMappedWorkingDirectory,
-} from "../utils/sandbox_prompt_paths.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
@@ -115,15 +112,12 @@ async function buildSubagentSystemPrompt(args: {
   riskLevel: RiskLevel;
   config: ToolDispatchContext["config"];
   cwd: string;
-  hostCwd: string;
   home: string;
   includeAgentContext: boolean;
-  sandboxEnabled: boolean;
-  sandboxHostRoot?: string;
 }): Promise<string | undefined> {
   const skillsResult = await loadSkillsForPromptContext({
     config: args.config,
-    cwd: args.hostCwd,
+    cwd: args.cwd,
     deps: {
       fs: {
         readFile: (path) => readFileSync(path, "utf-8"),
@@ -133,7 +127,7 @@ async function buildSubagentSystemPrompt(args: {
       },
       env: {
         getEnv: () => process.env,
-        cwd: () => args.hostCwd,
+        cwd: () => args.cwd,
         home: () => args.home,
       },
     },
@@ -145,31 +139,21 @@ async function buildSubagentSystemPrompt(args: {
   const bootstrap = resolveRuntimePromptBootstrap({
     persona: args.persona,
     discoveredSkills: skillsResult.skills,
-    cwd: args.hostCwd,
+    cwd: args.cwd,
     home: args.home,
     includeAgentContext: args.includeAgentContext,
-    sandboxEnabled: args.sandboxEnabled,
-    sandboxConfig: args.config?.sandbox,
-    sandboxHostRoot: args.sandboxHostRoot,
-    sandboxEnvironmentInfo: args.config?.sandbox?.environmentInfo,
     readFile: (path) => readFileSync(path, "utf-8"),
   });
 
   const composition = composeSessionPrompts({
     persona: args.persona,
     riskLevel: args.riskLevel,
-    // Sandbox path invariant: once workingDirectory is resolved, keep that exact sandbox path as
-    // the model-visible cwd. Re-deriving cwd from hostCwd can collapse to mount root when host
-    // cwd is outside a git repo, which breaks subagent path context.
     cwd: args.cwd,
-    hostCwd: bootstrap.promptContext.hostCwd,
     datetime: new Date().toISOString(),
     platform: process.platform,
     nodeVersion: process.version,
     skillsBlock: bootstrap.promptContext.skillsBlock,
     projectContextBlock: bootstrap.promptContext.projectContextBlock,
-    sandboxEnabled: bootstrap.promptContext.sandboxEnabled,
-    sandboxEnvironmentInfo: bootstrap.promptContext.sandboxEnvironmentInfo,
   });
 
   return composition.subagentPrompts[args.name];
@@ -222,10 +206,8 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         persona,
         config,
         cwd: baseCwd,
-        hostCwd: baseHostCwd,
         home: baseHome,
         includeAgentContext,
-        sandboxEnabled,
         subagentPrompts,
       } = context;
 
@@ -280,30 +262,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         launchModelOverride = parsedLaunchModel.launchModel;
       }
 
-      const sandboxMountPath = config.sandbox?.mountPath;
-      const sandboxHostRoot = resolveSandboxHostRoot({
-        cwd: baseCwd,
-        hostCwd: baseHostCwd,
-        sandboxEnabled,
-        sandboxMountPath,
-      });
-      const {
-        cwd,
-        hostCwd,
-        error: workingDirectoryError,
-      } = resolveSandboxMappedWorkingDirectory({
-        cwd: baseCwd,
-        hostCwd: baseHostCwd,
-        workingDirectory,
-        sandboxEnabled,
-        sandboxMountPath,
-      });
-      if (workingDirectoryError) {
-        return blocked(workingDirectoryError, {
-          name,
-          title,
-        });
-      }
+      const cwd = workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
 
       let systemPrompt: string | undefined;
       if (workingDirectory) {
@@ -314,11 +273,8 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             riskLevel,
             config,
             cwd,
-            hostCwd,
             home: baseHome,
             includeAgentContext,
-            sandboxEnabled,
-            sandboxHostRoot,
           });
         } catch (error) {
           return blocked(

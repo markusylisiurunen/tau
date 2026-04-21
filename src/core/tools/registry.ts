@@ -277,10 +277,8 @@ type ToolDispatchBaseContext = {
 export type MainToolDispatchContext = ToolDispatchBaseContext & {
   scope: "main";
   persona: Persona;
-  hostCwd: string;
   home: string;
   includeAgentContext: boolean;
-  sandboxEnabled: boolean;
   subagentPrompts: Record<string, string>;
   subagentControlPlane: SubagentControlPlane;
 };

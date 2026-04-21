@@ -92,7 +92,6 @@ describe("config paths", () => {
         JSON.stringify({
           defaultRisk: "read-only",
           apiKeys: { openai: "global", anthropic: "anthropic-key", mistral: "mistral-key" },
-          sandbox: { image: "sandbox-base" },
           bashCommands: [{ id: "check", cmd: "npm run check" }],
           diffTool: {
             command: "./scripts/global-diff-tool",
@@ -115,7 +114,6 @@ describe("config paths", () => {
         JSON.stringify({
           defaultRisk: "read-write",
           apiKeys: { openai: "repo", google: "google-key" },
-          sandbox: { pruneAfterHours: 12 },
           bashCommands: [
             { id: "check", cmd: "repo check" },
             { id: "test", cmd: "repo test" },
@@ -139,7 +137,6 @@ describe("config paths", () => {
         join(nested, ".tau", "config.json"),
         JSON.stringify({
           defaultPersona: "custom-persona",
-          sandbox: { mountPath: "/workspace", extraDockerArgs: ["--network=none"] },
           bashCommands: [{ id: "test", cmd: "nested test" }],
           agentContextFiles: ["AGENTS.md"],
         }),
@@ -159,12 +156,6 @@ describe("config paths", () => {
         anthropic: "anthropic-key",
         google: "google-key",
         mistral: "mistral-key",
-      });
-      expect(config.sandbox).toEqual({
-        image: "sandbox-base",
-        pruneAfterHours: 12,
-        mountPath: "/workspace",
-        extraDockerArgs: ["--network=none"],
       });
       expect(config.bashCommands).toEqual([
         { id: "check", cmd: "repo check", cwd: repo },
@@ -418,6 +409,92 @@ describe("config paths", () => {
           },
         },
       });
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("allows partial async client target overrides across config levels", () => {
+    const fx = setupFixture();
+
+    try {
+      const repo = join(fx.home, "repo");
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+      mkdirSync(join(repo, ".tau"), { recursive: true });
+
+      writeFileSync(
+        join(fx.home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          async: {
+            client: {
+              targets: {
+                dev: { url: "http://global", token: "global-token", timeoutMs: 5000 },
+              },
+            },
+          },
+        }),
+      );
+
+      writeFileSync(
+        join(repo, ".tau", "config.json"),
+        JSON.stringify({
+          async: {
+            client: {
+              targets: {
+                dev: { timeoutMs: 1000 },
+              },
+            },
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const levels = resolveConfigLevels(deps, { cwd: repo });
+      const modelResolver = loadModelResolver({ deps, levels });
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+
+      expect(result.errors).toEqual([]);
+      expect(result.config.async).toEqual({
+        client: {
+          targets: {
+            dev: { url: "http://global", token: "global-token", timeoutMs: 1000 },
+          },
+        },
+      });
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("reports unknown top-level config keys", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({ sandbox: { image: "ignored" } }),
+        "utf-8",
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
+      const modelResolver = loadModelResolver({ deps, levels });
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+
+      expect(result.errors).toContain(
+        `${join(fx.repo, ".tau", "config.json")}: unknown key in config: sandbox.`,
+      );
     } finally {
       fx.cleanup();
     }

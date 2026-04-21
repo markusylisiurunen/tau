@@ -21,7 +21,6 @@ import { getVirtualConfigDefaults } from "./virtual_defaults.js";
 
 export interface Config {
   apiKeys?: Record<string, string>;
-  sandbox?: SandboxConfig;
   defaultPersona?: string;
   defaultRisk?: RiskLevel;
   disableBuiltinPersonas?: boolean;
@@ -37,17 +36,9 @@ export interface Config {
   async?: AsyncConfig;
 }
 
-export type SandboxConfig = {
-  image?: string;
-  mountPath?: string;
-  pruneAfterHours?: number;
-  extraDockerArgs?: string[];
-  environmentInfo?: string;
-};
-
 export type AsyncClientTargetConfig = {
-  url: string;
-  token: string;
+  url?: string;
+  token?: string;
   timeoutMs?: number;
 };
 
@@ -88,7 +79,6 @@ export type AsyncProjectConfig = {
   backgroundBootstrapCommands?: string[];
   persona?: string;
   riskLevel?: RiskLevel;
-  sandbox?: boolean;
   noAgentContextFiles?: boolean;
 };
 
@@ -101,27 +91,26 @@ type ConfigDiagnostics = {
   errors: string[];
 };
 
+const KNOWN_TOP_LEVEL_CONFIG_KEYS = new Set([
+  "apiKeys",
+  "defaultPersona",
+  "defaultRisk",
+  "disableBuiltinPersonas",
+  "disableBuiltinThemes",
+  "defaultTheme",
+  "bashCommands",
+  "diffTool",
+  "agentContextFiles",
+  "subagents",
+  "modelSystemNotices",
+  "async",
+]);
+
 const NonEmptyStringSchema = z.string().trim().min(1);
 const BooleanSchema = z.boolean();
 const AgentContextFilesSchema = z.array(NonEmptyStringSchema);
 const ApiKeyProviderSchema = z.string();
 const ApiKeysSchema = z.object({}).catchall(z.unknown());
-const SandboxSchema = z
-  .object({
-    image: z.unknown().optional(),
-    mountPath: z.unknown().optional(),
-    pruneAfterHours: z.unknown().optional(),
-    extraDockerArgs: z.unknown().optional(),
-    environmentInfo: z.unknown().optional(),
-  })
-  .passthrough();
-const SandboxFieldsSchema = z.object({
-  image: NonEmptyStringSchema,
-  mountPath: NonEmptyStringSchema,
-  pruneAfterHours: z.number().finite().gt(0),
-  extraDockerArgs: z.array(z.string().refine((entry) => entry.trim().length > 0)),
-  environmentInfo: z.string(),
-});
 const SubagentsConfigSchema = z
   .object({
     defaultLaunchModels: z.array(z.string()).optional(),
@@ -130,8 +119,8 @@ const SubagentsConfigSchema = z
 const StringRecordSchema = z.object({}).catchall(z.unknown());
 const PositiveIntegerSchema = z.number().int().finite().gt(0);
 const AsyncClientTargetSchema = z.object({
-  url: NonEmptyStringSchema,
-  token: NonEmptyStringSchema,
+  url: NonEmptyStringSchema.optional(),
+  token: NonEmptyStringSchema.optional(),
   timeoutMs: PositiveIntegerSchema.optional(),
 });
 
@@ -289,11 +278,14 @@ function validateConfigData(
   const config: Config = {};
   const errors: string[] = [];
 
+  const unknownKeys = Object.keys(data).filter((key) => !KNOWN_TOP_LEVEL_CONFIG_KEYS.has(key));
+  if (unknownKeys.length > 0) {
+    const keyLabel = unknownKeys.length === 1 ? "key" : "keys";
+    errors.push(`${sourceLabel}: unknown ${keyLabel} in config: ${unknownKeys.sort().join(", ")}.`);
+  }
+
   const apiKeysResult = parseApiKeysConfig(data.apiKeys, sourceLabel);
   assignParsedConfigValue(config, errors, "apiKeys", apiKeysResult.config, apiKeysResult.errors);
-
-  const sandboxResult = parseSandboxConfig(data.sandbox, sourceLabel);
-  assignParsedConfigValue(config, errors, "sandbox", sandboxResult.config, sandboxResult.errors);
 
   const defaultPersonaResult = parseDefaultPersona(data.defaultPersona, sourceLabel);
   assignParsedConfigValue(
@@ -360,50 +352,6 @@ function validateConfigData(
   assignParsedConfigValue(config, errors, "async", asyncResult.config, asyncResult.errors);
 
   return { config, errors };
-}
-
-function parseSandboxConfig(
-  raw: unknown,
-  sourceLabel: string,
-): { config?: SandboxConfig; errors: string[] } {
-  if (raw === undefined) {
-    return { errors: [] };
-  }
-
-  const parsed = SandboxSchema.safeParse(raw);
-  if (!parsed.success) {
-    return { errors: [`${sourceLabel}: 'sandbox' must be an object.`] };
-  }
-
-  const sandboxResult = parseOptionalFields(parsed.data, sourceLabel, [
-    ["image", SandboxFieldsSchema.shape.image, "sandbox.image must be a non-empty string."],
-    [
-      "mountPath",
-      SandboxFieldsSchema.shape.mountPath,
-      "sandbox.mountPath must be a non-empty string.",
-    ],
-    [
-      "pruneAfterHours",
-      SandboxFieldsSchema.shape.pruneAfterHours,
-      "sandbox.pruneAfterHours must be a positive number.",
-    ],
-    [
-      "extraDockerArgs",
-      SandboxFieldsSchema.shape.extraDockerArgs,
-      "sandbox.extraDockerArgs must be a string array.",
-    ],
-    [
-      "environmentInfo",
-      SandboxFieldsSchema.shape.environmentInfo,
-      "sandbox.environmentInfo must be a string.",
-    ],
-  ]);
-
-  if (Object.keys(sandboxResult.values).length === 0) {
-    return { errors: sandboxResult.errors };
-  }
-
-  return { config: sandboxResult.values as SandboxConfig, errors: sandboxResult.errors };
 }
 
 function parseAgentContextFiles(
@@ -822,7 +770,6 @@ function dedupePaths(paths: string[]): string[] {
 function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   const merged: Config = getVirtualConfigDefaults();
   let apiKeys: Config["apiKeys"] | undefined;
-  let sandbox: SandboxConfig | undefined;
   let diffTool: DiffToolConfig | undefined;
   let subagents: Config["subagents"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
@@ -835,7 +782,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     const config = configs[i] ?? {};
 
     apiKeys = mergeOptionalObject(apiKeys, config.apiKeys);
-    sandbox = mergeOptionalObject(sandbox, config.sandbox);
     if (config.diffTool !== undefined) {
       diffTool = resolveDiffToolConfig(level, config.diffTool);
     }
@@ -876,10 +822,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (apiKeys && Object.keys(apiKeys).length > 0) {
     merged.apiKeys = apiKeys;
-  }
-
-  if (sandbox && Object.keys(sandbox).length > 0) {
-    merged.sandbox = sandbox;
   }
 
   if (diffTool) {

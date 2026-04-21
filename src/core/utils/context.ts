@@ -7,7 +7,6 @@ export {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
   buildProjectContextBlock,
-  buildSandboxInfoBlock,
   buildSkillsIndexBlock,
   describeRiskLevel,
   formatCwdChangeNotice,

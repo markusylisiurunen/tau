@@ -1546,7 +1546,7 @@ class AsyncTelegramAdapterImpl {
       if (this.defaultProjectId) {
         if (!this.projects[this.defaultProjectId]) {
           return {
-            error: `async.server.telegram.defaultProjectId '${this.defaultProjectId}' is not configured`,
+            error: `telegram.<botId>.defaultProjectId '${this.defaultProjectId}' is not configured`,
           };
         }
         return { projectId: this.defaultProjectId };

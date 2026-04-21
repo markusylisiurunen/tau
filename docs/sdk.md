@@ -79,8 +79,6 @@ returns a connected `TauSdkClient` instance.
   - forwarded as `--persona <id>[:<reasoning>]`
 - `riskLevel?: "read-only" | "read-write"`
   - forwarded as `--risk <level>`
-- `sandbox?: boolean`
-  - forwarded as `--sandbox`
 - `noAgentContextFiles?: boolean`
   - forwarded as `--no-agent-context-files`
 - `connectTimeoutMs?: number`

@@ -39,7 +39,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **SDK client** (`src/sdk/`): Node SDK facade that drives Tau through the same RPC subprocess protocol (`tau rpc`)
 - **Async daemon runtime** (`src/core/async/`): Async CLI + daemon stack (`cli.ts`, `cron.ts`, `http_protocol.ts`, `http_server.ts`, `server_config.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
-- **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools (local host or docker sandbox)
+- **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools on the local host
 - **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent) and sub-agent (configured allowed tools) registries
 - **TUI**: Terminal rendering via `@mariozechner/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
@@ -88,8 +88,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `session/` - Turn processing, streaming, tool dispatch, and manual compaction
   - `session/compaction.ts` - Core compaction preparation/prompt building and synthetic summary message construction
   - `tools/` - Tool definitions (bash, write, edit, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent, emit_output, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
-  - `tools/execution_backend.ts` - Local and sandbox tool backends
-  - `tools/sandbox/docker_sandbox.ts` - Docker sandbox runner
+  - `tools/execution_backend.ts` - Local tool execution backend and cwd scoping helper
   - `subagents/` - Default subagent prompt and runner
   - `modes/` - ModeAdapter interface plus RPC protocol/server (`rpc_protocol.ts`, `rpc_server.ts`)
   - `runtime/chat_runtime.ts` - High-level runtime that coordinates session updates, turn execution, and prompt composition
@@ -148,7 +147,7 @@ Risk levels (`read-only`, `read-write`) gate model tool calls. Subagents inherit
 
 Main session system prompts are immutable after session start to preserve model caching. The environment tag is not updated mid-session. `/risk` and `/cd` changes are injected as system messages on the next user turn instead. Subagent prompts are rebuilt on risk changes so inherited risk applies to subagents.
 
-Prompt/context tag style: use dash-case for XML-like tag names in prompt text (for example `<risk-level>`, `<sandbox-info>`, `<available-skills>`, `<tool-call>`, `<tool-result>`, `<last-assistant-message-verbatim>`). Do not introduce new snake_case tag names.
+Prompt/context tag style: use dash-case for XML-like tag names in prompt text (for example `<risk-level>`, `<available-skills>`, `<tool-call>`, `<tool-result>`, `<last-assistant-message-verbatim>`). Do not introduce new snake_case tag names.
 
 **Bash limits**: 1MB raw capture (tail of output, stdout/stderr merged in arrival order), 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized by dropping vars that match sensitive key patterns, git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
 
@@ -191,13 +190,12 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `bashCommands`, `agentContextFiles`, `sandbox`, `subagents`, `modelSystemNotices`, `async`). This level is only included when cwd is inside home.
+- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `bashCommands`, `agentContextFiles`, `subagents`, `modelSystemNotices`, `async`). This level is only included when cwd is inside home.
   - `apiKeys` (optional): Map of provider id to API key (`apiKeys.<provider>`). Keys merge by provider id across config levels.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
   - `apiKeys.mistral` (optional): Mistral API key for `/speak` and Telegram audio transcription.
   - `defaultPersona` (optional): String persona reference used by default when starting the app. Accepts `<id>` or `<id>:<reasoning>` and matches are exact/case-sensitive. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
-  - `sandbox` (optional): Docker sandbox settings (see below).
   - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.
   - `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.
   - `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Must be non-empty and matches are exact/case-sensitive. Defaults to `gold`.
@@ -207,19 +205,12 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `async.client` (optional): Async client config (`defaultTarget`, `defaultProjectId`, `targets.<id>.url`, `targets.<id>.token`, `targets.<id>.timeoutMs`).
   - daemon-side async settings are loaded from a separate JSON file passed via `tau async daemon --config-file <path>` (`host`, `port`, `authToken`, `maxSessions`, `telegram` (map keyed by bot id, with optional `allowedProjectIds`; sessions are chat-scoped within each bot), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `systemMessage`, and project fields like `workingDirectory`, `description`, `bootstrapCommands`, and `backgroundBootstrapCommands`). On daemon startup, Tau removes existing entries under configured async workspace roots (`workspaceRoot` plus any per-project overrides) before adapters start, and the Telegram adapter prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Assume zero or one async daemon process per host; concurrent daemons are unsupported.
 
-- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `sandbox`, `modelSystemNotices`, and `async.client` merge per field; `diffTool` is selected from the most specific level, overrides the built-in `tau diff-tool` fallback when present, and its relative `command` is resolved from that level root; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
+- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `modelSystemNotices`, and `async.client` merge per field; `diffTool` is selected from the most specific level, overrides the built-in `tau diff-tool` fallback when present, and its relative `command` is resolved from that level root; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
 - **Model overrides**: `~/.config/tau/models.json` (global, only when cwd is under home) and `.tau/models.json` (project) are discovered using the same level resolution as `config.json`. Entries overlay bundled model definitions by `provider + model id` (most specific wins). Known providers only.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored.
 - **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`). Each command runs with cwd set to the config level root (same root used to resolve `agentContextFiles`).
 - **Diff review**: `/diff [git diff args...]` only starts when the main TUI session is idle. Plain `/diff` captures the current working-tree review scope at launch time, including tracked staged + unstaged changes plus untracked text files that fit within Tau's snapshot limits; `/diff <git diff args...>` captures the resolved `git diff` output for those arguments instead. Tau starts the built-in `tau diff-tool` browser demo when `diffTool` is not configured, lets `diffTool` override that fallback when it is configured, shows diff-review status in the chat stream, keeps the editor usable while blocking normal TUI submission, and appends returned review text as a review-styled user message without auto-running the assistant. The built-in browser shows that captured review snapshot, but review agents inspect the live repo state while using the captured snapshot as their starting point. The model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that review context. If the tool never connects or disconnects before returning a result, Tau cancels the review and unblocks the session.
 
-**Sandbox config fields** (used when starting tau with `--sandbox`):
-
-- `sandbox.image` (required with `--sandbox`): Docker image to run.
-- `sandbox.mountPath` (optional): Container path for the project root mount. Defaults to `/workspace`.
-- `sandbox.pruneAfterHours` (optional): Auto-prune stale sandbox containers after N hours. Defaults to `72`.
-- `sandbox.extraDockerArgs` (optional): Additional `docker run` args (string array).
-- `sandbox.environmentInfo` (optional): Freeform text injected into the system prompt to describe the sandbox environment.
 - **Prompts**: `~/.config/tau/prompts/*.md` and `.tau/prompts/*.md` (discovered by walking up from cwd to home/root; most specific wins on conflicts). Prompt file names (without `.md`) must match their `id`.
 - **Themes**: `~/.config/tau/themes/*.json` and `.tau/themes/*.json` (same discovery rules as prompts/config). Theme values accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, or `hsl(h, s%, l%)`. Missing palette tokens render as plain text when a theme is selected. Built-in themes auto-adapt to dark/light terminal backgrounds via OSC 11 detection at startup (best effort, dark fallback). Custom themes remain single-variant.
 - **Skills**: `~/.config/tau/skills/` and `~/.agents/skills/` (global, only when cwd is under home), plus `.tau/skills/` and `.agents/skills/` (discovered by walking up from cwd to home/root). Each skill is a directory containing `SKILL.md` with required YAML frontmatter. When `.tau/skills/` and `.agents/skills/` both exist at the same level, `.agents/skills/` wins on name conflicts:
@@ -260,7 +251,6 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 - `--load`, `-l <file>` - Load a checkpoint file
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
 - `--risk <level>`, `-r` - Set initial risk level (`read-only`, `read-write`)
-- `--sandbox` - Run all tool calls inside a session-specific Docker container
 - `--caffeinated` - Keep macOS awake during active assistant turns in TUI mode (currently a no-op on Linux)
 - `--no-agent-context-files` - Disable AGENTS.md injection into the system prompt
 
@@ -290,7 +280,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `/compact:summary-only`, `/compact:summary-and-last` - Compact history into a single synthetic user summary message (optionally includes last assistant message verbatim when available)
 - `/prune:earliest`, `/prune:largest`, `/prune:smart` - Prune tool results and compact edit call payloads/results
 - `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
-- `!<cmd>` - Direct bash execution (bypasses model; runs inside sandbox when enabled)
+- `!<cmd>` - Direct bash execution (bypasses model)
 - `!!<cmd>` - Direct bash execution without adding output to the model context
 - `#<request>` - Memory mode for updating AGENTS.md (single-line only)
 
@@ -362,8 +352,7 @@ EOF
 
 ## Security
 
-- Risk levels gate model tools only; `!` commands bypass checks (but still use the sandbox when enabled)
-- In sandbox mode, model-visible paths must stay within `sandbox.mountPath`. For `spawn_agent` working-directory rebuilds, treat the resolved sandbox path as authoritative and never re-derive cwd from host paths. For prompt-injected AGENTS/skill files, include only host files under the mounted host root and rewrite prompt paths to sandbox paths.
+- Risk levels gate model tools only; `!` commands bypass checks
 - Bash sanitizes environment, blocks `*_KEY`, `*_SECRET`, `*_TOKEN`, `*_PASSWORD` patterns
 - Process groups terminated on abort to prevent orphaned processes
 

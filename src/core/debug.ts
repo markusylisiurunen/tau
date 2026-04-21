@@ -1,5 +1,5 @@
 import type { Tool } from "@mariozechner/pi-ai";
-import type { BashCommand, SandboxConfig, VirtualBundle } from "./config/index.js";
+import type { BashCommand, VirtualBundle } from "./config/index.js";
 import type { PromptTemplate } from "./prompts.js";
 import { createDefaultCoreDeps } from "./runtime/deps.js";
 import {
@@ -9,12 +9,10 @@ import {
 import type { SubagentPersonaConfig } from "./subagents/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import type { Persona, RiskLevel, Skill } from "./types.js";
-import { resolveAgentCwd } from "./utils/agent_environment.js";
 import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
   buildProjectContextBlock,
-  buildSandboxInfoBlock,
   buildSkillsIndexBlock,
 } from "./utils/context.js";
 import { resolvePromptGitRoot } from "./utils/git.js";
@@ -93,8 +91,6 @@ export function printDebugInfo(args: {
   selectedPersona?: Persona;
   noAgentContextFiles: boolean;
   riskLevel?: RiskLevel;
-  sandboxConfig?: SandboxConfig;
-  sandboxInfo?: string;
   toolRegistry: ToolRegistry;
   virtualBundle?: VirtualBundle;
 }): void {
@@ -106,8 +102,6 @@ export function printDebugInfo(args: {
     selectedPersona,
     noAgentContextFiles,
     riskLevel,
-    sandboxConfig,
-    sandboxInfo,
     toolRegistry,
     virtualBundle,
   } = args;
@@ -115,11 +109,6 @@ export function printDebugInfo(args: {
   const deps = createDefaultCoreDeps();
   const cwd = deps.env.cwd();
   const home = deps.env.home();
-  const promptCwd = resolveAgentCwd({
-    cwd,
-    sandboxEnabled: Boolean(sandboxConfig),
-    sandboxConfig,
-  });
 
   console.log("tau debug info");
   console.log(`cwd: ${cwd}`);
@@ -208,23 +197,20 @@ export function printDebugInfo(args: {
     ? buildProjectContextBlock({ cwd, home, readFile: deps.fs.readFile })
     : undefined;
   const effectiveRiskLevel: RiskLevel = riskLevel ?? "read-only";
-  const repoRoot = resolvePromptGitRoot({ cwd: promptCwd, hostCwd: cwd });
+  const repoRoot = resolvePromptGitRoot({ cwd });
   const environmentTag = buildEnvironmentTag({
     riskLevel: effectiveRiskLevel,
-    cwd: promptCwd,
+    cwd,
     repoRoot,
     datetime: new Date(deps.clock.now()).toISOString(),
     platform: deps.env.platform(),
     nodeVersion: deps.env.nodeVersion(),
   });
-  const sandboxInfoBlock = buildSandboxInfoBlock(sandboxInfo);
-
   const subagentsBlock = formatSubagentsForPrompt(selectedPersona);
   const fullSystemPrompt = buildBaseSystemPrompt({
     personaSystemPrompt: selectedPersona.systemPrompt,
     skillsBlock,
     projectContextBlock,
-    sandboxInfoBlock,
     environmentTag,
     subagentsBlock,
   });

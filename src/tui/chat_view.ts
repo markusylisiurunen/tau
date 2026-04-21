@@ -31,7 +31,6 @@ export type ChatViewStatus = {
     sessionCost: string;
     duration: string;
     riskLevel: RiskLevel;
-    sandboxed?: boolean;
     commandHint?: string;
   };
   editor: {
@@ -262,7 +261,6 @@ export class TuiChatView implements ChatView {
       sessionCost: status.footer.sessionCost,
       duration: status.footer.duration,
       riskLevel: status.footer.riskLevel,
-      sandboxed: status.footer.sandboxed,
       commandHint: status.footer.commandHint,
     });
 

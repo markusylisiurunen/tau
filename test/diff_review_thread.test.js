@@ -24,11 +24,9 @@ vi.mock("../src/core/runtime/runtime_bootstrap.ts", () => ({
   resolveRuntimePromptBootstrap: () => ({
     promptContext: {
       cwd: "/repo",
-      hostCwd: "/repo",
       home: "/home/test",
       includeAgentContext: true,
       projectContextBlock: "### Project context\n",
-      sandboxEnabled: false,
       skillsBlock: "### Skills\n",
     },
   }),
@@ -123,7 +121,7 @@ vi.mock("../src/core/tools/catalog.ts", () => ({
 }));
 
 vi.mock("../src/core/tools/execution_backend.ts", () => ({
-  createLocalToolExecutionBackend: () => ({ kind: "local" }),
+  createLocalToolExecutionBackend: () => ({}),
 }));
 
 vi.mock("../src/core/tools/bash.ts", () => ({

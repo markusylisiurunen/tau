@@ -1,12 +1,6 @@
-import type { SandboxConfig } from "../config/index.js";
 import type { Persona, Skill } from "../types.js";
-import { resolveAgentCwd } from "../utils/agent_environment.js";
 import { findAgentsFilesInScopeDetailed } from "../utils/agents_files.js";
 import { buildProjectContextBlock, buildSkillsIndexBlock } from "../utils/context_builder.js";
-import {
-  resolveSandboxPromptPath,
-  resolveSandboxPromptPathScope,
-} from "../utils/sandbox_prompt_paths.js";
 import type { ChatRuntimePromptContext } from "./chat_runtime.js";
 
 export type ResolvedPersonaSkills = {
@@ -18,36 +12,11 @@ export type ResolvedPersonaSkills = {
 export function resolvePersonaSkillsForPromptContext(args: {
   persona: Persona;
   discoveredSkills: Skill[];
-  cwd?: string;
-  sandboxEnabled?: boolean;
-  sandboxConfig?: SandboxConfig;
-  sandboxHostRoot?: string;
 }): ResolvedPersonaSkills {
-  const sandboxScope = args.cwd
-    ? resolveSandboxPromptPathScope({
-        cwd: args.cwd,
-        sandboxEnabled: args.sandboxEnabled,
-        sandboxConfig: args.sandboxConfig,
-        sandboxHostRoot: args.sandboxHostRoot,
-      })
-    : undefined;
-
-  const discoveredSkills = sandboxScope
-    ? args.discoveredSkills
-        .map((skill) => {
-          const path = resolveSandboxPromptPath(skill.path, sandboxScope);
-          if (!path) {
-            return undefined;
-          }
-          return { ...skill, path };
-        })
-        .filter((skill): skill is Skill => Boolean(skill))
-    : args.discoveredSkills;
-
   const personaSkills = args.persona.skills;
 
   if (personaSkills === "*") {
-    const skills = [...discoveredSkills];
+    const skills = [...args.discoveredSkills];
     return {
       skills,
       unknown: [],
@@ -60,7 +29,7 @@ export function resolvePersonaSkillsForPromptContext(args: {
   }
 
   const skillsByName = new Map<string, Skill>();
-  for (const skill of discoveredSkills) {
+  for (const skill of args.discoveredSkills) {
     skillsByName.set(skill.name.toLowerCase(), skill);
   }
 
@@ -98,9 +67,6 @@ export function resolveProjectContextForPromptContext(args: {
   cwd: string;
   home: string;
   includeAgentContext: boolean;
-  sandboxEnabled?: boolean;
-  sandboxConfig?: SandboxConfig;
-  sandboxHostRoot?: string;
   readFile: (path: string) => string;
 }): ResolvedProjectContext {
   if (!args.includeAgentContext) {
@@ -108,44 +74,15 @@ export function resolveProjectContextForPromptContext(args: {
   }
 
   const agentsContext = findAgentsFilesInScopeDetailed(args.cwd, args.home);
-  const sandboxScope = resolveSandboxPromptPathScope({
-    cwd: args.cwd,
-    sandboxEnabled: args.sandboxEnabled,
-    sandboxConfig: args.sandboxConfig,
-    sandboxHostRoot: args.sandboxHostRoot,
-  });
-
-  const promptPathByHostPath = new Map<string, string>();
-  const agentsFiles = sandboxScope
-    ? agentsContext.files.filter((path) => {
-        const promptPath = resolveSandboxPromptPath(path, sandboxScope);
-        if (!promptPath) {
-          return false;
-        }
-        promptPathByHostPath.set(path, promptPath);
-        return true;
-      })
-    : agentsContext.files;
-
-  const pathForPrompt = sandboxScope
-    ? (path: string) => {
-        const promptPath = promptPathByHostPath.get(path);
-        if (!promptPath) {
-          throw new Error(`missing sandbox prompt path for AGENTS file '${path}'`);
-        }
-        return promptPath;
-      }
-    : (path: string) => path;
 
   return {
-    agentsFiles,
+    agentsFiles: agentsContext.files,
     warnings: agentsContext.errors,
     projectContextBlock: buildProjectContextBlock({
       cwd: args.cwd,
       home: args.home,
-      agentsFiles,
+      agentsFiles: agentsContext.files,
       readFile: args.readFile,
-      pathForPrompt,
     }),
   };
 }
@@ -156,10 +93,6 @@ export type ResolveRuntimePromptBootstrapArgs = {
   cwd: string;
   home: string;
   includeAgentContext: boolean;
-  sandboxEnabled: boolean;
-  sandboxConfig?: SandboxConfig;
-  sandboxHostRoot?: string;
-  sandboxEnvironmentInfo?: string;
   readFile: (path: string) => string;
 };
 
@@ -177,33 +110,19 @@ export function resolveRuntimePromptBootstrap(
     cwd: args.cwd,
     home: args.home,
     includeAgentContext: args.includeAgentContext,
-    sandboxEnabled: args.sandboxEnabled,
-    sandboxConfig: args.sandboxConfig,
-    sandboxHostRoot: args.sandboxHostRoot,
     readFile: args.readFile,
   });
   const resolvedSkills = resolvePersonaSkillsForPromptContext({
     persona: args.persona,
     discoveredSkills: args.discoveredSkills,
-    cwd: args.cwd,
-    sandboxEnabled: args.sandboxEnabled,
-    sandboxConfig: args.sandboxConfig,
-    sandboxHostRoot: args.sandboxHostRoot,
   });
 
   return {
     promptContext: {
-      cwd: resolveAgentCwd({
-        cwd: args.cwd,
-        sandboxEnabled: args.sandboxEnabled,
-        sandboxConfig: args.sandboxConfig,
-      }),
-      hostCwd: args.cwd,
+      cwd: args.cwd,
       home: args.home,
       includeAgentContext: args.includeAgentContext,
       projectContextBlock: projectContext.projectContextBlock,
-      sandboxEnabled: args.sandboxEnabled,
-      sandboxEnvironmentInfo: args.sandboxEnvironmentInfo,
       skillsBlock: resolvedSkills.skillsBlock,
     },
     agentsFiles: projectContext.agentsFiles,

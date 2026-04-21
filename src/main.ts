@@ -27,7 +27,6 @@ import {
   createDefaultConfigDeps,
   createDefaultCoreDeps,
   createLocalToolExecutionBackend,
-  createSandboxToolExecutionBackend,
   getAuthPath,
   InstallCliError,
   loadConfig,
@@ -141,83 +140,70 @@ async function runRpcMode(options: {
   skills: Skill[];
   history?: Checkpoint["history"];
 }): Promise<void> {
-  const sandboxBackend = options.cli.sandbox
-    ? await createSandboxBackend(options.config)
-    : undefined;
+  const deps = createDefaultCoreDeps();
+  const runtimeCwd = deps.env.cwd();
+  const home = deps.env.home() || process.env.HOME || homedir();
+  const bootstrap = resolveRuntimePromptBootstrap({
+    persona: options.persona,
+    discoveredSkills: options.skills,
+    cwd: runtimeCwd,
+    home,
+    includeAgentContext: !options.cli.noAgentContextFiles,
+    readFile: (path) => readFileSync(path, "utf-8"),
+  });
+
+  if (bootstrap.warnings.length > 0) {
+    // eslint-disable-next-line no-console
+    console.error("config warnings:");
+    for (const warning of bootstrap.warnings) {
+      // eslint-disable-next-line no-console
+      console.error(`- ${warning}`);
+    }
+    // eslint-disable-next-line no-console
+    console.error("");
+  }
+
+  const runtime = ChatRuntime.create({
+    persona: options.persona,
+    riskLevel: options.riskLevel,
+    toolRegistry: ToolCatalog.createRegistry(createLocalToolExecutionBackend()),
+    promptContext: bootstrap.promptContext,
+    environment: {
+      now: () => deps.clock.now(),
+      platform: () => deps.env.platform(),
+      nodeVersion: () => deps.env.nodeVersion(),
+    },
+    config: options.config,
+    deps,
+  });
+
+  for (const message of options.history ?? []) {
+    runtime.session.addMessage(message);
+  }
+
+  const abortController = new AbortController();
+  const requestShutdown = () => {
+    if (!abortController.signal.aborted) {
+      abortController.abort();
+    }
+  };
+
+  const onSigInt = () => requestShutdown();
+  const onSigTerm = () => requestShutdown();
+
+  process.on("SIGINT", onSigInt);
+  process.on("SIGTERM", onSigTerm);
 
   try {
-    const deps = createDefaultCoreDeps();
-    const runtimeCwd = deps.env.cwd();
-    const home = deps.env.home() || process.env.HOME || homedir();
-    const bootstrap = resolveRuntimePromptBootstrap({
-      persona: options.persona,
-      discoveredSkills: options.skills,
-      cwd: runtimeCwd,
-      home,
-      includeAgentContext: !options.cli.noAgentContextFiles,
-      sandboxEnabled: options.cli.sandbox,
-      sandboxConfig: options.config.sandbox,
-      sandboxEnvironmentInfo: options.config.sandbox?.environmentInfo,
-      readFile: (path) => readFileSync(path, "utf-8"),
+    await runRpcServer({
+      runtime,
+      input: process.stdin,
+      output: process.stdout,
+      signal: abortController.signal,
     });
-
-    if (bootstrap.warnings.length > 0) {
-      // eslint-disable-next-line no-console
-      console.error("config warnings:");
-      for (const warning of bootstrap.warnings) {
-        // eslint-disable-next-line no-console
-        console.error(`- ${warning}`);
-      }
-      // eslint-disable-next-line no-console
-      console.error("");
-    }
-
-    const runtime = ChatRuntime.create({
-      persona: options.persona,
-      riskLevel: options.riskLevel,
-      toolRegistry: ToolCatalog.createRegistry(
-        sandboxBackend?.backend ?? createLocalToolExecutionBackend(),
-      ),
-      promptContext: bootstrap.promptContext,
-      environment: {
-        now: () => deps.clock.now(),
-        platform: () => deps.env.platform(),
-        nodeVersion: () => deps.env.nodeVersion(),
-      },
-      config: options.config,
-      deps,
-    });
-
-    for (const message of options.history ?? []) {
-      runtime.session.addMessage(message);
-    }
-
-    const abortController = new AbortController();
-    const requestShutdown = () => {
-      if (!abortController.signal.aborted) {
-        abortController.abort();
-      }
-    };
-
-    const onSigInt = () => requestShutdown();
-    const onSigTerm = () => requestShutdown();
-
-    process.on("SIGINT", onSigInt);
-    process.on("SIGTERM", onSigTerm);
-
-    try {
-      await runRpcServer({
-        runtime,
-        input: process.stdin,
-        output: process.stdout,
-        signal: abortController.signal,
-      });
-    } finally {
-      process.off("SIGINT", onSigInt);
-      process.off("SIGTERM", onSigTerm);
-    }
   } finally {
-    await sandboxBackend?.dispose?.();
+    process.off("SIGINT", onSigInt);
+    process.off("SIGTERM", onSigTerm);
   }
 }
 
@@ -375,26 +361,6 @@ if (isDiffToolSubcommand) {
   }
 }
 
-function requireSandboxConfig(config: Config): NonNullable<Config["sandbox"]> {
-  const sandbox = config.sandbox;
-  if (!sandbox?.image) {
-    // eslint-disable-next-line no-console
-    console.error("--sandbox requires sandbox.image in config.json");
-    process.exit(1);
-  }
-  return sandbox;
-}
-
-async function createSandboxBackend(config: Config) {
-  try {
-    return await createSandboxToolExecutionBackend({ config: requireSandboxConfig(config) });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error((err as Error).message);
-    process.exit(1);
-  }
-}
-
 try {
   const runtime = await loadRuntimeConfig(cwd, configDeps);
   config = runtime.config;
@@ -537,31 +503,20 @@ if (cli.debug) {
   }
 
   const debugRiskLevel = initialRiskLevel;
-  const debugSandboxConfig = cli.sandbox ? requireSandboxConfig(config) : undefined;
-  const debugBackend = cli.sandbox
-    ? await createSandboxBackend(config)
-    : { backend: createLocalToolExecutionBackend(), dispose: undefined };
   const virtualBundle = buildVirtualBundle(config);
-
-  try {
-    const debugToolRegistry = ToolCatalog.createRegistry(debugBackend.backend);
-    printDebugInfo({
-      personas,
-      prompts,
-      bashCommands,
-      skills,
-      virtualBundle,
-      selectedPersona: debugPersona,
-      noAgentContextFiles: cli.noAgentContextFiles,
-      riskLevel: debugRiskLevel,
-      sandboxConfig: debugSandboxConfig,
-      sandboxInfo: debugSandboxConfig?.environmentInfo,
-      toolRegistry: debugToolRegistry,
-    });
-    process.exit(0);
-  } finally {
-    await debugBackend.dispose?.();
-  }
+  const debugToolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
+  printDebugInfo({
+    personas,
+    prompts,
+    bashCommands,
+    skills,
+    virtualBundle,
+    selectedPersona: debugPersona,
+    noAgentContextFiles: cli.noAgentContextFiles,
+    riskLevel: debugRiskLevel,
+    toolRegistry: debugToolRegistry,
+  });
+  process.exit(0);
 }
 
 if (personas.length === 0) {
@@ -603,7 +558,6 @@ if (isRpcSubcommand) {
 
 const initialUserMessage = await readPipedStdin();
 
-const sandboxBackend = cli.sandbox ? await createSandboxBackend(config) : undefined;
 const terminalAppearance = await detectTerminalAppearance();
 const defaultDiffTool = createBuiltInDiffToolConfig({
   nodeExecutablePath: process.execPath,
@@ -625,10 +579,7 @@ const app = new ChatApp({
   noAgentContextFiles: cli.noAgentContextFiles,
   config,
   defaultDiffTool,
-  sandboxEnabled: cli.sandbox,
   caffeinated: cli.caffeinated,
-  toolBackend: sandboxBackend?.backend,
-  toolBackendDispose: sandboxBackend?.dispose,
 });
 
 let isShuttingDown = false;

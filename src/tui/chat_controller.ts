@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { realpathSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { AssistantMessage, Message, ToolResultMessage } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import { formatCodexAuthError } from "../core/auth/auth_messages.js";
@@ -59,7 +59,6 @@ import {
   type RiskLevel,
   type Skill,
 } from "../core/types.js";
-import { resolveAgentCwd, resolveSandboxPath } from "../core/utils/agent_environment.js";
 import { findAgentsFilesFromCwdToHome } from "../core/utils/agents_files.js";
 import {
   formatCwdChangeNotice,
@@ -72,7 +71,6 @@ import {
   formatPathForDisplay,
   formatTokenWindow,
 } from "../core/utils/format.js";
-import { getGitRoot } from "../core/utils/git.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
 import { transcribeMistralAudio } from "../core/utils/mistral_transcription.js";
 import { streamModel } from "../core/utils/model_stream.js";
@@ -112,10 +110,8 @@ export interface ChatControllerOptions {
   noAgentContextFiles?: boolean;
   config?: Config;
   defaultDiffTool?: DiffToolConfig;
-  sandboxEnabled: boolean;
   caffeinated?: boolean;
   toolBackend?: ToolExecutionBackend;
-  toolBackendDispose?: () => Promise<void> | void;
   deps?: CoreDeps;
   queuedUserMessages?: string[];
 }
@@ -208,9 +204,7 @@ export class ChatController {
   private activeThemeId?: string;
   private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
-  private readonly sandboxEnabled: boolean;
   private readonly caffeinated: boolean;
-  private readonly sandboxRootReal?: string;
   private agentCwd: string;
   private readonly includeAgentContext: boolean;
 
@@ -219,7 +213,6 @@ export class ChatController {
   private readonly commandRegistry: CommandRegistry<CommandDispatchContext>;
   private readonly commandHandlers: CommandDispatchContext;
   private readonly toolBackend: ToolExecutionBackend;
-  private readonly toolBackendDispose?: () => Promise<void> | void;
   private readonly deps: CoreDeps;
   private eventUnsubscribe?: () => void;
   private isStreaming = false;
@@ -276,9 +269,7 @@ export class ChatController {
     this.initialUserMessage = options.initialUserMessage;
     this.config = options.config ?? {};
     this.defaultDiffTool = options.defaultDiffTool;
-    this.sandboxEnabled = options.sandboxEnabled;
     this.caffeinated = options.caffeinated ?? false;
-    this.sandboxRootReal = this.sandboxEnabled ? this.resolveSandboxRoot(cwd) : undefined;
     this.activeThemeId = this.config.defaultTheme;
     this.authPath = getAuthPath(this.deps.env.home());
     const authStorage = new AuthStorage(this.authPath);
@@ -290,7 +281,6 @@ export class ChatController {
     const queuedUserMessages = options.queuedUserMessages ?? [];
     this.queuedMessageBuffer = new QueuedUserMessages(queuedUserMessages);
     this.interruptLifecycle = new InterruptLifecycle();
-    this.toolBackendDispose = options.toolBackendDispose;
 
     this.includeAgentContext = !options.noAgentContextFiles;
     const initialPersona =
@@ -319,10 +309,6 @@ export class ChatController {
       cwd,
       home,
       includeAgentContext: this.includeAgentContext,
-      sandboxEnabled: this.sandboxEnabled,
-      sandboxConfig: this.config.sandbox,
-      sandboxHostRoot: this.sandboxRootReal,
-      sandboxEnvironmentInfo: this.config.sandbox?.environmentInfo,
       readFile: this.deps.fs.readFile,
     });
 
@@ -341,9 +327,6 @@ export class ChatController {
         spawn: this.deps.spawn,
         env: this.deps.env,
       });
-    if (this.sandboxEnabled && this.toolBackend.kind !== "sandbox") {
-      throw new Error("sandbox enabled but tool backend is not sandboxed.");
-    }
     const toolRegistry = ToolCatalog.createRegistry(this.toolBackend);
     this.runtime = ChatRuntime.create({
       persona: this.currentPersona,
@@ -501,8 +484,6 @@ export class ChatController {
     await this.cancelDiffReview();
     await this.cancelSpeakCapture();
     await this.stopTurnCaffeinate();
-    if (!this.toolBackendDispose) return;
-    await this.toolBackendDispose();
   }
 
   // Mode Adapter ---------------------------------------------------------------------------------
@@ -704,7 +685,6 @@ export class ChatController {
         sessionCost,
         duration,
         riskLevel: this.riskLevel,
-        sandboxed: this.sandboxEnabled,
         commandHint: this.getActiveCommandHint(),
       },
       editor: {
@@ -918,10 +898,6 @@ export class ChatController {
     const resolved = resolvePersonaSkillsForPromptContext({
       persona,
       discoveredSkills: this.skills,
-      cwd: this.deps.env.cwd(),
-      sandboxEnabled: this.sandboxEnabled,
-      sandboxConfig: this.config.sandbox,
-      sandboxHostRoot: this.sandboxRootReal,
     });
     return { skillsBlock: resolved.skillsBlock, unknown: resolved.unknown };
   }
@@ -979,11 +955,6 @@ export class ChatController {
       return;
     }
 
-    if (this.sandboxEnabled && !this.isPathWithinSandboxRoot(resolved)) {
-      this.view.addSystemMessage(`directory is outside the sandbox mount: ${normalized}`, "error");
-      return;
-    }
-
     try {
       process.chdir(resolved);
     } catch (err) {
@@ -994,18 +965,7 @@ export class ChatController {
     const nextCwd = this.deps.env.cwd();
     const previousAgentCwd = this.agentCwd;
     const previousProjectContextBlock = this.projectContextBlock;
-    this.agentCwd =
-      this.sandboxEnabled && this.sandboxRootReal
-        ? resolveSandboxPath({
-            hostPath: nextCwd,
-            cwd: this.sandboxRootReal,
-            sandboxConfig: this.config.sandbox,
-          })
-        : resolveAgentCwd({
-            cwd: nextCwd,
-            sandboxEnabled: this.sandboxEnabled,
-            sandboxConfig: this.config.sandbox,
-          });
+    this.agentCwd = nextCwd;
     this.refreshProjectContext(nextCwd);
     this.updatePendingProjectContextChange(previousProjectContextBlock, this.projectContextBlock);
     this.projectFiles = [];
@@ -1041,35 +1001,11 @@ export class ChatController {
     return resolve(cwd, input);
   }
 
-  private resolveSandboxRoot(cwd: string): string | undefined {
-    try {
-      const root = getGitRoot(cwd) ?? cwd;
-      return realpathSync(root);
-    } catch {
-      return undefined;
-    }
-  }
-
-  private isPathWithinSandboxRoot(targetPath: string): boolean {
-    if (!this.sandboxRootReal) return true;
-    let resolved = targetPath;
-    try {
-      resolved = realpathSync(targetPath);
-    } catch {
-      // fall back to provided path
-    }
-    const rel = relative(this.sandboxRootReal, resolved);
-    return !(rel === ".." || rel.startsWith(`..${sep}`));
-  }
-
   private refreshProjectContext(cwd: string): void {
     const projectContext = resolveProjectContextForPromptContext({
       cwd,
       home: this.deps.env.home(),
       includeAgentContext: this.includeAgentContext,
-      sandboxEnabled: this.sandboxEnabled,
-      sandboxConfig: this.config.sandbox,
-      sandboxHostRoot: this.sandboxRootReal,
       readFile: this.deps.fs.readFile,
     });
 
@@ -1804,13 +1740,6 @@ export class ChatController {
     const nearestAgentsFiles = findAgentsFilesFromCwdToHome(cwd, home);
     const hostPath =
       nearestAgentsFiles.length > 0 ? nearestAgentsFiles[0]! : resolve(join(cwd, "AGENTS.md"));
-    if (this.sandboxEnabled) {
-      return resolveSandboxPath({
-        hostPath,
-        cwd,
-        sandboxConfig: this.config.sandbox,
-      });
-    }
     return hostPath;
   }
 
@@ -2153,12 +2082,9 @@ export class ChatController {
   private syncRuntimePromptContext(): void {
     this.runtime.updatePromptContext({
       cwd: this.agentCwd,
-      hostCwd: this.deps.env.cwd(),
       home: this.deps.env.home(),
       includeAgentContext: this.includeAgentContext,
       projectContextBlock: this.projectContextBlock,
-      sandboxEnabled: this.sandboxEnabled,
-      sandboxEnvironmentInfo: this.config.sandbox?.environmentInfo,
     });
   }
 
@@ -2393,12 +2319,7 @@ export class ChatController {
       return;
     }
 
-    const baseCwd = saved.cwd ?? this.deps.env.cwd();
-    const cwd = resolveAgentCwd({
-      cwd: baseCwd,
-      sandboxEnabled: this.sandboxEnabled,
-      sandboxConfig: this.config.sandbox,
-    });
+    const cwd = saved.cwd ?? this.deps.env.cwd();
     await this.runBashCommand(saved.cmd, { cwd });
   }
 

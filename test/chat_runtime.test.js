@@ -87,7 +87,6 @@ describe("ChatRuntime", () => {
       riskLevel: "read-only",
       promptContext: {
         cwd: "/repo",
-        sandboxEnabled: false,
       },
       environment: createEnvironment(),
     });
@@ -113,7 +112,6 @@ describe("ChatRuntime", () => {
       toolRegistry,
       promptContext: {
         cwd: "/repo",
-        sandboxEnabled: false,
       },
       environment: createEnvironment(),
       config: {
@@ -149,8 +147,6 @@ describe("ChatRuntime", () => {
         cwd: "/repo",
         skillsBlock: "### Skills\n\n- skill-a",
         projectContextBlock: '### Project context\n\n<file path="/repo/AGENTS.md">ctx</file>',
-        sandboxEnabled: true,
-        sandboxEnvironmentInfo: "ubuntu container",
       },
       environment: createEnvironment(),
     });
@@ -169,7 +165,6 @@ describe("ChatRuntime", () => {
     expect(composition.baseSystemPrompt).toContain(
       "By default, launch the subagent without a model override unless the user explicitly asks to use a specific model.",
     );
-    expect(composition.baseSystemPrompt).toContain("<sandbox-info>");
     expect(composition.baseSystemPrompt).toContain("<datetime>2026-01-01T00:00:00.000Z</datetime>");
 
     expect(composition.subagentPrompts.default).toContain('<risk-level level="read-only">');
@@ -177,7 +172,6 @@ describe("ChatRuntime", () => {
     expect(composition.subagentPrompts.default).toContain("main system prompt");
     expect(composition.subagentPrompts.researcher).toContain("research subagent prompt");
     expect(composition.subagentPrompts.researcher).toContain('<risk-level level="read-write">');
-    expect(composition.subagentPrompts.researcher).toContain("<sandbox-info>");
 
     const lastSetPersona = calls.setPersonaCalls.at(-1);
     expect(lastSetPersona).toBeDefined();
@@ -195,7 +189,6 @@ describe("ChatRuntime", () => {
       riskLevel: "read-only",
       promptContext: {
         cwd: "/repo/start",
-        sandboxEnabled: false,
         skillsBlock: "### Skills\n\n- initial",
       },
       environment: createEnvironment(),

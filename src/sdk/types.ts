@@ -81,7 +81,6 @@ export type TauSdkClientOptions = {
   env?: NodeJS.ProcessEnv;
   persona?: string;
   riskLevel?: "read-only" | "read-write";
-  sandbox?: boolean;
   noAgentContextFiles?: boolean;
   executable?: string;
   executableArgs?: string[];

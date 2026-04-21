@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/index.js";
@@ -311,14 +311,12 @@ describe("runtime prompt bootstrap", () => {
         cwd: repo,
         home,
         includeAgentContext: true,
-        sandboxEnabled: false,
         readFile: (path) => {
           return path === join(repo, "AGENTS.md") ? "# repo agents\n" : "";
         },
       });
 
       expect(resolved.promptContext.cwd).toBe(repo);
-      expect(resolved.promptContext.hostCwd).toBe(repo);
       expect(resolved.promptContext.includeAgentContext).toBe(true);
       expect(resolved.promptContext.projectContextBlock).toContain('<file path="');
       expect(resolved.promptContext.projectContextBlock).toContain("AGENTS.md");
@@ -332,8 +330,8 @@ describe("runtime prompt bootstrap", () => {
     }
   });
 
-  it("scopes AGENTS and skills to the sandbox mount and rewrites prompt paths", () => {
-    const home = mkdtempSync(join(tmpdir(), "tau-runtime-bootstrap-sandbox-home-"));
+  it("uses normal host paths for AGENTS and skills", () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-runtime-bootstrap-home-"));
     const repo = join(home, "repo");
     const repoAgents = join(repo, "AGENTS.md");
     const homeAgents = join(home, "AGENTS.md");
@@ -385,10 +383,6 @@ describe("runtime prompt bootstrap", () => {
         cwd: repo,
         home,
         includeAgentContext: true,
-        sandboxEnabled: true,
-        sandboxConfig: {
-          mountPath: "/workspace",
-        },
         readFile: (path) => {
           if (path === repoAgents) return "# repo agents\nrepo only\n";
           if (path === homeAgents) return "# home agents\nhome only\n";
@@ -396,18 +390,19 @@ describe("runtime prompt bootstrap", () => {
         },
       });
 
-      expect(resolved.promptContext.cwd).toBe("/workspace");
-      expect(resolved.promptContext.projectContextBlock).toContain(
-        '<file path="/workspace/AGENTS.md">',
-      );
+      expect(resolved.promptContext.cwd).toBe(repo);
+      expect(resolved.promptContext.projectContextBlock).toContain(`<file path="${homeAgents}">`);
+      expect(resolved.promptContext.projectContextBlock).toContain(`<file path="${repoAgents}">`);
       expect(resolved.promptContext.projectContextBlock).toContain("repo only");
-      expect(resolved.promptContext.projectContextBlock).not.toContain("home only");
+      expect(resolved.promptContext.projectContextBlock).toContain("home only");
       expect(resolved.promptContext.skillsBlock).toContain(
-        "<location>/workspace/.tau/skills/in-scope/SKILL.md</location>",
+        `<location>${inScopeSkillPath}</location>`,
       );
-      expect(resolved.promptContext.skillsBlock).not.toContain("out-of-scope");
-      expect(resolved.unknownSkills).toEqual(["out-of-scope"]);
-      expect(resolved.agentsFiles).toEqual([repoAgents]);
+      expect(resolved.promptContext.skillsBlock).toContain(
+        `<location>${outOfScopeSkillPath}</location>`,
+      );
+      expect(resolved.unknownSkills).toEqual([]);
+      expect(resolved.agentsFiles).toEqual([repoAgents, homeAgents]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -415,7 +410,7 @@ describe("runtime prompt bootstrap", () => {
 });
 
 describe("session prompt composer", () => {
-  it("composes main and subagent prompts with sandbox info and risk overrides", () => {
+  it("composes main and subagent prompts with risk overrides", () => {
     const persona = {
       id: "test-persona",
       label: "test persona",
@@ -439,8 +434,6 @@ describe("session prompt composer", () => {
       persona,
       skillsBlock: "### Skills\n\n- skill-a",
       projectContextBlock: '### Project context\n\n<file path="/repo/AGENTS.md">ctx</file>',
-      sandboxEnabled: true,
-      sandboxEnvironmentInfo: "ubuntu container",
       riskLevel: "read-only",
       cwd: "/repo",
       datetime: "2026-01-01T00:00:00.000Z",
@@ -459,7 +452,6 @@ describe("session prompt composer", () => {
     expect(result.baseSystemPrompt).toContain(
       "By default, launch the subagent without a model override unless the user explicitly asks to use a specific model.",
     );
-    expect(result.baseSystemPrompt).toContain("<sandbox-info>");
 
     expect(result.subagentPrompts.default).toContain('<risk-level level="read-only">');
     expect(result.subagentPrompts.default).toContain("<inherited-instructions>");
@@ -470,7 +462,6 @@ describe("session prompt composer", () => {
     );
     expect(result.subagentPrompts.researcher).toContain("research subagent prompt");
     expect(result.subagentPrompts.researcher).toContain('<risk-level level="read-write">');
-    expect(result.subagentPrompts.researcher).toContain("<sandbox-info>");
   });
 
   it("includes repo root in the environment tag when inside a git repo", () => {
@@ -493,25 +484,21 @@ describe("session prompt composer", () => {
       source: "project",
     };
 
-    const sandboxCwd = "/workspace/test/subdir";
-    const hostCwd = resolve(gitRoot, "src", "core");
+    const cwd = resolve(gitRoot, "src", "core");
 
     const result = composeSessionPrompts({
       persona,
-      sandboxEnabled: false,
       riskLevel: "read-only",
-      cwd: sandboxCwd,
-      hostCwd,
+      cwd,
       datetime: "2026-01-01T00:00:00.000Z",
       platform: "darwin",
       nodeVersion: "v24.0.0",
     });
 
-    const expectedRepoRoot = resolve(sandboxCwd, relative(hostCwd, gitRoot));
-    expect(result.environmentTag).toContain(`<repo-root>${expectedRepoRoot}</repo-root>`);
+    expect(result.environmentTag).toContain(`<repo-root>${gitRoot}</repo-root>`);
   });
 
-  it("omits sandbox blocks and subagent prompts when not applicable", () => {
+  it("omits subagent prompts when not applicable", () => {
     const persona = {
       id: "plain-persona",
       label: "plain persona",
@@ -523,8 +510,6 @@ describe("session prompt composer", () => {
 
     const result = composeSessionPrompts({
       persona,
-      sandboxEnabled: false,
-      sandboxEnvironmentInfo: "ignored",
       riskLevel: "read-only",
       cwd: "/repo",
       datetime: "2026-01-01T00:00:00.000Z",
@@ -533,7 +518,6 @@ describe("session prompt composer", () => {
     });
 
     expect(result.baseSystemPrompt).toContain("plain prompt");
-    expect(result.baseSystemPrompt).not.toContain("<sandbox-info>");
     expect(result.subagentPrompts).toEqual({});
   });
 });

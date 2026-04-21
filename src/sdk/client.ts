@@ -515,7 +515,6 @@ function buildProcessArgs(options: TauSdkClientOptions): string[] {
     "rpc",
     ...(options.persona ? ["--persona", options.persona] : []),
     ...(options.riskLevel ? ["--risk", options.riskLevel] : []),
-    ...(options.sandbox ? ["--sandbox"] : []),
     ...(options.noAgentContextFiles ? ["--no-agent-context-files"] : []),
     ...(options.rpcArgs ?? []),
   ];

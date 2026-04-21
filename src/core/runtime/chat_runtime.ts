@@ -11,12 +11,9 @@ import { composeSessionPrompts, type SessionPromptComposition } from "./session_
 
 export type ChatRuntimePromptContext = {
   cwd: string;
-  hostCwd?: string;
   home?: string;
   includeAgentContext?: boolean;
   projectContextBlock?: string;
-  sandboxEnabled: boolean;
-  sandboxEnvironmentInfo?: string;
   skillsBlock?: string;
 };
 
@@ -59,14 +56,11 @@ export class ChatRuntime {
       persona: options.persona,
       riskLevel: options.riskLevel,
       cwd: options.promptContext.cwd,
-      hostCwd: options.promptContext.hostCwd,
       datetime: new Date(options.environment.now()).toISOString(),
       platform: options.environment.platform(),
       nodeVersion: options.environment.nodeVersion(),
       skillsBlock: options.promptContext.skillsBlock,
       projectContextBlock: options.promptContext.projectContextBlock,
-      sandboxEnabled: options.promptContext.sandboxEnabled,
-      sandboxEnvironmentInfo: options.promptContext.sandboxEnvironmentInfo,
     });
 
     const session = new CoreSession({
@@ -78,10 +72,8 @@ export class ChatRuntime {
       config: options.config,
       deps: options.deps,
       cwd: options.promptContext.cwd,
-      hostCwd: options.promptContext.hostCwd,
       home: options.promptContext.home,
       includeAgentContext: options.promptContext.includeAgentContext,
-      sandboxEnabled: options.promptContext.sandboxEnabled,
     });
 
     return new ChatRuntime({
@@ -159,10 +151,8 @@ export class ChatRuntime {
     };
     this.sessionInstance.setPromptContext({
       cwd: this.promptContext.cwd,
-      hostCwd: this.promptContext.hostCwd,
       home: this.promptContext.home,
       includeAgentContext: this.promptContext.includeAgentContext,
-      sandboxEnabled: this.promptContext.sandboxEnabled,
     });
   }
 
@@ -202,14 +192,11 @@ export class ChatRuntime {
       persona: this.currentPersona,
       riskLevel: this.riskLevel,
       cwd: this.promptContext.cwd,
-      hostCwd: this.promptContext.hostCwd,
       datetime: new Date(this.environment.now()).toISOString(),
       platform: this.environment.platform(),
       nodeVersion: this.environment.nodeVersion(),
       skillsBlock: skillsBlock ?? this.promptContext.skillsBlock,
       projectContextBlock: this.promptContext.projectContextBlock,
-      sandboxEnabled: this.promptContext.sandboxEnabled,
-      sandboxEnvironmentInfo: this.promptContext.sandboxEnvironmentInfo,
     });
   }
 }

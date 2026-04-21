@@ -31,7 +31,6 @@ export type {
   Config,
   ConfigDeps,
   DiffToolConfig,
-  SandboxConfig,
   ThemeAppearance,
   ThemeDefinition,
   ThemeVariantTokens,
@@ -105,10 +104,7 @@ export { createBashToolDefinition } from "./tools/bash.js";
 export { ToolCatalog } from "./tools/catalog.js";
 export { createEditToolDefinition } from "./tools/edit.js";
 export { createEmitOutputToolDefinition } from "./tools/emit_output.js";
-export {
-  createLocalToolExecutionBackend,
-  createSandboxToolExecutionBackend,
-} from "./tools/execution_backend.js";
+export { createLocalToolExecutionBackend } from "./tools/execution_backend.js";
 export { createGrepToolDefinition } from "./tools/grep.js";
 export { createListToolDefinition } from "./tools/list.js";
 export { createReadToolDefinition } from "./tools/read.js";

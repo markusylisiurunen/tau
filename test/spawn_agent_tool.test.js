@@ -85,13 +85,11 @@ function createContext(overrides = {}) {
       researcher: "research prompt",
     },
     cwd: baseCwd,
-    hostCwd: baseCwd,
     home: baseHome,
     config: {},
     toolRegistry: { schemas: [] },
     authPath: "/tmp/auth.json",
     includeAgentContext: false,
-    sandboxEnabled: false,
     turnUserHistoryEntryId: "history-1",
     subagentControlPlane: {
       spawn: ({ runtimeConfig }) => {
@@ -376,21 +374,14 @@ describe("spawn_agent tool", () => {
     expect(spawned).toHaveLength(0);
   });
 
-  it("rejects absolute workingDirectory outside sandbox mount", async () => {
+  it("accepts absolute workingDirectory values", async () => {
     const backend = createLocalToolExecutionBackend();
     const tool = createSpawnAgentToolDefinition(backend);
     const { context, spawned } = createContext({
-      cwd: "/workspace/src",
-      hostCwd: "/home/user/repo/src",
-      sandboxEnabled: true,
-      config: {
-        sandbox: {
-          mountPath: "/workspace",
-        },
-      },
+      cwd: "/repo/src",
     });
 
-    const result = await tool.dispatch(
+    const dispatched = await tool.dispatch(
       {
         id: "call-8",
         name: TOOL_NAME_SPAWN_AGENT,
@@ -406,54 +397,39 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(result.kind).toBe("single");
-    expect(result.toolResult.isError).toBe(true);
-    expect(getText(result.toolResult)).toContain("is outside sandbox mount path");
-    expect(spawned).toHaveLength(0);
+    expect(dispatched.kind).toBe("phased");
+    await dispatched.run;
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].workingDirectory).toBe("/tmp");
   });
 
-  it("rejects relative workingDirectory that escapes sandbox mount", async () => {
-    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-sandbox-escape-"));
-    const hostSourceDir = join(tmpRoot, "mounted-root", "src");
-    mkdirSync(hostSourceDir, { recursive: true });
+  it("resolves relative workingDirectory values against the current cwd", async () => {
+    const backend = createLocalToolExecutionBackend();
+    const tool = createSpawnAgentToolDefinition(backend);
+    const { context, spawned } = createContext({
+      cwd: "/repo/src",
+    });
 
-    try {
-      const backend = createLocalToolExecutionBackend();
-      const tool = createSpawnAgentToolDefinition(backend);
-      const { context, spawned } = createContext({
-        cwd: "/workspace",
-        hostCwd: hostSourceDir,
-        sandboxEnabled: true,
-        config: {
-          sandbox: {
-            mountPath: "/workspace",
-          },
+    const dispatched = await tool.dispatch(
+      {
+        id: "call-8b",
+        name: TOOL_NAME_SPAWN_AGENT,
+        arguments: {
+          name: "researcher",
+          title: "research task",
+          prompt: "collect findings",
+          workingDirectory: "..",
         },
-      });
+      },
+      "read-only",
+      undefined,
+      context,
+    );
 
-      const result = await tool.dispatch(
-        {
-          id: "call-8b",
-          name: TOOL_NAME_SPAWN_AGENT,
-          arguments: {
-            name: "researcher",
-            title: "research task",
-            prompt: "collect findings",
-            workingDirectory: "..",
-          },
-        },
-        "read-only",
-        undefined,
-        context,
-      );
-
-      expect(result.kind).toBe("single");
-      expect(result.toolResult.isError).toBe(true);
-      expect(getText(result.toolResult)).toContain("is outside sandbox mount path");
-      expect(spawned).toHaveLength(0);
-    } finally {
-      rmSync(tmpRoot, { recursive: true, force: true });
-    }
+    expect(dispatched.kind).toBe("phased");
+    await dispatched.run;
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].workingDirectory).toBe("/repo");
   });
 
   it("rebuilds subagent prompt context for workingDirectory", async () => {
@@ -477,7 +453,6 @@ describe("spawn_agent tool", () => {
       const base = createContext();
       const { context, spawned } = createContext({
         cwd: sourceDir,
-        hostCwd: sourceDir,
         home: tmpRoot,
         includeAgentContext: true,
         persona: {
@@ -536,7 +511,6 @@ describe("spawn_agent tool", () => {
       const tool = createSpawnAgentToolDefinition(backend);
       const { context, spawned } = createContext({
         cwd: sourceDir,
-        hostCwd: sourceDir,
         home: tmpRoot,
       });
 
@@ -567,8 +541,8 @@ describe("spawn_agent tool", () => {
     }
   });
 
-  it("keeps the resolved sandbox workingDirectory in subagent prompt context", async () => {
-    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-sandbox-"));
+  it("keeps the resolved workingDirectory in subagent prompt context", async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-working-directory-"));
     const sourceDir = join(tmpRoot, "plain-dir", "src");
     mkdirSync(sourceDir, { recursive: true });
 
@@ -576,15 +550,8 @@ describe("spawn_agent tool", () => {
       const backend = createLocalToolExecutionBackend();
       const tool = createSpawnAgentToolDefinition(backend);
       const { context, spawned } = createContext({
-        cwd: "/workspace/src",
-        hostCwd: sourceDir,
+        cwd: sourceDir,
         home: tmpRoot,
-        sandboxEnabled: true,
-        config: {
-          sandbox: {
-            mountPath: "/workspace",
-          },
-        },
       });
 
       const dispatched = await tool.dispatch(
@@ -608,16 +575,15 @@ describe("spawn_agent tool", () => {
       expect(result.kind).toBe("single");
       expect(result.toolResult.isError).toBe(false);
       expect(spawned).toHaveLength(1);
-      expect(spawned[0].workingDirectory).toBe("/workspace/src");
-      expect(spawned[0].systemPrompt).toContain("<cwd>/workspace/src</cwd>");
-      expect(spawned[0].systemPrompt).not.toContain("<cwd>/workspace</cwd>");
+      expect(spawned[0].workingDirectory).toBe(sourceDir);
+      expect(spawned[0].systemPrompt).toContain(`<cwd>${sourceDir}</cwd>`);
     } finally {
       rmSync(tmpRoot, { recursive: true, force: true });
     }
   });
 
-  it("limits sandbox prompt AGENTS and skills to mounted host root", async () => {
-    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-sandbox-scope-"));
+  it("uses normal host paths for AGENTS and skills when rebuilding prompt context", async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-host-scope-"));
     const hostRoot = join(tmpRoot, "mounted-root");
     const hostSourceDir = join(hostRoot, "src");
 
@@ -642,16 +608,9 @@ describe("spawn_agent tool", () => {
       const tool = createSpawnAgentToolDefinition(backend);
       const base = createContext();
       const { context, spawned } = createContext({
-        cwd: "/workspace/src",
-        hostCwd: hostSourceDir,
+        cwd: hostSourceDir,
         home: tmpRoot,
         includeAgentContext: true,
-        sandboxEnabled: true,
-        config: {
-          sandbox: {
-            mountPath: "/workspace",
-          },
-        },
         persona: {
           ...base.context.persona,
           skills: ["in-scope", "out-of-scope"],
@@ -679,14 +638,18 @@ describe("spawn_agent tool", () => {
       expect(result.kind).toBe("single");
       expect(result.toolResult.isError).toBe(false);
       expect(spawned).toHaveLength(1);
-      expect(spawned[0].systemPrompt).toContain('<file path="/workspace/AGENTS.md">');
+      expect(spawned[0].systemPrompt).toContain(`<file path="${hostRoot}/AGENTS.md">`);
+      expect(spawned[0].systemPrompt).toContain(`<file path="${tmpRoot}/AGENTS.md">`);
       expect(spawned[0].systemPrompt).toContain("mounted agents");
-      expect(spawned[0].systemPrompt).not.toContain("outside agents");
+      expect(spawned[0].systemPrompt).toContain("outside agents");
       expect(spawned[0].systemPrompt).toContain("<name>in-scope</name>");
       expect(spawned[0].systemPrompt).toContain(
-        "<location>/workspace/.tau/skills/in-scope/SKILL.md</location>",
+        `<location>${hostRoot}/.tau/skills/in-scope/SKILL.md</location>`,
       );
-      expect(spawned[0].systemPrompt).not.toContain("<name>out-of-scope</name>");
+      expect(spawned[0].systemPrompt).toContain("<name>out-of-scope</name>");
+      expect(spawned[0].systemPrompt).toContain(
+        `<location>${tmpRoot}/.tau/skills/out-of-scope/SKILL.md</location>`,
+      );
     } finally {
       rmSync(tmpRoot, { recursive: true, force: true });
     }

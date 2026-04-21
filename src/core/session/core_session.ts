@@ -32,10 +32,8 @@ export type CoreSessionOptions = {
   config?: Config;
   deps?: CoreDeps;
   cwd?: string;
-  hostCwd?: string;
   home?: string;
   includeAgentContext?: boolean;
-  sandboxEnabled?: boolean;
 };
 
 export class CoreSession {
@@ -65,13 +63,7 @@ export class CoreSession {
     this.engine.setConfig(config);
   }
 
-  setPromptContext(context: {
-    cwd?: string;
-    hostCwd?: string;
-    home?: string;
-    includeAgentContext?: boolean;
-    sandboxEnabled?: boolean;
-  }): void {
+  setPromptContext(context: { cwd?: string; home?: string; includeAgentContext?: boolean }): void {
     this.engine.setPromptContext(context);
   }
 

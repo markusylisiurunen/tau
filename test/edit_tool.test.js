@@ -15,6 +15,34 @@ function setupFixture() {
 }
 
 describe("edit tool", () => {
+  it("resolves backend file operations relative to the configured cwd", async () => {
+    const fx = setupFixture();
+
+    try {
+      writeFileSync(join(fx.dir, "input.txt"), "hello\n", "utf-8");
+
+      const backend = createLocalToolExecutionBackend({
+        env: {
+          cwd: () => fx.dir,
+        },
+      });
+
+      const read = await backend.readFile("input.txt");
+      expect(read.path).toBe(join(fx.dir, "input.txt"));
+      expect(read.content).toBe("hello\n");
+
+      const written = await backend.writeFile("output.txt", "world\n");
+      expect(written.path).toBe(join(fx.dir, "output.txt"));
+      expect(readFileSync(join(fx.dir, "output.txt"), "utf-8")).toBe("world\n");
+
+      const listed = await backend.listDir(".");
+      expect(listed.path).toBe(fx.dir);
+      expect(listed.entries.map((entry) => entry.name).sort()).toEqual(["input.txt", "output.txt"]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("treats $ sequences as literal replacements", async () => {
     const fx = setupFixture();
 

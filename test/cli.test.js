@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 import { parseCliArgs } from "../dist/core/cli.js";
 
 describe("cli", () => {
-  it("rejects removed --sandbox flag", () => {
-    expect(() => parseCliArgs(["--sandbox"], [])).toThrow("unknown option: --sandbox");
+  it("rejects unknown options", () => {
+    expect(() => parseCliArgs(["--bogus"], [])).toThrow("unknown option: --bogus");
   });
 
   it("parses --caffeinated", () => {

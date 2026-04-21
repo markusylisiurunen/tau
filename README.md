@@ -165,7 +165,7 @@ this writes prompts and skills into `.tau/` under your current working directory
 
 - **model trust**: the bash tool relies on the model honestly declaring whether a command is a read or write. there's no runtime validation that the command actually matches the declared intent. a model could declare `safetyLevel="read"` while running `rm -rf /`.
 - **no command analysis**: the system doesn't inspect command content. it trusts the declared safety level without verifying what the command actually does.
-- **full system access**: Tau does not sandbox tool execution. the model can access any file on your system that your user account can read or write, not just the current working directory. if you need stronger isolation, run Tau inside a VM or container.
+- **full system access**: the model can access any file on your system that your user account can read or write, not just the current working directory. if you need stronger isolation, run Tau inside a VM or container.
 - **no tty / non-interactive tools**: tool commands run with stdin ignored and no TTY. anything that prompts for input or opens an editor can hang or fail (for example `sudo`, `ssh` password prompts, `git` credential prompts). tau also forces git into non-interactive mode (no prompt/editor/pager, batch-mode ssh).
 - **user bypasses**: the `!` prefix executes shell commands directly and completely bypasses risk level checks. this is intentional for direct use, but means risk levels only constrain the model, not the user.
 

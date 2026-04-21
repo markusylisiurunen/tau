@@ -478,7 +478,7 @@ describe("config paths", () => {
       mkdirSync(join(fx.repo, ".tau"), { recursive: true });
       writeFileSync(
         join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({ sandbox: { image: "ignored" } }),
+        JSON.stringify({ bogus: { value: "ignored" } }),
         "utf-8",
       );
 
@@ -493,7 +493,7 @@ describe("config paths", () => {
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
 
       expect(result.errors).toContain(
-        `${join(fx.repo, ".tau", "config.json")}: unknown key in config: sandbox.`,
+        `${join(fx.repo, ".tau", "config.json")}: unknown key in config: bogus.`,
       );
     } finally {
       fx.cleanup();

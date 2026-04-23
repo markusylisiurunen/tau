@@ -1,4 +1,4 @@
-import { resolveModelOrThrow } from "./models/catalog.js";
+import { resolveModel, resolveModelOrThrow } from "./models/catalog.js";
 import { DEFAULT_SUBAGENT_NAME, type SubagentConfigMap } from "./subagents/types.js";
 import { BASH_TOOL } from "./tools/bash.js";
 import { EDIT_TOOL } from "./tools/edit.js";
@@ -193,6 +193,32 @@ type PersonaSpec = {
   skills: string[] | "*";
 };
 
+function createOptionalPersonaSpec(args: {
+  id: string;
+  description: string;
+  provider: string;
+  modelId: string;
+  allowedReasoningLevels: NonNullable<Persona["allowedReasoningLevels"]>;
+  settings: Persona["settings"];
+  skills: string[] | "*";
+}): PersonaSpec[] {
+  const model = resolveModel(args.provider, args.modelId);
+  if (!model) {
+    return [];
+  }
+
+  return [
+    {
+      id: args.id,
+      description: args.description,
+      model,
+      allowedReasoningLevels: args.allowedReasoningLevels,
+      settings: args.settings,
+      skills: args.skills,
+    },
+  ];
+}
+
 const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "opus-4.7",
@@ -226,6 +252,15 @@ const PERSONA_SPECS: PersonaSpec[] = [
     settings: { reasoning: "medium" },
     skills: "*",
   },
+  ...createOptionalPersonaSpec({
+    id: "gpt-5.5",
+    description: "GPT-5.5",
+    provider: "openai",
+    modelId: "gpt-5.5",
+    allowedReasoningLevels: ["medium", "high", "xhigh"],
+    settings: { reasoning: "medium" },
+    skills: "*",
+  }),
   {
     id: "gpt-5.3-codex-chatgpt",
     description: "GPT-5.3-Codex (ChatGPT)",
@@ -242,6 +277,15 @@ const PERSONA_SPECS: PersonaSpec[] = [
     settings: { reasoning: "medium" },
     skills: "*",
   },
+  ...createOptionalPersonaSpec({
+    id: "gpt-5.5-chatgpt",
+    description: "GPT-5.5 (ChatGPT)",
+    provider: "openai-codex",
+    modelId: "gpt-5.5",
+    allowedReasoningLevels: ["medium", "high", "xhigh"],
+    settings: { reasoning: "medium" },
+    skills: "*",
+  }),
   {
     id: "gpt-5.3-codex-fast-chatgpt",
     description: "GPT-5.3-Codex Fast (ChatGPT)",
@@ -258,6 +302,15 @@ const PERSONA_SPECS: PersonaSpec[] = [
     settings: { reasoning: "medium", serviceTier: "priority" },
     skills: "*",
   },
+  ...createOptionalPersonaSpec({
+    id: "gpt-5.5-chatgpt-fast",
+    description: "GPT-5.5 Fast (ChatGPT)",
+    provider: "openai-codex",
+    modelId: "gpt-5.5",
+    allowedReasoningLevels: ["medium", "high", "xhigh"],
+    settings: { reasoning: "medium", serviceTier: "priority" },
+    skills: "*",
+  }),
   {
     id: "gemini-3.1-pro",
     description: "Gemini 3.1 Pro",

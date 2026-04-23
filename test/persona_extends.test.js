@@ -163,6 +163,18 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-chat")).toBeTruthy();
       expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-coder")).toBeTruthy();
       expect(personas.find((persona) => persona.id === "gpt-5.4-fast-chatgpt")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.5-coder")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-coder")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt")).toBeUndefined();
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-chat"),
+      ).toBeUndefined();
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-coder"),
+      ).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.5-fast-chatgpt")).toBeUndefined();
     } finally {
       fx.cleanup();
     }

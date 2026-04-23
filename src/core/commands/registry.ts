@@ -17,6 +17,7 @@ export type Command = (
   | { type: "pruneLargest" }
   | { type: "pruneSmart" }
   | { type: "reload" }
+  | { type: "listen" }
   | { type: "speak" }
   | { type: "risk"; level: RiskLevel }
   | { type: "bash"; id: string }
@@ -61,6 +62,7 @@ export interface CommandDispatchContext {
   pruneLargest: (extra?: string) => void;
   pruneSmart: (extra?: string) => Promise<void> | void;
   reload: () => Promise<void>;
+  listen: () => Promise<void> | void;
   speak: () => Promise<void> | void;
   risk: (level: RiskLevel) => void;
   persona: (id: string) => void;
@@ -395,10 +397,25 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
   });
 
   registry.register({
+    id: "listen",
+    usage: "/listen",
+    description: "start voice recording and transcription",
+    autocompleteDescription: "start voice recording",
+    argument: "none",
+    section: "base",
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/listen") return null;
+      return { type: "listen", extra };
+    },
+    run: (ctx) => ctx.listen(),
+  });
+
+  registry.register({
     id: "speak",
     usage: "/speak",
-    description: "toggle voice recording and transcription",
-    autocompleteDescription: "toggle voice recording",
+    description: "speak the last assistant message aloud",
+    autocompleteDescription: "speak the last assistant message",
     argument: "none",
     section: "base",
     parse: (raw) => {

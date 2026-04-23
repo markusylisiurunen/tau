@@ -28,6 +28,7 @@ function createStubView() {
   const finalizeToolUiPendingCalls = [];
   const thinkingVisibilityCalls = [];
   const editorInputEnabledCalls = [];
+  const statusUpdates = [];
   let clearToolUiTransientStateCallCount = 0;
   let rewindPickerHideCount = 0;
   let editorText = "";
@@ -46,6 +47,7 @@ function createStubView() {
     finalizeToolUiPendingCalls,
     thinkingVisibilityCalls,
     editorInputEnabledCalls,
+    statusUpdates,
     get clearToolUiTransientStateCallCount() {
       return clearToolUiTransientStateCallCount;
     },
@@ -85,7 +87,9 @@ function createStubView() {
         thinkingVisibilityCalls.push(visible);
       },
       setCompactToolUi: () => {},
-      updateStatus: () => {},
+      updateStatus: (status) => {
+        statusUpdates.push(status);
+      },
       startWorkingIcon: () => {},
       stopWorkingIcon: () => {},
       handleToolUiEvent: (event) => {
@@ -324,21 +328,21 @@ describe("ChatController event handling", () => {
 });
 
 describe("ChatController interrupt handling", () => {
-  it("stops speak recording instead of interrupting assistant", async () => {
+  it("stops listen recording instead of interrupting assistant", async () => {
     const stub = createStubView();
     const controller = createController(stub.view);
 
-    controller.speakRecording = {};
+    controller.listenRecording = {};
 
-    const stopSpeakCaptureSpy = vi
-      .spyOn(controller, "stopSpeakCapture")
+    const stopListenCaptureSpy = vi
+      .spyOn(controller, "stopListenCapture")
       .mockImplementation(async () => {});
     const interruptActiveTaskSpy = vi.spyOn(controller, "interruptActiveTask");
 
     controller.onInterrupt();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(stopSpeakCaptureSpy).toHaveBeenCalledTimes(1);
+    expect(stopListenCaptureSpy).toHaveBeenCalledTimes(1);
     expect(interruptActiveTaskSpy).not.toHaveBeenCalled();
   });
 
@@ -996,8 +1000,8 @@ describe("ChatController diff review", () => {
   });
 });
 
-describe("ChatController speak capture", () => {
-  it("ignores concurrent toggle requests while speak transition is running", async () => {
+describe("ChatController listen capture", () => {
+  it("ignores concurrent toggle requests while listen transition is running", async () => {
     const stub = createStubView();
     const controller = createController(stub.view);
 
@@ -1006,12 +1010,12 @@ describe("ChatController speak capture", () => {
       resolveStart = resolve;
     });
 
-    const startSpy = vi.spyOn(controller, "startSpeakCapture").mockImplementation(async () => {
+    const startSpy = vi.spyOn(controller, "startListenCapture").mockImplementation(async () => {
       await startPromise;
     });
 
-    const first = controller.toggleSpeakCapture();
-    const second = controller.toggleSpeakCapture();
+    const first = controller.toggleListenCapture();
+    const second = controller.toggleListenCapture();
 
     expect(startSpy).toHaveBeenCalledTimes(1);
 
@@ -1024,6 +1028,25 @@ describe("ChatController speak capture", () => {
     });
   });
 
+  it("does not stop an active recording when /listen is invoked", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.listenRecording = {};
+
+    const stopListenCaptureSpy = vi
+      .spyOn(controller, "stopListenCapture")
+      .mockImplementation(async () => {});
+
+    await controller.startListenCaptureFromCommand();
+
+    expect(stopListenCaptureSpy).not.toHaveBeenCalled();
+    expect(stub.systemMessages).toContainEqual({
+      text: "speech recording already in progress",
+      kind: "warn",
+    });
+  });
+
   it("shows a warning and skips recording on Linux", async () => {
     const stub = createStubView();
     const spawn = vi.fn();
@@ -1031,13 +1054,181 @@ describe("ChatController speak capture", () => {
       deps: createMockDeps(spawn, "linux"),
     });
 
-    await controller.toggleSpeakCapture();
+    await controller.toggleListenCapture();
 
     expect(spawn).not.toHaveBeenCalled();
     expect(stub.systemMessages).toContainEqual({
-      text: "/speak is currently supported only on macOS.",
+      text: "/listen is currently supported only on macOS.",
       kind: "warn",
     });
+  });
+});
+
+describe("ChatController speak playback", () => {
+  it("shows a warning when there is no assistant message to speak", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    await controller.speakLastAssistantMessage();
+
+    expect(stub.systemMessages).toContainEqual({
+      text: "no assistant message to speak yet.",
+      kind: "warn",
+    });
+  });
+
+  it("drains queued user input after speech playback finishes", async () => {
+    const stub = createStubView();
+    const queuedUserMessages = [];
+    const controller = createController(stub.view, { queuedUserMessages });
+
+    controller.engine.addMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "Use src/app.ts:42 for the fix." }],
+      stopReason: "end_turn",
+    });
+    controller.credentialResolver.getApiKey = vi.fn(async () => "gemini-key");
+
+    let resolveSpeak;
+    const speakTask = new Promise((resolve) => {
+      resolveSpeak = resolve;
+    });
+    vi.spyOn(controller, "runSpeakTask").mockImplementation(async () => {
+      await speakTask;
+    });
+    const runAssistantTurnSpy = vi
+      .spyOn(controller, "runAssistantTurn")
+      .mockImplementation(async () => {});
+
+    const speakPromise = controller.speakLastAssistantMessage();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    await controller.onUserInput("next message");
+    expect(queuedUserMessages).toEqual(["next message"]);
+
+    resolveSpeak();
+    await speakPromise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(queuedUserMessages).toEqual([]);
+    expect(getUserText(controller, 1)).toBe("next message");
+    expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("speaks the last assistant message using Gemini rewrite and TTS", async () => {
+    const stub = createStubView();
+    const mktempPath = join(tmpdir(), `tau-speak-test-${Date.now()}.wav`);
+    const spawn = vi.fn(async (cmd) => {
+      if (cmd === "mktemp") {
+        return {
+          stdout: `${mktempPath}\n`,
+          stderr: "",
+          output: undefined,
+          exitCode: 0,
+          captureLimitExceeded: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
+        };
+      }
+
+      return {
+        stdout: "",
+        stderr: "",
+        output: undefined,
+        exitCode: 0,
+        captureLimitExceeded: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
+      };
+    });
+    const controller = createController(stub.view, {
+      deps: createMockDeps(spawn),
+    });
+    controller.engine.addMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "Use src/app.ts:42 for the fix." }],
+      stopReason: "end_turn",
+    });
+    controller.credentialResolver.getApiKey = vi.fn(async () => "gemini-key");
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "Use src slash app dot t s, line 42, for the fix." }],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      inlineData: {
+                        data: Buffer.from([1, 2, 3, 4]).toString("base64"),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await controller.speakLastAssistantMessage();
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(mktempPath, { force: true });
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const speechHints = stub.statusUpdates
+      .map((status) => status.footer.commandHint)
+      .filter((hint) => hint !== undefined);
+    expect(stub.added).not.toContainEqual(
+      expect.objectContaining({
+        type: "system",
+        text: "rewriting for speech...",
+        kind: "success",
+      }),
+    );
+    expect(speechHints).toEqual(
+      expect.arrayContaining([
+        "rewriting for speech...",
+        "generating speech chunks (0 out of 1 ready)...",
+        "generating speech chunks (1 out of 1 ready)...",
+        "playing speech...",
+      ]),
+    );
+    expect(stub.statusUpdates.at(-1)?.footer.commandHint).toBeUndefined();
+    expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", ["/tmp/tau-speak.XXXXXX"]);
+    expect(spawn).toHaveBeenNthCalledWith(
+      2,
+      "afplay",
+      ["-r", "1.4", mktempPath],
+      expect.objectContaining({
+        detached: true,
+        killProcessGroup: true,
+        stdio: ["ignore", "ignore", "ignore"],
+      }),
+    );
   });
 });
 

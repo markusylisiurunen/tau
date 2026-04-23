@@ -48,6 +48,7 @@ describe("command registry", () => {
       pruneLargest: () => calls.push({ type: "pruneLargest" }),
       pruneSmart: () => calls.push({ type: "pruneSmart" }),
       reload: async () => calls.push({ type: "reload" }),
+      listen: () => calls.push({ type: "listen" }),
       speak: () => calls.push({ type: "speak" }),
       risk: (level) => calls.push({ type: "risk", level }),
       persona: (id) => calls.push({ type: "persona", id }),
@@ -85,6 +86,10 @@ describe("command registry", () => {
     expect(pruneSmart).toEqual({ type: "pruneSmart" });
     await registry.dispatch(pruneSmart, ctx);
 
+    const listen = registry.parse("/listen");
+    expect(listen).toEqual({ type: "listen" });
+    await registry.dispatch(listen, ctx);
+
     const speak = registry.parse("/speak");
     expect(speak).toEqual({ type: "speak" });
     await registry.dispatch(speak, ctx);
@@ -98,6 +103,7 @@ describe("command registry", () => {
     expect(calls).toContainEqual({ type: "compactSummaryOnly" });
     expect(calls).toContainEqual({ type: "diff", argsText: '--staged -- "src/file.ts"' });
     expect(calls).toContainEqual({ type: "pruneSmart" });
+    expect(calls).toContainEqual({ type: "listen" });
     expect(calls).toContainEqual({ type: "speak" });
     expect(calls).toContainEqual({ type: "unknown", raw: "/not-a-command" });
   });

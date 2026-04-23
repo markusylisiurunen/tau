@@ -193,7 +193,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 - **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `bashCommands`, `agentContextFiles`, `subagents`, `modelSystemNotices`, `async`). This level is only included when cwd is inside home.
   - `apiKeys` (optional): Map of provider id to API key (`apiKeys.<provider>`). Keys merge by provider id across config levels.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
-  - `apiKeys.mistral` (optional): Mistral API key for `/speak` and Telegram audio transcription.
+  - `apiKeys.mistral` (optional): Mistral API key for `/listen` and Telegram audio transcription.
   - `defaultPersona` (optional): String persona reference used by default when starting the app. Accepts `<id>` or `<id>:<reasoning>` and matches are exact/case-sensitive. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.
@@ -272,11 +272,11 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for daemon-file `authToken` in daemon mode
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 - `PARALLEL_API_KEY` (env var) - Optional override for `apiKeys.parallel` used by `web_search`/`web_fetch`
-- `MISTRAL_API_KEY` (env var) - Optional override for `/speak` microphone and Telegram audio transcription
+- `MISTRAL_API_KEY` (env var) - Optional override for `/listen` microphone and Telegram audio transcription
 
 ## Commands
 
-- `/help`, `/new`, `/rewind`, `/cd`, `/diff [git diff args...]`, `/copy:text`, `/copy:code`, `/checkpoint`, `/reload`, `/speak` (macOS only; warns on Linux)
+- `/help`, `/new`, `/rewind`, `/cd`, `/diff [git diff args...]`, `/copy:text`, `/copy:code`, `/checkpoint`, `/reload`, `/listen` (macOS only; warns on Linux), `/speak` (macOS only; speaks the last assistant message)
 - `/compact:summary-only`, `/compact:summary-and-last` - Compact history into a single synthetic user summary message (optionally includes last assistant message verbatim when available)
 - `/prune:earliest`, `/prune:largest`, `/prune:smart` - Prune tool results and compact edit call payloads/results
 - `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
@@ -288,7 +288,7 @@ Slash commands only trigger on single-line inputs. `/diff` treats its payload as
 
 RPC mode command surface is protocol-based (`initialize`, `session.submit`, `session.interrupt`, `session.snapshot`, `session.reset`, `session.shutdown`) over NDJSON stdin/stdout.
 
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @<file> and @@skill:<name> mentions), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording), `Ctrl+G` (terminate selected subagent), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work, including cancelling `/diff`), `Ctrl+C` (press twice to exit)
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @<file> and @@skill:<name> mentions), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (terminate selected subagent), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work, including cancelling `/diff`), `Ctrl+C` (press twice to exit)
 
 ## Development
 

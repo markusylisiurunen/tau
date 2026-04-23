@@ -60,6 +60,24 @@ when the rpc server starts, it immediately emits a `ready` line:
 
 `sessionId` is the active session id at startup.
 
+## lifecycle
+
+rpc lifecycle has three states:
+
+- `pre-initialize`: server has emitted `ready`, has not seen `initialize`, and accepts all rpc methods.
+- `active`: server has seen `initialize` at least once and still accepts all rpc methods.
+- `shutdown`: server has processed `session.shutdown` (or the transport is closing). streamed core events stop, and all non-`initialize` requests are rejected with `invalid_request`.
+
+state transitions:
+
+- server start enters `pre-initialize` and emits `ready` immediately.
+- `initialize` moves `pre-initialize` to `active`.
+- repeated `initialize` calls stay in `active` and return `alreadyInitialized: true`.
+- `session.shutdown` moves `pre-initialize` or `active` to `shutdown`.
+- `initialize` is still accepted in `shutdown` and returns protocol metadata, but it does not reactivate the server.
+
+`initialize` is a handshake signal, not a gate for other methods. clients may call other rpc methods before `initialize`, though most clients should still initialize immediately after `ready`.
+
 ## requests
 
 all requests use this envelope:
@@ -116,7 +134,7 @@ params (required):
 }
 ```
 
-note: tau does not require `initialize` before other methods, but most clients should still call it as a handshake.
+`alreadyInitialized` reports whether the server has already seen a prior `initialize` request. `initialize` remains valid after `session.shutdown`, but it only returns metadata and does not reopen the server.
 
 #### session.submit
 

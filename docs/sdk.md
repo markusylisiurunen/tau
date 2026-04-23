@@ -69,6 +69,11 @@ default behavior:
 
 returns a connected `TauSdkClient` instance.
 
+sdk lifecycle notes:
+
+- the sdk waits for rpc `ready`, then immediately sends `initialize`, so sdk callers start in the rpc `active` state described in [docs/rpc.md](./rpc.md).
+- `client.shutdown()` sends rpc `session.shutdown` and then closes the subprocess transport, so sdk callers do not observe tau's post-shutdown `initialize` behavior unless they implement the rpc transport themselves.
+
 #### options
 
 - `cwd?: string`

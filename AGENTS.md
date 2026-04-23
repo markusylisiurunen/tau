@@ -78,6 +78,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `models/tau_extensions.ts` - Tau-owned extension hooks for additional providers/models
   - `auth/cli.ts` - login/logout flows
   - `install/cli.ts` - starter prompts/skills installer (`tau install`)
+  - `tool/cli.ts`, `tool/pdf_unpack.ts` - built-in utility tool commands (`tau tool pdf-unpack`)
   - `auth/auth_storage.ts` - Credential storage and refresh
   - `auth/credential_resolver.ts` - API key resolution
   - `auth/auth_paths.ts` - Auth file path resolution
@@ -266,13 +267,14 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau auth logout codex --account <email>` - Remove stored OAuth credentials
 - `tau usage` - Summarize usage logs from `~/.config/tau/logs/`
 - `tau install [--global] [--force] [--prompt <id> | --skill <name>]` - Install starter prompts and skills (or one selected item)
+- `tau tool pdf-unpack <file.pdf>` - OCR a PDF with Mistral, render local page patches with `pdftoppm`, and print the artifact paths.
 - `tau async daemon --config-file <path>` - Run async daemon HTTP API (plus optional Telegram DM adapter)
 - `tau async --project <id> <prompt...> | <prompt...> | -- <prompt...> | list | status <id> | logs <id> | send <id> <text...> | interrupt <id> | cron list | cron runs [jobId] | cron run <jobId>` - Async client commands (`<prompt...>` uses `async.client.defaultProjectId` when set).
 - `tau diff-tool [--help]` - Built-in browser diff review demo tool used as the default `/diff` fallback
 - `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for daemon-file `authToken` in daemon mode
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 - `PARALLEL_API_KEY` (env var) - Optional override for `apiKeys.parallel` used by `web_search`/`web_fetch`
-- `MISTRAL_API_KEY` (env var) - Optional override for `/listen` microphone and Telegram audio transcription
+- `MISTRAL_API_KEY` (env var) - Optional override for `/listen` microphone, Telegram audio transcription, and `tau tool pdf-unpack`
 
 ## Commands
 

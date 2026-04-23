@@ -14,7 +14,7 @@ you'll need an API key from at least one provider. set it via environment variab
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
-# or OPENAI_API_KEY, or GEMINI_API_KEY, or PARALLEL_API_KEY, or MISTRAL_API_KEY (for /listen and Telegram audio)
+# or OPENAI_API_KEY, or GEMINI_API_KEY, or PARALLEL_API_KEY, or MISTRAL_API_KEY (for /listen, Telegram audio, and tau tool pdf-unpack)
 ```
 
 or store keys in `~/.config/tau/config.json`:
@@ -35,7 +35,7 @@ for built-in providers and features, use these `apiKeys` entries: `anthropic`, `
 
 `parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents and can be provided through `apiKeys.parallel` or `PARALLEL_API_KEY` (`PARALLEL_API_KEY` takes precedence).
 
-`/listen` and Telegram audio transcription both use `apiKeys.mistral` or `MISTRAL_API_KEY` (`MISTRAL_API_KEY` takes precedence). `/listen` also requires `ffmpeg` on your system and is currently supported only on macOS.
+`/listen`, Telegram audio transcription, and `tau tool pdf-unpack` all use `apiKeys.mistral` or `MISTRAL_API_KEY` (`MISTRAL_API_KEY` takes precedence). `/listen` also requires `ffmpeg` on your system and is currently supported only on macOS. `tau tool pdf-unpack` also requires `pdftoppm` from Poppler on your system.
 
 `/speak` uses the Google provider (`apiKeys.google` or `GEMINI_API_KEY`) and is currently supported only on macOS.
 
@@ -122,6 +122,16 @@ daemon config uses a bot-id map (`telegram.<botId>.botToken`), with optional per
 Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). attachment-only messages do not trigger turns, attachments are downloaded to local temp files immediately, queued attachments are prepended to the next text/voice turn as local temp file metadata, and oversized Telegram replies are split into 95%-of-limit chunks sent 1 second apart.
 
 daemon config also supports `systemMessage`, `cron.jobsDir`, and `cron.systemMessage` for scheduled runs, plus per-project `workingDirectory` (for monorepos), `description` (used by Telegram `/projects`), `bootstrapCommands` (blocking), and `backgroundBootstrapCommands` (non-blocking). on startup, the daemon wipes existing entries under configured async workspace roots. on Telegram adapter startup, tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Telegram `/close` deletes session workspaces from disk when closing sessions.
+
+## built-in tool commands
+
+tau also ships a small `tau tool` command family for utility workflows outside the chat UI.
+
+```sh
+tau tool pdf-unpack ./docs/spec.pdf
+```
+
+`tau tool pdf-unpack` sends the original PDF to Mistral for OCR/Markdown, renders page image patches locally with `pdftoppm`, writes a persistent temp directory with `document.md`, `pages/`, and `images/`, and prints the output paths as plain text for follow-up model use.
 
 ## SDK usage (Node)
 

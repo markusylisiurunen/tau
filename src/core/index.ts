@@ -100,6 +100,15 @@ export type {
 export { composeSessionPrompts } from "./runtime/session_prompt_composer.js";
 export type { Checkpoint } from "./session/checkpoint.js";
 export { createCheckpoint, parseCheckpoint } from "./session/checkpoint.js";
+export type { RunToolCommandOptions } from "./tool/index.js";
+export {
+  computePdfPatchRegions,
+  printPdfUnpackHelp,
+  printToolHelp,
+  runPdfUnpackCommand,
+  runToolCommand,
+  ToolCliError,
+} from "./tool/index.js";
 export { createBashToolDefinition } from "./tools/bash.js";
 export { ToolCatalog } from "./tools/catalog.js";
 export { createEditToolDefinition } from "./tools/edit.js";

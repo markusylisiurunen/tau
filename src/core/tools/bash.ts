@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
 import stripAnsi from "strip-ansi";
+import { Type } from "typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { formatCwd } from "../utils/format.js";

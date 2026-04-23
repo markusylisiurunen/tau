@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { z } from "zod";
 import { loadSkillsForPromptContext } from "../config/skills_loader.js";
 import { resolveRuntimePromptBootstrap } from "../runtime/runtime_bootstrap.js";

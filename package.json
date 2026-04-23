@@ -27,13 +27,13 @@
     "access": "public"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.67.67",
-    "@mariozechner/pi-tui": "^0.67.67",
-    "@sinclair/typebox": "^0.34.49",
+    "@mariozechner/pi-ai": "^0.69.0",
+    "@mariozechner/pi-tui": "^0.69.0",
     "chalk": "^5.6.2",
     "file-type": "^21.3.4",
     "sharp": "^0.34.5",
     "strip-ansi": "^7.2.0",
+    "typebox": "^1.1.31",
     "yaml": "^2.8.3",
     "zod": "^4.3.6"
   },
@@ -43,7 +43,7 @@
     "colorjs.io": "^0.6.1",
     "prettier": "^3.8.3",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.5"
   },
   "engines": {
     "node": ">=24.0.0"

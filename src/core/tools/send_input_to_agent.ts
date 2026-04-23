@@ -1,5 +1,5 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { z } from "zod";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
 import type { RiskLevel } from "../types.js";

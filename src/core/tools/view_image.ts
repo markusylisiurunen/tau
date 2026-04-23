@@ -1,7 +1,7 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
 import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
+import { Type } from "typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";

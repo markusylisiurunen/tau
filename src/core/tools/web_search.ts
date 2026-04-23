@@ -1,5 +1,5 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { z } from "zod";
 import type { Config } from "../config/index.js";
 import { getParallelApiKey } from "../config/index.js";

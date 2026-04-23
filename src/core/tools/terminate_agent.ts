@@ -1,5 +1,5 @@
 import type { Tool, ToolCall } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { z } from "zod";
 import type { SubagentResult } from "../subagents/control_plane.js";
 import type { RiskLevel } from "../types.js";

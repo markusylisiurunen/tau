@@ -1,5 +1,5 @@
 import type { Tool, ToolCall } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { z } from "zod";
 import type { RiskLevel } from "../types.js";
 import { buildLineDiff } from "../utils/line_diff.js";

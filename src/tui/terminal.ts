@@ -214,6 +214,14 @@ export class TauTerminal implements Terminal {
       .join("");
     this.output.write(`\x1b]0;${safeTitle}\x07`);
   }
+
+  setProgress(active: boolean): void {
+    if (active) {
+      this.output.write("\x1b]9;4;3\x07");
+    } else {
+      this.output.write("\x1b]9;4;0;\x07");
+    }
+  }
 }
 
 /**

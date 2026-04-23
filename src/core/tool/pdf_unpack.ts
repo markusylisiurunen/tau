@@ -426,9 +426,7 @@ function buildOutputSummary(args: {
     "- markdown may include [visual-content: ...] placeholders where OCR detected embedded image content",
     `- treat files under ${relativePath(args.imagesDir)}/ as the most reliable source because they match the original PDF page content exactly`,
     `- inspect files under ${relativePath(args.imagesDir)}/ when you need to verify or correct anything in the markdown`,
-    ...(args.cleanupWarning
-      ? ["", "Warning:", `- ${args.cleanupWarning}`]
-      : []),
+    ...(args.cleanupWarning ? ["", "Warning:", `- ${args.cleanupWarning}`] : []),
     "",
     "Artifact summary:",
     `- page markdown files: ${args.pageCount}`,

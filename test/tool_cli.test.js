@@ -177,7 +177,9 @@ describe("pdf-unpack", () => {
       expect(outputText).toContain("- document.md: full document markdown with tables inlined");
       expect(outputText).toContain("- markdown may include [visual-content: ...] placeholders");
       expect(outputText).toContain("Warning:");
-      expect(outputText).toContain("- failed to delete the uploaded PDF from Mistral: Unauthorized");
+      expect(outputText).toContain(
+        "- failed to delete the uploaded PDF from Mistral: Unauthorized",
+      );
       expect(outputText).toContain("- page markdown files: 2");
       expect(outputText).toContain("- image patch files: 4");
       expect(outputText).toContain("- images/page-0002/patch-0003.png");

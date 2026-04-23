@@ -294,7 +294,7 @@ RPC mode command surface is protocol-based (`initialize`, `session.submit`, `ses
 
 ## Development
 
-- `npm run check` - Format (Biome) + typecheck, including `src/diff_tool/app`
+- `npm run check` - Apply repository formatting, then typecheck, including `src/diff_tool/app`
 - `npm run build` - Build `src/diff_tool/app`, then compile to dist/ (TypeScript emits `.d.ts` files, then `postbuild` removes every declaration outside `dist/sdk/` via `find dist -name '*.d.ts' ! -path 'dist/sdk/*' -delete`)
 - `npm test` - Build + run UI tests
 - fresh clones also need `npm ci` in `src/diff_tool/app` because the built-in diff tool app has its own package.json
@@ -327,7 +327,7 @@ If you need dependency details (rare), check `references/repos/` first and treat
 
 **Theme tokens**: Always use semantic palette tokens for UI colors. Do not reuse unrelated tokens for new UI states; add a dedicated token when introducing a new semantic state.
 
-**Formatting**: Do not hand-format code (no manual import sorting or line wrapping). Run `npm run check` and let Biome handle formatting.
+**Formatting**: Do not hand-format code (no manual import sorting or line wrapping). Run `npm run check` before verification steps when files may need formatting, since it writes the canonical formatting changes.
 
 **Commit style**: Short, imperative, lowercase subject lines (no prefixes). Commit bodies are either empty or a single closing keyword line (for example, `fixes #123`) when explicitly working a GitHub issue with a single commit (no PR). Do not include any other commit body text. If opening a PR, put the closing keyword in the PR body instead of the commit body.
 
@@ -368,7 +368,7 @@ Before any release:
 - Ensure you are on `main` with a clean working tree. Unpushed commits are fine because the release flow pushes commits and tags. If either condition is not true, ask the user what to do.
 - Install dependencies for both package roots when starting from a clean checkout:
   - `npm ci && (cd src/diff_tool/app && npm ci)`
-- Run verification, build, and tests:
+- Run verification, build, and tests. Start with `npm run check`, since it applies required formatting before the remaining verification steps:
   - `npm run check && npm run build && npm test`
 
 Release flows:

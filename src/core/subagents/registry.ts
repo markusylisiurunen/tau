@@ -39,11 +39,7 @@ function normalizeTools(tools: SubagentToolName[]): SubagentToolName[] {
 }
 
 function getInheritedSubagentTools(persona: Persona): SubagentToolName[] {
-  const toolNames = persona.tools?.map((tool) => tool.name) ?? [
-    TOOL_NAME_BASH,
-    TOOL_NAME_WRITE,
-    TOOL_NAME_EDIT,
-  ];
+  const toolNames = persona.tools ?? [TOOL_NAME_BASH, TOOL_NAME_WRITE, TOOL_NAME_EDIT];
   const selected: SubagentToolName[] = [];
 
   for (const name of toolNames) {

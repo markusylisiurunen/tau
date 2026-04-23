@@ -8,14 +8,12 @@ import { resolveRuntimePromptBootstrap } from "../runtime/runtime_bootstrap.js";
 import { composeSessionPrompts } from "../runtime/session_prompt_composer.js";
 import { CoreSession, type HistoryEntry } from "../session/core_session.js";
 import { renderDiffReviewWrapperPrompt } from "../static/index.js";
-import { BASH_TOOL } from "../tools/bash.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import {
   createLocalToolExecutionBackend,
   type ToolExecutionBackend,
 } from "../tools/execution_backend.js";
 import { TOOL_NAME_BASH, TOOL_NAME_VIEW_IMAGE } from "../tools/tool_names.js";
-import { VIEW_IMAGE_TOOL } from "../tools/view_image.js";
 import type { Persona, Skill } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { extractAssistantText } from "../utils/messages.js";
@@ -271,7 +269,7 @@ function createDiffReviewPersona(persona: Persona, snapshot: DiffReviewSnapshot)
     systemPrompt: buildDiffReviewSystemPrompt(persona.systemPrompt, snapshot),
     subagents: undefined,
     skills: persona.skills,
-    tools: [BASH_TOOL, VIEW_IMAGE_TOOL],
+    tools: [TOOL_NAME_BASH, TOOL_NAME_VIEW_IMAGE],
   };
 }
 

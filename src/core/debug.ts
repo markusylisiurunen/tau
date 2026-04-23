@@ -43,7 +43,7 @@ function formatPersona(p: Persona): string {
     lines.push(`  subagents: ${names}`);
   }
   if (p.tools && p.tools.length > 0) {
-    lines.push(`  tools: ${p.tools.map((t) => t.name).join(", ")}`);
+    lines.push(`  tools: ${p.tools.join(", ")}`);
   }
   return lines.join("\n");
 }

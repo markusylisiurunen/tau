@@ -278,6 +278,7 @@ tau comes with several built-in personas across different models:
 - **GPT-5.3-Codex (ChatGPT)** (OpenAI Codex): `gpt-5.3-codex-chatgpt`
 - **GPT-5.4 (ChatGPT)** (OpenAI Codex): `gpt-5.4-chatgpt-chat`, `gpt-5.4-chatgpt-coder`
 - **GPT-5.3-Codex Fast (ChatGPT)** and **GPT-5.4 Fast (ChatGPT)** (OpenAI Codex, priority tier): `gpt-5.3-codex-fast-chatgpt`, `gpt-5.4-chatgpt-fast-chat`, `gpt-5.4-chatgpt-fast-coder`
+- **GPT-5.5** built-in personas appear automatically when `openai:gpt-5.5` and/or `openai-codex:gpt-5.5` are present in the merged model catalog, including `models.json`: `gpt-5.5-chat`, `gpt-5.5-coder`, `gpt-5.5-chatgpt-chat`, `gpt-5.5-chatgpt-coder`, `gpt-5.5-chatgpt-fast-chat`, `gpt-5.5-chatgpt-fast-coder`
 - **Gemini 3.1 Pro** and **Gemini 3 Flash** (Google): `gemini-3.1-pro-chat`, `gemini-3-flash-chat`
 
 chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.
@@ -584,7 +585,7 @@ the frontmatter defines the persona. required fields:
 - `provider`: model provider id (for example `openai`, `anthropic`, `google`)
 - `model`: model id for the provider (for example `gpt-5.4`, `claude-opus-4-7`)
 
-custom personas/subagents can reference model ids that are not bundled yet, as long as the provider is known. configure model metadata in `models.json` files or let tau derive defaults. see [docs/models.md](docs/models.md).
+custom personas/subagents can reference model ids that are not bundled yet, as long as the provider is known. optional built-in personas such as GPT-5.5 also use the merged model catalog, so adding those model ids to `models.json` makes the matching built-ins available. see [docs/models.md](docs/models.md).
 
 the persona file name (without the `.md` extension) must match the `id`.
 

@@ -2,6 +2,7 @@ export {
   findAgentsFilesFromCwdToHome,
   findAgentsFilesInScope,
   findAgentsFilesInScopeDetailed,
+  findChildAgentsFiles,
 } from "./agents_files.js";
 export {
   buildBaseSystemPrompt,

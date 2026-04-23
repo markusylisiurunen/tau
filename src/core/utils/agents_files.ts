@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import type { Dirent } from "node:fs";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, parse, resolve, sep } from "node:path";
 import type { ConfigDeps } from "../config/deps.js";
@@ -9,6 +11,33 @@ type AgentsFilesInScopeResult = {
   files: string[];
   errors: string[];
 };
+
+const CHILD_AGENTS_RG_TIMEOUT_MS = 2000;
+const CHILD_AGENTS_WALK_TIMEOUT_MS = 1000;
+const CHILD_AGENTS_WALK_MAX_DIRS = 10_000;
+
+const DEFAULT_IGNORED_CHILD_DIRS = new Set([
+  ".cache",
+  ".git",
+  ".hg",
+  ".jj",
+  ".next",
+  ".nuxt",
+  ".parcel-cache",
+  ".svn",
+  ".turbo",
+  ".venv",
+  ".vite",
+  "__pycache__",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+  "out",
+  "target",
+  "vendor",
+  "venv",
+]);
 
 function isSameOrParentPath(parent: string, child: string): boolean {
   if (parent === child) return true;
@@ -108,6 +137,129 @@ export function findAgentsFilesFromCwdToHome(cwd: string, home: string): string[
   }
 
   return found;
+}
+
+function buildIgnoredChildDirGlobs(): string[] {
+  return [...DEFAULT_IGNORED_CHILD_DIRS].flatMap((dir) => ["--glob", `!${dir}/`]);
+}
+
+function findChildAgentsFilesWithRipgrep(cwd: string, home: string): string[] | null {
+  const cwdAbs = resolve(cwd);
+  const result = spawnSync(
+    "rg",
+    [
+      "--files",
+      "--hidden",
+      "--no-ignore",
+      "--glob",
+      "**/AGENTS.md",
+      ...buildIgnoredChildDirGlobs(),
+    ],
+    {
+      cwd: cwdAbs,
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: CHILD_AGENTS_RG_TIMEOUT_MS,
+    },
+  );
+
+  if (result.error) {
+    const code = "code" in result.error ? result.error.code : undefined;
+    return code === "ETIMEDOUT" ? [] : null;
+  }
+  if (result.status !== 0 && result.status !== 1) return null;
+  if (typeof result.stdout !== "string") return null;
+
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b))
+    .map((filePath) => resolve(cwdAbs, filePath))
+    .filter((filePath) => dirname(filePath) !== cwdAbs)
+    .flatMap((filePath) => {
+      const resolved = resolveAgentContextPath({ path: filePath, cwd: cwdAbs, home });
+      return resolved ? [resolved] : [];
+    });
+}
+
+function findChildAgentsFilesByWalking(cwd: string, home: string): string[] {
+  const cwdAbs = resolve(cwd);
+  const found: string[] = [];
+  const seenDirs = new Set<string>();
+  const startedAt = Date.now();
+  let visitedDirs = 0;
+  let bailed = false;
+
+  const shouldBail = (): boolean => {
+    if (bailed) return true;
+    if (visitedDirs >= CHILD_AGENTS_WALK_MAX_DIRS) {
+      bailed = true;
+      return true;
+    }
+    if (Date.now() - startedAt >= CHILD_AGENTS_WALK_TIMEOUT_MS) {
+      bailed = true;
+      return true;
+    }
+    return false;
+  };
+
+  const walk = (dir: string): void => {
+    if (shouldBail()) return;
+
+    let dirReal = dir;
+    try {
+      dirReal = realpathSync(dir);
+    } catch {
+      return;
+    }
+
+    if (seenDirs.has(dirReal)) return;
+    seenDirs.add(dirReal);
+    visitedDirs += 1;
+
+    let entries: Dirent<string>[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (shouldBail()) return;
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      if (DEFAULT_IGNORED_CHILD_DIRS.has(entry.name)) continue;
+
+      const childDir = join(dir, entry.name);
+      let isDirectory = entry.isDirectory();
+      if (entry.isSymbolicLink()) {
+        try {
+          isDirectory = statSync(childDir).isDirectory();
+        } catch {
+          isDirectory = false;
+        }
+      }
+      if (!isDirectory) continue;
+
+      const candidate = join(childDir, "AGENTS.md");
+      if (existsSync(candidate)) {
+        const resolved = resolveAgentContextPath({ path: candidate, cwd: cwdAbs, home });
+        if (resolved) {
+          found.push(resolved);
+        }
+      }
+
+      walk(childDir);
+    }
+  };
+
+  walk(cwdAbs);
+  return found;
+}
+
+export function findChildAgentsFiles(cwd: string, home: string): string[] {
+  return findChildAgentsFilesWithRipgrep(cwd, home) ?? findChildAgentsFilesByWalking(cwd, home);
 }
 
 function findAdditionalAgentsFilesFromConfigsDetailed(args: {

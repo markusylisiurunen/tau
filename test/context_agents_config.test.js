@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { findAgentsFilesInScope } from "../dist/core/utils/context.js";
+import { findAgentsFilesInScope, findChildAgentsFiles } from "../dist/core/utils/context.js";
 
 function setupFixture() {
   const home = mkdtempSync(join(tmpdir(), "tau-context-home-"));
@@ -17,6 +17,37 @@ function setupFixture() {
 }
 
 describe("project context agents from .tau/config.json", () => {
+  it("finds AGENTS.md files in child directories", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".git"), { recursive: true });
+      mkdirSync(join(fx.repo, "ignored", "pkg"), { recursive: true });
+      mkdirSync(join(fx.repo, "packages", "pkg1"), { recursive: true });
+      mkdirSync(join(fx.repo, "packages", "pkg2", "nested"), { recursive: true });
+      mkdirSync(join(fx.repo, "dist", "ignored"), { recursive: true });
+      mkdirSync(join(fx.repo, "node_modules", "ignored"), { recursive: true });
+
+      writeFileSync(join(fx.repo, ".gitignore"), "ignored/\n");
+      writeFileSync(join(fx.repo, "AGENTS.md"), "# root agents\n");
+      writeFileSync(join(fx.repo, "ignored", "pkg", "AGENTS.md"), "# ignored by git\n");
+      writeFileSync(join(fx.repo, "packages", "pkg1", "AGENTS.md"), "# pkg1 agents\n");
+      writeFileSync(join(fx.repo, "packages", "pkg2", "nested", "AGENTS.md"), "# nested agents\n");
+      writeFileSync(join(fx.repo, "dist", "ignored", "AGENTS.md"), "# ignored\n");
+      writeFileSync(join(fx.repo, "node_modules", "ignored", "AGENTS.md"), "# ignored\n");
+
+      const res = findChildAgentsFiles(fx.repo, fx.home);
+
+      expect(res).toEqual([
+        join(fx.repo, "ignored", "pkg", "AGENTS.md"),
+        join(fx.repo, "packages", "pkg1", "AGENTS.md"),
+        join(fx.repo, "packages", "pkg2", "nested", "AGENTS.md"),
+      ]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("includes additional AGENTS.md files configured in .tau/config.json", () => {
     const fx = setupFixture();
 

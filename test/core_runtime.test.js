@@ -287,6 +287,26 @@ describe("context builder", () => {
     expect(block).toContain('<file path="/repo/AGENTS.md">');
     expect(block).toContain("# Agents");
   });
+
+  it("renders nested AGENTS.md paths without duplicating injected files", () => {
+    const block = buildProjectContextBlock({
+      cwd: "/repo",
+      home: "/home",
+      agentsFiles: ["/repo/AGENTS.md", "/repo/packages/full/AGENTS.md"],
+      childAgentsFiles: ["/repo/packages/full/AGENTS.md", "/repo/packages/path-only/AGENTS.md"],
+      readFile: (path) => {
+        if (path === "/repo/AGENTS.md") return "# Root\n";
+        if (path === "/repo/packages/full/AGENTS.md") return "# Full\n";
+        return "";
+      },
+    });
+
+    expect(block).toContain('<file path="/repo/AGENTS.md">');
+    expect(block).toContain('<file path="/repo/packages/full/AGENTS.md">');
+    expect(block).toContain("Nested AGENTS.md files under the current working directory");
+    expect(block).toContain('<file path="/repo/packages/path-only/AGENTS.md" />');
+    expect(block).not.toContain('<file path="/repo/packages/full/AGENTS.md" />');
+  });
 });
 
 describe("runtime prompt bootstrap", () => {

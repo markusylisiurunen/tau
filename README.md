@@ -337,7 +337,7 @@ you can also pipe content directly:
 cat src/tui/app.ts | tau --persona opus-4.7-chat
 ```
 
-by default, tau injects your AGENTS.md into the system prompt. use `--no-agent-context-files` to disable this behavior. tau searches for AGENTS.md in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home).
+by default, tau injects your AGENTS.md into the system prompt. use `--no-agent-context-files` to disable this behavior. tau searches for AGENTS.md in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home). tau also includes a paths-only listing of `AGENTS.md` files in child directories under the current working directory, excluding any file already injected in full.
 
 you can also include additional `AGENTS.md` files via config (when that config is in scope for the current working directory):
 
@@ -563,7 +563,7 @@ you can tell tau to always include extra `AGENTS.md` files by adding an `agentCo
 { "agentContextFiles": ["packages/pkg1/AGENTS.md"] }
 ```
 
-paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries must point at `AGENTS.md`. entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
+paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries must point at `AGENTS.md`. entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored). child `AGENTS.md` files that are not injected in full are still listed by path in the project context.
 
 ### custom personas
 

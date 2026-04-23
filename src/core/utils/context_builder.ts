@@ -1,5 +1,5 @@
 import type { RiskLevel, Skill } from "../types.js";
-import { findAgentsFilesInScope } from "./agents_files.js";
+import { findAgentsFilesInScope, findChildAgentsFiles } from "./agents_files.js";
 
 function escapeXml(value: string): string {
   return value
@@ -80,10 +80,15 @@ export function buildProjectContextBlock(args: {
   cwd: string;
   home: string;
   agentsFiles?: string[];
+  childAgentsFiles?: string[];
   readFile: (path: string) => string;
 }): string | undefined {
   const agentsFiles = args.agentsFiles ?? findAgentsFilesInScope(args.cwd, args.home);
-  if (agentsFiles.length === 0) return undefined;
+  const injectedAgentsFiles = new Set(agentsFiles);
+  const childAgentsFiles = (
+    args.childAgentsFiles ?? findChildAgentsFiles(args.cwd, args.home)
+  ).filter((filePath) => !injectedAgentsFiles.has(filePath));
+  if (agentsFiles.length === 0 && childAgentsFiles.length === 0) return undefined;
 
   const lines: string[] = ["### Project context", ""];
   const readFile = args.readFile;
@@ -99,6 +104,16 @@ export function buildProjectContextBlock(args: {
     lines.push(content.trimEnd());
     lines.push("</file>");
     lines.push("");
+  }
+
+  if (childAgentsFiles.length > 0) {
+    lines.push("Nested AGENTS.md files under the current working directory (paths only):");
+    lines.push("");
+    lines.push("<nested-agents-files>");
+    for (const filePath of childAgentsFiles) {
+      lines.push(`  <file path="${escapeXml(filePath)}" />`);
+    }
+    lines.push("</nested-agents-files>");
   }
 
   const out = lines.join("\n").trimEnd();

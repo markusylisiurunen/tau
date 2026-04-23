@@ -56,6 +56,31 @@ describe("cli", () => {
     expect(result.stdout).toContain("tau async daemon");
   });
 
+  it("prints pdf-unpack help", () => {
+    const mainPath = resolve(process.cwd(), "dist/main.js");
+    const result = spawnSync(process.execPath, [mainPath, "tool", "pdf-unpack", "--help"], {
+      encoding: "utf8",
+      env: process.env,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("tau tool pdf-unpack <file.pdf>");
+    expect(result.stdout).toContain("requires pdftoppm from Poppler on PATH");
+    expect(result.stderr).toBe("");
+  });
+
+  it("prints tool help text when tool command parsing fails", () => {
+    const mainPath = resolve(process.cwd(), "dist/main.js");
+    const result = spawnSync(process.execPath, [mainPath, "tool", "missing"], {
+      encoding: "utf8",
+      env: process.env,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("unknown tool subcommand 'missing'");
+    expect(result.stdout).toContain("tau tool <command>");
+  });
+
   it("prints diff-tool help", () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
     const result = spawnSync(process.execPath, [mainPath, "diff-tool", "--help"], {

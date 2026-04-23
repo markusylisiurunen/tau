@@ -47,8 +47,10 @@ import {
   runLoginCommand,
   runLogoutCommand,
   runRpcServer,
+  runToolCommand,
   runUsageCommand,
   ToolCatalog,
+  ToolCliError,
   UsageCliError,
 } from "./core/index.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
@@ -317,6 +319,30 @@ if (argv[0] === "async") {
       // eslint-disable-next-line no-console
       console.error("");
       printAsyncHelp();
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+if (argv[0] === "tool") {
+  try {
+    const toolConfig = loadConfig(cwd, configDeps);
+    await runToolCommand(argv.slice(1), {
+      cwd,
+      env: process.env,
+      config: toolConfig,
+    });
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof ToolCliError) {
+      // eslint-disable-next-line no-console
+      console.error(err.message);
+      if (err.helpPrinter) {
+        // eslint-disable-next-line no-console
+        console.error("");
+        err.helpPrinter();
+      }
       process.exit(1);
     }
     throw err;

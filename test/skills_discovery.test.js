@@ -59,7 +59,7 @@ async function loadAllContentWithModelResolver(config, options) {
   const modelResolver = loadModelResolver({
     deps: options.deps,
     levels,
-  }).resolveModel;
+  });
   return await loadAllContent(config, {
     deps: options.deps,
     levels,

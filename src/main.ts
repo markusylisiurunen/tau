@@ -40,6 +40,7 @@ import {
   printHelp,
   printInstallHelp,
   printUsageHelp,
+  resolveConfigLevels,
   resolveRuntimePromptBootstrap,
   runAsyncCommand,
   runInstallCommand,
@@ -53,6 +54,7 @@ import {
   ToolCliError,
   UsageCliError,
 } from "./core/index.js";
+import { loadModelResolver } from "./core/models/catalog.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
 import {
   createBuiltInDiffToolConfig,
@@ -413,7 +415,9 @@ try {
   config = loadConfig(cwd, configDeps);
   bashCommands = config.bashCommands ?? [];
 
-  const virtualBundle = buildVirtualBundle(config);
+  const levels = resolveConfigLevels(configDeps, { cwd });
+  const modelResolverResult = loadModelResolver({ deps: configDeps, levels });
+  const virtualBundle = buildVirtualBundle(config, modelResolverResult.resolveConfiguredModel);
   const hasBuiltins =
     virtualBundle.personas.length > 0 ||
     virtualBundle.prompts.length > 0 ||
@@ -529,7 +533,9 @@ if (cli.debug) {
   }
 
   const debugRiskLevel = initialRiskLevel;
-  const virtualBundle = buildVirtualBundle(config);
+  const debugLevels = resolveConfigLevels(configDeps, { cwd });
+  const debugModelResolverResult = loadModelResolver({ deps: configDeps, levels: debugLevels });
+  const virtualBundle = buildVirtualBundle(config, debugModelResolverResult.resolveConfiguredModel);
   const debugToolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
   printDebugInfo({
     personas,

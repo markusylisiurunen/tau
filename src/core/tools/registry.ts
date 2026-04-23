@@ -5,6 +5,7 @@ import type { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentName, SubagentStatus } from "../subagents/types.js";
 import type { Persona, RiskLevel } from "../types.js";
 import type { BashTruncationInfo } from "./bash.js";
+import type { ToolName } from "./tool_names.js";
 
 type ToolUiEventWithHeaderTarget = {
   headerTarget: string;
@@ -329,7 +330,17 @@ export class ToolRegistry {
     return this.byName.get(toolName);
   }
 
-  getEnabledToolSchemas(personaTools?: Tool[]): Tool[] {
-    return personaTools ?? this.schemas;
+  getEnabledToolSchemas(personaTools?: ToolName[]): Tool[] {
+    if (!personaTools) {
+      return this.schemas;
+    }
+
+    return personaTools.map((toolName) => {
+      const definition = this.byName.get(toolName);
+      if (!definition) {
+        throw new Error(`tool '${toolName}' is not registered`);
+      }
+      return definition.schema;
+    });
   }
 }

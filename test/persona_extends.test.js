@@ -30,14 +30,14 @@ function setupFixture() {
 
 async function loadAllContentWithModelResolver(config, options) {
   const levels = resolveConfigLevels(options.deps, { cwd: options.cwd });
-  const modelResolver = loadModelResolver({
+  const modelResolverResult = loadModelResolver({
     deps: options.deps,
     levels,
-  }).resolveModel;
+  });
   return await loadAllContent(config, {
     deps: options.deps,
     levels,
-    modelResolver,
+    modelResolver: modelResolverResult,
   });
 }
 
@@ -90,7 +90,7 @@ describe("custom personas", () => {
       expect(clone.systemPrompt).toBe(base.systemPrompt);
       expect(clone.skills).toEqual(base.skills);
 
-      expect(clone.tools.map((t) => t.name)).toEqual(base.tools.map((t) => t.name));
+      expect(clone.tools).toEqual(base.tools);
 
       expect(Object.keys(clone.subagents ?? {})).toEqual(Object.keys(base.subagents ?? {}));
 
@@ -175,6 +175,64 @@ describe("custom personas", () => {
         personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-coder"),
       ).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-5.5-fast-chatgpt")).toBeUndefined();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("loads optional built-in personas from configured models.json entries", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "models.json"),
+        JSON.stringify(
+          {
+            providers: {
+              openai: {
+                models: [
+                  {
+                    id: "gpt-5.5",
+                    contextWindow: 400000,
+                  },
+                ],
+              },
+              "openai-codex": {
+                models: [
+                  {
+                    id: "gpt-5.5",
+                    contextWindow: 400000,
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chat")?.model.id).toBe("gpt-5.5");
+      expect(personas.find((persona) => persona.id === "gpt-5.5-coder")?.model.id).toBe("gpt-5.5");
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-chat")?.model.id).toBe(
+        "gpt-5.5",
+      );
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-coder")?.model.id).toBe(
+        "gpt-5.5",
+      );
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-chat")?.settings
+          .serviceTier,
+      ).toBe("priority");
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-coder")?.settings
+          .serviceTier,
+      ).toBe("priority");
     } finally {
       fx.cleanup();
     }

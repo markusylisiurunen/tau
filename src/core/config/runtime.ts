@@ -36,7 +36,7 @@ export async function loadRuntimeConfig(
   const content = await loadAllContent(config, {
     deps,
     levels,
-    modelResolver: modelResolverResult.resolveModel,
+    modelResolver: modelResolverResult,
   });
   const warnings = [...configResult.errors, ...content.errors];
   if (config.defaultPersona) {

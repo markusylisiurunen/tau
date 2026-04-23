@@ -1,13 +1,15 @@
-import { resolveModel, resolveModelOrThrow } from "./models/catalog.js";
+import { type ModelResolver, resolveModel } from "./models/catalog.js";
 import { DEFAULT_SUBAGENT_NAME, type SubagentConfigMap } from "./subagents/types.js";
-import { BASH_TOOL } from "./tools/bash.js";
-import { EDIT_TOOL } from "./tools/edit.js";
-import { SEND_INPUT_TO_AGENT_TOOL } from "./tools/send_input_to_agent.js";
-import { SPAWN_AGENT_TOOL } from "./tools/spawn_agent.js";
-import { TERMINATE_AGENT_TOOL } from "./tools/terminate_agent.js";
-import { VIEW_IMAGE_TOOL } from "./tools/view_image.js";
-import { WAIT_FOR_AGENT_TOOL } from "./tools/wait_for_agent.js";
-import { WRITE_TOOL } from "./tools/write.js";
+import {
+  TOOL_NAME_BASH,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_SEND_INPUT_TO_AGENT,
+  TOOL_NAME_SPAWN_AGENT,
+  TOOL_NAME_TERMINATE_AGENT,
+  TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_WAIT_FOR_AGENT,
+  TOOL_NAME_WRITE,
+} from "./tools/tool_names.js";
 import type { Persona } from "./types.js";
 
 const BLOCK_GENERAL_PURPOSE_PREAMBLE = `
@@ -187,43 +189,20 @@ const CODER_SYSTEM_PROMPT = [
 type PersonaSpec = {
   id: string;
   description: string;
-  model: Persona["model"];
+  provider: string;
+  modelId: string;
+  optional?: boolean;
   allowedReasoningLevels: NonNullable<Persona["allowedReasoningLevels"]>;
   settings: Persona["settings"];
   skills: string[] | "*";
 };
 
-function createOptionalPersonaSpec(args: {
-  id: string;
-  description: string;
-  provider: string;
-  modelId: string;
-  allowedReasoningLevels: NonNullable<Persona["allowedReasoningLevels"]>;
-  settings: Persona["settings"];
-  skills: string[] | "*";
-}): PersonaSpec[] {
-  const model = resolveModel(args.provider, args.modelId);
-  if (!model) {
-    return [];
-  }
-
-  return [
-    {
-      id: args.id,
-      description: args.description,
-      model,
-      allowedReasoningLevels: args.allowedReasoningLevels,
-      settings: args.settings,
-      skills: args.skills,
-    },
-  ];
-}
-
 const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "opus-4.7",
     description: "Claude Opus 4.7",
-    model: resolveModelOrThrow("anthropic", "claude-opus-4-7"),
+    provider: "anthropic",
+    modelId: "claude-opus-4-7",
     allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -231,7 +210,8 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "opus-4.6",
     description: "Claude Opus 4.6",
-    model: resolveModelOrThrow("anthropic", "claude-opus-4-6"),
+    provider: "anthropic",
+    modelId: "claude-opus-4-6",
     allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -239,7 +219,8 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "gpt-5.3-codex",
     description: "GPT-5.3-Codex",
-    model: resolveModelOrThrow("openai", "gpt-5.3-codex"),
+    provider: "openai",
+    modelId: "gpt-5.3-codex",
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -247,24 +228,27 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "gpt-5.4",
     description: "GPT-5.4",
-    model: resolveModelOrThrow("openai", "gpt-5.4"),
+    provider: "openai",
+    modelId: "gpt-5.4",
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
   },
-  ...createOptionalPersonaSpec({
+  {
     id: "gpt-5.5",
     description: "GPT-5.5",
     provider: "openai",
     modelId: "gpt-5.5",
+    optional: true,
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
-  }),
+  },
   {
     id: "gpt-5.3-codex-chatgpt",
     description: "GPT-5.3-Codex (ChatGPT)",
-    model: resolveModelOrThrow("openai-codex", "gpt-5.3-codex"),
+    provider: "openai-codex",
+    modelId: "gpt-5.3-codex",
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -272,24 +256,27 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "gpt-5.4-chatgpt",
     description: "GPT-5.4 (ChatGPT)",
-    model: resolveModelOrThrow("openai-codex", "gpt-5.4"),
+    provider: "openai-codex",
+    modelId: "gpt-5.4",
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
   },
-  ...createOptionalPersonaSpec({
+  {
     id: "gpt-5.5-chatgpt",
     description: "GPT-5.5 (ChatGPT)",
     provider: "openai-codex",
     modelId: "gpt-5.5",
+    optional: true,
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
-  }),
+  },
   {
     id: "gpt-5.3-codex-fast-chatgpt",
     description: "GPT-5.3-Codex Fast (ChatGPT)",
-    model: resolveModelOrThrow("openai-codex", "gpt-5.3-codex"),
+    provider: "openai-codex",
+    modelId: "gpt-5.3-codex",
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium", serviceTier: "priority" },
     skills: "*",
@@ -297,24 +284,27 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "gpt-5.4-chatgpt-fast",
     description: "GPT-5.4 Fast (ChatGPT)",
-    model: resolveModelOrThrow("openai-codex", "gpt-5.4"),
+    provider: "openai-codex",
+    modelId: "gpt-5.4",
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium", serviceTier: "priority" },
     skills: "*",
   },
-  ...createOptionalPersonaSpec({
+  {
     id: "gpt-5.5-chatgpt-fast",
     description: "GPT-5.5 Fast (ChatGPT)",
     provider: "openai-codex",
     modelId: "gpt-5.5",
+    optional: true,
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium", serviceTier: "priority" },
     skills: "*",
-  }),
+  },
   {
     id: "gemini-3.1-pro",
     description: "Gemini 3.1 Pro",
-    model: resolveModelOrThrow("google", "gemini-3.1-pro-preview"),
+    provider: "google",
+    modelId: "gemini-3.1-pro-preview",
     allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "low" },
     skills: "*",
@@ -322,12 +312,15 @@ const PERSONA_SPECS: PersonaSpec[] = [
   {
     id: "gemini-3-flash",
     description: "Gemini 3 Flash",
-    model: resolveModelOrThrow("google", "gemini-3-flash-preview"),
+    provider: "google",
+    modelId: "gemini-3-flash-preview",
     allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "medium" },
     skills: "*",
   },
 ];
+
+export const DEFAULT_BUILTIN_PERSONA_ID = "opus-4.7-chat";
 
 type Variant = "chat" | "coder";
 
@@ -337,19 +330,24 @@ const VARIANT_CONFIG: Record<Variant, { suffix: string; systemPrompt: string }> 
 };
 
 const BASE_TOOLS: NonNullable<Persona["tools"]> = [
-  BASH_TOOL,
-  WRITE_TOOL,
-  EDIT_TOOL,
-  VIEW_IMAGE_TOOL,
+  TOOL_NAME_BASH,
+  TOOL_NAME_WRITE,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_VIEW_IMAGE,
 ];
 const SUBAGENT_TOOLS: NonNullable<Persona["tools"]> = [
-  SPAWN_AGENT_TOOL,
-  SEND_INPUT_TO_AGENT_TOOL,
-  WAIT_FOR_AGENT_TOOL,
-  TERMINATE_AGENT_TOOL,
+  TOOL_NAME_SPAWN_AGENT,
+  TOOL_NAME_SEND_INPUT_TO_AGENT,
+  TOOL_NAME_WAIT_FOR_AGENT,
+  TOOL_NAME_TERMINATE_AGENT,
 ];
 
-function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
+function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelResolver): Persona {
+  const model = modelResolver(spec.provider, spec.modelId);
+  if (!model) {
+    throw new Error(`failed to resolve model '${spec.provider}:${spec.modelId}'`);
+  }
+
   const config = VARIANT_CONFIG[variant];
   const skills = spec.skills;
   const settings = structuredClone(spec.settings);
@@ -363,7 +361,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
     id: `${spec.id}${config.suffix}`,
     label: `${spec.id}-${variant}`,
     description: `${spec.description}-${variant}`,
-    model: spec.model,
+    model,
     systemPrompt: config.systemPrompt,
     allowedReasoningLevels: spec.allowedReasoningLevels,
     settings,
@@ -374,25 +372,36 @@ function buildPersona(spec: PersonaSpec, variant: Variant): Persona {
   };
 }
 
-export const personas: Persona[] = PERSONA_SPECS.flatMap((spec) => {
-  if (spec.id.includes("-codex-")) {
-    const coderPersona = buildPersona(spec, "coder");
-    return [
-      {
-        ...coderPersona,
-        id: spec.id,
-        label: spec.id,
-        description: spec.description,
-      },
-    ];
-  }
+export function createBuiltinPersonas(modelResolver: ModelResolver = resolveModel): Persona[] {
+  return PERSONA_SPECS.flatMap((spec) => {
+    if (!modelResolver(spec.provider, spec.modelId)) {
+      if (spec.optional) {
+        return [];
+      }
+      throw new Error(`failed to resolve model '${spec.provider}:${spec.modelId}'`);
+    }
 
-  if (spec.id.startsWith("gemini-")) {
-    return [buildPersona(spec, "chat")];
-  }
+    if (spec.id.includes("-codex-")) {
+      const coderPersona = buildPersona(spec, "coder", modelResolver);
+      return [
+        {
+          ...coderPersona,
+          id: spec.id,
+          label: spec.id,
+          description: spec.description,
+        },
+      ];
+    }
 
-  return [buildPersona(spec, "chat"), buildPersona(spec, "coder")];
-});
+    if (spec.id.startsWith("gemini-")) {
+      return [buildPersona(spec, "chat", modelResolver)];
+    }
+
+    return [buildPersona(spec, "chat", modelResolver), buildPersona(spec, "coder", modelResolver)];
+  });
+}
+
+export const personas: Persona[] = createBuiltinPersonas();
 
 export function getPersonaById(id: string): Persona | undefined {
   return personas.find((p) => p.id === id);

@@ -5,7 +5,6 @@ import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
 import { parseSkill } from "./skill_parser.js";
-import { buildVirtualBundle } from "./virtual_bundle.js";
 
 export type SkillsLoadResult = {
   skills: Skill[];
@@ -68,7 +67,7 @@ function loadSkillsFromDir(dir: string, deps: ConfigDeps): SkillsLoadResult {
 }
 
 export async function loadSkillsContent(
-  config: Config | undefined,
+  _config: Config | undefined,
   options: { deps: ConfigDeps; levels: ConfigLevel[] },
 ): Promise<SkillsLoadResult> {
   const deps = options.deps;
@@ -76,11 +75,6 @@ export async function loadSkillsContent(
 
   const skillsByName = new Map<string, Skill>();
   const errors: string[] = [];
-
-  const virtualBundle = buildVirtualBundle(config ?? {});
-  for (const skill of virtualBundle.skills) {
-    skillsByName.set(skill.name.toLowerCase(), skill);
-  }
 
   for (const level of levels) {
     for (const dir of [level.skillsDir, level.agentsSkillsDir]) {

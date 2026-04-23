@@ -1,6 +1,7 @@
-import type { Api, Model, SimpleStreamOptions, ThinkingLevel, Tool } from "@mariozechner/pi-ai";
+import type { Api, Model, SimpleStreamOptions, ThinkingLevel } from "@mariozechner/pi-ai";
 import { z } from "zod";
 import type { SubagentConfigMap } from "./subagents/types.js";
+import type { ToolName } from "./tools/tool_names.js";
 
 export const RiskLevelSchema = z.enum(["read-only", "read-write"]);
 export type RiskLevel = z.infer<typeof RiskLevelSchema>;
@@ -45,7 +46,7 @@ export interface Persona {
   settings: PersonaSettings;
   allowedReasoningLevels?: ReasoningEffort[];
   subagents?: SubagentConfigMap;
-  tools?: Tool[];
+  tools?: ToolName[];
   skills: string[] | "*";
   source: PersonaSource;
 }

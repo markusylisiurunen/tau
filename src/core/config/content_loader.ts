@@ -1,8 +1,6 @@
 import { basename, join } from "node:path";
-import type { Tool } from "@mariozechner/pi-ai";
 import { z } from "zod";
-import type { ModelResolver } from "../models/catalog.js";
-import { personas as builtinPersonas } from "../personas.js";
+import type { LoadedModelResolver, ModelResolver } from "../models/catalog.js";
 import type { PromptTemplate } from "../prompts.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import type {
@@ -11,11 +9,6 @@ import type {
   SubagentToolName,
 } from "../subagents/types.js";
 import { DEFAULT_SUBAGENT_NAME, SUBAGENT_TOOL_NAMES } from "../subagents/types.js";
-import { BASH_TOOL } from "../tools/bash.js";
-import { EDIT_TOOL } from "../tools/edit.js";
-import { SEND_INPUT_TO_AGENT_TOOL } from "../tools/send_input_to_agent.js";
-import { SPAWN_AGENT_TOOL } from "../tools/spawn_agent.js";
-import { TERMINATE_AGENT_TOOL } from "../tools/terminate_agent.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
@@ -25,10 +18,8 @@ import {
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WAIT_FOR_AGENT,
   TOOL_NAME_WRITE,
+  type ToolName,
 } from "../tools/tool_names.js";
-import { VIEW_IMAGE_TOOL } from "../tools/view_image.js";
-import { WAIT_FOR_AGENT_TOOL } from "../tools/wait_for_agent.js";
-import { WRITE_TOOL } from "../tools/write.js";
 import type { Persona, Skill } from "../types.js";
 import { ReasoningEffortSchema, RiskLevelSchema, ServiceTierSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
@@ -277,7 +268,7 @@ function parseSubagentConfig(
   return { config, defaultDisabled };
 }
 
-function parsePersonaTools(toolsRaw: unknown): { tools?: Tool[]; error?: string } {
+function parsePersonaTools(toolsRaw: unknown): { tools?: ToolName[]; error?: string } {
   if (toolsRaw === undefined) {
     return {};
   }
@@ -298,23 +289,22 @@ function parsePersonaTools(toolsRaw: unknown): { tools?: Tool[]; error?: string 
     return { tools: [] };
   }
 
-  const selected: Tool[] = [];
+  const selected: ToolName[] = [];
   const unknown: string[] = [];
   const seen = new Set<string>();
 
   for (const name of cleaned) {
     if (seen.has(name)) continue;
     seen.add(name);
-    const tool = PERSONA_TOOL_DEFINITIONS.get(name);
-    if (tool) {
-      selected.push(tool);
+    if (PERSONA_TOOL_NAME_SET.has(name as ToolName)) {
+      selected.push(name as ToolName);
     } else {
       unknown.push(name);
     }
   }
 
   if (unknown.length > 0) {
-    const allowed = Array.from(PERSONA_TOOL_DEFINITIONS.keys()).join(", ");
+    const allowed = PERSONA_TOOL_NAMES.join(", ");
     return { error: `unknown tool(s): ${unknown.join(", ")}. allowed: ${allowed}` };
   }
 
@@ -517,24 +507,30 @@ const promptFrontMatterSchema = z
   })
   .passthrough();
 
-const PERSONA_TOOL_DEFINITIONS = new Map([
-  [TOOL_NAME_BASH, BASH_TOOL],
-  [TOOL_NAME_WRITE, WRITE_TOOL],
-  [TOOL_NAME_EDIT, EDIT_TOOL],
-  [TOOL_NAME_VIEW_IMAGE, VIEW_IMAGE_TOOL],
-  [TOOL_NAME_SPAWN_AGENT, SPAWN_AGENT_TOOL],
-  [TOOL_NAME_SEND_INPUT_TO_AGENT, SEND_INPUT_TO_AGENT_TOOL],
-  [TOOL_NAME_WAIT_FOR_AGENT, WAIT_FOR_AGENT_TOOL],
-  [TOOL_NAME_TERMINATE_AGENT, TERMINATE_AGENT_TOOL],
-]);
+const PERSONA_TOOL_NAMES = [
+  TOOL_NAME_BASH,
+  TOOL_NAME_WRITE,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_SPAWN_AGENT,
+  TOOL_NAME_SEND_INPUT_TO_AGENT,
+  TOOL_NAME_WAIT_FOR_AGENT,
+  TOOL_NAME_TERMINATE_AGENT,
+] as const satisfies ReadonlyArray<ToolName>;
 
-const DEFAULT_PERSONA_TOOLS = [BASH_TOOL, WRITE_TOOL, EDIT_TOOL, VIEW_IMAGE_TOOL];
+const PERSONA_TOOL_NAME_SET = new Set<ToolName>(PERSONA_TOOL_NAMES);
+const DEFAULT_PERSONA_TOOLS = [
+  TOOL_NAME_BASH,
+  TOOL_NAME_WRITE,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_VIEW_IMAGE,
+] as const satisfies ReadonlyArray<ToolName>;
 const DEFAULT_SUBAGENT_TOOLS = [
-  SPAWN_AGENT_TOOL,
-  SEND_INPUT_TO_AGENT_TOOL,
-  WAIT_FOR_AGENT_TOOL,
-  TERMINATE_AGENT_TOOL,
-];
+  TOOL_NAME_SPAWN_AGENT,
+  TOOL_NAME_SEND_INPUT_TO_AGENT,
+  TOOL_NAME_WAIT_FOR_AGENT,
+  TOOL_NAME_TERMINATE_AGENT,
+] as const satisfies ReadonlyArray<ToolName>;
 
 function parsePersona(
   file: string,
@@ -668,9 +664,10 @@ function parsePersona(
 
   const defaultTools = finalSubagents
     ? [...DEFAULT_PERSONA_TOOLS, ...DEFAULT_SUBAGENT_TOOLS]
-    : DEFAULT_PERSONA_TOOLS;
+    : [...DEFAULT_PERSONA_TOOLS];
 
-  const inheritedTools = toolsRaw === undefined ? basePersona?.tools : undefined;
+  const inheritedTools =
+    toolsRaw === undefined && basePersona?.tools ? [...basePersona.tools] : undefined;
   const tools = toolsResult.tools ?? inheritedTools ?? defaultTools;
 
   const finalLabel = label || basePersona?.label || "custom";
@@ -777,7 +774,7 @@ function parseTheme(
 }
 
 export async function loadUserPersonas(args: {
-  basePersonasById?: Map<string, Persona>;
+  basePersonasById: Map<string, Persona>;
   modelResolver: ModelResolver;
   deps: ConfigDeps;
   levels: ConfigLevel[];
@@ -798,16 +795,13 @@ export async function loadUserPersonas(args: {
   const { entries, errors } = loadMarkdownEntries(personasDir, deps, listMarkdownFiles);
   const personas: Persona[] = [];
 
-  const basePersonasById =
-    args.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
-
   for (const file of entries) {
     const result = parsePersona(
       file.path,
       file.content,
       "user",
       args.modelResolver,
-      basePersonasById,
+      args.basePersonasById,
     );
     if (result.persona) {
       personas.push(result.persona);
@@ -820,7 +814,7 @@ export async function loadUserPersonas(args: {
 }
 
 export async function loadProjectPersonas(args: {
-  basePersonasById?: Map<string, Persona>;
+  basePersonasById: Map<string, Persona>;
   modelResolver: ModelResolver;
   deps: ConfigDeps;
   levels: ConfigLevel[];
@@ -841,9 +835,6 @@ export async function loadProjectPersonas(args: {
   const personas: Persona[] = [];
   const errors: string[] = [];
 
-  const basePersonasById =
-    args.basePersonasById ?? new Map(builtinPersonas.map((p) => [p.id.toLowerCase(), p] as const));
-
   // Parent-first order, closest directory wins on conflicts.
   for (const level of projectLevels) {
     const { entries, errors: entryErrors } = loadMarkdownEntries(
@@ -859,7 +850,7 @@ export async function loadProjectPersonas(args: {
         file.content,
         "project",
         args.modelResolver,
-        basePersonasById,
+        args.basePersonasById,
       );
       if (result.persona) {
         personas.push(result.persona);
@@ -1021,7 +1012,7 @@ export async function loadAllContent(
   options: {
     deps: ConfigDeps;
     levels: ConfigLevel[];
-    modelResolver: ModelResolver;
+    modelResolver: LoadedModelResolver;
   },
 ): Promise<{
   personas: Persona[];
@@ -1035,19 +1026,17 @@ export async function loadAllContent(
     levels: options.levels,
   });
 
-  const virtualBundle = buildVirtualBundle(config ?? {});
+  const virtualBundle = buildVirtualBundle(
+    config ?? {},
+    options.modelResolver.resolveConfiguredModel,
+  );
 
   try {
-    const modelResolverResult = {
-      resolveModel: options.modelResolver,
-      errors: [] as string[],
-    };
-
     const builtinPersonaErrors: string[] = [];
     const resolvedBuiltinPersonas: Persona[] = [];
 
-    for (const persona of builtinPersonas) {
-      const resolved = resolvePersonaModels(persona, modelResolverResult.resolveModel);
+    for (const persona of virtualBundle.builtinPersonas) {
+      const resolved = resolvePersonaModels(persona, options.modelResolver.resolveModel);
       if (resolved.persona) {
         resolvedBuiltinPersonas.push(resolved.persona);
       } else if (resolved.error) {
@@ -1055,18 +1044,8 @@ export async function loadAllContent(
       }
     }
 
-    const resolvedVirtualBundlePersonas: Persona[] =
-      virtualBundle.personas === builtinPersonas ? [...resolvedBuiltinPersonas] : [];
-    if (resolvedVirtualBundlePersonas.length === 0) {
-      for (const persona of virtualBundle.personas) {
-        const resolved = resolvePersonaModels(persona, modelResolverResult.resolveModel);
-        if (resolved.persona) {
-          resolvedVirtualBundlePersonas.push(resolved.persona);
-        } else if (resolved.error) {
-          builtinPersonaErrors.push(`builtin persona '${persona.id}': ${resolved.error}`);
-        }
-      }
-    }
+    const resolvedVirtualBundlePersonas =
+      virtualBundle.personas.length === 0 ? [] : resolvedBuiltinPersonas;
 
     const basePersonasById = new Map(
       resolvedBuiltinPersonas.map((persona) => [persona.id.toLowerCase(), persona] as const),
@@ -1074,13 +1053,13 @@ export async function loadAllContent(
 
     const userPersonasResult = await loadUserPersonas({
       basePersonasById,
-      modelResolver: modelResolverResult.resolveModel,
+      modelResolver: options.modelResolver.resolveModel,
       deps,
       levels,
     });
     const projectPersonasResult = await loadProjectPersonas({
       basePersonasById,
-      modelResolver: modelResolverResult.resolveModel,
+      modelResolver: options.modelResolver.resolveModel,
       deps,
       levels,
     });
@@ -1091,7 +1070,7 @@ export async function loadAllContent(
     const projectThemesResult = await loadProjectThemes({ deps, levels });
 
     const allErrors = [
-      ...modelResolverResult.errors,
+      ...options.modelResolver.errors,
       ...builtinPersonaErrors,
       ...userPersonasResult.errors,
       ...projectPersonasResult.errors,

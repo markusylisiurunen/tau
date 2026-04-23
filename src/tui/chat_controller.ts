@@ -71,6 +71,7 @@ import {
   formatPathForDisplay,
   formatTokenWindow,
 } from "../core/utils/format.js";
+import { generateGeminiSpeech } from "../core/utils/gemini_speech.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
 import { transcribeMistralAudio } from "../core/utils/mistral_transcription.js";
 import { streamModel } from "../core/utils/model_stream.js";
@@ -148,7 +149,7 @@ type ReloadReport = {
   messages: ReloadMessage[];
 };
 
-type SpeakRecording = {
+type ListenRecording = {
   audioPath: string;
   stopRequested: boolean;
   abortController: AbortController;
@@ -181,9 +182,11 @@ const RELOAD_PLANS: Record<ReloadScope, ReloadPlan> = {
 };
 
 const ALLOWED_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
+const LISTEN_TEMP_FILE_TEMPLATE = "/tmp/tau-listen.XXXXXX";
 const SPEAK_TEMP_FILE_TEMPLATE = "/tmp/tau-speak.XXXXXX";
-const SPEAK_RECORDING_MIN_BYTES = 1024;
-const SPEAK_RECORDING_MAX_DURATION_MS = 5 * 60 * 1000;
+const LISTEN_RECORDING_MIN_BYTES = 1024;
+const LISTEN_RECORDING_MAX_DURATION_MS = 5 * 60 * 1000;
+const SPEAK_PLAYBACK_RATE = 1.4;
 const CAFFEINATE_COMMAND = "/usr/bin/caffeinate";
 
 const SmartPruneResponseSchema = z.object({
@@ -226,6 +229,7 @@ export class ChatController {
   private showThinking = false;
   private compactToolUi = true;
   private commandHint?: string;
+  private speechStatusHint?: string;
   private riskLevel: RiskLevel = "read-only";
   private projectContextBlock?: string;
   private projectFiles: string[] = [];
@@ -244,9 +248,13 @@ export class ChatController {
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
   private lastEmptySubmitAt?: number;
-  private speakRecording?: SpeakRecording;
-  private isTranscribingSpeak = false;
-  private speakTransition?: Promise<void>;
+  private listenRecording?: ListenRecording;
+  private isTranscribingListen = false;
+  private listenTransition?: Promise<void>;
+  private speakTask?: {
+    abortController: AbortController;
+    completion: Promise<void>;
+  };
   private turnCaffeinate?: TurnCaffeinateSession;
   private disableCaffeinateForSession = false;
 
@@ -384,7 +392,8 @@ export class ChatController {
       pruneLargest: (extra) => this.pruneToolResults("largest", extra),
       pruneSmart: (extra) => this.pruneToolResultsSmart(extra),
       reload: () => this.reloadContent(),
-      speak: () => this.toggleSpeakCapture(),
+      listen: () => this.startListenCaptureFromCommand(),
+      speak: () => this.speakLastAssistantMessage(),
       risk: (level) => this.setRiskLevel(level),
       persona: (id) => this.switchPersona(id),
       prompt: (id) => this.insertPrompt(id),
@@ -451,7 +460,7 @@ export class ChatController {
       onCtrlR: () => this.cycleRiskLevel(),
       onCtrlP: () => this.cyclePersonality(),
       onCtrlS: () => void this.stashEditorToClipboard(),
-      onCtrlY: () => void this.toggleSpeakCapture(),
+      onCtrlY: () => void this.toggleListenCapture(),
       onEscape: () => this.onInterrupt(),
       onCtrlF: () => {
         this.expandFileMentions().catch((err) => {
@@ -478,11 +487,15 @@ export class ChatController {
 
   async dispose(): Promise<void> {
     this.eventUnsubscribe?.();
-    if (this.speakTransition) {
-      await this.speakTransition;
+    if (this.listenTransition) {
+      await this.listenTransition;
+    }
+    if (this.speakTask) {
+      this.speakTask.abortController.abort();
+      await this.speakTask.completion;
     }
     await this.cancelDiffReview();
-    await this.cancelSpeakCapture();
+    await this.cancelListenCapture();
     await this.stopTurnCaffeinate();
   }
 
@@ -493,8 +506,16 @@ export class ChatController {
   }
 
   public onInterrupt(): void {
-    if (this.speakRecording) {
-      void this.runSpeakTransition(() => this.stopSpeakCapture());
+    if (this.listenRecording) {
+      void this.runListenTransition(() => this.stopListenCapture());
+      return;
+    }
+
+    if (this.speakTask) {
+      if (!this.speakTask.abortController.signal.aborted) {
+        this.speakTask.abortController.abort();
+        this.view.addSystemMessage("interrupted", "error");
+      }
       return;
     }
 
@@ -698,7 +719,7 @@ export class ChatController {
   }
 
   private getInputMode(): ChatInputMode {
-    if (this.speakRecording) return "recording";
+    if (this.listenRecording) return "recording";
     if (this.isBashIncognito) return "bash_incognito";
     if (this.isBashMode) return "bash";
     if (this.isMemoryMode) return "memory";
@@ -706,7 +727,7 @@ export class ChatController {
   }
 
   private getActiveCommandHint(): string | undefined {
-    return this.diffReviewService.getCommandHint(this.commandHint);
+    return this.diffReviewService.getCommandHint(this.speechStatusHint ?? this.commandHint);
   }
 
   // Context & Cost Tracking -----------------------------------------------------------------------
@@ -1085,7 +1106,7 @@ export class ChatController {
   // Input Handling --------------------------------------------------------------------------------
 
   private beforeSubmit(text: string): boolean {
-    if (this.speakRecording) return false;
+    if (this.listenRecording) return false;
     if (!this.isStreaming) return true;
     const trimmed = text.trimStart();
     if (trimmed.startsWith("!")) {
@@ -1185,8 +1206,10 @@ export class ChatController {
         return "prune smart-selected tool results and compact edit calls, optional fraction and guidance";
       case "reload":
         return "reload prompts, skills, themes, bash commands, and AGENTS.md";
+      case "listen":
+        return "start microphone recording and transcribe to editor (macOS only)";
       case "speak":
-        return "toggle microphone recording and transcribe to editor (macOS only)";
+        return "speak the last assistant message aloud (macOS only)";
       case "risk":
         return "set risk level: /risk:read-only or /risk:read-write";
       case "bash":
@@ -1483,18 +1506,32 @@ export class ChatController {
     await this.runAssistantTurn();
   }
 
-  private async toggleSpeakCapture(): Promise<void> {
-    if (this.speakTransition) {
+  private async toggleListenCapture(): Promise<void> {
+    if (this.listenTransition) {
       this.view.addSystemMessage("speech recording state change already in progress", "warn");
       return;
     }
 
-    if (this.speakRecording) {
-      await this.runSpeakTransition(() => this.stopSpeakCapture());
+    if (this.listenRecording) {
+      await this.runListenTransition(() => this.stopListenCapture());
       return;
     }
 
-    if (this.isTranscribingSpeak) {
+    await this.startListenCaptureFromCommand();
+  }
+
+  private async startListenCaptureFromCommand(): Promise<void> {
+    if (this.listenTransition) {
+      this.view.addSystemMessage("speech recording state change already in progress", "warn");
+      return;
+    }
+
+    if (this.listenRecording) {
+      this.view.addSystemMessage("speech recording already in progress", "warn");
+      return;
+    }
+
+    if (this.isTranscribingListen) {
       this.view.addSystemMessage("speech transcription already in progress", "warn");
       return;
     }
@@ -1504,41 +1541,41 @@ export class ChatController {
       return;
     }
 
-    await this.runSpeakTransition(() => this.startSpeakCapture());
+    await this.runListenTransition(() => this.startListenCapture());
   }
 
-  private async runSpeakTransition(task: () => Promise<void>): Promise<void> {
-    if (this.speakTransition) {
+  private async runListenTransition(task: () => Promise<void>): Promise<void> {
+    if (this.listenTransition) {
       return;
     }
 
     const transition = task();
-    this.speakTransition = transition;
+    this.listenTransition = transition;
 
     try {
       await transition;
     } finally {
-      if (this.speakTransition === transition) {
-        this.speakTransition = undefined;
+      if (this.listenTransition === transition) {
+        this.listenTransition = undefined;
       }
     }
   }
 
-  private async startSpeakCapture(): Promise<void> {
+  private async startListenCapture(): Promise<void> {
     if (this.deps.env.platform() !== "darwin") {
-      this.view.addSystemMessage("/speak is currently supported only on macOS.", "warn");
+      this.view.addSystemMessage("/listen is currently supported only on macOS.", "warn");
       return;
     }
 
     const apiKey = getMistralApiKey(this.config, this.deps.env.env());
     if (!apiKey) {
-      this.view.addSystemMessage("set MISTRAL_API_KEY or apiKeys.mistral to use /speak", "error");
+      this.view.addSystemMessage("set MISTRAL_API_KEY or apiKeys.mistral to use /listen", "error");
       return;
     }
 
     let audioPath: string | undefined;
     try {
-      audioPath = await this.createSpeakTempFilePath();
+      audioPath = await this.createTempFilePath(LISTEN_TEMP_FILE_TEMPLATE);
       const abortController = new AbortController();
       const completion = this.deps.spawn(
         "ffmpeg",
@@ -1570,35 +1607,35 @@ export class ChatController {
         },
       );
 
-      const recording: SpeakRecording = {
+      const recording: ListenRecording = {
         audioPath,
         stopRequested: false,
         abortController,
         completion,
       };
       recording.maxDurationTimeout = setTimeout(() => {
-        if (this.speakRecording !== recording || this.speakTransition) return;
-        void this.runSpeakTransition(() => this.stopSpeakCapture());
-      }, SPEAK_RECORDING_MAX_DURATION_MS);
-      this.speakRecording = recording;
+        if (this.listenRecording !== recording || this.listenTransition) return;
+        void this.runListenTransition(() => this.stopListenCapture());
+      }, LISTEN_RECORDING_MAX_DURATION_MS);
+      this.listenRecording = recording;
       this.view.setEditorInputEnabled(false);
       this.refreshStatus();
-      void this.watchSpeakRecording(recording);
+      void this.watchListenRecording(recording);
     } catch (err) {
       if (audioPath) {
-        await this.cleanupSpeakTempFile(audioPath);
+        await this.cleanupTempFile(audioPath);
       }
       this.view.addSystemMessage(`failed to start recording: ${(err as Error).message}`, "error");
     }
   }
 
-  private async stopSpeakCapture(): Promise<void> {
-    const recording = this.speakRecording;
+  private async stopListenCapture(): Promise<void> {
+    const recording = this.listenRecording;
     if (!recording) return;
 
     recording.stopRequested = true;
-    this.clearSpeakRecordingMaxDurationTimeout(recording);
-    this.speakRecording = undefined;
+    this.clearListenRecordingMaxDurationTimeout(recording);
+    this.listenRecording = undefined;
     this.view.setEditorInputEnabled(true);
     this.refreshStatus();
 
@@ -1608,19 +1645,19 @@ export class ChatController {
       await recording.completion;
     } catch (err) {
       this.view.addSystemMessage(`recording failed: ${(err as Error).message}`, "error");
-      await this.cleanupSpeakTempFile(recording.audioPath);
+      await this.cleanupTempFile(recording.audioPath);
       return;
     }
 
-    this.isTranscribingSpeak = true;
+    this.isTranscribingListen = true;
     try {
       const audio = await readFile(recording.audioPath);
-      if (audio.byteLength < SPEAK_RECORDING_MIN_BYTES) {
+      if (audio.byteLength < LISTEN_RECORDING_MIN_BYTES) {
         this.view.addSystemMessage("recording too short, try again", "warn");
         return;
       }
 
-      const transcript = await this.transcribeSpeakAudio(audio);
+      const transcript = await this.transcribeListenAudio(audio);
       const text = transcript.trim();
       if (!text) {
         return;
@@ -1630,18 +1667,18 @@ export class ChatController {
     } catch (err) {
       this.view.addSystemMessage(`speech transcription failed: ${(err as Error).message}`, "error");
     } finally {
-      this.isTranscribingSpeak = false;
-      await this.cleanupSpeakTempFile(recording.audioPath);
+      this.isTranscribingListen = false;
+      await this.cleanupTempFile(recording.audioPath);
     }
   }
 
-  private async cancelSpeakCapture(): Promise<void> {
-    const recording = this.speakRecording;
+  private async cancelListenCapture(): Promise<void> {
+    const recording = this.listenRecording;
     if (!recording) return;
 
     recording.stopRequested = true;
-    this.clearSpeakRecordingMaxDurationTimeout(recording);
-    this.speakRecording = undefined;
+    this.clearListenRecordingMaxDurationTimeout(recording);
+    this.listenRecording = undefined;
     this.view.setEditorInputEnabled(true);
     this.refreshStatus();
 
@@ -1651,16 +1688,16 @@ export class ChatController {
     } catch {
       // ignore disposal errors
     }
-    await this.cleanupSpeakTempFile(recording.audioPath);
+    await this.cleanupTempFile(recording.audioPath);
   }
 
-  private async watchSpeakRecording(recording: SpeakRecording): Promise<void> {
+  private async watchListenRecording(recording: ListenRecording): Promise<void> {
     try {
       const result = await recording.completion;
-      this.clearSpeakRecordingMaxDurationTimeout(recording);
-      if (this.speakRecording !== recording || recording.stopRequested) return;
+      this.clearListenRecordingMaxDurationTimeout(recording);
+      if (this.listenRecording !== recording || recording.stopRequested) return;
 
-      this.speakRecording = undefined;
+      this.listenRecording = undefined;
       this.view.setEditorInputEnabled(true);
       this.refreshStatus();
       const detail =
@@ -1670,12 +1707,12 @@ export class ChatController {
             ? `ffmpeg terminated by signal ${result.closeSignal}`
             : "ffmpeg exited";
       this.view.addSystemMessage(`recording stopped unexpectedly (${detail})`, "error");
-      await this.cleanupSpeakTempFile(recording.audioPath);
+      await this.cleanupTempFile(recording.audioPath);
     } catch (err) {
-      this.clearSpeakRecordingMaxDurationTimeout(recording);
-      if (this.speakRecording !== recording || recording.stopRequested) return;
+      this.clearListenRecordingMaxDurationTimeout(recording);
+      if (this.listenRecording !== recording || recording.stopRequested) return;
 
-      this.speakRecording = undefined;
+      this.listenRecording = undefined;
       this.view.setEditorInputEnabled(true);
       this.refreshStatus();
       const error = err as NodeJS.ErrnoException;
@@ -1687,18 +1724,18 @@ export class ChatController {
       } else {
         this.view.addSystemMessage(`recording failed: ${error.message}`, "error");
       }
-      await this.cleanupSpeakTempFile(recording.audioPath);
+      await this.cleanupTempFile(recording.audioPath);
     }
   }
 
-  private clearSpeakRecordingMaxDurationTimeout(recording: SpeakRecording): void {
+  private clearListenRecordingMaxDurationTimeout(recording: ListenRecording): void {
     if (!recording.maxDurationTimeout) return;
     clearTimeout(recording.maxDurationTimeout);
     recording.maxDurationTimeout = undefined;
   }
 
-  private async createSpeakTempFilePath(): Promise<string> {
-    const result = await this.deps.spawn("mktemp", [SPEAK_TEMP_FILE_TEMPLATE]);
+  private async createTempFilePath(template: string): Promise<string> {
+    const result = await this.deps.spawn("mktemp", [template]);
     if (result.exitCode !== 0) {
       const message = result.stderr.trim() || result.stdout.trim() || "mktemp failed";
       throw new Error(message);
@@ -1711,7 +1748,7 @@ export class ChatController {
     return path;
   }
 
-  private async transcribeSpeakAudio(audio: Buffer): Promise<string> {
+  private async transcribeListenAudio(audio: Buffer): Promise<string> {
     const apiKey = getMistralApiKey(this.config, this.deps.env.env());
     if (!apiKey) {
       throw new Error("missing MISTRAL_API_KEY or apiKeys.mistral");
@@ -1726,12 +1763,157 @@ export class ChatController {
     });
   }
 
-  private async cleanupSpeakTempFile(path: string): Promise<void> {
+  private async cleanupTempFile(path: string): Promise<void> {
     try {
       await unlink(path);
     } catch {
       // best-effort cleanup
     }
+  }
+
+  private async speakLastAssistantMessage(): Promise<void> {
+    if (this.speakTask) {
+      this.view.addSystemMessage("speech playback already in progress", "warn");
+      return;
+    }
+
+    if (this.isStreaming) {
+      this.view.addSystemMessage("wait for the assistant to finish before speaking", "warn");
+      return;
+    }
+
+    if (this.deps.env.platform() !== "darwin") {
+      this.view.addSystemMessage("/speak is currently supported only on macOS.", "warn");
+      return;
+    }
+
+    const lastAssistant = this.getLastAssistantMessage();
+    if (!lastAssistant) {
+      this.view.addSystemMessage("no assistant message to speak yet.", "warn");
+      return;
+    }
+
+    const sourceText = extractAssistantText(lastAssistant).trim();
+    if (!sourceText) {
+      this.view.addSystemMessage("last assistant message was empty.", "warn");
+      return;
+    }
+
+    const apiKey = await this.credentialResolver.getApiKey("google");
+    if (!apiKey) {
+      this.view.addSystemMessage("set GEMINI_API_KEY or apiKeys.google to use /speak", "error");
+      return;
+    }
+
+    this.isStreaming = true;
+    this.speechStatusHint = "rewriting for speech...";
+    this.refreshStatus();
+    this.view.startWorkingIcon();
+
+    const abortController = new AbortController();
+    const completion = this.runSpeakTask({
+      apiKey,
+      sourceText,
+      signal: abortController.signal,
+    });
+    const task = { abortController, completion };
+    this.speakTask = task;
+
+    try {
+      await completion;
+    } catch (err) {
+      if (abortController.signal.aborted) {
+        return;
+      }
+      this.view.addSystemMessage(`speech synthesis failed: ${(err as Error).message}`, "error");
+    } finally {
+      const wasAborted = abortController.signal.aborted;
+      if (this.speakTask === task) {
+        this.speakTask = undefined;
+      }
+      this.speechStatusHint = undefined;
+      this.view.stopWorkingIcon();
+      this.isStreaming = false;
+      this.refreshStatus();
+      this.view.requestRender();
+      if (wasAborted) {
+        this.dequeueQueuedUserMessagesIntoEditor();
+      } else {
+        void this.drainQueuedUserMessages();
+      }
+    }
+  }
+
+  private async runSpeakTask(args: {
+    apiKey: string;
+    sourceText: string;
+    signal: AbortSignal;
+  }): Promise<void> {
+    let audioPath: string | undefined;
+    try {
+      const result = await generateGeminiSpeech({
+        apiKey: args.apiKey,
+        sourceText: args.sourceText,
+        signal: args.signal,
+        onStageChange: () => {},
+        onChunkProgress: ({ ready, total }) => {
+          this.speechStatusHint = this.formatSpeechChunkProgressMessage(ready, total);
+          this.refreshStatus();
+        },
+      });
+      if (args.signal.aborted) {
+        return;
+      }
+
+      audioPath = await this.createTempFilePath(SPEAK_TEMP_FILE_TEMPLATE);
+      await writeFile(audioPath, result.audio);
+
+      this.speechStatusHint = "playing speech...";
+      this.refreshStatus();
+
+      const playback = await this.deps.spawn(
+        "afplay",
+        ["-r", String(SPEAK_PLAYBACK_RATE), audioPath],
+        {
+          detached: true,
+          killProcessGroup: true,
+          signal: args.signal,
+          stdio: ["ignore", "ignore", "ignore"],
+        },
+      );
+      if (args.signal.aborted || playback.aborted) {
+        return;
+      }
+      if (playback.exitCode !== 0) {
+        const detail =
+          playback.exitCode !== null
+            ? `afplay exited with code ${playback.exitCode}`
+            : playback.closeSignal
+              ? `afplay terminated by signal ${playback.closeSignal}`
+              : "afplay exited";
+        throw new Error(detail);
+      }
+    } catch (err) {
+      if (args.signal.aborted) {
+        return;
+      }
+      const error = err as NodeJS.ErrnoException;
+      if (error.name === "AbortError") {
+        return;
+      }
+      if (error.code === "ENOENT") {
+        throw new Error("afplay not found.");
+      }
+      throw err;
+    } finally {
+      if (audioPath) {
+        await this.cleanupTempFile(audioPath);
+      }
+    }
+  }
+
+  private formatSpeechChunkProgressMessage(ready: number, total: number): string {
+    return `generating speech chunks (${ready} out of ${total} ready)...`;
   }
 
   private getMemoryModeFilePath(): string {
@@ -1948,9 +2130,10 @@ export class ChatController {
   private isDiffReviewIdle(): boolean {
     return (
       !this.isStreaming &&
-      !this.speakRecording &&
-      !this.speakTransition &&
-      !this.isTranscribingSpeak &&
+      !this.listenRecording &&
+      !this.listenTransition &&
+      !this.isTranscribingListen &&
+      !this.speakTask &&
       !this.diffReviewService.isActive()
     );
   }

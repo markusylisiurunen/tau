@@ -5,8 +5,8 @@ export type { ConfigDeps } from "./deps.js";
 export { createDefaultConfigDeps } from "./deps.js";
 export type { DiffToolConfig } from "./diff_tool.js";
 export { resolveConfigLevels } from "./paths.js";
-export type { RuntimeConfigResult } from "./runtime.js";
-export { loadRuntimeConfig } from "./runtime.js";
+export type { RuntimeBootstrap, RuntimeConfigResult } from "./runtime.js";
+export { loadRuntimeBootstrap, loadRuntimeConfig } from "./runtime.js";
 export type {
   AsyncClientConfig,
   AsyncClientTargetConfig,

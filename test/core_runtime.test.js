@@ -125,6 +125,15 @@ describe("tool enablement by risk level", () => {
     expect(allTools).not.toContain(TOOL_NAME_LIST);
     expect(enabled).toEqual(allTools);
   });
+
+  it("fails fast when a persona references an unregistered tool", () => {
+    const backend = createLocalToolExecutionBackend();
+    const registry = ToolCatalog.createRegistry(backend);
+
+    expect(() => registry.getEnabledToolSchemas([TOOL_NAME_READ])).toThrow(
+      "tool 'read' is not registered",
+    );
+  });
 });
 
 describe("core session rewind APIs", () => {

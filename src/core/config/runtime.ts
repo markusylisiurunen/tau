@@ -1,4 +1,4 @@
-import { loadModelResolver } from "../models/catalog.js";
+import { type LoadedModelResolver, loadModelResolver } from "../models/catalog.js";
 import { parsePersonaReference } from "../persona_reference.js";
 import type { PromptTemplate } from "../prompts.js";
 import type { Persona, Skill } from "../types.js";
@@ -7,11 +7,22 @@ import type { ThemeDefinition } from "./content_loader.js";
 import { loadAllContent } from "./content_loader.js";
 import type { ConfigDeps } from "./deps.js";
 import type { DiffToolConfig } from "./diff_tool.js";
+import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
 import { loadConfigWithDiagnostics } from "./schema.js";
+import { buildVirtualBundle, type VirtualBundle } from "./virtual_bundle.js";
+
+export interface RuntimeBootstrap {
+  config: Config;
+  levels: ConfigLevel[];
+  modelResolver: LoadedModelResolver;
+  virtualBundle: VirtualBundle;
+  warnings: string[];
+}
 
 export interface RuntimeConfigResult {
+  bootstrap: RuntimeBootstrap;
   config: Config;
   personas: Persona[];
   prompts: PromptTemplate[];
@@ -22,50 +33,66 @@ export interface RuntimeConfigResult {
   warnings: string[];
 }
 
+export function loadRuntimeBootstrap(cwd: string, deps: ConfigDeps): RuntimeBootstrap {
+  const levels = resolveConfigLevels(deps, { cwd });
+  const modelResolver = loadModelResolver({ deps, levels });
+  const configResult = loadConfigWithDiagnostics(deps, {
+    levels,
+    modelResolver,
+  });
+  const config = configResult.config;
+  const virtualBundle = buildVirtualBundle(config, modelResolver.resolveConfiguredModel);
+
+  return {
+    config,
+    levels,
+    modelResolver,
+    virtualBundle,
+    warnings: configResult.errors,
+  };
+}
+
 export async function loadRuntimeConfig(
   cwd: string,
   deps: ConfigDeps,
 ): Promise<RuntimeConfigResult> {
-  const levels = resolveConfigLevels(deps, { cwd });
-  const modelResolverResult = loadModelResolver({ deps, levels });
-  const configResult = loadConfigWithDiagnostics(deps, {
-    levels,
-    modelResolver: modelResolverResult,
-  });
-  const config = configResult.config;
-  const content = await loadAllContent(config, {
+  const bootstrap = loadRuntimeBootstrap(cwd, deps);
+  const content = await loadAllContent(bootstrap.config, {
     deps,
-    levels,
-    modelResolver: modelResolverResult,
+    levels: bootstrap.levels,
+    modelResolver: bootstrap.modelResolver,
   });
-  const warnings = [...configResult.errors, ...content.errors];
-  if (config.defaultPersona) {
-    const parsedDefaultPersona = parsePersonaReference(config.defaultPersona);
+  const warnings = [...bootstrap.warnings, ...content.errors];
+  if (bootstrap.config.defaultPersona) {
+    const parsedDefaultPersona = parsePersonaReference(bootstrap.config.defaultPersona);
     const personaId = parsedDefaultPersona.personaId;
     const matched = personaId
       ? content.personas.some((persona) => persona.id === personaId)
       : false;
     if (!matched) {
-      warnings.push(`defaultPersona '${config.defaultPersona}' not found in loaded personas.`);
+      warnings.push(
+        `defaultPersona '${bootstrap.config.defaultPersona}' not found in loaded personas.`,
+      );
     }
   }
-  if (config.defaultTheme) {
-    const matched = content.themes.some((theme) => theme.id === config.defaultTheme);
+  if (bootstrap.config.defaultTheme) {
+    const matched = content.themes.some((theme) => theme.id === bootstrap.config.defaultTheme);
     if (!matched) {
       warnings.push(
-        `defaultTheme '${config.defaultTheme}' not found in built-in themes, .tau/themes, or ~/.config/tau/themes.`,
+        `defaultTheme '${bootstrap.config.defaultTheme}' not found in built-in themes, .tau/themes, or ~/.config/tau/themes.`,
       );
     }
   }
 
   return {
-    config,
+    bootstrap,
+    config: bootstrap.config,
     personas: content.personas,
     prompts: content.prompts,
     skills: content.skills,
     themes: content.themes,
-    bashCommands: config.bashCommands ?? [],
-    diffTool: config.diffTool,
+    bashCommands: bootstrap.config.bashCommands ?? [],
+    diffTool: bootstrap.config.diffTool,
     warnings,
   };
 }

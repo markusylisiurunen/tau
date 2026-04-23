@@ -294,10 +294,12 @@ function buildReviewContextBlock(snapshot: DiffReviewSnapshot): string {
     `Cwd: ${snapshot.cwd}`,
     `Initial review scope: ${snapshot.toDiffCommand()}`,
     "",
-    "Initial changed files:",
+    "Files in review scope:",
     changedFiles,
     "",
-    "This review context is the starting point captured when /diff opened.",
+    "This review context is the exact change selection captured when /diff opened. It may be narrower than the full set of current repo changes.",
+    "Treat this scoped patch as the default review target.",
+    "If answering well requires code outside this scope, inspect it as needed, but use it as supporting context unless the user broadens the review target.",
     "The current repo state is authoritative. Use read-only tools to inspect relevant repo context when needed.",
   ].join("\n");
 }

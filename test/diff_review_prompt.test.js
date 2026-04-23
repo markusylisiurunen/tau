@@ -23,7 +23,10 @@ describe("diff_review prompt", () => {
       "<inherited-instructions>\nBe careful and precise.\n</inherited-instructions>",
     );
     expect(prompt).toContain(
-      "Treat the review context below as the starting point for the review, not as a hard boundary.",
+      "Treat the review context below as the user-selected review scope. It may be only part of the current repo changes.",
+    );
+    expect(prompt).toContain(
+      "Keep the review centered on that scope by default. That scoped patch is the default review target, even when it is narrower than the repo's overall changes.",
     );
     expect(prompt).toContain(
       "The review context reflects the initial diff Tau captured when `/diff` opened.",
@@ -34,6 +37,14 @@ describe("diff_review prompt", () => {
     expect(prompt).toContain("### Review context");
     expect(prompt).toContain("Repo root: /repo");
     expect(prompt).toContain("Initial review scope: git diff --staged");
+    expect(prompt).toContain("Files in review scope:");
+    expect(prompt).toContain(
+      "This review context is the exact change selection captured when /diff opened. It may be narrower than the full set of current repo changes.",
+    );
+    expect(prompt).toContain("Treat this scoped patch as the default review target.");
+    expect(prompt).toContain(
+      "If answering well requires code outside this scope, inspect it as needed, but use it as supporting context unless the user broadens the review target.",
+    );
     expect(prompt).toContain("- src/old.ts -> src/new.ts (renamed)");
   });
 });

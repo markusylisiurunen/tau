@@ -1067,7 +1067,9 @@ describe("ChatController listen capture", () => {
 describe("ChatController speak playback", () => {
   it("shows a warning when there is no assistant message to speak", async () => {
     const stub = createStubView();
-    const controller = createController(stub.view);
+    const controller = createController(stub.view, {
+      deps: createMockDeps(vi.fn(), "darwin"),
+    });
 
     await controller.speakLastAssistantMessage();
 
@@ -1080,7 +1082,10 @@ describe("ChatController speak playback", () => {
   it("drains queued user input after speech playback finishes", async () => {
     const stub = createStubView();
     const queuedUserMessages = [];
-    const controller = createController(stub.view, { queuedUserMessages });
+    const controller = createController(stub.view, {
+      queuedUserMessages,
+      deps: createMockDeps(vi.fn(), "darwin"),
+    });
 
     controller.engine.addMessage({
       role: "assistant",

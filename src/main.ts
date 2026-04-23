@@ -15,13 +15,13 @@ import type {
   PromptTemplate,
   ReasoningEffort,
   RiskLevel,
+  RuntimeBootstrap,
   Skill,
   ThemeDefinition,
 } from "./core/index.js";
 import {
   AsyncCliError,
   AuthStorage,
-  buildVirtualBundle,
   ChatRuntime,
   CliError,
   createDefaultConfigDeps,
@@ -30,6 +30,7 @@ import {
   getAuthPath,
   InstallCliError,
   loadConfig,
+  loadRuntimeBootstrap,
   loadRuntimeConfig,
   parseCheckpoint,
   parseCliArgs,
@@ -40,7 +41,6 @@ import {
   printHelp,
   printInstallHelp,
   printUsageHelp,
-  resolveConfigLevels,
   resolveRuntimePromptBootstrap,
   runAsyncCommand,
   runInstallCommand,
@@ -54,7 +54,6 @@ import {
   ToolCliError,
   UsageCliError,
 } from "./core/index.js";
-import { loadModelResolver } from "./core/models/catalog.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
 import {
   createBuiltInDiffToolConfig,
@@ -216,6 +215,7 @@ let personas: Persona[];
 let prompts: PromptTemplate[];
 let skills: Skill[];
 let themes: ThemeDefinition[] = [];
+let runtimeBootstrap: RuntimeBootstrap | undefined;
 
 if (argv[0] === "auth") {
   if (argv.includes("--help") || argv.includes("-h")) {
@@ -391,6 +391,7 @@ if (isDiffToolSubcommand) {
 
 try {
   const runtime = await loadRuntimeConfig(cwd, configDeps);
+  runtimeBootstrap = runtime.bootstrap;
   config = runtime.config;
   personas = runtime.personas;
   prompts = runtime.prompts;
@@ -412,12 +413,11 @@ try {
   // eslint-disable-next-line no-console
   console.error(`failed to load user content: ${(err as Error).message}`);
 
-  config = loadConfig(cwd, configDeps);
+  runtimeBootstrap = loadRuntimeBootstrap(cwd, configDeps);
+  config = runtimeBootstrap.config;
   bashCommands = config.bashCommands ?? [];
 
-  const levels = resolveConfigLevels(configDeps, { cwd });
-  const modelResolverResult = loadModelResolver({ deps: configDeps, levels });
-  const virtualBundle = buildVirtualBundle(config, modelResolverResult.resolveConfiguredModel);
+  const { virtualBundle } = runtimeBootstrap;
   const hasBuiltins =
     virtualBundle.personas.length > 0 ||
     virtualBundle.prompts.length > 0 ||
@@ -533,9 +533,7 @@ if (cli.debug) {
   }
 
   const debugRiskLevel = initialRiskLevel;
-  const debugLevels = resolveConfigLevels(configDeps, { cwd });
-  const debugModelResolverResult = loadModelResolver({ deps: configDeps, levels: debugLevels });
-  const virtualBundle = buildVirtualBundle(config, debugModelResolverResult.resolveConfiguredModel);
+  const virtualBundle = runtimeBootstrap?.virtualBundle;
   const debugToolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
   printDebugInfo({
     personas,

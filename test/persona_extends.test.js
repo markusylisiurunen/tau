@@ -163,24 +163,30 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-chat")).toBeTruthy();
       expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-coder")).toBeTruthy();
       expect(personas.find((persona) => persona.id === "gpt-5.4-fast-chatgpt")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gpt-5.5-coder")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-coder")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chat")?.model.id).toBe("gpt-5.5");
+      expect(personas.find((persona) => persona.id === "gpt-5.5-coder")?.model.id).toBe("gpt-5.5");
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-chat")?.model.id).toBe(
+        "gpt-5.5",
+      );
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-coder")?.model.id).toBe(
+        "gpt-5.5",
+      );
       expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt")).toBeUndefined();
       expect(
-        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-chat"),
-      ).toBeUndefined();
+        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-chat")?.settings
+          .serviceTier,
+      ).toBe("priority");
       expect(
-        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-coder"),
-      ).toBeUndefined();
+        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-coder")?.settings
+          .serviceTier,
+      ).toBe("priority");
       expect(personas.find((persona) => persona.id === "gpt-5.5-fast-chatgpt")).toBeUndefined();
     } finally {
       fx.cleanup();
     }
   });
 
-  it("loads optional built-in personas from configured models.json entries", async () => {
+  it("applies configured models.json entries to built-in personas", async () => {
     const fx = setupFixture();
 
     try {
@@ -217,14 +223,18 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chat")?.model.id).toBe("gpt-5.5");
-      expect(personas.find((persona) => persona.id === "gpt-5.5-coder")?.model.id).toBe("gpt-5.5");
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-chat")?.model.id).toBe(
-        "gpt-5.5",
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chat")?.model.contextWindow).toBe(
+        400000,
       );
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-coder")?.model.id).toBe(
-        "gpt-5.5",
+      expect(personas.find((persona) => persona.id === "gpt-5.5-coder")?.model.contextWindow).toBe(
+        400000,
       );
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-chat")?.model.contextWindow,
+      ).toBe(400000);
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-coder")?.model.contextWindow,
+      ).toBe(400000);
       expect(
         personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-chat")?.settings
           .serviceTier,

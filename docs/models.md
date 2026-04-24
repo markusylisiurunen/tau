@@ -67,14 +67,14 @@ Notes:
 
 ## behavior for unbundled model ids
 
-Custom personas, custom subagents, subagent launch allowlists, and optional built-in personas can reference model ids that are not bundled yet, as long as the provider is known.
+Custom personas, custom subagents, and subagent launch allowlists can reference model ids that are not bundled yet, as long as the provider is known.
 
 When Tau sees an unbundled model id:
 
 - If it exists in merged `models.json` config, Tau uses that merged definition.
 - Otherwise Tau synthesizes a model definition from provider defaults and requested id.
 
-This lets you use newly released model ids immediately without waiting for a catalog update. For built-in optional personas such as GPT-5.5, adding the model to merged `models.json` also makes the matching built-in personas available.
+This lets you use newly released model ids immediately without waiting for a catalog update. Built-in personas use the merged model catalog, so `models.json` can override bundled model definitions.
 
 ## example
 

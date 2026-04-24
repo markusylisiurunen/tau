@@ -191,7 +191,6 @@ type PersonaSpec = {
   description: string;
   provider: string;
   modelId: string;
-  optional?: boolean;
   allowedReasoningLevels: NonNullable<Persona["allowedReasoningLevels"]>;
   settings: Persona["settings"];
   skills: string[] | "*";
@@ -239,7 +238,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     description: "GPT-5.5",
     provider: "openai",
     modelId: "gpt-5.5",
-    optional: true,
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -267,7 +265,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     description: "GPT-5.5 (ChatGPT)",
     provider: "openai-codex",
     modelId: "gpt-5.5",
-    optional: true,
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -295,7 +292,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     description: "GPT-5.5 Fast (ChatGPT)",
     provider: "openai-codex",
     modelId: "gpt-5.5",
-    optional: true,
     allowedReasoningLevels: ["medium", "high", "xhigh"],
     settings: { reasoning: "medium", serviceTier: "priority" },
     skills: "*",
@@ -374,13 +370,6 @@ function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelR
 
 export function createBuiltinPersonas(modelResolver: ModelResolver = resolveModel): Persona[] {
   return PERSONA_SPECS.flatMap((spec) => {
-    if (!modelResolver(spec.provider, spec.modelId)) {
-      if (spec.optional) {
-        return [];
-      }
-      throw new Error(`failed to resolve model '${spec.provider}:${spec.modelId}'`);
-    }
-
     if (spec.id.includes("-codex-")) {
       const coderPersona = buildPersona(spec, "coder", modelResolver);
       return [

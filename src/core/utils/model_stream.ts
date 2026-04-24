@@ -106,7 +106,7 @@ export function resolveOpenAIResponsesOptions(
   return {
     ...baseOptions,
     ...(isOpenAICodexModel(model) && options.transport === undefined
-      ? { transport: "websocket" as const }
+      ? { transport: "auto" as const }
       : {}),
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     ...(options.serviceTier !== undefined ? { serviceTier: options.serviceTier } : {}),

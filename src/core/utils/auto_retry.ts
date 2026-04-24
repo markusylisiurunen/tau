@@ -7,7 +7,7 @@ export type AutoRetryContext = {
 };
 
 const RETRYABLE_ERROR_REGEX =
-  /overloaded|high.?demand|peak.?load|maximum.?usage.?size|provisioned.?throughput|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server error|internal error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|terminated/i;
+  /overloaded|high.?demand|peak.?load|maximum.?usage.?size|provisioned.?throughput|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server error|internal error|connection.?error|connection.?refused|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|terminated/i;
 
 function asAssistantMessage(error: unknown): AssistantMessage | undefined {
   if (!error || typeof error !== "object") {

@@ -105,8 +105,9 @@ export function resolveOpenAIResponsesOptions(
 
   return {
     ...baseOptions,
-    // TODO: Enable websocket transport by default once pi-ai fixes the WebSocket transport bug.
-    // ...(options.transport === undefined ? { transport: "websocket" as const } : {}),
+    ...(isOpenAICodexModel(model) && options.transport === undefined
+      ? { transport: "websocket" as const }
+      : {}),
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     ...(options.serviceTier !== undefined ? { serviceTier: options.serviceTier } : {}),
   } satisfies OpenAIResponsesStreamOptions;

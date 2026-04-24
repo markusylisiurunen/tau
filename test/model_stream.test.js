@@ -54,9 +54,27 @@ describe("model stream option resolution", () => {
         },
       ),
     ).toEqual({
+      transport: "websocket",
       reasoningEffort: "none",
       serviceTier: "flex",
       maxTokens: 456,
+    });
+  });
+
+  test("preserves explicit openai codex transport", () => {
+    expect(
+      resolveOpenAIResponsesOptions(
+        {
+          api: "openai-codex-responses",
+          provider: "openai-codex",
+          id: "gpt-5.4",
+        },
+        {
+          transport: "sse",
+        },
+      ),
+    ).toEqual({
+      transport: "sse",
     });
   });
 
@@ -74,6 +92,7 @@ describe("model stream option resolution", () => {
         },
       ),
     ).toEqual({
+      transport: "websocket",
       reasoningEffort: "high",
       serviceTier: "priority",
     });

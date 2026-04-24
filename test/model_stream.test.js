@@ -54,7 +54,7 @@ describe("model stream option resolution", () => {
         },
       ),
     ).toEqual({
-      transport: "websocket",
+      transport: "auto",
       reasoningEffort: "none",
       serviceTier: "flex",
       maxTokens: 456,
@@ -92,7 +92,7 @@ describe("model stream option resolution", () => {
         },
       ),
     ).toEqual({
-      transport: "websocket",
+      transport: "auto",
       reasoningEffort: "high",
       serviceTier: "priority",
     });

@@ -150,8 +150,8 @@ function normalizeInlineTextPreservePadding(text: string): string {
   return text.replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ");
 }
 
-function wrapTextByWidth(text: string, maxCols: number): string[] {
-  if (maxCols <= 0) return [""];
+function wrapTextByWidths(text: string, firstMaxCols: number, nextMaxCols: number): string[] {
+  if (firstMaxCols <= 0) return [""];
   if (text.length === 0) return [""];
 
   const graphemes = iterateGraphemes(text);
@@ -160,13 +160,15 @@ function wrapTextByWidth(text: string, maxCols: number): string[] {
   let lineCols = 0;
 
   for (const g of graphemes) {
+    const maxCols = lines.length === 0 ? firstMaxCols : nextMaxCols;
     const gCols = visibleWidth(g);
     if (lineCols + gCols > maxCols && line.length > 0) {
       lines.push(line);
       line = "";
       lineCols = 0;
     }
-    if (gCols > maxCols && line.length === 0) {
+    const nextMaxColsForLine = lines.length === 0 ? firstMaxCols : nextMaxCols;
+    if (gCols > nextMaxColsForLine && line.length === 0) {
       lines.push(g);
       continue;
     }
@@ -277,7 +279,7 @@ export class WrappedSegmentsComponent implements Component {
     }
 
     const availableWidth = Math.max(1, minWidth - prefixWidth);
-    const wrapped = wrapTextByWidth(wrapText, availableWidth);
+    const wrapped = wrapTextByWidths(wrapText, availableWidth, minWidth);
     const prefixRendered = prefixTexts
       .map((t, i) => {
         const style = this.segments[i]?.style ?? ((s: string) => s);

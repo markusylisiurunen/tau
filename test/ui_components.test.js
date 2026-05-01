@@ -9,6 +9,7 @@ import {
   OneLineSegmentsComponent,
   truncateFromEndByWidth,
   truncateFromEndByWidthPreserveAnsi,
+  WrappedSegmentsComponent,
 } from "../dist/tui/ui/components/one_line_segments.js";
 import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
 import { FooterComponent } from "../dist/tui/ui/footer.js";
@@ -317,6 +318,23 @@ test("OneLineSegmentsComponent truncates flex segments", () => {
   );
   const line = renderLines(component, 8)[0];
   expect(line).toBe("hellowo…");
+});
+
+test("WrappedSegmentsComponent uses full width for continuation lines", () => {
+  const component = new WrappedSegmentsComponent(
+    [
+      { text: " ", style: (s) => s },
+      { text: "✓", style: (s) => s },
+      { text: " ", style: (s) => s },
+      { text: "ran", style: (s) => s },
+      { text: " ", style: (s) => s },
+      { text: "abcdefghijklmnopqrstuvwxyz0123456789", style: (s) => s },
+    ],
+    5,
+  );
+
+  const lines = renderLines(component, 20);
+  expect(lines).toEqual([" ✓ ran abcdefghijklm", "nopqrstuvwxyz0123456", "789"]);
 });
 
 test("truncateFromEndByWidth respects max width", () => {

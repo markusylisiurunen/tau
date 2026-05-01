@@ -487,6 +487,7 @@ export class ChatController {
 
   async dispose(): Promise<void> {
     this.eventUnsubscribe?.();
+    this.engine.dispose();
     if (this.listenTransition) {
       await this.listenTransition;
     }

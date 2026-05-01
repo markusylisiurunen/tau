@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import type { AssistantMessage, Context, Message, ToolCall } from "@mariozechner/pi-ai";
+import {
+  type AssistantMessage,
+  type Context,
+  closeOpenAICodexWebSocketSessions,
+  type Message,
+  type ToolCall,
+} from "@mariozechner/pi-ai";
 import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
@@ -117,9 +123,19 @@ export class SessionEngine {
   }
 
   reset(): void {
+    this.closeProviderSessions();
     this.historyEntries = [];
     this.sessionId = `tau-main-${randomUUID()}`;
     this.subagentControlPlane.reset();
+  }
+
+  dispose(): void {
+    this.closeProviderSessions();
+    this.subagentControlPlane.reset();
+  }
+
+  private closeProviderSessions(): void {
+    closeOpenAICodexWebSocketSessions(this.sessionId);
   }
 
   setPersona(

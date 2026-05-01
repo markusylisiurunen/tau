@@ -1,8 +1,21 @@
 import { describe, expect, test } from "vitest";
 import {
+  resolveOpenAICodexCachedWebSocketFallbackOptions,
   resolveOpenAIResponsesOptions,
   resolveSimpleStreamOptions,
 } from "../dist/core/utils/model_stream.js";
+
+function createAssistantError() {
+  return {
+    role: "assistant",
+    content: [],
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    model: "gpt-5.4",
+    stopReason: "error",
+    timestamp: Date.now(),
+  };
+}
 
 describe("model stream option resolution", () => {
   test("drops disabled reasoning for simple stream options", () => {
@@ -54,7 +67,7 @@ describe("model stream option resolution", () => {
         },
       ),
     ).toEqual({
-      transport: "auto",
+      transport: "websocket-cached",
       reasoningEffort: "none",
       serviceTier: "flex",
       maxTokens: 456,
@@ -92,9 +105,47 @@ describe("model stream option resolution", () => {
         },
       ),
     ).toEqual({
-      transport: "auto",
+      transport: "websocket-cached",
       reasoningEffort: "high",
       serviceTier: "priority",
     });
+  });
+
+  test("falls back from cached codex websocket to sse before provider events", () => {
+    expect(
+      resolveOpenAICodexCachedWebSocketFallbackOptions({
+        model: {
+          api: "openai-codex-responses",
+          provider: "openai-codex",
+          id: "gpt-5.4",
+        },
+        options: {
+          transport: "websocket-cached",
+          reasoning: "medium",
+          serviceTier: "priority",
+        },
+        result: createAssistantError(),
+        receivedProviderEvent: false,
+      }),
+    ).toEqual({
+      transport: "sse",
+      reasoning: "medium",
+      serviceTier: "priority",
+    });
+  });
+
+  test("does not fall back after cached codex websocket provider events", () => {
+    expect(
+      resolveOpenAICodexCachedWebSocketFallbackOptions({
+        model: {
+          api: "openai-codex-responses",
+          provider: "openai-codex",
+          id: "gpt-5.4",
+        },
+        options: { transport: "websocket-cached" },
+        result: createAssistantError(),
+        receivedProviderEvent: true,
+      }),
+    ).toBeUndefined();
   });
 });

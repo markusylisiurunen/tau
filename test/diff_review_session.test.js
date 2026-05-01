@@ -36,6 +36,7 @@ function createThreadSession(overrides = {}, contextWindow = 200_000) {
     interrupt() {
       return false;
     },
+    dispose() {},
     createForkSource() {
       return {
         historyEntries: [],

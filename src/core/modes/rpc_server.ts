@@ -24,6 +24,7 @@ export type RpcServerRuntime = Pick<ChatRuntime, "runTurn" | "interruptTurn" | "
     addUserText(text: string, options?: { historyEntryId?: string }): string;
     onEvent(handler: (event: CoreEvent) => void): () => void;
     reset(): void;
+    dispose(): void;
     readonly history: readonly Message[];
     readonly historyEntries: readonly HistoryEntry[];
     readonly sessionId: string;
@@ -134,6 +135,8 @@ export class RpcServer {
     if (options.interruptActiveSubmit && (this.activeSubmit || this.runtime.isTurnRunning)) {
       this.runtime.interruptTurn();
     }
+
+    this.runtime.session.dispose();
   }
 
   async shutdown(options: { interruptActiveSubmit?: boolean } = {}): Promise<void> {

@@ -57,6 +57,7 @@ function createHarness(options = {}) {
         historyEntries.length = 0;
         sessionId = `session-${nextSessionId++}`;
       },
+      dispose() {},
       get history() {
         return historyEntries.map((entry) => entry.message);
       },

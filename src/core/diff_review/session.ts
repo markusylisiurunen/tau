@@ -299,6 +299,7 @@ export class DiffReviewSession {
     }
 
     this.closed = true;
+    this.disposeReviewAgents();
     await this.closeServer();
   }
 
@@ -688,6 +689,12 @@ export class DiffReviewSession {
   private interruptAllReviewAgents(): void {
     for (const thread of this.threads.values()) {
       thread.interrupt();
+    }
+  }
+
+  private disposeReviewAgents(): void {
+    for (const thread of this.threads.values()) {
+      thread.dispose();
     }
   }
 

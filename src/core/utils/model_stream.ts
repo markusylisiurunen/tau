@@ -1,5 +1,6 @@
 import type {
   Api,
+  AssistantMessage,
   AssistantMessageEventStream,
   Context,
   Model,
@@ -106,11 +107,35 @@ export function resolveOpenAIResponsesOptions(
   return {
     ...baseOptions,
     ...(isOpenAICodexModel(model) && options.transport === undefined
-      ? { transport: "auto" as const }
+      ? { transport: "websocket-cached" as const }
       : {}),
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     ...(options.serviceTier !== undefined ? { serviceTier: options.serviceTier } : {}),
   } satisfies OpenAIResponsesStreamOptions;
+}
+
+export function resolveOpenAICodexCachedWebSocketFallbackOptions(args: {
+  model: Model<Api>;
+  options: TauStreamOptions;
+  result: AssistantMessage;
+  receivedProviderEvent: boolean;
+}): TauStreamOptions | undefined {
+  if (!isOpenAICodexModel(args.model)) {
+    return undefined;
+  }
+
+  if (args.options.transport !== "websocket-cached") {
+    return undefined;
+  }
+
+  if (args.receivedProviderEvent || args.result.stopReason !== "error") {
+    return undefined;
+  }
+
+  return {
+    ...args.options,
+    transport: "sse",
+  };
 }
 
 export function streamModel<TApi extends Api>(

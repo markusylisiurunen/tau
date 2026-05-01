@@ -47,6 +47,10 @@ export class CoreSession {
     this.engine.reset();
   }
 
+  dispose(): void {
+    this.engine.dispose();
+  }
+
   setPersona(
     persona: Persona,
     systemPrompt: string,

@@ -47,6 +47,7 @@ export type DiffReviewThreadForkSource = {
 export type DiffReviewThreadSession = {
   submitMessage(message: string): Promise<string>;
   interrupt(): boolean;
+  dispose(): void;
   createForkSource(): DiffReviewThreadForkSource;
 };
 
@@ -179,6 +180,10 @@ export class DiffReviewThread implements DiffReviewThreadSession {
 
   interrupt(): boolean {
     return this.runtime.interrupt();
+  }
+
+  dispose(): void {
+    this.session.dispose();
   }
 
   createForkSource(): DiffReviewThreadForkSource {

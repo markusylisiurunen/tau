@@ -103,6 +103,10 @@ export class CoreSession {
     return this.engine.history;
   }
 
+  get rawHistory(): readonly Message[] {
+    return this.engine.rawHistory;
+  }
+
   get historyEntries(): readonly HistoryEntry[] {
     return this.engine.historyEntriesSnapshot;
   }

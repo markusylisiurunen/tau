@@ -17,9 +17,9 @@ export type SessionCompactionMessageResult = {
 };
 
 export const COMPACTION_SUMMARIZATION_SYSTEM_PROMPT =
-  "You are a context summarization assistant. Do not continue the conversation. Do not answer any conversation questions. Only output the structured summary in the exact format requested.";
+  "You are a context compaction assistant. Your output will replace the conversation history for another assistant. Do not continue the conversation. Do not answer any conversation questions. Only output the structured summary in the exact format requested.";
 
-const COMPACTION_SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another assistant will use to continue the work.
+const COMPACTION_SUMMARIZATION_PROMPT = `The messages above are a conversation to compact. Create an information-dense context checkpoint summary that will replace the full conversation history. Another assistant should be able to continue the session from this summary as if the original conversation were still available.
 
 Use this exact format:
 
@@ -47,24 +47,26 @@ Use this exact format:
 1. [Ordered next action]
 
 ## Critical Context
-- [Concrete details needed to resume: file paths, function names, commands, errors]
+- [Concrete details needed to resume: file paths, function names, commands, errors, test/build status, assumptions]
 
 Rules:
-- Preserve enough detail for seamless continuation from this summary alone.
-- Keep each section concise and focused on continuity-critical information.
+- Preserve as much continuity-critical context as possible while removing tokens.
+- Keep each section information-dense and focused; do not omit useful details solely for brevity.
+- When unsure whether a detail may matter later, preserve it in compact form.
+- Preserve the current state of the work: files touched, commands run, test/build status, known failures, unverified assumptions, and pending validation.
 - Distinguish attempted work from confirmed outcomes.
 - If goals evolved over time, capture the current goal and briefly note the change.
 - Collapse tangents, retries, and pleasantries unless they materially affect decisions, blockers, or next steps.
 - Preserve exact file paths, function names, commands, and error messages.`;
 
-const COMPACTION_UPDATE_SUMMARIZATION_PROMPT = `The messages above are new conversation messages to incorporate into the existing summary in <previous-summary> tags.
+const COMPACTION_UPDATE_SUMMARIZATION_PROMPT = `The messages above are new conversation messages to incorporate into the existing summary in <previous-summary> tags. The updated summary will replace the prior summary plus these new messages as the session's continuity context.
 
 Update the existing structured summary with these rules:
 - Preserve all still-relevant information from the previous summary.
 - Add new progress, decisions, and context from the new messages.
 - Move items from In Progress to Done when completed.
 - Update Next Steps based on the current state.
-- Remove information that is no longer relevant.
+- Remove only information that is clearly obsolete, superseded, or irrelevant to continuing the session.
 
 Use the exact same format as before:
 
@@ -91,11 +93,13 @@ Use the exact same format as before:
 1. [Updated ordered actions]
 
 ## Critical Context
-- [Concrete details needed to resume: file paths, function names, commands, errors]
+- [Concrete details needed to resume: file paths, function names, commands, errors, test/build status, assumptions]
 
 Rules:
-- Preserve enough detail for seamless continuation from this summary alone.
-- Keep each section concise and focused on continuity-critical information.
+- Preserve as much continuity-critical context as possible while removing tokens.
+- Keep each section information-dense and focused; do not omit useful details solely for brevity.
+- When unsure whether a detail may matter later, preserve it in compact form.
+- Preserve the current state of the work: files touched, commands run, test/build status, known failures, unverified assumptions, and pending validation.
 - Distinguish attempted work from confirmed outcomes.
 - If goals evolved over time, capture the current goal and briefly note the change.
 - Collapse tangents, retries, and pleasantries unless they materially affect decisions, blockers, or next steps.

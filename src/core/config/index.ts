@@ -16,8 +16,16 @@ export type {
   AsyncServerTelegramBotConfig,
   AsyncServerTelegramConfig,
   Config,
+  NormalizedAutoCompactConfig,
 } from "./schema.js";
-export { getApiKeyForProvider, getMistralApiKey, getParallelApiKey, loadConfig } from "./schema.js";
+export {
+  DEFAULT_AUTO_COMPACT_CONFIG,
+  getApiKeyForProvider,
+  getMistralApiKey,
+  getParallelApiKey,
+  loadConfig,
+  normalizeAutoCompactConfig,
+} from "./schema.js";
 export { resolveThemeTokensById, resolveThemeTokensForAppearance } from "./theme_variants.js";
 export type { VirtualBundle } from "./virtual_bundle.js";
 export { buildVirtualBundle } from "./virtual_bundle.js";

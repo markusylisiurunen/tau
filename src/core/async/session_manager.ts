@@ -533,14 +533,20 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     const submitPromise = (async () => {
       try {
         const result = await client.submit(payload);
-        this.log(entry, "info", "message finished", {
+        this.log(entry, result.turn.blocked ? "error" : "info", "message finished", {
           source,
           aborted: result.turn.aborted,
+          blocked: result.turn.blocked,
           userHistoryEntryId: result.userHistoryEntryId,
         });
 
         if (!entry.cancelRequested) {
-          this.setState(entry, "waiting-input");
+          if (result.turn.blocked) {
+            entry.record.error = result.turn.blocked.message;
+            this.setState(entry, "failed");
+          } else {
+            this.setState(entry, "waiting-input");
+          }
         }
       } catch (error) {
         if (!entry.cancelRequested) {

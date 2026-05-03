@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { appendUsageLogEntryMock, coreSessionOptions } = vi.hoisted(() => ({
+const { appendUsageLogEntryMock, coreSessionOptions, conversationTurnMode } = vi.hoisted(() => ({
   appendUsageLogEntryMock: vi.fn(),
   coreSessionOptions: [],
+  conversationTurnMode: { blocked: false },
 }));
 
 vi.mock("../src/core/runtime/deps.ts", () => ({
@@ -73,6 +74,16 @@ vi.mock("../src/core/runtime/conversation_turn_runtime.ts", () => ({
     }
 
     async run(options) {
+      if (conversationTurnMode.blocked) {
+        return {
+          aborted: false,
+          blocked: {
+            reason: "auto-compaction-failed",
+            message: "auto-compaction failed",
+          },
+        };
+      }
+
       options?.onEvent?.({
         type: "tool_ui",
         uiEvent: {
@@ -157,6 +168,7 @@ import { DiffReviewSnapshot, formatDiffReviewScope } from "../src/core/diff_revi
 
 describe("diff_review thread", () => {
   it("records review agent usage", async () => {
+    conversationTurnMode.blocked = false;
     appendUsageLogEntryMock.mockReset();
 
     const snapshot = new DiffReviewSnapshot({
@@ -206,6 +218,7 @@ describe("diff_review thread", () => {
   });
 
   it("emits cumulative review agent updates", async () => {
+    conversationTurnMode.blocked = false;
     const updates = [];
     const snapshot = new DiffReviewSnapshot({
       repoRoot: "/repo",
@@ -268,6 +281,7 @@ describe("diff_review thread", () => {
   });
 
   it("inherits usage baselines when forking while resetting cost", async () => {
+    conversationTurnMode.blocked = false;
     coreSessionOptions.length = 0;
     const snapshot = new DiffReviewSnapshot({
       repoRoot: "/repo",
@@ -364,5 +378,38 @@ describe("diff_review thread", () => {
         },
       ]),
     );
+  });
+
+  it("reports blocked turns instead of returning a stale assistant response", async () => {
+    conversationTurnMode.blocked = false;
+    const snapshot = new DiffReviewSnapshot({
+      repoRoot: "/repo",
+      cwd: "/repo",
+      diffArgs: [],
+      patch: "diff --git a/src/a.ts b/src/a.ts",
+      files: [{ path: "src/a.ts", status: "modified", newPath: "src/a.ts" }],
+      patchByPath: new Map([["src/a.ts", "diff --git a/src/a.ts b/src/a.ts"]]),
+      scopeLabel: formatDiffReviewScope([]),
+    });
+
+    const thread = new DiffReviewThread({
+      threadId: "thread-1",
+      snapshot,
+      persona: {
+        id: "coder",
+        label: "coder",
+        model: { provider: "anthropic", id: "claude-opus-4-7", contextWindow: 200000 },
+        systemPrompt: "main system prompt",
+        settings: { reasoning: "high" },
+        skills: "*",
+        source: "builtin",
+      },
+      config: {},
+    });
+
+    await expect(thread.submitMessage("first question")).resolves.toBe("review answer");
+
+    conversationTurnMode.blocked = true;
+    await expect(thread.submitMessage("second question")).rejects.toThrow("auto-compaction failed");
   });
 });

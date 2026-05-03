@@ -393,7 +393,9 @@ tau supports slash commands for common actions:
 
 use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
 
-the compact commands are manual and useful when conversations get long. they replace prior context with a single synthetic user message, so the model keeps continuity without carrying full history. `/compact:summary-and-last` also includes the last assistant message verbatim when present.
+tau automatically compacts long sessions when provider-reported usage approaches the model context limit. automatic compaction summarizes older context, retains a recent tail verbatim, and inserts a hidden continuation note so the assistant continues without asking you to repeat context.
+
+the compact commands are manual and useful when you want to force a reset. they replace prior context with a single synthetic user summary message and do not retain a recent tail. `/compact:summary-and-last` also includes the last assistant message verbatim when present.
 
 the prune commands drop bash tool results from the active context without summarizing and compact edit call payloads/results. all three accept an optional fraction between `0` and `1` (for example, `/prune:largest 0.4`) and default to `0.25` when omitted. `/prune:smart` also accepts optional guidance text, either after a fraction (for example, `/prune:smart 0.3 keep only repetitive output`) or by itself (for example, `/prune:smart keep build logs`).
 
@@ -458,6 +460,11 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
       "anthropic/claude-haiku-4-5:low"
     ]
   },
+  "autoCompact": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
   "modelSystemNotices": {
     "openai-codex/gpt-5.3-codex": "avoid apply_patch heredocs, use tau tools directly"
   }
@@ -475,6 +482,8 @@ the `defaultTheme` field sets the theme id to load at startup. it must be non-em
 tau ships a built-in browser diff review demo tool, so `/diff` works without any `diffTool` config. set `diffTool` only when you want to override that default launcher. `command` is required when `diffTool` is present. `args` and `env` are optional. relative `command` paths resolve from the config level root (directory containing `.tau`, or home for the global config).
 
 the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launch overrides for the built-in `default` sub-agent. values must use `<provider>/<model>:<effort>`.
+
+`autoCompact` controls automatic session compaction and merges field-by-field across config levels. it is enabled by default with `reserveTokens: 16384` and `keepRecentTokens: 20000`. tau triggers it only after provider-reported assistant usage crosses the model context window minus the reserve, then summarizes older context while retaining recent messages verbatim. manual `/compact:*` commands remain summary-reset commands.
 
 the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). when a message is sent to that model, tau prepends the notice as a `<system>...</system>` block before the user content. this applies to main-session user messages and sub-agent prompts, regardless of persona id.
 

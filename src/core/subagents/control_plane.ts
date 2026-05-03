@@ -312,6 +312,10 @@ export class SubagentControlPlane {
     return record ? this.toSnapshot(record) : undefined;
   }
 
+  listSnapshots(): SubagentStateSnapshot[] {
+    return [...this.records.values()].map((record) => this.toSnapshot(record));
+  }
+
   getOriginHistoryEntryId(id: string): string {
     const record = this.records.get(id);
     if (!record) {

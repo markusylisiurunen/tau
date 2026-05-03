@@ -31,7 +31,7 @@ import {
 } from "../core/config/index.js";
 import type { StartedDiffReviewSession } from "../core/diff_review/index.js";
 import { startDiffReviewSession as startCoreDiffReviewSession } from "../core/diff_review/index.js";
-import type { CoreEvent } from "../core/events/types.js";
+import type { CoreCompactionResult, CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { ChatRuntime } from "../core/runtime/chat_runtime.js";
 import type { ConversationTurnResult } from "../core/runtime/conversation_turn_runtime.js";
@@ -77,7 +77,11 @@ import { transcribeMistralAudio } from "../core/utils/mistral_transcription.js";
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
-import { stripTauUserMetadata } from "../core/utils/user_metadata.js";
+import {
+  getAutoCompactionMetadataFromMessage,
+  hasAutoCompactionContinuationMetadata,
+  stripTauUserMetadata,
+} from "../core/utils/user_metadata.js";
 import { APP_VERSION } from "../core/version.js";
 import {
   type DiffReviewReturnedReview,
@@ -594,6 +598,23 @@ export class ChatController {
         return;
       }
 
+      case "compaction_start":
+        return;
+
+      case "compaction_end":
+        switch (event.outcome) {
+          case "compacted":
+            this.applyAutoCompactedHistoryUi(event.result);
+            return;
+          case "failed":
+            this.view.addSystemMessage(`auto-compaction failed: ${event.errorMessage}`, "error");
+            return;
+          case "skipped":
+          case "aborted":
+            return;
+        }
+        return;
+
       case "tool_result":
         return;
     }
@@ -641,13 +662,39 @@ export class ChatController {
       return;
     }
 
+    let hidingAutoCompactionTail = false;
     for (const message of history) {
       const historyEntryId = this.engine.addMessage(message);
+      const autoCompaction = getAutoCompactionMetadataFromMessage(message);
+      if (autoCompaction) {
+        this.renderHistoryMessage(message, historyEntryId);
+        this.view.addMessage({
+          type: "system",
+          text: this.formatAutoCompactionRetainedText(autoCompaction),
+          kind: "muted",
+        });
+        hidingAutoCompactionTail = true;
+        continue;
+      }
+
+      if (hasAutoCompactionContinuationMetadata(message)) {
+        hidingAutoCompactionTail = false;
+        continue;
+      }
+
+      if (hidingAutoCompactionTail) {
+        continue;
+      }
+
       this.renderHistoryMessage(message, historyEntryId);
     }
   }
 
   private renderHistoryMessage(message: Message, historyEntryId: string): void {
+    if (hasAutoCompactionContinuationMetadata(message)) {
+      return;
+    }
+
     if (message.role === "user") {
       const text = this.extractUserText(message);
       if (text) {
@@ -2303,6 +2350,32 @@ export class ChatController {
     this.refreshStatus();
   }
 
+  private applyAutoCompactedHistoryUi(result: CoreCompactionResult): void {
+    this.expandedFilesInCurrentPrompt.clear();
+    this.expandedSkillsInCurrentPrompt.clear();
+    this.view.addMessage({ type: "session_divider", label: "new session" });
+    const summaryEntryId = this.engine.historyEntries[0]?.id;
+    this.view.addMessage({ type: "user", text: result.compactionMessage }, summaryEntryId);
+    this.view.addMessage({
+      type: "system",
+      text: this.formatAutoCompactionRetainedText(result),
+      kind: "muted",
+    });
+    this.refreshStatus();
+  }
+
+  private formatAutoCompactionRetainedText(result: {
+    cutType: "turn-boundary" | "split-turn";
+    retainedMessageCount: number;
+  }): string {
+    const count = result.retainedMessageCount;
+    const messageLabel = count === 1 ? "message" : "messages";
+    if (result.cutType === "split-turn") {
+      return `retained current turn suffix, ${count} ${messageLabel}`;
+    }
+    return `retained ${count} recent ${messageLabel}`;
+  }
+
   private async compactSessionSummaryOnly(guidance?: string): Promise<void> {
     await this.maintenanceService.compactSummaryOnly(guidance);
   }
@@ -2773,7 +2846,7 @@ export class ChatController {
       this.view.clearToolUiTransientState();
       this.queuedMessageBuffer.markPendingIdleNotification();
       this.view.requestRender();
-      if (runResult.aborted) {
+      if (runResult.aborted || runResult.blocked) {
         this.dequeueQueuedUserMessagesIntoEditor();
       } else {
         void this.drainQueuedUserMessages();

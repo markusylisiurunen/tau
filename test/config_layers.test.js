@@ -102,6 +102,7 @@ describe("config paths", () => {
           subagents: {
             defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
           },
+          autoCompact: { enabled: false, reserveTokens: 1000 },
           modelSystemNotices: {
             "openai/gpt-5.4": "global codex notice",
             "anthropic/claude-sonnet-4-5": "global anthropic notice",
@@ -127,6 +128,7 @@ describe("config paths", () => {
           subagents: {
             defaultLaunchModels: ["openai/gpt-5.4:high"],
           },
+          autoCompact: { keepRecentTokens: 2000 },
           modelSystemNotices: {
             "openai/gpt-5.4": "repo codex notice",
           },
@@ -174,6 +176,11 @@ describe("config paths", () => {
       expect(config.subagents).toEqual({
         defaultLaunchModels: ["openai/gpt-5.4:high"],
       });
+      expect(config.autoCompact).toEqual({
+        enabled: false,
+        reserveTokens: 1000,
+        keepRecentTokens: 2000,
+      });
       expect(config.modelSystemNotices).toEqual({
         "openai/gpt-5.4": "repo codex notice",
         "anthropic/claude-sonnet-4-5": "global anthropic notice",
@@ -197,6 +204,11 @@ describe("config paths", () => {
       expect(config).toMatchObject({
         defaultPersona: "opus-4.7-chat",
         defaultRisk: "read-only",
+        autoCompact: {
+          enabled: true,
+          reserveTokens: 16384,
+          keepRecentTokens: 20000,
+        },
       });
     } finally {
       fx.cleanup();
@@ -494,6 +506,35 @@ describe("config paths", () => {
 
       expect(result.errors).toContain(
         `${join(fx.repo, ".tau", "config.json")}: unknown key in config: bogus.`,
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("reports unknown autoCompact keys", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({ autoCompact: { reserveTokens: 1000, bogus: true } }),
+        "utf-8",
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
+      const modelResolver = loadModelResolver({ deps, levels });
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+
+      expect(result.errors).toContain(
+        `${join(fx.repo, ".tau", "config.json")}: unknown key in autoCompact: bogus.`,
       );
     } finally {
       fx.cleanup();

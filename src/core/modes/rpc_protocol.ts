@@ -72,6 +72,10 @@ export type RpcSessionSubmitResult = {
   userHistoryEntryId: string;
   turn: {
     aborted: boolean;
+    blocked?: {
+      reason: "auto-compaction-failed";
+      message: string;
+    };
   };
 };
 

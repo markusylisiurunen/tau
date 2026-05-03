@@ -229,6 +229,7 @@ export class RpcServer {
         userHistoryEntryId,
         turn: {
           aborted: turnResult.aborted,
+          ...(turnResult.blocked ? { blocked: turnResult.blocked } : {}),
         },
       };
 

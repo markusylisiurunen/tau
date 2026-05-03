@@ -11,9 +11,13 @@ import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
 import { type CredentialResolver, createCredentialResolver } from "../auth/credential_resolver.js";
-import type { Config } from "../config/index.js";
+import {
+  type Config,
+  type NormalizedAutoCompactConfig,
+  normalizeAutoCompactConfig,
+} from "../config/index.js";
 import { resolveConfigLevels } from "../config/paths.js";
-import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
+import type { CoreCompactionResult, CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
 import { loadModelResolver, type ModelResolver } from "../models/catalog.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
@@ -24,20 +28,26 @@ import type { Persona, RiskLevel } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
+import { buildCompactionUserMessage } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { prependModelNotice, resolveModelNotice } from "../utils/model_notices.js";
 import { streamModel } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import {
+  getAutoCompactionMetadataFromMessage,
+  hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
   stripTauUserMetadata,
   stripTauUserMetadataFromMessage,
 } from "../utils/user_metadata.js";
 import {
+  buildAutoCompactionContinuationMessage,
+  buildAutoCompactionPrompt,
   buildSessionCompactionMessage,
   buildSessionCompactionPrompt,
   COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
+  prepareAutoCompaction,
   prepareSessionCompaction,
   type SessionCompactionMode,
 } from "./compaction.js";
@@ -67,6 +77,16 @@ export type SessionCompactionOptions = {
 export type SessionCompactionResult = {
   compactionMessage: string;
   includedLastAssistant: boolean;
+};
+
+export type AutoCompactionBlockedTurn = {
+  reason: "auto-compaction-failed";
+  message: string;
+};
+
+export type ProcessTurnResult = {
+  aborted: boolean;
+  blocked?: AutoCompactionBlockedTurn;
 };
 
 export type HistoryEntry = {
@@ -132,6 +152,12 @@ export class SessionEngine {
     this.historyEntries = [];
     this.sessionId = `tau-main-${randomUUID()}`;
     this.subagentControlPlane.reset();
+  }
+
+  private replaceHistoryEntries(entries: readonly HistoryEntry[]): void {
+    this.closeProviderSessions();
+    this.historyEntries = entries.map((entry) => ({ ...entry }));
+    this.sessionId = `tau-main-${randomUUID()}`;
   }
 
   dispose(): void {
@@ -220,12 +246,32 @@ export class SessionEngine {
   }
 
   listRewindCandidates(): RewindCandidate[] {
-    return this.historyEntries.flatMap((entry) => {
-      if (entry.message.role !== "user") {
+    return this.historyEntries.flatMap((entry, index) => {
+      if (entry.message.role !== "user" || !this.isVisibleRewindCandidate(index)) {
         return [];
       }
       return [{ historyEntryId: entry.id, text: this.extractRewindUserText(entry.message) }];
     });
+  }
+
+  private isVisibleRewindCandidate(index: number): boolean {
+    const entry = this.historyEntries[index];
+    if (!entry || hasAutoCompactionContinuationMetadata(entry.message)) {
+      return false;
+    }
+
+    for (let i = index - 1; i >= 0; i -= 1) {
+      const message = this.historyEntries[i]!.message;
+      if (hasAutoCompactionContinuationMetadata(message)) {
+        return true;
+      }
+      const metadata = getAutoCompactionMetadataFromMessage(message);
+      if (metadata) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   rewindToHistoryEntryId(historyEntryId: string): RewindResult | undefined {
@@ -496,11 +542,16 @@ export class SessionEngine {
     return apiKey;
   }
 
-  async *processTurn(signal: AbortSignal): AsyncGenerator<CoreEvent> {
+  async *processTurn(signal: AbortSignal): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
     let subturns = 0;
     const turnUserHistoryEntryId = this.getCurrentTurnUserHistoryEntryId();
 
     while (subturns < MAX_ASSISTANT_SUBTURNS && !signal.aborted) {
+      const compactionResult = yield* this.runAutoCompactionIfNeeded(signal);
+      if (compactionResult.blocked || compactionResult.aborted) {
+        return compactionResult;
+      }
+
       subturns += 1;
       const { finalMessage } = yield* this.runSingleSubturn(signal);
 
@@ -567,6 +618,212 @@ export class SessionEngine {
       this.emitEvent(event);
       yield event;
     }
+
+    return { aborted: signal.aborted };
+  }
+
+  private async *runAutoCompactionIfNeeded(
+    signal: AbortSignal,
+  ): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
+    if (!this.shouldRunAutoCompaction()) {
+      return { aborted: signal.aborted };
+    }
+
+    const startEvent: CoreEvent = { type: "compaction_start", reason: "threshold" };
+    this.emitEvent(startEvent);
+    yield startEvent;
+
+    try {
+      const result = await this.runAutoCompaction(signal);
+      if (!result) {
+        const endEvent: CoreEvent = {
+          type: "compaction_end",
+          reason: "threshold",
+          outcome: "skipped",
+        };
+        this.emitEvent(endEvent);
+        yield endEvent;
+        return { aborted: false };
+      }
+
+      const endEvent: CoreEvent = {
+        type: "compaction_end",
+        reason: "threshold",
+        outcome: "compacted",
+        result,
+      };
+      this.emitEvent(endEvent);
+      yield endEvent;
+      return { aborted: false };
+    } catch (error) {
+      if (signal.aborted) {
+        const endEvent: CoreEvent = {
+          type: "compaction_end",
+          reason: "threshold",
+          outcome: "aborted",
+        };
+        this.emitEvent(endEvent);
+        yield endEvent;
+        return { aborted: true };
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      const endEvent: CoreEvent = {
+        type: "compaction_end",
+        reason: "threshold",
+        outcome: "failed",
+        errorMessage: message,
+      };
+      this.emitEvent(endEvent);
+      yield endEvent;
+      return {
+        aborted: false,
+        blocked: {
+          reason: "auto-compaction-failed",
+          message,
+        },
+      };
+    }
+  }
+
+  private async runAutoCompaction(signal: AbortSignal): Promise<CoreCompactionResult | undefined> {
+    const settings = this.getAutoCompactConfig();
+    const preparation = prepareAutoCompaction(this.historyEntries, settings);
+    if (!preparation) {
+      return undefined;
+    }
+
+    const summaryPrompt = buildAutoCompactionPrompt(preparation);
+    const apiKey = await this.resolveApiKeyForCurrentPersona();
+    const stream = streamModel(
+      this.persona.model,
+      {
+        systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: summaryPrompt }],
+            timestamp: this.deps.clock.now(),
+          },
+        ],
+      },
+      {
+        reasoning: "high",
+        sessionId: `tau-auto-summary-${randomUUID()}`,
+        signal,
+        ...(apiKey && { apiKey }),
+      },
+    );
+
+    const final = await stream.result();
+    const summary = extractAssistantText(final).trim();
+    if (!summary) {
+      throw new Error("auto-compaction summarization returned an empty response.");
+    }
+
+    const compactionMessage = buildCompactionUserMessage({ summary });
+    const textWithModelNotice = prependModelNotice(
+      compactionMessage,
+      resolveModelNotice(this.config, this.persona.model),
+    );
+    const textWithMetadata = prependTauUserMetadata(textWithModelNotice, [
+      {
+        type: "auto-compaction",
+        version: 1,
+        summary,
+        cutType: preparation.cutType,
+        retainedMessageCount: preparation.retainedMessageCount,
+      },
+    ]);
+
+    const summaryEntry: HistoryEntry = {
+      id: this.createHistoryEntryId(),
+      message: {
+        role: "user",
+        content: [{ type: "text", text: textWithMetadata }],
+        timestamp: this.deps.clock.now(),
+      },
+    };
+    const continuationEntry: HistoryEntry = {
+      id: this.createHistoryEntryId(),
+      message: buildAutoCompactionContinuationMessage({
+        cutType: preparation.cutType,
+        now: this.deps.clock.now(),
+        subagentStatus: this.formatAutoCompactionSubagentStatus(),
+      }),
+    };
+
+    this.replaceHistoryEntries([summaryEntry, ...preparation.retainedEntries, continuationEntry]);
+
+    return {
+      compactionMessage,
+      cutType: preparation.cutType,
+      retainedMessageCount: preparation.retainedMessageCount,
+    };
+  }
+
+  private formatAutoCompactionSubagentStatus(): string | undefined {
+    const running = this.subagentControlPlane
+      .listSnapshots()
+      .filter((snapshot) => snapshot.status === "running");
+    if (running.length === 0) {
+      return undefined;
+    }
+
+    return running
+      .map((snapshot) => {
+        const abort = snapshot.abortRequested ? ", abort requested" : "";
+        return `- ${snapshot.id}: ${snapshot.title} (name: ${snapshot.name}, status: ${snapshot.status}${abort})`;
+      })
+      .join("\n");
+  }
+
+  private shouldRunAutoCompaction(): boolean {
+    const settings = this.getAutoCompactConfig();
+    if (!settings.enabled) {
+      return false;
+    }
+
+    const contextWindow = this.persona.model.contextWindow ?? 0;
+    if (contextWindow <= 0 || settings.reserveTokens >= contextWindow) {
+      return false;
+    }
+
+    const usageTokens = this.getLatestFreshContextUsageTokens();
+    return usageTokens !== undefined && usageTokens > contextWindow - settings.reserveTokens;
+  }
+
+  private getAutoCompactConfig(): NormalizedAutoCompactConfig {
+    return normalizeAutoCompactConfig(this.config.autoCompact);
+  }
+
+  private getLatestFreshContextUsageTokens(): number | undefined {
+    const boundaryIndex = this.findLatestAutoCompactionContinuationIndex();
+    for (let index = this.historyEntries.length - 1; index > boundaryIndex; index -= 1) {
+      const message = this.historyEntries[index]!.message;
+      if (message.role !== "assistant") {
+        continue;
+      }
+      const usage = (message as AssistantMessage).usage;
+      if (!usage) {
+        return undefined;
+      }
+      return (
+        (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) + (usage.output ?? 0)
+      );
+    }
+
+    return undefined;
+  }
+
+  private findLatestAutoCompactionContinuationIndex(): number {
+    for (let index = this.historyEntries.length - 1; index >= 0; index -= 1) {
+      if (hasAutoCompactionContinuationMetadata(this.historyEntries[index]!.message)) {
+        return index;
+      }
+    }
+
+    return -1;
   }
 
   private async *runSingleSubturn(

@@ -45,6 +45,41 @@ export type CoreToolResultEvent = {
   message: ToolResultMessage;
 };
 
+export type CoreCompactionStartEvent = {
+  type: "compaction_start";
+  reason: "threshold";
+};
+
+export type CoreCompactionResult = {
+  compactionMessage: string;
+  cutType: "turn-boundary" | "split-turn";
+  retainedMessageCount: number;
+};
+
+export type CoreCompactionEndEvent =
+  | {
+      type: "compaction_end";
+      reason: "threshold";
+      outcome: "compacted";
+      result: CoreCompactionResult;
+    }
+  | {
+      type: "compaction_end";
+      reason: "threshold";
+      outcome: "skipped";
+    }
+  | {
+      type: "compaction_end";
+      reason: "threshold";
+      outcome: "aborted";
+    }
+  | {
+      type: "compaction_end";
+      reason: "threshold";
+      outcome: "failed";
+      errorMessage: string;
+    };
+
 export type CoreEvent =
   | CoreAssistantStartEvent
   | CoreAssistantFinalEvent
@@ -52,7 +87,9 @@ export type CoreEvent =
   | CoreNoticeEvent
   | CoreToolUiEvent
   | CoreSubagentUiEvent
-  | CoreToolResultEvent;
+  | CoreToolResultEvent
+  | CoreCompactionStartEvent
+  | CoreCompactionEndEvent;
 
 export type RunnerAssistantPartialEvent = {
   type: "assistant_partial";

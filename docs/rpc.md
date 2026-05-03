@@ -149,7 +149,25 @@ behavior:
 - appends a user message to session history
 - runs one assistant turn
 - streams core events as `event` messages with `requestId`
+- automatically compacts when provider-reported context usage crosses the configured threshold
 - ends with a success `response`
+
+success result:
+
+```json
+{
+  "userHistoryEntryId": "history-...",
+  "turn": {
+    "aborted": false,
+    "blocked": {
+      "reason": "auto-compaction-failed",
+      "message": "optional failure message"
+    }
+  }
+}
+```
+
+`turn.blocked` is omitted for normal completion. currently the only blocked reason is `auto-compaction-failed`, which means tau could not compact safely before continuing the turn.
 
 if another turn is already running, tau returns:
 
@@ -245,6 +263,7 @@ notes:
 - events tied to `session.submit` include `requestId`.
 - `subagent_ui` events include stable `requestId` correlation to the submit that spawned the subagent run, even when the update arrives during a later submit.
 - `subagent_ui` core events include `originHistoryEntryId` for explicit origin correlation.
+- automatic compaction emits `compaction_start` and `compaction_end` events. `compaction_end.outcome` is `compacted`, `skipped`, `aborted`, or `failed`; compacted events include the visible summary message, cut type, and retained message count, while failed events include `errorMessage` and the submit result may include `turn.blocked`.
 - core event payloads follow `src/core/events/types.ts`.
 
 ## errors

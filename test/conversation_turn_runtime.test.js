@@ -56,6 +56,31 @@ describe("ConversationTurnRuntime", () => {
     expect(runtime.isRunning).toBe(false);
   });
 
+  it("preserves blocked generator return values", async () => {
+    const session = {
+      async *events() {
+        yield { type: "notice", severity: "info", text: "before block" };
+        return {
+          aborted: false,
+          blocked: {
+            reason: "auto-compaction-failed",
+            message: "summary failed",
+          },
+        };
+      },
+    };
+
+    const runtime = new ConversationTurnRuntime(session);
+
+    await expect(runtime.run()).resolves.toEqual({
+      aborted: false,
+      blocked: {
+        reason: "auto-compaction-failed",
+        message: "summary failed",
+      },
+    });
+  });
+
   it("interrupts the active run and reports aborted status", async () => {
     let runtime;
     let seen = 0;

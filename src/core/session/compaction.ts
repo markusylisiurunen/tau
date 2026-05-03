@@ -1,7 +1,14 @@
+import { Buffer } from "node:buffer";
 import type { AssistantMessage, Message } from "@mariozechner/pi-ai";
 import { buildCompactionUserMessage, formatHistoryForCompaction } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
-import { getCompactionMetadataFromMessage } from "../utils/user_metadata.js";
+import { bytesToTokens } from "../utils/token.js";
+import {
+  getSummaryCompactionMetadataFromMessage,
+  hasAutoCompactionContinuationMetadata,
+  prependTauUserMetadata,
+} from "../utils/user_metadata.js";
+import type { HistoryEntry } from "./session_engine.js";
 
 export type SessionCompactionMode = "only-summary" | "with-last-assistant";
 
@@ -14,6 +21,17 @@ export type SessionCompactionPreparation = {
 export type SessionCompactionMessageResult = {
   compactionMessage: string;
   includedLastAssistant: boolean;
+};
+
+export type AutoCompactionCutType = "turn-boundary" | "split-turn";
+
+export type AutoCompactionPreparation = {
+  previousSummary?: string;
+  messagesToSummarize: Message[];
+  retainedEntries: HistoryEntry[];
+  cutType: AutoCompactionCutType;
+  retainedMessageCount: number;
+  formattedHistory: string;
 };
 
 export const COMPACTION_SUMMARIZATION_SYSTEM_PROMPT =
@@ -109,7 +127,9 @@ export function prepareSessionCompaction(
   history: readonly Message[],
 ): SessionCompactionPreparation | undefined {
   const latestCompaction = findLatestCompaction(history);
-  const messagesToSummarize = history.slice(latestCompaction.index + 1);
+  const messagesToSummarize = history
+    .slice(latestCompaction.index + 1)
+    .filter((message) => !hasAutoCompactionContinuationMetadata(message));
   const formattedHistory = formatHistoryForCompaction(messagesToSummarize);
   if (!formattedHistory) {
     return undefined;
@@ -124,7 +144,7 @@ export function prepareSessionCompaction(
 
 function findLatestCompaction(history: readonly Message[]): { index: number; summary?: string } {
   for (let index = history.length - 1; index >= 0; index -= 1) {
-    const metadata = getCompactionMetadataFromMessage(history[index]!);
+    const metadata = getSummaryCompactionMetadataFromMessage(history[index]!);
     if (metadata) {
       return { index, summary: metadata.summary };
     }
@@ -172,6 +192,209 @@ export function buildSessionCompactionMessage(args: {
     }),
     includedLastAssistant: Boolean(lastAssistantMessage),
   };
+}
+
+export function prepareAutoCompaction(
+  entries: readonly HistoryEntry[],
+  settings: { keepRecentTokens: number },
+): AutoCompactionPreparation | undefined {
+  const latestCompaction = findLatestCompactionEntry(entries);
+  const cut = selectAutoCompactionCut(entries, {
+    startIndex: latestCompaction.index + 1,
+    keepRecentTokens: settings.keepRecentTokens,
+  });
+  if (!cut) {
+    return undefined;
+  }
+
+  const messagesToSummarize = entries
+    .slice(latestCompaction.index + 1, cut.startIndex)
+    .map((entry) => entry.message)
+    .filter((message) => !hasAutoCompactionContinuationMetadata(message));
+  const formattedHistory = formatHistoryForCompaction(messagesToSummarize);
+  if (!formattedHistory) {
+    return undefined;
+  }
+
+  const retainedEntries = entries.slice(cut.startIndex).map((entry) => ({ ...entry }));
+  if (retainedEntries.length === 0) {
+    return undefined;
+  }
+
+  return {
+    previousSummary: latestCompaction.summary,
+    messagesToSummarize,
+    retainedEntries,
+    cutType: cut.cutType,
+    retainedMessageCount: retainedEntries.length,
+    formattedHistory,
+  };
+}
+
+export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation): string {
+  return buildSessionCompactionPrompt({
+    preparation,
+    guidance:
+      preparation.cutType === "split-turn"
+        ? "The retained context will begin in the middle of the latest assistant/tool turn. Ensure the summary preserves the original user request, earlier tool work, and the state immediately before the retained suffix."
+        : "The retained context will include recent messages verbatim. Ensure the summary complements that retained context without duplicating unnecessary detail.",
+  });
+}
+
+export function buildAutoCompactionContinuationMessage(args: {
+  cutType: AutoCompactionCutType;
+  now: number;
+  subagentStatus?: string;
+}): Message {
+  const lines = [
+    "<system>",
+    "Tau automatically compacted the conversation context before this point.",
+    "Earlier context is summarized in the compaction message above. Recent messages are retained verbatim after that summary.",
+    "Continue from the summary and retained context without asking the user to repeat information.",
+  ];
+
+  if (args.cutType === "split-turn") {
+    lines.push(
+      "The retained messages begin in the middle of the latest assistant/tool turn. The summary contains the original request and earlier tool work from that turn.",
+    );
+  }
+
+  const subagentStatus = args.subagentStatus?.trim();
+  if (subagentStatus) {
+    lines.push("", "<active-subagents>", subagentStatus, "</active-subagents>");
+  }
+
+  lines.push("</system>");
+
+  return {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: prependTauUserMetadata(lines.join("\n"), [
+          { type: "auto-compaction-continuation", version: 1 },
+        ]),
+      },
+    ],
+    timestamp: args.now,
+  };
+}
+
+export function selectAutoCompactionCut(
+  entries: readonly HistoryEntry[],
+  args: { startIndex: number; keepRecentTokens: number },
+): { startIndex: number; cutType: AutoCompactionCutType } | undefined {
+  if (entries.length === 0 || args.startIndex >= entries.length) {
+    return undefined;
+  }
+
+  const turnStarts = collectTurnStarts(entries, args.startIndex);
+  if (turnStarts.length === 0) {
+    return undefined;
+  }
+
+  const latestTurnStart = turnStarts.at(-1)!;
+  const latestTurnTokens = estimateEntriesTokens(entries.slice(latestTurnStart));
+  if (latestTurnTokens <= args.keepRecentTokens) {
+    let firstKeptTurn = latestTurnStart;
+    let totalTokens = latestTurnTokens;
+
+    for (let i = turnStarts.length - 2; i >= 0; i -= 1) {
+      const turnStart = turnStarts[i]!;
+      const nextTurnStart = turnStarts[i + 1]!;
+      const turnTokens = estimateEntriesTokens(entries.slice(turnStart, nextTurnStart));
+      if (totalTokens + turnTokens > args.keepRecentTokens) {
+        break;
+      }
+      firstKeptTurn = turnStart;
+      totalTokens += turnTokens;
+    }
+
+    if (firstKeptTurn <= args.startIndex) {
+      return undefined;
+    }
+
+    return { startIndex: firstKeptTurn, cutType: "turn-boundary" };
+  }
+
+  const splitStart = selectLatestTurnSplitStart(entries, {
+    turnStart: latestTurnStart,
+    keepRecentTokens: args.keepRecentTokens,
+  });
+  if (splitStart === undefined) {
+    return latestTurnStart > args.startIndex
+      ? { startIndex: latestTurnStart, cutType: "turn-boundary" }
+      : undefined;
+  }
+  if (splitStart <= args.startIndex) {
+    return undefined;
+  }
+
+  return { startIndex: splitStart, cutType: "split-turn" };
+}
+
+function findLatestCompactionEntry(entries: readonly HistoryEntry[]): {
+  index: number;
+  summary?: string;
+} {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const metadata = getSummaryCompactionMetadataFromMessage(entries[index]!.message);
+    if (metadata) {
+      return { index, summary: metadata.summary };
+    }
+  }
+
+  return { index: -1 };
+}
+
+function collectTurnStarts(entries: readonly HistoryEntry[], startIndex: number): number[] {
+  const starts: number[] = [];
+  for (let index = Math.max(0, startIndex); index < entries.length; index += 1) {
+    const message = entries[index]!.message;
+    if (message.role !== "user") {
+      continue;
+    }
+    if (getSummaryCompactionMetadataFromMessage(message)) {
+      continue;
+    }
+    starts.push(index);
+  }
+  return starts;
+}
+
+function selectLatestTurnSplitStart(
+  entries: readonly HistoryEntry[],
+  args: { turnStart: number; keepRecentTokens: number },
+): number | undefined {
+  let retainedTokens = 0;
+  let latestAssistantBoundary: number | undefined;
+  let crossedBudget = false;
+
+  for (let index = entries.length - 1; index >= args.turnStart; index -= 1) {
+    const entry = entries[index]!;
+    retainedTokens += estimateMessageTokens(entry.message);
+
+    if (entry.message.role === "assistant") {
+      latestAssistantBoundary = index;
+    }
+
+    if (retainedTokens > args.keepRecentTokens) {
+      crossedBudget = true;
+    }
+    if (crossedBudget && latestAssistantBoundary !== undefined) {
+      return latestAssistantBoundary;
+    }
+  }
+
+  return latestAssistantBoundary;
+}
+
+function estimateEntriesTokens(entries: readonly HistoryEntry[]): number {
+  return entries.reduce((total, entry) => total + estimateMessageTokens(entry.message), 0);
+}
+
+function estimateMessageTokens(message: Message): number {
+  return Math.max(1, bytesToTokens(Buffer.byteLength(JSON.stringify(message), "utf8")));
 }
 
 function extractLastAssistantMessage(history: readonly Message[]): string | undefined {

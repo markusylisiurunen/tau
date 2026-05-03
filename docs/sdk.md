@@ -125,6 +125,7 @@ const client = await createTauSdkClient({
 - `submit(text, options?)`
   - sends `session.submit`
   - `options.historyEntryId` forwards a custom user history id
+  - resolves with `{ userHistoryEntryId, turn }`; `turn.blocked` is present when tau could not continue after a non-aborted auto-compaction failure
 - `interrupt()`
   - sends `session.interrupt`
 - `snapshot()`

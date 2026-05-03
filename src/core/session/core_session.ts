@@ -6,6 +6,7 @@ import type { ToolRegistry } from "../tools/registry.js";
 import type { Persona, RiskLevel } from "../types.js";
 import {
   type HistoryEntry,
+  type ProcessTurnResult,
   type RewindCandidate,
   type RewindResult,
   type SessionCompactionOptions,
@@ -17,6 +18,7 @@ export type {
   CoreEvent,
   CoreSubagentUiEvent,
   HistoryEntry,
+  ProcessTurnResult,
   RewindCandidate,
   RewindResult,
   SessionCompactionOptions,
@@ -123,7 +125,7 @@ export class CoreSession {
     return await this.engine.compact(options);
   }
 
-  async *events(signal: AbortSignal): AsyncGenerator<CoreEvent> {
-    yield* this.engine.processTurn(signal);
+  async *events(signal: AbortSignal): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
+    return yield* this.engine.processTurn(signal);
   }
 }

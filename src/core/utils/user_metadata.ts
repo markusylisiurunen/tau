@@ -10,7 +10,29 @@ export type TauCompactionUserMetadata = {
   summary: string;
 };
 
-export type TauUserMetadata = TauCompactionUserMetadata;
+export type TauAutoCompactionCutType = "turn-boundary" | "split-turn";
+
+export type TauAutoCompactionUserMetadata = {
+  type: "auto-compaction";
+  version: 1;
+  summary: string;
+  cutType: TauAutoCompactionCutType;
+  retainedMessageCount: number;
+};
+
+export type TauAutoCompactionContinuationUserMetadata = {
+  type: "auto-compaction-continuation";
+  version: 1;
+};
+
+export type TauSummaryCompactionUserMetadata =
+  | TauCompactionUserMetadata
+  | TauAutoCompactionUserMetadata;
+
+export type TauUserMetadata =
+  | TauCompactionUserMetadata
+  | TauAutoCompactionUserMetadata
+  | TauAutoCompactionContinuationUserMetadata;
 
 export type TauUserMetadataSplit = {
   metadata: TauUserMetadata[];
@@ -44,9 +66,19 @@ function parseMetadataRecord(value: unknown): TauUserMetadata {
   }
 
   const record = value as Record<string, unknown>;
-  if (record.type !== "compaction") {
-    throw new Error("invalid tau user metadata: unknown record type");
+  switch (record.type) {
+    case "compaction":
+      return parseCompactionMetadataRecord(record);
+    case "auto-compaction":
+      return parseAutoCompactionMetadataRecord(record);
+    case "auto-compaction-continuation":
+      return parseAutoCompactionContinuationMetadataRecord(record);
+    default:
+      throw new Error("invalid tau user metadata: unknown record type");
   }
+}
+
+function parseCompactionMetadataRecord(record: Record<string, unknown>): TauCompactionUserMetadata {
   if (record.version !== 1) {
     throw new Error("invalid tau user metadata: unsupported compaction metadata version");
   }
@@ -57,6 +89,52 @@ function parseMetadataRecord(value: unknown): TauUserMetadata {
     type: "compaction",
     version: 1,
     summary: record.summary,
+  };
+}
+
+function parseAutoCompactionMetadataRecord(
+  record: Record<string, unknown>,
+): TauAutoCompactionUserMetadata {
+  if (record.version !== 1) {
+    throw new Error("invalid tau user metadata: unsupported auto-compaction metadata version");
+  }
+  if (typeof record.summary !== "string" || record.summary.trim() === "") {
+    throw new Error(
+      "invalid tau user metadata: auto-compaction summary must be a non-empty string",
+    );
+  }
+  if (record.cutType !== "turn-boundary" && record.cutType !== "split-turn") {
+    throw new Error("invalid tau user metadata: auto-compaction cut type is invalid");
+  }
+  if (
+    typeof record.retainedMessageCount !== "number" ||
+    !Number.isInteger(record.retainedMessageCount) ||
+    record.retainedMessageCount < 0
+  ) {
+    throw new Error(
+      "invalid tau user metadata: auto-compaction retained message count must be a non-negative integer",
+    );
+  }
+  return {
+    type: "auto-compaction",
+    version: 1,
+    summary: record.summary,
+    cutType: record.cutType,
+    retainedMessageCount: record.retainedMessageCount,
+  };
+}
+
+function parseAutoCompactionContinuationMetadataRecord(
+  record: Record<string, unknown>,
+): TauAutoCompactionContinuationUserMetadata {
+  if (record.version !== 1) {
+    throw new Error(
+      "invalid tau user metadata: unsupported auto-compaction continuation metadata version",
+    );
+  }
+  return {
+    type: "auto-compaction-continuation",
+    version: 1,
   };
 }
 
@@ -128,6 +206,33 @@ export function getCompactionMetadataFromMessage(
   return getTauUserMetadataFromMessage(message)
     .filter((metadata): metadata is TauCompactionUserMetadata => metadata.type === "compaction")
     .at(-1);
+}
+
+export function getAutoCompactionMetadataFromMessage(
+  message: Message,
+): TauAutoCompactionUserMetadata | undefined {
+  return getTauUserMetadataFromMessage(message)
+    .filter(
+      (metadata): metadata is TauAutoCompactionUserMetadata => metadata.type === "auto-compaction",
+    )
+    .at(-1);
+}
+
+export function getSummaryCompactionMetadataFromMessage(
+  message: Message,
+): TauSummaryCompactionUserMetadata | undefined {
+  return getTauUserMetadataFromMessage(message)
+    .filter(
+      (metadata): metadata is TauSummaryCompactionUserMetadata =>
+        metadata.type === "compaction" || metadata.type === "auto-compaction",
+    )
+    .at(-1);
+}
+
+export function hasAutoCompactionContinuationMetadata(message: Message): boolean {
+  return getTauUserMetadataFromMessage(message).some(
+    (metadata) => metadata.type === "auto-compaction-continuation",
+  );
 }
 
 export function stripTauUserMetadataFromMessage(message: Message): Message {

@@ -32,8 +32,29 @@ export interface Config {
   subagents?: {
     defaultLaunchModels?: string[];
   };
+  autoCompact?: AutoCompactConfig;
   modelSystemNotices?: Record<string, string>;
   async?: AsyncConfig;
+}
+
+export type AutoCompactConfig = {
+  enabled?: boolean;
+  reserveTokens?: number;
+  keepRecentTokens?: number;
+};
+
+export type NormalizedAutoCompactConfig = Required<AutoCompactConfig>;
+
+export const DEFAULT_AUTO_COMPACT_CONFIG: NormalizedAutoCompactConfig = {
+  enabled: true,
+  reserveTokens: 16384,
+  keepRecentTokens: 20000,
+};
+
+export function normalizeAutoCompactConfig(
+  config: AutoCompactConfig | undefined,
+): NormalizedAutoCompactConfig {
+  return { ...DEFAULT_AUTO_COMPACT_CONFIG, ...config };
 }
 
 export type AsyncClientTargetConfig = {
@@ -102,6 +123,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS = new Set([
   "diffTool",
   "agentContextFiles",
   "subagents",
+  "autoCompact",
   "modelSystemNotices",
   "async",
 ]);
@@ -118,6 +140,13 @@ const SubagentsConfigSchema = z
   .passthrough();
 const StringRecordSchema = z.object({}).catchall(z.unknown());
 const PositiveIntegerSchema = z.number().int().finite().gt(0);
+const AutoCompactConfigSchema = z
+  .object({
+    enabled: BooleanSchema.optional(),
+    reserveTokens: PositiveIntegerSchema.optional(),
+    keepRecentTokens: PositiveIntegerSchema.optional(),
+  })
+  .strict();
 const AsyncClientTargetSchema = z.object({
   url: NonEmptyStringSchema.optional(),
   token: NonEmptyStringSchema.optional(),
@@ -335,6 +364,15 @@ function validateConfigData(
     subagentsResult.errors,
   );
 
+  const autoCompactResult = parseAutoCompactConfig(data.autoCompact, sourceLabel);
+  assignParsedConfigValue(
+    config,
+    errors,
+    "autoCompact",
+    autoCompactResult.config,
+    autoCompactResult.errors,
+  );
+
   const modelSystemNoticesResult = parseModelSystemNotices(
     data.modelSystemNotices,
     sourceLabel,
@@ -412,6 +450,58 @@ function parseSubagentsConfig(
     },
     errors: [],
   };
+}
+
+function parseAutoCompactConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: AutoCompactConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  const parsed = AutoCompactConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    const errors = new Set<string>();
+    if (parsed.error.issues.some((issue) => issue.path[0] === "enabled")) {
+      errors.add(`${sourceLabel}: autoCompact.enabled must be a boolean.`);
+    }
+    if (parsed.error.issues.some((issue) => issue.path[0] === "reserveTokens")) {
+      errors.add(`${sourceLabel}: autoCompact.reserveTokens must be a positive integer.`);
+    }
+    if (parsed.error.issues.some((issue) => issue.path[0] === "keepRecentTokens")) {
+      errors.add(`${sourceLabel}: autoCompact.keepRecentTokens must be a positive integer.`);
+    }
+    for (const issue of parsed.error.issues) {
+      if (issue.code === "unrecognized_keys") {
+        const keyLabel = issue.keys.length === 1 ? "key" : "keys";
+        errors.add(
+          `${sourceLabel}: unknown ${keyLabel} in autoCompact: ${issue.keys.sort().join(", ")}.`,
+        );
+      }
+    }
+    if (errors.size === 0) {
+      errors.add(`${sourceLabel}: 'autoCompact' must be an object.`);
+    }
+    return { errors: [...errors] };
+  }
+
+  const config: AutoCompactConfig = {};
+  if (parsed.data.enabled !== undefined) {
+    config.enabled = parsed.data.enabled;
+  }
+  if (parsed.data.reserveTokens !== undefined) {
+    config.reserveTokens = parsed.data.reserveTokens;
+  }
+  if (parsed.data.keepRecentTokens !== undefined) {
+    config.keepRecentTokens = parsed.data.keepRecentTokens;
+  }
+
+  if (Object.keys(config).length === 0) {
+    return { errors: [] };
+  }
+
+  return { config, errors: [] };
 }
 
 function parseModelNoticeTarget(
@@ -772,6 +862,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let apiKeys: Config["apiKeys"] | undefined;
   let diffTool: DiffToolConfig | undefined;
   let subagents: Config["subagents"] | undefined;
+  let autoCompact: Config["autoCompact"] = { ...DEFAULT_AUTO_COMPACT_CONFIG };
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
   let asyncConfig: AsyncConfig | undefined;
   const bashCommands = new Map<string, BashCommand>();
@@ -786,6 +877,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
       diffTool = resolveDiffToolConfig(level, config.diffTool);
     }
     subagents = mergeSubagentsConfig(subagents, config.subagents);
+    autoCompact = mergeOptionalObject(autoCompact, config.autoCompact);
     modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
     asyncConfig = mergeAsyncConfig(asyncConfig, config.async);
 
@@ -831,6 +923,8 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   if (subagents && Object.keys(subagents).length > 0) {
     merged.subagents = subagents;
   }
+
+  merged.autoCompact = autoCompact;
 
   if (modelSystemNotices && Object.keys(modelSystemNotices).length > 0) {
     merged.modelSystemNotices = modelSystemNotices;

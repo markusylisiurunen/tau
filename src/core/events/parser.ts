@@ -14,6 +14,9 @@ type UnknownRecord = Record<string, unknown>;
 const stopReasons = ["stop", "length", "toolUse", "error", "aborted"] as const;
 const subagentStatuses = ["running", "success", "error", "aborted"] as const;
 const noticeSeverities = ["info", "warn", "error"] as const;
+const compactionReasons = ["threshold"] as const;
+const compactionOutcomes = ["compacted", "skipped", "aborted", "failed"] as const;
+const compactionCutTypes = ["turn-boundary", "split-turn"] as const;
 
 const fail = (message: string): CoreEventParseFailure => ({ ok: false, message });
 
@@ -90,9 +93,42 @@ function isValidCoreEvent(value: UnknownRecord, eventType: string): boolean {
       return typeof value.originHistoryEntryId === "string" && isSubagentUiEvent(value.event);
     case "tool_result":
       return typeof value.historyEntryId === "string" && isToolResultMessage(value.message);
+    case "compaction_start":
+      return isOneOf(value.reason, compactionReasons);
+    case "compaction_end":
+      return isCompactionEndEvent(value);
     default:
       return false;
   }
+}
+
+function isCompactionEndEvent(value: UnknownRecord): boolean {
+  if (!isOneOf(value.reason, compactionReasons) || !isOneOf(value.outcome, compactionOutcomes)) {
+    return false;
+  }
+
+  switch (value.outcome) {
+    case "compacted":
+      return value.errorMessage === undefined && isCompactionResult(value.result);
+    case "failed":
+      return value.result === undefined && typeof value.errorMessage === "string";
+    case "skipped":
+    case "aborted":
+      return value.result === undefined && value.errorMessage === undefined;
+  }
+}
+
+function isCompactionResult(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.compactionMessage === "string" &&
+    isOneOf(value.cutType, compactionCutTypes) &&
+    isNonNegativeInteger(value.retainedMessageCount)
+  );
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 function isAssistantMessage(value: unknown): boolean {

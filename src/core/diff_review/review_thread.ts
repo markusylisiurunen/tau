@@ -151,6 +151,9 @@ export class DiffReviewThread implements DiffReviewThreadSession {
     if (result.aborted) {
       throw new Error("diff review thread was interrupted");
     }
+    if (result.blocked) {
+      throw new Error(result.blocked.message);
+    }
 
     const assistantMessage = findLastAssistantMessage(this.session);
     if (!assistantMessage) {

@@ -7,7 +7,12 @@ import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
-import { prepareSessionCompaction } from "../dist/core/session/compaction.js";
+import {
+  buildAutoCompactionContinuationMessage,
+  prepareAutoCompaction,
+  prepareSessionCompaction,
+  selectAutoCompactionCut,
+} from "../dist/core/session/compaction.js";
 import { CoreSession } from "../dist/core/session/core_session.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
@@ -27,7 +32,9 @@ import {
   buildProjectContextBlock,
 } from "../dist/core/utils/context_builder.js";
 import {
+  getAutoCompactionMetadataFromMessage,
   getCompactionMetadataFromMessage,
+  hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
   stripTauUserMetadata,
   stripTauUserMetadataFromMessage,
@@ -780,6 +787,20 @@ describe("compaction context message", () => {
     ).toThrow("invalid tau user metadata");
   });
 
+  it("skips hidden auto-continuation messages when preparing manual compaction", () => {
+    const continuation = buildAutoCompactionContinuationMessage({
+      cutType: "turn-boundary",
+      now: 1,
+    });
+    const history = [continuation, userMessage("new request")];
+
+    const result = prepareSessionCompaction(history);
+
+    expect(result.messagesToSummarize).toHaveLength(1);
+    expect(result.formattedHistory).toContain("new request");
+    expect(result.formattedHistory).not.toContain("Tau automatically compacted");
+  });
+
   it("uses compaction metadata as previous summary for the next compaction", () => {
     const compactionText = prependTauUserMetadata(
       buildCompactionUserMessage({ summary: "old summary" }),
@@ -834,4 +855,144 @@ describe("compaction context message", () => {
     expect(result.formattedHistory).toContain("old summary");
     expect(result.formattedHistory).toContain("new request");
   });
+
+  it("selects auto-compaction user boundaries when the latest turn fits", () => {
+    const entries = historyEntries([
+      userMessage(`old ${"x".repeat(9000)}`),
+      assistantMessage("old answer"),
+      userMessage("current request"),
+      assistantMessage("current answer"),
+    ]);
+
+    const cut = selectAutoCompactionCut(entries, { startIndex: 0, keepRecentTokens: 1000 });
+
+    expect(cut).toEqual({ startIndex: 2, cutType: "turn-boundary" });
+  });
+
+  it("splits only inside the oversized latest turn at assistant boundaries", () => {
+    const entries = historyEntries([
+      userMessage("latest request"),
+      assistantMessage("tool call one"),
+      toolResultMessage(`large output ${"x".repeat(15000)}`),
+      assistantMessage("tool call two"),
+      toolResultMessage("small output"),
+    ]);
+
+    const cut = selectAutoCompactionCut(entries, { startIndex: 0, keepRecentTokens: 1000 });
+
+    expect(cut).toEqual({ startIndex: 3, cutType: "split-turn" });
+    expect(entries[cut.startIndex].message.role).toBe("assistant");
+  });
+
+  it("splits at an assistant boundary before an oversized latest tool result", () => {
+    const entries = historyEntries([
+      userMessage("latest request"),
+      assistantMessage("tool call"),
+      toolResultMessage(`large output ${"x".repeat(15000)}`),
+    ]);
+
+    const cut = selectAutoCompactionCut(entries, { startIndex: 0, keepRecentTokens: 1000 });
+
+    expect(cut).toEqual({ startIndex: 1, cutType: "split-turn" });
+  });
+
+  it("keeps an oversized latest user-only turn whole when older history can be compacted", () => {
+    const entries = historyEntries([
+      userMessage("older request"),
+      assistantMessage("older answer"),
+      userMessage(`latest request ${"x".repeat(15000)}`),
+    ]);
+
+    const cut = selectAutoCompactionCut(entries, { startIndex: 0, keepRecentTokens: 1000 });
+
+    expect(cut).toEqual({ startIndex: 2, cutType: "turn-boundary" });
+  });
+
+  it("does not split an oversized latest turn without older history or an assistant boundary", () => {
+    const entries = historyEntries([userMessage(`latest request ${"x".repeat(15000)}`)]);
+
+    expect(
+      selectAutoCompactionCut(entries, { startIndex: 0, keepRecentTokens: 1000 }),
+    ).toBeUndefined();
+  });
+
+  it("prepares auto-compaction with auto metadata and hidden continuation messages", () => {
+    const previousSummaryText = prependTauUserMetadata(
+      buildCompactionUserMessage({ summary: "old summary" }),
+      [
+        {
+          type: "auto-compaction",
+          version: 1,
+          summary: "old summary",
+          cutType: "turn-boundary",
+          retainedMessageCount: 2,
+        },
+      ],
+    );
+    const continuation = buildAutoCompactionContinuationMessage({
+      cutType: "turn-boundary",
+      now: 2,
+      subagentStatus: "- agent-1: check tests (name: default, status: running)",
+    });
+    const entries = historyEntries([
+      userMessage(previousSummaryText),
+      userMessage("retained old request"),
+      continuation,
+      userMessage(`new request ${"x".repeat(9000)}`),
+      userMessage("current request"),
+    ]);
+
+    const preparation = prepareAutoCompaction(entries, { keepRecentTokens: 1000 });
+
+    expect(preparation.previousSummary).toBe("old summary");
+    expect(preparation.formattedHistory).toContain("retained old request");
+    expect(preparation.formattedHistory).toContain("new request");
+    expect(preparation.formattedHistory).not.toContain("Tau automatically compacted");
+    expect(preparation.retainedEntries.map((entry) => entry.id)).toEqual(["entry-4"]);
+    expect(getAutoCompactionMetadataFromMessage(entries[0].message)).toEqual({
+      type: "auto-compaction",
+      version: 1,
+      summary: "old summary",
+      cutType: "turn-boundary",
+      retainedMessageCount: 2,
+    });
+    expect(stripTauUserMetadata(continuation.content[0].text)).toContain("<active-subagents>");
+    expect(stripTauUserMetadata(continuation.content[0].text)).toContain("agent-1");
+    expect(hasAutoCompactionContinuationMetadata(continuation)).toBe(true);
+  });
 });
+
+function historyEntries(messages) {
+  return messages.map((message, index) => ({ id: `entry-${index}`, message }));
+}
+
+function userMessage(text) {
+  return {
+    role: "user",
+    content: [{ type: "text", text }],
+    timestamp: 0,
+  };
+}
+
+function assistantMessage(text) {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    timestamp: 0,
+    provider: "test",
+    model: "test",
+    api: "test",
+    stopReason: "stop",
+  };
+}
+
+function toolResultMessage(text) {
+  return {
+    role: "toolResult",
+    toolCallId: `tool-${text.length}`,
+    toolName: TOOL_NAME_BASH,
+    content: [{ type: "text", text }],
+    isError: false,
+    timestamp: 0,
+  };
+}

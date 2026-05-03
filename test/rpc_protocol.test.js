@@ -53,6 +53,18 @@ describe("rpc_protocol", () => {
       event,
     });
 
+    const compactionEnd = {
+      type: "compaction_end",
+      reason: "threshold",
+      outcome: "compacted",
+      result: {
+        compactionMessage: "summary",
+        cutType: "turn-boundary",
+        retainedMessageCount: 3,
+      },
+    };
+    expect(parseCoreEvent(compactionEnd)).toEqual(compactionEnd);
+
     expect(safeParseCoreEvent({ type: "notice", text: "missing severity" })).toEqual({
       ok: false,
       message: expect.stringContaining("invalid core event payload"),

@@ -55,6 +55,9 @@ vi.mock("../src/core/session/core_session.ts", () => ({
         message,
       });
     }
+    get rawHistoryEntries() {
+      return this.historyEntries;
+    }
     get sessionId() {
       return "review-session-1";
     }

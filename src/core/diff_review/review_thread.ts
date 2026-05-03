@@ -188,7 +188,7 @@ export class DiffReviewThread implements DiffReviewThreadSession {
 
   createForkSource(): DiffReviewThreadForkSource {
     return {
-      historyEntries: this.session.historyEntries.map((entry) => ({
+      historyEntries: this.session.rawHistoryEntries.map((entry) => ({
         id: entry.id,
         message: structuredClone(entry.message),
       })),

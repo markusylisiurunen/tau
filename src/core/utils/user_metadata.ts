@@ -8,7 +8,6 @@ export type TauCompactionUserMetadata = {
   type: "compaction";
   version: 1;
   summary: string;
-  mode: "only-summary" | "with-last-assistant";
 };
 
 export type TauUserMetadata = TauCompactionUserMetadata;
@@ -54,15 +53,10 @@ function parseMetadataRecord(value: unknown): TauUserMetadata {
   if (typeof record.summary !== "string" || record.summary.trim() === "") {
     throw new Error("invalid tau user metadata: compaction summary must be a non-empty string");
   }
-  if (record.mode !== "only-summary" && record.mode !== "with-last-assistant") {
-    throw new Error("invalid tau user metadata: invalid compaction mode");
-  }
-
   return {
     type: "compaction",
     version: 1,
     summary: record.summary,
-    mode: record.mode,
   };
 }
 

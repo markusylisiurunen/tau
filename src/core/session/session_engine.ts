@@ -260,6 +260,10 @@ export class SessionEngine {
     return this.historyEntries.map((entry) => entry.message);
   }
 
+  get rawHistoryEntriesSnapshot(): readonly HistoryEntry[] {
+    return this.historyEntries;
+  }
+
   get historyEntriesSnapshot(): readonly HistoryEntry[] {
     return this.historyEntries.map((entry) => ({
       ...entry,
@@ -324,7 +328,6 @@ export class SessionEngine {
         type: "compaction",
         version: 1,
         summary,
-        mode: options.mode,
       },
     ]);
 

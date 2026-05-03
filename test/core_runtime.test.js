@@ -214,7 +214,6 @@ describe("core session rewind APIs", () => {
         type: "compaction",
         version: 1,
         summary: "summary",
-        mode: "only-summary",
       },
     ]);
 
@@ -757,7 +756,6 @@ describe("compaction context message", () => {
         type: "compaction",
         version: 1,
         summary: "## Goal\nShip feature",
-        mode: "only-summary",
       },
     ]);
     const message = {
@@ -773,7 +771,6 @@ describe("compaction context message", () => {
       type: "compaction",
       version: 1,
       summary: "## Goal\nShip feature",
-      mode: "only-summary",
     });
   });
 
@@ -791,7 +788,6 @@ describe("compaction context message", () => {
           type: "compaction",
           version: 1,
           summary: "old summary",
-          mode: "only-summary",
         },
       ],
     );

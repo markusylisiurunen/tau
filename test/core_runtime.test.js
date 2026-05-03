@@ -7,6 +7,7 @@ import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
+import { prepareSessionCompaction } from "../dist/core/session/compaction.js";
 import { CoreSession } from "../dist/core/session/core_session.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
@@ -19,14 +20,19 @@ import {
 } from "../dist/core/tools/tool_names.js";
 import {
   buildCompactionUserMessage,
-  extractCompactionSummaryFromText,
   formatHistoryForCompaction,
-  partitionHistoryForCompaction,
 } from "../dist/core/utils/compact.js";
 import {
   buildEnvironmentTag,
   buildProjectContextBlock,
 } from "../dist/core/utils/context_builder.js";
+import {
+  getCompactionMetadataFromMessage,
+  prependTauUserMetadata,
+  stripTauUserMetadata,
+  stripTauUserMetadataFromMessage,
+  TAU_USER_METADATA_PREFIX,
+} from "../dist/core/utils/user_metadata.js";
 
 describe("command registry", () => {
   it("parses and dispatches commands", async () => {
@@ -191,6 +197,37 @@ describe("core session rewind APIs", () => {
     expect(remaining[1]?.role).toBe("assistant");
 
     expect(session.rewindToHistoryEntryId("missing-id")).toBeUndefined();
+  });
+
+  it("keeps tau metadata in raw history and strips it from visible history", () => {
+    const backend = createLocalToolExecutionBackend();
+    const toolRegistry = ToolCatalog.createRegistry(backend);
+    const session = new CoreSession({
+      persona: personas[0],
+      systemPrompt: "system",
+      subagentPrompts: {},
+      riskLevel: "read-only",
+      toolRegistry,
+    });
+    const text = prependTauUserMetadata("visible summary", [
+      {
+        type: "compaction",
+        version: 1,
+        summary: "summary",
+        mode: "only-summary",
+      },
+    ]);
+
+    session.addMessage({
+      role: "user",
+      content: [{ type: "text", text }],
+      timestamp: 0,
+    });
+
+    expect(session.rawHistory[0].content[0].text.startsWith(TAU_USER_METADATA_PREFIX)).toBe(true);
+    expect(session.history[0].content[0].text).toBe("visible summary");
+    expect(session.historyEntries[0].message.content[0].text).toBe("visible summary");
+    expect(session.listRewindCandidates()[0].text).toBe("visible summary");
   });
 });
 
@@ -703,7 +740,7 @@ describe("summary formatting", () => {
 });
 
 describe("compaction context message", () => {
-  it("builds and extracts compaction summary text", () => {
+  it("builds visible compaction summary text", () => {
     const message = buildCompactionUserMessage({
       summary: "## Goal\nShip feature",
       lastAssistantMessage: "Done. Tests passed.",
@@ -711,35 +748,57 @@ describe("compaction context message", () => {
 
     expect(message).toContain("<summary>");
     expect(message).toContain("<last-assistant-message-verbatim>");
-    expect(extractCompactionSummaryFromText(message)).toBe("## Goal\nShip feature");
   });
 
-  it("does not extract summary from non-canonical marker text", () => {
-    const quotedCompactionText = [
-      "Please echo this format:",
-      "The conversation history before this point was compacted into the following summary:",
-      "<summary>",
-      "quoted content",
-      "</summary>",
-    ].join("\n");
+  it("round-trips tau user metadata", () => {
+    const visibleText = buildCompactionUserMessage({ summary: "## Goal\nShip feature" });
+    const text = prependTauUserMetadata(visibleText, [
+      {
+        type: "compaction",
+        version: 1,
+        summary: "## Goal\nShip feature",
+        mode: "only-summary",
+      },
+    ]);
+    const message = {
+      role: "user",
+      content: [{ type: "text", text }],
+      timestamp: 0,
+    };
 
-    expect(extractCompactionSummaryFromText(quotedCompactionText)).toBeUndefined();
+    expect(text.startsWith(TAU_USER_METADATA_PREFIX)).toBe(true);
+    expect(stripTauUserMetadata(text)).toBe(visibleText);
+    expect(stripTauUserMetadataFromMessage(message).content[0].text).toBe(visibleText);
+    expect(getCompactionMetadataFromMessage(message)).toEqual({
+      type: "compaction",
+      version: 1,
+      summary: "## Goal\nShip feature",
+      mode: "only-summary",
+    });
   });
 
-  it("does not extract summary when extra trailing text is present", () => {
-    const messageWithTrailingText = `${buildCompactionUserMessage({
-      summary: "old summary",
-    })}\n\ntrailing text`;
-
-    expect(extractCompactionSummaryFromText(messageWithTrailingText)).toBeUndefined();
+  it("fails fast for invalid tau user metadata", () => {
+    expect(() =>
+      stripTauUserMetadata(`${TAU_USER_METADATA_PREFIX}not-base64\u001evisible`),
+    ).toThrow("invalid tau user metadata");
   });
 
-  it("excludes previous compaction user message from the next summary input", () => {
-    const compactionMessage = buildCompactionUserMessage({ summary: "old summary" });
+  it("uses compaction metadata as previous summary for the next compaction", () => {
+    const compactionText = prependTauUserMetadata(
+      buildCompactionUserMessage({ summary: "old summary" }),
+      [
+        {
+          type: "compaction",
+          version: 1,
+          summary: "old summary",
+          mode: "only-summary",
+        },
+      ],
+    );
     const history = [
       {
         role: "user",
-        content: [{ type: "text", text: compactionMessage }],
+        content: [{ type: "text", text: compactionText }],
         timestamp: 0,
       },
       {
@@ -749,10 +808,34 @@ describe("compaction context message", () => {
       },
     ];
 
-    const result = partitionHistoryForCompaction(history);
+    const result = prepareSessionCompaction(history);
 
     expect(result.previousSummary).toBe("old summary");
     expect(result.messagesToSummarize).toHaveLength(1);
-    expect(result.messagesToSummarize[0].role).toBe("user");
+    expect(result.formattedHistory).toContain("new request");
+    expect(result.formattedHistory).not.toContain("old summary");
+  });
+
+  it("treats visible compaction text without metadata as ordinary user text", () => {
+    const oldVisibleCompactionText = buildCompactionUserMessage({ summary: "old summary" });
+    const history = [
+      {
+        role: "user",
+        content: [{ type: "text", text: oldVisibleCompactionText }],
+        timestamp: 0,
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "new request" }],
+        timestamp: 1,
+      },
+    ];
+
+    const result = prepareSessionCompaction(history);
+
+    expect(result.previousSummary).toBeUndefined();
+    expect(result.messagesToSummarize).toHaveLength(2);
+    expect(result.formattedHistory).toContain("old summary");
+    expect(result.formattedHistory).toContain("new request");
   });
 });

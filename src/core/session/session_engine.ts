@@ -30,6 +30,11 @@ import { streamModel } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import {
+  prependTauUserMetadata,
+  stripTauUserMetadata,
+  stripTauUserMetadataFromMessage,
+} from "../utils/user_metadata.js";
+import {
   buildSessionCompactionMessage,
   buildSessionCompactionPrompt,
   COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
@@ -248,11 +253,18 @@ export class SessionEngine {
   }
 
   get history(): readonly Message[] {
+    return this.historyEntries.map((entry) => stripTauUserMetadataFromMessage(entry.message));
+  }
+
+  get rawHistory(): readonly Message[] {
     return this.historyEntries.map((entry) => entry.message);
   }
 
   get historyEntriesSnapshot(): readonly HistoryEntry[] {
-    return this.historyEntries;
+    return this.historyEntries.map((entry) => ({
+      ...entry,
+      message: stripTauUserMetadataFromMessage(entry.message),
+    }));
   }
 
   get sessionIdValue(): string {
@@ -260,7 +272,7 @@ export class SessionEngine {
   }
 
   async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {
-    const preparation = prepareSessionCompaction(this.history);
+    const preparation = prepareSessionCompaction(this.rawHistory);
     if (!preparation) {
       throw new Error("no conversation to compact.");
     }
@@ -303,8 +315,25 @@ export class SessionEngine {
       messagesToSummarize: preparation.messagesToSummarize,
     });
 
+    const textWithModelNotice = prependModelNotice(
+      compactionMessage,
+      resolveModelNotice(this.config, this.persona.model),
+    );
+    const textWithMetadata = prependTauUserMetadata(textWithModelNotice, [
+      {
+        type: "compaction",
+        version: 1,
+        summary,
+        mode: options.mode,
+      },
+    ]);
+
     this.reset();
-    this.addUserText(compactionMessage);
+    this.addMessage({
+      role: "user",
+      content: [{ type: "text", text: textWithMetadata }],
+      timestamp: this.deps.clock.now(),
+    });
 
     return {
       compactionMessage,
@@ -340,7 +369,7 @@ export class SessionEngine {
 
   private extractUserText(message: Message): string {
     if (typeof message.content === "string") {
-      return message.content.trim();
+      return stripTauUserMetadata(message.content).trim();
     }
 
     const parts: string[] = [];
@@ -352,7 +381,7 @@ export class SessionEngine {
       }
     }
 
-    return parts.join("\n\n").trim();
+    return stripTauUserMetadata(parts.join("\n\n")).trim();
   }
 
   private extractRewindUserText(message: Message): string {

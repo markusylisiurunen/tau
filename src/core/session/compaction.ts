@@ -1,10 +1,7 @@
 import type { AssistantMessage, Message } from "@mariozechner/pi-ai";
-import {
-  buildCompactionUserMessage,
-  formatHistoryForCompaction,
-  partitionHistoryForCompaction,
-} from "../utils/compact.js";
+import { buildCompactionUserMessage, formatHistoryForCompaction } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
+import { getCompactionMetadataFromMessage } from "../utils/user_metadata.js";
 
 export type SessionCompactionMode = "only-summary" | "with-last-assistant";
 
@@ -107,17 +104,29 @@ Rules:
 export function prepareSessionCompaction(
   history: readonly Message[],
 ): SessionCompactionPreparation | undefined {
-  const { previousSummary, messagesToSummarize } = partitionHistoryForCompaction(history);
+  const latestCompaction = findLatestCompaction(history);
+  const messagesToSummarize = history.slice(latestCompaction.index + 1);
   const formattedHistory = formatHistoryForCompaction(messagesToSummarize);
   if (!formattedHistory) {
     return undefined;
   }
 
   return {
-    previousSummary,
+    previousSummary: latestCompaction.summary,
     messagesToSummarize,
     formattedHistory,
   };
+}
+
+function findLatestCompaction(history: readonly Message[]): { index: number; summary?: string } {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const metadata = getCompactionMetadataFromMessage(history[index]!);
+    if (metadata) {
+      return { index, summary: metadata.summary };
+    }
+  }
+
+  return { index: -1 };
 }
 
 export function buildSessionCompactionPrompt(args: {

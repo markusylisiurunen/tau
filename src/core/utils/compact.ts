@@ -2,6 +2,7 @@ import type { AssistantMessage, Message, ToolResultMessage } from "@mariozechner
 import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../tools/tool_names.js";
 import { buildLineDiff, collapseLongUnchangedDiffRuns } from "./line_diff.js";
 import { truncateForTokens } from "./truncate.js";
+import { stripTauUserMetadata } from "./user_metadata.js";
 
 export const COMPACTION_SUMMARY_HEADER =
   "The conversation history before this point was compacted into the following summary:";
@@ -123,7 +124,7 @@ export function formatHistoryForCompaction(history: readonly Message[]): string 
 
   for (const message of history) {
     if (message.role === "user") {
-      const text = extractTextFromContent(message.content);
+      const text = stripTauUserMetadata(extractTextFromContent(message.content));
       if (text) {
         lines.push(formatCompactionBlock("[User]:", text));
       }
@@ -161,89 +162,4 @@ export function buildCompactionUserMessage(args: {
   }
 
   return lines.join("\n");
-}
-
-export function extractCompactionSummaryFromText(text: string): string | undefined {
-  const summaryPrefix = `${COMPACTION_SUMMARY_HEADER}\n\n${SUMMARY_OPEN_TAG}\n`;
-  if (!text.startsWith(summaryPrefix)) {
-    return undefined;
-  }
-
-  const summaryContentStart = summaryPrefix.length;
-  const summaryEndMarker = `\n${SUMMARY_CLOSE_TAG}`;
-  const summaryEnd = text.indexOf(summaryEndMarker, summaryContentStart);
-  if (summaryEnd === -1) {
-    return undefined;
-  }
-
-  const summary = text.slice(summaryContentStart, summaryEnd).trim();
-  if (!summary) {
-    return undefined;
-  }
-
-  const remainderStart = summaryEnd + summaryEndMarker.length;
-  const remainder = text.slice(remainderStart);
-  if (!remainder) {
-    return summary;
-  }
-
-  if (!remainder.startsWith("\n\n")) {
-    return undefined;
-  }
-
-  const lastAssistantPrefix = `${LAST_ASSISTANT_OPEN_TAG}\n`;
-  const lastAssistantBlock = remainder.slice(2);
-  if (!lastAssistantBlock.startsWith(lastAssistantPrefix)) {
-    return undefined;
-  }
-
-  const lastAssistantContentStart = lastAssistantPrefix.length;
-  const lastAssistantEndMarker = `\n${LAST_ASSISTANT_CLOSE_TAG}`;
-  const lastAssistantEnd = lastAssistantBlock.indexOf(
-    lastAssistantEndMarker,
-    lastAssistantContentStart,
-  );
-  if (lastAssistantEnd === -1) {
-    return undefined;
-  }
-
-  const trailing = lastAssistantBlock.slice(lastAssistantEnd + lastAssistantEndMarker.length);
-  if (trailing.length > 0) {
-    return undefined;
-  }
-
-  return summary;
-}
-
-export function extractCompactionSummaryFromMessage(message: Message): string | undefined {
-  if (message.role !== "user") {
-    return undefined;
-  }
-
-  const text = extractTextFromContent(message.content);
-  if (!text) {
-    return undefined;
-  }
-
-  return extractCompactionSummaryFromText(text);
-}
-
-export function partitionHistoryForCompaction(history: readonly Message[]): {
-  previousSummary?: string;
-  messagesToSummarize: Message[];
-} {
-  const messagesToSummarize: Message[] = [];
-  let previousSummary: string | undefined;
-
-  for (const message of history) {
-    const summary = extractCompactionSummaryFromMessage(message);
-    if (summary) {
-      previousSummary = summary;
-      continue;
-    }
-
-    messagesToSummarize.push(message);
-  }
-
-  return { previousSummary, messagesToSummarize };
 }

@@ -77,6 +77,7 @@ import { transcribeMistralAudio } from "../core/utils/mistral_transcription.js";
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
+import { stripTauUserMetadata } from "../core/utils/user_metadata.js";
 import { APP_VERSION } from "../core/version.js";
 import {
   type DiffReviewReturnedReview,
@@ -674,7 +675,7 @@ export class ChatController {
 
   private extractUserText(message: Message): string {
     if (typeof message.content === "string") {
-      return message.content.trim();
+      return stripTauUserMetadata(message.content).trim();
     }
     const parts: string[] = [];
     for (const block of message.content) {
@@ -682,7 +683,7 @@ export class ChatController {
         parts.push(block.text);
       }
     }
-    return parts.join("\n").trim();
+    return stripTauUserMetadata(parts.join("\n")).trim();
   }
 
   private formatToolResultNotice(toolResult: ToolResultMessage): string {
@@ -2074,7 +2075,7 @@ export class ChatController {
   }
 
   private async checkpointSession(): Promise<void> {
-    const history = this.engine.history;
+    const history = this.engine.rawHistory;
     if (history.length === 0) {
       this.view.addSystemMessage("no conversation to checkpoint.", "warn", { persist: false });
       return;

@@ -105,7 +105,7 @@ describe("subagent engine model notices", () => {
       },
       modelResolver: createModelResolver(),
       signal: new AbortController().signal,
-      turnUserHistoryEntryId: "history-1",
+      originHistoryEntryId: "history-1",
       subagentContext: {
         id: "subagent-1",
         name: "default",
@@ -170,7 +170,7 @@ describe("subagent engine model notices", () => {
       config: {},
       modelResolver: createModelResolver(),
       signal: new AbortController().signal,
-      turnUserHistoryEntryId: "history-1",
+      originHistoryEntryId: "history-1",
       subagentContext: {
         id: "subagent-1",
         name: "default",

@@ -90,7 +90,7 @@ function createContext(overrides = {}) {
     toolRegistry: { schemas: [] },
     authPath: "/tmp/auth.json",
     includeAgentContext: false,
-    turnUserHistoryEntryId: "history-1",
+    originHistoryEntryId: "history-1",
     subagentControlPlane: {
       spawn: ({ runtimeConfig }) => {
         spawned.push(runtimeConfig);

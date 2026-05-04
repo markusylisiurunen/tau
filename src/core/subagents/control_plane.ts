@@ -370,7 +370,7 @@ export class SubagentControlPlane {
       signal: record.controller.signal,
       sessionId: record.id,
       personaId,
-      turnUserHistoryEntryId: record.originHistoryEntryId,
+      originHistoryEntryId: record.originHistoryEntryId,
       subagentContext,
       modelResolver: record.modelResolver,
       messages: record.messages,

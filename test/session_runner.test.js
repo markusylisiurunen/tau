@@ -52,7 +52,7 @@ describe("session runner tool dispatch context", () => {
       config: {},
       toolRegistry,
       authPath: "/tmp/auth.json",
-      turnUserHistoryEntryId: "history-1",
+      originHistoryEntryId: "history-1",
       cwd: "/repo/subagent",
       subagentContext: {
         id: "subagent-1",

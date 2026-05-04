@@ -268,7 +268,7 @@ export type SubagentDispatchContext = {
 
 type ToolDispatchBaseContext = {
   config: Config;
-  turnUserHistoryEntryId: string;
+  originHistoryEntryId: string;
   cwd: string;
   toolRegistry: ToolRegistry;
   modelResolver: ModelResolver;

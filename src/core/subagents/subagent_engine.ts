@@ -89,7 +89,7 @@ export async function runSubagent(options: {
   onToolUiEvent?: (event: SubagentToolUiEvent) => void;
   sessionId?: string;
   personaId?: string;
-  turnUserHistoryEntryId: string;
+  originHistoryEntryId: string;
   subagentContext: SubagentDispatchContext;
   modelResolver: ModelResolver;
 }): Promise<SubagentRunResult> {
@@ -102,7 +102,7 @@ export async function runSubagent(options: {
     onToolUiEvent,
     subagentContext,
     personaId,
-    turnUserHistoryEntryId,
+    originHistoryEntryId,
     modelResolver,
   } = options;
   const authPath = options.authPath ?? getAuthPath();
@@ -322,7 +322,7 @@ export async function runSubagent(options: {
       config,
       toolRegistry,
       authPath,
-      turnUserHistoryEntryId,
+      originHistoryEntryId,
       cwd: runtimeConfig.workingDirectory,
       modelResolver,
       subagentContext,

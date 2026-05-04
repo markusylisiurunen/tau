@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/index.js";
@@ -16,6 +17,7 @@ import {
 import { CoreSession } from "../dist/core/session/core_session.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { ToolRegistry } from "../dist/core/tools/registry.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
@@ -234,6 +236,94 @@ describe("core session rewind APIs", () => {
     expect(session.history[0].content[0].text).toBe("visible summary");
     expect(session.historyEntries[0].message.content[0].text).toBe("visible summary");
     expect(session.listRewindCandidates()[0].text).toBe("visible summary");
+  });
+
+  it("keeps tool dispatch origin tied to the submitted user after auto-compaction", async () => {
+    const faux = registerFauxProvider({
+      provider: "faux-auto-origin",
+      models: [{ id: "faux-auto-origin-model", contextWindow: 2000 }],
+    });
+
+    try {
+      faux.setResponses([
+        fauxAssistantMessage("## Goal\nPreserve the request"),
+        fauxAssistantMessage([fauxToolCall("fake_tool", {}, { id: "fake-call" })], {
+          stopReason: "toolUse",
+        }),
+        fauxAssistantMessage("done"),
+      ]);
+
+      let receivedOriginHistoryEntryId;
+      const toolRegistry = new ToolRegistry([
+        {
+          schema: {
+            name: "fake_tool",
+            description: "test tool",
+            parameters: {
+              type: "object",
+              properties: {},
+              additionalProperties: false,
+            },
+          },
+          async dispatch(toolCall, _riskLevel, _signal, context) {
+            receivedOriginHistoryEntryId = context.originHistoryEntryId;
+            return {
+              kind: "single",
+              toolResult: {
+                role: "toolResult",
+                toolCallId: toolCall.id,
+                toolName: toolCall.name,
+                content: [{ type: "text", text: "ok" }],
+                isError: false,
+                timestamp: 2,
+              },
+            };
+          },
+        },
+      ]);
+      const persona = {
+        id: "faux-auto-origin",
+        label: "faux auto origin",
+        model: faux.getModel(),
+        systemPrompt: "system",
+        settings: { reasoning: "none" },
+        skills: "*",
+        source: "builtin",
+      };
+      const session = new CoreSession({
+        persona,
+        systemPrompt: "system",
+        subagentPrompts: {},
+        riskLevel: "read-only",
+        toolRegistry,
+        config: {
+          autoCompact: {
+            enabled: true,
+            reserveTokens: 500,
+            keepRecentTokens: 1000,
+          },
+        },
+      });
+
+      session.addUserText(`old request ${"x".repeat(10000)}`);
+      session.addMessage(assistantMessageWithUsage("old answer", 1600));
+      const submittedUserHistoryEntryId = session.addUserText("current request");
+
+      const events = [];
+      for await (const event of session.events(new AbortController().signal)) {
+        events.push(event);
+      }
+
+      expect(events).toContainEqual({
+        type: "compaction_end",
+        reason: "threshold",
+        outcome: "compacted",
+        result: expect.objectContaining({ cutType: "turn-boundary" }),
+      });
+      expect(receivedOriginHistoryEntryId).toBe(submittedUserHistoryEntryId);
+    } finally {
+      faux.unregister();
+    }
   });
 });
 
@@ -983,6 +1073,20 @@ function assistantMessage(text) {
     model: "test",
     api: "test",
     stopReason: "stop",
+  };
+}
+
+function assistantMessageWithUsage(text, totalTokens) {
+  return {
+    ...assistantMessage(text),
+    usage: {
+      input: totalTokens,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
   };
 }
 

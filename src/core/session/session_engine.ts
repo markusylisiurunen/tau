@@ -544,7 +544,7 @@ export class SessionEngine {
 
   async *processTurn(signal: AbortSignal): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
     let subturns = 0;
-    const turnUserHistoryEntryId = this.getCurrentTurnUserHistoryEntryId();
+    const originHistoryEntryId = this.getCurrentTurnUserHistoryEntryId();
 
     while (subturns < MAX_ASSISTANT_SUBTURNS && !signal.aborted) {
       const compactionResult = yield* this.runAutoCompactionIfNeeded(signal);
@@ -573,7 +573,7 @@ export class SessionEngine {
         scope: "main",
         persona: this.persona,
         config: this.config,
-        turnUserHistoryEntryId,
+        originHistoryEntryId,
         cwd: this.cwd,
         home: this.home,
         includeAgentContext: this.includeAgentContext,

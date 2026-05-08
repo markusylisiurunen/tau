@@ -5,11 +5,11 @@ import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
 import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
 import { renderChatMessage } from "../dist/tui/ui/chat_message_model.js";
+import { HeaderLineComponent } from "../dist/tui/ui/components/header_line.js";
 import {
   OneLineSegmentsComponent,
   truncateFromEndByWidth,
   truncateFromEndByWidthPreserveAnsi,
-  WrappedSegmentsComponent,
 } from "../dist/tui/ui/components/one_line_segments.js";
 import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
 import { FooterComponent } from "../dist/tui/ui/footer.js";
@@ -320,21 +320,21 @@ test("OneLineSegmentsComponent truncates flex segments", () => {
   expect(line).toBe("hellowo…");
 });
 
-test("WrappedSegmentsComponent uses full width for continuation lines", () => {
-  const component = new WrappedSegmentsComponent(
-    [
+test("HeaderLineComponent uses character wrapping for wrapped headers", () => {
+  const component = new HeaderLineComponent({
+    segments: [
       { text: " ", style: (s) => s },
       { text: "✓", style: (s) => s },
       { text: " ", style: (s) => s },
       { text: "ran", style: (s) => s },
       { text: " ", style: (s) => s },
-      { text: "abcdefghijklmnopqrstuvwxyz0123456789", style: (s) => s },
+      { text: "alpha beta gamma delta epsilon", style: (s) => s },
     ],
-    5,
-  );
+    wrapIndex: 5,
+  });
 
   const lines = renderLines(component, 20);
-  expect(lines).toEqual([" ✓ ran abcdefghijklm", "nopqrstuvwxyz0123456", "789"]);
+  expect(lines).toEqual([" ✓ ran alpha beta ga", "mma delta epsilon"]);
 });
 
 test("truncateFromEndByWidth respects max width", () => {

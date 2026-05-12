@@ -263,7 +263,7 @@ notes:
 - events tied to `session.submit` include `requestId`.
 - `subagent_ui` events include stable `requestId` correlation to the submit that spawned the subagent run, even when the update arrives during a later submit.
 - `subagent_ui` core events include `originHistoryEntryId` for explicit origin correlation.
-- automatic compaction emits `compaction_start` and `compaction_end` events. `compaction_end.outcome` is `compacted`, `skipped`, `aborted`, or `failed`; compacted events include the visible summary message, cut type, and retained message count, while failed events include `errorMessage` and the submit result may include `turn.blocked`.
+- automatic compaction emits `compaction_start` and `compaction_end` events. `compaction_end.outcome` is `compacted`, `skipped`, `aborted`, or `failed`; compacted events include the summary and hidden-continuation history ids, visible summary message, cut type, and retained message count, while failed events include `errorMessage` and the submit result may include `turn.blocked`.
 - core event payloads follow `src/core/events/types.ts`.
 
 ## errors

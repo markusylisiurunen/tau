@@ -78,7 +78,22 @@ function parseMetadataRecord(value: unknown): TauUserMetadata {
   }
 }
 
+function assertMetadataKeys(
+  record: Record<string, unknown>,
+  expectedKeys: readonly string[],
+): void {
+  const expected = new Set(expectedKeys);
+  const unknownKeys = Object.keys(record).filter((key) => !expected.has(key));
+  if (unknownKeys.length > 0) {
+    const keyLabel = unknownKeys.length === 1 ? "key" : "keys";
+    throw new Error(
+      `invalid tau user metadata: unknown ${keyLabel}: ${unknownKeys.sort().join(", ")}`,
+    );
+  }
+}
+
 function parseCompactionMetadataRecord(record: Record<string, unknown>): TauCompactionUserMetadata {
+  assertMetadataKeys(record, ["type", "version", "summary"]);
   if (record.version !== 1) {
     throw new Error("invalid tau user metadata: unsupported compaction metadata version");
   }
@@ -95,6 +110,7 @@ function parseCompactionMetadataRecord(record: Record<string, unknown>): TauComp
 function parseAutoCompactionMetadataRecord(
   record: Record<string, unknown>,
 ): TauAutoCompactionUserMetadata {
+  assertMetadataKeys(record, ["type", "version", "summary", "cutType", "retainedMessageCount"]);
   if (record.version !== 1) {
     throw new Error("invalid tau user metadata: unsupported auto-compaction metadata version");
   }
@@ -109,10 +125,10 @@ function parseAutoCompactionMetadataRecord(
   if (
     typeof record.retainedMessageCount !== "number" ||
     !Number.isInteger(record.retainedMessageCount) ||
-    record.retainedMessageCount < 0
+    record.retainedMessageCount <= 0
   ) {
     throw new Error(
-      "invalid tau user metadata: auto-compaction retained message count must be a non-negative integer",
+      "invalid tau user metadata: auto-compaction retained message count must be a positive integer",
     );
   }
   return {
@@ -127,6 +143,7 @@ function parseAutoCompactionMetadataRecord(
 function parseAutoCompactionContinuationMetadataRecord(
   record: Record<string, unknown>,
 ): TauAutoCompactionContinuationUserMetadata {
+  assertMetadataKeys(record, ["type", "version"]);
   if (record.version !== 1) {
     throw new Error(
       "invalid tau user metadata: unsupported auto-compaction continuation metadata version",

@@ -58,6 +58,8 @@ describe("rpc_protocol", () => {
       reason: "threshold",
       outcome: "compacted",
       result: {
+        summaryHistoryEntryId: "history-summary",
+        continuationHistoryEntryId: "history-continuation",
         compactionMessage: "summary",
         cutType: "turn-boundary",
         retainedMessageCount: 3,

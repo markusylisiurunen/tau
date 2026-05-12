@@ -483,7 +483,7 @@ tau ships a built-in browser diff review demo tool, so `/diff` works without any
 
 the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launch overrides for the built-in `default` sub-agent. values must use `<provider>/<model>:<effort>`.
 
-`autoCompact` controls automatic session compaction and merges field-by-field across config levels. it is enabled by default with `reserveTokens: 16384` and `keepRecentTokens: 20000`. tau triggers it only after provider-reported assistant usage crosses the model context window minus the reserve, then summarizes older context while retaining recent messages verbatim. manual `/compact:*` commands remain summary-reset commands.
+`autoCompact` controls automatic session compaction and merges field-by-field across config levels. it is enabled by default with `reserveTokens: 16384` and `keepRecentTokens: 20000`. tau triggers it only after provider-reported assistant usage crosses the model context window minus the reserve, then summarizes older context while retaining recent messages verbatim (capped at that threshold). manual `/compact:*` commands remain summary-reset commands.
 
 the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). when a message is sent to that model, tau prepends the notice as a `<system>...</system>` block before the user content. this applies to main-session user messages and sub-agent prompts, regardless of persona id.
 

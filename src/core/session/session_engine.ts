@@ -299,7 +299,19 @@ export class SessionEngine {
   }
 
   get history(): readonly Message[] {
+    return this.visibleHistoryEntries.map((entry) =>
+      stripTauUserMetadataFromMessage(entry.message),
+    );
+  }
+
+  private get modelHistory(): readonly Message[] {
     return this.historyEntries.map((entry) => stripTauUserMetadataFromMessage(entry.message));
+  }
+
+  private get visibleHistoryEntries(): readonly HistoryEntry[] {
+    return this.historyEntries.filter(
+      (entry) => !hasAutoCompactionContinuationMetadata(entry.message),
+    );
   }
 
   get rawHistory(): readonly Message[] {
@@ -311,7 +323,7 @@ export class SessionEngine {
   }
 
   get historyEntriesSnapshot(): readonly HistoryEntry[] {
-    return this.historyEntries.map((entry) => ({
+    return this.visibleHistoryEntries.map((entry) => ({
       ...entry,
       message: stripTauUserMetadataFromMessage(entry.message),
     }));
@@ -332,32 +344,10 @@ export class SessionEngine {
       guidance: options.guidance,
     });
 
-    const apiKey = await this.resolveApiKeyForCurrentPersona();
-    const stream = streamModel(
-      this.persona.model,
-      {
-        systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [{ type: "text", text: summaryPrompt }],
-            timestamp: this.deps.clock.now(),
-          },
-        ],
-      },
-      {
-        reasoning: "high",
-        sessionId: `tau-summary-${randomUUID()}`,
-        ...(options.signal ? { signal: options.signal } : {}),
-        ...(apiKey && { apiKey }),
-      },
-    );
-
-    const final = await stream.result();
-    const summary = extractAssistantText(final).trim();
-    if (!summary) {
-      throw new Error("summarization returned an empty response.");
-    }
+    const summary = await this.runCompactionSummary(summaryPrompt, {
+      sessionId: `tau-summary-${randomUUID()}`,
+      signal: options.signal,
+    });
 
     const { compactionMessage, includedLastAssistant } = buildSessionCompactionMessage({
       summary,
@@ -388,6 +378,40 @@ export class SessionEngine {
       compactionMessage,
       includedLastAssistant,
     };
+  }
+
+  private async runCompactionSummary(
+    summaryPrompt: string,
+    options: { sessionId: string; signal?: AbortSignal },
+  ): Promise<string> {
+    const apiKey = await this.resolveApiKeyForCurrentPersona();
+    const stream = streamModel(
+      this.persona.model,
+      {
+        systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: summaryPrompt }],
+            timestamp: this.deps.clock.now(),
+          },
+        ],
+      },
+      {
+        reasoning: "high",
+        sessionId: options.sessionId,
+        ...(options.signal ? { signal: options.signal } : {}),
+        ...(apiKey && { apiKey }),
+      },
+    );
+
+    const final = await stream.result();
+    const summary = extractAssistantText(final).trim();
+    if (!summary) {
+      throw new Error("summarization returned an empty response.");
+    }
+
+    return summary;
   }
 
   private appendHistoryEntry(message: Message, preferredId?: string): HistoryEntry {
@@ -688,40 +712,23 @@ export class SessionEngine {
 
   private async runAutoCompaction(signal: AbortSignal): Promise<CoreCompactionResult | undefined> {
     const settings = this.getAutoCompactConfig();
-    const preparation = prepareAutoCompaction(this.historyEntries, settings);
+    const preparation = prepareAutoCompaction(this.historyEntries, {
+      keepRecentTokens: Math.min(
+        settings.keepRecentTokens,
+        this.getAutoCompactionThresholdTokens(settings),
+      ),
+    });
     if (!preparation) {
       return undefined;
     }
 
-    const summaryPrompt = buildAutoCompactionPrompt(preparation);
-    const apiKey = await this.resolveApiKeyForCurrentPersona();
-    const stream = streamModel(
-      this.persona.model,
-      {
-        systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [{ type: "text", text: summaryPrompt }],
-            timestamp: this.deps.clock.now(),
-          },
-        ],
-      },
-      {
-        reasoning: "high",
-        sessionId: `tau-auto-summary-${randomUUID()}`,
-        signal,
-        ...(apiKey && { apiKey }),
-      },
-    );
-
-    const final = await stream.result();
-    const summary = extractAssistantText(final).trim();
-    if (!summary) {
-      throw new Error("auto-compaction summarization returned an empty response.");
-    }
+    const summary = await this.runCompactionSummary(buildAutoCompactionPrompt(preparation), {
+      sessionId: `tau-auto-summary-${randomUUID()}`,
+      signal,
+    });
 
     const compactionMessage = buildCompactionUserMessage({ summary });
+    const retainedMessageCount = preparation.retainedEntries.length;
     const textWithModelNotice = prependModelNotice(
       compactionMessage,
       resolveModelNotice(this.config, this.persona.model),
@@ -732,7 +739,7 @@ export class SessionEngine {
         version: 1,
         summary,
         cutType: preparation.cutType,
-        retainedMessageCount: preparation.retainedMessageCount,
+        retainedMessageCount,
       },
     ]);
 
@@ -756,9 +763,11 @@ export class SessionEngine {
     this.replaceHistoryEntries([summaryEntry, ...preparation.retainedEntries, continuationEntry]);
 
     return {
+      summaryHistoryEntryId: summaryEntry.id,
+      continuationHistoryEntryId: continuationEntry.id,
       compactionMessage,
       cutType: preparation.cutType,
-      retainedMessageCount: preparation.retainedMessageCount,
+      retainedMessageCount,
     };
   }
 
@@ -784,13 +793,17 @@ export class SessionEngine {
       return false;
     }
 
-    const contextWindow = this.persona.model.contextWindow ?? 0;
-    if (contextWindow <= 0 || settings.reserveTokens >= contextWindow) {
+    const thresholdTokens = this.getAutoCompactionThresholdTokens(settings);
+    if (thresholdTokens <= 0) {
       return false;
     }
 
     const usageTokens = this.getLatestFreshContextUsageTokens();
-    return usageTokens !== undefined && usageTokens > contextWindow - settings.reserveTokens;
+    return usageTokens !== undefined && usageTokens > thresholdTokens;
+  }
+
+  private getAutoCompactionThresholdTokens(settings: NormalizedAutoCompactConfig): number {
+    return (this.persona.model.contextWindow ?? 0) - settings.reserveTokens;
   }
 
   private getAutoCompactConfig(): NormalizedAutoCompactConfig {
@@ -837,7 +850,7 @@ export class SessionEngine {
 
     const context: Context = {
       systemPrompt: this.systemPrompt,
-      messages: [...this.history],
+      messages: [...this.modelHistory],
       tools,
     };
 

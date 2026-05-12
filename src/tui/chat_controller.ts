@@ -2351,11 +2351,14 @@ export class ChatController {
   }
 
   private applyAutoCompactedHistoryUi(result: CoreCompactionResult): void {
+    this.view.resetToolUiSession();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
     this.view.addMessage({ type: "session_divider", label: "new session" });
-    const summaryEntryId = this.engine.historyEntries[0]?.id;
-    this.view.addMessage({ type: "user", text: result.compactionMessage }, summaryEntryId);
+    this.view.addMessage(
+      { type: "user", text: result.compactionMessage },
+      result.summaryHistoryEntryId,
+    );
     this.view.addMessage({
       type: "system",
       text: this.formatAutoCompactionRetainedText(result),

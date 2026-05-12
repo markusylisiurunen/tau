@@ -121,14 +121,16 @@ function isCompactionEndEvent(value: UnknownRecord): boolean {
 function isCompactionResult(value: unknown): boolean {
   return (
     isRecord(value) &&
+    typeof value.summaryHistoryEntryId === "string" &&
+    typeof value.continuationHistoryEntryId === "string" &&
     typeof value.compactionMessage === "string" &&
     isOneOf(value.cutType, compactionCutTypes) &&
-    isNonNegativeInteger(value.retainedMessageCount)
+    isPositiveInteger(value.retainedMessageCount)
   );
 }
 
-function isNonNegativeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 function isAssistantMessage(value: unknown): boolean {

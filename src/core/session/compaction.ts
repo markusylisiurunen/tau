@@ -248,7 +248,7 @@ export function buildAutoCompactionContinuationMessage(args: {
 }): Message {
   const lines = [
     "<system>",
-    "Tau automatically compacted the conversation context before this point.",
+    "The conversation context before this point has been compacted.",
     "Earlier context is summarized in the compaction message above. Recent messages are retained verbatim after that summary.",
     "Continue from the summary and retained context without asking the user to repeat information.",
   ];

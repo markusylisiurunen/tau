@@ -231,11 +231,77 @@ describe("core session rewind APIs", () => {
       content: [{ type: "text", text }],
       timestamp: 0,
     });
+    session.addMessage(
+      buildAutoCompactionContinuationMessage({ cutType: "turn-boundary", now: 1 }),
+    );
 
+    expect(session.rawHistory).toHaveLength(2);
     expect(session.rawHistory[0].content[0].text.startsWith(TAU_USER_METADATA_PREFIX)).toBe(true);
+    expect(session.history).toHaveLength(1);
     expect(session.history[0].content[0].text).toBe("visible summary");
+    expect(session.historyEntries).toHaveLength(1);
     expect(session.historyEntries[0].message.content[0].text).toBe("visible summary");
     expect(session.listRewindCandidates()[0].text).toBe("visible summary");
+  });
+
+  it("clamps auto-compaction retention to the threshold budget", async () => {
+    const faux = registerFauxProvider({
+      provider: "faux-auto-clamp",
+      models: [{ id: "faux-auto-clamp-model", contextWindow: 2000 }],
+    });
+
+    try {
+      faux.setResponses([
+        fauxAssistantMessage("## Goal\nKeep current request"),
+        fauxAssistantMessage("done"),
+      ]);
+      const persona = {
+        id: "faux-auto-clamp",
+        label: "faux auto clamp",
+        model: faux.getModel(),
+        systemPrompt: "system",
+        settings: { reasoning: "none" },
+        skills: "*",
+        source: "builtin",
+      };
+      const session = new CoreSession({
+        persona,
+        systemPrompt: "system",
+        subagentPrompts: {},
+        riskLevel: "read-only",
+        toolRegistry: new ToolRegistry([]),
+        config: {
+          autoCompact: {
+            enabled: true,
+            reserveTokens: 1500,
+            keepRecentTokens: 10000,
+          },
+        },
+      });
+
+      session.addUserText("old request");
+      session.addMessage(assistantMessageWithUsage("old answer", 1000));
+      session.addUserText(`middle request ${"x".repeat(6000)}`);
+      session.addMessage(assistantMessageWithUsage("middle answer", 1000));
+      session.addUserText("current request");
+
+      const events = [];
+      for await (const event of session.events(new AbortController().signal)) {
+        events.push(event);
+      }
+
+      expect(events).toContainEqual({
+        type: "compaction_end",
+        reason: "threshold",
+        outcome: "compacted",
+        result: expect.objectContaining({
+          cutType: "turn-boundary",
+          retainedMessageCount: 1,
+        }),
+      });
+    } finally {
+      faux.unregister();
+    }
   });
 
   it("keeps tool dispatch origin tied to the submitted user after auto-compaction", async () => {
@@ -875,6 +941,14 @@ describe("compaction context message", () => {
     expect(() =>
       stripTauUserMetadata(`${TAU_USER_METADATA_PREFIX}not-base64\u001evisible`),
     ).toThrow("invalid tau user metadata");
+
+    const encoded = Buffer.from(
+      JSON.stringify([{ type: "compaction", version: 1, summary: "summary", extra: true }]),
+      "utf8",
+    ).toString("base64url");
+    expect(() =>
+      stripTauUserMetadata(`${TAU_USER_METADATA_PREFIX}${encoded}\u001evisible`),
+    ).toThrow("invalid tau user metadata: unknown key: extra");
   });
 
   it("skips hidden auto-continuation messages when preparing manual compaction", () => {
@@ -1006,6 +1080,42 @@ describe("compaction context message", () => {
     expect(
       selectAutoCompactionCut(entries, { startIndex: 0, keepRecentTokens: 1000 }),
     ).toBeUndefined();
+  });
+
+  it("does not carry hidden auto-continuation messages into repeated auto-compactions", () => {
+    const previousSummaryText = prependTauUserMetadata(
+      buildCompactionUserMessage({ summary: "old summary" }),
+      [
+        {
+          type: "auto-compaction",
+          version: 1,
+          summary: "old summary",
+          cutType: "turn-boundary",
+          retainedMessageCount: 2,
+        },
+      ],
+    );
+    const continuation = buildAutoCompactionContinuationMessage({
+      cutType: "turn-boundary",
+      now: 2,
+    });
+    const entries = historyEntries([
+      userMessage(previousSummaryText),
+      userMessage("current request"),
+      continuation,
+      assistantMessage("tool call"),
+      toolResultMessage(`large output ${"x".repeat(15000)}`),
+    ]);
+
+    const preparation = prepareAutoCompaction(entries, { keepRecentTokens: 1000 });
+
+    expect(preparation.cutType).toBe("split-turn");
+    expect(preparation.formattedHistory).toContain("current request");
+    expect(preparation.formattedHistory).not.toContain(
+      "The conversation context before this point has been compacted",
+    );
+    expect(preparation.retainedEntries.map((entry) => entry.id)).toEqual(["entry-3", "entry-4"]);
+    expect(preparation.retainedEntries.some((entry) => entry.message === continuation)).toBe(false);
   });
 
   it("prepares auto-compaction with auto metadata and hidden continuation messages", () => {

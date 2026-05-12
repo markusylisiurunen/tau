@@ -51,6 +51,8 @@ export type CoreCompactionStartEvent = {
 };
 
 export type CoreCompactionResult = {
+  summaryHistoryEntryId: string;
+  continuationHistoryEntryId: string;
   compactionMessage: string;
   cutType: "turn-boundary" | "split-turn";
   retainedMessageCount: number;

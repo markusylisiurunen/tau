@@ -8,14 +8,21 @@ import {
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
 } from "../utils/user_metadata.js";
-import type { HistoryEntry } from "./session_engine.js";
+
+export type CompactionHistoryEntry = {
+  id: string;
+  message: Message;
+};
 
 export type SessionCompactionMode = "only-summary" | "with-last-assistant";
 
-export type SessionCompactionPreparation = {
+type CompactionPromptPreparation = {
   previousSummary?: string;
-  messagesToSummarize: Message[];
   formattedHistory: string;
+};
+
+export type SessionCompactionPreparation = CompactionPromptPreparation & {
+  messagesToSummarize: Message[];
 };
 
 export type SessionCompactionMessageResult = {
@@ -25,13 +32,9 @@ export type SessionCompactionMessageResult = {
 
 export type AutoCompactionCutType = "turn-boundary" | "split-turn";
 
-export type AutoCompactionPreparation = {
-  previousSummary?: string;
-  messagesToSummarize: Message[];
-  retainedEntries: HistoryEntry[];
+export type AutoCompactionPreparation = CompactionPromptPreparation & {
+  retainedEntries: CompactionHistoryEntry[];
   cutType: AutoCompactionCutType;
-  retainedMessageCount: number;
-  formattedHistory: string;
 };
 
 export const COMPACTION_SUMMARIZATION_SYSTEM_PROMPT =
@@ -154,7 +157,7 @@ function findLatestCompaction(history: readonly Message[]): { index: number; sum
 }
 
 export function buildSessionCompactionPrompt(args: {
-  preparation: SessionCompactionPreparation;
+  preparation: CompactionPromptPreparation;
   guidance?: string;
 }): string {
   const { preparation, guidance } = args;
@@ -195,7 +198,7 @@ export function buildSessionCompactionMessage(args: {
 }
 
 export function prepareAutoCompaction(
-  entries: readonly HistoryEntry[],
+  entries: readonly CompactionHistoryEntry[],
   settings: { keepRecentTokens: number },
 ): AutoCompactionPreparation | undefined {
   const latestCompaction = findLatestCompactionEntry(entries);
@@ -216,17 +219,18 @@ export function prepareAutoCompaction(
     return undefined;
   }
 
-  const retainedEntries = entries.slice(cut.startIndex).map((entry) => ({ ...entry }));
+  const retainedEntries = entries
+    .slice(cut.startIndex)
+    .filter((entry) => !hasAutoCompactionContinuationMetadata(entry.message))
+    .map((entry) => ({ ...entry }));
   if (retainedEntries.length === 0) {
     return undefined;
   }
 
   return {
     previousSummary: latestCompaction.summary,
-    messagesToSummarize,
     retainedEntries,
     cutType: cut.cutType,
-    retainedMessageCount: retainedEntries.length,
     formattedHistory,
   };
 }
@@ -281,7 +285,7 @@ export function buildAutoCompactionContinuationMessage(args: {
 }
 
 export function selectAutoCompactionCut(
-  entries: readonly HistoryEntry[],
+  entries: readonly CompactionHistoryEntry[],
   args: { startIndex: number; keepRecentTokens: number },
 ): { startIndex: number; cutType: AutoCompactionCutType } | undefined {
   if (entries.length === 0 || args.startIndex >= entries.length) {
@@ -333,7 +337,7 @@ export function selectAutoCompactionCut(
   return { startIndex: splitStart, cutType: "split-turn" };
 }
 
-function findLatestCompactionEntry(entries: readonly HistoryEntry[]): {
+function findLatestCompactionEntry(entries: readonly CompactionHistoryEntry[]): {
   index: number;
   summary?: string;
 } {
@@ -347,14 +351,20 @@ function findLatestCompactionEntry(entries: readonly HistoryEntry[]): {
   return { index: -1 };
 }
 
-function collectTurnStarts(entries: readonly HistoryEntry[], startIndex: number): number[] {
+function collectTurnStarts(
+  entries: readonly CompactionHistoryEntry[],
+  startIndex: number,
+): number[] {
   const starts: number[] = [];
   for (let index = Math.max(0, startIndex); index < entries.length; index += 1) {
     const message = entries[index]!.message;
     if (message.role !== "user") {
       continue;
     }
-    if (getSummaryCompactionMetadataFromMessage(message)) {
+    if (
+      getSummaryCompactionMetadataFromMessage(message) ||
+      hasAutoCompactionContinuationMetadata(message)
+    ) {
       continue;
     }
     starts.push(index);
@@ -363,7 +373,7 @@ function collectTurnStarts(entries: readonly HistoryEntry[], startIndex: number)
 }
 
 function selectLatestTurnSplitStart(
-  entries: readonly HistoryEntry[],
+  entries: readonly CompactionHistoryEntry[],
   args: { turnStart: number; keepRecentTokens: number },
 ): number | undefined {
   let retainedTokens = 0;
@@ -372,6 +382,10 @@ function selectLatestTurnSplitStart(
 
   for (let index = entries.length - 1; index >= args.turnStart; index -= 1) {
     const entry = entries[index]!;
+    if (hasAutoCompactionContinuationMetadata(entry.message)) {
+      continue;
+    }
+
     retainedTokens += estimateMessageTokens(entry.message);
 
     if (entry.message.role === "assistant") {
@@ -389,8 +403,14 @@ function selectLatestTurnSplitStart(
   return latestAssistantBoundary;
 }
 
-function estimateEntriesTokens(entries: readonly HistoryEntry[]): number {
-  return entries.reduce((total, entry) => total + estimateMessageTokens(entry.message), 0);
+function estimateEntriesTokens(entries: readonly CompactionHistoryEntry[]): number {
+  return entries.reduce(
+    (total, entry) =>
+      hasAutoCompactionContinuationMetadata(entry.message)
+        ? total
+        : total + estimateMessageTokens(entry.message),
+    0,
+  );
 }
 
 function estimateMessageTokens(message: Message): number {

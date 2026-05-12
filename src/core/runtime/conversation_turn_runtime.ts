@@ -1,15 +1,7 @@
 import type { CoreEvent } from "../events/types.js";
 import type { CoreSession, ProcessTurnResult } from "../session/core_session.js";
 
-export type ConversationTurnBlocked = {
-  reason: "auto-compaction-failed";
-  message: string;
-};
-
-export type ConversationTurnResult = {
-  aborted: boolean;
-  blocked?: ConversationTurnBlocked;
-};
+export type ConversationTurnResult = ProcessTurnResult;
 
 export class ConversationTurnRuntime {
   private readonly session: Pick<CoreSession, "events">;

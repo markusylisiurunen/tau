@@ -486,22 +486,11 @@ function parseAutoCompactConfig(
     return { errors: [...errors] };
   }
 
-  const config: AutoCompactConfig = {};
-  if (parsed.data.enabled !== undefined) {
-    config.enabled = parsed.data.enabled;
-  }
-  if (parsed.data.reserveTokens !== undefined) {
-    config.reserveTokens = parsed.data.reserveTokens;
-  }
-  if (parsed.data.keepRecentTokens !== undefined) {
-    config.keepRecentTokens = parsed.data.keepRecentTokens;
-  }
-
-  if (Object.keys(config).length === 0) {
+  if (Object.keys(parsed.data).length === 0) {
     return { errors: [] };
   }
 
-  return { config, errors: [] };
+  return { config: parsed.data, errors: [] };
 }
 
 function parseModelNoticeTarget(
@@ -862,7 +851,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let apiKeys: Config["apiKeys"] | undefined;
   let diffTool: DiffToolConfig | undefined;
   let subagents: Config["subagents"] | undefined;
-  let autoCompact: Config["autoCompact"] = { ...DEFAULT_AUTO_COMPACT_CONFIG };
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
   let asyncConfig: AsyncConfig | undefined;
   const bashCommands = new Map<string, BashCommand>();
@@ -877,7 +865,9 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
       diffTool = resolveDiffToolConfig(level, config.diffTool);
     }
     subagents = mergeSubagentsConfig(subagents, config.subagents);
-    autoCompact = mergeOptionalObject(autoCompact, config.autoCompact);
+    if (config.autoCompact !== undefined) {
+      merged.autoCompact = mergeOptionalObject(merged.autoCompact, config.autoCompact);
+    }
     modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
     asyncConfig = mergeAsyncConfig(asyncConfig, config.async);
 
@@ -923,8 +913,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   if (subagents && Object.keys(subagents).length > 0) {
     merged.subagents = subagents;
   }
-
-  merged.autoCompact = autoCompact;
 
   if (modelSystemNotices && Object.keys(modelSystemNotices).length > 0) {
     merged.modelSystemNotices = modelSystemNotices;

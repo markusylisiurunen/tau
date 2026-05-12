@@ -888,7 +888,9 @@ describe("compaction context message", () => {
 
     expect(result.messagesToSummarize).toHaveLength(1);
     expect(result.formattedHistory).toContain("new request");
-    expect(result.formattedHistory).not.toContain("Tau automatically compacted");
+    expect(result.formattedHistory).not.toContain(
+      "The conversation context before this point has been compacted",
+    );
   });
 
   it("uses compaction metadata as previous summary for the next compaction", () => {
@@ -1037,7 +1039,9 @@ describe("compaction context message", () => {
     expect(preparation.previousSummary).toBe("old summary");
     expect(preparation.formattedHistory).toContain("retained old request");
     expect(preparation.formattedHistory).toContain("new request");
-    expect(preparation.formattedHistory).not.toContain("Tau automatically compacted");
+    expect(preparation.formattedHistory).not.toContain(
+      "The conversation context before this point has been compacted",
+    );
     expect(preparation.retainedEntries.map((entry) => entry.id)).toEqual(["entry-4"]);
     expect(getAutoCompactionMetadataFromMessage(entries[0].message)).toEqual({
       type: "auto-compaction",

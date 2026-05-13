@@ -3,13 +3,10 @@ import {
   iterateGraphemes,
   normalizeInlineTextPreservePadding,
   type OneLineSegment,
-  OneLineSegmentsComponent,
 } from "./one_line_segments.js";
 
 export interface HeaderLineModel {
   segments: OneLineSegment[];
-  flexIndices?: number[];
-  wrapIndex?: number;
 }
 
 type WrappedLineSegment = { index: number; text: string };
@@ -23,8 +20,8 @@ function appendWrappedLineSegment(chunks: WrappedLineSegment[], index: number, t
   chunks.push({ index, text });
 }
 
-class CharacterWrappedSegmentsComponent implements Component {
-  constructor(private segments: OneLineSegment[]) {}
+export class HeaderLineComponent implements Component {
+  constructor(private model: HeaderLineModel) {}
 
   invalidate() {}
 
@@ -32,7 +29,9 @@ class CharacterWrappedSegmentsComponent implements Component {
     const minWidth = Math.max(0, width);
     if (minWidth <= 0) return [""];
 
-    const texts = this.segments.map((segment) => normalizeInlineTextPreservePadding(segment.text));
+    const texts = this.model.segments.map((segment) =>
+      normalizeInlineTextPreservePadding(segment.text),
+    );
     const lines: WrappedLineSegment[][] = [];
     let currentLine: WrappedLineSegment[] = [];
     let currentWidth = 0;
@@ -64,34 +63,17 @@ class CharacterWrappedSegmentsComponent implements Component {
       flushLine();
     }
 
-    return lines.map((line) => {
-      const rendered = line
-        .map((chunk) => {
-          const style = this.segments[chunk.index]?.style ?? ((s: string) => s);
-          return style(chunk.text);
-        })
-        .join("");
-      const lineWidth = line.reduce((acc, chunk) => acc + visibleWidth(chunk.text), 0);
-      return `${rendered}${" ".repeat(Math.max(0, minWidth - lineWidth))}`;
-    });
-  }
-}
-
-export class HeaderLineComponent implements Component {
-  private inner: Component;
-
-  constructor(model: HeaderLineModel) {
-    this.inner =
-      model.wrapIndex !== undefined
-        ? new CharacterWrappedSegmentsComponent(model.segments)
-        : new OneLineSegmentsComponent(model.segments, model.flexIndices ?? []);
+    return lines.map((line) => this.renderLine(line, minWidth));
   }
 
-  invalidate() {
-    this.inner.invalidate?.();
-  }
-
-  render(width: number): string[] {
-    return this.inner.render(width);
+  private renderLine(line: WrappedLineSegment[], width: number): string {
+    const rendered = line
+      .map((chunk) => {
+        const style = this.model.segments[chunk.index]?.style ?? ((s: string) => s);
+        return style(chunk.text);
+      })
+      .join("");
+    const lineWidth = line.reduce((acc, chunk) => acc + visibleWidth(chunk.text), 0);
+    return `${rendered}${" ".repeat(Math.max(0, width - lineWidth))}`;
   }
 }

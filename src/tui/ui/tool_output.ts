@@ -3,7 +3,6 @@ import type { ToolUiLine, ToolUiText } from "../../core/tools/registry.js";
 import { DynamicBorder } from "./components/dynamic_border.js";
 import { HeaderLineComponent, type HeaderLineModel } from "./components/header_line.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";
-import { OneLineSegmentsComponent } from "./components/one_line_segments.js";
 import type { UiComponent } from "./components/ui_component.js";
 import type { Theme } from "./theme/index.js";
 
@@ -41,19 +40,9 @@ export interface HeaderSegmentsSpec {
   accentStyle?: (text: string) => string;
 }
 
-export interface HeaderLineSpec extends HeaderSegmentsSpec {
-  tailSegments?: OneLineSegment[];
-  flexAccent?: boolean;
-  flexTailIndices?: number[];
-  wrapIndex?: number;
-}
-
-export function buildHeaderSegments(spec: HeaderSegmentsSpec): {
-  segments: OneLineSegment[];
-  accentIndex: number;
-} {
+function buildHeaderSegments(spec: HeaderSegmentsSpec): OneLineSegment[] {
   const bullet = spec.bullet ?? "▪";
-  const segments: OneLineSegment[] = [
+  return [
     { text: " ", style: (s) => s },
     { text: bullet, style: spec.bulletStyle },
     { text: " ", style: (s) => s },
@@ -61,32 +50,6 @@ export function buildHeaderSegments(spec: HeaderSegmentsSpec): {
     { text: " ", style: (s) => s },
     { text: spec.accent, style: spec.accentStyle ?? ((s) => s) },
   ];
-  return { segments, accentIndex: segments.length - 1 };
-}
-
-export function buildHeaderLine(spec: HeaderLineSpec): HeaderLineModel {
-  const { segments, accentIndex } = buildHeaderSegments(spec);
-  const baseLength = segments.length;
-  if (spec.tailSegments && spec.tailSegments.length > 0) {
-    segments.push(...spec.tailSegments);
-  }
-  const flexIndices: number[] = [];
-  if (spec.flexAccent !== false) {
-    flexIndices.push(accentIndex);
-  }
-  if (spec.flexTailIndices && spec.flexTailIndices.length > 0) {
-    for (const idx of spec.flexTailIndices) {
-      const absolute = baseLength + idx;
-      if (absolute >= 0 && absolute < segments.length) {
-        flexIndices.push(absolute);
-      }
-    }
-  }
-  return {
-    segments,
-    flexIndices,
-    wrapIndex: spec.wrapIndex,
-  };
 }
 
 export function buildSection(lines: Array<string | undefined>): string | undefined {
@@ -133,7 +96,7 @@ export const TOOL_UI_INDENT = 4;
 const DEFAULT_STATUS_WRAPPER = (text: string) => `(${text})`;
 
 export function buildToolHeaderLine(spec: HeaderSegmentsSpec): HeaderLineModel {
-  return buildHeaderLine({ ...spec, wrapIndex: 5 });
+  return { segments: buildHeaderSegments(spec) };
 }
 
 export function renderToolUiCompactText(args: {
@@ -190,8 +153,6 @@ export interface ToolOutputExpandedView {
 
 export interface ToolOutputCompactView {
   headerComponent?: Component;
-  segments?: OneLineSegment[];
-  flexIndices?: number[];
   extraText?: string;
   extraComponent?: Component;
   paddingX?: number;
@@ -213,19 +174,9 @@ export class ToolOutputComponent extends Container implements UiComponent<ToolOu
   update(props: ToolOutputProps): void {
     this.clear();
     if (props.compact) {
-      const {
-        headerComponent,
-        segments,
-        flexIndices,
-        extraText,
-        extraComponent,
-        paddingX,
-        paddingY,
-      } = props.compactView;
+      const { headerComponent, extraText, extraComponent, paddingX, paddingY } = props.compactView;
       if (headerComponent) {
         this.addChild(headerComponent);
-      } else if (segments) {
-        this.addChild(new OneLineSegmentsComponent(segments, flexIndices ?? []));
       }
 
       if (extraComponent) {

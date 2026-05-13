@@ -1,5 +1,5 @@
-import type { Component } from "@mariozechner/pi-tui";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 
 export type OneLineSegment = { text: string; style: (s: string) => string };
 

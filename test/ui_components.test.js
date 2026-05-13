@@ -1,4 +1,4 @@
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { expect, test } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";

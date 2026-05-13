@@ -1,4 +1,4 @@
-import { type Component, Container, Text } from "@mariozechner/pi-tui";
+import { type Component, Container, Text } from "@earendil-works/pi-tui";
 import type { ToolUiLine, ToolUiText } from "../../core/tools/registry.js";
 import { DynamicBorder } from "./components/dynamic_border.js";
 import { HeaderLineComponent, type HeaderLineModel } from "./components/header_line.js";

@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import { loadSkillsForPromptContext } from "../config/skills_loader.js";

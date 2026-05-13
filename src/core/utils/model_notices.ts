@@ -1,4 +1,4 @@
-import type { Api, Model } from "@mariozechner/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
 
 export function normalizeModelNoticeKey(provider: string, modelId: string): string {

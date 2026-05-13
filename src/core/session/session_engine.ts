@@ -3,10 +3,10 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import {
   type AssistantMessage,
   type Context,
-  closeOpenAICodexWebSocketSessions,
+  cleanupSessionResources,
   type Message,
   type ToolCall,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
@@ -166,7 +166,7 @@ export class SessionEngine {
   }
 
   private closeProviderSessions(): void {
-    closeOpenAICodexWebSocketSessions(this.sessionId);
+    cleanupSessionResources(this.sessionId);
   }
 
   setPersona(

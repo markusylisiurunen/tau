@@ -1,4 +1,4 @@
-import type { Tool } from "@mariozechner/pi-ai";
+import type { Tool } from "@earendil-works/pi-ai";
 import type { BashCommand, VirtualBundle } from "./config/index.js";
 import type { PromptTemplate } from "./prompts.js";
 import { createDefaultCoreDeps } from "./runtime/deps.js";

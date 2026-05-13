@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeOpenAICodexWebSocketSessions, type Message } from "@mariozechner/pi-ai";
+import { cleanupSessionResources, type Message } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
 import type { ModelResolver } from "../models/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
@@ -117,7 +117,7 @@ export class SubagentControlPlane {
 
   reset(): void {
     for (const record of this.records.values()) {
-      closeOpenAICodexWebSocketSessions(record.id);
+      cleanupSessionResources(record.id);
       if (record.status === "running") {
         record.abortRequested = true;
         record.controller.abort();
@@ -302,7 +302,7 @@ export class SubagentControlPlane {
     const completion = this.waitForRecord(id);
     const resolved = await raceWithAbort(completion, signal);
     if (aborting) {
-      closeOpenAICodexWebSocketSessions(record.id);
+      cleanupSessionResources(record.id);
     }
     return this.toResult(resolved);
   }

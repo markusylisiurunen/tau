@@ -1,4 +1,4 @@
-import type { AssistantMessage, Message, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../tools/tool_names.js";
 import { buildLineDiff, collapseLongUnchangedDiffRuns } from "./line_diff.js";
 import { truncateForTokens } from "./truncate.js";

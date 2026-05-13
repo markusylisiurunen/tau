@@ -1,4 +1,4 @@
-import { type Component, type TUI, visibleWidth } from "@mariozechner/pi-tui";
+import { type Component, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import type { RiskLevel } from "../../core/types.js";
 import { truncateFromEndByWidth } from "./components/one_line_segments.js";
 import type { SystemMessageKind } from "./system_message.js";

@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import type { AssistantMessage, Message } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { buildCompactionUserMessage, formatHistoryForCompaction } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { prependModelNotice } from "../utils/model_notices.js";

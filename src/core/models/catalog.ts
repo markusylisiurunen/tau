@@ -1,5 +1,5 @@
-import type { Api, Model } from "@mariozechner/pi-ai";
-import { getModels, getProviders } from "@mariozechner/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import type { ConfigDeps } from "../config/deps.js";
 import type { ConfigLevel } from "../config/paths.js";

@@ -1,4 +1,4 @@
-import { Key, matchesKey, visibleWidth } from "@mariozechner/pi-tui";
+import { Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import { DOUBLE_PRESS_WINDOW_MS } from "../constants.js";
 import { Editor } from "./components/editor.js";
 import {

@@ -1,5 +1,5 @@
-import type { Component } from "@mariozechner/pi-tui";
-import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { DiffReviewAgentActivity } from "../../core/diff_review/index.js";
 import { formatUsageSnapshot, formatUsdCost } from "../../core/utils/format.js";
 import { formatToolActivityText } from "./agent_activity_format.js";

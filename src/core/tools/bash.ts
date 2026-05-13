@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import type { Tool, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import stripAnsi from "strip-ansi";
 import { Type } from "typebox";
 import { z } from "zod";

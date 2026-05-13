@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import type { Message } from "@mariozechner/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
 
 export const TAU_USER_METADATA_PREFIX = "\u001eTAU_METADATA_V1:";
 const TAU_USER_METADATA_SUFFIX = "\u001e";

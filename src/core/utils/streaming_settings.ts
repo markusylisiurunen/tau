@@ -1,4 +1,4 @@
-import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
+import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import type { ReasoningEffort, ServiceTier } from "../types.js";
 

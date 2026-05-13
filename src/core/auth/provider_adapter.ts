@@ -1,4 +1,4 @@
-import type { OAuthCredentials } from "@mariozechner/pi-ai";
+import type { OAuthCredentials } from "@earendil-works/pi-ai";
 import type { AuthStorage } from "./auth_storage.js";
 import type { AuthAccountInfo } from "./types.js";
 

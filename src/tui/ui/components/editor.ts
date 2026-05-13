@@ -10,7 +10,7 @@ import {
   type SelectListLayoutOptions,
   type SelectListTheme,
   visibleWidth,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import { UndoStack } from "./undo_stack.js";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });

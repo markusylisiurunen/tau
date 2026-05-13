@@ -1,4 +1,4 @@
-import { Container, Spacer } from "@mariozechner/pi-tui";
+import { Container, Spacer } from "@earendil-works/pi-tui";
 import {
   type ChatMessageModel,
   type RenderedMessage,

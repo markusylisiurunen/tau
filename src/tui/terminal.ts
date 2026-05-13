@@ -5,7 +5,7 @@ import {
   StdinBuffer,
   setKittyProtocolActive,
   type Terminal,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 
 type InputStream = NodeJS.ReadStream & {
   isRaw?: boolean;

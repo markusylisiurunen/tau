@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 
 export function extractAssistantText(message: AssistantMessage): string {
   return message.content

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AssistantMessage, Context, Message, ToolCall } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Context, Message, ToolCall } from "@earendil-works/pi-ai";
 import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";

@@ -3,7 +3,7 @@ import { statSync } from "node:fs";
 import { mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import type { AssistantMessage, Message, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { formatCodexAuthError } from "../core/auth/auth_messages.js";
 import { getAuthPath } from "../core/auth/auth_paths.js";

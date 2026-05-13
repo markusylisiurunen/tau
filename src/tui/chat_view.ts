@@ -1,5 +1,5 @@
-import type { AutocompleteProvider, Component } from "@mariozechner/pi-tui";
-import { Spacer, TUI } from "@mariozechner/pi-tui";
+import type { AutocompleteProvider, Component } from "@earendil-works/pi-tui";
+import { Spacer, TUI } from "@earendil-works/pi-tui";
 import {
   resolveThemeTokensById,
   type ThemeAppearance,

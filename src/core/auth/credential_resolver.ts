@@ -1,4 +1,4 @@
-import { getEnvApiKey } from "@mariozechner/pi-ai";
+import { getEnvApiKey } from "@earendil-works/pi-ai";
 import type { Config } from "../config/schema.js";
 import { getApiKeyForProvider } from "../config/schema.js";
 import { resolveProviderApiKey } from "../models/catalog.js";

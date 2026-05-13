@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
 import type { CoreEvent } from "../events/types.js";
 import { ConversationTurnRuntime } from "../runtime/conversation_turn_runtime.js";

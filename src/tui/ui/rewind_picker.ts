@@ -4,7 +4,7 @@ import {
   SelectList,
   type SelectListLayoutOptions,
   visibleWidth,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import type { Theme } from "./theme/index.js";
 
 const REWIND_PICKER_MAX_VISIBLE = 8;

@@ -1,4 +1,4 @@
-import type { AutocompleteItem, AutocompleteProvider } from "@mariozechner/pi-tui";
+import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
 import type { CommandRegistry } from "../../core/commands/index.js";
 import { getRiskLevelAutocompleteOptions } from "../../core/commands/index.js";
 import type { RiskLevel } from "../../core/types.js";

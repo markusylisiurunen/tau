@@ -6,8 +6,8 @@ import type {
   ProviderStreamOptions,
   SimpleStreamOptions,
   ThinkingLevel,
-} from "@mariozechner/pi-ai";
-import { stream, streamSimple, supportsXhigh } from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, stream, streamSimple } from "@earendil-works/pi-ai";
 import type { ReasoningEffort, ServiceTier } from "../types.js";
 import type { TauStreamOptions } from "./streaming_settings.js";
 
@@ -89,7 +89,7 @@ export function resolveOpenAIReasoningEffort(
     return reasoning;
   }
 
-  if (supportsXhigh(model) || reasoning !== "xhigh") {
+  if (getSupportedThinkingLevels(model).includes("xhigh") || reasoning !== "xhigh") {
     return reasoning;
   }
 

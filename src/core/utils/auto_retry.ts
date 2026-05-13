@@ -1,5 +1,5 @@
-import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
-import { isContextOverflow } from "@mariozechner/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
+import { isContextOverflow } from "@earendil-works/pi-ai";
 
 export type AutoRetryContext = {
   model: Model<Api>;

@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ToolUiEvent } from "../tools/registry.js";
 import { extractAssistantText } from "./messages.js";
 

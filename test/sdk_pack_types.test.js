@@ -46,13 +46,13 @@ describe("sdk npm pack types", () => {
       );
       expect(extractResult.status).toBe(0);
 
-      const piAiDir = join(consumerDir, "node_modules", "@mariozechner", "pi-ai");
+      const piAiDir = join(consumerDir, "node_modules", "@earendil-works", "pi-ai");
       mkdirSync(piAiDir, { recursive: true });
       writeFileSync(
         join(piAiDir, "package.json"),
         `${JSON.stringify(
           {
-            name: "@mariozechner/pi-ai",
+            name: "@earendil-works/pi-ai",
             version: "0.0.0",
             types: "index.d.ts",
           },

@@ -1,4 +1,4 @@
-import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
+import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";
 import { Chalk } from "chalk";
 import { builtinThemes } from "../../../core/config/builtin_themes.js";
 import type { ReasoningEffort } from "../../../core/types.js";

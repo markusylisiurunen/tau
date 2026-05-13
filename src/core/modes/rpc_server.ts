@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import type { Message } from "@mariozechner/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
 import { type CoreEvent, wrapCoreEvent } from "../events/types.js";
 import type { ChatRuntime } from "../runtime/chat_runtime.js";
 import type { HistoryEntry } from "../session/core_session.js";

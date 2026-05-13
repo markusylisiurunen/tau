@@ -1,4 +1,4 @@
-import { type Component, visibleWidth } from "@mariozechner/pi-tui";
+import { type Component, visibleWidth } from "@earendil-works/pi-tui";
 import {
   truncateFromEndByWidth,
   truncateFromEndByWidthPreserveAnsi,

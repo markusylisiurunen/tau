@@ -1,4 +1,4 @@
-import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { CoreSession, HistoryEntry } from "../../core/session/core_session.js";
 import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../../core/tools/tool_names.js";
 import { buildLineDiff, collapseLongUnchangedDiffRuns } from "../../core/utils/line_diff.js";

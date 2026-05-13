@@ -1,4 +1,4 @@
-import type { Component } from "@mariozechner/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 
 /**
  * UI components follow a simple lifecycle: construct -> update(model) -> render(width).

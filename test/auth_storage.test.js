@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@mariozechner/pi-ai/oauth", async (importOriginal) => {
+vi.mock("@earendil-works/pi-ai/oauth", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
@@ -12,7 +12,7 @@ vi.mock("@mariozechner/pi-ai/oauth", async (importOriginal) => {
   };
 });
 
-vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
@@ -20,8 +20,8 @@ vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
   };
 });
 
-const { getOAuthApiKey, refreshOpenAICodexToken } = await import("@mariozechner/pi-ai/oauth");
-const { getEnvApiKey } = await import("@mariozechner/pi-ai");
+const { getOAuthApiKey, refreshOpenAICodexToken } = await import("@earendil-works/pi-ai/oauth");
+const { getEnvApiKey } = await import("@earendil-works/pi-ai");
 
 import { AuthManager } from "../dist/core/auth/auth_manager.js";
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";

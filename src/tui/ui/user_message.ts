@@ -1,4 +1,4 @@
-import { Container, Markdown } from "@mariozechner/pi-tui";
+import { Container, Markdown } from "@earendil-works/pi-tui";
 import type { UiComponent } from "./components/ui_component.js";
 import type { Theme } from "./theme/index.js";
 

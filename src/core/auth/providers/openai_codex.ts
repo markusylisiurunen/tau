@@ -1,5 +1,5 @@
-import type { OAuthCredentials, OAuthProvider } from "@mariozechner/pi-ai";
-import { getOAuthApiKey, refreshOpenAICodexToken } from "@mariozechner/pi-ai/oauth";
+import type { OAuthCredentials, OAuthProvider } from "@earendil-works/pi-ai";
+import { getOAuthApiKey, refreshOpenAICodexToken } from "@earendil-works/pi-ai/oauth";
 import type { AuthStorage } from "../auth_storage.js";
 import { decodeJwtPayload } from "../jwt.js";
 import type { AuthProviderAdapter, AuthProviderSelection } from "../provider_adapter.js";

@@ -1,4 +1,4 @@
-import type { Api, Model, SimpleStreamOptions, ThinkingLevel } from "@mariozechner/pi-ai";
+import type { Api, Model, SimpleStreamOptions, ThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import type { SubagentConfigMap } from "./subagents/types.js";
 import type { ToolName } from "./tools/tool_names.js";

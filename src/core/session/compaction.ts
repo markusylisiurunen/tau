@@ -295,13 +295,17 @@ export function selectAutoCompactionCut(
   }
 
   const turnStarts = collectTurnStarts(entries, args.startIndex);
-  if (turnStarts.length === 0) {
+  const latestTurnStart = turnStarts.at(-1) ?? findOngoingTurnStart(entries, args.startIndex);
+  if (latestTurnStart === undefined) {
     return undefined;
   }
 
-  const latestTurnStart = turnStarts.at(-1)!;
   const latestTurnTokens = estimateEntriesTokens(entries.slice(latestTurnStart));
   if (latestTurnTokens <= args.keepRecentTokens) {
+    if (turnStarts.length === 0) {
+      return undefined;
+    }
+
     let firstKeptTurn = latestTurnStart;
     let totalTokens = latestTurnTokens;
 
@@ -372,6 +376,18 @@ function collectTurnStarts(
     starts.push(index);
   }
   return starts;
+}
+
+function findOngoingTurnStart(
+  entries: readonly CompactionHistoryEntry[],
+  startIndex: number,
+): number | undefined {
+  for (let index = Math.max(0, startIndex); index < entries.length; index += 1) {
+    if (!hasAutoCompactionContinuationMetadata(entries[index]!.message)) {
+      return index;
+    }
+  }
+  return undefined;
 }
 
 function selectLatestTurnSplitStart(

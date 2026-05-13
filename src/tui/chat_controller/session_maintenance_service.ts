@@ -1,5 +1,5 @@
 import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import type { CoreSession } from "../../core/session/core_session.js";
+import type { CoreSession, HistoryEntry } from "../../core/session/core_session.js";
 import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../../core/tools/tool_names.js";
 import { buildLineDiff, collapseLongUnchangedDiffRuns } from "../../core/utils/line_diff.js";
 import { bytesToTokens, formatTokenEstimate, tokensToBytes } from "../../core/utils/token.js";
@@ -14,7 +14,7 @@ const PRUNE_PREVIEW_MAX_TOKENS = 512;
 const PRUNE_MAX_OVERAGE_RATIO = 0.1;
 
 type ToolResultPruneCandidate = {
-  index: number;
+  historyEntryId: string;
   toolResult: ToolResultMessage;
   bytes: number;
   tokens: number;
@@ -159,21 +159,21 @@ export class SessionMaintenanceService {
       return;
     }
 
-    const history = this.engine.history;
-    if (history.length === 0) {
+    const historyEntries = this.engine.historyEntries;
+    if (historyEntries.length === 0) {
       this.view.addSystemMessage("no conversation to prune.", "warn");
       return;
     }
 
     let editSummary: EditPruneSummary;
     try {
-      editSummary = this.pruneEditToolHistory(history);
+      editSummary = this.pruneEditToolHistory(historyEntries);
     } catch (error) {
       this.view.addSystemMessage(`prune failed: ${(error as Error).message}`, "error");
       return;
     }
 
-    const prune = this.preparePruneCandidates(history, fraction);
+    const prune = this.preparePruneCandidates(historyEntries, fraction);
     if (prune.candidates.length === 0 || prune.totalTokens === 0) {
       this.reportPruneNoop(editSummary, "no bash tool results or edit tool calls to prune.");
       return;
@@ -210,18 +210,18 @@ export class SessionMaintenanceService {
       return;
     }
 
-    const history = this.engine.history;
-    if (history.length === 0) {
+    const historyEntries = this.engine.historyEntries;
+    if (historyEntries.length === 0) {
       this.view.addSystemMessage("no conversation to prune.", "warn");
       return;
     }
 
     try {
-      const prune = this.preparePruneCandidates(history, fraction);
+      const prune = this.preparePruneCandidates(historyEntries, fraction);
       let editSummary: EditPruneSummary | undefined;
       const getEditSummary = (): EditPruneSummary => {
         if (!editSummary) {
-          editSummary = this.pruneEditToolHistory(history);
+          editSummary = this.pruneEditToolHistory(historyEntries);
         }
         return editSummary;
       };
@@ -242,7 +242,7 @@ export class SessionMaintenanceService {
       const selectionOutcome = await this.runStreamingTask(
         async (signal) => {
           const prompt = this.buildSmartPrunePrompt({
-            history,
+            history: historyEntries.map((entry) => entry.message),
             targetTokens: prune.targetTokens,
             guidance: parsed.guidance,
           });
@@ -348,13 +348,16 @@ export class SessionMaintenanceService {
     return { fraction: DEFAULT_PRUNE_FRACTION, guidance: trimmed };
   }
 
-  private preparePruneCandidates(history: readonly Message[], fraction: number): PrunePreparation {
+  private preparePruneCandidates(
+    historyEntries: readonly HistoryEntry[],
+    fraction: number,
+  ): PrunePreparation {
     const candidates: ToolResultPruneCandidate[] = [];
     let totalTokens = 0;
 
-    for (let index = 0; index < history.length; index++) {
-      const message = history[index];
-      if (message?.role !== "toolResult") {
+    for (const entry of historyEntries) {
+      const message = entry.message;
+      if (message.role !== "toolResult") {
         continue;
       }
 
@@ -370,7 +373,7 @@ export class SessionMaintenanceService {
 
       const tokens = bytesToTokens(inspection.textBytes);
       candidates.push({
-        index,
+        historyEntryId: entry.id,
         toolResult,
         bytes: inspection.textBytes,
         tokens,
@@ -424,7 +427,7 @@ export class SessionMaintenanceService {
         ...candidate.toolResult,
         content: [{ type: "text", text: noticeText }],
       };
-      this.engine.replaceMessage(candidate.index, prunedResult);
+      this.engine.replaceMessageById(candidate.historyEntryId, prunedResult);
       this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, noticeText);
     }
 
@@ -486,7 +489,7 @@ export class SessionMaintenanceService {
     return `${parts.join(" and ")} (${tokenEstimate})`;
   }
 
-  private pruneEditToolHistory(history: readonly Message[]): EditPruneSummary {
+  private pruneEditToolHistory(historyEntries: readonly HistoryEntry[]): EditPruneSummary {
     const summary: EditPruneSummary = {
       callsPruned: 0,
       resultsPruned: 0,
@@ -494,9 +497,9 @@ export class SessionMaintenanceService {
     };
     const editCallsById = new Map<string, EditPruneCallDiff>();
 
-    for (let index = 0; index < history.length; index++) {
-      const message = history[index];
-      if (message?.role !== "assistant") {
+    for (const entry of historyEntries) {
+      const message = entry.message;
+      if (message.role !== "assistant") {
         continue;
       }
 
@@ -544,7 +547,7 @@ export class SessionMaintenanceService {
       });
 
       if (changed) {
-        this.engine.replaceMessage(index, { ...assistant, content: nextContent });
+        this.engine.replaceMessageById(entry.id, { ...assistant, content: nextContent });
       }
     }
 
@@ -552,9 +555,9 @@ export class SessionMaintenanceService {
       return summary;
     }
 
-    for (let index = 0; index < history.length; index++) {
-      const message = history[index];
-      if (message?.role !== "toolResult") {
+    for (const entry of historyEntries) {
+      const message = entry.message;
+      if (message.role !== "toolResult") {
         continue;
       }
 
@@ -581,7 +584,7 @@ export class SessionMaintenanceService {
         ...toolResult,
         content: [{ type: "text", text: prunedText }],
       };
-      this.engine.replaceMessage(index, prunedResult);
+      this.engine.replaceMessageById(entry.id, prunedResult);
       this.emitToolResultPrunedUiEvent(prunedResult.toolCallId, prunedText);
       summary.resultsPruned += 1;
     }

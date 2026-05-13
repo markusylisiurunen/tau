@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import type { AssistantMessage, Message } from "@mariozechner/pi-ai";
 import { buildCompactionUserMessage, formatHistoryForCompaction } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
+import { prependModelNotice } from "../utils/model_notices.js";
 import { bytesToTokens } from "../utils/token.js";
 import {
   getSummaryCompactionMetadataFromMessage,
@@ -248,6 +249,7 @@ export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation
 export function buildAutoCompactionContinuationMessage(args: {
   cutType: AutoCompactionCutType;
   now: number;
+  modelNotice?: string;
   subagentStatus?: string;
 }): Message {
   const lines = [
@@ -270,14 +272,14 @@ export function buildAutoCompactionContinuationMessage(args: {
 
   lines.push("</system>");
 
+  const text = prependModelNotice(lines.join("\n"), args.modelNotice);
+
   return {
     role: "user",
     content: [
       {
         type: "text",
-        text: prependTauUserMetadata(lines.join("\n"), [
-          { type: "auto-compaction-continuation", version: 1 },
-        ]),
+        text: prependTauUserMetadata(text, [{ type: "auto-compaction-continuation", version: 1 }]),
       },
     ],
     timestamp: args.now,

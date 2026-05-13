@@ -93,6 +93,10 @@ export class CoreSession {
     return this.engine.replaceMessage(index, message);
   }
 
+  replaceMessageById(historyEntryId: string, message: Message): boolean {
+    return this.engine.replaceMessageById(historyEntryId, message);
+  }
+
   listRewindCandidates(): RewindCandidate[] {
     return this.engine.listRewindCandidates();
   }

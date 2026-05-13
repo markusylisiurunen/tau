@@ -30,6 +30,8 @@ function createStubView() {
   const editorInputEnabledCalls = [];
   const statusUpdates = [];
   let clearToolUiTransientStateCallCount = 0;
+  let resetToolUiSessionCallCount = 0;
+  let resetToolUiSessionPreservingSubagentsCallCount = 0;
   let rewindPickerHideCount = 0;
   let editorText = "";
 
@@ -50,6 +52,12 @@ function createStubView() {
     statusUpdates,
     get clearToolUiTransientStateCallCount() {
       return clearToolUiTransientStateCallCount;
+    },
+    get resetToolUiSessionCallCount() {
+      return resetToolUiSessionCallCount;
+    },
+    get resetToolUiSessionPreservingSubagentsCallCount() {
+      return resetToolUiSessionPreservingSubagentsCallCount;
     },
     setEditorText: (text) => {
       editorText = text;
@@ -96,7 +104,12 @@ function createStubView() {
         toolUiEvents.push(event);
       },
       handleSubagentEvent: () => {},
-      resetToolUiSession: () => {},
+      resetToolUiSession: () => {
+        resetToolUiSessionCallCount += 1;
+      },
+      resetToolUiSessionPreservingSubagents: () => {
+        resetToolUiSessionPreservingSubagentsCallCount += 1;
+      },
       finalizeToolUiPending: (reason) => {
         finalizeToolUiPendingCalls.push(reason);
       },
@@ -324,6 +337,39 @@ describe("ChatController event handling", () => {
     controller.onEvent({ type: "notice", severity: "warn", text: "heads up" });
 
     expect(stub.systemMessages).toEqual([{ text: "heads up", kind: "warn" }]);
+  });
+
+  it("shows auto-compaction status and preserves subagent UI state", () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.onEvent({ type: "compaction_start", reason: "threshold" });
+
+    expect(stub.statusUpdates.at(-1).footer.commandHint).toBe("compacting context...");
+
+    controller.onEvent({
+      type: "compaction_end",
+      reason: "threshold",
+      outcome: "compacted",
+      result: {
+        summaryHistoryEntryId: "history-summary",
+        continuationHistoryEntryId: "history-continuation",
+        compactionMessage: "summary",
+        cutType: "turn-boundary",
+        retainedMessageCount: 2,
+      },
+    });
+
+    expect(stub.statusUpdates.at(-1).footer.commandHint).toBeUndefined();
+    expect(stub.resetToolUiSessionCallCount).toBe(0);
+    expect(stub.resetToolUiSessionPreservingSubagentsCallCount).toBe(1);
+    expect(stub.added).toContainEqual({ type: "session_divider", label: "new session" });
+    expect(stub.added).toContainEqual({ type: "user", text: "summary" });
+    expect(stub.added).toContainEqual({
+      type: "system",
+      text: "retained 2 recent messages",
+      kind: "muted",
+    });
   });
 });
 

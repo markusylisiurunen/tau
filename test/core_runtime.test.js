@@ -1132,6 +1132,44 @@ describe("compaction context message", () => {
     expect(preparation.retainedEntries.some((entry) => entry.message === continuation)).toBe(false);
   });
 
+  it("splits repeated auto-compactions inside an ongoing assistant turn", () => {
+    const previousSummaryText = prependTauUserMetadata(
+      buildCompactionUserMessage({ summary: "old summary" }),
+      [
+        {
+          type: "auto-compaction",
+          version: 1,
+          summary: "old summary",
+          cutType: "split-turn",
+          retainedMessageCount: 2,
+        },
+      ],
+    );
+    const continuation = buildAutoCompactionContinuationMessage({
+      cutType: "split-turn",
+      now: 2,
+    });
+    const entries = historyEntries([
+      userMessage(previousSummaryText),
+      assistantMessage("retained previous tool call"),
+      toolResultMessage("small retained output"),
+      continuation,
+      assistantMessage("next diagnostic tool call"),
+      toolResultMessage(`large diagnostic output ${"x".repeat(15000)}`),
+      assistantMessage("final small explanation"),
+    ]);
+
+    const preparation = prepareAutoCompaction(entries, { keepRecentTokens: 1000 });
+
+    expect(preparation.cutType).toBe("split-turn");
+    expect(preparation.formattedHistory).toContain("retained previous tool call");
+    expect(preparation.formattedHistory).toContain("next diagnostic tool call");
+    expect(preparation.formattedHistory).not.toContain(
+      "The conversation context before this point has been compacted",
+    );
+    expect(preparation.retainedEntries.map((entry) => entry.id)).toEqual(["entry-6"]);
+  });
+
   it("prepares auto-compaction with auto metadata and hidden continuation messages", () => {
     const previousSummaryText = prependTauUserMetadata(
       buildCompactionUserMessage({ summary: "old summary" }),

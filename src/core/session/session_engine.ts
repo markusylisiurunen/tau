@@ -376,12 +376,15 @@ export class SessionEngine {
       },
     ]);
 
-    this.reset();
-    this.addMessage({
-      role: "user",
-      content: [{ type: "text", text: textWithMetadata }],
-      timestamp: this.deps.clock.now(),
-    });
+    const summaryEntry: HistoryEntry = {
+      id: this.createHistoryEntryId(),
+      message: {
+        role: "user",
+        content: [{ type: "text", text: textWithMetadata }],
+        timestamp: this.deps.clock.now(),
+      },
+    };
+    this.replaceHistoryEntries([summaryEntry]);
 
     return {
       compactionMessage,

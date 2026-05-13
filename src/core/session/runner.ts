@@ -23,10 +23,7 @@ import type {
 } from "../tools/registry.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
-import {
-  resolveOpenAICodexCachedWebSocketFallbackOptions,
-  streamModel,
-} from "../utils/model_stream.js";
+import { streamModel } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { MessageAccumulator } from "./message_accumulator.js";
 
@@ -57,19 +54,11 @@ export async function* runModelSubturn(
 
   const runAttempt = async function* (
     attemptOptions: TauStreamOptions,
-  ): AsyncGenerator<
-    ModelRunnerEvent,
-    { result: AssistantMessage; receivedProviderEvent: boolean },
-    void
-  > {
+  ): AsyncGenerator<ModelRunnerEvent, AssistantMessage, void> {
     const stream = streamModel(model, context, attemptOptions);
     const accumulator = emitPartials ? new MessageAccumulator() : undefined;
-    let receivedProviderEvent = false;
 
     for await (const event of stream) {
-      if (event.type !== "error") {
-        receivedProviderEvent = true;
-      }
       if (accumulator) {
         accumulator.processEvent(event as AssistantMessageEvent);
       }
@@ -81,7 +70,7 @@ export async function* runModelSubturn(
       }
     }
 
-    return { result: await stream.result(), receivedProviderEvent };
+    return await stream.result();
   };
 
   const retryNotice = retry?.notice
@@ -116,25 +105,10 @@ export async function* runModelSubturn(
   };
 
   let attempt = 0;
-  let attemptOptions = streamOptions;
-  let usedCachedWebSocketFallback = false;
 
   while (true) {
     try {
-      const { result, receivedProviderEvent } = yield* runAttempt(attemptOptions);
-      const fallbackOptions = usedCachedWebSocketFallback
-        ? undefined
-        : resolveOpenAICodexCachedWebSocketFallbackOptions({
-            model,
-            options: attemptOptions,
-            result,
-            receivedProviderEvent,
-          });
-      if (fallbackOptions) {
-        usedCachedWebSocketFallback = true;
-        attemptOptions = fallbackOptions;
-        continue;
-      }
+      const result = yield* runAttempt(streamOptions);
       if (attempt < maxRetries && retry?.shouldRetryAfterError?.({ error: result, model })) {
         attempt += 1;
         if (retryNotice) {

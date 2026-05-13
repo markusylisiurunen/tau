@@ -245,6 +245,15 @@ export class SessionEngine {
     return true;
   }
 
+  replaceMessageById(historyEntryId: string, message: Message): boolean {
+    const index = this.historyEntries.findIndex((entry) => entry.id === historyEntryId);
+    if (index < 0) {
+      return false;
+    }
+    this.historyEntries[index] = { ...this.historyEntries[index]!, message };
+    return true;
+  }
+
   listRewindCandidates(): RewindCandidate[] {
     return this.historyEntries.flatMap((entry, index) => {
       if (entry.message.role !== "user" || !this.isVisibleRewindCandidate(index)) {
@@ -568,12 +577,16 @@ export class SessionEngine {
 
   async *processTurn(signal: AbortSignal): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
     let subturns = 0;
+    let autoCompactionAttempted = false;
     const originHistoryEntryId = this.getCurrentTurnUserHistoryEntryId();
 
     while (subturns < MAX_ASSISTANT_SUBTURNS && !signal.aborted) {
-      const compactionResult = yield* this.runAutoCompactionIfNeeded(signal);
-      if (compactionResult.blocked || compactionResult.aborted) {
-        return compactionResult;
+      if (!autoCompactionAttempted && this.shouldRunAutoCompaction()) {
+        autoCompactionAttempted = true;
+        const compactionResult = yield* this.runAutoCompactionIfNeeded(signal);
+        if (compactionResult.blocked || compactionResult.aborted) {
+          return compactionResult;
+        }
       }
 
       subturns += 1;
@@ -729,10 +742,8 @@ export class SessionEngine {
 
     const compactionMessage = buildCompactionUserMessage({ summary });
     const retainedMessageCount = preparation.retainedEntries.length;
-    const textWithModelNotice = prependModelNotice(
-      compactionMessage,
-      resolveModelNotice(this.config, this.persona.model),
-    );
+    const modelNotice = resolveModelNotice(this.config, this.persona.model);
+    const textWithModelNotice = prependModelNotice(compactionMessage, modelNotice);
     const textWithMetadata = prependTauUserMetadata(textWithModelNotice, [
       {
         type: "auto-compaction",
@@ -756,6 +767,7 @@ export class SessionEngine {
       message: buildAutoCompactionContinuationMessage({
         cutType: preparation.cutType,
         now: this.deps.clock.now(),
+        modelNotice,
         subagentStatus: this.formatAutoCompactionSubagentStatus(),
       }),
     };

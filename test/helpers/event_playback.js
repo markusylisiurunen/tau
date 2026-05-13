@@ -55,6 +55,9 @@ export function createPlaybackHarness(options = {}) {
     resetToolUiSession: () => {
       calls.toolUiReset += 1;
     },
+    resetToolUiSessionPreservingSubagents: () => {
+      calls.toolUiReset += 1;
+    },
     finalizeToolUiPending: (reason) => {
       calls.toolUiFinalize.push(reason);
     },

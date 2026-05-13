@@ -235,6 +235,7 @@ export class ChatController {
   private compactToolUi = true;
   private commandHint?: string;
   private speechStatusHint?: string;
+  private autoCompactionStatusHint?: string;
   private riskLevel: RiskLevel = "read-only";
   private projectContextBlock?: string;
   private projectFiles: string[] = [];
@@ -599,9 +600,13 @@ export class ChatController {
       }
 
       case "compaction_start":
+        this.autoCompactionStatusHint = "compacting context...";
+        this.refreshStatus();
         return;
 
       case "compaction_end":
+        this.autoCompactionStatusHint = undefined;
+        this.refreshStatus();
         switch (event.outcome) {
           case "compacted":
             this.applyAutoCompactedHistoryUi(event.result);
@@ -776,7 +781,9 @@ export class ChatController {
   }
 
   private getActiveCommandHint(): string | undefined {
-    return this.diffReviewService.getCommandHint(this.speechStatusHint ?? this.commandHint);
+    return this.diffReviewService.getCommandHint(
+      this.autoCompactionStatusHint ?? this.speechStatusHint ?? this.commandHint,
+    );
   }
 
   // Context & Cost Tracking -----------------------------------------------------------------------
@@ -2335,7 +2342,7 @@ export class ChatController {
   }
 
   private applyCompactedHistoryUi(compactionMessage: string): void {
-    this.view.resetToolUiSession();
+    this.view.resetToolUiSessionPreservingSubagents();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
     this.view.addMessage({ type: "session_divider", label: "new session" });
@@ -2351,7 +2358,7 @@ export class ChatController {
   }
 
   private applyAutoCompactedHistoryUi(result: CoreCompactionResult): void {
-    this.view.resetToolUiSession();
+    this.view.resetToolUiSessionPreservingSubagents();
     this.expandedFilesInCurrentPrompt.clear();
     this.expandedSkillsInCurrentPrompt.clear();
     this.view.addMessage({ type: "session_divider", label: "new session" });

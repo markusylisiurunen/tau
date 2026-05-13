@@ -4,13 +4,26 @@ import { SessionMaintenanceService } from "../dist/tui/chat_controller/session_m
 
 function createService(options = {}) {
   const history = options.history ?? [];
+  const historyEntries =
+    options.historyEntries ??
+    history.map((message, index) => ({ id: `history-${index}`, message, rawIndex: index }));
   const viewMessages = [];
   const toolUiEvents = [];
   const engine = {
-    history,
+    history: historyEntries.map((entry) => entry.message),
+    historyEntries,
     compact:
       options.compact ??
       (async () => ({ compactionMessage: "summary", includedLastAssistant: false })),
+    replaceMessageById: (historyEntryId, message) => {
+      const entry = historyEntries.find((item) => item.id === historyEntryId);
+      if (!entry) return false;
+      entry.message = message;
+      if (entry.rawIndex !== undefined) {
+        history[entry.rawIndex] = message;
+      }
+      return true;
+    },
     replaceMessage: (index, message) => {
       history[index] = message;
     },
@@ -235,5 +248,40 @@ describe("SessionMaintenanceService", () => {
 
     expect(history[0].content[0].text).toBe("tiny");
     expect(history[1].content[0].text).toContain("[Tool result pruned] bash output removed");
+  });
+
+  it("uses history entry ids when pruning filtered history", () => {
+    const hiddenContinuation = {
+      role: "user",
+      content: [{ type: "text", text: "hidden continuation" }],
+      timestamp: 1,
+    };
+    const history = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "visible user" }],
+        timestamp: 0,
+      },
+      hiddenContinuation,
+      {
+        role: "toolResult",
+        toolCallId: "bash-call-1",
+        toolName: TOOL_NAME_BASH,
+        content: [{ type: "text", text: "bash output" }],
+        isError: false,
+        timestamp: 2,
+      },
+    ];
+    const historyEntries = [
+      { id: "history-0", message: history[0], rawIndex: 0 },
+      { id: "history-2", message: history[2], rawIndex: 2 },
+    ];
+
+    const { service } = createService({ history, historyEntries });
+
+    service.pruneToolResults("earliest", "1");
+
+    expect(history[1]).toBe(hiddenContinuation);
+    expect(history[2].content[0].text).toContain("[Tool result pruned] bash output removed");
   });
 });

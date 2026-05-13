@@ -320,21 +320,23 @@ test("OneLineSegmentsComponent truncates flex segments", () => {
   expect(line).toBe("hellowo…");
 });
 
-test("HeaderLineComponent uses character wrapping for wrapped headers", () => {
+test("HeaderLineComponent wraps styled header text by character", () => {
   const component = new HeaderLineComponent({
     segments: [
       { text: " ", style: (s) => s },
-      { text: "✓", style: (s) => s },
+      { text: "✓", style: (s) => `<ok>${s}</ok>` },
       { text: " ", style: (s) => s },
-      { text: "ran", style: (s) => s },
+      { text: "ran", style: (s) => `<muted>${s}</muted>` },
       { text: " ", style: (s) => s },
-      { text: "alpha beta gamma delta epsilon", style: (s) => s },
+      { text: "alpha beta gamma delta epsilon", style: (s) => `<accent>${s}</accent>` },
     ],
-    wrapIndex: 5,
   });
 
   const lines = renderLines(component, 20);
-  expect(lines).toEqual([" ✓ ran alpha beta ga", "mma delta epsilon"]);
+  expect(lines).toEqual([
+    " <ok>✓</ok> <muted>ran</muted> <accent>alpha beta ga</accent>",
+    "<accent>mma delta epsilon</accent>",
+  ]);
 });
 
 test("truncateFromEndByWidth respects max width", () => {

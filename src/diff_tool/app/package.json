@@ -8,10 +8,10 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@pierre/diffs": "^1.1.13",
-    "lucide-react": "^1.8.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "@pierre/diffs": "^1.1.22",
+    "lucide-react": "^1.16.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
     "shiki": "^3.23.0"
   },
@@ -20,6 +20,6 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",
     "typescript": "^5.9.3",
-    "vite": "^7.3.2"
+    "vite": "^7.3.3"
   }
 }

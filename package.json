@@ -39,7 +39,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
-    "@types/node": "^25.7.0",
+    "@types/node": "^25.8.0",
     "colorjs.io": "^0.6.1",
     "prettier": "^3.8.3",
     "typescript": "^5.9.3",

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
@@ -21,11 +21,22 @@ export type DiffReviewFile = {
   newPath?: string;
 };
 
+export type DiffReviewSnapshotSource =
+  | {
+      kind: "git_diff";
+      diffArgs: string[];
+    }
+  | {
+      kind: "patch_files";
+      patchFiles: string[];
+      scopeLabel: string;
+    };
+
 export type CaptureDiffReviewSnapshotOptions = {
   cwd: string;
-  diffArgs?: string[];
+  source: DiffReviewSnapshotSource;
   signal?: AbortSignal;
-  deps?: Partial<Pick<CoreDeps, "spawn" | "env">>;
+  deps?: Partial<Pick<CoreDeps, "spawn" | "env" | "fs">>;
 };
 
 const GIT_TIMEOUT_MS = 30_000;
@@ -84,13 +95,16 @@ export async function captureDiffReviewSnapshot(
 ): Promise<DiffReviewSnapshot> {
   const deps = createDiffSnapshotDeps(options.deps);
   const cwd = resolve(options.cwd);
-  const diffArgs = [...(options.diffArgs ?? [])];
   const signal = options.signal;
   const repoRoot = await resolveGitRepoRoot(cwd, deps, signal);
+  const source = options.source;
   const captured =
-    diffArgs.length > 0
-      ? await captureExplicitDiffSnapshot(cwd, diffArgs, deps, signal)
-      : await captureWorkingTreeSnapshot(repoRoot, deps, signal);
+    source.kind === "patch_files"
+      ? await capturePatchFilesSnapshot(cwd, source.patchFiles, deps, signal)
+      : source.diffArgs.length > 0
+        ? await captureExplicitDiffSnapshot(cwd, source.diffArgs, deps, signal)
+        : await captureWorkingTreeSnapshot(repoRoot, deps, signal);
+  const diffArgs = source.kind === "git_diff" ? [...source.diffArgs] : [];
 
   return new DiffReviewSnapshot({
     repoRoot,
@@ -99,7 +113,8 @@ export async function captureDiffReviewSnapshot(
     patch: captured.patch,
     files: captured.files,
     patchByPath: captured.patchByPath,
-    scopeLabel: formatDiffReviewScope(diffArgs),
+    scopeLabel:
+      source.kind === "patch_files" ? source.scopeLabel : formatDiffReviewScope(source.diffArgs),
   });
 }
 
@@ -109,13 +124,20 @@ type CapturedSnapshotData = {
   patchByPath: ReadonlyMap<string, string>;
 };
 
+function throwIfSnapshotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("diff review start aborted");
+  }
+}
+
 function createDiffSnapshotDeps(
-  deps?: Partial<Pick<CoreDeps, "spawn" | "env">>,
-): Pick<CoreDeps, "spawn" | "env"> {
+  deps?: Partial<Pick<CoreDeps, "spawn" | "env" | "fs">>,
+): Pick<CoreDeps, "spawn" | "env" | "fs"> {
   const defaults = createDefaultCoreDeps();
   return {
     spawn: deps?.spawn ?? defaults.spawn,
     env: deps?.env ?? defaults.env,
+    fs: deps?.fs ?? defaults.fs,
   };
 }
 
@@ -138,6 +160,49 @@ async function resolveGitRepoRoot(
     throw new Error("failed to resolve git repository root");
   }
   return resolve(repoRoot);
+}
+
+async function capturePatchFilesSnapshot(
+  cwd: string,
+  patchFiles: string[],
+  deps: Pick<CoreDeps, "fs">,
+  signal?: AbortSignal,
+): Promise<CapturedSnapshotData> {
+  const sections: string[] = [];
+  let totalBytes = 0;
+  for (const patchFile of patchFiles) {
+    throwIfSnapshotAborted(signal);
+    const patchPath = resolve(cwd, patchFile);
+    const patchBytes = statSync(patchPath).size;
+    if (totalBytes + patchBytes > GIT_MAX_CAPTURE_BYTES) {
+      throw new Error(
+        `patch files exceeded ${GIT_MAX_CAPTURE_BYTES} bytes while capturing diff review snapshot`,
+      );
+    }
+
+    const patch = deps.fs.readFile(patchPath);
+    totalBytes += Buffer.byteLength(patch, "utf-8");
+    if (totalBytes > GIT_MAX_CAPTURE_BYTES) {
+      throw new Error(
+        `patch files exceeded ${GIT_MAX_CAPTURE_BYTES} bytes while capturing diff review snapshot`,
+      );
+    }
+
+    const patchSections = splitPatchSections(patch);
+    if (patchSections.length === 0 && patch.trim().length > 0) {
+      throw new Error(`patch file ${patchFile} does not contain git unified diff sections`);
+    }
+    sections.push(...patchSections);
+  }
+
+  const files = sections.map((section) => parsePatchSectionFile(section));
+  const patchByPath = pairFilePatches(files, sections);
+
+  return {
+    patch: joinPatchSections(sections),
+    files: dedupeFilesByPath(files),
+    patchByPath,
+  };
 }
 
 async function captureExplicitDiffSnapshot(
@@ -602,13 +667,7 @@ function pairFilePatches(
       if (!file || patch === undefined) {
         continue;
       }
-      byPath.set(file.path, patch);
-      if (file.oldPath) {
-        byPath.set(file.oldPath, patch);
-      }
-      if (file.newPath) {
-        byPath.set(file.newPath, patch);
-      }
+      addFilePatchByPath(byPath, file, patch);
     }
     return byPath;
   }
@@ -627,16 +686,66 @@ function pairFilePatches(
     if (!file) {
       continue;
     }
-    byPath.set(file.path, patch);
-    if (file.oldPath) {
-      byPath.set(file.oldPath, patch);
-    }
-    if (file.newPath) {
-      byPath.set(file.newPath, patch);
-    }
+    addFilePatchByPath(byPath, file, patch);
   }
 
   return byPath;
+}
+
+function addFilePatchByPath(
+  byPath: Map<string, string>,
+  file: DiffReviewFile,
+  patch: string,
+): void {
+  const keys = new Set(
+    [file.path, file.oldPath, file.newPath].filter((path): path is string => Boolean(path)),
+  );
+  for (const key of keys) {
+    const existing = byPath.get(key);
+    byPath.set(key, existing ? joinPatchSections([existing, patch]) : patch);
+  }
+}
+
+function parsePatchSectionFile(patch: string): DiffReviewFile {
+  const paths = extractPatchPaths(patch);
+  if (!paths) {
+    throw new Error("patch section is missing a valid diff --git header");
+  }
+
+  const lines = patch.split(/\r?\n/);
+  const isAdded = lines.some((line) => line === "--- /dev/null");
+  const isDeleted = lines.some((line) => line === "+++ /dev/null");
+  const isRenamed = lines.some((line) => line.startsWith("rename from "));
+  const isCopied = lines.some((line) => line.startsWith("copy from "));
+
+  if (isAdded) {
+    return { path: paths.newPath, status: "added", newPath: paths.newPath };
+  }
+  if (isDeleted) {
+    return { path: paths.oldPath, status: "deleted", oldPath: paths.oldPath };
+  }
+  if (isRenamed) {
+    return {
+      path: paths.newPath,
+      status: "renamed",
+      oldPath: paths.oldPath,
+      newPath: paths.newPath,
+    };
+  }
+  if (isCopied) {
+    return {
+      path: paths.newPath,
+      status: "copied",
+      oldPath: paths.oldPath,
+      newPath: paths.newPath,
+    };
+  }
+  return {
+    path: paths.newPath,
+    status: "modified",
+    oldPath: paths.oldPath,
+    newPath: paths.newPath,
+  };
 }
 
 function extractPatchPaths(patch: string): { oldPath: string; newPath: string } | undefined {

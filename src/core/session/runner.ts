@@ -151,6 +151,88 @@ export type RunToolCallsOptions = {
   };
 };
 
+type PhasedToolRaceResult =
+  | { type: "run"; result: ToolDispatchResult }
+  | { type: "run_error"; error: unknown }
+  | { type: "ui"; result: IteratorResult<CoreToolUiEvent["uiEvent"]> }
+  | { type: "ui_error"; error: unknown };
+
+async function* runPhasedToolResult(
+  result: ToolDispatchResultWithPhases,
+): AsyncGenerator<ToolRunnerEvent, ToolDispatchResult, void> {
+  if (!result.uiEvents) {
+    return await result.run;
+  }
+
+  const iterator = result.uiEvents[Symbol.asyncIterator]();
+  let runSettled = false;
+  let uiSettled = false;
+  let finalResult: ToolDispatchResult | undefined;
+  let runPromise: Promise<PhasedToolRaceResult> | undefined = result.run.then(
+    (value) => ({ type: "run", result: value }),
+    (error: unknown) => ({ type: "run_error", error }),
+  );
+  let uiPromise: Promise<PhasedToolRaceResult> | undefined = iterator.next().then(
+    (value) => ({ type: "ui", result: value }),
+    (error: unknown) => ({ type: "ui_error", error }),
+  );
+
+  while (!runSettled) {
+    const pending = [runPromise, uiPromise].filter(
+      (promise): promise is Promise<PhasedToolRaceResult> => Boolean(promise),
+    );
+    const next = await Promise.race(pending);
+
+    switch (next.type) {
+      case "run":
+        runSettled = true;
+        finalResult = next.result;
+        break;
+      case "run_error":
+        runSettled = true;
+        await iterator.return?.();
+        throw next.error;
+      case "ui":
+        if (next.result.done) {
+          uiSettled = true;
+          uiPromise = undefined;
+        } else {
+          yield { type: "tool_ui", uiEvent: next.result.value };
+          uiPromise = iterator.next().then(
+            (value) => ({ type: "ui", result: value }),
+            (error: unknown) => ({ type: "ui_error", error }),
+          );
+        }
+        break;
+      case "ui_error":
+        uiSettled = true;
+        uiPromise = undefined;
+        yield {
+          type: "notice",
+          severity: "warn",
+          text: `tool UI update stream failed: ${next.error instanceof Error ? next.error.message : String(next.error)}`,
+        };
+        break;
+    }
+
+    if (uiSettled) {
+      uiPromise = undefined;
+    }
+    if (runSettled) {
+      runPromise = undefined;
+    }
+  }
+
+  if (!uiSettled) {
+    await iterator.return?.();
+  }
+
+  if (!finalResult) {
+    throw new Error("phased tool completed without a result");
+  }
+  return finalResult;
+}
+
 export async function* runToolCalls(
   options: RunToolCallsOptions,
 ): AsyncGenerator<ToolRunnerEvent, void, void> {
@@ -226,7 +308,8 @@ export async function* runToolCalls(
         yield { type: "tool_ui", uiEvent: result.startedUiEvent };
       }
 
-      const { toolResult, uiEvent } = await result.run;
+      const phasedResult = yield* runPhasedToolResult(result);
+      const { toolResult, uiEvent } = phasedResult;
       resultsByIndex.set(index, toolResult);
       if (uiEvent) {
         yield { type: "tool_ui", uiEvent };

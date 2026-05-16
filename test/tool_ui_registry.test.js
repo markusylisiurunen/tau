@@ -156,6 +156,75 @@ describe("ToolUiRegistry", () => {
     expect(terminateFinished).toContain("cost $0.05");
   });
 
+  it("renders diff review tool status with a blank line before review agents", () => {
+    const rendered = renderEvent(registry, theme, {
+      type: "diff_review_updated",
+      toolCallId: "diff-1",
+      command: "git diff --staged",
+      headerTarget: "git diff --staged",
+      reviewedFiles: ["src/a.ts"],
+      diffToolUiText: "http://127.0.0.1:4321",
+      reviewAgents: [
+        {
+          threadId: "12345678-90ab-cdef-1234-567890abcdef",
+          status: "running",
+          costTotal: 0.12,
+          usage: {
+            input: 1200,
+            output: 320,
+            cacheRead: 64,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 1584,
+            contextWindow: 200000,
+          },
+        },
+      ],
+    });
+
+    const addressIndex = rendered.indexOf("http://127.0.0.1:4321");
+    const agentIndex = rendered.indexOf("12345678-90ab-cdef-1234-567890abcdef");
+    expect(addressIndex).toBeGreaterThan(-1);
+    expect(agentIndex).toBeGreaterThan(addressIndex);
+    expect(rendered.slice(addressIndex, agentIndex)).toContain("<textDim>    </textDim>");
+  });
+
+  it("renders completed diff review tool cards from final tool output", () => {
+    const rendered = renderEvent(registry, theme, {
+      type: "diff_review_finished",
+      toolCallId: "diff-1",
+      command: "git diff --staged",
+      headerTarget: "git diff --staged",
+      status: "success",
+      reviewedFiles: ["src/a.ts"],
+      diffToolUiText: "http://127.0.0.1:4321",
+      reviewAgents: [
+        {
+          threadId: "12345678-90ab-cdef-1234-567890abcdef",
+          status: "idle",
+          costTotal: 0.12,
+          usage: {
+            input: 1200,
+            output: 320,
+            cacheRead: 64,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 1584,
+            contextWindow: 200000,
+          },
+        },
+      ],
+      uiText: makeUiText(
+        "Diff review completed.\nReview:\nLooks good.",
+        "success · 1 reviewed file",
+        "Diff review completed.\nReview:\nLooks good.",
+      ),
+    });
+
+    expect(rendered).toContain("Diff review completed.");
+    expect(rendered).toContain("Looks good.");
+    expect(rendered).not.toContain("http://127.0.0.1:4321");
+    expect(rendered).not.toContain("12345678-90ab-cdef-1234-567890abcdef");
+  });
+
   it("renders fallback subagent error text when uiText is absent", () => {
     const spawnFailed = renderEvent(registry, theme, {
       type: "spawn_agent_finished",

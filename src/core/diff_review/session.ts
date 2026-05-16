@@ -36,7 +36,11 @@ import {
   type DiffReviewThreadSession,
   type DiffReviewThreadUpdate,
 } from "./review_thread.js";
-import { captureDiffReviewSnapshot, type DiffReviewSnapshot } from "./snapshot.js";
+import {
+  captureDiffReviewSnapshot,
+  type DiffReviewSnapshot,
+  type DiffReviewSnapshotSource,
+} from "./snapshot.js";
 
 export type DiffReviewCancelledReason =
   | "tool_cancelled"
@@ -73,7 +77,7 @@ export type DiffReviewSessionOptions = {
 
 export type StartDiffReviewSessionOptions = {
   cwd: string;
-  diffArgs?: string[];
+  source: DiffReviewSnapshotSource;
   signal?: AbortSignal;
   diffTool: DiffToolConfig;
   persona: Persona;
@@ -1021,7 +1025,7 @@ export async function startDiffReviewSession(
 
   const snapshot = await captureDiffReviewSnapshot({
     cwd: options.cwd,
-    diffArgs: options.diffArgs,
+    source: options.source,
     signal: options.signal,
     deps: options.deps,
   });

@@ -113,6 +113,7 @@ export {
 } from "./tool/index.js";
 export { createBashToolDefinition } from "./tools/bash.js";
 export { ToolCatalog } from "./tools/catalog.js";
+export { createDiffReviewToolDefinition } from "./tools/diff_review.js";
 export { createEditToolDefinition } from "./tools/edit.js";
 export { createEmitOutputToolDefinition } from "./tools/emit_output.js";
 export { createLocalToolExecutionBackend } from "./tools/execution_backend.js";

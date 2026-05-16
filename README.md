@@ -407,6 +407,8 @@ the prune commands drop bash tool results from the active context without summar
 
 `/diff` only starts when tau is idle. it captures the requested `git diff` output at launch time as the initial review context, opens tau's built-in browser diff review demo when `diffTool` is not configured, and lets `diffTool` override that launcher when it is configured. the built-in browser shows that captured diff, but review agents inspect the live repo state while using the captured diff context as their starting point. tau shows review status in the chat stream, keeps the editor usable for drafting, but blocks normal submission until the tool returns review text or cancels. returned review text is appended as a review-styled user message without auto-running the assistant, and the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that review context. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session. press `esc` to cancel locally.
 
+the main assistant also has a TUI-only `diff_review` tool. it uses the same captured review session and live status UI as `/diff`, but it is only for cases where you explicitly ask the agent to start a diff review. when the review returns, the feedback is delivered as a normal tool result so the assistant continues in the same turn; it is not inserted as a separate hidden-system user message.
+
 ## keyboard shortcuts
 
 | key         | action                                     |
@@ -565,6 +567,8 @@ if you want a different launcher, configure `diffTool` in any in-scope config fi
 
 plain `/diff` captures the current working-tree review scope before launch, including tracked staged + unstaged changes plus untracked text files that fit within tau's snapshot limits. `/diff [git diff args...]` with arguments passes those raw arguments to `git diff`, so `/diff --staged` and `/diff -- src/foo.ts` still work. tau shows diff-review status in the chat stream, keeps the editor usable while blocking submission, and appends returned review text as a review-styled user message without auto-running the assistant. the built-in browser shows that captured review snapshot, but review agents inspect the live repo state while using the captured snapshot as their starting point. the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that review context. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session. during normal shutdown, tau now asks the diff tool to exit via the diff-review protocol before closing the transport. custom diff tools should follow the built-in tool and treat that explicit shutdown request as the canonical way to stop.
 
+in the TUI, the main assistant can also call the `diff_review` tool when you explicitly ask it to start a diff review. the tool can capture structured `git diff` args or one or more prebuilt patch files for selected-hunk reviews, shows the same live session status in a normal tool card, and returns review feedback to the model as a normal tool result so the assistant can continue immediately.
+
 ### additional agents context
 
 you can tell tau to always include extra `AGENTS.md` files by adding an `agentContextFiles` list to a config file in scope:
@@ -625,7 +629,7 @@ optional frontmatter fields:
         - openai/gpt-5.4:high
         - anthropic/claude-haiku-4-5:medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled). risk levels still apply.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `diff_review`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `diff_review` (and subagent tools when subagents are enabled). risk levels still apply.
 
 the markdown body becomes the system prompt.
 

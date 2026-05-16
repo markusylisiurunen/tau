@@ -67,7 +67,7 @@ describe("diff_review snapshot", () => {
     try {
       const snapshot = await captureDiffReviewSnapshot({
         cwd: fx.repo,
-        diffArgs: ["--staged"],
+        source: { kind: "git_diff", diffArgs: ["--staged"] },
       });
 
       expect(snapshot.repoRoot).toBe(fx.gitRoot);
@@ -103,6 +103,7 @@ describe("diff_review snapshot", () => {
     try {
       const snapshot = await captureDiffReviewSnapshot({
         cwd: fx.repo,
+        source: { kind: "git_diff", diffArgs: [] },
       });
 
       expect(snapshot.repoRoot).toBe(fx.gitRoot);
@@ -148,6 +149,7 @@ describe("diff_review snapshot", () => {
     try {
       const snapshot = await captureDiffReviewSnapshot({
         cwd: join(fx.repo, "packages", "app"),
+        source: { kind: "git_diff", diffArgs: [] },
       });
 
       expect(snapshot.cwd).toBe(join(fx.repo, "packages", "app"));
@@ -179,6 +181,7 @@ describe("diff_review snapshot", () => {
     await expect(
       captureDiffReviewSnapshot({
         cwd: "/repo",
+        source: { kind: "git_diff", diffArgs: [] },
         deps: {
           spawn,
           env: { env: () => ({}) },
@@ -203,6 +206,7 @@ describe("diff_review snapshot", () => {
     await expect(
       captureDiffReviewSnapshot({
         cwd: "/repo",
+        source: { kind: "git_diff", diffArgs: [] },
         signal: abortController.signal,
         deps: {
           spawn,
@@ -210,6 +214,110 @@ describe("diff_review snapshot", () => {
         },
       }),
     ).rejects.toThrow("diff review start aborted");
+  });
+
+  it("captures multiple patch files as a custom review scope", async () => {
+    const fx = createRepoFixture();
+
+    try {
+      const patchOne = [
+        "diff --git a/src/foo.ts b/src/foo.ts",
+        "--- a/src/foo.ts",
+        "+++ b/src/foo.ts",
+        "@@ -1 +1 @@",
+        "-export const value = 1;",
+        "+export const value = 2;",
+      ].join("\n");
+      const patchTwo = [
+        "diff --git a/src/qux.ts b/src/qux.ts",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/src/qux.ts",
+        "@@ -0,0 +1 @@",
+        "+export const untracked = true;",
+      ].join("\n");
+      writeFileSync(join(fx.repo, "selected-one.patch"), patchOne, "utf-8");
+      writeFileSync(join(fx.repo, "selected-two.patch"), patchTwo, "utf-8");
+
+      const snapshot = await captureDiffReviewSnapshot({
+        cwd: fx.repo,
+        source: {
+          kind: "patch_files",
+          patchFiles: ["selected-one.patch", "selected-two.patch"],
+          scopeLabel: "selected hunks",
+        },
+      });
+
+      expect(snapshot.toDiffCommand()).toBe("selected hunks");
+      expect(snapshot.patch).toContain("diff --git a/src/foo.ts b/src/foo.ts");
+      expect(snapshot.patch).toContain("diff --git a/src/qux.ts b/src/qux.ts");
+      expect(snapshot.files).toEqual([
+        { path: "src/foo.ts", status: "modified", oldPath: "src/foo.ts", newPath: "src/foo.ts" },
+        { path: "src/qux.ts", status: "added", newPath: "src/qux.ts" },
+      ]);
+      expect(snapshot.getFilePatch("src/foo.ts")).toBe(patchOne);
+      expect(snapshot.getFilePatch("src/qux.ts")).toBe(patchTwo);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("combines multiple patch-file sections for the same path", async () => {
+    const fx = createRepoFixture();
+
+    try {
+      const patchOne = [
+        "diff --git a/src/foo.ts b/src/foo.ts",
+        "--- a/src/foo.ts",
+        "+++ b/src/foo.ts",
+        "@@ -1 +1 @@",
+        "-export const value = 1;",
+        "+export const value = 2;",
+      ].join("\n");
+      const patchTwo = [
+        "diff --git a/src/foo.ts b/src/foo.ts",
+        "--- a/src/foo.ts",
+        "+++ b/src/foo.ts",
+        "@@ -1 +1 @@",
+        "-export const other = 1;",
+        "+export const other = 2;",
+      ].join("\n");
+      writeFileSync(join(fx.repo, "selected-one.patch"), patchOne, "utf-8");
+      writeFileSync(join(fx.repo, "selected-two.patch"), patchTwo, "utf-8");
+
+      const snapshot = await captureDiffReviewSnapshot({
+        cwd: fx.repo,
+        source: {
+          kind: "patch_files",
+          patchFiles: ["selected-one.patch", "selected-two.patch"],
+          scopeLabel: "selected hunks",
+        },
+      });
+
+      expect(snapshot.files).toEqual([
+        { path: "src/foo.ts", status: "modified", oldPath: "src/foo.ts", newPath: "src/foo.ts" },
+      ]);
+      expect(snapshot.getFilePatch("src/foo.ts")).toBe([patchOne, patchTwo].join("\n"));
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects patch files that exceed the snapshot capture limit", async () => {
+    const fx = createRepoFixture();
+
+    try {
+      writeFileSync(join(fx.repo, "large.patch"), "x".repeat(2 * 1024 * 1024 + 1), "utf-8");
+
+      await expect(
+        captureDiffReviewSnapshot({
+          cwd: fx.repo,
+          source: { kind: "patch_files", patchFiles: ["large.patch"], scopeLabel: "large.patch" },
+        }),
+      ).rejects.toThrow(/patch files exceeded/);
+    } finally {
+      fx.cleanup();
+    }
   });
 
   it("preserves exact file paths from quoted git patch headers", async () => {
@@ -235,6 +343,7 @@ describe("diff_review snapshot", () => {
 
     const snapshot = await captureDiffReviewSnapshot({
       cwd: "/repo",
+      source: { kind: "git_diff", diffArgs: [] },
       deps: {
         spawn,
         env: { env: () => ({}) },

@@ -1,6 +1,7 @@
 import type { Config } from "../config/index.js";
 import type { SubagentToolName } from "../subagents/types.js";
 import { createBashToolDefinition } from "./bash.js";
+import { createDiffReviewToolDefinition, type DiffReviewToolOptions } from "./diff_review.js";
 import { createEditToolDefinition } from "./edit.js";
 import { createEmitOutputToolDefinition } from "./emit_output.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
@@ -26,12 +27,16 @@ import { createWriteToolDefinition } from "./write.js";
 const SUBAGENT_EMIT_OUTPUT_ENABLED = false;
 
 export const ToolCatalog = {
-  createRegistry(backend: ToolExecutionBackend): ToolRegistry {
+  createRegistry(
+    backend: ToolExecutionBackend,
+    options?: { diffReview?: DiffReviewToolOptions },
+  ): ToolRegistry {
     return new ToolRegistry([
       createBashToolDefinition(backend),
       createWriteToolDefinition(backend),
       createEditToolDefinition(backend),
       createViewImageToolDefinition(backend),
+      createDiffReviewToolDefinition(options?.diffReview),
       createSpawnAgentToolDefinition(backend),
       createSendInputToAgentToolDefinition(backend),
       createWaitForAgentToolDefinition(),

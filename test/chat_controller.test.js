@@ -641,7 +641,7 @@ describe("ChatController diff review", () => {
     await controller.onUserInput("/diff");
 
     expect(startDiffReviewSessionSpy).toHaveBeenCalledWith({
-      diffArgs: [],
+      source: { kind: "git_diff", diffArgs: [] },
       diffTool: defaultDiffTool,
       signal: expect.any(AbortSignal),
     });
@@ -807,7 +807,7 @@ describe("ChatController diff review", () => {
     await controller.onUserInput('/diff -- "src/file name.ts"');
 
     expect(startDiffReviewSessionSpy).toHaveBeenCalledWith({
-      diffArgs: ["--", "src/file name.ts"],
+      source: { kind: "git_diff", diffArgs: ["--", "src/file name.ts"] },
       diffTool: {
         command: "tau-diff-tool",
       },
@@ -818,7 +818,7 @@ describe("ChatController diff review", () => {
     expect(getUserText(controller, 1)).toBe(
       [
         "<system>",
-        "The following user message comes from a completed diff review in Tau. During that review, the user read through the reviewed diff snapshot and the files included in it, and may have left comments on specific files, lines, or broader concerns they noticed while reviewing. The message below is the feedback returned from that review.",
+        "The following user message comes from a completed diff review. During that review, the user read through the reviewed diff snapshot and the files included in it, and may have left comments on specific files, lines, or broader concerns they noticed while reviewing. The message below is the feedback returned from that review.",
         "",
         "Reviewed scope: git diff -- src/file name.ts",
         "Reviewed files: (none)",
@@ -899,7 +899,7 @@ describe("ChatController diff review", () => {
       expect(userMessages[0]).toBe(
         [
           "<system>",
-          "The following user message comes from a completed diff review in Tau. During that review, the user read through the reviewed diff snapshot and the files included in it, and may have left comments on specific files, lines, or broader concerns they noticed while reviewing. The message below is the feedback returned from that review.",
+          "The following user message comes from a completed diff review. During that review, the user read through the reviewed diff snapshot and the files included in it, and may have left comments on specific files, lines, or broader concerns they noticed while reviewing. The message below is the feedback returned from that review.",
           "",
           "Reviewed scope: git diff --staged",
           "Reviewed files: (none)",
@@ -1024,7 +1024,7 @@ describe("ChatController diff review", () => {
     await diffPromise;
 
     expect(startDiffReviewSessionSpy).toHaveBeenCalledWith({
-      diffArgs: [],
+      source: { kind: "git_diff", diffArgs: [] },
       diffTool: {
         command: "tau-diff-tool",
       },

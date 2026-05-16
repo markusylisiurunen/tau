@@ -55,6 +55,7 @@ import {
   UsageCliError,
 } from "./core/index.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
+import { TOOL_NAME_DIFF_REVIEW } from "./core/tools/tool_names.js";
 import {
   createBuiltInDiffToolConfig,
   DiffToolLaunchEnvironmentError,
@@ -135,6 +136,13 @@ function clonePersonaForSession(persona: Persona): Persona {
   };
 }
 
+function omitTuiOnlyTools(persona: Persona): Persona {
+  return {
+    ...persona,
+    tools: persona.tools?.filter((tool) => tool !== TOOL_NAME_DIFF_REVIEW),
+  };
+}
+
 async function runRpcMode(options: {
   cli: CliOptions;
   config: Config;
@@ -144,10 +152,11 @@ async function runRpcMode(options: {
   history?: Checkpoint["history"];
 }): Promise<void> {
   const deps = createDefaultCoreDeps();
+  const persona = omitTuiOnlyTools(options.persona);
   const runtimeCwd = deps.env.cwd();
   const home = deps.env.home() || process.env.HOME || homedir();
   const bootstrap = resolveRuntimePromptBootstrap({
-    persona: options.persona,
+    persona,
     discoveredSkills: options.skills,
     cwd: runtimeCwd,
     home,
@@ -167,7 +176,7 @@ async function runRpcMode(options: {
   }
 
   const runtime = ChatRuntime.create({
-    persona: options.persona,
+    persona,
     riskLevel: options.riskLevel,
     toolRegistry: ToolCatalog.createRegistry(createLocalToolExecutionBackend()),
     promptContext: bootstrap.promptContext,

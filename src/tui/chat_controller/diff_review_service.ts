@@ -5,7 +5,10 @@ import type {
   DiffReviewSessionUiState,
   StartedDiffReviewSession,
 } from "../../core/diff_review/index.js";
-import { formatDiffReviewScope } from "../../core/diff_review/snapshot.js";
+import {
+  type DiffReviewSnapshotSource,
+  formatDiffReviewScope,
+} from "../../core/diff_review/snapshot.js";
 import type { ChatView } from "../chat_view.js";
 import type { DiffReviewMessageModel } from "../ui/diff_review_message.js";
 import type { BusyTask, InterruptLifecycle } from "./interrupt_lifecycle.js";
@@ -25,7 +28,7 @@ export type DiffReviewServiceOptions = {
   stopTurnTimer: () => void;
   getDiffToolConfig: () => DiffToolConfig | undefined;
   startSession: (args: {
-    diffArgs: string[];
+    source: DiffReviewSnapshotSource;
     diffTool: DiffToolConfig;
     signal: AbortSignal;
   }) => Promise<StartedDiffReviewSession>;
@@ -54,7 +57,7 @@ export class DiffReviewService {
   private readonly stopTurnTimer: () => void;
   private readonly getDiffToolConfig: () => DiffToolConfig | undefined;
   private readonly startSession: (args: {
-    diffArgs: string[];
+    source: DiffReviewSnapshotSource;
     diffTool: DiffToolConfig;
     signal: AbortSignal;
   }) => Promise<StartedDiffReviewSession>;
@@ -149,7 +152,7 @@ export class DiffReviewService {
 
     try {
       const started = await this.startSession({
-        diffArgs,
+        source: { kind: "git_diff", diffArgs },
         diffTool,
         signal: state.abortController.signal,
       });

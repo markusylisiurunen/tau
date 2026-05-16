@@ -2,6 +2,7 @@ import { type ModelResolver, resolveModel } from "./models/catalog.js";
 import { DEFAULT_SUBAGENT_NAME, type SubagentConfigMap } from "./subagents/types.js";
 import {
   TOOL_NAME_BASH,
+  TOOL_NAME_DIFF_REVIEW,
   TOOL_NAME_EDIT,
   TOOL_NAME_SEND_INPUT_TO_AGENT,
   TOOL_NAME_SPAWN_AGENT,
@@ -330,6 +331,7 @@ const BASE_TOOLS: NonNullable<Persona["tools"]> = [
   TOOL_NAME_WRITE,
   TOOL_NAME_EDIT,
   TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_DIFF_REVIEW,
 ];
 const SUBAGENT_TOOLS: NonNullable<Persona["tools"]> = [
   TOOL_NAME_SPAWN_AGENT,

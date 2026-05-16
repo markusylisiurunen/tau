@@ -75,5 +75,6 @@ export type {
   CaptureDiffReviewSnapshotOptions,
   DiffReviewFile,
   DiffReviewFileStatus,
+  DiffReviewSnapshotSource,
 } from "./snapshot.js";
 export { captureDiffReviewSnapshot, DiffReviewSnapshot } from "./snapshot.js";

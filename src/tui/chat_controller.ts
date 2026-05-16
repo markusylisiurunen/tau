@@ -29,7 +29,10 @@ import {
   type RuntimeConfigResult,
   type ThemeDefinition,
 } from "../core/config/index.js";
-import type { StartedDiffReviewSession } from "../core/diff_review/index.js";
+import type {
+  DiffReviewSnapshotSource,
+  StartedDiffReviewSession,
+} from "../core/diff_review/index.js";
 import { startDiffReviewSession as startCoreDiffReviewSession } from "../core/diff_review/index.js";
 import type { CoreCompactionResult, CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
@@ -341,7 +344,12 @@ export class ChatController {
         spawn: this.deps.spawn,
         env: this.deps.env,
       });
-    const toolRegistry = ToolCatalog.createRegistry(this.toolBackend);
+    const toolRegistry = ToolCatalog.createRegistry(this.toolBackend, {
+      diffReview: {
+        getDiffToolConfig: () => this.resolveDiffToolConfig(),
+        startSession: (args) => this.startDiffReviewSession(args),
+      },
+    });
     this.runtime = ChatRuntime.create({
       persona: this.currentPersona,
       riskLevel: this.riskLevel,
@@ -2004,7 +2012,7 @@ export class ChatController {
         ? ["Reviewed files:", ...review.reviewedFiles.map((file) => `- ${file}`)]
         : ["Reviewed files: (none)"];
     const system = [
-      "The following user message comes from a completed diff review in Tau. During that review, the user read through the reviewed diff snapshot and the files included in it, and may have left comments on specific files, lines, or broader concerns they noticed while reviewing. The message below is the feedback returned from that review.",
+      "The following user message comes from a completed diff review. During that review, the user read through the reviewed diff snapshot and the files included in it, and may have left comments on specific files, lines, or broader concerns they noticed while reviewing. The message below is the feedback returned from that review.",
       "",
       `Reviewed scope: ${review.diffCommand}`,
       ...reviewedFiles,
@@ -2199,13 +2207,13 @@ export class ChatController {
   }
 
   private async startDiffReviewSession(args: {
-    diffArgs: string[];
+    source: DiffReviewSnapshotSource;
     diffTool: DiffToolConfig;
     signal: AbortSignal;
   }): Promise<StartedDiffReviewSession> {
     return await startCoreDiffReviewSession({
-      cwd: this.deps.env.cwd(),
-      diffArgs: args.diffArgs,
+      cwd: this.agentCwd,
+      source: args.source,
       signal: args.signal,
       diffTool: args.diffTool,
       persona: this.currentPersona,

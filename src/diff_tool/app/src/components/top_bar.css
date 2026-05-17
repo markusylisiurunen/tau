@@ -5,8 +5,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
+  max-width: 100vw;
   height: var(--bar-height);
   padding: 0 12px;
+  overflow: hidden;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
@@ -20,9 +23,13 @@
 }
 
 .top-bar-left {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   gap: 12px;
   overflow: hidden;
+}
+
+.top-bar-right {
+  flex: 0 0 auto;
 }
 
 .top-bar-meta {
@@ -53,13 +60,19 @@
 .top-bar-diff-meta {
   display: inline-flex;
   align-items: center;
+  flex: 1 1 0;
   gap: 8px;
   min-width: 0;
   overflow: hidden;
   font-size: var(--font-size-sm);
 }
 
+.top-bar-diff-meta .diff-stats {
+  flex: 0 0 auto;
+}
+
 .top-bar-diff-command {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

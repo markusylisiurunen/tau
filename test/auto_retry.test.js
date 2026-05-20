@@ -13,6 +13,7 @@ describe("auto retry", () => {
       "service unavailable",
       "network error",
       "connection lost",
+      "WebSocket closed 1012",
       "socket hang up",
       "request ended without sending chunks",
       "http2 request did not get a response",

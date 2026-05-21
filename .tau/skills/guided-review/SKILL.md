@@ -46,7 +46,11 @@ Do not start by mechanically grouping files. Build enough understanding of what 
 
 Start with the full diff or change summary, then read surrounding code, relevant tests, types, call sites, and related patterns as needed. Identify the main behavior changes, supporting refactors, dependency order, and risk areas. Trace how changed files interact so each chunk preserves the context a reviewer needs.
 
-Only create the orientation brief and chunk plan once you can explain the overall purpose of the change and the role each major file group plays. If the intent is still unclear after exploration, say what is unclear and ask a focused question before launching reviews.
+Pay special attention to changed boundaries and invocation surfaces: commands, routes, handlers, events, CLIs, schemas, SDKs, typed clients, config, feature flags, background jobs, migrations, generated artifacts, or docs consumed by machines. Do not assume a wrapper or declaration change is obvious from the implementation chunk; if it changes how another component calls the feature, it belongs in the orientation.
+
+Also trace any trust or safety model that is central to the change. For authentication, authorization, tokens, secrets, external callbacks, file access, persistence boundaries, validation, rate limits, idempotency, concurrency, or data retention, understand who can do what, how access is granted and revoked, and what failure modes the reviewer should keep in mind.
+
+Only create the orientation brief and chunk plan once you can explain the overall purpose of the change, the role each major file group plays, the caller-facing surfaces that changed, and the core safety or lifecycle assumptions. If the intent is still unclear after exploration, say what is unclear and ask a focused question before launching reviews.
 
 ## Phase 1: write the orientation brief
 
@@ -54,15 +58,18 @@ Phase 1 prepares the reviewer. Do not call `diff_review` during phase 1.
 
 Write a concise reviewer briefing that tells the story of the change and gives the reviewer the mental model they need before looking at code. It should read like a well-written narrative, not a checklist or a file-by-file inventory. Use headings to make it skimmable. Do not paste large diffs or long file lists.
 
-Choose the right medium for each piece of information. Use prose for intent, motivation, reasoning, and narrative flow. Use small code blocks (pseudo-code, type signatures, JSON shapes, and the like) to show concrete changes: a before/after of a response type, a stripped-down snippet of new control flow, how a lifecycle was reordered. Showing is often faster to absorb than the equivalent explanation in prose. Use bullets for compact enumerations like chunk names, risk items, or field additions. Mix these freely; the goal is that every piece of information appears in the form that makes it fastest to understand.
+Choose the right medium for each piece of information. Use prose for intent, motivation, reasoning, and narrative flow. Use small code blocks to show concrete contracts and mechanics: minimal real syntax for schema or config changes, type signatures, JSON shapes, command names and payloads, or stripped-down control flow. Prefer the form closest to the source contract over an invented table when the source form is compact enough. Showing is often faster to absorb than the equivalent explanation in prose. Use bullets for compact enumerations like changed commands, entry points, risk items, field additions, or chunk names. Mix these freely; the goal is that every piece of information appears in the form that makes it fastest to understand.
 
-A useful structure is: start with the problem or intent, then show the main mechanics and how contracts or shapes change, then call out review focus areas and the chunk map. The chunk map can be a compact list when that is the clearest format.
+A useful structure is: start with the problem or intent, then show the main mechanics and lifecycle, then make the caller-facing contract changes concrete, then call out review focus areas and the chunk map. The chunk map can be a compact list when that is the clearest format.
+
+When a change adds or modifies named entry points, include a concise list of those entry points with one short explanation each. This can include commands, routes, exported functions, SDK methods, config keys, event names, jobs, docs, or any other surface a caller or another component must know about. Keep it selective and useful rather than exhaustive boilerplate.
 
 The brief should cover:
 
 - The overall intent and story of the change.
-- Important changes in mechanics, such as data flow, state transitions, or lifecycle behavior.
-- Any contract or shape changes, such as APIs, response types, schemas, or config formats.
+- Important changes in mechanics, such as data flow, state transitions, lifecycle behavior, retries, ordering, or failure handling.
+- Any contract or shape changes, such as APIs, commands, response types, schemas, storage layouts, SDK/client declarations, config formats, or machine-consumed docs.
+- The trust and safety model when relevant: authentication, authorization, token or secret handling, expiry or revocation, validation, cross-tenant isolation, access to uploaded/downloaded data, external calls, and persistence assumptions.
 - The most important behavior changes and user-visible effects.
 - The riskiest areas or assumptions the reviewer should keep in mind.
 - The chunk plan: each chunk's label, scope, relative importance, and why it belongs together.

@@ -401,7 +401,7 @@ the prune commands drop bash tool results from the active context without summar
 
 `/listen` (or `ctrl+y`) starts microphone recording on macOS. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor. recording also auto-stops after 5 minutes. on Linux, `/listen` is currently unavailable and tau shows a warning.
 
-`/speak` rewrites the last assistant message into naturally speakable text with Gemini 3 Flash, synthesizes audio with Gemini 3.1 Flash TTS, and plays it on macOS at 1.4x speed.
+`/speak` rewrites the last assistant message into naturally speakable text with Gemini 3.5 Flash, synthesizes audio with Gemini 3.1 Flash TTS, and starts playing on macOS at 1.4x speed as soon as the first speech chunk is ready.
 
 `/rewind` opens a picker over prior user messages in the current context. it truncates history from the selected message onward (including the selected message) and prefills the editor with that message so you can retry from there.
 

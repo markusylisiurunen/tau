@@ -74,7 +74,7 @@ import {
   formatPathForDisplay,
   formatTokenWindow,
 } from "../core/utils/format.js";
-import { generateGeminiSpeech } from "../core/utils/gemini_speech.js";
+import { streamGeminiSpeechAudio } from "../core/utils/gemini_speech.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
 import { transcribeMistralAudio } from "../core/utils/mistral_transcription.js";
 import { streamModel } from "../core/utils/model_stream.js";
@@ -1914,48 +1914,74 @@ export class ChatController {
     signal: AbortSignal;
   }): Promise<void> {
     let audioPath: string | undefined;
+    let readyChunks = 0;
+    let totalChunks = 0;
+    let playedChunks = 0;
+    let playbackStarted = false;
+
+    const refreshSpeechProgress = (): void => {
+      if (totalChunks <= 0) return;
+      this.speechStatusHint = playbackStarted
+        ? this.formatSpeechPlaybackProgressMessage(playedChunks, readyChunks, totalChunks)
+        : this.formatSpeechChunkProgressMessage(readyChunks, totalChunks);
+      this.refreshStatus();
+    };
+
     try {
-      const result = await generateGeminiSpeech({
+      for await (const chunk of streamGeminiSpeechAudio({
         apiKey: args.apiKey,
         sourceText: args.sourceText,
         signal: args.signal,
-        onStageChange: () => {},
-        onChunkProgress: ({ ready, total }) => {
-          this.speechStatusHint = this.formatSpeechChunkProgressMessage(ready, total);
+        onStageChange: (stage) => {
+          this.speechStatusHint =
+            stage === "rewriting" ? "rewriting for speech..." : "generating speech...";
           this.refreshStatus();
         },
-      });
-      if (args.signal.aborted) {
-        return;
-      }
-
-      audioPath = await this.createTempFilePath(SPEAK_TEMP_FILE_TEMPLATE);
-      await writeFile(audioPath, result.audio);
-
-      this.speechStatusHint = "playing speech...";
-      this.refreshStatus();
-
-      const playback = await this.deps.spawn(
-        "afplay",
-        ["-r", String(SPEAK_PLAYBACK_RATE), audioPath],
-        {
-          detached: true,
-          killProcessGroup: true,
-          signal: args.signal,
-          stdio: ["ignore", "ignore", "ignore"],
+        onChunkProgress: ({ ready, total }) => {
+          readyChunks = ready;
+          totalChunks = total;
+          refreshSpeechProgress();
         },
-      );
-      if (args.signal.aborted || playback.aborted) {
-        return;
-      }
-      if (playback.exitCode !== 0) {
-        const detail =
-          playback.exitCode !== null
-            ? `afplay exited with code ${playback.exitCode}`
-            : playback.closeSignal
-              ? `afplay terminated by signal ${playback.closeSignal}`
-              : "afplay exited";
-        throw new Error(detail);
+      })) {
+        if (args.signal.aborted) {
+          return;
+        }
+
+        playbackStarted = true;
+        totalChunks = chunk.total;
+        refreshSpeechProgress();
+
+        audioPath = await this.createTempFilePath(SPEAK_TEMP_FILE_TEMPLATE);
+        await writeFile(audioPath, chunk.audio);
+
+        const playback = await this.deps.spawn(
+          "afplay",
+          ["-r", String(SPEAK_PLAYBACK_RATE), audioPath],
+          {
+            detached: true,
+            killProcessGroup: true,
+            signal: args.signal,
+            stdio: ["ignore", "ignore", "ignore"],
+          },
+        );
+        await this.cleanupTempFile(audioPath);
+        audioPath = undefined;
+
+        if (args.signal.aborted || playback.aborted) {
+          return;
+        }
+        if (playback.exitCode !== 0) {
+          const detail =
+            playback.exitCode !== null
+              ? `afplay exited with code ${playback.exitCode}`
+              : playback.closeSignal
+                ? `afplay terminated by signal ${playback.closeSignal}`
+                : "afplay exited";
+          throw new Error(detail);
+        }
+
+        playedChunks = chunk.index + 1;
+        refreshSpeechProgress();
       }
     } catch (err) {
       if (args.signal.aborted) {
@@ -1978,6 +2004,14 @@ export class ChatController {
 
   private formatSpeechChunkProgressMessage(ready: number, total: number): string {
     return `generating speech chunks (${ready} out of ${total} ready)...`;
+  }
+
+  private formatSpeechPlaybackProgressMessage(
+    played: number,
+    ready: number,
+    total: number,
+  ): string {
+    return `playing speech (${played}/${total} played, ${ready}/${total} ready)...`;
   }
 
   private getMemoryModeFilePath(): string {

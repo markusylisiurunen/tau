@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { generateGeminiSpeech } from "../dist/core/utils/gemini_speech.js";
+import { streamGeminiSpeechAudio } from "../dist/core/utils/gemini_speech.js";
 
 describe("gemini speech", () => {
   it("rewrites text, requests TTS audio, and returns a wav buffer", async () => {
@@ -42,7 +42,8 @@ describe("gemini speech", () => {
 
     const stages = [];
     const chunkProgress = [];
-    const result = await generateGeminiSpeech({
+    const chunks = [];
+    for await (const chunk of streamGeminiSpeechAudio({
       apiKey: "gemini-key",
       sourceText: "Use src/app.ts:42 for the fix.",
       fetchImpl: fetchMock,
@@ -52,9 +53,12 @@ describe("gemini speech", () => {
       onChunkProgress: (progress) => {
         chunkProgress.push(progress);
       },
-    });
+    })) {
+      chunks.push(chunk);
+    }
 
-    expect(result.spokenText).toBe("Use src slash app dot t s, line 42, for the fix.");
+    expect(chunks).toHaveLength(1);
+    const result = chunks[0];
     expect(stages).toEqual(["rewriting", "generating"]);
     expect(chunkProgress).toEqual([
       { ready: 0, total: 1 },
@@ -100,7 +104,9 @@ describe("gemini speech", () => {
       "Despina",
     );
     expect(ttsRequest.contents[0].parts[0].text).toContain("### TRANSCRIPT");
-    expect(ttsRequest.contents[0].parts[0].text).toContain(result.spokenText);
+    expect(ttsRequest.contents[0].parts[0].text).toContain(
+      "Use src slash app dot t s, line 42, for the fix.",
+    );
   });
 
   it("retries transient TTS failures", async () => {
@@ -151,14 +157,17 @@ describe("gemini speech", () => {
         ),
       );
 
-    const result = await generateGeminiSpeech({
+    const chunks = [];
+    for await (const chunk of streamGeminiSpeechAudio({
       apiKey: "gemini-key",
       sourceText: "Original text.",
       fetchImpl: fetchMock,
       maxTtsAttempts: 2,
-    });
+    })) {
+      chunks.push(chunk);
+    }
 
-    expect(result.spokenText).toBe("Spoken version.");
+    expect(chunks).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

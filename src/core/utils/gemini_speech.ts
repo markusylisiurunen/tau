@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_GEMINI_SPEECH_REWRITE_MODEL = "gemini-3-flash-preview";
+const DEFAULT_GEMINI_SPEECH_REWRITE_MODEL = "gemini-3.5-flash";
+const DEFAULT_GEMINI_SPEECH_REWRITE_THINKING_LEVEL = "minimal";
 const DEFAULT_GEMINI_SPEECH_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 const DEFAULT_GEMINI_TTS_VOICE_NAME = "Despina";
 const DEFAULT_TTS_SAMPLE_RATE_HZ = 24000;
@@ -41,8 +42,9 @@ export type GeminiSpeechOptions = {
   onChunkProgress?: (progress: GeminiSpeechChunkProgress) => void | Promise<void>;
 };
 
-export type GeminiSpeechResult = {
-  spokenText: string;
+export type GeminiSpeechAudioChunk = {
+  index: number;
+  total: number;
   audio: Buffer;
   mimeType: "audio/wav";
 };
@@ -64,9 +66,9 @@ class GeminiTtsResponseError extends Error {
   }
 }
 
-export async function generateGeminiSpeech(
+export async function* streamGeminiSpeechAudio(
   options: GeminiSpeechOptions,
-): Promise<GeminiSpeechResult> {
+): AsyncGenerator<GeminiSpeechAudioChunk> {
   const sourceText = options.sourceText.trim();
   if (!sourceText) {
     throw new Error("speech source text was empty");
@@ -81,40 +83,55 @@ export async function generateGeminiSpeech(
   const rewriteModel = options.rewriteModel ?? DEFAULT_GEMINI_SPEECH_REWRITE_MODEL;
   const ttsModel = options.ttsModel ?? DEFAULT_GEMINI_SPEECH_TTS_MODEL;
   const voiceName = options.voiceName ?? DEFAULT_GEMINI_TTS_VOICE_NAME;
-  await options.onStageChange?.("rewriting");
-  const spokenText = await rewriteTextForSpeech({
-    apiKey,
-    model: rewriteModel,
-    sourceText,
-    fetchImpl,
-    signal: options.signal,
-  });
+  const abortController = createLinkedAbortController(options.signal);
+  let completed = false;
 
-  const spokenParagraphs = splitSpeechParagraphs(spokenText);
-  await options.onStageChange?.("generating");
-  await options.onChunkProgress?.({ ready: 0, total: spokenParagraphs.length });
-  const pcmChunks = await synthesizeSpeechAudioChunks({
-    apiKey,
-    model: ttsModel,
-    voiceName,
-    spokenParagraphs,
-    fetchImpl,
-    signal: options.signal,
-    maxAttempts: options.maxTtsAttempts ?? DEFAULT_TTS_MAX_ATTEMPTS,
-    concurrency: DEFAULT_TTS_CONCURRENCY,
-    onChunkProgress: options.onChunkProgress,
-  });
+  try {
+    await options.onStageChange?.("rewriting");
+    const spokenText = await rewriteTextForSpeech({
+      apiKey,
+      model: rewriteModel,
+      sourceText,
+      fetchImpl,
+      signal: abortController.signal,
+    });
 
-  return {
-    spokenText,
-    audio: encodeWaveFile({
-      pcmAudio: Buffer.concat(pcmChunks),
-      sampleRateHz: DEFAULT_TTS_SAMPLE_RATE_HZ,
-      channelCount: DEFAULT_TTS_CHANNEL_COUNT,
-      bitsPerSample: DEFAULT_TTS_BITS_PER_SAMPLE,
-    }),
-    mimeType: "audio/wav",
-  };
+    const spokenChunks = splitSpeechChunks(spokenText);
+    await options.onStageChange?.("generating");
+    await options.onChunkProgress?.({ ready: 0, total: spokenChunks.length });
+
+    for await (const chunk of synthesizeSpeechAudioChunksInOrder({
+      apiKey,
+      model: ttsModel,
+      voiceName,
+      spokenChunks,
+      fetchImpl,
+      signal: abortController.signal,
+      maxAttempts: options.maxTtsAttempts ?? DEFAULT_TTS_MAX_ATTEMPTS,
+      concurrency: DEFAULT_TTS_CONCURRENCY,
+      onChunkProgress: options.onChunkProgress,
+      abortOnFailure: () => abortController.abort(),
+    })) {
+      yield {
+        index: chunk.index,
+        total: spokenChunks.length,
+        audio: encodeWaveFile({
+          pcmAudio: chunk.pcmAudio,
+          sampleRateHz: DEFAULT_TTS_SAMPLE_RATE_HZ,
+          channelCount: DEFAULT_TTS_CHANNEL_COUNT,
+          bitsPerSample: DEFAULT_TTS_BITS_PER_SAMPLE,
+        }),
+        mimeType: "audio/wav",
+      };
+    }
+
+    completed = true;
+  } finally {
+    if (!completed) {
+      abortController.abort();
+    }
+    abortController.dispose();
+  }
 }
 
 type RewriteTextForSpeechArgs = {
@@ -143,7 +160,7 @@ async function rewriteTextForSpeech(args: RewriteTextForSpeechArgs): Promise<str
       ],
       generationConfig: {
         thinkingConfig: {
-          thinkingLevel: "minimal",
+          thinkingLevel: DEFAULT_GEMINI_SPEECH_REWRITE_THINKING_LEVEL,
         },
       },
     },
@@ -160,7 +177,7 @@ type SynthesizeSpeechAudioChunksArgs = {
   apiKey: string;
   model: string;
   voiceName: string;
-  spokenParagraphs: string[];
+  spokenChunks: string[];
   fetchImpl: typeof fetch;
   signal?: AbortSignal;
   maxAttempts: number;
@@ -168,39 +185,108 @@ type SynthesizeSpeechAudioChunksArgs = {
   onChunkProgress?: (progress: GeminiSpeechChunkProgress) => void | Promise<void>;
 };
 
-async function synthesizeSpeechAudioChunks(
-  args: SynthesizeSpeechAudioChunksArgs,
-): Promise<Buffer[]> {
-  const total = args.spokenParagraphs.length;
-  const results = new Array<Buffer>(total);
+type SynthesizedSpeechAudioChunk = {
+  index: number;
+  pcmAudio: Buffer;
+};
+
+type SynthesizeSpeechAudioChunksInOrderArgs = SynthesizeSpeechAudioChunksArgs & {
+  abortOnFailure?: () => void;
+};
+
+async function* synthesizeSpeechAudioChunksInOrder(
+  args: SynthesizeSpeechAudioChunksInOrderArgs,
+): AsyncGenerator<SynthesizedSpeechAudioChunk> {
+  const total = args.spokenChunks.length;
+  const results = new Array<Buffer | undefined>(total);
   const concurrency = Math.max(1, Math.trunc(args.concurrency));
   let nextIndex = 0;
+  let nextYieldIndex = 0;
   let ready = 0;
+  let failure: unknown;
+  let notify: (() => void) | undefined;
+
+  const wake = (): void => {
+    notify?.();
+    notify = undefined;
+  };
+
+  const waitForWake = async (): Promise<void> => {
+    await new Promise<void>((resolve) => {
+      notify = resolve;
+    });
+  };
+
+  const onAbort = (): void => {
+    if (failure === undefined) {
+      failure = abortError();
+    }
+    wake();
+  };
+
+  if (args.signal) {
+    if (args.signal.aborted) {
+      onAbort();
+    } else {
+      args.signal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
 
   const worker = async (): Promise<void> => {
-    while (true) {
+    while (failure === undefined && !args.signal?.aborted) {
       const index = nextIndex;
       nextIndex += 1;
       if (index >= total) {
         return;
       }
 
-      results[index] = await synthesizeSpeechAudioChunk({
-        apiKey: args.apiKey,
-        model: args.model,
-        voiceName: args.voiceName,
-        spokenText: args.spokenParagraphs[index]!,
-        fetchImpl: args.fetchImpl,
-        signal: args.signal,
-        maxAttempts: args.maxAttempts,
-      });
-      ready += 1;
-      await args.onChunkProgress?.({ ready, total });
+      try {
+        results[index] = await synthesizeSpeechAudioChunk({
+          apiKey: args.apiKey,
+          model: args.model,
+          voiceName: args.voiceName,
+          spokenText: args.spokenChunks[index]!,
+          fetchImpl: args.fetchImpl,
+          signal: args.signal,
+          maxAttempts: args.maxAttempts,
+        });
+        ready += 1;
+        await args.onChunkProgress?.({ ready, total });
+        wake();
+      } catch (err) {
+        if (failure === undefined) {
+          failure = err;
+        }
+        args.abortOnFailure?.();
+        wake();
+        return;
+      }
     }
   };
 
-  await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => worker()));
-  return results;
+  const workers = Array.from({ length: Math.min(concurrency, total) }, () => worker());
+  void Promise.allSettled(workers);
+
+  try {
+    while (nextYieldIndex < total) {
+      const nextResult = results[nextYieldIndex];
+      if (nextResult) {
+        yield { index: nextYieldIndex, pcmAudio: nextResult };
+        nextYieldIndex += 1;
+        continue;
+      }
+
+      if (failure !== undefined) {
+        throw failure instanceof Error ? failure : new Error("Gemini TTS request failed");
+      }
+
+      await waitForWake();
+    }
+
+    await Promise.all(workers);
+  } finally {
+    args.signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 type SynthesizeSpeechAudioChunkArgs = {
@@ -394,13 +480,13 @@ function buildSpeechRewritePrompt(sourceText: string): string {
   ].join("\n");
 }
 
-function splitSpeechParagraphs(spokenText: string): string[] {
-  const paragraphs = spokenText
+function splitSpeechChunks(spokenText: string): string[] {
+  const chunks = spokenText
     .split(/\n\s*\n/g)
     .map((paragraph) => paragraph.trim())
     .filter((paragraph) => paragraph.length > 0);
 
-  return paragraphs.length > 0 ? paragraphs : [spokenText.trim()];
+  return chunks.length > 0 ? chunks : [spokenText.trim()];
 }
 
 function buildSpeechSynthesisPrompt(spokenText: string): string {
@@ -459,6 +545,29 @@ async function waitForRetryDelay(attempt: number, signal?: AbortSignal): Promise
 
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function createLinkedAbortController(parent?: AbortSignal): {
+  signal: AbortSignal;
+  abort: () => void;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(parent?.reason);
+
+  if (parent) {
+    if (parent.aborted) {
+      onAbort();
+    } else {
+      parent.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    abort: () => controller.abort(),
+    dispose: () => parent?.removeEventListener("abort", onAbort),
+  };
 }
 
 function encodeWaveFile(args: {

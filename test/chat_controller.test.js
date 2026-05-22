@@ -1265,7 +1265,7 @@ describe("ChatController speak playback", () => {
         "rewriting for speech...",
         "generating speech chunks (0 out of 1 ready)...",
         "generating speech chunks (1 out of 1 ready)...",
-        "playing speech...",
+        "playing speech (0/1 played, 1/1 ready)...",
       ]),
     );
     expect(stub.statusUpdates.at(-1)?.footer.commandHint).toBeUndefined();

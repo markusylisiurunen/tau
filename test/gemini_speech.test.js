@@ -85,6 +85,9 @@ describe("gemini speech", () => {
       "Things that typically need rewriting: file paths, shell commands, code identifiers",
     );
     expect(rewriteRequest.contents[0].parts[0].text).toContain(
+      "Remove formatting. Convert headings, lists, tables, and code blocks into plain spoken prose.",
+    );
+    expect(rewriteRequest.contents[0].parts[0].text).toContain(
       "Do not add location detail that was not in the original",
     );
     expect(rewriteRequest.contents[0].parts[0].text).toContain(
@@ -107,6 +110,74 @@ describe("gemini speech", () => {
     expect(ttsRequest.contents[0].parts[0].text).toContain(
       "Use src slash app dot t s, line 42, for the fix.",
     );
+  });
+
+  it("merges short rewritten paragraphs into one TTS chunk", async () => {
+    const rewrittenText = [
+      "Setup.",
+      "First short point.",
+      "Second short point.",
+      "This wraps the setup and short points in enough surrounding prose that the speech request stays natural instead of isolating structural fragments as separate audio chunks.",
+    ].join("\n\n");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: rewrittenText }],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      inlineData: {
+                        data: Buffer.from([1, 2]).toString("base64"),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    const chunkProgress = [];
+    const chunks = [];
+    for await (const chunk of streamGeminiSpeechAudio({
+      apiKey: "gemini-key",
+      sourceText: "## Setup\n\n- First short point.\n- Second short point.",
+      fetchImpl: fetchMock,
+      onChunkProgress: (progress) => {
+        chunkProgress.push(progress);
+      },
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(chunkProgress).toEqual([
+      { ready: 0, total: 1 },
+      { ready: 1, total: 1 },
+    ]);
+
+    const ttsRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(ttsRequest.contents[0].parts[0].text).toContain(rewrittenText);
   });
 
   it("retries transient TTS failures", async () => {

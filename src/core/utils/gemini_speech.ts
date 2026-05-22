@@ -10,6 +10,7 @@ const DEFAULT_TTS_CHANNEL_COUNT = 1;
 const DEFAULT_TTS_BITS_PER_SAMPLE = 16;
 const DEFAULT_TTS_MAX_ATTEMPTS = 3;
 const DEFAULT_TTS_CONCURRENCY = 6;
+const MIN_SPEECH_CHUNK_CHARACTERS = 240;
 const RETRYABLE_TTS_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 
 const errorPayloadSchema = z.object({
@@ -460,6 +461,7 @@ function buildSpeechRewritePrompt(sourceText: string): string {
     "Keep prose unchanged. Only rewrite spans that are awkward to say aloud, so the listener can follow along with the original text.",
     "Do not drop, condense, or add content. Preserve meaning, order, and technical accuracy.",
     "Things that typically need rewriting: file paths, shell commands, code identifiers, markdown structure, XML-like tags, long option lists, and code-heavy formatting.",
+    "Remove formatting. Convert headings, lists, tables, and code blocks into plain spoken prose. Do not preserve markdown bullets, heading markers, table rows, fences, or standalone labels.",
     "For file references, keep the filename and any line or range info that was actually present. Do not add location detail that was not in the original.",
     "Say code identifiers and version strings as natural words (for example, handleToolUiEvent as 'handle tool UI event', v5.4 as 'version 5.4'). Keep numbers and units natural (for example, 8,192 tokens as 'about eight thousand tokens').",
     "",
@@ -472,8 +474,9 @@ function buildSpeechRewritePrompt(sourceText: string): string {
     '- `<available-skills>` → "the available-skills tag"',
     "- A markdown bullet list of short items → a natural comma-separated list or short sentences",
     "",
-    "Write in prose-like paragraphs of sensible spoken length, separated by blank lines.",
-    "Return plain text only, with no markdown fences or commentary.",
+    "Write only plain text paragraphs of sensible spoken length, separated by blank lines.",
+    "Do not make headings, bullets, or numbered items their own paragraphs. Fold short structural text into the surrounding prose.",
+    "Return plain text only, with no markdown fences, bullets, numbering, tables, headings, or commentary.",
     "",
     "ASSISTANT RESPONSE:",
     sourceText,
@@ -481,18 +484,52 @@ function buildSpeechRewritePrompt(sourceText: string): string {
 }
 
 function splitSpeechChunks(spokenText: string): string[] {
-  const chunks = spokenText
+  const paragraphs = spokenText
     .split(/\n\s*\n/g)
-    .map((paragraph) => paragraph.trim())
+    .map((paragraph) => normalizeSpeechParagraph(paragraph))
     .filter((paragraph) => paragraph.length > 0);
 
-  return chunks.length > 0 ? chunks : [spokenText.trim()];
+  if (paragraphs.length === 0) {
+    return [spokenText.trim()];
+  }
+
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const paragraph of paragraphs) {
+    if (!current) {
+      current = paragraph;
+      continue;
+    }
+
+    if (current.length < MIN_SPEECH_CHUNK_CHARACTERS) {
+      current = joinSpeechParagraphs(current, paragraph);
+      continue;
+    }
+
+    chunks.push(current);
+    current = paragraph;
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks;
+}
+
+function normalizeSpeechParagraph(paragraph: string): string {
+  return paragraph.replace(/\s+/g, " ").trim();
+}
+
+function joinSpeechParagraphs(first: string, second: string): string {
+  return `${first}\n\n${second}`;
 }
 
 function buildSpeechSynthesisPrompt(spokenText: string): string {
   return [
     "Synthesize speech audio for the labeled transcript below.",
-    "Speak only the transcript. Do not speak the instructions, labels, or headings.",
+    "Speak only the transcript. Do not speak the instructions or section labels.",
     "",
     "### DIRECTOR'S NOTES",
     "Style: Clear, natural, conversational.",

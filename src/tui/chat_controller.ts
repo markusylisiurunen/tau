@@ -592,6 +592,9 @@ export class ChatController {
 
       case "tool_ui":
         this.view.handleToolUiEvent(event.uiEvent);
+        if (event.uiEvent.type === "diff_review_started") {
+          this.view.sendTerminalNotification("tau is waiting for diff review");
+        }
         this.refreshStatus();
         return;
 

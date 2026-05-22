@@ -29,6 +29,7 @@ function createStubView() {
   const thinkingVisibilityCalls = [];
   const editorInputEnabledCalls = [];
   const statusUpdates = [];
+  const terminalNotifications = [];
   let clearToolUiTransientStateCallCount = 0;
   let resetToolUiSessionCallCount = 0;
   let resetToolUiSessionPreservingSubagentsCallCount = 0;
@@ -50,6 +51,7 @@ function createStubView() {
     thinkingVisibilityCalls,
     editorInputEnabledCalls,
     statusUpdates,
+    terminalNotifications,
     get clearToolUiTransientStateCallCount() {
       return clearToolUiTransientStateCallCount;
     },
@@ -119,7 +121,9 @@ function createStubView() {
       getToolUiCostTotal: () => 0,
       cycleSubagentSelection: () => undefined,
       getSelectedSubagentId: () => undefined,
-      sendTerminalNotification: () => {},
+      sendTerminalNotification: (title) => {
+        terminalNotifications.push(title);
+      },
       getEditorText: () => editorText,
       getExpandedEditorText: () => editorText,
       setEditorText: (text) => {
@@ -337,6 +341,24 @@ describe("ChatController event handling", () => {
     controller.onEvent({ type: "notice", severity: "warn", text: "heads up" });
 
     expect(stub.systemMessages).toEqual([{ text: "heads up", kind: "warn" }]);
+  });
+
+  it("notifies when the assistant starts a diff review", () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.onEvent({
+      type: "tool_ui",
+      uiEvent: {
+        type: "diff_review_started",
+        toolCallId: "diff-review-1",
+        command: "git diff",
+        headerTarget: "git diff",
+      },
+    });
+
+    expect(stub.toolUiEvents).toHaveLength(1);
+    expect(stub.terminalNotifications).toEqual(["tau is waiting for diff review"]);
   });
 
   it("shows auto-compaction status and preserves subagent UI state", () => {

@@ -3,6 +3,7 @@ import {
   type SelectItem,
   SelectList,
   type SelectListLayoutOptions,
+  truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { Theme } from "./theme/index.js";
@@ -11,6 +12,7 @@ const REWIND_PICKER_MAX_VISIBLE = 8;
 const SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
   minPrimaryColumnWidth: 12,
   maxPrimaryColumnWidth: 32,
+  truncatePrimary: ({ text, maxWidth }) => truncateToWidth(text, maxWidth, "…"),
 };
 
 export type RewindPickerItem = {

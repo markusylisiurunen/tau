@@ -9,6 +9,7 @@ import {
   SelectList,
   type SelectListLayoutOptions,
   type SelectListTheme,
+  truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { UndoStack } from "./undo_stack.js";
@@ -26,6 +27,7 @@ const APC_REGEX = new RegExp(APC_PATTERN, "g");
 const SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
   minPrimaryColumnWidth: 12,
   maxPrimaryColumnWidth: 32,
+  truncatePrimary: ({ text, maxWidth }) => truncateToWidth(text, maxWidth, "…"),
 };
 const ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = 20;
 

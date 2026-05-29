@@ -240,7 +240,7 @@ export function printHelp(personas: Persona[]): void {
       "",
       "examples:",
       "  tau --persona gpt-5.4-chat:high",
-      "  tau -p opus-4.7-coder",
+      "  tau -p opus-4.8-coder",
       "  tau --persona gpt-5.4-chat:medium --risk read-write",
       "  tau -p gpt-5.4-coder:high -r read-write",
       "  tau -l /tmp/tau-checkpoint-abc123/checkpoint.json",

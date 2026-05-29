@@ -249,7 +249,7 @@ describe("ChatController persona switching", () => {
     handlers.onShiftTab?.();
     expect(controller.currentPersona.settings.reasoning).toBe("high");
 
-    await controller.onUserInput("/persona:opus-4.7-chat");
+    await controller.onUserInput("/persona:opus-4.8-chat");
     await controller.onUserInput("/persona:gpt-5.4-chat");
 
     expect(controller.currentPersona.id).toBe("gpt-5.4-chat");

@@ -124,17 +124,17 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "opus-4.6-coder")?.model.id).toBe(
         "claude-opus-4-6",
       );
-      expect(personas.find((persona) => persona.id === "opus-4.7-chat")?.model.id).toBe(
-        "claude-opus-4-7",
+      expect(personas.find((persona) => persona.id === "opus-4.8-chat")?.model.id).toBe(
+        "claude-opus-4-8",
       );
-      expect(personas.find((persona) => persona.id === "opus-4.7-chat")?.settings.reasoning).toBe(
+      expect(personas.find((persona) => persona.id === "opus-4.8-chat")?.settings.reasoning).toBe(
         "medium",
       );
       expect(
-        personas.find((persona) => persona.id === "opus-4.7-chat")?.allowedReasoningLevels,
+        personas.find((persona) => persona.id === "opus-4.8-chat")?.allowedReasoningLevels,
       ).toEqual(["low", "medium", "high", "xhigh"]);
-      expect(personas.find((persona) => persona.id === "opus-4.7-coder")?.model.id).toBe(
-        "claude-opus-4-7",
+      expect(personas.find((persona) => persona.id === "opus-4.8-coder")?.model.id).toBe(
+        "claude-opus-4-8",
       );
     } finally {
       fx.cleanup();

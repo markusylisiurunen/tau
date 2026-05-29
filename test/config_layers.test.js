@@ -202,7 +202,7 @@ describe("config paths", () => {
 
       const config = loadConfig(fx.repo, deps);
       expect(config).toMatchObject({
-        defaultPersona: "opus-4.7-chat",
+        defaultPersona: "opus-4.8-chat",
         defaultRisk: "read-only",
         autoCompact: {
           enabled: true,
@@ -232,7 +232,7 @@ describe("config paths", () => {
       const modelResolver = loadModelResolver({ deps, levels });
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
       expect(result.config).toMatchObject({
-        defaultPersona: "opus-4.7-chat",
+        defaultPersona: "opus-4.8-chat",
         defaultRisk: "read-only",
       });
       expect(result.errors.length).toBeGreaterThan(0);

@@ -63,6 +63,8 @@ export const DIFF_TOOL_CODE_THEMES = [
 
 export type DiffToolCodeTheme = (typeof DIFF_TOOL_CODE_THEMES)[number];
 
+export const DEFAULT_DIFF_TOOL_CODE_THEME: DiffToolCodeTheme = "github-dark-dimmed";
+
 export type DiffToolDetachedThreadAnchor = {
   kind: "detached";
 };
@@ -123,6 +125,10 @@ export type DiffToolGetDiffResult = DiffReviewSessionGetDiffResult;
 
 export type DiffToolStateResponse = {
   state: DiffToolReviewState;
+};
+
+export type DiffToolCreateThreadResponse = DiffToolStateResponse & {
+  threadId: string;
 };
 
 export type DiffToolCreateThreadPayload = {

@@ -29,7 +29,7 @@ The HTTP server (`http_server.ts`) serves these endpoints, which the React app c
 | POST | `/api/thread/collapse` | Collapse or expand a local review thread |
 | POST | `/api/thread-message` | Send the pending thread messages to the review agent and store the reply |
 | POST | `/api/brief/generate` | Ask the review agent for a diff-wide reviewer brief |
-| POST | `/api/review` | Send `{ review }` to return the review text to Tau |
+| POST | `/api/review` | Send an optional `{ message }` and return the composed review text to Tau |
 | POST | `/api/cancel` | Cancel the review session |
 
 Non-API GET requests serve static files from `app/dist/`.
@@ -125,6 +125,6 @@ When the user asks to develop or test the diff tool UI using `@@skill:agent-brow
 - "whole diff" button loads the full session diff
 - Thread creation: sending a message creates a new thread and shows the mock response
 - Thread selection: clicking a thread shows its message history
-- Review flow: typing in the review textarea and clicking "return review to Tau"
+- Review flow: submitting with and without an optional message
 - Cancel flow: clicking "cancel review"
 - Responsive layout: the three-column grid collapses on narrow viewports

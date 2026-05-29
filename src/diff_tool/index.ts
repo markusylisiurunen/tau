@@ -35,7 +35,7 @@ export async function runBuiltInDiffToolCommand(
 ): Promise<void> {
   const launchEnvironment = parseDiffToolLaunchEnvironment(options.env);
   const client = new DiffReviewProtocolClient(launchEnvironment);
-  const server = new DiffToolHttpServer({ client });
+  const server = new DiffToolHttpServer({ client, codeTheme: launchEnvironment.codeTheme });
 
   let started: StartedDiffToolHttpServer | undefined;
   let shuttingDown = false;

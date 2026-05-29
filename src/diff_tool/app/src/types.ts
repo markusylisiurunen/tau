@@ -1,10 +1,14 @@
-import { DIFF_TOOL_CODE_THEMES } from "../../shared_types.js";
+import {
+  DEFAULT_DIFF_TOOL_CODE_THEME,
+  DIFF_TOOL_CODE_THEMES,
+} from "../../shared_types.js";
 import type {
   DiffReviewFile,
   DiffToolBootstrapPayload,
   DiffToolBrief,
   DiffToolCommentThread,
   DiffToolCreateThreadPayload,
+  DiffToolCreateThreadResponse,
   DiffToolDetachedThreadAnchor,
   DiffToolGetDiffResult,
   DiffToolLineSide,
@@ -17,7 +21,7 @@ import type {
   DiffToolThreadReplyPayload,
 } from "../../shared_types.js";
 
-export { DIFF_TOOL_CODE_THEMES };
+export { DEFAULT_DIFF_TOOL_CODE_THEME, DIFF_TOOL_CODE_THEMES };
 
 export type {
   DiffReviewFile,
@@ -35,6 +39,7 @@ export type DiffReviewGetDiffResult = DiffToolGetDiffResult;
 export type StateResponse = DiffToolStateResponse;
 export type ReviewStatePatch = DiffToolStatePatch;
 export type CreateThreadPayload = DiffToolCreateThreadPayload;
+export type CreateThreadResponse = DiffToolCreateThreadResponse;
 export type ThreadReplyPayload = DiffToolThreadReplyPayload;
 export type LineSide = DiffToolLineSide;
 export type DiffStyle = DiffToolReviewState["diffStyle"];

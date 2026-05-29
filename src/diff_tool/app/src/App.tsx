@@ -377,20 +377,7 @@ export function App() {
             return;
           }
 
-          const thread = [...createResult.state.threads]
-            .reverse()
-            .find(
-              (entry) =>
-                entry.anchor.kind === "line" &&
-                entry.anchor.fileId === anchor.fileId &&
-                entry.anchor.lineNumber === anchor.lineNumber &&
-                entry.anchor.side === anchor.side,
-            );
-          if (!thread) {
-            return;
-          }
-
-          await requestThreadAgentReply(thread.id);
+          await requestThreadAgentReply(createResult.threadId);
         } catch (error) {
           setStatus(error instanceof Error ? error.message : String(error));
         }
@@ -503,23 +490,19 @@ export function App() {
       });
       applyReviewState(createResult.state);
 
-      const newestDetachedThread = [...createResult.state.threads]
-        .filter((thread) => thread.anchor.kind === "detached")
-        .at(-1);
       if (!resetDetachedDraftIfCurrent(dialogVersion)) {
         return;
       }
-      setDetachedThreadDialog(
-        newestDetachedThread
-          ? { mode: "thread", threadId: newestDetachedThread.id }
-          : null,
-      );
+      setDetachedThreadDialog({
+        mode: "thread",
+        threadId: createResult.threadId,
+      });
 
-      if (!shouldTriggerAgent || !newestDetachedThread) {
+      if (!shouldTriggerAgent) {
         return;
       }
 
-      await requestThreadAgentReply(newestDetachedThread.id);
+      await requestThreadAgentReply(createResult.threadId);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }

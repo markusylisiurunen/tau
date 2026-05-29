@@ -7,7 +7,12 @@ import type {
   LineSide,
 } from "../comments.js";
 import type { DiffFile } from "../parse_diff.js";
-import type { CodeTheme, DiffStyle, OverflowMode } from "../types.js";
+import {
+  DEFAULT_DIFF_TOOL_CODE_THEME,
+  type CodeTheme,
+  type DiffStyle,
+  type OverflowMode,
+} from "../types.js";
 import { Checkbox } from "./checkbox.js";
 import { CommentEditor } from "./comment_editor.js";
 import { DiffStats } from "./diff_stats.js";
@@ -15,7 +20,7 @@ import { ThreadCard } from "./thread_card.js";
 import "./file_section.css";
 
 const baseDiffOptions = {
-  theme: "github-dark-dimmed",
+  theme: DEFAULT_DIFF_TOOL_CODE_THEME,
   themeType: "dark",
   diffStyle: "unified",
   diffIndicators: "none",

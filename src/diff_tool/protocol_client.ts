@@ -78,10 +78,6 @@ export class DiffReviewProtocolClient {
     this.launchEnvironment = launchEnvironment;
   }
 
-  getLaunchEnvironment(): DiffToolLaunchEnvironment {
-    return { ...this.launchEnvironment, diffArgs: [...this.launchEnvironment.diffArgs] };
-  }
-
   async connect(): Promise<void> {
     if (this.closed) {
       throw new Error("diff review protocol client is closed");

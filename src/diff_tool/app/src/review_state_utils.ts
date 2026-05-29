@@ -4,12 +4,16 @@ import type {
   LineAnnotation,
 } from "./comments.js";
 import type { DiffFile } from "./parse_diff.js";
-import { DIFF_TOOL_CODE_THEMES, type DiffToolReviewState } from "./types.js";
+import {
+  DEFAULT_DIFF_TOOL_CODE_THEME,
+  DIFF_TOOL_CODE_THEMES,
+  type DiffToolReviewState,
+} from "./types.js";
 
 export const emptyReviewState: DiffToolReviewState = {
   diffStyle: "split",
   overflowMode: "wrap",
-  codeTheme: "github-dark-dimmed",
+  codeTheme: DEFAULT_DIFF_TOOL_CODE_THEME,
   sidebarOpen: false,
   collapsedFileIds: [],
   viewedFileIds: [],
@@ -88,7 +92,7 @@ export function sumFileChanges(
 function normalizeCodeTheme(
   codeTheme: DiffToolReviewState["codeTheme"],
 ): DiffToolReviewState["codeTheme"] {
-  return codeThemes.has(codeTheme) ? codeTheme : "github-dark-dimmed";
+  return codeThemes.has(codeTheme) ? codeTheme : DEFAULT_DIFF_TOOL_CODE_THEME;
 }
 
 export function buildThreadsByFileId(

@@ -12,7 +12,9 @@ import {
 import { DiffToolReviewStateStore } from "./review_state.js";
 import type {
   DiffToolBootstrapPayload,
+  DiffToolCodeTheme,
   DiffToolCreateThreadPayload,
+  DiffToolCreateThreadResponse,
   DiffToolGetDiffResult,
   DiffToolStatePatch,
 } from "./shared_types.js";
@@ -33,6 +35,7 @@ export type {
 
 export type StartDiffToolHttpServerOptions = {
   client: DiffReviewProtocolClient;
+  codeTheme?: DiffToolCodeTheme;
   host?: string;
   port?: number;
 };
@@ -87,7 +90,7 @@ export class DiffToolHttpServer {
   constructor(options: StartDiffToolHttpServerOptions) {
     this.client = options.client;
     this.reviewState = new DiffToolReviewStateStore({
-      codeTheme: options.client.getLaunchEnvironment().codeTheme,
+      codeTheme: options.codeTheme,
     });
     this.host = options.host ?? "127.0.0.1";
     this.port = options.port ?? 0;
@@ -287,8 +290,11 @@ export class DiffToolHttpServer {
         return;
       }
 
-      this.reviewState.createThread(payload);
-      this.sendJson(response, 200, { state: this.reviewState.getState() });
+      const threadId = this.reviewState.createThread(payload);
+      this.sendJson(response, 200, {
+        state: this.reviewState.getState(),
+        threadId,
+      } satisfies DiffToolCreateThreadResponse);
       return;
     }
 

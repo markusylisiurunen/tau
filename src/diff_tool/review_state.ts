@@ -7,7 +7,7 @@ import type {
   DiffToolStatePatch,
   DiffToolThreadAnchor,
 } from "./shared_types.js";
-import { DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
+import { DEFAULT_DIFF_TOOL_CODE_THEME, DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
 
 const emptyBrief: DiffToolBrief = {
   content: "",
@@ -22,7 +22,7 @@ function createInitialState(options: {
   return {
     diffStyle: "split",
     overflowMode: "wrap",
-    codeTheme: options.codeTheme ?? "github-dark-dimmed",
+    codeTheme: options.codeTheme ?? DEFAULT_DIFF_TOOL_CODE_THEME,
     sidebarOpen: false,
     collapsedFileIds: [],
     viewedFileIds: [],
@@ -86,15 +86,17 @@ export class DiffToolReviewStateStore {
     return thread ? cloneThread(thread) : undefined;
   }
 
-  createThread(payload: DiffToolCreateThreadPayload): void {
+  createThread(payload: DiffToolCreateThreadPayload): string {
+    const id = randomUUID();
     this.state.threads.push({
-      id: randomUUID(),
+      id,
       anchor: cloneAnchor(payload.anchor),
       messages: [{ role: "user", text: payload.body }],
       loading: false,
       resolved: false,
       collapsed: false,
     });
+    return id;
   }
 
   addReply(id: string, text: string): boolean {

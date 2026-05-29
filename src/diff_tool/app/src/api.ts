@@ -2,6 +2,7 @@ import type {
   BootstrapPayload,
   CollapseThreadPayload,
   CreateThreadPayload,
+  CreateThreadResponse,
   DiffReviewGetDiffResult,
   GenerateBriefResponse,
   ResolveThreadPayload,
@@ -63,8 +64,8 @@ export async function updateReviewState(
 
 export async function createThread(
   payload: CreateThreadPayload,
-): Promise<StateResponse> {
-  return request<StateResponse>("/api/thread", {
+): Promise<CreateThreadResponse> {
+  return request<CreateThreadResponse>("/api/thread", {
     method: "POST",
     body: JSON.stringify(payload),
   });

@@ -190,8 +190,8 @@ describe("built-in diff tool", () => {
       expect(bootstrap.state).toEqual({
         diffStyle: "split",
         overflowMode: "wrap",
+        codeTheme: "github-dark-dimmed",
         sidebarOpen: false,
-        sidebarWidth: "narrow",
         collapsedFileIds: [],
         viewedFileIds: [],
         threads: [],
@@ -246,6 +246,7 @@ describe("built-in diff tool", () => {
         }),
       });
       const thread = createdThread.state.threads[0];
+      expect(createdThread.threadId).toBe(thread.id);
       expect(thread).toMatchObject({
         anchor: {
           kind: "line",
@@ -315,6 +316,7 @@ describe("built-in diff tool", () => {
         }),
       });
       const detachedThread = createdDetachedThread.state.threads[1];
+      expect(createdDetachedThread.threadId).toBe(detachedThread.id);
       expect(detachedThread).toMatchObject({
         anchor: { kind: "detached" },
         messages: [{ role: "user", text: "Anything else worth checking?" }],

@@ -423,15 +423,16 @@ const server = createServer(async (req, res) => {
         return;
       }
 
+      const threadId = randomUUID();
       state.threads.push({
-        id: randomUUID(),
+        id: threadId,
         anchor: body.anchor,
         messages: [{ role: "user", text: message }],
         loading: false,
         resolved: false,
         collapsed: false,
       });
-      sendJson(res, 200, { state });
+      sendJson(res, 200, { state, threadId });
       return;
     }
 

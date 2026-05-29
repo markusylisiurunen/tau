@@ -271,11 +271,59 @@ const mockThreads = [
   },
 ];
 
+const codeThemes = new Set([
+  "andromeeda",
+  "aurora-x",
+  "ayu-dark",
+  "ayu-mirage",
+  "catppuccin-frappe",
+  "catppuccin-macchiato",
+  "catppuccin-mocha",
+  "dark-plus",
+  "dracula",
+  "dracula-soft",
+  "everforest-dark",
+  "github-dark",
+  "github-dark-default",
+  "github-dark-dimmed",
+  "github-dark-high-contrast",
+  "gruvbox-dark-hard",
+  "gruvbox-dark-medium",
+  "gruvbox-dark-soft",
+  "horizon",
+  "horizon-bright",
+  "houston",
+  "kanagawa-dragon",
+  "kanagawa-wave",
+  "laserwave",
+  "material-theme",
+  "material-theme-darker",
+  "material-theme-ocean",
+  "material-theme-palenight",
+  "min-dark",
+  "monokai",
+  "night-owl",
+  "nord",
+  "one-dark-pro",
+  "plastic",
+  "poimandres",
+  "red",
+  "rose-pine",
+  "rose-pine-moon",
+  "slack-dark",
+  "solarized-dark",
+  "synthwave-84",
+  "tokyo-night",
+  "vesper",
+  "vitesse-black",
+  "vitesse-dark",
+]);
+
 const state = {
   diffStyle: "split",
   overflowMode: "wrap",
+  codeTheme: "github-dark-dimmed",
   sidebarOpen: false,
-  sidebarWidth: "narrow",
   collapsedFileIds: [],
   viewedFileIds: ["dev-session-001-0-0"],
   threads: mockThreads,
@@ -347,11 +395,11 @@ const server = createServer(async (req, res) => {
       if (body.overflowMode === "wrap" || body.overflowMode === "scroll") {
         state.overflowMode = body.overflowMode;
       }
+      if (codeThemes.has(body.codeTheme)) {
+        state.codeTheme = body.codeTheme;
+      }
       if (typeof body.sidebarOpen === "boolean") {
         state.sidebarOpen = body.sidebarOpen;
-      }
-      if (body.sidebarWidth === "narrow" || body.sidebarWidth === "wide") {
-        state.sidebarWidth = body.sidebarWidth;
       }
       if (Array.isArray(body.collapsedFileIds)) {
         state.collapsedFileIds = body.collapsedFileIds.filter(
@@ -530,10 +578,13 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/review") {
+      const body = await readBody(req);
+      const message =
+        typeof body.message === "string" ? body.message.trim() : "";
       const unresolvedThreads = state.threads.filter(
         (thread) => !thread.resolved,
       );
-      const review = unresolvedThreads.length
+      const threadReview = unresolvedThreads.length
         ? unresolvedThreads
             .map((thread, index) => {
               const location =
@@ -549,7 +600,10 @@ const server = createServer(async (req, res) => {
               return `## thread ${index + 1}\n\n\`${location}\`\n\n${body}`;
             })
             .join("\n\n---\n\n")
-        : "(no comments)";
+        : "";
+      const review =
+        [message, threadReview].filter(Boolean).join("\n\n---\n\n") ||
+        "(no comments)";
       console.log(`\nreview returned:\n${review}\n`);
       sendJson(res, 200, { status: "returned" });
       return;

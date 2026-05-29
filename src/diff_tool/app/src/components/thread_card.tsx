@@ -1,12 +1,13 @@
 import { ChevronsDownUp, ChevronsUpDown, Sparkles } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { CommentThread } from "../comments.js";
+import { Checkbox } from "./checkbox.js";
 import { MarkdownContent } from "./markdown_content.js";
 import "./thread_card.css";
 
 type ThreadCardProps = {
   thread: CommentThread;
-  onAddReply: (text: string) => void;
+  onAddReply: (text: string, requestAgent: boolean) => void;
   onRequestAgent: () => void;
   onToggleResolved: (resolved: boolean) => void;
   onToggleCollapsed: (collapsed: boolean) => void;
@@ -21,6 +22,7 @@ export const ThreadCard = memo(function ThreadCard({
 }: ThreadCardProps) {
   const [isReplying, setIsReplying] = useState(false);
   const [hasReplyText, setHasReplyText] = useState(false);
+  const [requestAgentReply, setRequestAgentReply] = useState(false);
   const replyInputRef = useRef<HTMLTextAreaElement>(null);
   const lastMessage = thread.messages[thread.messages.length - 1];
   const canAsk =
@@ -46,8 +48,9 @@ export const ThreadCard = memo(function ThreadCard({
     }
     setHasReplyText(false);
     setIsReplying(false);
-    onAddReply(text);
-  }, [onAddReply]);
+    onAddReply(text, requestAgentReply);
+    setRequestAgentReply(false);
+  }, [onAddReply, requestAgentReply]);
 
   const handleReplyKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -68,6 +71,7 @@ export const ThreadCard = memo(function ThreadCard({
       replyInputRef.current.value = "";
     }
     setHasReplyText(false);
+    setRequestAgentReply(false);
     setIsReplying(false);
   }, []);
 
@@ -107,40 +111,21 @@ export const ThreadCard = memo(function ThreadCard({
         </button>
       </div>
       <div className="thread-messages">
-        {thread.messages.map((message, index) => {
-          const showAskAgent =
-            canAsk &&
-            message.role === "user" &&
-            index === thread.messages.length - 1;
-
-          return (
-            <div
-              key={`${message.role}:${index}:${message.text}`}
-              className={`thread-msg thread-msg-${message.role}`}
-            >
-              <span className="thread-msg-role">
-                {message.role === "user" ? "you" : "agent"}
-              </span>
-              <MarkdownContent
-                content={message.text}
-                className="thread-msg-text"
-                variant="thread"
-              />
-              {showAskAgent && (
-                <div className="thread-msg-actions">
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={onRequestAgent}
-                  >
-                    <Sparkles size={14} />
-                    ask agent
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {thread.messages.map((message, index) => (
+          <div
+            key={`${message.role}:${index}:${message.text}`}
+            className={`thread-msg thread-msg-${message.role}`}
+          >
+            <span className="thread-msg-role">
+              {message.role === "user" ? "you" : "agent"}
+            </span>
+            <MarkdownContent
+              content={message.text}
+              className="thread-msg-text"
+              variant="thread"
+            />
+          </div>
+        ))}
         {thread.loading && (
           <div className="thread-msg thread-msg-assistant">
             <span className="thread-msg-role">agent</span>
@@ -165,6 +150,11 @@ export const ThreadCard = memo(function ThreadCard({
               rows={3}
             />
             <div className="thread-actions">
+              <Checkbox
+                checked={requestAgentReply}
+                label="ask agent"
+                onChange={setRequestAgentReply}
+              />
               <button
                 type="button"
                 className="btn ghost"
@@ -198,6 +188,12 @@ export const ThreadCard = memo(function ThreadCard({
             >
               reply
             </button>
+            {canAsk && (
+              <button type="button" className="btn" onClick={onRequestAgent}>
+                <Sparkles size={14} />
+                ask agent
+              </button>
+            )}
           </div>
         )}
       </div>

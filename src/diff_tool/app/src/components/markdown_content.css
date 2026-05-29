@@ -1,5 +1,10 @@
 .markdown-content {
-  --markdown-code-block-border-color: hsl(0 0% 12%);
+  --markdown-code-block-border-color: color-mix(
+    in srgb,
+    var(--border) 86%,
+    var(--bg)
+  );
+  line-height: var(--line-height-ui);
   --markdown-code-block-font-size: calc(14 / 15 * 1rem);
   --markdown-code-block-margin-block: 1em;
   --markdown-code-block-padding: 8px 10px;
@@ -15,8 +20,16 @@
   --markdown-list-nested-gap: 0.25em;
   --markdown-list-padding: 1.5em;
   --markdown-paragraph-margin-block: 1em;
-  --markdown-prose-color: hsl(0 0% 76%);
-  --markdown-blockquote-color: hsl(0 0% 66%);
+  --markdown-prose-color: color-mix(
+    in srgb,
+    var(--text) 74%,
+    var(--text-muted)
+  );
+  --markdown-blockquote-color: color-mix(
+    in srgb,
+    var(--text) 47%,
+    var(--text-muted)
+  );
   max-width: 100%;
   min-width: 0;
   overflow-wrap: anywhere;

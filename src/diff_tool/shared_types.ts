@@ -13,6 +13,56 @@ export type DiffToolThreadMessage = {
 
 export type DiffToolLineSide = "additions" | "deletions";
 
+export const DIFF_TOOL_CODE_THEMES = [
+  "andromeeda",
+  "aurora-x",
+  "ayu-dark",
+  "ayu-mirage",
+  "catppuccin-frappe",
+  "catppuccin-macchiato",
+  "catppuccin-mocha",
+  "dark-plus",
+  "dracula",
+  "dracula-soft",
+  "everforest-dark",
+  "github-dark",
+  "github-dark-default",
+  "github-dark-dimmed",
+  "github-dark-high-contrast",
+  "gruvbox-dark-hard",
+  "gruvbox-dark-medium",
+  "gruvbox-dark-soft",
+  "horizon",
+  "horizon-bright",
+  "houston",
+  "kanagawa-dragon",
+  "kanagawa-wave",
+  "laserwave",
+  "material-theme",
+  "material-theme-darker",
+  "material-theme-ocean",
+  "material-theme-palenight",
+  "min-dark",
+  "monokai",
+  "night-owl",
+  "nord",
+  "one-dark-pro",
+  "plastic",
+  "poimandres",
+  "red",
+  "rose-pine",
+  "rose-pine-moon",
+  "slack-dark",
+  "solarized-dark",
+  "synthwave-84",
+  "tokyo-night",
+  "vesper",
+  "vitesse-black",
+  "vitesse-dark",
+] as const;
+
+export type DiffToolCodeTheme = (typeof DIFF_TOOL_CODE_THEMES)[number];
+
 export type DiffToolDetachedThreadAnchor = {
   kind: "detached";
 };
@@ -46,8 +96,8 @@ export type DiffToolBrief = {
 export type DiffToolReviewState = {
   diffStyle: "stacked" | "split";
   overflowMode: "wrap" | "scroll";
+  codeTheme: DiffToolCodeTheme;
   sidebarOpen: boolean;
-  sidebarWidth: "narrow" | "wide";
   collapsedFileIds: string[];
   viewedFileIds: string[];
   threads: DiffToolCommentThread[];
@@ -57,8 +107,8 @@ export type DiffToolReviewState = {
 export type DiffToolStatePatch = {
   diffStyle?: DiffToolReviewState["diffStyle"];
   overflowMode?: DiffToolReviewState["overflowMode"];
+  codeTheme?: DiffToolReviewState["codeTheme"];
   sidebarOpen?: boolean;
-  sidebarWidth?: DiffToolReviewState["sidebarWidth"];
   collapsedFileIds?: string[];
   viewedFileIds?: string[];
 };

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
 import type {
   DiffToolBrief,
   DiffToolCommentThread,
@@ -13,24 +14,36 @@ const emptyBrief: DiffToolBrief = {
   loading: false,
 };
 
-export class DiffToolReviewStateStore {
-  private readonly state: DiffToolReviewState = {
+const codeThemes = new Set<DiffToolReviewState["codeTheme"]>(DIFF_TOOL_CODE_THEMES);
+
+function createInitialState(options: {
+  codeTheme?: DiffToolReviewState["codeTheme"];
+}): DiffToolReviewState {
+  return {
     diffStyle: "split",
     overflowMode: "wrap",
+    codeTheme: options.codeTheme ?? "github-dark-dimmed",
     sidebarOpen: false,
-    sidebarWidth: "narrow",
     collapsedFileIds: [],
     viewedFileIds: [],
     threads: [],
     brief: { ...emptyBrief },
   };
+}
+
+export class DiffToolReviewStateStore {
+  private readonly state: DiffToolReviewState;
+
+  constructor(options: { codeTheme?: DiffToolReviewState["codeTheme"] } = {}) {
+    this.state = createInitialState(options);
+  }
 
   getState(): DiffToolReviewState {
     return {
       diffStyle: this.state.diffStyle,
       overflowMode: this.state.overflowMode,
+      codeTheme: this.state.codeTheme,
       sidebarOpen: this.state.sidebarOpen,
-      sidebarWidth: this.state.sidebarWidth,
       collapsedFileIds: [...this.state.collapsedFileIds],
       viewedFileIds: [...this.state.viewedFileIds],
       threads: this.state.threads.map(cloneThread),
@@ -47,12 +60,12 @@ export class DiffToolReviewStateStore {
       this.state.overflowMode = patch.overflowMode;
     }
 
-    if (typeof patch.sidebarOpen === "boolean") {
-      this.state.sidebarOpen = patch.sidebarOpen;
+    if (patch.codeTheme && codeThemes.has(patch.codeTheme)) {
+      this.state.codeTheme = patch.codeTheme;
     }
 
-    if (patch.sidebarWidth === "narrow" || patch.sidebarWidth === "wide") {
-      this.state.sidebarWidth = patch.sidebarWidth;
+    if (typeof patch.sidebarOpen === "boolean") {
+      this.state.sidebarOpen = patch.sidebarOpen;
     }
 
     if (Array.isArray(patch.collapsedFileIds)) {
@@ -190,10 +203,11 @@ export class DiffToolReviewStateStore {
     return `${locationPrefix}${userText}`;
   }
 
-  buildReviewText(): string {
+  buildReviewText(submissionMessage?: string): string {
+    const trimmedSubmissionMessage = submissionMessage?.trim();
     const unresolvedThreads = this.state.threads.filter((thread) => !thread.resolved);
     if (unresolvedThreads.length === 0) {
-      return "(no comments)";
+      return trimmedSubmissionMessage || "(no comments)";
     }
 
     const guidance = [
@@ -221,7 +235,11 @@ export class DiffToolReviewStateStore {
       })
       .join("\n\n---\n\n");
 
-    return `${guidance}\n\n---\n\n${threads}`;
+    const message = trimmedSubmissionMessage
+      ? `## submission message\n\n${trimmedSubmissionMessage}\n\n---\n\n`
+      : "";
+
+    return `${guidance}\n\n---\n\n${message}${threads}`;
   }
 
   private findThreadInternal(id: string): DiffToolCommentThread | undefined {

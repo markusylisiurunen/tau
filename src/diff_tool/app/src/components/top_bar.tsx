@@ -1,4 +1,5 @@
 import {
+  ChevronDown,
   ChevronsDownUp,
   ChevronsUpDown,
   EyeOff,
@@ -36,6 +37,7 @@ type TopBarProps = {
   onDiffStyleChange: (style: "stacked" | "split") => void;
   onOverflowModeChange: (mode: "wrap" | "scroll") => void;
   onSubmit: () => void;
+  onOpenSubmitPopover: (anchor: DOMRect) => void;
   onCancel: () => void;
 };
 
@@ -63,6 +65,7 @@ export function TopBar({
   onDiffStyleChange,
   onOverflowModeChange,
   onSubmit,
+  onOpenSubmitPopover,
   onCancel,
 }: TopBarProps) {
   const resolvedDiffStyle = diffStyle === "split" ? "split" : "stacked";
@@ -175,14 +178,27 @@ export function TopBar({
           ]}
           onChange={onDiffStyleChange}
         />
-        <button
-          type="button"
-          className="btn top-bar-action top-bar-action-primary"
-          onClick={onSubmit}
-          disabled={finished}
-        >
-          submit
-        </button>
+        <div className="top-bar-submit-group">
+          <button
+            type="button"
+            className="btn top-bar-action top-bar-action-primary top-bar-submit-main"
+            onClick={onSubmit}
+            disabled={finished}
+          >
+            submit
+          </button>
+          <button
+            type="button"
+            className="btn top-bar-action top-bar-action-primary top-bar-submit-menu"
+            onClick={(event) =>
+              onOpenSubmitPopover(event.currentTarget.getBoundingClientRect())
+            }
+            disabled={finished}
+            aria-label="submit with message"
+          >
+            <ChevronDown size={14} />
+          </button>
+        </div>
         <button
           type="button"
           className="btn top-bar-action top-bar-action-cancel"

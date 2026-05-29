@@ -5,6 +5,7 @@ export type DiffFile = {
   id: string;
   file: FileDiffMetadata;
   displayPath: string;
+  status: DiffReviewFile["status"];
   oldRepoPath?: string;
   newRepoPath: string;
   additions: number;
@@ -13,6 +14,7 @@ export type DiffFile = {
 
 type ResolvedFileMetadata = {
   displayPath: string;
+  status: DiffReviewFile["status"];
   oldRepoPath?: string;
   newRepoPath: string;
 };
@@ -38,6 +40,7 @@ export function parseDiff(
         id: file.cacheKey ?? `${file.name}::${counter++}`,
         file,
         displayPath: fileMetadata.displayPath,
+        status: fileMetadata.status,
         oldRepoPath: fileMetadata.oldRepoPath,
         newRepoPath: fileMetadata.newRepoPath,
         additions: countChanges(file, "additions"),
@@ -45,6 +48,14 @@ export function parseDiff(
       };
     }),
   );
+}
+
+function resolveFileStatus(file: FileDiffMetadata): DiffReviewFile["status"] {
+  if (file.prevName && file.prevName !== file.name) {
+    return "renamed";
+  }
+
+  return "modified";
 }
 
 function countChanges(
@@ -74,6 +85,7 @@ function buildSnapshotRepoPathIndex(
         file.oldPath && file.newPath && file.oldPath !== file.newPath
           ? `${file.oldPath} → ${file.newPath}`
           : file.path,
+      status: file.status,
       oldRepoPath: file.oldPath,
       newRepoPath: file.newPath ?? file.path,
     };
@@ -107,6 +119,7 @@ function resolveFileMetadata(
       file.prevName && file.prevName !== file.name
         ? `${file.prevName} → ${file.name}`
         : file.name,
+    status: resolveFileStatus(file),
     oldRepoPath: file.prevName,
     newRepoPath: file.name,
   };

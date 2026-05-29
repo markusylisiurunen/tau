@@ -10,6 +10,7 @@ import {
   buildDiffReviewCommentThreadPrompt,
 } from "./review_prompts.js";
 import { DiffToolReviewStateStore } from "./review_state.js";
+import { DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
 import type {
   DiffToolBootstrapPayload,
   DiffToolCreateThreadPayload,
@@ -64,7 +65,7 @@ export class DiffToolHttpServer {
   private readonly removeClientCloseListener: () => void;
   private readonly removeSessionCloseListener: () => void;
   private readonly staticDir: string;
-  private readonly reviewState = new DiffToolReviewStateStore();
+  private readonly reviewState: DiffToolReviewStateStore;
   private context?: DiffReviewSessionContextResult;
   private files: DiffReviewFile[] = [];
   private bootstrapThreadPromise?: Promise<string>;
@@ -85,6 +86,9 @@ export class DiffToolHttpServer {
 
   constructor(options: StartDiffToolHttpServerOptions) {
     this.client = options.client;
+    this.reviewState = new DiffToolReviewStateStore({
+      codeTheme: options.client.getLaunchEnvironment().codeTheme,
+    });
     this.host = options.host ?? "127.0.0.1";
     this.port = options.port ?? 0;
     this.staticDir = resolveStaticDir();
@@ -410,8 +414,9 @@ export class DiffToolHttpServer {
     }
 
     if (method === "POST" && requestUrl.pathname === "/api/review") {
+      const payload = parseReviewPayload(await this.readJsonBody(request));
       const result = await this.client.returnReview({
-        review: this.reviewState.buildReviewText(),
+        review: this.reviewState.buildReviewText(payload.message),
       });
       this.sendJson(response, 200, result);
       return;
@@ -513,6 +518,16 @@ export class DiffToolHttpServer {
   }
 }
 
+function parseReviewPayload(payload: Record<string, unknown>): { message?: string } {
+  return typeof payload.message === "string" && payload.message.trim()
+    ? { message: payload.message }
+    : {};
+}
+
+const codeThemes = new Set<NonNullable<DiffToolStatePatch["codeTheme"]>>(
+  DIFF_TOOL_CODE_THEMES,
+);
+
 function parseStatePatch(payload: Record<string, unknown>): DiffToolStatePatch {
   return {
     ...(payload.diffStyle === "split" || payload.diffStyle === "stacked"
@@ -521,10 +536,11 @@ function parseStatePatch(payload: Record<string, unknown>): DiffToolStatePatch {
     ...(payload.overflowMode === "wrap" || payload.overflowMode === "scroll"
       ? { overflowMode: payload.overflowMode }
       : {}),
-    ...(typeof payload.sidebarOpen === "boolean" ? { sidebarOpen: payload.sidebarOpen } : {}),
-    ...(payload.sidebarWidth === "narrow" || payload.sidebarWidth === "wide"
-      ? { sidebarWidth: payload.sidebarWidth }
+    ...(typeof payload.codeTheme === "string" &&
+    codeThemes.has(payload.codeTheme as NonNullable<DiffToolStatePatch["codeTheme"]>)
+      ? { codeTheme: payload.codeTheme as NonNullable<DiffToolStatePatch["codeTheme"]> }
       : {}),
+    ...(typeof payload.sidebarOpen === "boolean" ? { sidebarOpen: payload.sidebarOpen } : {}),
     ...(Array.isArray(payload.collapsedFileIds)
       ? {
           collapsedFileIds: payload.collapsedFileIds.flatMap((value) =>

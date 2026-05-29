@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -20,7 +22,11 @@ import {
   returnReview,
   updateReviewState,
 } from "./api.js";
-import { type CommentDraft, type LineAnnotation } from "./comments.js";
+import {
+  type CommentDraft,
+  type CommentThread,
+  type LineAnnotation,
+} from "./comments.js";
 import {
   buildThreadsByFileId,
   countThreadsByFileId,
@@ -56,6 +62,13 @@ type DetachedThreadDialogState =
   | { mode: "new" }
   | { mode: "thread"; threadId: string };
 
+const LocalAgentation = import.meta.env.DEV
+  ? lazy(async () => {
+      const { Agentation } = await import("agentation");
+      return { default: Agentation };
+    })
+  : null;
+
 export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapPayload | null>(null);
   const [diff, setDiff] = useState<DiffReviewGetDiffResult | null>(null);
@@ -70,6 +83,11 @@ export function App() {
   const [finished, setFinished] = useState(false);
   const [status, setStatus] = useState("");
   const [briefOpen, setBriefOpen] = useState(false);
+  const [submitPopoverOpen, setSubmitPopoverOpen] = useState(false);
+  const [submitPopoverAnchor, setSubmitPopoverAnchor] =
+    useState<DOMRect | null>(null);
+  const [submitMessage, setSubmitMessage] = useState("");
+  const submitPopoverRef = useRef<HTMLDivElement | null>(null);
   const pendingCollapsedScrollTargetRef = useRef<string | null>(null);
   const detachedThreadDialogVersionRef = useRef(0);
 
@@ -107,6 +125,20 @@ export function App() {
   const setBriefLoading = useCallback((loading: boolean) => {
     setReviewState((prev) => withBriefLoading(prev, loading));
   }, []);
+
+  const requestThreadAgentReply = useCallback(
+    async (threadId: string) => {
+      setThreadLoading(threadId, true);
+      try {
+        const agentResult = await requestThreadMessage(threadId);
+        applyReviewState(agentResult.state);
+      } catch (error) {
+        setThreadLoading(threadId, false);
+        setStatus(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [applyReviewState, setThreadLoading],
+  );
 
   useEffect(() => {
     let active = true;
@@ -163,8 +195,12 @@ export function App() {
     [reviewState.threads],
   );
   const unresolvedThreadCount = unresolvedThreads.length;
+  const sidebarThreads = useMemo(
+    () => [...reviewState.threads].reverse(),
+    [reviewState.threads],
+  );
   const detachedThreads = useMemo(
-    () => [...reviewState.threads.filter(isDetachedThread)].reverse(),
+    () => reviewState.threads.filter(isDetachedThread),
     [reviewState.threads],
   );
   const selectedDetachedThread = useMemo(() => {
@@ -309,7 +345,7 @@ export function App() {
   );
 
   const saveDraft = useCallback(
-    (body: string) => {
+    (body: string, shouldRequestAgent: boolean) => {
       if (!draft) {
         return;
       }
@@ -320,23 +356,49 @@ export function App() {
         return;
       }
 
-      void syncState(
-        createThread({
-          body: trimmedBody,
-          anchor: {
-            kind: "line",
-            fileId: draft.fileId,
-            filePath: resolveDraftFilePath(draft, files),
-            lineNumber: draft.lineNumber,
-            side: draft.side,
-          },
-        }).then((result) => {
+      const anchor = {
+        kind: "line" as const,
+        fileId: draft.fileId,
+        filePath: resolveDraftFilePath(draft, files),
+        lineNumber: draft.lineNumber,
+        side: draft.side,
+      };
+
+      const save = async () => {
+        try {
+          const createResult = await createThread({
+            body: trimmedBody,
+            anchor,
+          });
+          applyReviewState(createResult.state);
           setDraft(null);
-          return result;
-        }),
-      );
+
+          if (!shouldRequestAgent) {
+            return;
+          }
+
+          const thread = [...createResult.state.threads]
+            .reverse()
+            .find(
+              (entry) =>
+                entry.anchor.kind === "line" &&
+                entry.anchor.fileId === anchor.fileId &&
+                entry.anchor.lineNumber === anchor.lineNumber &&
+                entry.anchor.side === anchor.side,
+            );
+          if (!thread) {
+            return;
+          }
+
+          await requestThreadAgentReply(thread.id);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error));
+        }
+      };
+
+      void save();
     },
-    [draft, files, syncState],
+    [applyReviewState, draft, files, requestThreadAgentReply],
   );
 
   const cancelDraft = useCallback(() => setDraft(null), []);
@@ -361,6 +423,36 @@ export function App() {
     setDetachedSkipAgentResponse(false);
     setDetachedThreadDialog(null);
   }, []);
+
+  const openThread = useCallback(
+    (thread: CommentThread) => {
+      if (thread.anchor.kind === "detached") {
+        openDetachedThread(thread.id);
+        return;
+      }
+
+      closeDetachedThreadDialog();
+      const fileId = thread.anchor.fileId;
+      if (reviewState.collapsedFileIds.includes(fileId)) {
+        pendingCollapsedScrollTargetRef.current = fileId;
+        applyStatePatch({
+          collapsedFileIds: reviewState.collapsedFileIds.filter(
+            (id) => id !== fileId,
+          ),
+        });
+        return;
+      }
+
+      scrollToFile(fileId);
+    },
+    [
+      applyStatePatch,
+      closeDetachedThreadDialog,
+      openDetachedThread,
+      reviewState.collapsedFileIds,
+      scrollToFile,
+    ],
+  );
 
   const updateDetachedDraft = useCallback((body: string) => {
     setDetachedDraftBody(body);
@@ -401,16 +493,7 @@ export function App() {
           return;
         }
 
-        setThreadLoading(detachedThreadDialog.threadId, true);
-        try {
-          const agentResult = await requestThreadMessage(
-            detachedThreadDialog.threadId,
-          );
-          applyReviewState(agentResult.state);
-        } catch (error) {
-          setThreadLoading(detachedThreadDialog.threadId, false);
-          setStatus(error instanceof Error ? error.message : String(error));
-        }
+        await requestThreadAgentReply(detachedThreadDialog.threadId);
         return;
       }
 
@@ -436,14 +519,7 @@ export function App() {
         return;
       }
 
-      setThreadLoading(newestDetachedThread.id, true);
-      try {
-        const agentResult = await requestThreadMessage(newestDetachedThread.id);
-        applyReviewState(agentResult.state);
-      } catch (error) {
-        setThreadLoading(newestDetachedThread.id, false);
-        setStatus(error instanceof Error ? error.message : String(error));
-      }
+      await requestThreadAgentReply(newestDetachedThread.id);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -452,28 +528,38 @@ export function App() {
     detachedDraftBody,
     detachedSkipAgentResponse,
     detachedThreadDialog,
+    requestThreadAgentReply,
     resetDetachedDraftIfCurrent,
-    setThreadLoading,
   ]);
 
   const addReply = useCallback(
-    (threadId: string, text: string) => {
-      void syncState(replyToThread({ id: threadId, text }));
+    (threadId: string, text: string, shouldRequestAgent: boolean) => {
+      if (!shouldRequestAgent) {
+        void syncState(replyToThread({ id: threadId, text }));
+        return;
+      }
+
+      const reply = async () => {
+        try {
+          const replyResult = await replyToThread({ id: threadId, text });
+          applyReviewState(replyResult.state);
+          await requestThreadAgentReply(threadId);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error));
+        }
+      };
+
+      void reply();
     },
-    [syncState],
+    [applyReviewState, requestThreadAgentReply, syncState],
   );
 
   const requestAgent = useCallback(
     (threadId: string) => {
       setStatus("");
-      setThreadLoading(threadId, true);
-      void syncState(requestThreadMessage(threadId), {
-        onError: () => {
-          setThreadLoading(threadId, false);
-        },
-      });
+      void requestThreadAgentReply(threadId);
     },
-    [setThreadLoading, syncState],
+    [requestThreadAgentReply],
   );
 
   const requestBrief = useCallback(() => {
@@ -516,17 +602,65 @@ export function App() {
     };
   }, [draft]);
 
-  const handleSubmit = useCallback(async () => {
+  const openSubmitPopover = useCallback((anchor: DOMRect) => {
+    setSubmitPopoverAnchor(anchor);
+    setSubmitPopoverOpen(true);
+  }, []);
+
+  const closeSubmitPopover = useCallback(() => {
+    setSubmitPopoverOpen(false);
+  }, []);
+
+  const submitReview = useCallback(async (message: string) => {
     setFinished(true);
+    setSubmitPopoverOpen(false);
     setStatus("Returning review…");
     try {
-      await returnReview();
+      await returnReview(message);
       setStatus("Review returned. You can close this tab.");
     } catch (error) {
       setFinished(false);
       setStatus(error instanceof Error ? error.message : String(error));
     }
   }, []);
+
+  const handleSubmit = useCallback(() => {
+    void submitReview("");
+  }, [submitReview]);
+
+  const handleSubmitWithMessage = useCallback(() => {
+    void submitReview(submitMessage);
+  }, [submitMessage, submitReview]);
+
+  useEffect(() => {
+    if (!submitPopoverOpen) {
+      return;
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        submitPopoverRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setSubmitPopoverOpen(false);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSubmitPopoverOpen(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [submitPopoverOpen]);
 
   const handleCancel = useCallback(async () => {
     setFinished(true);
@@ -550,9 +684,7 @@ export function App() {
 
   return (
     <>
-      <div
-        className={`app${reviewState.sidebarOpen ? " sidebar-open" : ""}${reviewState.sidebarWidth === "wide" ? " sidebar-wide" : ""}`}
-      >
+      <div className={`app${reviewState.sidebarOpen ? " sidebar-open" : ""}`}>
         <TopBar
           fileCount={files.length}
           viewedCount={reviewState.viewedFileIds.length}
@@ -583,28 +715,22 @@ export function App() {
             applyStatePatch({ overflowMode });
           }}
           onSubmit={handleSubmit}
+          onOpenSubmitPopover={openSubmitPopover}
           onCancel={handleCancel}
         />
         <Sidebar
           open={reviewState.sidebarOpen}
-          widthMode={reviewState.sidebarWidth}
           files={files}
           viewed={viewed}
-          detachedThreads={detachedThreads}
-          selectedDetachedThreadId={
+          threads={sidebarThreads}
+          selectedThreadId={
             detachedThreadDialog?.mode === "thread"
               ? detachedThreadDialog.threadId
               : null
           }
           onJumpToFile={scrollToFile}
           onCreateDetachedThread={openDetachedThreadDraft}
-          onOpenDetachedThread={openDetachedThread}
-          onToggleWidth={() => {
-            applyStatePatch({
-              sidebarWidth:
-                reviewState.sidebarWidth === "wide" ? "narrow" : "wide",
-            });
-          }}
+          onOpenThread={openThread}
         />
         <main className="content">
           {files.length === 0 && (
@@ -626,6 +752,7 @@ export function App() {
                 file={file}
                 diffStyle={reviewState.diffStyle}
                 overflowMode={reviewState.overflowMode}
+                codeTheme={reviewState.codeTheme}
                 collapsed={collapsed[file.id] ?? false}
                 viewed={viewed[file.id] ?? false}
                 annotations={annotations}
@@ -652,6 +779,41 @@ export function App() {
         loading={reviewState.brief.loading}
         onClose={() => setBriefOpen(false)}
       />
+      {submitPopoverOpen && submitPopoverAnchor ? (
+        <div
+          ref={submitPopoverRef}
+          className="submit-popover"
+          style={{
+            top: submitPopoverAnchor.bottom + 6,
+            right: window.innerWidth - submitPopoverAnchor.right,
+          }}
+        >
+          <textarea
+            className="text-input-area submit-popover-input"
+            value={submitMessage}
+            onChange={(event) => setSubmitMessage(event.target.value)}
+            placeholder="Optional message…"
+            rows={5}
+          />
+          <div className="submit-popover-actions">
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={closeSubmitPopover}
+            >
+              cancel
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={finished}
+              onClick={handleSubmitWithMessage}
+            >
+              submit
+            </button>
+          </div>
+        </div>
+      ) : null}
       <DetachedThreadDialog
         open={detachedThreadDialog !== null}
         thread={selectedDetachedThread}
@@ -668,6 +830,11 @@ export function App() {
           toggleResolved(selectedDetachedThread.id, resolved);
         }}
       />
+      {LocalAgentation ? (
+        <Suspense fallback={null}>
+          <LocalAgentation />
+        </Suspense>
+      ) : null}
     </>
   );
 }

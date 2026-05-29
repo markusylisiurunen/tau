@@ -1,8 +1,9 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
+import { Checkbox } from "./checkbox.js";
 import "./comment_editor.css";
 
 type CommentEditorProps = {
-  onSave: (body: string) => void;
+  onSave: (body: string, requestAgent: boolean) => void;
   onCancel: () => void;
 };
 
@@ -11,6 +12,7 @@ export const CommentEditor = memo(function CommentEditor({
   onCancel,
 }: CommentEditorProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const [requestAgent, setRequestAgent] = useState(false);
 
   useEffect(() => {
     ref.current?.focus();
@@ -18,7 +20,7 @@ export const CommentEditor = memo(function CommentEditor({
 
   const submit = () => {
     const body = ref.current?.value ?? "";
-    onSave(body);
+    onSave(body, requestAgent);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
@@ -42,6 +44,11 @@ export const CommentEditor = memo(function CommentEditor({
         rows={2}
       />
       <div className="comment-actions">
+        <Checkbox
+          checked={requestAgent}
+          label="ask agent"
+          onChange={setRequestAgent}
+        />
         <button type="button" className="btn ghost" onClick={onCancel}>
           cancel
         </button>

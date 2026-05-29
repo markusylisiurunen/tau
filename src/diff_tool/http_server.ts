@@ -10,13 +10,13 @@ import {
   buildDiffReviewCommentThreadPrompt,
 } from "./review_prompts.js";
 import { DiffToolReviewStateStore } from "./review_state.js";
-import { DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
 import type {
   DiffToolBootstrapPayload,
   DiffToolCreateThreadPayload,
   DiffToolGetDiffResult,
   DiffToolStatePatch,
 } from "./shared_types.js";
+import { DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
 
 export type {
   DiffToolBootstrapPayload,
@@ -524,9 +524,7 @@ function parseReviewPayload(payload: Record<string, unknown>): { message?: strin
     : {};
 }
 
-const codeThemes = new Set<NonNullable<DiffToolStatePatch["codeTheme"]>>(
-  DIFF_TOOL_CODE_THEMES,
-);
+const codeThemes = new Set<NonNullable<DiffToolStatePatch["codeTheme"]>>(DIFF_TOOL_CODE_THEMES);
 
 function parseStatePatch(payload: Record<string, unknown>): DiffToolStatePatch {
   return {

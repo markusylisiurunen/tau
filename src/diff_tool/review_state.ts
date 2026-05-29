@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
 import type {
   DiffToolBrief,
   DiffToolCommentThread,
@@ -8,6 +7,7 @@ import type {
   DiffToolStatePatch,
   DiffToolThreadAnchor,
 } from "./shared_types.js";
+import { DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
 
 const emptyBrief: DiffToolBrief = {
   content: "",

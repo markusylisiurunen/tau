@@ -12,6 +12,6 @@ export function createBuiltInDiffToolConfig(
   return {
     command: options.nodeExecutablePath,
     args: [options.cliEntryPath, "diff-tool"],
-    ...(options.codeTheme ? { env: { TAU_DIFF_CODE_THEME: options.codeTheme } } : {}),
+    env: { TAU_DIFF_CODE_THEME: options.codeTheme ?? "github-dark-dimmed" },
   };
 }

@@ -20,7 +20,9 @@ export const emptyReviewState: DiffToolReviewState = {
   },
 };
 
-const codeThemes = new Set<DiffToolReviewState["codeTheme"]>(DIFF_TOOL_CODE_THEMES);
+const codeThemes = new Set<DiffToolReviewState["codeTheme"]>(
+  DIFF_TOOL_CODE_THEMES,
+);
 
 export function normalizeReviewState(
   state: DiffToolReviewState,

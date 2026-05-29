@@ -601,6 +601,7 @@ const terminalAppearance = await detectTerminalAppearance();
 const defaultDiffTool = createBuiltInDiffToolConfig({
   nodeExecutablePath: process.execPath,
   cliEntryPath: fileURLToPath(import.meta.url),
+  codeTheme: config.builtInDiffTool?.codeTheme,
 });
 
 const app = new ChatApp({

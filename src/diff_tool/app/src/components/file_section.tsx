@@ -7,7 +7,7 @@ import type {
   LineSide,
 } from "../comments.js";
 import type { DiffFile } from "../parse_diff.js";
-import type { DiffStyle, OverflowMode } from "../types.js";
+import type { CodeTheme, DiffStyle, OverflowMode } from "../types.js";
 import { Checkbox } from "./checkbox.js";
 import { CommentEditor } from "./comment_editor.js";
 import { DiffStats } from "./diff_stats.js";
@@ -15,16 +15,18 @@ import { ThreadCard } from "./thread_card.js";
 import "./file_section.css";
 
 const baseDiffOptions = {
-  theme: "github-dark-default",
+  theme: "github-dark-dimmed",
   themeType: "dark",
   diffStyle: "unified",
   diffIndicators: "none",
+  hunkSeparators: "line-info-basic",
   lineDiffType: "word-alt",
   disableFileHeader: true,
   overflow: "wrap",
   unsafeCSS: [
-    ":host { --diffs-dark-bg: var(--bg); --diffs-bg: var(--bg); font-weight: var(--font-weight-code); }",
+    ":host { --diffs-dark-bg: var(--bg); --diffs-bg: var(--bg); --diffs-annotation-bg-override: color-mix(in srgb, var(--bg) 96%, var(--text)); --diffs-bg-separator-override: color-mix(in srgb, var(--bg) 92%, var(--text)); --diffs-bg-context-override: var(--diffs-annotation-bg-override); --diffs-bg-context-gutter-override: var(--diffs-annotation-bg-override); font-weight: var(--font-weight-code); }",
     "pre { background-color: var(--bg) !important; --diffs-bg: var(--bg) !important; }",
+    "[data-line-annotation], [data-gutter-buffer='annotation'] { --diffs-annotation-bg: var(--diffs-annotation-bg-override); }",
     "[data-annotation-slot], [data-annotation-content] { font-family: var(--font-family-ui); }",
     "[data-annotation-slot] code, [data-annotation-slot] pre, [data-annotation-content] code, [data-annotation-content] pre { font-family: var(--font-family-code); }",
     "[data-overflow='wrap'] [data-code] { overflow-x: hidden; }",
@@ -36,6 +38,7 @@ type FileSectionProps = {
   file: DiffFile;
   diffStyle: DiffStyle;
   overflowMode: OverflowMode;
+  codeTheme: CodeTheme;
   collapsed: boolean;
   viewed: boolean;
   annotations: LineAnnotation[];
@@ -43,9 +46,9 @@ type FileSectionProps = {
   onToggleCollapsed: (id: string) => void;
   onToggleViewed: (id: string) => void;
   onLineActivate: (fileId: string, lineNumber: number, side: LineSide) => void;
-  onSaveDraft: (body: string) => void;
+  onSaveDraft: (body: string, requestAgent: boolean) => void;
   onCancelDraft: () => void;
-  onAddReply: (threadId: string, text: string) => void;
+  onAddReply: (threadId: string, text: string, requestAgent: boolean) => void;
   onRequestAgent: (threadId: string) => void;
   onToggleResolved: (threadId: string, resolved: boolean) => void;
   onToggleThreadCollapsed: (threadId: string, collapsed: boolean) => void;
@@ -55,6 +58,7 @@ export const FileSection = memo(function FileSection({
   file,
   diffStyle,
   overflowMode,
+  codeTheme,
   collapsed,
   viewed,
   annotations,
@@ -76,6 +80,7 @@ export const FileSection = memo(function FileSection({
 
     return {
       ...baseDiffOptions,
+      theme: codeTheme,
       diffStyle: resolvedDiffStyle,
       overflow: overflowMode,
       onLineNumberClick: ({
@@ -88,7 +93,7 @@ export const FileSection = memo(function FileSection({
         onLineActivate(file.id, lineNumber, annotationSide);
       },
     };
-  }, [diffStyle, file.id, onLineActivate, overflowMode]);
+  }, [codeTheme, diffStyle, file.id, onLineActivate, overflowMode]);
 
   const renderAnnotation = useCallback(
     (annotation: LineAnnotation) => {
@@ -100,7 +105,9 @@ export const FileSection = memo(function FileSection({
       return (
         <ThreadCard
           thread={thread}
-          onAddReply={(text) => onAddReply(thread.id, text)}
+          onAddReply={(text, requestAgent) =>
+            onAddReply(thread.id, text, requestAgent)
+          }
           onRequestAgent={() => onRequestAgent(thread.id)}
           onToggleResolved={(resolved) => onToggleResolved(thread.id, resolved)}
           onToggleCollapsed={(nextCollapsed) =>

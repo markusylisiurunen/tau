@@ -481,7 +481,9 @@ the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`
 
 the `defaultTheme` field sets the theme id to load at startup. it must be non-empty, and matching is exact/case-sensitive. if not specified, it defaults to `gold`.
 
-tau ships a built-in browser diff review demo tool, so `/diff` works without any `diffTool` config. set `diffTool` only when you want to override that default launcher. `command` is required when `diffTool` is present. `args` and `env` are optional. relative `command` paths resolve from the config level root (directory containing `.tau`, or home for the global config).
+tau ships a built-in browser diff review demo tool, so `/diff` works without any `diffTool` config. set `diffTool` only when you want to override that default launcher. `command` is required when `diffTool` is present. `args` and `env` are optional. relative `command` paths resolve from the config level root (directory containing `.tau`, or home for the global config). set `builtInDiffTool.codeTheme` to choose the built-in diff tool's initial code theme, for example `{ "builtInDiffTool": { "codeTheme": "github-dark-dimmed" } }`. the default is `github-dark-dimmed`.
+
+supported built-in diff tool code themes are: `andromeeda`, `aurora-x`, `ayu-dark`, `ayu-mirage`, `catppuccin-frappe`, `catppuccin-macchiato`, `catppuccin-mocha`, `dark-plus`, `dracula`, `dracula-soft`, `everforest-dark`, `github-dark`, `github-dark-default`, `github-dark-dimmed`, `github-dark-high-contrast`, `gruvbox-dark-hard`, `gruvbox-dark-medium`, `gruvbox-dark-soft`, `horizon`, `horizon-bright`, `houston`, `kanagawa-dragon`, `kanagawa-wave`, `laserwave`, `material-theme`, `material-theme-darker`, `material-theme-ocean`, `material-theme-palenight`, `min-dark`, `monokai`, `night-owl`, `nord`, `one-dark-pro`, `plastic`, `poimandres`, `red`, `rose-pine`, `rose-pine-moon`, `slack-dark`, `solarized-dark`, `synthwave-84`, `tokyo-night`, `vesper`, `vitesse-black`, `vitesse-dark`.
 
 the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launch overrides for the built-in `default` sub-agent. values must use `<provider>/<model>:<effort>`.
 
@@ -549,7 +551,7 @@ commands run with cwd set to the config level root (directory containing `.tau`,
 
 ### diff review tool
 
-tau ships `tau diff-tool`, a built-in browser diff review demo tool. `/diff` launches it by default when `diffTool` is not configured.
+tau ships `tau diff-tool`, a built-in browser diff review demo tool. `/diff` launches it by default when `diffTool` is not configured. configure `builtInDiffTool.codeTheme` to choose the built-in tool's initial code theme; the default is `github-dark-dimmed`.
 
 if you want a different launcher, configure `diffTool` in any in-scope config file. when present, it overrides the built-in fallback:
 

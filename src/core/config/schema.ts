@@ -28,6 +28,7 @@ export interface Config {
   defaultTheme?: string;
   bashCommands?: BashCommand[];
   diffTool?: DiffToolConfig;
+  builtInDiffTool?: BuiltInDiffToolConfig;
   agentContextFiles?: string[];
   subagents?: {
     defaultLaunchModels?: string[];
@@ -36,6 +37,10 @@ export interface Config {
   modelSystemNotices?: Record<string, string>;
   async?: AsyncConfig;
 }
+
+export type BuiltInDiffToolConfig = {
+  codeTheme?: string;
+};
 
 export type AutoCompactConfig = {
   enabled?: boolean;
@@ -112,6 +117,60 @@ type ConfigDiagnostics = {
   errors: string[];
 };
 
+const BUILT_IN_DIFF_TOOL_CODE_THEMES = new Set([
+  "andromeeda",
+  "aurora-x",
+  "ayu-dark",
+  "ayu-mirage",
+  "catppuccin-frappe",
+  "catppuccin-macchiato",
+  "catppuccin-mocha",
+  "dark-plus",
+  "dracula",
+  "dracula-soft",
+  "everforest-dark",
+  "github-dark",
+  "github-dark-default",
+  "github-dark-dimmed",
+  "github-dark-high-contrast",
+  "gruvbox-dark-hard",
+  "gruvbox-dark-medium",
+  "gruvbox-dark-soft",
+  "horizon",
+  "horizon-bright",
+  "houston",
+  "kanagawa-dragon",
+  "kanagawa-wave",
+  "laserwave",
+  "material-theme",
+  "material-theme-darker",
+  "material-theme-ocean",
+  "material-theme-palenight",
+  "min-dark",
+  "monokai",
+  "night-owl",
+  "nord",
+  "one-dark-pro",
+  "plastic",
+  "poimandres",
+  "red",
+  "rose-pine",
+  "rose-pine-moon",
+  "slack-dark",
+  "solarized-dark",
+  "synthwave-84",
+  "tokyo-night",
+  "vesper",
+  "vitesse-black",
+  "vitesse-dark",
+]);
+
+const BuiltInDiffToolSchema = z
+  .object({
+    codeTheme: z.string().trim().min(1).optional(),
+  })
+  .passthrough();
+
 const KNOWN_TOP_LEVEL_CONFIG_KEYS = new Set([
   "apiKeys",
   "defaultPersona",
@@ -121,6 +180,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS = new Set([
   "defaultTheme",
   "bashCommands",
   "diffTool",
+  "builtInDiffTool",
   "agentContextFiles",
   "subagents",
   "autoCompact",
@@ -346,6 +406,15 @@ function validateConfigData(
   const diffToolResult = parseDiffToolConfig(data.diffTool, sourceLabel);
   assignParsedConfigValue(config, errors, "diffTool", diffToolResult.config, diffToolResult.errors);
 
+  const builtInDiffToolResult = parseBuiltInDiffToolConfig(data.builtInDiffTool, sourceLabel);
+  assignParsedConfigValue(
+    config,
+    errors,
+    "builtInDiffTool",
+    builtInDiffToolResult.config,
+    builtInDiffToolResult.errors,
+  );
+
   const agentResult = parseAgentContextFiles(data.agentContextFiles, sourceLabel);
   assignParsedConfigValue(
     config,
@@ -409,6 +478,31 @@ function parseAgentContextFiles(
   }
 
   return { paths: parsed.data, errors: [] };
+}
+
+function parseBuiltInDiffToolConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: BuiltInDiffToolConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  const parsed = BuiltInDiffToolSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { errors: [`${sourceLabel}: 'builtInDiffTool' must be an object.`] };
+  }
+
+  const config: BuiltInDiffToolConfig = {};
+  const codeTheme = parsed.data.codeTheme;
+  if (codeTheme !== undefined) {
+    if (!BUILT_IN_DIFF_TOOL_CODE_THEMES.has(codeTheme)) {
+      return { errors: [`${sourceLabel}: builtInDiffTool.codeTheme is not supported.`] };
+    }
+    config.codeTheme = codeTheme;
+  }
+
+  return { config: Object.keys(config).length > 0 ? config : undefined, errors: [] };
 }
 
 function parseSubagentsConfig(
@@ -850,6 +944,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   const merged: Config = getVirtualConfigDefaults();
   let apiKeys: Config["apiKeys"] | undefined;
   let diffTool: DiffToolConfig | undefined;
+  let builtInDiffTool: BuiltInDiffToolConfig | undefined;
   let subagents: Config["subagents"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
   let asyncConfig: AsyncConfig | undefined;
@@ -863,6 +958,9 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     apiKeys = mergeOptionalObject(apiKeys, config.apiKeys);
     if (config.diffTool !== undefined) {
       diffTool = resolveDiffToolConfig(level, config.diffTool);
+    }
+    if (config.builtInDiffTool !== undefined) {
+      builtInDiffTool = { ...config.builtInDiffTool };
     }
     subagents = mergeSubagentsConfig(subagents, config.subagents);
     if (config.autoCompact !== undefined) {
@@ -908,6 +1006,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (diffTool) {
     merged.diffTool = diffTool;
+  }
+
+  if (builtInDiffTool) {
+    merged.builtInDiffTool = builtInDiffTool;
   }
 
   if (subagents && Object.keys(subagents).length > 0) {

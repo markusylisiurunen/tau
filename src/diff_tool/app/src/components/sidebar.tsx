@@ -1,53 +1,40 @@
-import {
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { FileDiff, MessagesSquare } from "lucide-react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CommentThread } from "../comments.js";
 import type { DiffFile } from "../parse_diff.js";
-import type { SidebarWidth } from "../types.js";
 import { DiffStats } from "./diff_stats.js";
 import "./sidebar.css";
 
 type SidebarProps = {
   open: boolean;
-  widthMode: SidebarWidth;
   files: DiffFile[];
   viewed: Record<string, boolean>;
-  detachedThreads: CommentThread[];
-  selectedDetachedThreadId: string | null;
+  threads: CommentThread[];
+  selectedThreadId: string | null;
   onJumpToFile: (fileId: string) => void;
   onCreateDetachedThread: () => void;
-  onOpenDetachedThread: (threadId: string) => void;
-  onToggleWidth: () => void;
+  onOpenThread: (thread: CommentThread) => void;
+};
+
+type SidebarFileGroup = {
+  directory: string;
+  files: DiffFile[];
 };
 
 export function Sidebar({
   open,
-  widthMode,
   files,
   viewed,
-  detachedThreads,
-  selectedDetachedThreadId,
+  threads,
+  selectedThreadId,
   onJumpToFile,
   onCreateDetachedThread,
-  onOpenDetachedThread,
-  onToggleWidth,
+  onOpenThread,
 }: SidebarProps) {
-  const widthLabel =
-    widthMode === "wide" ? "Use narrow sidebar" : "Use wide sidebar";
+  const fileGroups = groupSidebarFiles(files);
 
   return (
     <aside className={`sidebar${open ? " open" : ""}`}>
-      <button
-        type="button"
-        className="sidebar-width-toggle"
-        aria-label={widthLabel}
-        title={widthLabel}
-        onClick={onToggleWidth}
-      />
       <section className="sidebar-section">
         <div className="sidebar-section-header">
           <h2 className="sidebar-section-title">conversations</h2>
@@ -60,24 +47,33 @@ export function Sidebar({
           </button>
         </div>
         <div className="sidebar-conversations">
-          {detachedThreads.length === 0 ? (
+          {threads.length === 0 ? (
             <p className="sidebar-empty">no conversations yet</p>
           ) : (
-            detachedThreads.map((thread) => {
+            threads.map((thread) => {
               const name = getThreadName(thread);
               const status = thread.loading ? "active" : "idle";
+              const ThreadIcon =
+                thread.anchor.kind === "line" ? FileDiff : MessagesSquare;
+              const threadKind =
+                thread.anchor.kind === "line" ? "diff comment" : "thread";
 
               return (
                 <button
                   key={thread.id}
                   type="button"
                   className={`sidebar-thread-item${
-                    selectedDetachedThreadId === thread.id ? " selected" : ""
+                    selectedThreadId === thread.id ? " selected" : ""
                   }${thread.resolved ? " resolved" : ""}`}
-                  onClick={() => onOpenDetachedThread(thread.id)}
+                  onClick={() => onOpenThread(thread)}
                   title={name}
                 >
                   <span className="sidebar-thread-row">
+                    <ThreadIcon
+                      className="sidebar-thread-kind"
+                      size={13}
+                      aria-label={threadKind}
+                    />
                     <span className="sidebar-thread-name">{name}</span>
                     <span
                       className={`sidebar-thread-status-dot ${status}`}
@@ -97,24 +93,39 @@ export function Sidebar({
           <h2 className="sidebar-section-title">files</h2>
         </div>
         <div className="sidebar-file-list">
-          {files.map((file) => (
-            <button
-              key={file.id}
-              type="button"
-              className={`sidebar-item${viewed[file.id] ? " viewed" : ""}`}
-              onClick={() => onJumpToFile(file.id)}
+          {fileGroups.map((group, index) => (
+            <div
+              key={`${group.directory}:${index}`}
+              className="sidebar-file-group"
             >
-              <SidebarPathLabel
-                path={file.displayPath}
-                stats={
-                  <DiffStats
-                    additions={file.additions}
-                    deletions={file.deletions}
-                    className="sidebar-stats"
-                  />
-                }
-              />
-            </button>
+              <SidebarDirectoryLabel directory={group.directory} />
+              {group.files.map((file) => (
+                <button
+                  key={file.id}
+                  type="button"
+                  className={`sidebar-item${viewed[file.id] ? " viewed" : ""}`}
+                  onClick={() => onJumpToFile(file.id)}
+                  title={file.displayPath}
+                >
+                  <span className="sidebar-row">
+                    <span
+                      className={`sidebar-file-status ${file.status}`}
+                      aria-label={file.status}
+                    >
+                      {formatFileStatus(file.status)}
+                    </span>
+                    <span className="sidebar-file-name">
+                      {formatFileName(file)}
+                    </span>
+                    <DiffStats
+                      additions={file.additions}
+                      deletions={file.deletions}
+                      className="sidebar-stats"
+                    />
+                  </span>
+                </button>
+              ))}
+            </div>
           ))}
         </div>
       </section>
@@ -122,63 +133,76 @@ export function Sidebar({
   );
 }
 
-type SidebarPathLabelProps = {
-  path: string;
-  stats: ReactNode;
+type SidebarDirectoryLabelProps = {
+  directory: string;
 };
 
-function SidebarPathLabel({ path, stats }: SidebarPathLabelProps) {
-  const rowRef = useRef<HTMLSpanElement | null>(null);
-  const pathRef = useRef<HTMLSpanElement | null>(null);
-  const statsRef = useRef<HTMLSpanElement | null>(null);
-  const [compactPath, setCompactPath] = useState(() =>
-    initialSidebarPath(path),
+function SidebarDirectoryLabel({ directory }: SidebarDirectoryLabelProps) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const [compactDirectory, setCompactDirectory] = useState(() =>
+    initialSidebarDirectory(directory),
   );
   const measure = useMemo(() => createTextMeasurer(), []);
 
   useLayoutEffect(() => {
     const row = rowRef.current;
-    const pathElement = pathRef.current;
-    const statsElement = statsRef.current;
-    if (!row || !pathElement || !statsElement) {
+    if (!row) {
       return;
     }
 
-    const updateCompactPath = () => {
-      const rowWidth = row.clientWidth;
-      const statsWidth = statsElement.offsetWidth;
-      const gap = 8;
-      const availableWidth = rowWidth - statsWidth - gap;
-      if (availableWidth <= 0) {
-        setCompactPath(path);
-        return;
-      }
-
-      const style = window.getComputedStyle(pathElement);
-      setCompactPath(
-        compactSidebarPath(path, availableWidth, style.font, measure),
+    const updateCompactDirectory = () => {
+      const style = window.getComputedStyle(row);
+      setCompactDirectory(
+        compactSidebarDirectory(
+          directory,
+          row.clientWidth,
+          style.font,
+          measure,
+        ),
       );
     };
 
-    updateCompactPath();
+    updateCompactDirectory();
 
-    const observer = new ResizeObserver(updateCompactPath);
+    const observer = new ResizeObserver(updateCompactDirectory);
     observer.observe(row);
-    observer.observe(statsElement);
 
     return () => {
       observer.disconnect();
     };
-  }, [measure, path]);
+  }, [directory, measure]);
 
   return (
-    <span ref={rowRef} className="sidebar-row">
-      <span ref={pathRef} className="sidebar-path" title={path}>
-        {compactPath}
-      </span>
-      <span ref={statsRef}>{stats}</span>
-    </span>
+    <div ref={rowRef} className="sidebar-file-directory" title={directory}>
+      {compactDirectory}
+    </div>
   );
+}
+
+function groupSidebarFiles(files: DiffFile[]): SidebarFileGroup[] {
+  const groups: SidebarFileGroup[] = [];
+
+  for (const file of files) {
+    const directory = formatDirectoryName(file.newRepoPath);
+    const lastGroup = groups[groups.length - 1];
+    if (lastGroup?.directory === directory) {
+      lastGroup.files.push(file);
+      continue;
+    }
+
+    groups.push({ directory, files: [file] });
+  }
+
+  return groups;
+}
+
+function formatDirectoryName(path: string): string {
+  const index = path.lastIndexOf("/");
+  if (index < 0) {
+    return "./";
+  }
+
+  return `${path.slice(0, index)}/`;
 }
 
 function createTextMeasurer() {
@@ -194,78 +218,84 @@ function createTextMeasurer() {
   };
 }
 
-function initialSidebarPath(path: string): string {
-  const parts = path.split("/");
-  const name = parts.pop() ?? path;
+function initialSidebarDirectory(directory: string): string {
+  const parts = directoryParts(directory);
   if (parts.length <= 2) {
-    return path;
+    return directory;
   }
 
-  return `${parts[0]}/…/${name}`;
+  return `${parts[0]}/…/${parts[parts.length - 1]}/`;
 }
 
-function compactSidebarPath(
-  path: string,
+function compactSidebarDirectory(
+  directory: string,
   maxWidth: number,
   font: string,
   measure: (text: string, font: string) => number,
 ): string {
-  const candidates = buildPathCandidates(path);
+  const candidates = buildDirectoryCandidates(directory);
   for (const candidate of candidates) {
     if (measure(candidate, font) <= maxWidth) {
       return candidate;
     }
   }
 
-  return candidates[candidates.length - 1] ?? path;
+  return candidates[candidates.length - 1] ?? directory;
 }
 
-function buildPathCandidates(path: string): string[] {
-  const parts = path.split("/");
-  const name = parts.pop() ?? path;
-  const dirs = parts;
-  const candidates = [path];
+function buildDirectoryCandidates(directory: string): string[] {
+  const parts = directoryParts(directory);
+  const candidates = [directory];
 
-  if (dirs.length > 0) {
-    candidates.push(`${dirs.join("/")}/${name}`);
+  if (parts.length > 2) {
+    candidates.push(`${parts[0]}/…/${parts.slice(1).join("/")}/`);
+    candidates.push(`${parts[0]}/…/${parts.slice(-2).join("/")}/`);
+    candidates.push(`${parts[0]}/…/${parts[parts.length - 1]}/`);
   }
 
-  if (dirs.length > 2) {
-    candidates.push(`${dirs[0]}/…/${dirs.slice(1).join("/")}/${name}`);
-    candidates.push(`${dirs[0]}/…/${dirs.slice(-2).join("/")}/${name}`);
-    candidates.push(`${dirs[0]}/…/${name}`);
-    candidates.push(`${dirs[0]}/…/${dirs[dirs.length - 1]}/${name}`);
+  if (parts.length > 0) {
+    candidates.push(`…/${parts[parts.length - 1]}/`);
   }
-
-  if (dirs.length > 0) {
-    candidates.push(`…/${name}`);
-    candidates.push(`…/${dirs[dirs.length - 1]}/${name}`);
-  }
-
-  const shortenedName = shortenFileName(name);
-  if (dirs.length > 0) {
-    candidates.push(`${dirs[0]}/…/${shortenedName}`);
-    candidates.push(`${dirs[0]}/…/${dirs[dirs.length - 1]}/${shortenedName}`);
-    candidates.push(`…/${shortenedName}`);
-  }
-  candidates.push(shortenedName);
 
   return [...new Set(candidates)];
 }
 
-function shortenFileName(name: string): string {
-  const dotIndex = name.lastIndexOf(".");
-  if (dotIndex <= 1 || dotIndex === name.length - 1) {
-    return name.length <= 24 ? name : `${name.slice(0, 20)}…`;
+function directoryParts(directory: string): string[] {
+  if (directory === "./") {
+    return [];
   }
 
-  const stem = name.slice(0, dotIndex);
-  const ext = name.slice(dotIndex);
-  if (stem.length <= 18) {
-    return name;
-  }
+  return directory.split("/").filter(Boolean);
+}
 
-  return `${stem.slice(0, 14)}…${ext}`;
+function formatFileName(file: DiffFile): string {
+  return basename(file.newRepoPath);
+}
+
+function basename(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index < 0 ? path : path.slice(index + 1);
+}
+
+function formatFileStatus(status: DiffFile["status"]): string {
+  switch (status) {
+    case "added":
+      return "A";
+    case "deleted":
+      return "D";
+    case "renamed":
+      return "R";
+    case "copied":
+      return "C";
+    case "type-changed":
+      return "T";
+    case "unmerged":
+      return "U";
+    case "modified":
+      return "M";
+    case "unknown":
+      return "?";
+  }
 }
 
 function getThreadName(thread: CommentThread): string {

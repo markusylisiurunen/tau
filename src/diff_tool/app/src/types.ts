@@ -1,3 +1,4 @@
+import { DIFF_TOOL_CODE_THEMES } from "../../shared_types.js";
 import type {
   DiffReviewFile,
   DiffToolBootstrapPayload,
@@ -15,6 +16,8 @@ import type {
   DiffToolThreadMessage,
   DiffToolThreadReplyPayload,
 } from "../../shared_types.js";
+
+export { DIFF_TOOL_CODE_THEMES };
 
 export type {
   DiffReviewFile,
@@ -36,7 +39,7 @@ export type ThreadReplyPayload = DiffToolThreadReplyPayload;
 export type LineSide = DiffToolLineSide;
 export type DiffStyle = DiffToolReviewState["diffStyle"];
 export type OverflowMode = DiffToolReviewState["overflowMode"];
-export type SidebarWidth = DiffToolReviewState["sidebarWidth"];
+export type CodeTheme = DiffToolReviewState["codeTheme"];
 
 export type ResolveThreadPayload = {
   id: string;

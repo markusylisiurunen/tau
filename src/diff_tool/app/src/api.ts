@@ -110,9 +110,12 @@ export async function generateBrief(): Promise<GenerateBriefResponse> {
   });
 }
 
-export async function returnReview(): Promise<{ status: string }> {
+export async function returnReview(
+  message: string,
+): Promise<{ status: string }> {
   return request<{ status: string }>("/api/review", {
     method: "POST",
+    body: JSON.stringify({ message }),
   });
 }
 

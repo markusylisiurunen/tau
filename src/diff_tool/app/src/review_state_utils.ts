@@ -4,13 +4,13 @@ import type {
   LineAnnotation,
 } from "./comments.js";
 import type { DiffFile } from "./parse_diff.js";
-import type { DiffToolReviewState } from "./types.js";
+import { DIFF_TOOL_CODE_THEMES, type DiffToolReviewState } from "./types.js";
 
 export const emptyReviewState: DiffToolReviewState = {
   diffStyle: "split",
   overflowMode: "wrap",
+  codeTheme: "github-dark-dimmed",
   sidebarOpen: false,
-  sidebarWidth: "narrow",
   collapsedFileIds: [],
   viewedFileIds: [],
   threads: [],
@@ -20,6 +20,8 @@ export const emptyReviewState: DiffToolReviewState = {
   },
 };
 
+const codeThemes = new Set<DiffToolReviewState["codeTheme"]>(DIFF_TOOL_CODE_THEMES);
+
 export function normalizeReviewState(
   state: DiffToolReviewState,
 ): DiffToolReviewState {
@@ -27,7 +29,7 @@ export function normalizeReviewState(
     ...state,
     diffStyle: state.diffStyle === "split" ? "split" : "stacked",
     overflowMode: state.overflowMode === "scroll" ? "scroll" : "wrap",
-    sidebarWidth: state.sidebarWidth === "wide" ? "wide" : "narrow",
+    codeTheme: normalizeCodeTheme(state.codeTheme),
     threads: state.threads.map((thread) => ({
       ...thread,
       anchor:
@@ -79,6 +81,12 @@ export function sumFileChanges(
     additions: totals.additions + file.additions,
     deletions: totals.deletions + file.deletions,
   };
+}
+
+function normalizeCodeTheme(
+  codeTheme: DiffToolReviewState["codeTheme"],
+): DiffToolReviewState["codeTheme"] {
+  return codeThemes.has(codeTheme) ? codeTheme : "github-dark-dimmed";
 }
 
 export function buildThreadsByFileId(

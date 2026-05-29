@@ -28,7 +28,7 @@
 }
 
 .detached-thread-dialog-message-assistant {
-  background: hsl(142 72% 72% / 0.02);
+  background: var(--thread-agent-surface);
 }
 
 .detached-thread-dialog-role {

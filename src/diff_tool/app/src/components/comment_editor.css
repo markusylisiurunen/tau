@@ -17,8 +17,14 @@
 }
 
 .comment-actions {
+  align-items: center;
   display: flex;
   gap: 4px;
   justify-content: flex-end;
   margin-top: 6px;
+}
+
+.comment-actions .checkbox-btn {
+  font-size: var(--font-size-ui);
+  margin-inline-end: auto;
 }

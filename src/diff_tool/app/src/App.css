@@ -40,15 +40,18 @@
 
 :root {
   color-scheme: dark;
-  --bg: hsl(0 0% 5.2%);
-  --surface: hsl(0 0% 6.8%);
-  --surface-hover: hsl(0 0% 9.6%);
-  --border: hsl(0 0% 14%);
-  --border-focus: hsl(0 0% 24%);
-  --text: hsl(0 0% 86%);
-  --text-muted: hsl(0 0% 48%);
+  --bg: hsl(0 0% 6.8%);
+  --surface: hsl(0 0% 7.2%);
+  --surface-hover: hsl(0 0% 9.2%);
+  --file-header-bg: color-mix(in srgb, var(--bg) 97%, var(--text));
+  --file-header-bg-hover: color-mix(in srgb, var(--bg) 95%, var(--text));
+  --border: hsl(0 0% 12%);
+  --border-focus: hsl(0 0% 20%);
+  --text: hsl(0 0% 74%);
+  --text-muted: hsl(0 0% 40%);
   --accent-add: hsl(142 70% 62%);
   --accent-del: hsl(0 91% 68%);
+  --accent-change: hsl(262 90% 76%);
   --accent-del-muted: hsl(0 91% 71% / 0.72);
   --accent-del-subtle: hsl(0 91% 71% / 0.08);
   --accent-del-subtle-hover: hsl(0 91% 71% / 0.14);
@@ -56,17 +59,38 @@
   --text-inverse: hsl(0 0% 3.6%);
   --accent-primary-hover: hsl(0 0% 94%);
   --thread-border-muted: hsl(0 0% 84% / 0.15);
-  --thread-border-strong: hsl(0 0% 84% / 0.2);
+  --thread-border-strong: hsl(0 0% 84% / 0.16);
   --thread-border-subtle: hsl(0 0% 84% / 0.08);
   --thread-surface-subtle: hsl(0 0% 100% / 0.02);
-  --code-inline-bg: hsl(142 68% 56% / 0.07);
-  --code-inline-text: hsl(142 74% 68%);
+  --thread-agent-surface: color-mix(in srgb, var(--accent-add) 4%, transparent);
+  --sidebar-status-add: color-mix(
+    in srgb,
+    var(--accent-add) 55%,
+    var(--text-muted)
+  );
+  --sidebar-status-del: color-mix(
+    in srgb,
+    var(--accent-del) 45%,
+    var(--text-muted)
+  );
+  --sidebar-status-change: color-mix(
+    in srgb,
+    var(--accent-change) 45%,
+    var(--text-muted)
+  );
+  --dialog-backdrop: color-mix(in srgb, black 80%, transparent);
+  --popover-shadow: color-mix(in srgb, black 45%, transparent);
+  --button-split-border: color-mix(
+    in srgb,
+    var(--text-inverse) 18%,
+    transparent
+  );
+  --code-inline-bg: color-mix(in srgb, var(--accent-add) 7%, transparent);
+  --code-inline-text: color-mix(in srgb, var(--accent-add) 82%, var(--text));
   --bar-height: 48px;
-  --sidebar-width-narrow: 300px;
-  --sidebar-width-wide: 480px;
-  --sidebar-width: var(--sidebar-width-narrow);
+  --sidebar-width: 300px;
   --content-padding-x: 12px;
-  --file-gap: 1rem;
+  --file-gap: 12px;
   --font-size-ui: 1rem;
   --font-size-lg: 1.071429rem;
   --font-size-sm: 0.928571rem;
@@ -78,13 +102,14 @@
   --letter-spacing-code: 0;
   --font-family-ui: system-ui, sans-serif;
   --font-family-code: "JetBrains Mono", monospace;
+  --line-height-ui: 1.5;
   --diffs-font-family: var(--font-family-code);
   --diffs-line-height: 1.75;
   font-family: var(--font-family-ui);
   font-size: 14px;
   font-weight: var(--font-weight-ui);
   letter-spacing: var(--letter-spacing-ui);
-  line-height: 1.5;
+  line-height: var(--line-height-ui);
 }
 
 *,
@@ -111,10 +136,6 @@ textarea {
   min-height: 100vh;
 }
 
-.app.sidebar-wide {
-  --sidebar-width: var(--sidebar-width-wide);
-}
-
 .content {
   min-height: calc(100vh - var(--bar-height));
   padding: var(--content-padding-x);
@@ -122,6 +143,31 @@ textarea {
 
 .app.sidebar-open .content {
   margin-left: var(--sidebar-width);
+}
+
+.submit-popover {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 18px 48px var(--popover-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  position: fixed;
+  width: min(420px, calc(100vw - 24px));
+  z-index: 35;
+}
+
+.submit-popover-input {
+  min-height: calc(1.5em * 5 + 0.75rem * 2);
+  resize: vertical;
+}
+
+.submit-popover-actions {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 .empty {

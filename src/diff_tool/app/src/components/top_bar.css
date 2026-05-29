@@ -1,4 +1,5 @@
 .top-bar {
+  --top-bar-gap: 8px;
   position: sticky;
   top: 0;
   z-index: 20;
@@ -18,13 +19,12 @@
 .top-bar-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--top-bar-gap);
   min-width: 0;
 }
 
 .top-bar-left {
   flex: 1 1 0;
-  gap: 12px;
   overflow: hidden;
 }
 
@@ -61,7 +61,7 @@
   display: inline-flex;
   align-items: center;
   flex: 1 1 0;
-  gap: 8px;
+  gap: var(--top-bar-gap);
   min-width: 0;
   overflow: hidden;
   font-size: var(--font-size-sm);
@@ -83,11 +83,10 @@
 .top-bar-viewed {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--top-bar-gap);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
   white-space: nowrap;
-  margin-right: 2px;
 }
 
 .top-bar-viewed-ring {
@@ -115,7 +114,7 @@
 .top-bar-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--top-bar-gap);
   border: none;
   background: transparent;
   color: var(--text-muted);
@@ -185,6 +184,24 @@
 .top-bar-action-primary:hover {
   color: var(--text-inverse);
   background: var(--accent-primary-hover);
+}
+
+.top-bar-submit-group {
+  display: inline-flex;
+}
+
+.top-bar-submit-main {
+  border-right-color: var(--button-split-border);
+}
+
+.top-bar-submit-menu {
+  justify-content: center;
+  min-width: 28px;
+  padding-inline: 6px;
+}
+
+.top-bar-submit-main + .top-bar-submit-menu {
+  border-left: 0;
 }
 
 .top-bar-action-cancel {

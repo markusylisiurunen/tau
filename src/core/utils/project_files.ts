@@ -1,29 +1,37 @@
-import { readdir, realpath, stat } from "node:fs/promises";
-import { join } from "node:path";
 import { spawnWithCapture } from "./spawn_capture.js";
 
-const DEFAULT_IGNORED_DIRS = new Set([".git", "node_modules"]);
+const MAX_STDOUT_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_COUNT = 50_000;
+const MAX_DIRECTORY_COUNT = 25_000;
+const MAX_ENTRY_COUNT = MAX_FILE_COUNT + MAX_DIRECTORY_COUNT;
+const RIPGREP_TIMEOUT_MS = 5000;
 
-async function runCommand(
-  cwd: string,
-  cmd: string,
-  args: string[],
-): Promise<{ status: number; stdout: string }> {
-  const MAX_STDOUT_BYTES = 10 * 1024 * 1024;
-
-  const result = await spawnWithCapture(cmd, args, {
+async function runRipgrepFiles(cwd: string): Promise<{ status: number; stdout: string }> {
+  const result = await spawnWithCapture("rg", ["--files", "--hidden", "--glob", "!.git/"], {
     cwd,
     maxCaptureBytes: MAX_STDOUT_BYTES,
+    timeoutMs: RIPGREP_TIMEOUT_MS,
     stdio: ["ignore", "pipe", "ignore"],
   });
 
-  if (result.captureLimitExceeded) {
-    const err = new Error(`command stdout exceeded ${MAX_STDOUT_BYTES} bytes: ${cmd}`);
-    err.name = "StdoutLimitExceededError";
-    throw err;
+  return { status: result.exitCode ?? 1, stdout: result.stdout };
+}
+
+function listFilesFromOutput(stdout: string): string[] {
+  const files: string[] = [];
+  const seen = new Set<string>();
+
+  for (const line of stdout.split("\n")) {
+    const file = line.trim();
+    if (!file || seen.has(file)) continue;
+
+    files.push(file);
+    seen.add(file);
+
+    if (files.length >= MAX_FILE_COUNT) break;
   }
 
-  return { status: result.exitCode ?? 1, stdout: result.stdout };
+  return files;
 }
 
 function listDirectoriesFromFiles(files: string[]): string[] {
@@ -36,6 +44,7 @@ function listDirectoriesFromFiles(files: string[]): string[] {
     for (let i = 1; i < parts.length; i += 1) {
       const dir = parts.slice(0, i).join("/");
       if (dir) out.add(`${dir}/`);
+      if (out.size >= MAX_DIRECTORY_COUNT) return [...out];
     }
   }
 
@@ -44,95 +53,30 @@ function listDirectoriesFromFiles(files: string[]): string[] {
 
 function combineEntries(files: Iterable<string>, dirs: Iterable<string>): string[] {
   const out = new Set<string>();
-  for (const file of files) out.add(file);
-  for (const dir of dirs) out.add(dir);
+
+  for (const file of files) {
+    out.add(file);
+    if (out.size >= MAX_ENTRY_COUNT) break;
+  }
+
+  if (out.size < MAX_ENTRY_COUNT) {
+    for (const dir of dirs) {
+      out.add(dir);
+      if (out.size >= MAX_ENTRY_COUNT) break;
+    }
+  }
+
   return [...out].sort();
 }
 
 export async function listProjectFilesAsync(cwd: string): Promise<string[]> {
-  const fromRipgrep = await listProjectFilesFromRipgrepAsync(cwd);
-  if (fromRipgrep.length) return fromRipgrep;
-  return listProjectFilesByWalkingAsync(cwd);
-}
-
-async function listProjectFilesFromRipgrepAsync(cwd: string): Promise<string[]> {
   try {
-    const res = await runCommand(cwd, "rg", ["--files", "--hidden", "--glob", "!.git/"]);
-    if (res.status !== 0) return [];
+    const res = await runRipgrepFiles(cwd);
+    if (res.status !== 0 && !res.stdout) return [];
 
-    const files = (res.stdout ?? "")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-
-    const uniqueFiles = [...new Set(files)];
-    return combineEntries(uniqueFiles, listDirectoriesFromFiles(uniqueFiles));
+    const files = listFilesFromOutput(res.stdout);
+    return combineEntries(files, listDirectoriesFromFiles(files));
   } catch {
     return [];
   }
-}
-
-async function listProjectFilesByWalkingAsync(cwd: string): Promise<string[]> {
-  const files = new Set<string>();
-  const dirs = new Set<string>();
-  const realpathStack = new Set<string>();
-
-  const walk = async (dirAbs: string, dirRel: string): Promise<void> => {
-    let dirReal: string;
-    try {
-      dirReal = await realpath(dirAbs);
-    } catch {
-      return;
-    }
-
-    if (realpathStack.has(dirReal)) return;
-    realpathStack.add(dirReal);
-
-    try {
-      const entries = await readdir(dirAbs, { withFileTypes: true, encoding: "utf8" });
-
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          if (DEFAULT_IGNORED_DIRS.has(entry.name)) continue;
-          const nextAbs = join(dirAbs, entry.name);
-          const nextRel = dirRel ? join(dirRel, entry.name) : entry.name;
-          dirs.add(`${nextRel}/`);
-          await walk(nextAbs, nextRel);
-          continue;
-        }
-
-        if (entry.isSymbolicLink()) {
-          try {
-            const targetPath = join(dirAbs, entry.name);
-            const st = await stat(targetPath);
-            if (st.isDirectory()) {
-              if (DEFAULT_IGNORED_DIRS.has(entry.name)) continue;
-              const nextRel = dirRel ? join(dirRel, entry.name) : entry.name;
-              dirs.add(`${nextRel}/`);
-              await walk(targetPath, nextRel);
-            } else if (st.isFile()) {
-              const rel = dirRel ? join(dirRel, entry.name) : entry.name;
-              files.add(rel);
-            }
-          } catch {
-            // Broken symlink or permission error, skip
-          }
-          continue;
-        }
-
-        if (entry.isFile()) {
-          const rel = dirRel ? join(dirRel, entry.name) : entry.name;
-          files.add(rel);
-        }
-      }
-    } catch {
-      return;
-    } finally {
-      realpathStack.delete(dirReal);
-    }
-  };
-
-  await walk(cwd, "");
-
-  return combineEntries(files, dirs);
 }

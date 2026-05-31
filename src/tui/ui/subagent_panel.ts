@@ -127,7 +127,7 @@ export class SubagentPanelComponent implements Component {
   getSelectedId(): string | undefined {
     if (!this.selectedId) return undefined;
     const entry = this.entries.get(this.selectedId);
-    if (!entry || entry.status !== "running") return undefined;
+    if (entry?.status !== "running") return undefined;
     return this.selectedId;
   }
 

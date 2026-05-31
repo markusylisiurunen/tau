@@ -1069,7 +1069,7 @@ class AsyncTelegramAdapterImpl {
     const message = update.message;
     if (message) {
       const chat = message.chat;
-      if (!chat || chat.type !== "private") {
+      if (chat?.type !== "private") {
         return;
       }
 
@@ -1115,7 +1115,7 @@ class AsyncTelegramAdapterImpl {
     }
 
     const chat = callbackQuery.message?.chat;
-    if (!chat || chat.type !== "private") {
+    if (chat?.type !== "private") {
       await this.answerCallbackQuery(callbackQuery.id);
       return;
     }

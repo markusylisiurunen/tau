@@ -599,7 +599,7 @@ export class SessionEngine {
         break;
       }
 
-      if (!finalMessage || finalMessage.stopReason !== "toolUse") {
+      if (finalMessage?.stopReason !== "toolUse") {
         break;
       }
 

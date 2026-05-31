@@ -527,7 +527,7 @@ export class TuiChatView implements ChatView {
     this.recordingIndicatorFrame = 0;
     this.recordingStartedAt = Date.now();
     this.recordingIndicatorTimer = setInterval(() => {
-      if (!this.lastStatus || this.lastStatus.editor.mode !== "recording") {
+      if (this.lastStatus?.editor.mode !== "recording") {
         return;
       }
 

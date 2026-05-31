@@ -547,7 +547,7 @@ function updateStoredOAuthAccount(
     if (index < 0) return;
 
     const account = accounts[index];
-    if (!account || account.type !== "oauth") return;
+    if (account?.type !== "oauth") return;
     accounts[index] = update(account);
   });
 }

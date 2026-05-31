@@ -8,7 +8,7 @@ Keep `src/diff_tool/` as an isolated island. Diff-tool-specific prompts, HTTP ha
 
 - `index.ts` — entry point (`runBuiltInDiffToolCommand`): parses launch env vars, connects the protocol client, starts the HTTP server, opens a browser, waits for close
 - `protocol_client.ts` — TCP/NDJSON client that talks to Tau's diff review protocol server over a Unix socket. Supports concurrent in-flight requests over one initialized connection, plus the server-initiated `session.close` shutdown handshake. Methods: `getContext`, `listFiles`, `getDiff`, `submitThreadMessage`, `returnReview`, `cancelSession`, `setUiText`
-- `http_server.ts` — local HTTP server that serves the React app's static build and exposes a REST API (`/api/bootstrap`, `/api/diff`, `/api/state`, `/api/thread`, `/api/thread/reply`, `/api/thread/delete`, `/api/thread/resolve`, `/api/thread/collapse`, `/api/thread-message`, `/api/brief/generate`, `/api/review`, `/api/cancel`). Starts an internal bootstrap review thread eagerly so later brief/comment threads can fork from warmed-up context, and shuts down in response to Tau's `session.close` request before the protocol client disconnects.
+- `http_server.ts` — local HTTP server that serves the React app's static build and exposes a REST API (`/api/bootstrap`, `/api/diff`, `/api/state`, `/api/thread`, `/api/thread/reply`, `/api/thread/delete`, `/api/thread/resolve`, `/api/thread/collapse`, `/api/thread-message`, `/api/thread-message/delete`, `/api/brief/generate`, `/api/review`, `/api/cancel`). Starts an internal bootstrap review thread eagerly so later brief/comment threads can fork from warmed-up context, and shuts down in response to Tau's `session.close` request before the protocol client disconnects.
 - `launcher.ts` — creates a `DiffToolConfig` pointing at `node <cli> diff-tool`
 - `browser.ts` — opens the URL via `open` (macOS) or `xdg-open` (Linux)
 - `app/` — Vite + React TypeScript app (the browser UI)
@@ -28,6 +28,7 @@ The HTTP server (`http_server.ts`) serves these endpoints, which the React app c
 | POST | `/api/thread/resolve` | Mark a local review thread resolved or unresolved |
 | POST | `/api/thread/collapse` | Collapse or expand a local review thread |
 | POST | `/api/thread-message` | Send the pending thread messages to the review agent and store the reply |
+| POST | `/api/thread-message/delete` | Delete one user or agent message from a local review thread |
 | POST | `/api/brief/generate` | Ask the review agent for a diff-wide reviewer brief |
 | POST | `/api/review` | Send an optional `{ message }` and return the composed review text to Tau |
 | POST | `/api/cancel` | Cancel the review session |

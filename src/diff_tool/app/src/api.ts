@@ -3,6 +3,7 @@ import type {
   CollapseThreadPayload,
   CreateThreadPayload,
   CreateThreadResponse,
+  DeleteThreadMessagePayload,
   DiffReviewGetDiffResult,
   GenerateBriefResponse,
   ResolveThreadPayload,
@@ -84,6 +85,15 @@ export async function requestThreadMessage(id: string): Promise<StateResponse> {
   return request<StateResponse>("/api/thread-message", {
     method: "POST",
     body: JSON.stringify({ id }),
+  });
+}
+
+export async function deleteThreadMessage(
+  payload: DeleteThreadMessagePayload,
+): Promise<StateResponse> {
+  return request<StateResponse>("/api/thread-message/delete", {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

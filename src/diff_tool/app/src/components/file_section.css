@@ -90,3 +90,9 @@
   font-weight: var(--font-weight-code);
   letter-spacing: var(--letter-spacing-code);
 }
+
+.diff-placeholder {
+  color: var(--text-muted);
+  font-size: var(--font-size-ui);
+  padding: 1rem var(--content-padding-x);
+}

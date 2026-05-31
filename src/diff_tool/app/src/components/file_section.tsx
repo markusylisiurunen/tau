@@ -48,6 +48,7 @@ type FileSectionProps = {
   viewed: boolean;
   annotations: LineAnnotation[];
   unresolvedThreadCount: number;
+  renderReady: boolean;
   onToggleCollapsed: (id: string) => void;
   onToggleViewed: (id: string) => void;
   onLineActivate: (fileId: string, lineNumber: number, side: LineSide) => void;
@@ -57,6 +58,7 @@ type FileSectionProps = {
   onRequestAgent: (threadId: string) => void;
   onToggleResolved: (threadId: string, resolved: boolean) => void;
   onToggleThreadCollapsed: (threadId: string, collapsed: boolean) => void;
+  onDeleteThreadMessage: (threadId: string, messageIndex: number) => void;
 };
 
 export const FileSection = memo(function FileSection({
@@ -68,6 +70,7 @@ export const FileSection = memo(function FileSection({
   viewed,
   annotations,
   unresolvedThreadCount,
+  renderReady,
   onToggleCollapsed,
   onToggleViewed,
   onLineActivate,
@@ -77,6 +80,7 @@ export const FileSection = memo(function FileSection({
   onRequestAgent,
   onToggleResolved,
   onToggleThreadCollapsed,
+  onDeleteThreadMessage,
 }: FileSectionProps) {
   const options = useMemo(() => {
     const resolvedDiffStyle = (diffStyle === "split" ? "split" : "unified") as
@@ -118,6 +122,9 @@ export const FileSection = memo(function FileSection({
           onToggleCollapsed={(nextCollapsed) =>
             onToggleThreadCollapsed(thread.id, nextCollapsed)
           }
+          onDeleteMessage={(messageIndex) =>
+            onDeleteThreadMessage(thread.id, messageIndex)
+          }
         />
       );
     },
@@ -126,6 +133,7 @@ export const FileSection = memo(function FileSection({
       onCancelDraft,
       onRequestAgent,
       onSaveDraft,
+      onDeleteThreadMessage,
       onToggleResolved,
       onToggleThreadCollapsed,
     ],
@@ -168,13 +176,17 @@ export const FileSection = memo(function FileSection({
       </div>
       {!collapsed && (
         <div className="file-body">
-          <FileDiff<CommentAnnotation>
-            className="diff-view"
-            fileDiff={file.file}
-            options={options}
-            lineAnnotations={annotations}
-            renderAnnotation={renderAnnotation}
-          />
+          {renderReady ? (
+            <FileDiff<CommentAnnotation>
+              className="diff-view"
+              fileDiff={file.file}
+              options={options}
+              lineAnnotations={annotations}
+              renderAnnotation={renderAnnotation}
+            />
+          ) : (
+            <div className="diff-placeholder">preparing diff…</div>
+          )}
         </div>
       )}
     </section>

@@ -55,11 +55,33 @@
   background: var(--thread-agent-surface);
 }
 
+.thread-msg-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+  margin-block-end: 0.25rem;
+}
+
 .thread-msg-role {
   color: var(--text);
   display: inline-block;
   font-weight: 600;
-  margin-block-end: 0.25rem;
+}
+
+.thread-msg-delete {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 0.125rem;
+}
+
+.thread-msg-delete:hover {
+  color: var(--text);
 }
 
 .thread-msg-thinking {

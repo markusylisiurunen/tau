@@ -121,6 +121,26 @@ export class DiffToolReviewStateStore {
     return true;
   }
 
+  deleteThreadMessage(id: string, messageIndex: number): boolean {
+    const threadIndex = this.state.threads.findIndex((thread) => thread.id === id);
+    if (threadIndex < 0) {
+      return false;
+    }
+
+    const thread = this.state.threads[threadIndex];
+    if (!thread || messageIndex < 0 || messageIndex >= thread.messages.length) {
+      return false;
+    }
+
+    if (messageIndex === 0) {
+      this.state.threads.splice(threadIndex, 1);
+      return true;
+    }
+
+    thread.messages.splice(messageIndex, 1);
+    return true;
+  }
+
   setThreadLoading(id: string, loading: boolean): boolean {
     const thread = this.findThreadInternal(id);
     if (!thread) {

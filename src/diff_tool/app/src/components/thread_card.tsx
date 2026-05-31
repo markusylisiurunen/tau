@@ -1,4 +1,4 @@
-import { ChevronsDownUp, ChevronsUpDown, Sparkles } from "lucide-react";
+import { ChevronsDownUp, ChevronsUpDown, Sparkles, Trash } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { CommentThread } from "../comments.js";
 import { Checkbox } from "./checkbox.js";
@@ -11,6 +11,7 @@ type ThreadCardProps = {
   onRequestAgent: () => void;
   onToggleResolved: (resolved: boolean) => void;
   onToggleCollapsed: (collapsed: boolean) => void;
+  onDeleteMessage: (messageIndex: number) => void;
 };
 
 export const ThreadCard = memo(function ThreadCard({
@@ -19,6 +20,7 @@ export const ThreadCard = memo(function ThreadCard({
   onRequestAgent,
   onToggleResolved,
   onToggleCollapsed,
+  onDeleteMessage,
 }: ThreadCardProps) {
   const [isReplying, setIsReplying] = useState(false);
   const [hasReplyText, setHasReplyText] = useState(false);
@@ -116,9 +118,20 @@ export const ThreadCard = memo(function ThreadCard({
             key={`${message.role}:${index}:${message.text}`}
             className={`thread-msg thread-msg-${message.role}`}
           >
-            <span className="thread-msg-role">
-              {message.role === "user" ? "you" : "agent"}
-            </span>
+            <div className="thread-msg-header">
+              <span className="thread-msg-role">
+                {message.role === "user" ? "you" : "agent"}
+              </span>
+              <button
+                type="button"
+                className="thread-msg-delete"
+                onClick={() => onDeleteMessage(index)}
+                aria-label={`Delete ${message.role === "user" ? "your" : "agent"} comment`}
+                title="delete comment"
+              >
+                <Trash size={13} />
+              </button>
+            </div>
             <MarkdownContent
               content={message.text}
               className="thread-msg-text"

@@ -19,6 +19,7 @@ type TopBarProps = {
   additions: number;
   deletions: number;
   commentCount: number;
+  diffArgs?: string[];
   diffCommand?: string;
   diffStyle: "stacked" | "split";
   overflowMode: "wrap" | "scroll";
@@ -41,12 +42,62 @@ type TopBarProps = {
   onCancel: () => void;
 };
 
+type DiffScopeSummary = {
+  label: string;
+  title: string;
+};
+
+const compactDiffCommandLength = 48;
+
+function summarizeDiffScope(
+  diffCommand: string | undefined,
+  diffArgs: string[] | undefined,
+): DiffScopeSummary | undefined {
+  const title = diffCommand?.trim();
+  if (!title) {
+    return undefined;
+  }
+
+  const args = diffArgs ?? [];
+  if (args.length === 0 || title === "current working tree") {
+    return { label: "current working tree", title };
+  }
+
+  if (title.length <= compactDiffCommandLength) {
+    return { label: title, title };
+  }
+
+  const pathspecIndex = args.indexOf("--");
+  const diffArgsOnly = pathspecIndex >= 0 ? args.slice(0, pathspecIndex) : args;
+  const paths = pathspecIndex >= 0 ? args.slice(pathspecIndex + 1) : [];
+  const range = diffArgsOnly.find(
+    (arg) => arg !== "--" && !arg.startsWith("-"),
+  );
+
+  if (range && paths.length > 0) {
+    return { label: `${range} · ${formatPathCount(paths.length)}`, title };
+  }
+  if (range) {
+    return { label: `git diff ${range}`, title };
+  }
+  if (paths.length > 0) {
+    return { label: `working tree · ${formatPathCount(paths.length)}`, title };
+  }
+
+  return { label: "custom diff", title };
+}
+
+function formatPathCount(count: number): string {
+  return `${count} path${count === 1 ? "" : "s"}`;
+}
+
 export function TopBar({
   fileCount,
   viewedCount,
   additions,
   deletions,
   commentCount,
+  diffArgs,
   diffCommand,
   diffStyle,
   overflowMode,
@@ -72,6 +123,7 @@ export function TopBar({
   const resolvedOverflowMode = overflowMode === "scroll" ? "scroll" : "wrap";
   const viewedProgress =
     fileCount > 0 ? Math.round((viewedCount / fileCount) * 100) : 0;
+  const diffScope = summarizeDiffScope(diffCommand, diffArgs);
 
   return (
     <header className="top-bar">
@@ -97,15 +149,15 @@ export function TopBar({
         </button>
         <div
           className="top-bar-diff-meta"
-          aria-label={`${additions} additions and ${deletions} deletions${diffCommand ? `, ${diffCommand}` : ""}`}
+          aria-label={`${additions} additions and ${deletions} deletions${diffScope ? `, ${diffScope.title}` : ""}`}
         >
           <DiffStats additions={additions} deletions={deletions} />
-          {diffCommand && (
+          {diffScope && (
             <span
               className="top-bar-meta top-bar-meta-dim top-bar-diff-command"
-              title={diffCommand}
+              title={diffScope.title}
             >
-              {diffCommand}
+              {diffScope.label}
             </span>
           )}
         </div>

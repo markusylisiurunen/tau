@@ -470,6 +470,41 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (
+      req.method === "POST" &&
+      url.pathname === "/api/thread-message/delete"
+    ) {
+      const body = await readBody(req);
+      const threadIndex = state.threads.findIndex(
+        (entry) => entry.id === body.id,
+      );
+      if (threadIndex < 0) {
+        sendJson(res, 404, { error: "thread not found" });
+        return;
+      }
+
+      const thread = state.threads[threadIndex];
+      const messageIndex =
+        typeof body.messageIndex === "number" &&
+        Number.isInteger(body.messageIndex)
+          ? body.messageIndex
+          : -1;
+      if (messageIndex < 0 || messageIndex >= thread.messages.length) {
+        sendJson(res, 400, { error: "message not found" });
+        return;
+      }
+
+      if (messageIndex === 0) {
+        state.threads.splice(threadIndex, 1);
+        sendJson(res, 200, { state });
+        return;
+      }
+
+      thread.messages.splice(messageIndex, 1);
+      sendJson(res, 200, { state });
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/thread/resolve") {
       const body = await readBody(req);
       const thread = state.threads.find((entry) => entry.id === body.id);

@@ -140,3 +140,8 @@ export type DiffToolThreadReplyPayload = {
   id: string;
   text: string;
 };
+
+export type DiffToolDeleteThreadMessagePayload = {
+  id: string;
+  messageIndex: number;
+};

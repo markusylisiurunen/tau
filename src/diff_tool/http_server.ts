@@ -329,6 +329,28 @@ export class DiffToolHttpServer {
       return;
     }
 
+    if (method === "POST" && requestUrl.pathname === "/api/thread-message/delete") {
+      const payload = await this.readJsonBody(request);
+      const id = typeof payload.id === "string" ? payload.id.trim() : "";
+      const messageIndex =
+        typeof payload.messageIndex === "number" && Number.isInteger(payload.messageIndex)
+          ? payload.messageIndex
+          : -1;
+      if (!this.reviewState.findThread(id)) {
+        this.sendJson(response, 404, { error: "thread not found" });
+        return;
+      }
+
+      const removed = this.reviewState.deleteThreadMessage(id, messageIndex);
+      if (!removed) {
+        this.sendJson(response, 400, { error: "message not found" });
+        return;
+      }
+
+      this.sendJson(response, 200, { state: this.reviewState.getState() });
+      return;
+    }
+
     if (method === "POST" && requestUrl.pathname === "/api/thread/resolve") {
       const payload = await this.readJsonBody(request);
       const id = typeof payload.id === "string" ? payload.id.trim() : "";

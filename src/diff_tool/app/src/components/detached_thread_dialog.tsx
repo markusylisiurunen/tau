@@ -1,3 +1,4 @@
+import { Trash } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { CommentThread } from "../comments.js";
 import { Checkbox } from "./checkbox.js";
@@ -15,6 +16,7 @@ type DetachedThreadDialogProps = {
   onSubmit: () => void;
   onClose: () => void;
   onToggleResolved: (resolved: boolean) => void;
+  onDeleteMessage: (messageIndex: number) => void;
 };
 
 export function DetachedThreadDialog({
@@ -27,6 +29,7 @@ export function DetachedThreadDialog({
   onSubmit,
   onClose,
   onToggleResolved,
+  onDeleteMessage,
 }: DetachedThreadDialogProps) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
@@ -86,9 +89,20 @@ export function DetachedThreadDialog({
               key={`${message.role}:${index}:${message.text}`}
               className={`detached-thread-dialog-message detached-thread-dialog-message-${message.role}`}
             >
-              <span className="detached-thread-dialog-role">
-                {message.role === "user" ? "you" : "agent"}
-              </span>
+              <div className="detached-thread-dialog-message-header">
+                <span className="detached-thread-dialog-role">
+                  {message.role === "user" ? "you" : "agent"}
+                </span>
+                <button
+                  type="button"
+                  className="detached-thread-dialog-delete"
+                  onClick={() => onDeleteMessage(index)}
+                  aria-label={`Delete ${message.role === "user" ? "your" : "agent"} comment`}
+                  title="delete comment"
+                >
+                  <Trash size={14} />
+                </button>
+              </div>
               <MarkdownContent
                 content={message.text}
                 className="detached-thread-dialog-text"

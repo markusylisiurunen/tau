@@ -13,6 +13,7 @@ import {
   cancelReview,
   collapseThread,
   createThread,
+  deleteThreadMessage,
   fetchBootstrap,
   fetchDiff,
   generateBrief,
@@ -49,6 +50,7 @@ import { FileSection } from "./components/file_section.js";
 import { Sidebar } from "./components/sidebar.js";
 import { TopBar } from "./components/top_bar.js";
 import { parseDiff } from "./parse_diff.js";
+import { useDiffRendererReady } from "./use_diff_renderer_ready.js";
 import type {
   BootstrapPayload,
   DiffReviewGetDiffResult,
@@ -181,6 +183,8 @@ export function App() {
     () => parseDiff(patch, bootstrap?.files, bootstrap?.context.sessionId),
     [patch, bootstrap],
   );
+
+  const diffRendererReady = useDiffRendererReady(files, reviewState.codeTheme);
 
   const collapsed = useMemo(
     () => toLookup(reviewState.collapsedFileIds),
@@ -411,6 +415,12 @@ export function App() {
     setDetachedThreadDialog(null);
   }, []);
 
+  useEffect(() => {
+    if (detachedThreadDialog?.mode === "thread" && !selectedDetachedThread) {
+      closeDetachedThreadDialog();
+    }
+  }, [closeDetachedThreadDialog, detachedThreadDialog, selectedDetachedThread]);
+
   const openThread = useCallback(
     (thread: CommentThread) => {
       if (thread.anchor.kind === "detached") {
@@ -569,6 +579,13 @@ export function App() {
     [syncState],
   );
 
+  const removeThreadMessage = useCallback(
+    (threadId: string, messageIndex: number) => {
+      void syncState(deleteThreadMessage({ id: threadId, messageIndex }));
+    },
+    [syncState],
+  );
+
   const threadsByFileId = useMemo(
     () => buildThreadsByFileId(reviewState.threads),
     [reviewState.threads],
@@ -674,6 +691,7 @@ export function App() {
           additions={totals.additions}
           deletions={totals.deletions}
           commentCount={unresolvedThreadCount}
+          diffArgs={bootstrap?.context.diffArgs}
           diffCommand={bootstrap?.context.diffCommand}
           diffStyle={reviewState.diffStyle}
           overflowMode={reviewState.overflowMode}
@@ -742,6 +760,7 @@ export function App() {
                 unresolvedThreadCount={
                   unresolvedThreadCountsByFileId.get(file.id) ?? 0
                 }
+                renderReady={diffRendererReady}
                 onToggleCollapsed={toggleCollapsed}
                 onToggleViewed={toggleViewed}
                 onLineActivate={activateLine}
@@ -751,6 +770,7 @@ export function App() {
                 onRequestAgent={requestAgent}
                 onToggleResolved={toggleResolved}
                 onToggleThreadCollapsed={toggleThreadCollapsed}
+                onDeleteThreadMessage={removeThreadMessage}
               />
             );
           })}
@@ -811,6 +831,12 @@ export function App() {
             return;
           }
           toggleResolved(selectedDetachedThread.id, resolved);
+        }}
+        onDeleteMessage={(messageIndex) => {
+          if (!selectedDetachedThread) {
+            return;
+          }
+          removeThreadMessage(selectedDetachedThread.id, messageIndex);
         }}
       />
       {LocalAgentation ? (

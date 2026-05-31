@@ -9,6 +9,7 @@ import type {
   DiffToolCommentThread,
   DiffToolCreateThreadPayload,
   DiffToolCreateThreadResponse,
+  DiffToolDeleteThreadMessagePayload,
   DiffToolDetachedThreadAnchor,
   DiffToolGetDiffResult,
   DiffToolLineSide,
@@ -41,6 +42,7 @@ export type ReviewStatePatch = DiffToolStatePatch;
 export type CreateThreadPayload = DiffToolCreateThreadPayload;
 export type CreateThreadResponse = DiffToolCreateThreadResponse;
 export type ThreadReplyPayload = DiffToolThreadReplyPayload;
+export type DeleteThreadMessagePayload = DiffToolDeleteThreadMessagePayload;
 export type LineSide = DiffToolLineSide;
 export type DiffStyle = DiffToolReviewState["diffStyle"];
 export type OverflowMode = DiffToolReviewState["overflowMode"];

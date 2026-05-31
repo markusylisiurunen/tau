@@ -8,7 +8,7 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@pierre/diffs": "^1.2.4",
+    "@pierre/diffs": "^1.2.5",
     "lucide-react": "^1.17.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

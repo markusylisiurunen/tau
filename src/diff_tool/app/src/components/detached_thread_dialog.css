@@ -31,11 +31,33 @@
   background: var(--thread-agent-surface);
 }
 
+.detached-thread-dialog-message-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+  margin-bottom: 0.5rem;
+}
+
 .detached-thread-dialog-role {
   color: var(--text);
   display: inline-block;
   font-weight: 600;
-  margin-bottom: 0.5rem;
+}
+
+.detached-thread-dialog-delete {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 0.125rem;
+}
+
+.detached-thread-dialog-delete:hover {
+  color: var(--text);
 }
 
 .detached-thread-dialog-thinking {

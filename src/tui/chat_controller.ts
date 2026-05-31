@@ -1603,11 +1603,6 @@ export class ChatController {
       return;
     }
 
-    if (this.isStreaming) {
-      this.view.addSystemMessage("wait for the assistant to finish before recording", "warn");
-      return;
-    }
-
     await this.runListenTransition(() => this.startListenCapture());
   }
 

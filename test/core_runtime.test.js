@@ -103,6 +103,7 @@ describe("command registry", () => {
 
     const listen = registry.parse("/listen");
     expect(listen).toEqual({ type: "listen" });
+    expect(registry.allowsDuringStreaming(listen)).toBe(true);
     await registry.dispatch(listen, ctx);
 
     const speak = registry.parse("/speak");

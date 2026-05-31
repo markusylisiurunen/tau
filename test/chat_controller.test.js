@@ -414,6 +414,43 @@ describe("ChatController interrupt handling", () => {
     expect(interruptActiveTaskSpy).not.toHaveBeenCalled();
   });
 
+  it("interrupts assistant normally after stopping listen recording", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    let resolveTurn;
+    const turnGate = new Promise((resolve) => {
+      resolveTurn = resolve;
+    });
+    vi.spyOn(controller.runtime, "runTurn").mockImplementation(async () => {
+      await turnGate;
+      return { aborted: true };
+    });
+    const interruptSpy = vi
+      .spyOn(controller.runtime, "interruptTurn")
+      .mockImplementation(() => true);
+
+    const turnPromise = controller.runAssistantTurn();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    controller.listenRecording = {};
+    const stopListenCaptureSpy = vi
+      .spyOn(controller, "stopListenCapture")
+      .mockImplementation(async () => {
+        controller.listenRecording = undefined;
+      });
+
+    controller.onInterrupt();
+    expect(stopListenCaptureSpy).toHaveBeenCalledTimes(1);
+    expect(interruptSpy).not.toHaveBeenCalled();
+
+    controller.onInterrupt();
+    expect(interruptSpy).toHaveBeenCalledTimes(1);
+
+    resolveTurn();
+    await turnPromise;
+  });
+
   it("interrupts the active assistant turn task once", async () => {
     const stub = createStubView();
     const controller = createController(stub.view);
@@ -1111,6 +1148,23 @@ describe("ChatController listen capture", () => {
     expect(stopListenCaptureSpy).not.toHaveBeenCalled();
     expect(stub.systemMessages).toContainEqual({
       text: "speech recording already in progress",
+      kind: "warn",
+    });
+  });
+
+  it("starts listen recording while assistant is running", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+
+    controller.isStreaming = true;
+
+    const startSpy = vi.spyOn(controller, "startListenCapture").mockImplementation(async () => {});
+
+    await controller.startListenCaptureFromCommand();
+
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(stub.systemMessages).not.toContainEqual({
+      text: "wait for the assistant to finish before recording",
       kind: "warn",
     });
   });

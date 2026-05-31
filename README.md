@@ -399,7 +399,7 @@ the compact commands are manual and useful when you want to force a reset. they 
 
 the prune commands drop bash tool results from the active context without summarizing and compact edit call payloads/results. all three accept an optional fraction between `0` and `1` (for example, `/prune:largest 0.4`) and default to `0.25` when omitted. `/prune:smart` also accepts optional guidance text, either after a fraction (for example, `/prune:smart 0.3 keep only repetitive output`) or by itself (for example, `/prune:smart keep build logs`).
 
-`/listen` (or `ctrl+y`) starts microphone recording on macOS. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor. recording also auto-stops after 5 minutes. on Linux, `/listen` is currently unavailable and tau shows a warning.
+`/listen` (or `ctrl+y`) starts microphone recording on macOS, including while the assistant is working. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor. `esc` stops recording first without interrupting the assistant; press it again to interrupt active work. recording also auto-stops after 5 minutes. on Linux, `/listen` is currently unavailable and tau shows a warning.
 
 `/speak` rewrites the last assistant message into naturally speakable text with Gemini 3.5 Flash, synthesizes audio with Gemini 3.1 Flash TTS, and starts playing on macOS at 1.4x speed as soon as the first speech chunk is ready.
 

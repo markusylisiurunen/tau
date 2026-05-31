@@ -403,6 +403,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     autocompleteDescription: "start voice recording",
     argument: "none",
     section: "base",
+    allowDuringStreaming: true,
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/listen") return null;

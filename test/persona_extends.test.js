@@ -149,10 +149,16 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
+      expect(personas.find((persona) => persona.id === "gpt-5.3-codex-chat")?.model.provider).toBe(
+        "openai",
+      );
+      expect(personas.find((persona) => persona.id === "gpt-5.3-codex-coder")?.model.provider).toBe(
+        "openai",
+      );
+      expect(personas.find((persona) => persona.id === "gpt-5.3-codex-chatgpt")).toBeUndefined();
       expect(
-        personas.find((persona) => persona.id === "gpt-5.3-codex-fast-chatgpt")?.settings
-          .serviceTier,
-      ).toBe("priority");
+        personas.find((persona) => persona.id === "gpt-5.3-codex-fast-chatgpt"),
+      ).toBeUndefined();
       expect(
         personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-chat")?.settings
           .serviceTier,

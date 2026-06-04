@@ -893,6 +893,93 @@ describe("async telegram adapter", () => {
     }
   });
 
+  it("transcribes voice messages with Gemini when configured", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 211, type: "private" },
+            from: { id: 7 },
+            text: "/use s22",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 211, type: "private" },
+            from: { id: 7 },
+            voice: {
+              file_id: "voice-456",
+              mime_type: "audio/ogg",
+            },
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s22",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(211) },
+    );
+
+    const geminiFetch = vi.fn(async () =>
+      createJsonResponse({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    transcription: "use google transcription",
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      speechToTextProvider: "gemini",
+      geminiApiKey: "gemini-key",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      fetchImpl: geminiFetch,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+      expect(apiHarness.downloadFileCalls).toEqual(["voice-456"]);
+      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
+        "s22",
+        "use google transcription",
+        undefined,
+      );
+      expect(geminiFetch).toHaveBeenCalledTimes(1);
+      const request = JSON.parse(geminiFetch.mock.calls[0][1].body);
+      expect(request.generationConfig.responseMimeType).toBe("application/json");
+      expect(request.generationConfig.responseSchema.required).toEqual(["transcription"]);
+      expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe("minimal");
+      expect(request.contents[0].parts[1].inlineData.mimeType).toBe("audio/ogg");
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("supports /close all for waiting-input and failed sessions", async () => {
     const apiHarness = createApiHarness([
       [

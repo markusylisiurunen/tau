@@ -17,10 +17,13 @@ export type {
   AsyncServerTelegramConfig,
   Config,
   NormalizedAutoCompactConfig,
+  SpeechToTextConfig,
+  SpeechToTextProvider,
 } from "./schema.js";
 export {
   DEFAULT_AUTO_COMPACT_CONFIG,
   getApiKeyForProvider,
+  getGoogleApiKey,
   getMistralApiKey,
   getParallelApiKey,
   loadConfig,

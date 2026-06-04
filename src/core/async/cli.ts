@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createDefaultConfigDeps } from "../config/deps.js";
 import type { Config } from "../config/schema.js";
-import { getMistralApiKey, loadConfig } from "../config/schema.js";
+import { getGoogleApiKey, getMistralApiKey, loadConfig } from "../config/schema.js";
 import { AsyncDaemonRuntimeError, startAsyncDaemonRuntime } from "./daemon_runtime.js";
 import { AsyncDaemonConfigError, loadAsyncDaemonConfig } from "./server_config.js";
 import { createAsyncSessionManager } from "./session_manager.js";
@@ -597,6 +597,8 @@ async function runDaemon(args: {
   }
 
   const authToken = getTrimmedEnvValue("TAU_ASYNC_AUTH_TOKEN", args.env) ?? daemonConfig.authToken;
+  const speechToTextProvider = args.config.speechToText?.provider ?? "mistral";
+  const geminiApiKey = getGoogleApiKey(args.config, args.env);
   const mistralApiKey = getMistralApiKey(args.config, args.env);
 
   if (!authToken) {
@@ -626,6 +628,8 @@ async function runDaemon(args: {
     runtime = await startAsyncDaemonRuntime({
       daemonConfig,
       authToken,
+      speechToTextProvider,
+      geminiApiKey,
       mistralApiKey,
       sessionManager,
       onLog: args.stdout,

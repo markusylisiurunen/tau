@@ -1,3 +1,4 @@
+import type { SpeechToTextProvider } from "../config/schema.js";
 import { type AsyncCronScheduler, startAsyncCronScheduler } from "./cron.js";
 import { type AsyncHttpServerHandle, startAsyncHttpServer } from "./http_server.js";
 import type { AsyncDaemonConfig } from "./server_config.js";
@@ -13,6 +14,8 @@ type AsyncDaemonRuntimeDependencies = {
 export type StartAsyncDaemonRuntimeOptions = {
   daemonConfig: AsyncDaemonConfig;
   authToken: string;
+  speechToTextProvider?: SpeechToTextProvider;
+  geminiApiKey?: string;
   mistralApiKey?: string;
   sessionManager: AsyncSessionManager;
   onLog?: (line: string) => void;
@@ -138,6 +141,8 @@ export async function startAsyncDaemonRuntime(
         allowedChatIds: telegramConfig.allowedChatIds,
         pollIntervalMs: telegramConfig.pollIntervalMs,
         requestTimeoutSeconds: telegramConfig.requestTimeoutSeconds,
+        speechToTextProvider: options.speechToTextProvider,
+        geminiApiKey: options.geminiApiKey,
         mistralApiKey: options.mistralApiKey,
         sessionManager: options.sessionManager,
         onLog: (entry) => {

@@ -20,6 +20,9 @@ type TelegramChat = {
 
 type TelegramUser = {
   id: number;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
 };
 
 type TelegramMessage = {
@@ -75,12 +78,17 @@ type TelegramUpdate = {
 
 type TelegramAllowedUpdates = readonly string[];
 
+type TelegramBotInfo = {
+  username: string;
+};
+
 type TelegramBotCommand = {
   command: string;
   description: string;
 };
 
 export type AsyncTelegramApi = {
+  getMe(): Promise<TelegramBotInfo>;
   getUpdates(args: {
     offset: number;
     timeoutSeconds: number;
@@ -169,6 +177,29 @@ type TelegramMaterializedAttachment = {
   caption?: string;
 };
 
+type TelegramAttachmentQueueResult = {
+  attachments: TelegramMaterializedAttachment[];
+  errors: string[];
+};
+
+type TelegramAudioTranscriptionResult = {
+  transcript?: string;
+  error?: string;
+};
+
+type TelegramGroupPendingMessage = {
+  sender: string;
+  text?: string;
+  audioTranscript?: string;
+  attachments?: TelegramMaterializedAttachment[];
+  errors?: string[];
+};
+
+type ResolvedAsyncTelegramAdapterOptions = AsyncTelegramAdapterOptions & {
+  api: AsyncTelegramApi;
+  botUsername: string;
+};
+
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
 const MAX_COMMAND_PREVIEW_CHARS = 128;
@@ -194,6 +225,7 @@ const MAX_SESSION_PREVIEW_CHARS = 64;
 const MAX_TELEGRAM_ATTACHMENTS_PER_TURN = 10;
 const MAX_TELEGRAM_ATTACHMENT_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
+const MAX_TELEGRAM_GROUP_PENDING_MESSAGES = 50;
 const TELEGRAM_ATTACHMENT_TEMP_DIR_PREFIX = "tau-telegram-attachments-";
 const NO_ACTIVE_SESSION_MESSAGE = "no active session. use /new or /sessions";
 
@@ -306,6 +338,99 @@ function stripCommandMention(command: string): string {
     return command;
   }
   return command.slice(0, mentionIndex);
+}
+
+function normalizeTelegramUsername(username: string): string {
+  return username.trim().replace(/^@+/, "").toLowerCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasTelegramMention(text: string, username: string): boolean {
+  const normalizedUsername = normalizeTelegramUsername(username);
+  if (!normalizedUsername) {
+    return false;
+  }
+
+  const mentionPattern = new RegExp(
+    `(^|[^A-Za-z0-9_])@${escapeRegExp(normalizedUsername)}(?=$|[^A-Za-z0-9_])`,
+    "i",
+  );
+  return mentionPattern.test(text);
+}
+
+function stripTelegramMention(text: string, username: string): string {
+  const normalizedUsername = normalizeTelegramUsername(username);
+  if (!normalizedUsername) {
+    return text.trim();
+  }
+
+  const mentionPattern = new RegExp(
+    `(^|[^A-Za-z0-9_])@${escapeRegExp(normalizedUsername)}(?=$|[^A-Za-z0-9_])`,
+    "gi",
+  );
+  return text
+    .replace(mentionPattern, (_match, prefix: string) => prefix)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getCommandMention(command: string): string | undefined {
+  if (!command.startsWith("/")) {
+    return undefined;
+  }
+
+  const mentionIndex = command.indexOf("@");
+  if (mentionIndex === -1) {
+    return undefined;
+  }
+
+  const mention = normalizeTelegramUsername(command.slice(mentionIndex + 1));
+  return mention || undefined;
+}
+
+function isTelegramMentionToken(part: string, username: string): boolean {
+  return normalizeTelegramUsername(part) === username;
+}
+
+function getMentionedGroupCommandText(text: string, username: string): string | undefined {
+  const parts = splitCommandText(text);
+  const first = parts[0];
+  if (!first) {
+    return undefined;
+  }
+
+  if (first.startsWith("/")) {
+    const commandMention = getCommandMention(first);
+    if (commandMention && commandMention !== username) {
+      return undefined;
+    }
+
+    const mentionIndex = parts.findIndex((part) => isTelegramMentionToken(part, username));
+    if (commandMention === username || mentionIndex !== -1) {
+      return parts.filter((_part, index) => index !== mentionIndex).join(" ");
+    }
+
+    return undefined;
+  }
+
+  if (!isTelegramMentionToken(first, username)) {
+    return undefined;
+  }
+
+  const command = parts[1];
+  if (!command?.startsWith("/")) {
+    return undefined;
+  }
+
+  const commandMention = getCommandMention(command);
+  if (commandMention && commandMention !== username) {
+    return undefined;
+  }
+
+  return parts.slice(1).join(" ");
 }
 
 function truncateText(text: string, maxChars: number): string {
@@ -488,6 +613,32 @@ function describeAttachment(fileName: string, mimeType: string): string {
   return "attachment";
 }
 
+function formatTelegramSender(user: TelegramUser | undefined): string {
+  if (!user) {
+    return "unknown sender";
+  }
+
+  const firstName = user.first_name?.trim() ?? "";
+  const lastName = user.last_name?.trim() ?? "";
+  const fullName = [firstName, lastName].filter(Boolean).join(" ");
+  const username = user.username?.trim().replace(/^@+/, "");
+  const usernameLabel = username ? `@${username}` : undefined;
+
+  if (fullName && usernameLabel) {
+    return `${fullName} (${usernameLabel}, id ${user.id})`;
+  }
+
+  if (fullName) {
+    return `${fullName} (id ${user.id})`;
+  }
+
+  if (usernameLabel) {
+    return `${usernameLabel} (id ${user.id})`;
+  }
+
+  return `id ${user.id}`;
+}
+
 function describeSession(
   session: AsyncSessionRecord,
   details: {
@@ -542,7 +693,12 @@ const TelegramEnvelopeSchema = z.discriminatedUnion("ok", [
 ]);
 
 const TelegramChatSchema = telegramObject({ id: z.number(), type: z.string() });
-const TelegramUserSchema = telegramObject({ id: z.number() });
+const TelegramUserSchema = telegramPartialObject({
+  id: z.number(),
+  first_name: z.string(),
+  last_name: z.string(),
+  username: z.string(),
+}).required({ id: true });
 const TELEGRAM_FILE_SHAPE = {
   file_id: z.string(),
   file_name: z.string(),
@@ -592,6 +748,7 @@ const TelegramUpdateSchema = telegramPartialObject({
 
 const TelegramGetUpdatesResultSchema = z.array(TelegramUpdateSchema);
 const TelegramGetFileResultSchema = z.object({ file_path: z.string() });
+const TelegramGetMeResultSchema = telegramObject({ username: z.string() });
 const TelegramAckResultSchema = z.literal(true);
 
 function createTelegramApi(botToken: string): AsyncTelegramApi {
@@ -641,6 +798,9 @@ function createTelegramApi(botToken: string): AsyncTelegramApi {
   }
 
   return {
+    async getMe() {
+      return callTelegramMethod("getMe", {}, TelegramGetMeResultSchema);
+    },
     async getUpdates(args) {
       return callTelegramMethod(
         "getUpdates",
@@ -725,6 +885,7 @@ class AsyncTelegramAdapterImpl {
   private readonly systemMessage?: string;
   private readonly allowedUserIds?: Set<number>;
   private readonly allowedChatIds?: Set<number>;
+  private readonly botUsername: string;
   private readonly pollIntervalMs: number;
   private readonly requestTimeoutSeconds: number;
   private readonly mistralApiKey?: string;
@@ -747,6 +908,7 @@ class AsyncTelegramAdapterImpl {
   private readonly lastAssistantMessageBySession = new Map<string, string>();
   private readonly latestAssistantMessageByRun = new Map<string, string>();
   private readonly pendingAttachmentsBySession = new Map<string, TelegramPendingAttachment[]>();
+  private readonly pendingGroupMessagesByChat = new Map<number, TelegramGroupPendingMessage[]>();
   private readonly pendingAttachmentTempDirBySession = new Map<string, string>();
   private readonly attachmentTempDirsBySession = new Map<string, Set<string>>();
   private readonly updateQueueTailByKey = new Map<string, Promise<void>>();
@@ -758,7 +920,7 @@ class AsyncTelegramAdapterImpl {
   private nextUpdateOffset = 0;
   private closed = false;
 
-  constructor(options: AsyncTelegramAdapterOptions) {
+  constructor(options: ResolvedAsyncTelegramAdapterOptions) {
     const botId = options.botId.trim();
     if (!botId) {
       throw new Error("telegram bot id must be a non-empty string");
@@ -775,6 +937,7 @@ class AsyncTelegramAdapterImpl {
       options.allowedChatIds && options.allowedChatIds.length > 0
         ? new Set(options.allowedChatIds)
         : undefined;
+    this.botUsername = options.botUsername;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
     this.mistralApiKey = options.mistralApiKey?.trim() || undefined;
@@ -782,7 +945,7 @@ class AsyncTelegramAdapterImpl {
     this.enforceChatOwnership = true;
     this.botOwnerPrefix = `telegram:${botId}`;
     this.allowedProjectIds = Object.keys(options.projects);
-    this.api = options.api ?? createTelegramApi(options.botToken);
+    this.api = options.api;
     this.fetchImpl = options.fetchImpl;
     this.onLog = options.onLog;
     this.commandDefinitions = this.createCommandDefinitions();
@@ -1068,60 +1231,158 @@ class AsyncTelegramAdapterImpl {
   private async handleUpdate(update: TelegramUpdate): Promise<void> {
     const message = update.message;
     if (message) {
-      const chat = message.chat;
-      if (chat?.type !== "private") {
-        return;
-      }
-
-      const chatId = chat.id;
-      if (!this.isChatAllowed(chatId)) {
-        return;
-      }
-
-      const userId = message.from?.id;
-      if (!this.isUserAllowed(userId)) {
-        return;
-      }
-
-      const text = typeof message.text === "string" ? message.text.trim() : "";
-      const isCommand = text.startsWith("/");
-
-      if (!isCommand) {
-        await this.queueMessageAttachments(chatId, message);
-      }
-
-      if (text) {
-        if (isCommand) {
-          await this.handleCommand(chatId, text);
-          return;
-        }
-
-        await this.handleMessage(chatId, text, message.message_id);
-        return;
-      }
-
-      const audioMessage = this.parseAudioMessage(message);
-      if (!audioMessage) {
-        return;
-      }
-
-      await this.handleAudioMessage(chatId, audioMessage, message.message_id);
+      await this.handleMessageUpdate(message);
       return;
     }
 
     const callbackQuery = update.callback_query;
-    if (!callbackQuery) {
+    if (callbackQuery) {
+      await this.handleCallbackQueryUpdate(callbackQuery);
+    }
+  }
+
+  private async handleMessageUpdate(message: TelegramMessage): Promise<void> {
+    const chat = message.chat;
+    if (!chat) {
       return;
     }
 
+    if (chat.type === "private") {
+      await this.handlePrivateMessage(chat.id, message);
+      return;
+    }
+
+    if (chat.type === "group" || chat.type === "supergroup") {
+      await this.handleGroupMessage(chat.id, message);
+    }
+  }
+
+  private async handlePrivateMessage(chatId: number, message: TelegramMessage): Promise<void> {
+    if (!this.isChatAllowed(chatId)) {
+      return;
+    }
+
+    const userId = message.from?.id;
+    if (!this.isUserAllowed(userId)) {
+      return;
+    }
+
+    const text = typeof message.text === "string" ? message.text.trim() : "";
+    const isCommand = text.startsWith("/");
+
+    if (!isCommand) {
+      await this.queueMessageAttachments(chatId, message);
+    }
+
+    if (text) {
+      if (isCommand) {
+        await this.handleCommand(chatId, text);
+        return;
+      }
+
+      await this.handleMessage(chatId, text, message.message_id);
+      return;
+    }
+
+    const audioMessage = this.parseAudioMessage(message);
+    if (!audioMessage) {
+      return;
+    }
+
+    await this.handleAudioMessage(chatId, audioMessage, message.message_id);
+  }
+
+  private async handleGroupMessage(chatId: number, message: TelegramMessage): Promise<void> {
+    if (!this.isGroupChatAllowed(chatId)) {
+      return;
+    }
+
+    const text = typeof message.text === "string" ? message.text.trim() : "";
+    const caption = typeof message.caption === "string" ? message.caption.trim() : "";
+    const contentText = text || caption;
+
+    const groupCommandText = getMentionedGroupCommandText(text, this.botUsername);
+    if (groupCommandText) {
+      if (!this.isUserAllowed(message.from?.id)) {
+        return;
+      }
+
+      await this.handleCommand(chatId, groupCommandText);
+      return;
+    }
+
+    if (text.startsWith("/")) {
+      this.bufferGroupMessage(chatId, message, text);
+      return;
+    }
+
+    const attachmentResult = await this.queueMessageAttachments(chatId, message, { silent: true });
+    const audioMessage = this.parseAudioMessage(message);
+    const audioResult: TelegramAudioTranscriptionResult = audioMessage
+      ? await this.transcribeTelegramAudio(chatId, audioMessage, { silent: true })
+      : {};
+    const errors = [...attachmentResult.errors, ...(audioResult.error ? [audioResult.error] : [])];
+
+    if (!contentText && !audioResult.transcript && errors.length === 0) {
+      this.bufferGroupMessage(
+        chatId,
+        message,
+        undefined,
+        undefined,
+        attachmentResult.attachments,
+        errors,
+      );
+      return;
+    }
+
+    if (!hasTelegramMention(contentText, this.botUsername)) {
+      this.bufferGroupMessage(
+        chatId,
+        message,
+        contentText,
+        audioResult.transcript,
+        attachmentResult.attachments,
+        errors,
+      );
+      return;
+    }
+
+    if (!this.isUserAllowed(message.from?.id)) {
+      this.bufferGroupMessage(
+        chatId,
+        message,
+        contentText,
+        audioResult.transcript,
+        attachmentResult.attachments,
+        errors,
+      );
+      return;
+    }
+
+    const triggerText = stripTelegramMention(contentText, this.botUsername);
+    await this.handleGroupTriggeredMessage(
+      chatId,
+      message,
+      triggerText,
+      message.message_id,
+      attachmentResult.attachments,
+      audioResult.transcript,
+      errors,
+    );
+  }
+
+  private async handleCallbackQueryUpdate(callbackQuery: TelegramCallbackQuery): Promise<void> {
     const chat = callbackQuery.message?.chat;
-    if (chat?.type !== "private") {
+    if (!chat) {
       await this.answerCallbackQuery(callbackQuery.id);
       return;
     }
 
-    const chatId = chat.id;
-    if (!this.isChatAllowed(chatId)) {
+    const isAllowedChat =
+      chat.type === "private"
+        ? this.isChatAllowed(chat.id)
+        : (chat.type === "group" || chat.type === "supergroup") && this.isGroupChatAllowed(chat.id);
+    if (!isAllowedChat) {
       await this.answerCallbackQuery(callbackQuery.id);
       return;
     }
@@ -1137,7 +1398,7 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    const callbackHandled = await this.handleCallback(chatId, callbackData);
+    const callbackHandled = await this.handleCallback(chat.id, callbackData);
     await this.answerCallbackQuery(callbackQuery.id, callbackHandled ? "done" : undefined);
   }
 
@@ -1163,7 +1424,12 @@ class AsyncTelegramAdapterImpl {
     };
   }
 
-  private async queueMessageAttachments(chatId: number, message: TelegramMessage): Promise<void> {
+  private async queueMessageAttachments(
+    chatId: number,
+    message: TelegramMessage,
+    options: { silent?: boolean } = {},
+  ): Promise<TelegramAttachmentQueueResult> {
+    const result: TelegramAttachmentQueueResult = { attachments: [], errors: [] };
     const caption = typeof message.caption === "string" ? message.caption.trim() : "";
     const attachmentCaption = caption || undefined;
     const parsedAttachments: TelegramAttachmentDescriptor[] = [];
@@ -1203,10 +1469,12 @@ class AsyncTelegramAdapterImpl {
         DEFAULT_TELEGRAM_DOCUMENT_MIME_TYPE;
 
       if (!isSupportedDocumentAttachment(mimeType, fileName)) {
-        await this.reply(
-          chatId,
-          `skipped attachment ${describeAttachment(fileName, mimeType)}: unsupported file type`,
-        );
+        const errorMessage = `skipped attachment ${describeAttachment(fileName, mimeType)}: unsupported file type`;
+        if (options.silent) {
+          result.errors.push(errorMessage);
+        } else {
+          await this.reply(chatId, errorMessage);
+        }
       } else {
         parsedAttachments.push({
           fileId: documentFileId,
@@ -1219,12 +1487,17 @@ class AsyncTelegramAdapterImpl {
     }
 
     if (parsedAttachments.length === 0) {
-      return;
+      return result;
     }
 
-    const session = await this.requireActiveOrSingleSession(chatId);
+    const session = options.silent
+      ? this.getActiveOrSingleSession(chatId)
+      : await this.requireActiveOrSingleSession(chatId);
     if (!session) {
-      return;
+      if (options.silent) {
+        result.errors.push(NO_ACTIVE_SESSION_MESSAGE);
+      }
+      return result;
     }
 
     const pending = this.pendingAttachmentsBySession.get(session.id) ?? [];
@@ -1235,11 +1508,12 @@ class AsyncTelegramAdapterImpl {
     for (const attachment of parsedAttachments) {
       const attachmentLabel = describeAttachment(attachment.fileName, attachment.mimeType);
       if (pending.length >= MAX_TELEGRAM_ATTACHMENTS_PER_TURN) {
-        await this.replySkippedAttachment(
-          chatId,
-          attachmentLabel,
-          `exceeds attachment limit (${MAX_TELEGRAM_ATTACHMENTS_PER_TURN} files per turn)`,
-        );
+        const reason = `exceeds attachment limit (${MAX_TELEGRAM_ATTACHMENTS_PER_TURN} files per turn)`;
+        if (options.silent) {
+          result.errors.push(`skipped attachment ${attachmentLabel}: ${reason}`);
+        } else {
+          await this.replySkippedAttachment(chatId, attachmentLabel, reason);
+        }
         continue;
       }
 
@@ -1248,7 +1522,11 @@ class AsyncTelegramAdapterImpl {
           ? this.getAttachmentPerFileLimitReason(attachment.sizeBytes)
           : undefined;
       if (declaredFileLimitReason) {
-        await this.replySkippedAttachment(chatId, attachmentLabel, declaredFileLimitReason);
+        if (options.silent) {
+          result.errors.push(`skipped attachment ${attachmentLabel}: ${declaredFileLimitReason}`);
+        } else {
+          await this.replySkippedAttachment(chatId, attachmentLabel, declaredFileLimitReason);
+        }
         continue;
       }
 
@@ -1257,7 +1535,11 @@ class AsyncTelegramAdapterImpl {
           ? this.getAttachmentTotalLimitReason(totalSizeBytes, attachment.sizeBytes)
           : undefined;
       if (declaredTotalLimitReason) {
-        await this.replySkippedAttachment(chatId, attachmentLabel, declaredTotalLimitReason);
+        if (options.silent) {
+          result.errors.push(`skipped attachment ${attachmentLabel}: ${declaredTotalLimitReason}`);
+        } else {
+          await this.replySkippedAttachment(chatId, attachmentLabel, declaredTotalLimitReason);
+        }
         continue;
       }
 
@@ -1265,23 +1547,33 @@ class AsyncTelegramAdapterImpl {
       try {
         bytes = await this.api.downloadFile(attachment.fileId);
       } catch (error) {
-        await this.reply(
-          chatId,
-          `failed to download attachment ${attachmentLabel}: ${this.formatManagerError(error)}`,
-        );
+        const errorMessage = `failed to download attachment ${attachmentLabel}: ${this.formatManagerError(error)}`;
+        if (options.silent) {
+          result.errors.push(errorMessage);
+        } else {
+          await this.reply(chatId, errorMessage);
+        }
         continue;
       }
 
       const sizeBytes = bytes.byteLength;
       const fileLimitReason = this.getAttachmentPerFileLimitReason(sizeBytes);
       if (fileLimitReason) {
-        await this.replySkippedAttachment(chatId, attachmentLabel, fileLimitReason);
+        if (options.silent) {
+          result.errors.push(`skipped attachment ${attachmentLabel}: ${fileLimitReason}`);
+        } else {
+          await this.replySkippedAttachment(chatId, attachmentLabel, fileLimitReason);
+        }
         continue;
       }
 
       const totalLimitReason = this.getAttachmentTotalLimitReason(totalSizeBytes, sizeBytes);
       if (totalLimitReason) {
-        await this.replySkippedAttachment(chatId, attachmentLabel, totalLimitReason);
+        if (options.silent) {
+          result.errors.push(`skipped attachment ${attachmentLabel}: ${totalLimitReason}`);
+        } else {
+          await this.replySkippedAttachment(chatId, attachmentLabel, totalLimitReason);
+        }
         continue;
       }
 
@@ -1292,13 +1584,21 @@ class AsyncTelegramAdapterImpl {
       try {
         await writeFile(filePath, bytes);
       } catch (error) {
-        await this.reply(
-          chatId,
-          `failed to materialize attachment ${attachmentLabel}: ${this.formatManagerError(error)}`,
-        );
+        const errorMessage = `failed to materialize attachment ${attachmentLabel}: ${this.formatManagerError(error)}`;
+        if (options.silent) {
+          result.errors.push(errorMessage);
+        } else {
+          await this.reply(chatId, errorMessage);
+        }
         continue;
       }
 
+      const materializedAttachment: TelegramMaterializedAttachment = {
+        path: filePath,
+        mimeType: attachment.mimeType,
+        sizeBytes,
+        ...(attachment.caption ? { caption: attachment.caption } : {}),
+      };
       pending.push({
         fileId: attachment.fileId,
         fileName: attachment.fileName,
@@ -1310,6 +1610,7 @@ class AsyncTelegramAdapterImpl {
           sizeBytes,
         },
       });
+      result.attachments.push(materializedAttachment);
 
       totalSizeBytes += sizeBytes;
     }
@@ -1317,6 +1618,8 @@ class AsyncTelegramAdapterImpl {
     if (pending.length > 0) {
       this.pendingAttachmentsBySession.set(session.id, pending);
     }
+
+    return result;
   }
 
   private async buildMessageTextWithAttachments(
@@ -1329,7 +1632,20 @@ class AsyncTelegramAdapterImpl {
       return text;
     }
 
-    return [this.formatAttachmentBlock(attachments), text].join("\n\n");
+    const attachmentBlock = this.formatAttachmentBlock(attachments);
+    const systemEndIndex = text.startsWith("<system>") ? text.indexOf("</system>") : -1;
+    if (systemEndIndex !== -1) {
+      const systemBlockEnd = systemEndIndex + "</system>".length;
+      return [
+        text.slice(0, systemBlockEnd),
+        attachmentBlock,
+        text.slice(systemBlockEnd).trimStart(),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    }
+
+    return [attachmentBlock, text].join("\n\n");
   }
 
   private formatAttachmentBlock(attachments: TelegramMaterializedAttachment[]): string {
@@ -1455,6 +1771,10 @@ class AsyncTelegramAdapterImpl {
       return true;
     }
     return this.allowedChatIds.has(chatId);
+  }
+
+  private isGroupChatAllowed(chatId: number): boolean {
+    return this.allowedChatIds?.has(chatId) ?? false;
   }
 
   private isUserAllowed(userId: number | undefined): boolean {
@@ -1902,22 +2222,190 @@ class AsyncTelegramAdapterImpl {
     }
   }
 
-  private async handleAudioMessage(
+  private async handleGroupTriggeredMessage(
     chatId: number,
-    message: TelegramAudioMessage,
+    message: TelegramMessage,
+    triggerText: string,
     sourceMessageId?: number,
+    attachments: TelegramMaterializedAttachment[] = [],
+    audioTranscript?: string,
+    errors: string[] = [],
   ): Promise<void> {
     const session = await this.requireActiveOrSingleSession(chatId);
     if (!session) {
       return;
     }
 
-    if (!this.mistralApiKey) {
-      await this.reply(
+    try {
+      const text = this.formatGroupTurnText(
         chatId,
-        "set MISTRAL_API_KEY or apiKeys.mistral to transcribe Telegram audio",
+        message,
+        triggerText,
+        attachments,
+        audioTranscript,
+        errors,
       );
+      const processingErrors = this.collectGroupProcessingErrors(chatId, errors);
+      await this.submitSessionMessage(chatId, session.id, text, sourceMessageId, {
+        includePendingAttachments: false,
+      });
+      this.pendingGroupMessagesByChat.delete(chatId);
+      await this.notifyGroupProcessingErrors(chatId, processingErrors);
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
+    }
+  }
+
+  private bufferGroupMessage(
+    chatId: number,
+    message: TelegramMessage,
+    text?: string,
+    audioTranscript?: string,
+    attachments: TelegramMaterializedAttachment[] = [],
+    errors: string[] = [],
+  ): void {
+    const trimmedText = text?.trim();
+    const trimmedAudioTranscript = audioTranscript?.trim();
+    if (
+      !trimmedText &&
+      !trimmedAudioTranscript &&
+      attachments.length === 0 &&
+      errors.length === 0
+    ) {
       return;
+    }
+
+    const pending = this.pendingGroupMessagesByChat.get(chatId) ?? [];
+    pending.push({
+      sender: formatTelegramSender(message.from),
+      ...(trimmedText ? { text: trimmedText } : {}),
+      ...(trimmedAudioTranscript ? { audioTranscript: trimmedAudioTranscript } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
+      ...(errors.length > 0 ? { errors } : {}),
+    });
+
+    if (pending.length > MAX_TELEGRAM_GROUP_PENDING_MESSAGES) {
+      pending.splice(0, pending.length - MAX_TELEGRAM_GROUP_PENDING_MESSAGES);
+    }
+
+    this.pendingGroupMessagesByChat.set(chatId, pending);
+  }
+
+  private collectGroupProcessingErrors(chatId: number, triggerErrors: string[]): string[] {
+    const pending = this.pendingGroupMessagesByChat.get(chatId) ?? [];
+    return [...pending.flatMap((message) => message.errors ?? []), ...triggerErrors];
+  }
+
+  private async notifyGroupProcessingErrors(chatId: number, errors: string[]): Promise<void> {
+    if (errors.length === 0) {
+      return;
+    }
+
+    const visibleErrors = errors.slice(0, 5).map((error) => `- ${truncateText(error, 160)}`);
+    if (errors.length > visibleErrors.length) {
+      visibleErrors.push(`- and ${errors.length - visibleErrors.length} more`);
+    }
+
+    await this.reply(
+      chatId,
+      ["some Telegram group context could not be processed:", ...visibleErrors].join("\n"),
+    );
+  }
+
+  private formatGroupTurnText(
+    chatId: number,
+    message: TelegramMessage,
+    triggerText: string,
+    triggerAttachments: TelegramMaterializedAttachment[] = [],
+    triggerAudioTranscript?: string,
+    triggerErrors: string[] = [],
+  ): string {
+    const pending = this.pendingGroupMessagesByChat.get(chatId) ?? [];
+    const lines: string[] = [
+      "<system>",
+      pending.length > 0
+        ? "This message came from a Telegram group chat. The <telegram-group-context> block contains recent non-triggering group messages, attachments, audio transcripts, and processing errors since the previous bot-triggering turn. Use it as background context only. The <telegram-trigger-message> block is the message that explicitly mentioned the bot and triggered this turn. Respond to the trigger message."
+        : "This message came from a Telegram group chat. The <telegram-trigger-message> block is the message that explicitly mentioned the bot and triggered this turn. Respond to the trigger message.",
+      "</system>",
+      "",
+    ];
+
+    if (pending.length > 0) {
+      lines.push("<telegram-group-context>");
+      for (const [index, pendingMessage] of pending.entries()) {
+        lines.push(`${index + 1}. sender: ${pendingMessage.sender}`);
+        if (pendingMessage.text) {
+          lines.push(`   text: ${JSON.stringify(pendingMessage.text)}`);
+        }
+        if (pendingMessage.audioTranscript) {
+          lines.push(`   audio_transcript: ${JSON.stringify(pendingMessage.audioTranscript)}`);
+        }
+        this.pushIndentedErrorLines(lines, pendingMessage.errors, "   ");
+        this.pushIndentedAttachmentLines(lines, pendingMessage.attachments, "   ");
+      }
+      lines.push("</telegram-group-context>");
+      lines.push("");
+    }
+
+    lines.push("<telegram-trigger-message>");
+    lines.push(`sender: ${formatTelegramSender(message.from)}`);
+    lines.push(`text: ${JSON.stringify(triggerText)}`);
+    if (triggerAudioTranscript) {
+      lines.push(`audio_transcript: ${JSON.stringify(triggerAudioTranscript)}`);
+    }
+    this.pushIndentedErrorLines(lines, triggerErrors, "");
+    this.pushIndentedAttachmentLines(lines, triggerAttachments, "");
+    lines.push("</telegram-trigger-message>");
+
+    return lines.join("\n");
+  }
+
+  private pushIndentedErrorLines(
+    lines: string[],
+    errors: string[] | undefined,
+    indent: string,
+  ): void {
+    if (!errors || errors.length === 0) {
+      return;
+    }
+
+    lines.push(`${indent}errors:`);
+    for (const error of errors) {
+      lines.push(`${indent}- ${JSON.stringify(error)}`);
+    }
+  }
+
+  private pushIndentedAttachmentLines(
+    lines: string[],
+    attachments: TelegramMaterializedAttachment[] | undefined,
+    indent: string,
+  ): void {
+    if (!attachments || attachments.length === 0) {
+      return;
+    }
+
+    lines.push(`${indent}attachments:`);
+    for (const attachment of attachments) {
+      lines.push(`${indent}- path: ${attachment.path}`);
+      lines.push(`${indent}  mime: ${attachment.mimeType}`);
+      lines.push(`${indent}  size_bytes: ${attachment.sizeBytes}`);
+      if (attachment.caption) {
+        lines.push(`${indent}  caption: ${JSON.stringify(attachment.caption)}`);
+      }
+    }
+  }
+
+  private async transcribeTelegramAudio(
+    chatId: number,
+    message: TelegramAudioMessage,
+    options: { silent?: boolean } = {},
+  ): Promise<TelegramAudioTranscriptionResult> {
+    if (!this.mistralApiKey) {
+      const error = "set MISTRAL_API_KEY or apiKeys.mistral to transcribe Telegram audio";
+      if (!options.silent) {
+        await this.reply(chatId, error);
+      }
+      return { error };
     }
 
     let transcript = "";
@@ -1933,17 +2421,41 @@ class AsyncTelegramAdapterImpl {
         })
       ).trim();
     } catch (error) {
-      await this.reply(chatId, `audio transcription failed: ${this.formatManagerError(error)}`);
-      return;
+      const errorMessage = `audio transcription failed: ${this.formatManagerError(error)}`;
+      if (!options.silent) {
+        await this.reply(chatId, errorMessage);
+      }
+      return { error: errorMessage };
     }
 
     if (!transcript) {
-      await this.reply(chatId, "audio transcription failed: transcription result was empty");
+      const error = "audio transcription failed: transcription result was empty";
+      if (!options.silent) {
+        await this.reply(chatId, error);
+      }
+      return { error };
+    }
+
+    return { transcript };
+  }
+
+  private async handleAudioMessage(
+    chatId: number,
+    message: TelegramAudioMessage,
+    sourceMessageId?: number,
+  ): Promise<void> {
+    const session = await this.requireActiveOrSingleSession(chatId);
+    if (!session) {
+      return;
+    }
+
+    const result = await this.transcribeTelegramAudio(chatId, message);
+    if (!result.transcript) {
       return;
     }
 
     try {
-      await this.submitSessionMessage(chatId, session.id, transcript, sourceMessageId);
+      await this.submitSessionMessage(chatId, session.id, result.transcript, sourceMessageId);
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
@@ -1976,8 +2488,12 @@ class AsyncTelegramAdapterImpl {
     sessionId: string,
     text: string,
     sourceMessageId?: number,
+    options: { includePendingAttachments?: boolean } = {},
   ): Promise<void> {
-    const textWithAttachments = await this.buildMessageTextWithAttachments(sessionId, text, chatId);
+    const textWithAttachments =
+      options.includePendingAttachments === false
+        ? text
+        : await this.buildMessageTextWithAttachments(sessionId, text, chatId);
     const sessionManager = this.getSessionManagerForChat(chatId);
     await sessionManager.sendMessage(
       sessionId,
@@ -2389,7 +2905,17 @@ export async function startAsyncTelegramAdapter(
   options: AsyncTelegramAdapterOptions,
 ): Promise<AsyncTelegramAdapterHandle> {
   await sweepStaleTelegramAttachmentTempDirs();
-  const adapter = new AsyncTelegramAdapterImpl(options);
+  const api = options.api ?? createTelegramApi(options.botToken);
+  const botUsername = normalizeTelegramUsername((await api.getMe()).username);
+  if (!botUsername) {
+    throw new Error("telegram bot username is missing");
+  }
+
+  const adapter = new AsyncTelegramAdapterImpl({
+    ...options,
+    api,
+    botUsername,
+  });
 
   return {
     close: () => adapter.close(),

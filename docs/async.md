@@ -177,13 +177,13 @@ Authorization: Bearer <token>
 
 Bearer tokens are checked with constant-time comparison. Missing/invalid tokens return `401`.
 
-## telegram dm adapter
+## telegram adapter
 
 Enable Telegram by setting at least one bot token in daemon config (`telegram.<botId>.botToken`) and running the daemon.
 
-The adapter uses long-polling and only handles private DM messages (`chat.type=private`).
+The adapter uses long-polling and handles private DMs plus opt-in group/supergroup chats whose chat IDs are listed in `allowedChatIds`.
 
-Supported DM commands:
+Supported commands:
 
 - `/help` (shows command usage and examples)
 - `/new [projectId]`
@@ -206,7 +206,9 @@ Supported DM commands:
 - `/quiet` (for the selected session, default mode, send only the run's final assistant message)
   - oversized Telegram replies are split into 95%-of-limit chunks (3891 bytes) and sent 1 second apart
 
-- plain text sends to the selected session (if no active session is selected and exactly one session exists, it is auto-selected)
+- in DMs, plain text sends to the selected session (if no active session is selected and exactly one session exists, it is auto-selected)
+- in allowed groups, only messages that explicitly mention the bot username (`@botusername`) trigger a turn; non-triggering text/caption messages, attachments, audio transcripts, and processing errors are buffered as sender-attributed context and the last 50 pending messages since the previous bot-triggering turn are included with the triggering turn. attachment/audio processing runs eagerly for buffered context, but processing errors are reported to Telegram only after a later bot-triggering message is accepted
+- group commands must mention the bot, for example `/sessions@botusername`, `/sessions @botusername`, or `@botusername /sessions`; each group has one shared chat-scoped session namespace and one selected session
 - Telegram `voice` and `audio` messages are downloaded, transcribed with Mistral, and then sent to the selected session
 - attachments (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`) are downloaded to local temp files immediately, queued per session, and prepended to the next text/voice turn as local temp paths with mime, size, and caption metadata
   - attachment-only messages do not trigger a turn
@@ -226,7 +228,7 @@ Optional per-bot allowlists:
 - `allowedUserIds`
 - `allowedChatIds`
 
-If `allowedProjectIds` is omitted, the bot can access all async projects. Sessions are chat-scoped within each bot: each DM chat can only see and control sessions it created, even for the same project. If `allowedUserIds` and `allowedChatIds` are provided, both must match for a DM to be processed.
+If `allowedProjectIds` is omitted, the bot can access all async projects. Sessions are chat-scoped within each bot: each DM chat can only see and control sessions it created, and each allowed group shares one chat-scoped session namespace. Group chats are ignored unless their chat ID is listed in `allowedChatIds`. If `allowedUserIds` is provided, it limits who can trigger turns, run commands, and use callbacks; group messages from other users can still be included as pending context.
 
 Telegram keeps one selected session per chat for command and plain-text input routing, but it continues streaming events for every session that has been selected in that chat.
 

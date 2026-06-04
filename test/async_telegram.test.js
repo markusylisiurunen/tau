@@ -39,7 +39,7 @@ function getRequestUrl(input) {
   return input.url;
 }
 
-function createApiHarness(updateBatches) {
+function createApiHarness(updateBatches, options = {}) {
   const queue = [...updateBatches];
   const sendMessages = [];
   const downloadFileCalls = [];
@@ -48,6 +48,7 @@ function createApiHarness(updateBatches) {
   const answerCallbackQueryCalls = [];
 
   const api = {
+    getMe: vi.fn(async () => ({ username: options.botUsername ?? "tau_bot" })),
     getUpdates: vi.fn(async () => {
       if (queue.length > 0) {
         return queue.shift();
@@ -268,6 +269,389 @@ describe("async telegram adapter", () => {
       expect(managerHarness.manager.listSessions).toHaveBeenCalledTimes(1);
       expect(apiHarness.sendMessages[0].chatId).toBe(20);
       expect(apiHarness.sendMessages[0].text).toContain("s1");
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("routes allowed group mentions with sender-attributed pending context", async () => {
+    const groupChatId = -1001;
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: groupChatId, type: "supergroup" },
+            from: { id: 7, first_name: "Ada", username: "ada" },
+            text: "we should update docs",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            message_id: 602,
+            chat: { id: groupChatId, type: "supergroup" },
+            from: { id: 8, first_name: "Grace", last_name: "Hopper", username: "grace" },
+            text: "@tau_bot please summarize",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s-group",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(groupChatId) },
+    );
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      allowedChatIds: [groupChatId],
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+      const sendMessageCall = managerHarness.manager.sendMessage.mock.calls[0];
+      expect(sendMessageCall[0]).toBe("s-group");
+      expect(sendMessageCall[1]).toContain("<system>");
+      expect(sendMessageCall[1]).toContain(
+        "recent non-triggering group messages, attachments, audio transcripts, and processing errors since the previous bot-triggering turn",
+      );
+      expect(sendMessageCall[1]).toContain("<telegram-group-context>");
+      expect(sendMessageCall[1]).toContain("sender: Ada (@ada, id 7)");
+      expect(sendMessageCall[1]).toContain('text: "we should update docs"');
+      expect(sendMessageCall[1]).toContain("<telegram-trigger-message>");
+      expect(sendMessageCall[1]).toContain("sender: Grace Hopper (@grace, id 8)");
+      expect(sendMessageCall[1]).toContain('text: "please summarize"');
+      expect(sendMessageCall[2]).toBe(undefined);
+      await waitFor(() =>
+        apiHarness.setMessageReactions.some(
+          (entry) => entry.chatId === groupChatId && entry.messageId === 602,
+        ),
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("includes group attachments and audio transcripts as pending context messages", async () => {
+    const groupChatId = -1002;
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 7, first_name: "Ada", username: "ada" },
+            photo: [{ file_id: "photo-1", file_size: 123, width: 100, height: 100 }],
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 8, first_name: "Alan", username: "alan" },
+            caption: "second image",
+            photo: [{ file_id: "photo-2", file_size: 234, width: 100, height: 100 }],
+          },
+        },
+        {
+          update_id: 3,
+          message: {
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 9, first_name: "Katherine", username: "kat" },
+            voice: { file_id: "voice-1", mime_type: "audio/ogg" },
+          },
+        },
+        {
+          update_id: 4,
+          message: {
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 10, first_name: "Margaret", username: "margaret" },
+            text: "normal context",
+          },
+        },
+        {
+          update_id: 5,
+          message: {
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 12, first_name: "Edsger", username: "edsger" },
+            document: {
+              file_id: "exe-1",
+              file_name: "tool.exe",
+              mime_type: "application/octet-stream",
+            },
+          },
+        },
+        {
+          update_id: 6,
+          message: {
+            message_id: 603,
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 11, first_name: "Grace", username: "grace" },
+            text: "@tau_bot summarize",
+          },
+        },
+      ],
+    ]);
+    apiHarness.api.downloadFile.mockImplementation(async (fileId) => {
+      apiHarness.downloadFileCalls.push(fileId);
+      return Buffer.from(`${fileId} bytes`);
+    });
+    const mistralFetch = vi.fn(async () => createJsonResponse({ text: "transcribed audio" }));
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s-group",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(groupChatId) },
+    );
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      allowedChatIds: [groupChatId],
+      mistralApiKey: "mistral-key",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      fetchImpl: mistralFetch,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+      const text = managerHarness.manager.sendMessage.mock.calls[0][1];
+      expect(text).toContain("1. sender: Ada (@ada, id 7)");
+      expect(text).toContain("   attachments:");
+      expect(text).toContain("- path:");
+      expect(text).toContain("mime: image/jpeg");
+      expect(text).toContain("2. sender: Alan (@alan, id 8)");
+      expect(text).toContain('   text: "second image"');
+      expect(text).toContain('caption: "second image"');
+      expect(text).toContain("3. sender: Katherine (@kat, id 9)");
+      expect(text).toContain('   audio_transcript: "transcribed audio"');
+      expect(text).toContain("4. sender: Margaret (@margaret, id 10)");
+      expect(text).toContain('   text: "normal context"');
+      expect(text).toContain("5. sender: Edsger (@edsger, id 12)");
+      expect(text).toContain("   errors:");
+      expect(text).toContain("- \"skipped attachment 'tool.exe': unsupported file type\"");
+      expect(text).toContain("<telegram-trigger-message>");
+      expect(text).toContain('text: "summarize"');
+      expect(apiHarness.downloadFileCalls).toEqual(["photo-1", "photo-2", "voice-1"]);
+      expect(mistralFetch).toHaveBeenCalledTimes(1);
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(apiHarness.sendMessages[0].text).toContain(
+        "some Telegram group context could not be processed",
+      );
+      expect(apiHarness.sendMessages[0].text).toContain(
+        "skipped attachment 'tool.exe': unsupported file type",
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("requires allowedChatIds before processing group mentions", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: -1002, type: "group" },
+            from: { id: 7, first_name: "Ada" },
+            text: "@tau_bot please respond",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s-group",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(-1002) },
+    );
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.api.getUpdates.mock.calls.length >= 1);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+      expect(apiHarness.sendMessages).toEqual([]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("caps pending group context at the most recent 50 messages", async () => {
+    const groupChatId = -1003;
+    const messages = Array.from({ length: 51 }, (_, index) => ({
+      update_id: index + 1,
+      message: {
+        chat: { id: groupChatId, type: "group" },
+        from: { id: index + 10, first_name: `User${index + 1}` },
+        text: `pending ${index + 1}`,
+      },
+    }));
+    messages.push({
+      update_id: 52,
+      message: {
+        message_id: 620,
+        chat: { id: groupChatId, type: "group" },
+        from: { id: 99, first_name: "Trigger" },
+        text: "@tau_bot go",
+      },
+    });
+
+    const apiHarness = createApiHarness([messages]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s-group",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(groupChatId) },
+    );
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      allowedChatIds: [groupChatId],
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+      const text = managerHarness.manager.sendMessage.mock.calls[0][1];
+      expect(text).not.toContain('text: "pending 1"');
+      expect(text).toContain('text: "pending 2"');
+      expect(text).toContain('text: "pending 51"');
+      expect(text).toContain('text: "go"');
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("requires bot mentions for group commands", async () => {
+    const groupChatId = -1004;
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 7, first_name: "Ada" },
+            text: "/sessions",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 7, first_name: "Ada" },
+            text: "/sessions@other_bot @tau_bot",
+          },
+        },
+        {
+          update_id: 3,
+          message: {
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 7, first_name: "Ada" },
+            text: "/sessions@tau_bot",
+          },
+        },
+        {
+          update_id: 4,
+          message: {
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 7, first_name: "Ada" },
+            text: "/sessions @tau_bot",
+          },
+        },
+        {
+          update_id: 5,
+          message: {
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 7, first_name: "Ada" },
+            text: "@tau_bot /sessions",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s-group",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(groupChatId) },
+    );
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      allowedChatIds: [groupChatId],
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 3);
+      expect(managerHarness.manager.listSessions).toHaveBeenCalledTimes(3);
+      expect(apiHarness.sendMessages.map((message) => message.chatId)).toEqual([
+        groupChatId,
+        groupChatId,
+        groupChatId,
+      ]);
+      expect(apiHarness.sendMessages.map((message) => message.text)).toEqual([
+        expect.stringContaining("s-group"),
+        expect.stringContaining("s-group"),
+        expect.stringContaining("s-group"),
+      ]);
     } finally {
       await adapter.close();
     }
@@ -813,6 +1197,9 @@ describe("async telegram adapter", () => {
       methodCalls.set(method, count);
       const handler = handlers[method];
       if (!handler) {
+        if (method === "getMe") {
+          return createJsonResponse({ ok: true, result: { username: "tau_bot" } });
+        }
         throw new Error(`unexpected telegram method call: ${url}`);
       }
       return handler({ call: count, init });

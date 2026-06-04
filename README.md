@@ -275,11 +275,10 @@ tau comes with several built-in personas across different models:
 
 - **Claude Opus 4.6** (Anthropic): `opus-4.6-chat`, `opus-4.6-coder`
 - **Claude Opus 4.8** (Anthropic): `opus-4.8-chat`, `opus-4.8-coder`
-- **GPT-5.3-Codex** (OpenAI): `gpt-5.3-codex`
+- **GPT-5.3-Codex** (OpenAI): `gpt-5.3-codex-chat`, `gpt-5.3-codex-coder`
 - **GPT-5.4** (OpenAI): `gpt-5.4-chat`, `gpt-5.4-coder`
-- **GPT-5.3-Codex (ChatGPT)** (OpenAI Codex): `gpt-5.3-codex-chatgpt`
 - **GPT-5.4 (ChatGPT)** (OpenAI Codex): `gpt-5.4-chatgpt-chat`, `gpt-5.4-chatgpt-coder`
-- **GPT-5.3-Codex Fast (ChatGPT)**, **GPT-5.4 Fast (ChatGPT)**, and **GPT-5.5 Fast (ChatGPT)** (OpenAI Codex, priority tier): `gpt-5.3-codex-fast-chatgpt`, `gpt-5.4-chatgpt-fast-chat`, `gpt-5.4-chatgpt-fast-coder`, `gpt-5.5-chatgpt-fast-chat`, `gpt-5.5-chatgpt-fast-coder`
+- **GPT-5.4 Fast (ChatGPT)** and **GPT-5.5 Fast (ChatGPT)** (OpenAI Codex, priority tier): `gpt-5.4-chatgpt-fast-chat`, `gpt-5.4-chatgpt-fast-coder`, `gpt-5.5-chatgpt-fast-chat`, `gpt-5.5-chatgpt-fast-coder`
 - **GPT-5.5** (OpenAI): `gpt-5.5-chat`, `gpt-5.5-coder`
 - **GPT-5.5 (ChatGPT)** (OpenAI Codex): `gpt-5.5-chatgpt-chat`, `gpt-5.5-chatgpt-coder`
 - **Gemini 3.1 Pro** and **Gemini 3 Flash** (Google): `gemini-3.1-pro-chat`, `gemini-3-flash-chat`
@@ -473,7 +472,7 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
     "provider": "mistral"
   },
   "modelSystemNotices": {
-    "openai-codex/gpt-5.3-codex": "avoid apply_patch heredocs, use tau tools directly"
+    "openai-codex/gpt-5.5": "avoid apply_patch heredocs, use tau tools directly"
   }
 }
 ```

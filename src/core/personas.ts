@@ -244,15 +244,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     skills: "*",
   },
   {
-    id: "gpt-5.3-codex-chatgpt",
-    description: "GPT-5.3-Codex (ChatGPT)",
-    provider: "openai-codex",
-    modelId: "gpt-5.3-codex",
-    allowedReasoningLevels: ["medium", "high", "xhigh"],
-    settings: { reasoning: "medium" },
-    skills: "*",
-  },
-  {
     id: "gpt-5.4-chatgpt",
     description: "GPT-5.4 (ChatGPT)",
     provider: "openai-codex",
@@ -268,15 +259,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     modelId: "gpt-5.5",
     allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
-    skills: "*",
-  },
-  {
-    id: "gpt-5.3-codex-fast-chatgpt",
-    description: "GPT-5.3-Codex Fast (ChatGPT)",
-    provider: "openai-codex",
-    modelId: "gpt-5.3-codex",
-    allowedReasoningLevels: ["medium", "high", "xhigh"],
-    settings: { reasoning: "medium", serviceTier: "priority" },
     skills: "*",
   },
   {

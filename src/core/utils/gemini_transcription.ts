@@ -1,0 +1,164 @@
+import { z } from "zod";
+
+const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const DEFAULT_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.5-flash";
+const DEFAULT_GEMINI_TRANSCRIPTION_THINKING_LEVEL = "minimal";
+const DEFAULT_GEMINI_AUDIO_MIME_TYPE = "audio/wav";
+
+const errorPayloadSchema = z.object({
+  error: z
+    .object({
+      message: z.string().trim().min(1).optional(),
+      status: z.string().trim().min(1).optional(),
+      code: z.number().int().optional(),
+    })
+    .optional(),
+});
+
+const GEMINI_TRANSCRIPTION_RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    transcription: { type: "STRING" },
+  },
+  required: ["transcription"],
+};
+
+const textPartSchema = z.object({ text: z.string() });
+const apiResponseSchema = z.object({
+  candidates: z
+    .array(
+      z.object({
+        content: z.object({
+          parts: z.array(z.unknown()).optional(),
+        }),
+      }),
+    )
+    .optional(),
+});
+const transcriptionResultSchema = z.object({
+  transcription: z.string(),
+});
+
+export type GeminiTranscriptionOptions = {
+  apiKey: string;
+  audio: Buffer;
+  model?: string;
+  mimeType?: string;
+  fetchImpl?: typeof fetch;
+};
+
+export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions): Promise<string> {
+  const apiKey = options.apiKey.trim();
+  if (!apiKey) {
+    throw new Error("missing Gemini API key");
+  }
+
+  const fetchFn = options.fetchImpl ?? fetch;
+  const model = options.model ?? DEFAULT_GEMINI_TRANSCRIPTION_MODEL;
+  const response = await fetchFn(
+    `${GEMINI_GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [
+            {
+              text: buildTranscriptionSystemInstruction(),
+            },
+          ],
+        },
+        contents: [
+          {
+            parts: [
+              {
+                text: buildTranscriptionPrompt(),
+              },
+              {
+                inlineData: {
+                  mimeType: options.mimeType ?? DEFAULT_GEMINI_AUDIO_MIME_TYPE,
+                  data: options.audio.toString("base64"),
+                },
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: GEMINI_TRANSCRIPTION_RESPONSE_SCHEMA,
+          thinkingConfig: {
+            thinkingLevel: DEFAULT_GEMINI_TRANSCRIPTION_THINKING_LEVEL,
+          },
+        },
+      }),
+    },
+  );
+
+  const responseText = await response.text();
+  let payload: unknown;
+  try {
+    payload = responseText ? (JSON.parse(responseText) as unknown) : undefined;
+  } catch {
+    payload = undefined;
+  }
+
+  if (!response.ok) {
+    const parsed = errorPayloadSchema.safeParse(payload);
+    const fallbackMessage = responseText.trim() || `HTTP ${response.status}`;
+    throw new Error(
+      parsed.success ? (parsed.data.error?.message ?? fallbackMessage) : fallbackMessage,
+    );
+  }
+
+  return extractGeminiText(payload).trim();
+}
+
+function buildTranscriptionSystemInstruction(): string {
+  return [
+    "You are a speech-to-text engine.",
+    "Transcribe the speaker's intended message for insertion into a chat input.",
+    "Detect the speaker's language and transcribe in that same language; never translate unless the speaker explicitly asks for translation.",
+    "Preserve the speaker's wording and register as spoken, including colloquial forms, dialect, and informal language; do not normalize informal speech into formal standard language.",
+    "Use natural punctuation and capitalization where helpful, without changing the speaker's wording or register.",
+    "Lightly clean only speech artifacts that do not affect meaning, such as filler words, repeated stutters, obvious false starts, and unintelligible mumbling.",
+    "Do not rewrite, paraphrase, summarize, answer the speaker, add labels, add timestamps, or describe background sounds.",
+  ].join("\n");
+}
+
+function buildTranscriptionPrompt(): string {
+  return [
+    "Transcribe the attached audio into the transcription field.",
+    "Return only the lightly cleaned transcript text, with no timestamps or commentary.",
+  ].join("\n");
+}
+
+function extractGeminiText(payload: unknown): string {
+  const parsed = apiResponseSchema.safeParse(payload);
+  if (!parsed.success) {
+    return "";
+  }
+
+  const responseText = (parsed.data.candidates?.[0]?.content.parts ?? [])
+    .map((part) => {
+      const parsedPart = textPartSchema.safeParse(part);
+      return parsedPart.success ? parsedPart.data.text : "";
+    })
+    .join("");
+
+  let transcriptionPayload: unknown;
+  try {
+    transcriptionPayload = responseText ? (JSON.parse(responseText) as unknown) : undefined;
+  } catch {
+    return "";
+  }
+
+  const transcription = transcriptionResultSchema.safeParse(transcriptionPayload);
+  if (!transcription.success) {
+    return "";
+  }
+
+  return transcription.data.transcription;
+}

@@ -2,8 +2,8 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { z } from "zod";
-import type { AsyncProjectConfig } from "../config/schema.js";
-import { transcribeMistralAudio } from "../utils/mistral_transcription.js";
+import type { AsyncProjectConfig, SpeechToTextProvider } from "../config/schema.js";
+import { transcribeAudio } from "../utils/speech_to_text.js";
 import { formatZodError } from "../utils/zod.js";
 import {
   type AsyncSessionManager,
@@ -125,6 +125,8 @@ export type AsyncTelegramAdapterOptions = {
   allowedChatIds?: number[];
   pollIntervalMs?: number;
   requestTimeoutSeconds?: number;
+  speechToTextProvider?: SpeechToTextProvider;
+  geminiApiKey?: string;
   mistralApiKey?: string;
   sessionManager: AsyncSessionManager;
   api?: AsyncTelegramApi;
@@ -888,6 +890,8 @@ class AsyncTelegramAdapterImpl {
   private readonly botUsername: string;
   private readonly pollIntervalMs: number;
   private readonly requestTimeoutSeconds: number;
+  private readonly speechToTextProvider: SpeechToTextProvider;
+  private readonly geminiApiKey?: string;
   private readonly mistralApiKey?: string;
   private readonly sessionManager: AsyncSessionManager;
   private readonly enforceChatOwnership: boolean;
@@ -940,6 +944,8 @@ class AsyncTelegramAdapterImpl {
     this.botUsername = options.botUsername;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
+    this.speechToTextProvider = options.speechToTextProvider ?? "mistral";
+    this.geminiApiKey = options.geminiApiKey?.trim() || undefined;
     this.mistralApiKey = options.mistralApiKey?.trim() || undefined;
     this.sessionManager = options.sessionManager;
     this.enforceChatOwnership = true;
@@ -2395,13 +2401,24 @@ class AsyncTelegramAdapterImpl {
     }
   }
 
+  private getSpeechToTextApiKey(): string | undefined {
+    return this.speechToTextProvider === "gemini" ? this.geminiApiKey : this.mistralApiKey;
+  }
+
+  private getSpeechToTextApiKeyErrorMessage(action: string): string {
+    return this.speechToTextProvider === "gemini"
+      ? `set GEMINI_API_KEY or apiKeys.google to ${action}`
+      : `set MISTRAL_API_KEY or apiKeys.mistral to ${action}`;
+  }
+
   private async transcribeTelegramAudio(
     chatId: number,
     message: TelegramAudioMessage,
     options: { silent?: boolean } = {},
   ): Promise<TelegramAudioTranscriptionResult> {
-    if (!this.mistralApiKey) {
-      const error = "set MISTRAL_API_KEY or apiKeys.mistral to transcribe Telegram audio";
+    const apiKey = this.getSpeechToTextApiKey();
+    if (!apiKey) {
+      const error = this.getSpeechToTextApiKeyErrorMessage("transcribe Telegram audio");
       if (!options.silent) {
         await this.reply(chatId, error);
       }
@@ -2412,8 +2429,9 @@ class AsyncTelegramAdapterImpl {
     try {
       const audio = await this.api.downloadFile(message.fileId);
       transcript = (
-        await transcribeMistralAudio({
-          apiKey: this.mistralApiKey,
+        await transcribeAudio({
+          provider: this.speechToTextProvider,
+          apiKey,
           audio,
           fileName: message.fileName,
           mimeType: message.mimeType,

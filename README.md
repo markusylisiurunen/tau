@@ -35,7 +35,9 @@ for built-in providers and features, use these `apiKeys` entries: `anthropic`, `
 
 `parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents and can be provided through `apiKeys.parallel` or `PARALLEL_API_KEY` (`PARALLEL_API_KEY` takes precedence).
 
-`/listen`, Telegram audio transcription, and `tau tool pdf-unpack` all use `apiKeys.mistral` or `MISTRAL_API_KEY` (`MISTRAL_API_KEY` takes precedence). `/listen` also requires `ffmpeg` on your system and is currently supported only on macOS. `tau tool pdf-unpack` also requires `pdftoppm` from Poppler on your system.
+`/listen` and Telegram audio transcription use Mistral by default (`apiKeys.mistral` or `MISTRAL_API_KEY`, with `MISTRAL_API_KEY` taking precedence). set `speechToText.provider` to `gemini` to use Gemini 3.5 Flash instead (`apiKeys.google` or `GEMINI_API_KEY`). `/listen` also requires `ffmpeg` on your system and is currently supported only on macOS.
+
+`tau tool pdf-unpack` uses Mistral OCR (`apiKeys.mistral` or `MISTRAL_API_KEY`) and requires `pdftoppm` from Poppler on your system.
 
 `/speak` uses the Google provider (`apiKeys.google` or `GEMINI_API_KEY`) and is currently supported only on macOS.
 
@@ -399,7 +401,7 @@ the compact commands are manual and useful when you want to force a reset. they 
 
 the prune commands drop bash tool results from the active context without summarizing and compact edit call payloads/results. all three accept an optional fraction between `0` and `1` (for example, `/prune:largest 0.4`) and default to `0.25` when omitted. `/prune:smart` also accepts optional guidance text, either after a fraction (for example, `/prune:smart 0.3 keep only repetitive output`) or by itself (for example, `/prune:smart keep build logs`).
 
-`/listen` (or `ctrl+y`) starts microphone recording on macOS, including while the assistant is working. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor. `esc` stops recording first without interrupting the assistant; press it again to interrupt active work. recording also auto-stops after 5 minutes. on Linux, `/listen` is currently unavailable and tau shows a warning.
+`/listen` (or `ctrl+y`) starts microphone recording on macOS, including while the assistant is working. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor using the configured speech-to-text provider. `esc` stops recording first without interrupting the assistant; press it again to interrupt active work. recording also auto-stops after 5 minutes. on Linux, `/listen` is currently unavailable and tau shows a warning.
 
 `/speak` rewrites the last assistant message into naturally speakable text with Gemini 3.5 Flash, synthesizes audio with Gemini 3.1 Flash TTS, and starts playing on macOS at 1.4x speed as soon as the first speech chunk is ready.
 
@@ -467,6 +469,9 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
     "reserveTokens": 16384,
     "keepRecentTokens": 20000
   },
+  "speechToText": {
+    "provider": "mistral"
+  },
   "modelSystemNotices": {
     "openai-codex/gpt-5.3-codex": "avoid apply_patch heredocs, use tau tools directly"
   }
@@ -480,6 +485,8 @@ the `defaultPersona` field specifies which persona to use when starting the app.
 the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 
 the `defaultTheme` field sets the theme id to load at startup. it must be non-empty, and matching is exact/case-sensitive. if not specified, it defaults to `gold`.
+
+`speechToText.provider` selects the `/listen` and Telegram audio transcription provider. supported values are `mistral` (default, uses Voxtral) and `gemini` (uses Gemini 3.5 Flash with minimal thinking).
 
 tau ships a built-in browser diff review demo tool, so `/diff` works without any `diffTool` config. set `diffTool` only when you want to override that default launcher. `command` is required when `diffTool` is present. `args` and `env` are optional. relative `command` paths resolve from the config level root (directory containing `.tau`, or home for the global config). set `builtInDiffTool.codeTheme` to choose the built-in diff tool's initial code theme, for example `{ "builtInDiffTool": { "codeTheme": "github-dark-dimmed" } }`. the default is `github-dark-dimmed`.
 

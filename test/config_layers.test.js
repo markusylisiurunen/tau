@@ -102,6 +102,7 @@ describe("config paths", () => {
           subagents: {
             defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
           },
+          speechToText: { provider: "mistral" },
           autoCompact: { enabled: false, reserveTokens: 1000 },
           modelSystemNotices: {
             "openai/gpt-5.4": "global codex notice",
@@ -128,6 +129,7 @@ describe("config paths", () => {
           subagents: {
             defaultLaunchModels: ["openai/gpt-5.4:high"],
           },
+          speechToText: { provider: "gemini" },
           autoCompact: { keepRecentTokens: 2000 },
           modelSystemNotices: {
             "openai/gpt-5.4": "repo codex notice",
@@ -176,6 +178,7 @@ describe("config paths", () => {
       expect(config.subagents).toEqual({
         defaultLaunchModels: ["openai/gpt-5.4:high"],
       });
+      expect(config.speechToText).toEqual({ provider: "gemini" });
       expect(config.autoCompact).toEqual({
         enabled: false,
         reserveTokens: 1000,

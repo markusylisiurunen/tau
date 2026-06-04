@@ -24,9 +24,11 @@ import {
   type Config,
   createDefaultConfigDeps,
   type DiffToolConfig,
+  getGoogleApiKey,
   getMistralApiKey,
   loadRuntimeConfig,
   type RuntimeConfigResult,
+  type SpeechToTextProvider,
   type ThemeDefinition,
 } from "../core/config/index.js";
 import type {
@@ -76,10 +78,10 @@ import {
 } from "../core/utils/format.js";
 import { streamGeminiSpeechAudio } from "../core/utils/gemini_speech.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
-import { transcribeMistralAudio } from "../core/utils/mistral_transcription.js";
 import { streamModel } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
+import { transcribeAudio } from "../core/utils/speech_to_text.js";
 import {
   getAutoCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
@@ -1629,9 +1631,9 @@ export class ChatController {
       return;
     }
 
-    const apiKey = getMistralApiKey(this.config, this.deps.env.env());
+    const apiKey = this.getSpeechToTextApiKey();
     if (!apiKey) {
-      this.view.addSystemMessage("set MISTRAL_API_KEY or apiKeys.mistral to use /listen", "error");
+      this.view.addSystemMessage(this.getSpeechToTextApiKeyErrorMessage("use /listen"), "error");
       return;
     }
 
@@ -1810,13 +1812,33 @@ export class ChatController {
     return path;
   }
 
+  private getSpeechToTextProvider(): SpeechToTextProvider {
+    return this.config.speechToText?.provider ?? "mistral";
+  }
+
+  private getSpeechToTextApiKey(): string | undefined {
+    const provider = this.getSpeechToTextProvider();
+    return provider === "gemini"
+      ? getGoogleApiKey(this.config, this.deps.env.env())
+      : getMistralApiKey(this.config, this.deps.env.env());
+  }
+
+  private getSpeechToTextApiKeyErrorMessage(action: string): string {
+    const provider = this.getSpeechToTextProvider();
+    return provider === "gemini"
+      ? `set GEMINI_API_KEY or apiKeys.google to ${action}`
+      : `set MISTRAL_API_KEY or apiKeys.mistral to ${action}`;
+  }
+
   private async transcribeListenAudio(audio: Buffer): Promise<string> {
-    const apiKey = getMistralApiKey(this.config, this.deps.env.env());
+    const provider = this.getSpeechToTextProvider();
+    const apiKey = this.getSpeechToTextApiKey();
     if (!apiKey) {
-      throw new Error("missing MISTRAL_API_KEY or apiKeys.mistral");
+      throw new Error(this.getSpeechToTextApiKeyErrorMessage("transcribe speech"));
     }
 
-    return await transcribeMistralAudio({
+    return await transcribeAudio({
+      provider,
       apiKey,
       audio,
       mimeType: "audio/wav",

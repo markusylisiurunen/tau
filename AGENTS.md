@@ -192,10 +192,11 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `builtInDiffTool`, `bashCommands`, `agentContextFiles`, `subagents`, `autoCompact`, `modelSystemNotices`, `async`). This level is only included when cwd is inside home.
+- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `builtInDiffTool`, `bashCommands`, `agentContextFiles`, `subagents`, `autoCompact`, `modelSystemNotices`, `speechToText`, `async`). This level is only included when cwd is inside home.
   - `apiKeys` (optional): Map of provider id to API key (`apiKeys.<provider>`). Keys merge by provider id across config levels.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
-  - `apiKeys.mistral` (optional): Mistral API key for `/listen` and Telegram audio transcription.
+  - `apiKeys.mistral` (optional): Mistral API key for `/listen`, Telegram audio transcription, and PDF OCR.
+  - `apiKeys.google` (optional): Google API key for Gemini chat models, `/speak`, and speech-to-text when `speechToText.provider` is `gemini`.
   - `defaultPersona` (optional): String persona reference used by default when starting the app. Accepts `<id>` or `<id>:<reasoning>` and matches are exact/case-sensitive. Overridden by `--persona` flag.
   - `defaultRisk` (optional): Default risk level (`read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
   - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.
@@ -206,6 +207,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `subagents.defaultLaunchModels` (optional): Allowlisted `spawn_agent` launch overrides for the built-in `default` subagent (`<provider>/<model>:<effort>` entries).
   - `autoCompact` (optional): Automatic compaction settings, merged field-by-field. Defaults are `{ "enabled": true, "reserveTokens": 16384, "keepRecentTokens": 20000 }`. Threshold detection uses only provider-reported assistant usage against `model.contextWindow - reserveTokens`; Tau's token heuristic is only used after threshold crossing to choose the retained-tail cut point, with retention capped at that threshold. Auto-compaction summarizes older context, keeps a recent tail, inserts a hidden continuation user message, and emits `compaction_start`/`compaction_end` core events. Context-overflow compact-and-retry is not implemented.
   - `modelSystemNotices` (optional): Map of `<provider>/<model>` to notice text. Provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). Tau prepends the notice as a `<system>` block before each user message sent to that model (main session and subagents).
+  - `speechToText` (optional): Speech-to-text config for `/listen` and Telegram audio transcription. `provider` is required when present and accepts `mistral` (default, Voxtral) or `gemini` (Gemini 3.5 Flash with minimal thinking).
   - `async.client` (optional): Async client config (`defaultTarget`, `defaultProjectId`, `targets.<id>.url`, `targets.<id>.token`, `targets.<id>.timeoutMs`).
   - daemon-side async settings are loaded from a separate JSON file passed via `tau async daemon --config-file <path>` (`host`, `port`, `authToken`, `maxSessions`, `telegram` (map keyed by bot id, with optional `allowedProjectIds`; sessions are chat-scoped within each bot, and allowed groups share one chat-scoped namespace), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `systemMessage`, and project fields like `workingDirectory`, `description`, `bootstrapCommands`, and `backgroundBootstrapCommands`). On daemon startup, Tau removes existing entries under configured async workspace roots (`workspaceRoot` plus any per-project overrides) before adapters start, and the Telegram adapter prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Assume zero or one async daemon process per host; concurrent daemons are unsupported.
 
@@ -277,7 +279,8 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for daemon-file `authToken` in daemon mode
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 - `PARALLEL_API_KEY` (env var) - Optional override for `apiKeys.parallel` used by `web_search`/`web_fetch`
-- `MISTRAL_API_KEY` (env var) - Optional override for `/listen` microphone, Telegram audio transcription, and `tau tool pdf-unpack`
+- `GEMINI_API_KEY` (env var) - Optional override for `apiKeys.google` used by Google Gemini models, `/speak`, and Google speech-to-text
+- `MISTRAL_API_KEY` (env var) - Optional override for Mistral `/listen` microphone transcription, Telegram audio transcription, and `tau tool pdf-unpack`
 
 ## Commands
 

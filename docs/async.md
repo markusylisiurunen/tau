@@ -209,14 +209,14 @@ Supported commands:
 - in DMs, plain text sends to the selected session (if no active session is selected and exactly one session exists, it is auto-selected)
 - in allowed groups, only messages that explicitly mention the bot username (`@botusername`) trigger a turn; non-triggering text/caption messages, attachments, audio transcripts, and processing errors are buffered as sender-attributed context and the last 50 pending messages since the previous bot-triggering turn are included with the triggering turn. attachment/audio processing runs eagerly for buffered context, but processing errors are reported to Telegram only after a later bot-triggering message is accepted
 - group commands must mention the bot, for example `/sessions@botusername`, `/sessions @botusername`, or `@botusername /sessions`; each group has one shared chat-scoped session namespace and one selected session
-- Telegram `voice` and `audio` messages are downloaded, transcribed with Mistral, and then sent to the selected session
+- Telegram `voice` and `audio` messages are downloaded, transcribed with the configured speech-to-text provider, and then sent to the selected session
 - attachments (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`) are downloaded to local temp files immediately, queued per session, and prepended to the next text/voice turn as local temp paths with mime, size, and caption metadata
   - attachment-only messages do not trigger a turn
   - captions are non-triggering and are preserved in the attachment metadata block
   - unsupported attachments and over-limit attachments are skipped with an immediate Telegram warning
   - limits: 10 attachments/turn, 20 MB/file, 50 MB/turn
 
-Telegram audio transcription requires `MISTRAL_API_KEY` (or `apiKeys.mistral` in regular tau config).
+Telegram audio transcription uses Mistral by default and requires `MISTRAL_API_KEY` (or `apiKeys.mistral` in regular tau config). set `speechToText.provider` to `gemini` to use Gemini 3.5 Flash instead, with `GEMINI_API_KEY` or `apiKeys.google`.
 
 When a plain-text or audio message is accepted for a session, the adapter tries to add a 👀 reaction to that user message (best effort).
 

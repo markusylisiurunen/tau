@@ -35,11 +35,18 @@ export interface Config {
   };
   autoCompact?: AutoCompactConfig;
   modelSystemNotices?: Record<string, string>;
+  speechToText?: SpeechToTextConfig;
   async?: AsyncConfig;
 }
 
 export type BuiltInDiffToolConfig = {
   codeTheme?: string;
+};
+
+export type SpeechToTextProvider = "mistral" | "gemini";
+
+export type SpeechToTextConfig = {
+  provider: SpeechToTextProvider;
 };
 
 export type AutoCompactConfig = {
@@ -185,6 +192,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS = new Set([
   "subagents",
   "autoCompact",
   "modelSystemNotices",
+  "speechToText",
   "async",
 ]);
 
@@ -193,6 +201,11 @@ const BooleanSchema = z.boolean();
 const AgentContextFilesSchema = z.array(NonEmptyStringSchema);
 const ApiKeyProviderSchema = z.string();
 const ApiKeysSchema = z.object({}).catchall(z.unknown());
+const SpeechToTextConfigSchema = z
+  .object({
+    provider: z.enum(["mistral", "gemini"]),
+  })
+  .passthrough();
 const SubagentsConfigSchema = z
   .object({
     defaultLaunchModels: z.array(z.string()).optional(),
@@ -455,6 +468,15 @@ function validateConfigData(
     modelSystemNoticesResult.errors,
   );
 
+  const speechToTextResult = parseSpeechToTextConfig(data.speechToText, sourceLabel);
+  assignParsedConfigValue(
+    config,
+    errors,
+    "speechToText",
+    speechToTextResult.config,
+    speechToTextResult.errors,
+  );
+
   const asyncResult = parseAsyncConfig(data.async, sourceLabel);
   assignParsedConfigValue(config, errors, "async", asyncResult.config, asyncResult.errors);
 
@@ -503,6 +525,27 @@ function parseBuiltInDiffToolConfig(
   }
 
   return { config: Object.keys(config).length > 0 ? config : undefined, errors: [] };
+}
+
+function parseSpeechToTextConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: SpeechToTextConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  const parsed = SpeechToTextConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    if (parsed.error.issues.some((issue) => issue.path[0] === "provider")) {
+      return {
+        errors: [`${sourceLabel}: speechToText.provider must be 'mistral' or 'gemini'.`],
+      };
+    }
+    return { errors: [`${sourceLabel}: 'speechToText' must be an object.`] };
+  }
+
+  return { config: { provider: parsed.data.provider }, errors: [] };
 }
 
 function parseSubagentsConfig(
@@ -947,6 +990,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let builtInDiffTool: BuiltInDiffToolConfig | undefined;
   let subagents: Config["subagents"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
+  let speechToText: SpeechToTextConfig | undefined;
   let asyncConfig: AsyncConfig | undefined;
   const bashCommands = new Map<string, BashCommand>();
   const agentContextFiles: string[] = [];
@@ -967,6 +1011,9 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
       merged.autoCompact = mergeOptionalObject(merged.autoCompact, config.autoCompact);
     }
     modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
+    if (config.speechToText !== undefined) {
+      speechToText = { ...config.speechToText };
+    }
     asyncConfig = mergeAsyncConfig(asyncConfig, config.async);
 
     if (config.defaultPersona !== undefined) {
@@ -1018,6 +1065,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (modelSystemNotices && Object.keys(modelSystemNotices).length > 0) {
     merged.modelSystemNotices = modelSystemNotices;
+  }
+
+  if (speechToText) {
+    merged.speechToText = speechToText;
   }
 
   if (asyncConfig && Object.keys(asyncConfig).length > 0) {
@@ -1099,6 +1150,16 @@ export function getParallelApiKey(config: Config, env?: NodeJS.ProcessEnv): stri
   }
 
   const configKey = config.apiKeys?.parallel?.trim();
+  return configKey || undefined;
+}
+
+export function getGoogleApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
+  const envKey = getTrimmedEnvValue("GEMINI_API_KEY", env);
+  if (envKey) {
+    return envKey;
+  }
+
+  const configKey = config.apiKeys?.google?.trim();
   return configKey || undefined;
 }
 

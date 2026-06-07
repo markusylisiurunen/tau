@@ -717,19 +717,25 @@ describe("async telegram adapter", () => {
         additionalSystemMessage: "telegram guidance",
       });
 
-      await waitFor(
-        () =>
-          apiHarness.sendMessages.some((entry) =>
-            String(entry.text).includes("session is being prepared"),
-          ) &&
-          apiHarness.sendMessages.some((entry) =>
-            String(entry.text).includes("(s1) session is ready"),
-          ),
+      await waitFor(() =>
+        apiHarness.sendMessages.some(
+          (entry) => String(entry.text) === "all set, your demo session s1 is ready.",
+        ),
       );
 
       expect(
+        apiHarness.sendMessages.some((entry) =>
+          String(entry.text).includes("session is being prepared"),
+        ),
+      ).toBe(false);
+      expect(
         apiHarness.sendMessages.some((entry) => String(entry.text).includes("(s1) message queued")),
       ).toBe(false);
+      await waitFor(() =>
+        apiHarness.setMessageReactions.some(
+          (entry) => entry.chatId === 200 && entry.messageId === 501,
+        ),
+      );
       await waitFor(() =>
         apiHarness.setMessageReactions.some(
           (entry) => entry.chatId === 200 && entry.messageId === 502,
@@ -1049,15 +1055,7 @@ describe("async telegram adapter", () => {
       expect(managerHarness.manager.closeSession).toHaveBeenCalledWith("s1");
       expect(managerHarness.manager.closeSession).toHaveBeenCalledWith("s3");
       expect(
-        apiHarness.sendMessages.some(
-          (entry) =>
-            entry.text.includes("closed 2 sessions") &&
-            entry.text.includes("s1") &&
-            entry.text.includes("s3") &&
-            !entry.text.includes("s2") &&
-            !entry.text.includes("s5") &&
-            !entry.text.includes("s6"),
-        ),
+        apiHarness.sendMessages.some((entry) => entry.text === "closed 2 idle sessions."),
       ).toBe(true);
     } finally {
       await adapter.close();

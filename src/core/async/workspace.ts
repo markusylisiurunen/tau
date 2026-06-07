@@ -312,7 +312,14 @@ async function fetchRepositoryCache(options: {
   const fetchStart = process.hrtime.bigint();
   const fetchResult = await runCommand({
     command: "git",
-    commandArgs: ["-C", options.cachePath, "fetch", "--prune", "origin"],
+    commandArgs: [
+      "-C",
+      options.cachePath,
+      "fetch",
+      "--prune",
+      "origin",
+      "+refs/heads/*:refs/heads/*",
+    ],
     signal: options.signal,
   });
 

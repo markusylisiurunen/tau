@@ -203,7 +203,7 @@ describe("async workspace", () => {
     expect(result.workspacePath).toBe(join(workspaceRoot, "tau", "abc12345"));
     expect(spawnWithCaptureMock).toHaveBeenCalledWith(
       "git",
-      ["-C", cachePath, "fetch", "--prune", "origin"],
+      ["-C", cachePath, "fetch", "--prune", "origin", "+refs/heads/*:refs/heads/*"],
       expect.any(Object),
     );
     expect(spawnWithCaptureMock).not.toHaveBeenCalledWith(

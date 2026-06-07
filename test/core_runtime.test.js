@@ -815,6 +815,17 @@ describe("summary formatting", () => {
     expect(summary).not.toContain('newText="const after = 2;"');
   });
 
+  it("includes the session system prompt when provided", () => {
+    const history = [userMessage("continue")];
+
+    const summary = formatHistoryForCompaction(history, {
+      systemPrompt: "follow AGENTS.md and current risk level",
+    });
+
+    expect(summary).toContain("[System prompt]:\nfollow AGENTS.md and current risk level");
+    expect(summary).toContain("[User]:\ncontinue");
+  });
+
   it("omits unchanged edit regions only when they are long", () => {
     const unchangedPrefix = Array.from({ length: 12 }, (_, index) => `pre ${index}`);
     const unchangedSuffix = Array.from({ length: 12 }, (_, index) => `post ${index}`);
@@ -959,9 +970,10 @@ describe("compaction context message", () => {
     });
     const history = [continuation, userMessage("new request")];
 
-    const result = prepareSessionCompaction(history);
+    const result = prepareSessionCompaction(history, { systemPrompt: "project instructions" });
 
     expect(result.messagesToSummarize).toHaveLength(1);
+    expect(result.formattedHistory).toContain("[System prompt]:\nproject instructions");
     expect(result.formattedHistory).toContain("new request");
     expect(result.formattedHistory).not.toContain(
       "The conversation context before this point has been compacted",
@@ -1006,7 +1018,7 @@ describe("compaction context message", () => {
       },
     ];
 
-    const result = prepareSessionCompaction(history);
+    const result = prepareSessionCompaction(history, { systemPrompt: "project instructions" });
 
     expect(result.previousSummary).toBe("old summary");
     expect(result.messagesToSummarize).toHaveLength(1);
@@ -1029,7 +1041,7 @@ describe("compaction context message", () => {
       },
     ];
 
-    const result = prepareSessionCompaction(history);
+    const result = prepareSessionCompaction(history, { systemPrompt: "project instructions" });
 
     expect(result.previousSummary).toBeUndefined();
     expect(result.messagesToSummarize).toHaveLength(2);
@@ -1122,7 +1134,10 @@ describe("compaction context message", () => {
       toolResultMessage(`large output ${"x".repeat(15000)}`),
     ]);
 
-    const preparation = prepareAutoCompaction(entries, { keepRecentTokens: 1000 });
+    const preparation = prepareAutoCompaction(entries, {
+      keepRecentTokens: 1000,
+      systemPrompt: "project instructions",
+    });
 
     expect(preparation.cutType).toBe("split-turn");
     expect(preparation.formattedHistory).toContain("current request");
@@ -1160,7 +1175,10 @@ describe("compaction context message", () => {
       assistantMessage("final small explanation"),
     ]);
 
-    const preparation = prepareAutoCompaction(entries, { keepRecentTokens: 1000 });
+    const preparation = prepareAutoCompaction(entries, {
+      keepRecentTokens: 1000,
+      systemPrompt: "project instructions",
+    });
 
     expect(preparation.cutType).toBe("split-turn");
     expect(preparation.formattedHistory).toContain("retained previous tool call");
@@ -1197,7 +1215,10 @@ describe("compaction context message", () => {
       userMessage("current request"),
     ]);
 
-    const preparation = prepareAutoCompaction(entries, { keepRecentTokens: 1000 });
+    const preparation = prepareAutoCompaction(entries, {
+      keepRecentTokens: 1000,
+      systemPrompt: "project instructions",
+    });
 
     expect(preparation.previousSummary).toBe("old summary");
     expect(preparation.formattedHistory).toContain("retained old request");

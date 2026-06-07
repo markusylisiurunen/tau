@@ -119,8 +119,15 @@ function serializeToolResultMessage(message: ToolResultMessage): string {
   return formatCompactionBlock(`[Tool result]: ${message.toolName} (${status})`, content);
 }
 
-export function formatHistoryForCompaction(history: readonly Message[]): string {
+export function formatHistoryForCompaction(
+  history: readonly Message[],
+  options?: { systemPrompt?: string },
+): string {
   const lines: string[] = [];
+  const systemPrompt = options?.systemPrompt?.trim();
+  if (systemPrompt) {
+    lines.push(formatCompactionBlock("[System prompt]:", systemPrompt));
+  }
 
   for (const message of history) {
     if (message.role === "user") {

@@ -343,7 +343,9 @@ export class SessionEngine {
   }
 
   async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {
-    const preparation = prepareSessionCompaction(this.rawHistory);
+    const preparation = prepareSessionCompaction(this.rawHistory, {
+      systemPrompt: this.systemPrompt,
+    });
     if (!preparation) {
       throw new Error("no conversation to compact.");
     }
@@ -733,6 +735,7 @@ export class SessionEngine {
         settings.keepRecentTokens,
         this.getAutoCompactionThresholdTokens(settings),
       ),
+      systemPrompt: this.systemPrompt,
     });
     if (!preparation) {
       return undefined;

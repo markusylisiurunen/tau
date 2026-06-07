@@ -43,6 +43,8 @@ export const COMPACTION_SUMMARIZATION_SYSTEM_PROMPT =
 
 const COMPACTION_SUMMARIZATION_PROMPT = `The messages above are a conversation to compact. Create an information-dense context checkpoint summary that will replace the full conversation history. Another assistant should be able to continue the session from this summary as if the original conversation were still available.
 
+If a [System prompt] block is present, use it as context for interpreting the conversation. Do not summarize it as part of the conversation history.
+
 Use this exact format:
 
 ## Goal
@@ -82,6 +84,8 @@ Rules:
 - Preserve exact file paths, function names, commands, and error messages.`;
 
 const COMPACTION_UPDATE_SUMMARIZATION_PROMPT = `The messages above are new conversation messages to incorporate into the existing summary in <previous-summary> tags. The updated summary will replace the prior summary plus these new messages as the session's continuity context.
+
+If a [System prompt] block is present, use it as context for interpreting the new conversation messages. Do not summarize it as part of the conversation history.
 
 Update the existing structured summary with these rules:
 - Preserve all still-relevant information from the previous summary.
@@ -129,15 +133,19 @@ Rules:
 
 export function prepareSessionCompaction(
   history: readonly Message[],
+  options: { systemPrompt: string },
 ): SessionCompactionPreparation | undefined {
   const latestCompaction = findLatestCompaction(history);
   const messagesToSummarize = history
     .slice(latestCompaction.index + 1)
     .filter((message) => !hasAutoCompactionContinuationMetadata(message));
-  const formattedHistory = formatHistoryForCompaction(messagesToSummarize);
-  if (!formattedHistory) {
+  const formattedConversation = formatHistoryForCompaction(messagesToSummarize);
+  if (!formattedConversation) {
     return undefined;
   }
+  const formattedHistory = formatHistoryForCompaction(messagesToSummarize, {
+    systemPrompt: options.systemPrompt,
+  });
 
   return {
     previousSummary: latestCompaction.summary,
@@ -200,7 +208,7 @@ export function buildSessionCompactionMessage(args: {
 
 export function prepareAutoCompaction(
   entries: readonly CompactionHistoryEntry[],
-  settings: { keepRecentTokens: number },
+  settings: { keepRecentTokens: number; systemPrompt: string },
 ): AutoCompactionPreparation | undefined {
   const latestCompaction = findLatestCompactionEntry(entries);
   const cut = selectAutoCompactionCut(entries, {
@@ -215,10 +223,13 @@ export function prepareAutoCompaction(
     .slice(latestCompaction.index + 1, cut.startIndex)
     .map((entry) => entry.message)
     .filter((message) => !hasAutoCompactionContinuationMetadata(message));
-  const formattedHistory = formatHistoryForCompaction(messagesToSummarize);
-  if (!formattedHistory) {
+  const formattedConversation = formatHistoryForCompaction(messagesToSummarize);
+  if (!formattedConversation) {
     return undefined;
   }
+  const formattedHistory = formatHistoryForCompaction(messagesToSummarize, {
+    systemPrompt: settings.systemPrompt,
+  });
 
   const retainedEntries = entries
     .slice(cut.startIndex)

@@ -76,19 +76,33 @@ describe("async workspace", () => {
     );
   });
 
-  it("clones repository and logs phase durations", async () => {
+  it("clones repository through a persistent cache and logs phase durations", async () => {
     const workspaceRoot = await createWorkspaceRoot();
+    const cachePath = join(`${workspaceRoot}-repo-cache`, "tau.git");
     const logs = [];
 
     spawnWithCaptureMock.mockImplementation(async (command, commandArgs, options) => {
       if (command === "gh") {
-        const workspacePath = commandArgs[3];
-        await mkdir(join(workspacePath, "packages", "core"), { recursive: true });
-        return { exitCode: 0, output: "cloned" };
+        await mkdir(commandArgs[3], { recursive: true });
+        return { exitCode: 0, output: "cached" };
       }
 
       if (command === "git") {
-        return { exitCode: 0, output: "Already on 'main'" };
+        if (commandArgs[2] === "remote" && commandArgs[3] === "get-url") {
+          return { exitCode: 0, output: "git@github.com:owner/repo.git\n" };
+        }
+
+        if (commandArgs[0] === "clone") {
+          const workspacePath = commandArgs[3];
+          await mkdir(join(workspacePath, "packages", "core"), { recursive: true });
+          return { exitCode: 0, output: "cloned from cache" };
+        }
+
+        if (commandArgs[2] === "checkout") {
+          return { exitCode: 0, output: "Already on 'main'" };
+        }
+
+        return { exitCode: 0, output: "" };
       }
 
       if (command === "npm ci") {
@@ -117,12 +131,25 @@ describe("async workspace", () => {
     expect(spawnWithCaptureMock).toHaveBeenNthCalledWith(
       1,
       "gh",
-      ["repo", "clone", "owner/repo", result.workspacePath],
+      ["repo", "clone", "owner/repo", cachePath, "--", "--bare"],
+      expect.any(Object),
+    );
+    expect(spawnWithCaptureMock).toHaveBeenCalledWith(
+      "git",
+      ["clone", "--shared", cachePath, result.workspacePath],
       expect.any(Object),
     );
 
     const cloneLog = logs.find((entry) => entry.message === "repository clone complete");
     expect(cloneLog?.data).toEqual(
+      expect.objectContaining({
+        cachePath,
+        durationMs: expect.any(Number),
+      }),
+    );
+
+    const checkoutLog = logs.find((entry) => entry.message === "ref checkout complete");
+    expect(checkoutLog?.data).toEqual(
       expect.objectContaining({
         ref: "main",
         durationMs: expect.any(Number),
@@ -138,7 +165,114 @@ describe("async workspace", () => {
     );
   });
 
-  it("fails when repository clone fails", async () => {
+  it("fetches an existing repository cache before cloning", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const cachePath = join(`${workspaceRoot}-repo-cache`, "tau.git");
+    await mkdir(cachePath, { recursive: true });
+
+    spawnWithCaptureMock.mockImplementation(async (command, commandArgs) => {
+      if (command !== "git") {
+        throw new Error(`unexpected command: ${command}`);
+      }
+
+      if (commandArgs[2] === "config" && commandArgs[3] === "--get") {
+        return { exitCode: 0, output: "owner/repo\n" };
+      }
+
+      if (commandArgs[2] === "remote" && commandArgs[3] === "get-url") {
+        return { exitCode: 0, output: "git@github.com:owner/repo.git\n" };
+      }
+
+      if (commandArgs[0] === "clone") {
+        await mkdir(commandArgs[3], { recursive: true });
+        return { exitCode: 0, output: "cloned from cache" };
+      }
+
+      return { exitCode: 0, output: "" };
+    });
+
+    const result = await prepareWorkspace({
+      sessionId: "abc12345",
+      projectId: "tau",
+      workspaceRoot,
+      project: {
+        repo: "owner/repo",
+      },
+    });
+
+    expect(result.workspacePath).toBe(join(workspaceRoot, "tau", "abc12345"));
+    expect(spawnWithCaptureMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", cachePath, "fetch", "--prune", "origin"],
+      expect.any(Object),
+    );
+    expect(spawnWithCaptureMock).not.toHaveBeenCalledWith(
+      "gh",
+      expect.any(Array),
+      expect.any(Object),
+    );
+  });
+
+  it("reinitializes an existing repository cache when the configured repo changes", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const cachePath = join(`${workspaceRoot}-repo-cache`, "tau.git");
+    await mkdir(cachePath, { recursive: true });
+    let initialized = false;
+
+    spawnWithCaptureMock.mockImplementation(async (command, commandArgs) => {
+      if (command === "gh") {
+        initialized = true;
+        await mkdir(commandArgs[3], { recursive: true });
+        return { exitCode: 0, output: "cached" };
+      }
+
+      if (command !== "git") {
+        throw new Error(`unexpected command: ${command}`);
+      }
+
+      if (commandArgs[2] === "config" && commandArgs[3] === "--get") {
+        return { exitCode: 0, output: "owner/old-repo\n" };
+      }
+
+      if (commandArgs[2] === "remote" && commandArgs[3] === "get-url") {
+        return {
+          exitCode: 0,
+          output: initialized
+            ? "git@github.com:owner/new-repo.git\n"
+            : "git@github.com:owner/old-repo.git\n",
+        };
+      }
+
+      if (commandArgs[0] === "clone") {
+        await mkdir(commandArgs[3], { recursive: true });
+        return { exitCode: 0, output: "cloned from cache" };
+      }
+
+      return { exitCode: 0, output: "" };
+    });
+
+    await prepareWorkspace({
+      sessionId: "abc12345",
+      projectId: "tau",
+      workspaceRoot,
+      project: {
+        repo: "owner/new-repo",
+      },
+    });
+
+    expect(spawnWithCaptureMock).toHaveBeenCalledWith(
+      "gh",
+      ["repo", "clone", "owner/new-repo", cachePath, "--", "--bare"],
+      expect.any(Object),
+    );
+    expect(spawnWithCaptureMock).not.toHaveBeenCalledWith(
+      "git",
+      ["-C", cachePath, "fetch", "--prune", "origin"],
+      expect.any(Object),
+    );
+  });
+
+  it("fails when repository cache clone fails", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const logs = [];
 
@@ -161,10 +295,10 @@ describe("async workspace", () => {
         },
         onLog: (entry) => logs.push(entry),
       }),
-    ).rejects.toThrow("gh repo clone failed with exit code 1");
+    ).rejects.toThrow("repository cache clone failed with exit code 1");
 
     expect(spawnWithCaptureMock).toHaveBeenCalledTimes(1);
-    const cloneFailureLog = logs.find((entry) => entry.message === "gh repo clone failed");
+    const cloneFailureLog = logs.find((entry) => entry.message === "repository cache clone failed");
     expect(cloneFailureLog?.level).toBe("error");
   });
 });

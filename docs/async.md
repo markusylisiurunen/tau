@@ -133,8 +133,8 @@ Notes:
 - failing `backgroundBootstrapCommands` are logged as warnings, but the session remains available.
 - `projects.<id>.ref` is optional, but recommended (for example `"main"`) when every session should start from the same branch.
 - `projects.<id>.description` is optional metadata used by Telegram `/projects` output.
-- Clone uses `gh repo clone <owner/repo> <path>` (daemon host must have authenticated `gh`).
-- On daemon startup, Tau removes existing entries under all configured workspace roots (`workspaceRoot` plus any `projects.<id>.workspaceRoot` overrides) before starting adapters.
+- Repositories use an automatic persistent bare cache at `<workspaceRoot>-repo-cache/<projectId>.git`: the first session initializes it with `gh repo clone <owner/repo> <cache> -- --bare`, later sessions run `git fetch --prune origin`, then each session workspace is cloned from the local cache with `git clone --shared`. If `projects.<id>.repo` changes, Tau reinitializes that project's cache.
+- On daemon startup, Tau removes existing entries under all configured workspace roots (`workspaceRoot` plus any `projects.<id>.workspaceRoot` overrides) before starting adapters. Repository caches are not removed by startup workspace cleanup.
 - On Telegram adapter startup, Tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory.
 - `cron.jobsDir` is optional and points to a directory of `*.md` cron job files.
 - each cron job markdown file requires frontmatter fields `id`, `projectId`, and `schedule`; the markdown body is used as the prompt.
@@ -218,7 +218,7 @@ Supported commands:
 
 Telegram audio transcription uses Mistral by default and requires `MISTRAL_API_KEY` (or `apiKeys.mistral` in regular tau config). set `speechToText.provider` to `gemini` to use Gemini 3.5 Flash instead, with `GEMINI_API_KEY` or `apiKeys.google`.
 
-When a plain-text or audio message is accepted for a session, the adapter tries to add a 👀 reaction to that user message (best effort).
+When `/new` creates a session, or when a plain-text or audio message is accepted for a session, the adapter tries to add a 👀 reaction to that user message (best effort).
 
 The adapter registers these commands via Telegram's command list so clients can autocomplete them.
 
@@ -234,9 +234,8 @@ Telegram keeps one selected session per chat for command and plain-text input ro
 
 Lifecycle notifications are sent back to associated chats:
 
-- `session is being prepared` (after `/new`)
-- `session is ready` (when workspace + client are ready)
-- `run failed`
+- a natural-language ready message after `/new`, when workspace + client are ready
+- a natural-language failure message when a run fails
 
 In `/verbose` mode, run updates also include:
 
@@ -259,4 +258,4 @@ Async daemon state is in-memory only:
 - Telegram chat-to-session associations for multiplexed event streaming
 - Telegram per-session state (verbosity mode, last command, last assistant message)
 
-Restarting the daemon clears this state. Existing cloned workspaces on disk are not reused as daemon session state.
+Restarting the daemon clears this state. Existing session workspaces on disk are not reused as daemon session state; repository caches remain available for future session preparation.

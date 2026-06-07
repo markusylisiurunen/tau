@@ -310,7 +310,11 @@ type QuickAction = "new" | "sessions" | "status" | "interrupt" | "close" | "quie
 
 type SessionVerbosity = "verbose" | "quiet";
 
-type TelegramCommandHandler = (chatId: number, args: string[]) => Promise<void>;
+type TelegramCommandHandler = (
+  chatId: number,
+  args: string[],
+  sourceMessageId?: number,
+) => Promise<void>;
 
 type TelegramCommandDefinition = {
   command: `/${string}`;
@@ -641,27 +645,17 @@ function formatTelegramSender(user: TelegramUser | undefined): string {
   return `id ${user.id}`;
 }
 
-function describeSession(
-  session: AsyncSessionRecord,
-  details: {
-    verbosity?: SessionVerbosity;
-    lastCommand?: string;
-    lastAssistantMessage?: string;
-  } = {},
-): string {
-  return [
-    formatSessionHeadline(session.id, "status"),
-    `project: ${session.projectId}`,
-    `state: ${session.state}`,
-    `verbosity: ${details.verbosity ?? "quiet"}`,
-    ...(session.error ? [`error: ${session.error}`] : []),
-    ...(details.lastCommand
-      ? [`last command: ${truncateText(details.lastCommand, MAX_COMMAND_PREVIEW_CHARS)}`]
-      : []),
-    ...(details.lastAssistantMessage
-      ? ["last assistant message:", details.lastAssistantMessage]
-      : []),
-  ].join("\n");
+function formatTelegramSessionName(session: Pick<AsyncSessionRecord, "id" | "projectId">): string {
+  return `${session.projectId} session ${session.id}`;
+}
+
+function formatSessionStatus(session: AsyncSessionRecord): string {
+  const sessionName = formatTelegramSessionName(session);
+  if (session.state === "failed" && session.error) {
+    return `your ${sessionName} failed. ${session.error}`;
+  }
+
+  return `your ${sessionName} is ${session.state}.`;
 }
 
 function formatSessionHeadline(sessionId: string, label: string): string {
@@ -1017,7 +1011,8 @@ class AsyncTelegramAdapterImpl {
         description: "start a new session",
         usage: "/new [projectId]",
         callbackAction: "new",
-        handler: async (chatId, args) => this.handleNew(chatId, args),
+        handler: async (chatId, args, sourceMessageId) =>
+          this.handleNew(chatId, args, sourceMessageId),
       },
       {
         command: "/projects",
@@ -1282,7 +1277,7 @@ class AsyncTelegramAdapterImpl {
 
     if (text) {
       if (isCommand) {
-        await this.handleCommand(chatId, text);
+        await this.handleCommand(chatId, text, message.message_id);
         return;
       }
 
@@ -1313,7 +1308,7 @@ class AsyncTelegramAdapterImpl {
         return;
       }
 
-      await this.handleCommand(chatId, groupCommandText);
+      await this.handleCommand(chatId, groupCommandText, message.message_id);
       return;
     }
 
@@ -1813,7 +1808,11 @@ class AsyncTelegramAdapterImpl {
     });
   }
 
-  private async handleCommand(chatId: number, text: string): Promise<void> {
+  private async handleCommand(
+    chatId: number,
+    text: string,
+    sourceMessageId?: number,
+  ): Promise<void> {
     const parts = splitCommandText(text);
     const command = stripCommandMention(parts[0] ?? "");
     const args = parts.slice(1);
@@ -1824,7 +1823,7 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    await handler(chatId, args);
+    await handler(chatId, args, sourceMessageId);
   }
 
   private async handleCallback(chatId: number, callbackData: string): Promise<boolean> {
@@ -1943,7 +1942,7 @@ class AsyncTelegramAdapterImpl {
     await this.reply(chatId, [`projects:`, ...lines].join("\n"));
   }
 
-  private async handleNew(chatId: number, args: string[]): Promise<void> {
+  private async handleNew(chatId: number, args: string[], sourceMessageId?: number): Promise<void> {
     const parsed = this.resolveNewCommand(args);
     if ("error" in parsed) {
       await this.reply(chatId, parsed.error);
@@ -1958,7 +1957,7 @@ class AsyncTelegramAdapterImpl {
 
       this.setActiveSession(chatId, session.id);
       this.sessionVerbosityBySession.set(session.id, "quiet");
-      await this.reply(chatId, this.formatSessionPreparing(session.projectId));
+      void this.reactToQueuedMessage(chatId, sourceMessageId);
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
@@ -1980,13 +1979,7 @@ class AsyncTelegramAdapterImpl {
     }
 
     this.setActiveSession(chatId, selectedSession.session.id);
-    await this.reply(
-      chatId,
-      formatSessionHeadline(
-        selectedSession.session.id,
-        `using session (${selectedSession.session.state})`,
-      ),
-    );
+    await this.reply(chatId, `switched to ${formatTelegramSessionName(selectedSession.session)}.`);
   }
 
   private resolveSessionSelector(
@@ -2118,17 +2111,9 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    await this.reply(
-      chatId,
-      describeSession(session, {
-        verbosity: this.getSessionVerbosity(session.id),
-        lastCommand: this.lastCommandBySession.get(session.id),
-        lastAssistantMessage: this.lastAssistantMessageBySession.get(session.id),
-      }),
-      {
-        replyMarkup: this.buildQuickActionsKeyboard(),
-      },
-    );
+    await this.reply(chatId, formatSessionStatus(session), {
+      replyMarkup: this.buildQuickActionsKeyboard(),
+    });
   }
 
   private async handleInterrupt(chatId: number): Promise<void> {
@@ -2141,11 +2126,14 @@ class AsyncTelegramAdapterImpl {
       const sessionManager = this.getSessionManagerForChat(chatId);
       const result = await sessionManager.interruptSession(session.id);
       if (!result.interrupted) {
-        await this.reply(chatId, formatSessionHeadline(result.session.id, "no run in progress"));
+        await this.reply(
+          chatId,
+          `nothing is running in ${formatTelegramSessionName(result.session)}.`,
+        );
         return;
       }
 
-      await this.reply(chatId, formatSessionHeadline(result.session.id, "interrupt requested"));
+      await this.reply(chatId, `stopping ${formatTelegramSessionName(result.session)}.`);
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
@@ -2167,17 +2155,12 @@ class AsyncTelegramAdapterImpl {
         }
 
         if (closed.length === 0) {
-          await this.reply(chatId, "no sessions to close");
+          await this.reply(chatId, "there are no idle sessions to close.");
           return;
         }
 
         const label = closed.length === 1 ? "session" : "sessions";
-        await this.reply(
-          chatId,
-          [`closed ${closed.length} ${label}`, closed.map((session) => session.id).join(", ")].join(
-            "\n",
-          ),
-        );
+        await this.reply(chatId, `closed ${closed.length} idle ${label}.`);
       } catch (error) {
         await this.reply(chatId, this.formatManagerError(error));
       }
@@ -2195,7 +2178,7 @@ class AsyncTelegramAdapterImpl {
       const sessionManager = this.getSessionManagerForChat(chatId);
       const closed = await sessionManager.closeSession(sessionId);
       this.clearClosedSession(closed.id);
-      await this.reply(chatId, formatSessionHeadline(closed.id, "closed"));
+      await this.reply(chatId, `closed ${formatTelegramSessionName(closed)}.`);
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
@@ -2208,7 +2191,11 @@ class AsyncTelegramAdapterImpl {
     }
 
     this.sessionVerbosityBySession.set(session.id, verbosity);
-    await this.reply(chatId, formatSessionHeadline(session.id, `verbosity set to ${verbosity}`));
+    const message =
+      verbosity === "quiet"
+        ? `${formatTelegramSessionName(session)} is now quiet.`
+        : `${formatTelegramSessionName(session)} will now show progress updates.`;
+    await this.reply(chatId, message);
   }
 
   private async handleMessage(
@@ -2785,6 +2772,11 @@ class AsyncTelegramAdapterImpl {
       failed: "run failed",
     }[state];
 
+    if (state === "failed") {
+      this.notifySession(sessionId, `something went wrong in ${projectId} session ${sessionId}.`);
+      return;
+    }
+
     this.notifySession(
       sessionId,
       [formatSessionHeadline(sessionId, stateLabel), `project: ${projectId}`].join("\n"),
@@ -2847,14 +2839,8 @@ class AsyncTelegramAdapterImpl {
     }
   }
 
-  private formatSessionPreparing(projectId: string): string {
-    return ["session is being prepared", `project: ${projectId}`].join("\n");
-  }
-
   private formatSessionReady(sessionId: string, projectId: string): string {
-    return [formatSessionHeadline(sessionId, "session is ready"), `project: ${projectId}`].join(
-      "\n",
-    );
+    return `all set, your ${projectId} session ${sessionId} is ready.`;
   }
 
   private formatMessageQueued(sessionId: string): string {

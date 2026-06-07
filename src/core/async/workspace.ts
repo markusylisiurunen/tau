@@ -37,6 +37,7 @@ export type WorkspaceRootCleanupResult = {
 };
 
 const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
+const repositoryCacheLocks = new Map<string, Promise<unknown>>();
 
 function elapsedMs(startTime: bigint): number {
   return Number((process.hrtime.bigint() - startTime) / NANOSECONDS_PER_MILLISECOND);
@@ -172,6 +173,322 @@ export function resolveWorkspacePath(options: {
   return join(resolve(options.workspaceRoot), options.projectId, options.sessionId);
 }
 
+function resolveRepositoryCachePath(options: { workspaceRoot: string; projectId: string }): string {
+  return join(`${resolve(options.workspaceRoot)}-repo-cache`, `${options.projectId}.git`);
+}
+
+async function withRepositoryCacheLock<T>(cachePath: string, fn: () => Promise<T>): Promise<T> {
+  const previous = repositoryCacheLocks.get(cachePath) ?? Promise.resolve();
+  const current = previous.then(fn);
+  const tracked = current
+    .then(
+      () => undefined,
+      () => undefined,
+    )
+    .finally(() => {
+      if (repositoryCacheLocks.get(cachePath) === tracked) {
+        repositoryCacheLocks.delete(cachePath);
+      }
+    });
+
+  repositoryCacheLocks.set(cachePath, tracked);
+
+  return await current;
+}
+
+async function pathIsDirectory(path: string): Promise<boolean> {
+  const stats = await stat(path).catch((error) => {
+    if (getErrorCode(error) === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  });
+
+  return stats?.isDirectory() ?? false;
+}
+
+async function runRepositoryCacheConfig(options: {
+  cachePath: string;
+  key: string;
+  value: string;
+  signal?: AbortSignal;
+  onLog?: (entry: WorkspaceLogEntry) => void;
+}): Promise<void> {
+  const configResult = await runCommand({
+    command: "git",
+    commandArgs: ["-C", options.cachePath, "config", options.key, options.value],
+    signal: options.signal,
+  });
+
+  if (configResult.exitCode !== 0) {
+    log(options.onLog, "error", "repository cache config failed", { output: configResult.output });
+    throw new Error(
+      `repository cache config failed with exit code ${configResult.exitCode ?? "unknown"}`,
+    );
+  }
+}
+
+async function configureRepositoryCache(options: {
+  cachePath: string;
+  repo?: string;
+  signal?: AbortSignal;
+  onLog?: (entry: WorkspaceLogEntry) => void;
+}): Promise<void> {
+  await runRepositoryCacheConfig({
+    cachePath: options.cachePath,
+    key: "gc.auto",
+    value: "0",
+    signal: options.signal,
+    onLog: options.onLog,
+  });
+
+  if (options.repo !== undefined) {
+    await runRepositoryCacheConfig({
+      cachePath: options.cachePath,
+      key: "tau.repo",
+      value: options.repo,
+      signal: options.signal,
+      onLog: options.onLog,
+    });
+  }
+}
+
+async function initializeRepositoryCache(options: {
+  repo: string;
+  cachePath: string;
+  signal?: AbortSignal;
+  onLog?: (entry: WorkspaceLogEntry) => void;
+}): Promise<void> {
+  await rm(options.cachePath, { recursive: true, force: true });
+  await mkdir(dirname(options.cachePath), { recursive: true });
+
+  log(options.onLog, "info", "initializing repository cache", {
+    repo: options.repo,
+    cachePath: options.cachePath,
+  });
+
+  const cloneStart = process.hrtime.bigint();
+  const cloneResult = await runCommand({
+    command: "gh",
+    commandArgs: ["repo", "clone", options.repo, options.cachePath, "--", "--bare"],
+    signal: options.signal,
+  });
+
+  if (cloneResult.exitCode !== 0) {
+    log(options.onLog, "error", "repository cache clone failed", { output: cloneResult.output });
+    await rm(options.cachePath, { recursive: true, force: true });
+    throw new Error(
+      `repository cache clone failed with exit code ${cloneResult.exitCode ?? "unknown"}`,
+    );
+  }
+
+  if (cloneResult.output.trim()) {
+    log(options.onLog, "info", "repository cache clone output", { output: cloneResult.output });
+  }
+
+  await configureRepositoryCache({
+    cachePath: options.cachePath,
+    repo: options.repo,
+    signal: options.signal,
+    onLog: options.onLog,
+  });
+
+  log(options.onLog, "info", "repository cache initialized", {
+    cachePath: options.cachePath,
+    durationMs: elapsedMs(cloneStart),
+  });
+}
+
+async function fetchRepositoryCache(options: {
+  cachePath: string;
+  signal?: AbortSignal;
+  onLog?: (entry: WorkspaceLogEntry) => void;
+}): Promise<void> {
+  await configureRepositoryCache(options);
+
+  log(options.onLog, "info", "fetching repository cache", { cachePath: options.cachePath });
+
+  const fetchStart = process.hrtime.bigint();
+  const fetchResult = await runCommand({
+    command: "git",
+    commandArgs: ["-C", options.cachePath, "fetch", "--prune", "origin"],
+    signal: options.signal,
+  });
+
+  if (fetchResult.exitCode !== 0) {
+    log(options.onLog, "error", "repository cache fetch failed", { output: fetchResult.output });
+    throw new Error(
+      `repository cache fetch failed with exit code ${fetchResult.exitCode ?? "unknown"}`,
+    );
+  }
+
+  if (fetchResult.output.trim()) {
+    log(options.onLog, "info", "repository cache fetch output", { output: fetchResult.output });
+  }
+
+  log(options.onLog, "info", "repository cache updated", {
+    cachePath: options.cachePath,
+    durationMs: elapsedMs(fetchStart),
+  });
+}
+
+async function prepareRepositoryCache(options: {
+  workspaceRoot: string;
+  projectId: string;
+  repo: string;
+  signal?: AbortSignal;
+  onLog?: (entry: WorkspaceLogEntry) => void;
+}): Promise<string> {
+  const cachePath = resolveRepositoryCachePath({
+    workspaceRoot: options.workspaceRoot,
+    projectId: options.projectId,
+  });
+
+  return await withRepositoryCacheLock(cachePath, async () => {
+    if (await pathIsDirectory(cachePath)) {
+      const cachedRepo = await getRepositoryCacheConfig({
+        cachePath,
+        key: "tau.repo",
+        signal: options.signal,
+      });
+
+      if (cachedRepo === options.repo) {
+        await fetchRepositoryCache({
+          cachePath,
+          signal: options.signal,
+          onLog: options.onLog,
+        });
+      } else {
+        log(options.onLog, "info", "repository cache repo mismatch", {
+          repo: options.repo,
+          cachePath,
+          ...(cachedRepo ? { cachedRepo } : {}),
+        });
+        await initializeRepositoryCache({
+          repo: options.repo,
+          cachePath,
+          signal: options.signal,
+          onLog: options.onLog,
+        });
+      }
+    } else {
+      await initializeRepositoryCache({
+        repo: options.repo,
+        cachePath,
+        signal: options.signal,
+        onLog: options.onLog,
+      });
+    }
+
+    return cachePath;
+  });
+}
+
+async function getRepositoryCacheConfig(options: {
+  cachePath: string;
+  key: string;
+  signal?: AbortSignal;
+}): Promise<string | undefined> {
+  const configResult = await runCommand({
+    command: "git",
+    commandArgs: ["-C", options.cachePath, "config", "--get", options.key],
+    signal: options.signal,
+  });
+
+  if (configResult.exitCode !== 0) {
+    return undefined;
+  }
+
+  return configResult.output.trim() || undefined;
+}
+
+async function getRepositoryCacheRemoteUrl(options: {
+  cachePath: string;
+  signal?: AbortSignal;
+  onLog?: (entry: WorkspaceLogEntry) => void;
+}): Promise<string> {
+  const remoteResult = await runCommand({
+    command: "git",
+    commandArgs: ["-C", options.cachePath, "remote", "get-url", "origin"],
+    signal: options.signal,
+  });
+
+  if (remoteResult.exitCode !== 0) {
+    log(options.onLog, "error", "repository cache remote lookup failed", {
+      output: remoteResult.output,
+    });
+    throw new Error(
+      `repository cache remote lookup failed with exit code ${remoteResult.exitCode ?? "unknown"}`,
+    );
+  }
+
+  const remoteUrl = remoteResult.output.trim();
+  if (!remoteUrl) {
+    throw new Error("repository cache origin remote is empty");
+  }
+
+  return remoteUrl;
+}
+
+async function cloneRepositoryFromCache(options: {
+  cachePath: string;
+  workspacePath: string;
+  signal?: AbortSignal;
+  onLog?: (entry: WorkspaceLogEntry) => void;
+}): Promise<void> {
+  const cloneStart = process.hrtime.bigint();
+  const remoteUrl = await getRepositoryCacheRemoteUrl({
+    cachePath: options.cachePath,
+    signal: options.signal,
+    onLog: options.onLog,
+  });
+
+  log(options.onLog, "info", "cloning repository from cache", {
+    cachePath: options.cachePath,
+    workspacePath: options.workspacePath,
+  });
+
+  const cloneResult = await runCommand({
+    command: "git",
+    commandArgs: ["clone", "--shared", options.cachePath, options.workspacePath],
+    signal: options.signal,
+  });
+
+  if (cloneResult.exitCode !== 0) {
+    log(options.onLog, "error", "repository clone from cache failed", {
+      output: cloneResult.output,
+    });
+    throw new Error(
+      `repository clone from cache failed with exit code ${cloneResult.exitCode ?? "unknown"}`,
+    );
+  }
+
+  if (cloneResult.output.trim()) {
+    log(options.onLog, "info", "repository clone output", { output: cloneResult.output });
+  }
+
+  const setRemoteResult = await runCommand({
+    command: "git",
+    commandArgs: ["-C", options.workspacePath, "remote", "set-url", "origin", remoteUrl],
+    signal: options.signal,
+  });
+
+  if (setRemoteResult.exitCode !== 0) {
+    log(options.onLog, "error", "repository remote update failed", {
+      output: setRemoteResult.output,
+    });
+    throw new Error(
+      `repository remote update failed with exit code ${setRemoteResult.exitCode ?? "unknown"}`,
+    );
+  }
+
+  log(options.onLog, "info", "repository clone complete", {
+    cachePath: options.cachePath,
+    durationMs: elapsedMs(cloneStart),
+  });
+}
+
 export async function cleanupWorkspacePath(workspacePath: string): Promise<void> {
   await rm(workspacePath, { recursive: true, force: true });
 }
@@ -238,30 +555,19 @@ export async function prepareWorkspace(
   await rm(workspacePath, { recursive: true, force: true });
   await mkdir(dirname(workspacePath), { recursive: true });
 
-  log(options.onLog, "info", "cloning repository", {
+  const cachePath = await prepareRepositoryCache({
+    workspaceRoot: options.workspaceRoot,
+    projectId: options.projectId,
     repo: options.project.repo,
-    workspacePath,
-  });
-
-  const cloneStart = process.hrtime.bigint();
-  const cloneResult = await runCommand({
-    command: "gh",
-    commandArgs: ["repo", "clone", options.project.repo, workspacePath],
     signal: options.signal,
+    onLog: options.onLog,
   });
 
-  if (cloneResult.exitCode !== 0) {
-    log(options.onLog, "error", "gh repo clone failed", { output: cloneResult.output });
-    throw new Error(`gh repo clone failed with exit code ${cloneResult.exitCode ?? "unknown"}`);
-  }
-
-  if (cloneResult.output.trim()) {
-    log(options.onLog, "info", "gh repo clone output", { output: cloneResult.output });
-  }
-
-  log(options.onLog, "info", "repository clone complete", {
-    durationMs: elapsedMs(cloneStart),
-    ...(options.project.ref ? { ref: options.project.ref } : {}),
+  await cloneRepositoryFromCache({
+    cachePath,
+    workspacePath,
+    signal: options.signal,
+    onLog: options.onLog,
   });
 
   if (options.project.ref) {

@@ -123,7 +123,7 @@ daemon config uses a bot-id map (`telegram.<botId>.botToken`), with optional per
 
 Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). allowed groups are opt-in via `allowedChatIds`; non-triggering group text/captions, attachments, audio transcripts, and processing errors are buffered as sender-attributed context and the most recent 50 messages since the previous bot-triggering turn are included when a bot mention triggers a turn. group context attachment/audio processing runs eagerly, but processing errors are reported to Telegram only after a later bot-triggering message is accepted. group commands accept explicit bot mentions on or around the command, such as `/sessions@botusername`, `/sessions @botusername`, or `@botusername /sessions`. attachment-only messages do not trigger turns, attachments are downloaded to local temp files immediately, queued attachments are prepended to the next text/voice turn as local temp file metadata, and oversized Telegram replies are split into 95%-of-limit chunks sent 1 second apart.
 
-daemon config also supports `systemMessage`, `cron.jobsDir`, and `cron.systemMessage` for scheduled runs, plus per-project `workingDirectory` (for monorepos), `description` (used by Telegram `/projects`), `bootstrapCommands` (blocking), and `backgroundBootstrapCommands` (non-blocking). on startup, the daemon wipes existing entries under configured async workspace roots. on Telegram adapter startup, tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Telegram `/close` deletes session workspaces from disk when closing sessions.
+daemon config also supports `systemMessage`, `cron.jobsDir`, and `cron.systemMessage` for scheduled runs, plus per-project `workingDirectory` (for monorepos), `description` (used by Telegram `/projects`), `bootstrapCommands` (blocking), and `backgroundBootstrapCommands` (non-blocking). repositories use automatic persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`, while individual session workspaces are still ephemeral. on startup, the daemon wipes existing entries under configured async workspace roots but leaves repository caches intact. on Telegram adapter startup, tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Telegram `/close` deletes session workspaces from disk when closing sessions.
 
 ## built-in tool commands
 
@@ -529,7 +529,7 @@ daemon-side async settings are in a separate config file passed to:
 tau async daemon --config-file <path>
 ```
 
-see [docs/async.md](docs/async.md) for daemon config schema (`host`, `port`, `authToken`, `telegram` (map keyed by bot id), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `projects.<id>.ref`, `projects.<id>.workingDirectory`, `projects.<id>.description`, `projects.<id>.bootstrapCommands`, `projects.<id>.backgroundBootstrapCommands`) and GitHub repo requirements (`owner/repo`, cloned via `gh repo clone`).
+see [docs/async.md](docs/async.md) for daemon config schema (`host`, `port`, `authToken`, `telegram` (map keyed by bot id), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `projects.<id>.ref`, `projects.<id>.workingDirectory`, `projects.<id>.description`, `projects.<id>.bootstrapCommands`, `projects.<id>.backgroundBootstrapCommands`) and GitHub repo requirements (`owner/repo`, cached via `gh repo clone -- --bare`).
 
 ### project bash commands
 

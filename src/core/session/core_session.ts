@@ -129,7 +129,10 @@ export class CoreSession {
     return await this.engine.compact(options);
   }
 
-  async *events(signal: AbortSignal): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
-    return yield* this.engine.processTurn(signal);
+  async *events(
+    signal: AbortSignal,
+    options?: { shouldStopAtBoundary?: () => boolean },
+  ): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
+    return yield* this.engine.processTurn(signal, options);
   }
 }

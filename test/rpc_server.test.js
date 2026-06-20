@@ -1,5 +1,5 @@
 import { PassThrough } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CORE_EVENT_VERSION } from "../dist/core/events/types.js";
 import { RPC_ERROR_CODES, RPC_PROTOCOL_VERSION } from "../dist/core/modes/rpc_protocol.js";
 import { RpcServer, runRpcServer } from "../dist/core/modes/rpc_server.js";
@@ -88,6 +88,7 @@ function createHarness(options = {}) {
         pendingTurnResult = { aborted: false };
       }
     },
+    requestTurnBoundaryStop: vi.fn(() => running),
     interruptTurn() {
       if (!running || !releaseTurn) {
         return false;
@@ -117,6 +118,16 @@ function createHarness(options = {}) {
       });
     },
   };
+}
+
+async function waitFor(predicate, timeoutMs = 2000) {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error("waitFor timeout");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 function parseNdjson(text) {
@@ -212,6 +223,107 @@ describe("rpc_server", () => {
           turn: { aborted: false },
         },
       }),
+    );
+  });
+
+  it("batches steering submits while a turn is running", async () => {
+    const harness = createHarness();
+
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", { text: "first turn" }),
+    );
+
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "event" && line.event?.event?.text === "streaming",
+      ),
+    );
+    const steerOne = harness.server.handleLine(
+      request("steer-1", "session.submit", { text: "change direction", mode: "steer" }),
+    );
+    const steerTwo = harness.server.handleLine(
+      request("steer-2", "session.submit", { text: "also check docs", mode: "steer" }),
+    );
+
+    await Promise.resolve();
+    expect(harness.runtime.requestTurnBoundaryStop).toHaveBeenCalled();
+    expect(harness.lines.some((line) => line.id === "steer-1" && line.type === "response")).toBe(
+      false,
+    );
+
+    harness.releaseTurn();
+    await firstSubmit;
+    await waitFor(() =>
+      harness.runtime.session.historyEntries.some((entry) =>
+        entry.message.content[0].text.includes("change direction"),
+      ),
+    );
+
+    const steeringEntry = harness.runtime.session.historyEntries.find((entry) =>
+      entry.message.content[0].text.includes("change direction"),
+    );
+    harness.emitSubagent({ type: "spawned", id: "agent-2", title: "research" }, steeringEntry.id);
+    harness.releaseTurn();
+    await Promise.all([steerOne, steerTwo]);
+
+    expect(steeringEntry.message.content[0].text).toContain("<system>");
+    expect(steeringEntry.message.content[0].text).toContain("change direction\n\nalso check docs");
+
+    const steeringSubagentEvent = harness.lines.find(
+      (line) =>
+        line.type === "event" &&
+        line.event?.event?.type === "subagent_ui" &&
+        line.event?.event?.event?.id === "agent-2",
+    );
+    expect(steeringSubagentEvent.requestId).toBe("steer-1");
+
+    for (const id of ["steer-1", "steer-2"]) {
+      expect(harness.lines.find((line) => line.type === "response" && line.id === id)).toEqual(
+        expect.objectContaining({
+          ok: true,
+          result: expect.objectContaining({
+            userHistoryEntryId: steeringEntry.id,
+            turn: { aborted: false },
+          }),
+        }),
+      );
+    }
+  });
+
+  it("drops pending steering submits when a turn is interrupted", async () => {
+    const harness = createHarness();
+
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", { text: "first turn" }),
+    );
+
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "event" && line.event?.event?.text === "streaming",
+      ),
+    );
+    await harness.server.handleLine(
+      request("steer-1", "session.submit", { text: "change direction", mode: "steer" }),
+    );
+    await harness.server.handleLine(request("interrupt", "session.interrupt", {}));
+    await firstSubmit;
+
+    expect(
+      harness.runtime.session.historyEntries.some((entry) =>
+        entry.message.content[0].text.includes("change direction"),
+      ),
+    ).toBe(false);
+    expect(harness.lines.find((line) => line.type === "response" && line.id === "steer-1")).toEqual(
+      {
+        version: RPC_PROTOCOL_VERSION,
+        type: "response",
+        id: "steer-1",
+        ok: false,
+        error: {
+          code: RPC_ERROR_CODES.invalidRequest,
+          message: "session was interrupted",
+        },
+      },
     );
   });
 

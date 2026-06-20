@@ -62,7 +62,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `commands/registry.ts` - Slash command parsing and dispatch
   - `cli.ts` - CLI argument parsing and help text
   - `async/` - Async daemon/client modules (`cli.ts`, `cron.ts`, `http_protocol.ts`, `http_server.ts`, `server_config.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
-    - `telegram.ts` handles DM and opt-in group commands with explicit bot mentions, group mention triggers with sender-attributed pending context (including attachments, audio transcripts, and processing errors) since the previous bot-triggering turn, voice/audio transcription, immediate attachment materialization/queueing for text/voice-triggered turns, and splits oversized Telegram replies into 95%-of-limit chunks sent 1 second apart
+    - `telegram.ts` handles DM and opt-in group commands with explicit bot mentions, group mention triggers with sender-attributed pending context (including attachments, audio transcripts, and processing errors) since the previous bot-triggering turn, voice/audio transcription, steering-mode submission for text/audio while a session is running, immediate attachment materialization/queueing for text/voice-triggered turns, and splits oversized Telegram replies into 95%-of-limit chunks sent 1 second apart
 
   - `debug.ts` - `--debug` output
   - `config/deps.ts` - Config loader dependencies

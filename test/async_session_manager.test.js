@@ -285,6 +285,51 @@ describe("async session manager", () => {
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 
+  it("allows explicit steering submissions while a session is running", async () => {
+    const firstSubmit = deferred();
+    const steeringSubmit = deferred();
+    const submitDeferreds = [firstSubmit, steeringSubmit];
+    const client = {
+      ready: { sessionId: "rpc-1" },
+      submit: vi.fn(async () => await submitDeferreds.shift().promise),
+      interrupt: vi.fn(async () => ({ interrupted: true, isTurnRunning: true })),
+      snapshot: vi.fn(async () => ({ sessionId: "rpc-1", isTurnRunning: false, historyLength: 0 })),
+      reset: vi.fn(async () => ({ previousSessionId: "rpc-1", sessionId: "rpc-2" })),
+      shutdown: vi.fn(async () => ({ shutdown: true })),
+      close: vi.fn(async () => {}),
+      onEvent: vi.fn(() => () => {}),
+    };
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
+      createClient: vi.fn(async () => client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "start work");
+    await manager.sendMessage(created.id, "steer it", { mode: "steer" });
+
+    expect(client.submit).toHaveBeenNthCalledWith(1, "start work");
+    expect(client.submit).toHaveBeenNthCalledWith(2, "steer it", { mode: "steer" });
+    expect(manager.getSession(created.id)?.state).toBe("running");
+
+    firstSubmit.resolve({ userHistoryEntryId: "history-1", turn: { aborted: false } });
+    await Promise.resolve();
+    expect(manager.getSession(created.id)?.state).toBe("running");
+
+    steeringSubmit.resolve({ userHistoryEntryId: "history-2", turn: { aborted: false } });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+  });
+
   it("applies additional system message to initial prompt submissions", async () => {
     const clientHarness = createClientHarness();
     const manager = createAsyncSessionManager({

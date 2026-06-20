@@ -134,6 +134,7 @@ export type AsyncSessionManagerEvent =
 
 export type AsyncSessionSubmitOptions = {
   additionalSystemMessage?: string;
+  mode?: "submit" | "steer";
 };
 
 export type AsyncSessionInterruptResult = {
@@ -313,11 +314,12 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       throw new AsyncSessionManagerError("not_ready", "session is still preparing");
     }
 
-    if (entry.record.state === "running" || entry.activeSubmit) {
+    const mode = options?.mode ?? "submit";
+    if (mode !== "steer" && (entry.record.state === "running" || entry.activeSubmit)) {
       throw new AsyncSessionManagerError("busy", "session is running");
     }
 
-    void this.submitText(entry, trimmed, "user-message", options?.additionalSystemMessage);
+    void this.submitText(entry, trimmed, "user-message", options?.additionalSystemMessage, mode);
     return this.toRecord(entry);
   }
 
@@ -515,24 +517,31 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     text: string,
     source: string,
     additionalSystemMessage?: string,
+    mode: "submit" | "steer" = "submit",
   ): Promise<void> {
     if (!entry.client) {
       throw new AsyncSessionManagerError("not_ready", "session is still preparing");
     }
 
-    if (entry.activeSubmit) {
+    if (entry.activeSubmit && mode !== "steer") {
       throw new AsyncSessionManagerError("busy", "session is running");
     }
 
     this.setState(entry, "running");
-    this.log(entry, "info", "submitting message", { source, text });
+    this.log(entry, "info", mode === "steer" ? "steering message" : "submitting message", {
+      source,
+      text,
+    });
 
+    const previousSubmit = entry.activeSubmit;
     const client = entry.client;
     const payload = this.buildSubmitPayload(text, additionalSystemMessage);
 
-    const submitPromise = (async () => {
+    let submitPromise!: Promise<void>;
+    submitPromise = (async () => {
       try {
-        const result = await client.submit(payload);
+        const result =
+          mode === "steer" ? await client.submit(payload, { mode }) : await client.submit(payload);
         this.log(entry, result.turn.blocked ? "error" : "info", "message finished", {
           source,
           aborted: result.turn.aborted,
@@ -544,7 +553,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
           if (result.turn.blocked) {
             entry.record.error = result.turn.blocked.message;
             this.setState(entry, "failed");
-          } else {
+          } else if (!entry.activeSubmit || entry.activeSubmit === submitPromise) {
             this.setState(entry, "waiting-input");
           }
         }
@@ -559,10 +568,16 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       }
     })();
 
-    entry.activeSubmit = submitPromise;
-    void submitPromise.finally(() => {
-      if (entry.activeSubmit === submitPromise) {
+    const trackedSubmit = previousSubmit
+      ? Promise.all([previousSubmit, submitPromise]).then(() => undefined)
+      : submitPromise;
+    entry.activeSubmit = trackedSubmit;
+    void trackedSubmit.finally(() => {
+      if (entry.activeSubmit === trackedSubmit) {
         entry.activeSubmit = undefined;
+        if (!entry.cancelRequested && entry.record.state === "running") {
+          this.setState(entry, "waiting-input");
+        }
       }
     });
 

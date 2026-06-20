@@ -121,6 +121,10 @@ export class ChatRuntime {
     return this.turnRuntime.run();
   }
 
+  requestTurnBoundaryStop(): boolean {
+    return this.turnRuntime.requestStopAtBoundary();
+  }
+
   interruptTurn(): boolean {
     return this.turnRuntime.interrupt();
   }

@@ -45,6 +45,7 @@ export type RpcInitializeParams = {
 export type RpcSessionSubmitParams = {
   text: string;
   historyEntryId?: string;
+  mode?: "submit" | "steer";
 };
 
 export type RpcSessionInterruptParams = Record<string, never>;
@@ -289,6 +290,7 @@ const rpcSessionSubmitParamsSchema = z
   .object({
     text: z.string(),
     historyEntryId: z.string().optional(),
+    mode: z.enum(["submit", "steer"]).optional(),
   })
   .strict();
 
@@ -639,12 +641,14 @@ function validateSubmitParams(params: unknown): RpcParamsValidationResult<RpcSes
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.submit params must be an object"
       : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.submit params only support text and optional historyEntryId"
+        ? "session.submit params only support text, optional historyEntryId, and optional mode"
         : hasIssue(parsed.error, ["text"])
           ? "session.submit params.text must be a string"
           : hasIssue(parsed.error, ["historyEntryId"])
             ? "session.submit params.historyEntryId must be a string when provided"
-            : `session.submit params are invalid: ${formatZodError(parsed.error)}`;
+            : hasIssue(parsed.error, ["mode"])
+              ? "session.submit params.mode must be 'submit' or 'steer' when provided"
+              : `session.submit params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -655,6 +659,7 @@ function validateSubmitParams(params: unknown): RpcParamsValidationResult<RpcSes
       ...(parsed.data.historyEntryId !== undefined
         ? { historyEntryId: parsed.data.historyEntryId }
         : {}),
+      ...(parsed.data.mode !== undefined ? { mode: parsed.data.mode } : {}),
     },
   };
 }

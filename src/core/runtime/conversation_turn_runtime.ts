@@ -6,6 +6,7 @@ export type ConversationTurnResult = ProcessTurnResult;
 export class ConversationTurnRuntime {
   private readonly session: Pick<CoreSession, "events">;
   private abortController?: AbortController;
+  private stopAtBoundaryRequested = false;
 
   constructor(session: Pick<CoreSession, "events">) {
     this.session = session;
@@ -26,7 +27,10 @@ export class ConversationTurnRuntime {
     try {
       let result: ProcessTurnResult | undefined;
       try {
-        const stream = this.session.events(abortController.signal);
+        this.stopAtBoundaryRequested = false;
+        const stream = this.session.events(abortController.signal, {
+          shouldStopAtBoundary: () => this.stopAtBoundaryRequested,
+        });
         while (true) {
           const next = await stream.next();
           if (next.done) {
@@ -53,8 +57,17 @@ export class ConversationTurnRuntime {
     } finally {
       if (this.abortController === abortController) {
         this.abortController = undefined;
+        this.stopAtBoundaryRequested = false;
       }
     }
+  }
+
+  requestStopAtBoundary(): boolean {
+    if (!this.abortController) {
+      return false;
+    }
+    this.stopAtBoundaryRequested = true;
+    return true;
   }
 
   interrupt(): boolean {

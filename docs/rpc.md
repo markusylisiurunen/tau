@@ -141,7 +141,11 @@ params (required):
 params (required):
 
 ```json
-{ "text": "implement this", "historyEntryId": "optional-user-entry-id" }
+{
+  "text": "implement this",
+  "historyEntryId": "optional-user-entry-id",
+  "mode": "submit"
+}
 ```
 
 behavior:
@@ -149,6 +153,7 @@ behavior:
 - appends a user message to session history
 - runs one assistant turn
 - streams core events as `event` messages with `requestId`
+- `mode` defaults to `"submit"`; `"steer"` is explicit opt-in behavior for callers that want a running turn to change course
 - automatically compacts when provider-reported context usage crosses the configured threshold
 - ends with a success `response`
 
@@ -261,6 +266,8 @@ events are wrapped core events:
 notes:
 
 - events tied to `session.submit` include `requestId`.
+- when `mode: "steer"` is sent while idle, it behaves like a normal submit with no extra system prefix.
+- when `mode: "steer"` is sent while a turn is running, Tau accepts it, batches any additional steering submits in arrival order, asks the active turn to stop at the next safe boundary after model output or completed tool results, then starts one new turn with a short `<system>` steering instruction plus the batched user messages.
 - `subagent_ui` events include stable `requestId` correlation to the submit that spawned the subagent run, even when the update arrives during a later submit.
 - `subagent_ui` core events include `originHistoryEntryId` for explicit origin correlation.
 - automatic compaction emits `compaction_start` and `compaction_end` events. `compaction_end.outcome` is `compacted`, `skipped`, `aborted`, or `failed`; compacted events include the summary and hidden-continuation history ids, visible summary message, cut type, and retained message count, while failed events include `errorMessage` and the submit result may include `turn.blocked`.
@@ -290,7 +297,7 @@ error codes:
 - `invalid_request`: malformed envelope, bad version/type/id, or shut down server
 - `method_not_found`: unsupported method
 - `invalid_params`: params failed method validation
-- `busy`: overlapping `session.submit` or submit rejected while a mutating request is in progress
+- `busy`: overlapping normal `session.submit` or submit rejected while a mutating request is in progress
 - `internal_error`: unexpected runtime failure
 
 for lines that cannot produce a valid request id (for example malformed json), `id` is `null`.
@@ -301,7 +308,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 
 - multiple requests can be accepted before earlier ones complete
 - `session.reset` and `session.shutdown` run through a shared mutation queue (arrival order)
-- only one `session.submit` can run at once (`busy` otherwise)
+- only one normal `session.submit` can run at once (`busy` otherwise); `mode: "steer"` is accepted during an active turn and runs at the next safe boundary
 - `session.submit` is rejected with `busy` while a queued/running reset or shutdown mutation exists
 - responses/events from different request ids may still interleave
 

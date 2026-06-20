@@ -116,7 +116,15 @@ class TauSdkClientImpl implements TauSdkClient {
     return this.request("session.submit", {
       text,
       ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
+      ...(options.mode === undefined ? {} : { mode: options.mode }),
     });
+  }
+
+  steer(
+    text: string,
+    options: Omit<TauSdkSubmitOptions, "mode"> = {},
+  ): Promise<RpcResultByMethod["session.submit"]> {
+    return this.submit(text, { ...options, mode: "steer" });
   }
 
   interrupt(): Promise<RpcResultByMethod["session.interrupt"]> {

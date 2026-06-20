@@ -335,7 +335,7 @@ describe("async telegram adapter", () => {
       expect(sendMessageCall[1]).toContain("<telegram-trigger-message>");
       expect(sendMessageCall[1]).toContain("sender: Grace Hopper (@grace, id 8)");
       expect(sendMessageCall[1]).toContain('text: "please summarize"');
-      expect(sendMessageCall[2]).toBe(undefined);
+      expect(sendMessageCall[2]).toEqual({ mode: "steer" });
       await waitFor(() =>
         apiHarness.setMessageReactions.some(
           (entry) => entry.chatId === groupChatId && entry.messageId === 602,
@@ -714,6 +714,7 @@ describe("async telegram adapter", () => {
         ownerId: ownerIdForChat(200),
       });
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s1", "follow up", {
+        mode: "steer",
         additionalSystemMessage: "telegram guidance",
       });
 
@@ -805,7 +806,7 @@ describe("async telegram adapter", () => {
 
       const sendMessageCall = managerHarness.manager.sendMessage.mock.calls[0];
       expect(sendMessageCall[0]).toBe("s1");
-      expect(sendMessageCall[2]).toBe(undefined);
+      expect(sendMessageCall[2]).toEqual({ mode: "steer" });
       expect(sendMessageCall[1]).toContain("attachments:");
       expect(sendMessageCall[1]).toContain("mime: application/pdf");
       expect(sendMessageCall[1]).toContain("size_bytes: 9");
@@ -883,11 +884,9 @@ describe("async telegram adapter", () => {
     try {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
       expect(apiHarness.downloadFileCalls).toEqual(["voice-123"]);
-      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
-        "s21",
-        "ship the fix",
-        undefined,
-      );
+      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s21", "ship the fix", {
+        mode: "steer",
+      });
       expect(mistralFetch).toHaveBeenCalledTimes(1);
       await waitFor(() =>
         apiHarness.setMessageReactions.some(
@@ -973,7 +972,7 @@ describe("async telegram adapter", () => {
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
         "s22",
         "use google transcription",
-        undefined,
+        { mode: "steer" },
       );
       expect(geminiFetch).toHaveBeenCalledTimes(1);
       const request = JSON.parse(geminiFetch.mock.calls[0][1].body);

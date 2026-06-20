@@ -19,7 +19,10 @@ import {
   serializeRpcMessage,
 } from "./rpc_protocol.js";
 
-export type RpcServerRuntime = Pick<ChatRuntime, "runTurn" | "interruptTurn" | "isTurnRunning"> & {
+export type RpcServerRuntime = Pick<
+  ChatRuntime,
+  "runTurn" | "interruptTurn" | "requestTurnBoundaryStop" | "isTurnRunning"
+> & {
   session: {
     addUserText(text: string, options?: { historyEntryId?: string }): string;
     onEvent(handler: (event: CoreEvent) => void): () => void;
@@ -50,6 +53,8 @@ export class RpcServer {
   private unsubscribeEvent?: () => void;
   private activeSubmit?: Promise<void>;
   private activeSubmitRequestId?: RpcRequestId;
+  private pendingSteeringSubmits: Array<Extract<RpcRequestMessage, { method: "session.submit" }>> =
+    [];
   private readonly submitRequestByUserHistoryEntryId = new Map<string, RpcRequestId>();
   private mutationQueue: Promise<void> = Promise.resolve();
   private pendingSessionMutations = 0;
@@ -177,31 +182,7 @@ export class RpcServer {
       return;
     }
 
-    const startedSubmit = await this.enqueueMutation(() => {
-      if (this.rpcShutdown) {
-        this.sendServerShutdownError(request.id);
-        return undefined;
-      }
-
-      if (this.activeSubmit || this.runtime.isTurnRunning) {
-        this.sendSubmitBusy(request.id);
-        return undefined;
-      }
-
-      const addOptions = request.params.historyEntryId
-        ? { historyEntryId: request.params.historyEntryId }
-        : undefined;
-      const userHistoryEntryId = this.runtime.session.addUserText(request.params.text, addOptions);
-      this.submitRequestByUserHistoryEntryId.set(userHistoryEntryId, request.id);
-      this.activeSubmitRequestId = request.id;
-
-      const submitPromise = this.executeSubmit(request.id, userHistoryEntryId);
-      this.activeSubmit = submitPromise;
-
-      return {
-        submitPromise,
-      };
-    });
+    const startedSubmit = await this.enqueueMutation(() => this.startSubmit(request));
 
     if (!startedSubmit) {
       return;
@@ -218,10 +199,91 @@ export class RpcServer {
           this.activeSubmitRequestId = undefined;
         }
       });
+      void this.drainPendingSteeringSubmits();
     }
   }
 
-  private async executeSubmit(requestId: RpcRequestId, userHistoryEntryId: string): Promise<void> {
+  private startSubmit(request: Extract<RpcRequestMessage, { method: "session.submit" }>) {
+    if (this.rpcShutdown) {
+      this.sendServerShutdownError(request.id);
+      return undefined;
+    }
+
+    if (this.activeSubmit || this.runtime.isTurnRunning) {
+      if (request.params.mode === "steer") {
+        this.pendingSteeringSubmits.push(request);
+        this.runtime.requestTurnBoundaryStop();
+      } else {
+        this.sendSubmitBusy(request.id);
+      }
+      return undefined;
+    }
+
+    const addOptions = request.params.historyEntryId
+      ? { historyEntryId: request.params.historyEntryId }
+      : undefined;
+    const userHistoryEntryId = this.runtime.session.addUserText(request.params.text, addOptions);
+    this.submitRequestByUserHistoryEntryId.set(userHistoryEntryId, request.id);
+    this.activeSubmitRequestId = request.id;
+
+    const submitPromise = this.executeSubmit(request.id, userHistoryEntryId);
+    this.activeSubmit = submitPromise;
+
+    return {
+      submitPromise,
+    };
+  }
+
+  private async drainPendingSteeringSubmits(): Promise<void> {
+    const batch = await this.enqueueMutation(() => {
+      if (
+        this.rpcShutdown ||
+        this.pendingSteeringSubmits.length === 0 ||
+        this.activeSubmit ||
+        this.runtime.isTurnRunning
+      ) {
+        return undefined;
+      }
+
+      const requests = this.pendingSteeringSubmits.splice(0);
+      const primaryRequest = requests[0]!;
+      const preferredHistoryEntryId =
+        requests.length === 1 ? primaryRequest.params.historyEntryId : undefined;
+      const userHistoryEntryId = this.runtime.session.addUserText(
+        this.formatSteeringUserMessage(requests.map((item) => item.params.text)),
+        preferredHistoryEntryId ? { historyEntryId: preferredHistoryEntryId } : undefined,
+      );
+      this.submitRequestByUserHistoryEntryId.set(userHistoryEntryId, primaryRequest.id);
+      this.activeSubmitRequestId = primaryRequest.id;
+
+      const submitPromise = this.executeSubmit(primaryRequest.id, userHistoryEntryId, requests);
+      this.activeSubmit = submitPromise;
+
+      return { submitPromise };
+    });
+
+    if (!batch) {
+      return;
+    }
+
+    try {
+      await batch.submitPromise;
+    } finally {
+      await this.enqueueMutation(() => {
+        if (this.activeSubmit === batch.submitPromise) {
+          this.activeSubmit = undefined;
+          this.activeSubmitRequestId = undefined;
+        }
+      });
+      void this.drainPendingSteeringSubmits();
+    }
+  }
+
+  private async executeSubmit(
+    requestId: RpcRequestId,
+    userHistoryEntryId: string,
+    responseRequests?: Array<Extract<RpcRequestMessage, { method: "session.submit" }>>,
+  ): Promise<void> {
     try {
       const turnResult = await this.runtime.runTurn();
 
@@ -233,23 +295,41 @@ export class RpcServer {
         },
       };
 
-      this.sendMessage(createRpcSuccessResponse(requestId, result));
+      if (responseRequests) {
+        for (const request of responseRequests) {
+          this.sendMessage(createRpcSuccessResponse(request.id, result));
+        }
+      } else {
+        this.sendMessage(createRpcSuccessResponse(requestId, result));
+      }
     } catch (error) {
-      this.sendMessage(
-        createRpcErrorResponse(
-          requestId,
-          RPC_ERROR_CODES.internalError,
-          "failed to run session turn",
-          { cause: error instanceof Error ? error.message : String(error) },
-        ),
-      );
+      const requests = responseRequests ?? [{ id: requestId }];
+      for (const request of requests) {
+        this.sendMessage(
+          createRpcErrorResponse(
+            request.id,
+            RPC_ERROR_CODES.internalError,
+            "failed to run session turn",
+            { cause: error instanceof Error ? error.message : String(error) },
+          ),
+        );
+      }
     }
+  }
+
+  private formatSteeringUserMessage(messages: string[]): string {
+    const guidance =
+      "The user sent the following message(s) while you were already working. Treat them as steering for the current task: incorporate them immediately, adjust your plan if needed, and do not continue down the previous path if this changes the requested direction.";
+    const body = messages.join("\n\n");
+
+    return `<system>\n${guidance}\n</system>\n${body}`;
   }
 
   private handleInterrupt(
     request: Extract<RpcRequestMessage, { method: "session.interrupt" }>,
   ): void {
     const interrupted = this.runtime.interruptTurn();
+    this.rejectPendingSteeringSubmits("session was interrupted");
 
     const result: RpcResultByMethod["session.interrupt"] = {
       interrupted,
@@ -287,6 +367,7 @@ export class RpcServer {
 
       await this.interruptAndWaitForActiveSubmit();
 
+      this.rejectPendingSteeringSubmits("session was reset");
       const previousSessionId = this.runtime.session.sessionId;
       this.runtime.session.reset();
       this.clearEventCorrelationState();
@@ -315,6 +396,7 @@ export class RpcServer {
       await this.interruptAndWaitForActiveSubmit();
 
       this.rpcShutdown = true;
+      this.rejectPendingSteeringSubmits("rpc server is shut down");
       this.clearEventCorrelationState();
       this.unsubscribeEventListener();
 
@@ -324,6 +406,13 @@ export class RpcServer {
 
       this.sendMessage(createRpcSuccessResponse(request.id, result));
     });
+  }
+
+  private rejectPendingSteeringSubmits(message: string): void {
+    const requests = this.pendingSteeringSubmits.splice(0);
+    for (const request of requests) {
+      this.sendMessage(createRpcErrorResponse(request.id, RPC_ERROR_CODES.invalidRequest, message));
+    }
   }
 
   private sendServerShutdownError(id: RpcRequestId): void {

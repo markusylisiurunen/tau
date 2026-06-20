@@ -580,7 +580,10 @@ export class SessionEngine {
     return apiKey;
   }
 
-  async *processTurn(signal: AbortSignal): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
+  async *processTurn(
+    signal: AbortSignal,
+    options?: { shouldStopAtBoundary?: () => boolean },
+  ): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
     let subturns = 0;
     let autoCompactionAttempted = false;
     const originHistoryEntryId = this.getCurrentTurnUserHistoryEntryId();
@@ -648,6 +651,10 @@ export class SessionEngine {
         }
         this.emitEvent(event);
         yield event;
+      }
+
+      if (options?.shouldStopAtBoundary?.()) {
+        break;
       }
     }
 

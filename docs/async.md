@@ -207,6 +207,7 @@ Supported commands:
   - oversized Telegram replies are split into 95%-of-limit chunks (3891 bytes) and sent 1 second apart
 
 - in DMs, plain text sends to the selected session (if no active session is selected and exactly one session exists, it is auto-selected)
+- Telegram-originated text and transcribed audio use explicit steering mode: if the selected session is idle the message behaves like a normal user turn, and if the agent is already working the message is accepted, batched with any other steering messages, and run at the next safe boundary after model output or completed tool results
 - in allowed groups, only messages that explicitly mention the bot username (`@botusername`) trigger a turn; non-triggering text/caption messages, attachments, audio transcripts, and processing errors are buffered as sender-attributed context and the last 50 pending messages since the previous bot-triggering turn are included with the triggering turn. attachment/audio processing runs eagerly for buffered context, but processing errors are reported to Telegram only after a later bot-triggering message is accepted
 - group commands must mention the bot, for example `/sessions@botusername`, `/sessions @botusername`, or `@botusername /sessions`; each group has one shared chat-scoped session namespace and one selected session
 - Telegram `voice` and `audio` messages are downloaded, transcribed with the configured speech-to-text provider, and then sent to the selected session

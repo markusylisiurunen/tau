@@ -98,6 +98,7 @@ export type TauSdkClientOptions = {
 
 export type TauSdkSubmitOptions = {
   historyEntryId?: string;
+  mode?: "submit" | "steer";
 };
 
 export type TauSdkEventListener = (event: TauSdkEvent) => void;
@@ -105,6 +106,10 @@ export type TauSdkEventListener = (event: TauSdkEvent) => void;
 export type TauSdkClient = {
   readonly ready: TauSdkReadyMessage;
   submit(text: string, options?: TauSdkSubmitOptions): Promise<TauSdkSessionSubmitResult>;
+  steer(
+    text: string,
+    options?: Omit<TauSdkSubmitOptions, "mode">,
+  ): Promise<TauSdkSessionSubmitResult>;
   interrupt(): Promise<TauSdkSessionInterruptResult>;
   snapshot(): Promise<TauSdkSessionSnapshotResult>;
   reset(): Promise<TauSdkSessionResetResult>;

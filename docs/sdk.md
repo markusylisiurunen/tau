@@ -125,7 +125,10 @@ const client = await createTauSdkClient({
 - `submit(text, options?)`
   - sends `session.submit`
   - `options.historyEntryId` forwards a custom user history id
+  - `options.mode` may be `"submit"` (default) or `"steer"`; steering while idle behaves like a normal submit, while steering during an active turn is batched and run at the next safe boundary
   - resolves with `{ userHistoryEntryId, turn }`; `turn.blocked` is present when tau could not continue after a non-aborted auto-compaction failure
+- `steer(text, options?)`
+  - convenience wrapper for `submit(text, { ...options, mode: "steer" })`
 - `interrupt()`
   - sends `session.interrupt`
 - `snapshot()`

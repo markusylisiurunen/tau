@@ -2500,11 +2500,10 @@ class AsyncTelegramAdapterImpl {
         ? text
         : await this.buildMessageTextWithAttachments(sessionId, text, chatId);
     const sessionManager = this.getSessionManagerForChat(chatId);
-    await sessionManager.sendMessage(
-      sessionId,
-      textWithAttachments,
-      this.systemMessage ? { additionalSystemMessage: this.systemMessage } : undefined,
-    );
+    await sessionManager.sendMessage(sessionId, textWithAttachments, {
+      mode: "steer",
+      ...(this.systemMessage ? { additionalSystemMessage: this.systemMessage } : {}),
+    });
     this.resetPendingAttachmentQueue(sessionId);
     await this.reactToQueuedMessage(chatId, sourceMessageId);
     if (this.isVerboseSession(sessionId)) {

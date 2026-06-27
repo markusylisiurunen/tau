@@ -426,6 +426,7 @@ the main assistant also has a TUI-only `diff_review` tool. it uses the same capt
 | `enter x2`  | retry last response on empty input         |
 | `esc x2`    | clear current prompt                       |
 | `alt+up`    | pop queued message                         |
+| `alt+c`     | collapse queued messages into one          |
 | `alt+down`  | cycle active sub-agents                    |
 | `esc`       | interrupt active task or cancel `/diff`    |
 | `ctrl+c`    | press twice to exit                        |

@@ -24,7 +24,7 @@ export class QueuedMessagesComponent implements Component {
 
     const { palette, markdownTheme } = this.theme;
     const lines: string[] = [];
-    const headerRaw = `queued (${this.messages.length}) — alt+up to edit next`;
+    const headerRaw = `queued (${this.messages.length}) — alt+up edit · alt+c collapse`;
     const headerPad = " ";
     const headerWidth = Math.max(0, width - visibleWidth(headerPad));
     lines.push(palette.textDim(`${headerPad}${truncateToWidth(headerRaw, headerWidth, "…")}`));

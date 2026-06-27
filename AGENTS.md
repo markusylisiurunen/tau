@@ -296,7 +296,7 @@ Slash commands only trigger on single-line inputs. `/diff` treats its payload as
 
 RPC mode command surface is protocol-based (`initialize`, `session.submit`, `session.interrupt`, `session.snapshot`, `session.reset`, `session.shutdown`) over NDJSON stdin/stdout.
 
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @<file> and @@skill:<name> mentions), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (terminate selected subagent), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work, including cancelling `/diff`), `Ctrl+C` (press twice to exit)
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @<file> and @@skill:<name> mentions), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (terminate selected subagent), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+C` (collapse queued messages into one), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work, including cancelling `/diff`), `Ctrl+C` (press twice to exit)
 
 ## Development
 

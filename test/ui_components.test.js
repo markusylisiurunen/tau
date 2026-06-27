@@ -262,7 +262,7 @@ test("QueuedMessagesComponent renders numbered, italicized previews", () => {
   const theme = createTagTheme();
   const component = new QueuedMessagesComponent(theme, ["first line\nsecond", "third"]);
   const lines = renderLines(component, 80);
-  expect(lines[0]).toBe("<textDim> queued (2) — alt+up to edit next</textDim>");
+  expect(lines[0]).toBe("<textDim> queued (2) — alt+up edit · alt+c collapse</textDim>");
   expect(lines[1]).toBe(
     "<textDim>  1› </textDim><italic><textMuted>first line</textMuted></italic>",
   );

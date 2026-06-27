@@ -60,6 +60,8 @@ export type ChatViewInputHandlers = {
   beforeSubmit?: (text: string) => boolean;
   onChange?: (text: string) => void;
   onSubmit?: (text: string) => void;
+  onSteerSubmit?: (text: string) => void;
+  onFlushQueueAsSteer?: () => void;
 };
 
 export type RewindPickerOptions = {
@@ -404,6 +406,8 @@ export class TuiChatView implements ChatView {
     this.editor.beforeSubmit = handlers.beforeSubmit;
     this.editor.onChange = handlers.onChange;
     this.editor.onSubmit = handlers.onSubmit;
+    this.editor.onSteerSubmit = handlers.onSteerSubmit;
+    this.editor.onFlushQueueAsSteer = handlers.onFlushQueueAsSteer;
   }
 
   setAutocompleteProvider(provider: AutocompleteProvider): void {

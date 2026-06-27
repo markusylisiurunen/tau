@@ -181,6 +181,16 @@ function getUserText(controller, index) {
   return textBlock?.text ?? "";
 }
 
+async function waitFor(predicate, timeoutMs = 2000) {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error("waitFor timeout");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function createMockDeps(spawn, platform = "darwin") {
   return {
     clock: {
@@ -621,6 +631,118 @@ describe("ChatController queued message draining", () => {
 
     expect(calls).toEqual(["first", "second"]);
     expect(queuedUserMessages.length).toBe(0);
+  });
+
+  it("submits editor input as steering after the active turn reaches a boundary", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view);
+    let resolveFirstTurn;
+    const firstTurn = new Promise((resolve) => {
+      resolveFirstTurn = resolve;
+    });
+    const runSpy = vi
+      .spyOn(controller.runtime, "runTurn")
+      .mockImplementationOnce(async () => {
+        await firstTurn;
+        return { aborted: false };
+      })
+      .mockResolvedValue({ aborted: false });
+    vi.spyOn(controller.runtime, "isTurnRunning", "get").mockImplementation(
+      () => controller.isStreaming,
+    );
+    const stopSpy = vi.spyOn(controller.runtime, "requestTurnBoundaryStop");
+
+    const turnPromise = controller.runAssistantTurn();
+    await waitFor(() => controller.isStreaming);
+
+    const handlers = controller.getInputHandlers();
+    handlers.onSteerSubmit?.("change direction");
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(stub.systemMessages).toContainEqual({
+      text: "steering queued for next turn boundary",
+      kind: "success",
+    });
+
+    resolveFirstTurn();
+    await turnPromise;
+    await waitFor(() => runSpy.mock.calls.length === 2);
+
+    expect(getUserText(controller, 0)).toContain("<system>");
+    expect(getUserText(controller, 0)).toContain("change direction");
+    expect(stub.added).toContainEqual({ type: "user", text: "change direction" });
+  });
+
+  it("routes idle steering submissions through normal input handling", async () => {
+    const stub = createStubView();
+    const controller = createController(stub.view, {
+      prompts: [{ id: "intro", template: "hello there" }],
+    });
+    const runSpy = vi.spyOn(controller.runtime, "runTurn").mockResolvedValue({ aborted: false });
+
+    const handlers = controller.getInputHandlers();
+    handlers.onSteerSubmit?.("/prompt:intro");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(stub.editorTextUpdates).toEqual(["hello there"]);
+    expect(runSpy).not.toHaveBeenCalled();
+  });
+
+  it("leaves queued messages unchanged when flushing as steering while idle", () => {
+    const stub = createStubView();
+    const queuedUserMessages = ["first queued", "second queued"];
+    const controller = createController(stub.view, { queuedUserMessages });
+
+    const handlers = controller.getInputHandlers();
+    handlers.onFlushQueueAsSteer?.();
+
+    expect(queuedUserMessages).toEqual(["first queued", "second queued"]);
+    expect(stub.systemMessages).toContainEqual({
+      text: "current task cannot be steered; queued messages unchanged",
+      kind: "warn",
+    });
+  });
+
+  it("flushes queued messages into one steering turn", async () => {
+    const stub = createStubView();
+    const queuedUserMessages = ["first queued", "second queued"];
+    const controller = createController(stub.view, { queuedUserMessages });
+    let resolveFirstTurn;
+    const firstTurn = new Promise((resolve) => {
+      resolveFirstTurn = resolve;
+    });
+    const runSpy = vi
+      .spyOn(controller.runtime, "runTurn")
+      .mockImplementationOnce(async () => {
+        await firstTurn;
+        return { aborted: false };
+      })
+      .mockResolvedValue({ aborted: false });
+    vi.spyOn(controller.runtime, "isTurnRunning", "get").mockImplementation(
+      () => controller.isStreaming,
+    );
+    const stopSpy = vi.spyOn(controller.runtime, "requestTurnBoundaryStop");
+
+    const turnPromise = controller.runAssistantTurn();
+    await waitFor(() => controller.isStreaming);
+
+    const handlers = controller.getInputHandlers();
+    handlers.onFlushQueueAsSteer?.();
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(queuedUserMessages).toEqual([]);
+    expect(stub.systemMessages).toContainEqual({
+      text: "queued messages will steer at the next turn boundary",
+      kind: "success",
+    });
+
+    resolveFirstTurn();
+    await turnPromise;
+    await waitFor(() => runSpy.mock.calls.length === 2);
+
+    expect(getUserText(controller, 0)).toContain("<system>");
+    expect(getUserText(controller, 0)).toContain("first queued\n\nsecond queued");
+    expect(stub.added).toContainEqual({ type: "user", text: "first queued\n\nsecond queued" });
   });
 });
 

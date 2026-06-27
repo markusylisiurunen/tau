@@ -2,6 +2,7 @@ import { createInterface } from "node:readline";
 import type { Message } from "@earendil-works/pi-ai";
 import { type CoreEvent, wrapCoreEvent } from "../events/types.js";
 import type { ChatRuntime } from "../runtime/chat_runtime.js";
+import { formatSteeringUserMessage } from "../runtime/steering.js";
 import type { HistoryEntry } from "../session/core_session.js";
 import {
   createRpcErrorResponse,
@@ -250,7 +251,7 @@ export class RpcServer {
       const preferredHistoryEntryId =
         requests.length === 1 ? primaryRequest.params.historyEntryId : undefined;
       const userHistoryEntryId = this.runtime.session.addUserText(
-        this.formatSteeringUserMessage(requests.map((item) => item.params.text)),
+        formatSteeringUserMessage(requests.map((item) => item.params.text)),
         preferredHistoryEntryId ? { historyEntryId: preferredHistoryEntryId } : undefined,
       );
       this.submitRequestByUserHistoryEntryId.set(userHistoryEntryId, primaryRequest.id);
@@ -315,14 +316,6 @@ export class RpcServer {
         );
       }
     }
-  }
-
-  private formatSteeringUserMessage(messages: string[]): string {
-    const guidance =
-      "The user sent the following message(s) while you were already working. Treat them as steering for the current task: incorporate them immediately, adjust your plan if needed, and do not continue down the previous path if this changes the requested direction.";
-    const body = messages.join("\n\n");
-
-    return `<system>\n${guidance}\n</system>\n${body}`;
   }
 
   private handleInterrupt(

@@ -11,6 +11,10 @@ type QueueDrainAdapter = {
   buildIdleNotificationTitle: () => string;
 };
 
+export function joinQueuedUserMessages(messages: string[]): string {
+  return messages.join("\n\n---\n\n");
+}
+
 export class QueuedUserMessages {
   private readonly messages: string[];
   private isDraining = false;
@@ -20,9 +24,17 @@ export class QueuedUserMessages {
     this.messages = messages;
   }
 
+  get length(): number {
+    return this.messages.length;
+  }
+
   enqueue(text: string, requestRender: () => void): void {
     this.messages.push(text);
     requestRender();
+  }
+
+  flush(): string[] {
+    return this.messages.splice(0);
   }
 
   popIntoEditor(editor: EditorAdapter): void {
@@ -37,7 +49,7 @@ export class QueuedUserMessages {
   collapse(): boolean {
     if (this.messages.length < 2) return false;
 
-    const collapsed = this.messages.join("\n\n---\n\n");
+    const collapsed = joinQueuedUserMessages(this.messages);
     this.messages.length = 0;
     this.messages.push(collapsed);
     return true;
@@ -55,7 +67,7 @@ export class QueuedUserMessages {
 
     parts.push(...this.messages);
     this.messages.length = 0;
-    editor.setEditorText(parts.join("\n\n---\n\n"));
+    editor.setEditorText(joinQueuedUserMessages(parts));
   }
 
   markPendingIdleNotification(): void {

@@ -9,8 +9,6 @@ export {
   runLogoutCommand,
   SUPPORTED_OAUTH_PROVIDERS,
 } from "./cli.js";
-export type { CredentialResolver } from "./credential_resolver.js";
-export { createCredentialResolver } from "./credential_resolver.js";
 export type {
   AuthAccountInfo,
   AuthAccountUsage,

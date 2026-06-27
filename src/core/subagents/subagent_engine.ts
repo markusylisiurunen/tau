@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AssistantMessage, Context, Message, ToolCall } from "@earendil-works/pi-ai";
-import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
-import { type CredentialResolver, createCredentialResolver } from "../auth/credential_resolver.js";
 import type { Config } from "../config/index.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { type RunnerEvent, runModelSubturn, runToolCalls } from "../session/runner.js";
@@ -25,6 +23,7 @@ import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { prependModelNotice, resolveModelNotice } from "../utils/model_notices.js";
+import { ModelRuntime } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import {
@@ -106,10 +105,10 @@ export async function runSubagent(options: {
     modelResolver,
   } = options;
   const authPath = options.authPath ?? getAuthPath();
-  const authStorage = new AuthStorage(authPath);
-  const credentialResolver: CredentialResolver = createCredentialResolver({
-    authStorage,
+  const modelRuntime = new ModelRuntime({
+    authStorage: new AuthStorage(authPath),
     getConfig: () => config,
+    authPath,
   });
 
   if (signal.aborted) {
@@ -170,6 +169,14 @@ export async function runSubagent(options: {
     issues.length > 0 ? ` (Recent issues: ${issues.slice(-3).join("; ")})` : "";
 
   const sessionId = options.sessionId ?? `tau-subagent-${runtimeConfig.name}-${randomUUID()}`;
+  const noteProviderError = async (message?: string) => {
+    try {
+      await modelRuntime.noteProviderError(runtimeConfig.model.provider, {
+        sessionId,
+        error: message ? new Error(message) : undefined,
+      });
+    } catch {}
+  };
 
   for (let subturn = 1; subturn <= maxSubturns && !signal.aborted; subturn++) {
     emitProgress("assistant: thinking");
@@ -180,24 +187,10 @@ export async function runSubagent(options: {
       tools: toolRegistry.schemas,
     };
 
-    let apiKey: string | undefined;
-    try {
-      apiKey = await credentialResolver.getApiKey(runtimeConfig.model.provider, { sessionId });
-    } catch (error) {
-      if (runtimeConfig.model.provider === "openai-codex") {
-        throw new Error(formatCodexAuthError(authPath, (error as Error)?.message));
-      }
-      throw error;
-    }
-
-    if (!apiKey && runtimeConfig.model.provider === "openai-codex") {
-      throw new Error(formatCodexAuthError(authPath));
-    }
     const baseOptions: TauStreamOptions = {
       ...getStreamingSettings(runtimeConfig.settings),
       signal,
       sessionId,
-      ...(apiKey && { apiKey }),
     };
 
     if (runtimeConfig.model.provider === "openai-codex") {
@@ -210,6 +203,7 @@ export async function runSubagent(options: {
 
     const runner = runModelSubturn({
       model: runtimeConfig.model,
+      modelRuntime,
       context,
       streamOptions: baseOptions,
       signal,
@@ -231,17 +225,16 @@ export async function runSubagent(options: {
       });
     } catch (err) {
       if (!signal.aborted) {
-        try {
-          await credentialResolver.noteProviderError?.(runtimeConfig.model.provider, {
-            sessionId,
-            error: err,
-          });
-        } catch {}
+        await noteProviderError(err instanceof Error ? err.message : String(err));
       }
       if (signal.aborted) {
         throw new Error("sub-agent aborted");
       }
       throw err;
+    }
+
+    if (finalMessage.stopReason === "error") {
+      await noteProviderError(finalMessage.errorMessage);
     }
 
     messages.push(finalMessage);

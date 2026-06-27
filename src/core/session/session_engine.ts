@@ -7,10 +7,8 @@ import {
   type Message,
   type ToolCall,
 } from "@earendil-works/pi-ai";
-import { formatCodexAuthError } from "../auth/auth_messages.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
-import { type CredentialResolver, createCredentialResolver } from "../auth/credential_resolver.js";
 import {
   type Config,
   type NormalizedAutoCompactConfig,
@@ -31,7 +29,7 @@ import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import { buildCompactionUserMessage } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { prependModelNotice, resolveModelNotice } from "../utils/model_notices.js";
-import { streamModel } from "../utils/model_stream.js";
+import { ModelRuntime } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import {
@@ -113,8 +111,8 @@ export class SessionEngine {
   private readonly toolRegistry: ToolRegistry;
   private config: Config;
   private readonly deps: CoreDeps;
-  private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
+  private readonly modelRuntime: ModelRuntime;
   private cwd: string;
   private home: string;
   private includeAgentContext: boolean;
@@ -137,10 +135,11 @@ export class SessionEngine {
     this.includeAgentContext = options.includeAgentContext ?? true;
     this.modelResolver = this.createDispatchModelResolver();
     this.authPath = getAuthPath(this.deps.env.home());
-    const authStorage = new AuthStorage(this.authPath);
-    this.credentialResolver = createCredentialResolver({
-      authStorage,
+    this.modelRuntime = new ModelRuntime({
+      authStorage: new AuthStorage(this.authPath),
       getConfig: () => this.config,
+      authPath: this.authPath,
+      env: this.deps.env.env(),
     });
     this.subagentControlPlane = new SubagentControlPlane({
       onEvent: (event) => this.emitSubagentEvent(event),
@@ -398,8 +397,7 @@ export class SessionEngine {
     summaryPrompt: string,
     options: { sessionId: string; signal?: AbortSignal },
   ): Promise<string> {
-    const apiKey = await this.resolveApiKeyForCurrentPersona();
-    const stream = streamModel(
+    const stream = this.modelRuntime.streamModel(
       this.persona.model,
       {
         systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
@@ -415,7 +413,6 @@ export class SessionEngine {
         reasoning: "high",
         sessionId: options.sessionId,
         ...(options.signal ? { signal: options.signal } : {}),
-        ...(apiKey && { apiKey }),
       },
     );
 
@@ -558,26 +555,6 @@ export class SessionEngine {
     const levels = resolveConfigLevels(deps, { cwd });
 
     return loadModelResolver({ deps, levels }).resolveModel;
-  }
-
-  private async resolveApiKeyForCurrentPersona(): Promise<string | undefined> {
-    let apiKey: string | undefined;
-    try {
-      apiKey = await this.credentialResolver.getApiKey(this.persona.model.provider, {
-        sessionId: this.sessionId,
-      });
-    } catch (error) {
-      if (this.persona.model.provider === "openai-codex") {
-        throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));
-      }
-      throw error;
-    }
-
-    if (!apiKey && this.persona.model.provider === "openai-codex") {
-      throw new Error(formatCodexAuthError(this.authPath));
-    }
-
-    return apiKey;
   }
 
   async *processTurn(
@@ -864,6 +841,15 @@ export class SessionEngine {
     return -1;
   }
 
+  private async noteCurrentProviderError(message?: string): Promise<void> {
+    try {
+      await this.modelRuntime.noteProviderError(this.persona.model.provider, {
+        sessionId: this.sessionId,
+        error: message ? new Error(message) : undefined,
+      });
+    } catch {}
+  }
+
   private async *runSingleSubturn(
     signal: AbortSignal,
   ): AsyncGenerator<CoreEvent, { finalMessage?: AssistantMessage }, void> {
@@ -879,12 +865,10 @@ export class SessionEngine {
       tools,
     };
 
-    const apiKey = await this.resolveApiKeyForCurrentPersona();
     const baseOptions: TauStreamOptions = {
       ...this.getStreamingSettings(this.persona),
       signal,
       sessionId: this.sessionId,
-      ...(apiKey && { apiKey }),
     };
 
     if (this.persona.model.provider === "openai-codex") {
@@ -898,6 +882,7 @@ export class SessionEngine {
     try {
       const stream = runModelSubturn({
         model: this.persona.model,
+        modelRuntime: this.modelRuntime,
         context,
         streamOptions: baseOptions,
         signal,
@@ -937,6 +922,10 @@ export class SessionEngine {
         return { finalMessage: undefined };
       }
 
+      if (finalMessage.stopReason === "error") {
+        await this.noteCurrentProviderError(finalMessage.errorMessage);
+      }
+
       this.addMessage(finalMessage, { historyEntryId });
       appendUsageLogEntry({
         timestamp: finalMessage.timestamp,
@@ -956,12 +945,7 @@ export class SessionEngine {
       return { finalMessage };
     } catch (err) {
       if (!signal.aborted) {
-        try {
-          await this.credentialResolver.noteProviderError?.(this.persona.model.provider, {
-            sessionId: this.sessionId,
-            error: err,
-          });
-        } catch {}
+        await this.noteCurrentProviderError(err instanceof Error ? err.message : String(err));
       }
       if (signal.aborted) {
         return { finalMessage: undefined };

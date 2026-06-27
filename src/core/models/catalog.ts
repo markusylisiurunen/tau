@@ -1,5 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { getModels, getProviders } from "@earendil-works/pi-ai";
+import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { z } from "zod";
 import type { ConfigDeps } from "../config/deps.js";
 import type { ConfigLevel } from "../config/paths.js";
@@ -133,8 +133,8 @@ function createCatalogState(): CatalogState {
 
   const providers = new Map<string, Map<string, Model<Api>>>();
 
-  for (const provider of getProviders()) {
-    for (const model of getModels(provider)) {
+  for (const provider of getBuiltinProviders()) {
+    for (const model of getBuiltinModels(provider)) {
       registerModel({ providers, provider, model, source: "pi-ai" });
     }
   }

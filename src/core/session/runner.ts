@@ -23,7 +23,7 @@ import type {
 } from "../tools/registry.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
-import { streamModel } from "../utils/model_stream.js";
+import type { ModelRuntime } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { MessageAccumulator } from "./message_accumulator.js";
 
@@ -41,6 +41,7 @@ export type RetryOptions = {
 export type RunModelSubturnOptions = {
   model: Model<Api>;
   context: Context;
+  modelRuntime: ModelRuntime;
   streamOptions: TauStreamOptions;
   signal: AbortSignal;
   emitPartials?: boolean;
@@ -50,12 +51,20 @@ export type RunModelSubturnOptions = {
 export async function* runModelSubturn(
   options: RunModelSubturnOptions,
 ): AsyncGenerator<ModelRunnerEvent, AssistantMessage, void> {
-  const { model, context, streamOptions, signal, emitPartials = false, retry } = options;
+  const {
+    model,
+    context,
+    modelRuntime,
+    streamOptions,
+    signal,
+    emitPartials = false,
+    retry,
+  } = options;
 
   const runAttempt = async function* (
     attemptOptions: TauStreamOptions,
   ): AsyncGenerator<ModelRunnerEvent, AssistantMessage, void> {
-    const stream = streamModel(model, context, attemptOptions);
+    const stream = modelRuntime.streamModel(model, context, attemptOptions);
     const accumulator = emitPartials ? new MessageAccumulator() : undefined;
 
     for await (const event of stream) {

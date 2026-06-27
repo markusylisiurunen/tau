@@ -1,15 +1,8 @@
 export { AsyncCliError, printAsyncHelp, runAsyncCommand } from "./async/index.js";
-export type {
-  AuthLog,
-  AuthLoginHandler,
-  AuthPromptFn,
-  CredentialResolver,
-  OAuthProviderSpec,
-} from "./auth/index.js";
+export type { AuthLog, AuthLoginHandler, AuthPromptFn, OAuthProviderSpec } from "./auth/index.js";
 export {
   AuthManager,
   AuthStorage,
-  createCredentialResolver,
   formatCodexAuthError,
   getAuthPath,
   runListCommand,

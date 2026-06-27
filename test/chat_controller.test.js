@@ -1207,6 +1207,7 @@ describe("ChatController speak playback", () => {
     const controller = createController(stub.view, {
       queuedUserMessages,
       deps: createMockDeps(vi.fn(), "darwin"),
+      config: { apiKeys: { google: "gemini-key" } },
     });
 
     controller.engine.addMessage({
@@ -1214,8 +1215,6 @@ describe("ChatController speak playback", () => {
       content: [{ type: "text", text: "Use src/app.ts:42 for the fix." }],
       stopReason: "end_turn",
     });
-    controller.credentialResolver.getApiKey = vi.fn(async () => "gemini-key");
-
     let resolveSpeak;
     const speakTask = new Promise((resolve) => {
       resolveSpeak = resolve;
@@ -1272,14 +1271,13 @@ describe("ChatController speak playback", () => {
     });
     const controller = createController(stub.view, {
       deps: createMockDeps(spawn),
+      config: { apiKeys: { google: "gemini-key" } },
     });
     controller.engine.addMessage({
       role: "assistant",
       content: [{ type: "text", text: "Use src/app.ts:42 for the fix." }],
       stopReason: "end_turn",
     });
-    controller.credentialResolver.getApiKey = vi.fn(async () => "gemini-key");
-
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(

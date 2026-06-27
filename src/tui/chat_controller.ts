@@ -5,13 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { formatCodexAuthError } from "../core/auth/auth_messages.js";
 import { getAuthPath } from "../core/auth/auth_paths.js";
 import { AuthStorage } from "../core/auth/auth_storage.js";
-import {
-  type CredentialResolver,
-  createCredentialResolver,
-} from "../core/auth/credential_resolver.js";
 import {
   type Command,
   type CommandDispatchContext,
@@ -78,7 +73,7 @@ import {
 } from "../core/utils/format.js";
 import { streamGeminiSpeechAudio } from "../core/utils/gemini_speech.js";
 import { extractAllFencedCodeBlocks, extractAssistantText } from "../core/utils/messages.js";
-import { streamModel } from "../core/utils/model_stream.js";
+import { ModelRuntime } from "../core/utils/model_stream.js";
 import { listProjectFilesAsync } from "../core/utils/project_files.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 import { transcribeAudio } from "../core/utils/speech_to_text.js";
@@ -215,8 +210,8 @@ export class ChatController {
   private config: Config;
   private readonly defaultDiffTool?: DiffToolConfig;
   private activeThemeId?: string;
-  private readonly credentialResolver: CredentialResolver;
   private readonly authPath: string;
+  private readonly modelRuntime: ModelRuntime;
   private readonly caffeinated: boolean;
   private agentCwd: string;
   private readonly includeAgentContext: boolean;
@@ -292,9 +287,11 @@ export class ChatController {
     this.activeThemeId = this.config.defaultTheme;
     this.authPath = getAuthPath(this.deps.env.home());
     const authStorage = new AuthStorage(this.authPath);
-    this.credentialResolver = createCredentialResolver({
+    this.modelRuntime = new ModelRuntime({
       authStorage,
       getConfig: () => this.config,
+      authPath: this.authPath,
+      env: this.deps.env.env(),
     });
     this.compactToolUi = true;
     const queuedUserMessages = options.queuedUserMessages ?? [];
@@ -1883,7 +1880,7 @@ export class ChatController {
       return;
     }
 
-    const apiKey = await this.credentialResolver.getApiKey("google");
+    const apiKey = getGoogleApiKey(this.config, this.deps.env.env());
     if (!apiKey) {
       this.view.addSystemMessage("set GEMINI_API_KEY or apiKeys.google to use /speak", "error");
       return;
@@ -2278,26 +2275,6 @@ export class ChatController {
     });
   }
 
-  private async resolveCurrentPersonaApiKey(): Promise<string | undefined> {
-    let apiKey: string | undefined;
-    try {
-      apiKey = await this.credentialResolver.getApiKey(this.currentPersona.model.provider, {
-        sessionId: this.engine.sessionId,
-      });
-    } catch (error) {
-      if (this.currentPersona.model.provider === "openai-codex") {
-        throw new Error(formatCodexAuthError(this.authPath, (error as Error)?.message));
-      }
-      throw error;
-    }
-
-    if (!apiKey && this.currentPersona.model.provider === "openai-codex") {
-      throw new Error(formatCodexAuthError(this.authPath));
-    }
-
-    return apiKey;
-  }
-
   private async cancelDiffReview(): Promise<void> {
     await this.diffReviewService.cancel();
   }
@@ -2468,9 +2445,8 @@ export class ChatController {
     prompt: string,
     signal?: AbortSignal,
   ): Promise<string[]> {
-    const apiKey = await this.resolveCurrentPersonaApiKey();
     const reasoning = this.clampPruneReasoning(this.currentPersona.settings.reasoning);
-    const stream = streamModel(
+    const stream = this.modelRuntime.streamModel(
       this.currentPersona.model,
       {
         systemPrompt: [
@@ -2493,7 +2469,6 @@ export class ChatController {
         ...(reasoning ? { reasoning } : {}),
         sessionId: `tau-prune-${randomUUID()}`,
         ...(signal ? { signal } : {}),
-        ...(apiKey && { apiKey }),
       },
     );
 

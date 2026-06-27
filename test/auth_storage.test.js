@@ -12,20 +12,11 @@ vi.mock("@earendil-works/pi-ai/oauth", async (importOriginal) => {
   };
 });
 
-vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...actual,
-    getEnvApiKey: vi.fn(),
-  };
-});
-
 const { getOAuthApiKey, refreshOpenAICodexToken } = await import("@earendil-works/pi-ai/oauth");
-const { getEnvApiKey } = await import("@earendil-works/pi-ai");
 
 import { AuthManager } from "../dist/core/auth/auth_manager.js";
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
-import { createCredentialResolver } from "../dist/core/auth/credential_resolver.js";
+import { TauCredentialStore } from "../dist/core/auth/credential_store.js";
 
 function toBase64Url(value) {
   return Buffer.from(value, "utf-8")
@@ -121,62 +112,7 @@ describe("AuthStorage", () => {
   });
 });
 
-describe("CredentialResolver", () => {
-  it("uses codex auth accounts and persists refreshed credentials", async () => {
-    const fx = createTempAuthPath();
-    try {
-      writeFileSync(
-        fx.authPath,
-        JSON.stringify(
-          {
-            providers: {
-              "openai-codex": {
-                accounts: [
-                  {
-                    type: "oauth",
-                    accountId: "acct-old",
-                    access: "old-access",
-                    refresh: "old-refresh",
-                    expires: 0,
-                    idToken: "header.payload.signature",
-                  },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
-
-      getOAuthApiKey.mockResolvedValue({
-        apiKey: "new-access",
-        newCredentials: {
-          access: "new-access",
-          refresh: "new-refresh",
-          expires: 999999,
-          accountId: "acct-new",
-        },
-      });
-
-      const storage = new AuthStorage(fx.authPath);
-      const resolver = createCredentialResolver({
-        authStorage: storage,
-        getConfig: () => ({}),
-      });
-
-      const apiKey = await resolver.getApiKey("openai-codex", { sessionId: "session-1" });
-      expect(apiKey).toBe("new-access");
-
-      const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
-      const account = saved.providers["openai-codex"].accounts[0];
-      expect(account.access).toBe("new-access");
-      expect(account.refresh).toBe("new-refresh");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
+describe("AuthManager and TauCredentialStore", () => {
   it("refreshes codex account identity before listing plans", async () => {
     const fx = createTempAuthPath();
     try {
@@ -255,7 +191,7 @@ describe("CredentialResolver", () => {
     }
   });
 
-  it("refreshes exhausted codex accounts before deciding failover candidates", async () => {
+  it("uses codex failover selection in pi-ai credential store", async () => {
     const fx = createTempAuthPath();
     try {
       writeFileSync(
@@ -312,26 +248,9 @@ describe("CredentialResolver", () => {
 
       getOAuthApiKey.mockImplementation(async (_provider, providers) => {
         const account = providers["openai-codex"];
-        if (account.refresh === "refresh-exhausted") {
-          return {
-            apiKey: "api-exhausted",
-            newCredentials: {
-              access: account.access,
-              refresh: account.refresh,
-              expires: account.expires,
-              accountId: account.accountId,
-            },
-          };
-        }
-
         return {
-          apiKey: "api-next",
-          newCredentials: {
-            access: account.access,
-            refresh: account.refresh,
-            expires: account.expires,
-            accountId: account.accountId,
-          },
+          apiKey: account.refresh === "refresh-exhausted" ? "api-exhausted" : "api-next",
+          newCredentials: account,
         };
       });
 
@@ -362,13 +281,256 @@ describe("CredentialResolver", () => {
       );
 
       const storage = new AuthStorage(fx.authPath);
-      const resolver = createCredentialResolver({
+      const store = new TauCredentialStore({ authStorage: storage, getConfig: () => ({}) });
+      const credential = await store.read("openai-codex");
+
+      expect(credential?.type).toBe("oauth");
+      expect(credential?.refresh).toBe("refresh-next");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("matches forced codex accounts by email in pi-ai credential store", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify(
+          {
+            providers: {
+              "openai-codex": {
+                accounts: [
+                  {
+                    type: "oauth",
+                    accountId: "acct-email",
+                    providerAccountId: "provider-email",
+                    access: createAccessToken({
+                      accountId: "acct-email",
+                      email: "user@example.com",
+                      plan: "plus",
+                    }),
+                    refresh: "refresh-email",
+                    expires: Number.MAX_SAFE_INTEGER,
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const storage = new AuthStorage(fx.authPath);
+      const store = new TauCredentialStore({
         authStorage: storage,
         getConfig: () => ({}),
+        env: { TAU_CODEX_ACCOUNT: "user@example.com" },
+      });
+      const credential = await store.read("openai-codex");
+
+      expect(credential?.type).toBe("oauth");
+      expect(credential?.refresh).toBe("refresh-email");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("keeps codex account selection sticky per model runtime session", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify(
+          {
+            providers: {
+              "openai-codex": {
+                accounts: [
+                  {
+                    type: "oauth",
+                    accountId: "acct-a",
+                    providerAccountId: "provider-a",
+                    access: "access-a",
+                    refresh: "refresh-a",
+                    expires: Number.MAX_SAFE_INTEGER,
+                    usage: {
+                      windows: [
+                        {
+                          name: "primary",
+                          usedPercent: 80,
+                          resetAt: 4102444800,
+                          windowSeconds: 18000,
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    type: "oauth",
+                    accountId: "acct-b",
+                    providerAccountId: "provider-b",
+                    access: "access-b",
+                    refresh: "refresh-b",
+                    expires: Number.MAX_SAFE_INTEGER,
+                    usage: {
+                      windows: [
+                        {
+                          name: "primary",
+                          usedPercent: 10,
+                          resetAt: 4102444800,
+                          windowSeconds: 18000,
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      getOAuthApiKey.mockImplementation(async (_provider, providers) => ({
+        apiKey: providers["openai-codex"].access,
+        newCredentials: providers["openai-codex"],
+      }));
+
+      let sessionId = "session-1";
+      const storage = new AuthStorage(fx.authPath);
+      const store = new TauCredentialStore({
+        authStorage: storage,
+        getConfig: () => ({}),
+        getSessionId: () => sessionId,
       });
 
-      const apiKey = await resolver.getApiKey("openai-codex", { sessionId: "session-1" });
-      expect(apiKey).toBe("api-next");
+      const first = await store.read("openai-codex");
+      expect(first?.type).toBe("oauth");
+      expect(first?.refresh).toBe("refresh-a");
+
+      storage.update((data) => {
+        const accounts = data.providers["openai-codex"].accounts;
+        accounts[0].usage.windows[0].usedPercent = 20;
+        accounts[1].usage.windows[0].usedPercent = 90;
+      });
+
+      const sameSession = await store.read("openai-codex");
+      expect(sameSession?.type).toBe("oauth");
+      expect(sameSession?.refresh).toBe("refresh-a");
+
+      sessionId = "session-2";
+      const nextSession = await store.read("openai-codex");
+      expect(nextSession?.type).toBe("oauth");
+      expect(nextSession?.refresh).toBe("refresh-b");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("clears sticky codex account selection after exhausted-account provider errors", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify(
+          {
+            providers: {
+              "openai-codex": {
+                accounts: [
+                  {
+                    type: "oauth",
+                    accountId: "acct-a",
+                    providerAccountId: "provider-a",
+                    access: "access-a",
+                    refresh: "refresh-a",
+                    expires: Number.MAX_SAFE_INTEGER,
+                    usage: {
+                      windows: [
+                        {
+                          name: "primary",
+                          usedPercent: 80,
+                          resetAt: 4102444800,
+                          windowSeconds: 18000,
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    type: "oauth",
+                    accountId: "acct-b",
+                    providerAccountId: "provider-b",
+                    access: "access-b",
+                    refresh: "refresh-b",
+                    expires: Number.MAX_SAFE_INTEGER,
+                    usage: {
+                      windows: [
+                        {
+                          name: "primary",
+                          usedPercent: 10,
+                          resetAt: 4102444800,
+                          windowSeconds: 18000,
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      getOAuthApiKey.mockImplementation(async (_provider, providers) => ({
+        apiKey: providers["openai-codex"].access,
+        newCredentials: providers["openai-codex"],
+      }));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url, init) => {
+          const rawHeaders = init?.headers;
+          const accountId =
+            rawHeaders instanceof Headers
+              ? rawHeaders.get("ChatGPT-Account-Id")
+              : rawHeaders && typeof rawHeaders === "object"
+                ? rawHeaders["ChatGPT-Account-Id"]
+                : undefined;
+          return {
+            ok: true,
+            json: async () => ({
+              rate_limit: {
+                primary_window: {
+                  used_percent: accountId === "provider-a" ? 100 : 10,
+                  reset_at: 4102444800,
+                  limit_window_seconds: 18000,
+                },
+              },
+            }),
+          };
+        }),
+      );
+
+      const storage = new AuthStorage(fx.authPath);
+      const store = new TauCredentialStore({
+        authStorage: storage,
+        getConfig: () => ({}),
+        getSessionId: () => "session-1",
+      });
+
+      const first = await store.read("openai-codex");
+      expect(first?.type).toBe("oauth");
+      expect(first?.refresh).toBe("refresh-a");
+
+      await store.noteProviderError("openai-codex", {
+        sessionId: "session-1",
+        error: new Error("quota exceeded"),
+      });
+
+      const afterError = await store.read("openai-codex");
+      expect(afterError?.type).toBe("oauth");
+      expect(afterError?.refresh).toBe("refresh-b");
     } finally {
       fx.cleanup();
     }
@@ -428,36 +590,11 @@ describe("CredentialResolver", () => {
       );
 
       const storage = new AuthStorage(fx.authPath);
-      const resolver = createCredentialResolver({
-        authStorage: storage,
-        getConfig: () => ({}),
-      });
+      const store = new TauCredentialStore({ authStorage: storage, getConfig: () => ({}) });
 
-      await expect(resolver.getApiKey("openai-codex", { sessionId: "session-1" })).rejects.toThrow(
+      await expect(store.read("openai-codex")).rejects.toThrow(
         "unexpected ChatGPT Codex primary usage window: 3600 seconds (expected 18000 for 5h or 604800 for 7d)",
       );
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("prefers config apiKeys, then environment", async () => {
-    const fx = createTempAuthPath();
-    try {
-      const storage = new AuthStorage(fx.authPath);
-      const resolver = createCredentialResolver({
-        authStorage: storage,
-        getConfig: () => ({ apiKeys: { openai: "config-key" } }),
-      });
-
-      getEnvApiKey.mockReturnValue("env-key");
-      expect(await resolver.getApiKey("openai")).toBe("config-key");
-
-      const resolverNoConfig = createCredentialResolver({
-        authStorage: storage,
-        getConfig: () => ({}),
-      });
-      expect(await resolverNoConfig.getApiKey("openai")).toBe("env-key");
     } finally {
       fx.cleanup();
     }

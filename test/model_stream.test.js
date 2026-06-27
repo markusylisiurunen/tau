@@ -1,8 +1,21 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { AuthStorage } from "../dist/core/auth/auth_storage.js";
 import {
+  ModelRuntime,
   resolveOpenAIResponsesOptions,
   resolveSimpleStreamOptions,
 } from "../dist/core/utils/model_stream.js";
+
+function createTempAuthPath() {
+  const dir = mkdtempSync(join(tmpdir(), "tau-model-runtime-"));
+  return {
+    authPath: join(dir, "auth.json"),
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
 
 describe("model stream option resolution", () => {
   test("drops disabled reasoning for simple stream options", () => {
@@ -96,5 +109,62 @@ describe("model stream option resolution", () => {
       reasoningEffort: "high",
       serviceTier: "priority",
     });
+  });
+
+  test("resolves configured api keys through the pi-ai models runtime", async () => {
+    const fx = createTempAuthPath();
+    try {
+      const runtime = new ModelRuntime({
+        authStorage: new AuthStorage(fx.authPath),
+        getConfig: () => ({ apiKeys: { openai: "config-key" } }),
+        env: {},
+      });
+      const model = runtime.resolveModel("openai", "gpt-5.4");
+      expect(model).toBeDefined();
+
+      const auth = await runtime.getAuth(model);
+      expect(auth?.auth.apiKey).toBe("config-key");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  test("resolves environment api keys through injected runtime env", async () => {
+    const runtime = new ModelRuntime({
+      env: { OPENAI_API_KEY: "env-key" },
+    });
+    const model = runtime.resolveModel("openai", "gpt-5.4");
+    expect(model).toBeDefined();
+
+    const auth = await runtime.getAuth(model);
+    expect(auth?.auth.apiKey).toBe("env-key");
+  });
+
+  test("formats missing codex credentials before provider requests", async () => {
+    const fx = createTempAuthPath();
+    try {
+      const runtime = new ModelRuntime({
+        authStorage: new AuthStorage(fx.authPath),
+        getConfig: () => ({}),
+        authPath: fx.authPath,
+        env: {},
+      });
+      const model = runtime.resolveModel("openai-codex", "gpt-5.4");
+      expect(model).toBeDefined();
+
+      const stream = runtime.streamModel(
+        model,
+        { systemPrompt: "test", messages: [] },
+        { sessionId: "session-1" },
+      );
+      const final = await stream.result();
+
+      expect(final.stopReason).toBe("error");
+      expect(final.errorMessage).toBe(
+        `OpenAI Codex credentials are missing or expired. run "tau auth login codex" to authenticate and store tokens in ${fx.authPath}.`,
+      );
+    } finally {
+      fx.cleanup();
+    }
   });
 });

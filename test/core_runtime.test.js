@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/index.js";
@@ -33,6 +33,7 @@ import {
   buildEnvironmentTag,
   buildProjectContextBlock,
 } from "../dist/core/utils/context_builder.js";
+import { registerModelRuntimeProvider } from "../dist/core/utils/model_stream.js";
 import {
   getAutoCompactionMetadataFromMessage,
   getCompactionMetadataFromMessage,
@@ -246,10 +247,11 @@ describe("core session rewind APIs", () => {
   });
 
   it("clamps auto-compaction retention to the threshold budget", async () => {
-    const faux = registerFauxProvider({
+    const faux = fauxProvider({
       provider: "faux-auto-clamp",
       models: [{ id: "faux-auto-clamp-model", contextWindow: 2000 }],
     });
+    const unregisterFauxProvider = registerModelRuntimeProvider(faux.provider);
 
     try {
       faux.setResponses([
@@ -301,15 +303,16 @@ describe("core session rewind APIs", () => {
         }),
       });
     } finally {
-      faux.unregister();
+      unregisterFauxProvider();
     }
   });
 
   it("keeps tool dispatch origin tied to the submitted user after auto-compaction", async () => {
-    const faux = registerFauxProvider({
+    const faux = fauxProvider({
       provider: "faux-auto-origin",
       models: [{ id: "faux-auto-origin-model", contextWindow: 2000 }],
     });
+    const unregisterFauxProvider = registerModelRuntimeProvider(faux.provider);
 
     try {
       faux.setResponses([
@@ -389,7 +392,7 @@ describe("core session rewind APIs", () => {
       });
       expect(receivedOriginHistoryEntryId).toBe(submittedUserHistoryEntryId);
     } finally {
-      faux.unregister();
+      unregisterFauxProvider();
     }
   });
 });

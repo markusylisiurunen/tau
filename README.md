@@ -412,24 +412,26 @@ the main assistant also has a TUI-only `diff_review` tool. it uses the same capt
 
 ## keyboard shortcuts
 
-| key         | action                                     |
-| ----------- | ------------------------------------------ |
-| `shift+tab` | cycle reasoning effort                     |
-| `ctrl+r`    | cycle risk level                           |
-| `ctrl+p`    | cycle personality                          |
-| `ctrl+t`    | toggle thinking visibility                 |
-| `ctrl+o`    | toggle compact tool display                |
-| `ctrl+f`    | expand @<file> and @@skill:<name> mentions |
-| `ctrl+s`    | stash input to clipboard                   |
-| `ctrl+y`    | toggle voice recording (`/listen`)         |
-| `ctrl+g`    | terminate selected sub-agent               |
-| `enter x2`  | retry last response on empty input         |
-| `esc x2`    | clear current prompt                       |
-| `alt+up`    | pop queued message                         |
-| `alt+c`     | collapse queued messages into one          |
-| `alt+down`  | cycle active sub-agents                    |
-| `esc`       | interrupt active task or cancel `/diff`    |
-| `ctrl+c`    | press twice to exit                        |
+| key          | action                                       |
+| ------------ | -------------------------------------------- |
+| `shift+tab`  | cycle reasoning effort                       |
+| `ctrl+r`     | cycle risk level                             |
+| `ctrl+p`     | cycle personality                            |
+| `ctrl+t`     | toggle thinking visibility                   |
+| `ctrl+o`     | toggle compact tool display                  |
+| `ctrl+f`     | expand @<file> and @@skill:<name> mentions   |
+| `ctrl+s`     | stash input to clipboard                     |
+| `ctrl+y`     | toggle voice recording (`/listen`)           |
+| `ctrl+g`     | terminate selected sub-agent                 |
+| `ctrl+enter` | steer running assistant with editor input    |
+| `alt+s`      | steer running assistant with queued messages |
+| `enter x2`   | retry last response on empty input           |
+| `esc x2`     | clear current prompt                         |
+| `alt+up`     | pop queued message                           |
+| `alt+c`      | collapse queued messages into one            |
+| `alt+down`   | cycle active sub-agents                      |
+| `esc`        | interrupt active task or cancel `/diff`      |
+| `ctrl+c`     | press twice to exit                          |
 
 ## configuration
 

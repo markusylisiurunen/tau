@@ -46,6 +46,7 @@ import {
   resolveProjectContextForPromptContext,
   resolveRuntimePromptBootstrap,
 } from "../core/runtime/runtime_bootstrap.js";
+import { formatSteeringUserMessage } from "../core/runtime/steering.js";
 import { createCheckpoint } from "../core/session/checkpoint.js";
 import type { CoreSession } from "../core/session/core_session.js";
 import {
@@ -93,7 +94,10 @@ import {
   DiffReviewService,
 } from "./chat_controller/diff_review_service.js";
 import { type BusyTask, InterruptLifecycle } from "./chat_controller/interrupt_lifecycle.js";
-import { QueuedUserMessages } from "./chat_controller/queued_user_messages.js";
+import {
+  joinQueuedUserMessages,
+  QueuedUserMessages,
+} from "./chat_controller/queued_user_messages.js";
 import {
   type MaintenanceTaskOutcome,
   SessionMaintenanceService,
@@ -230,6 +234,7 @@ export class ChatController {
   private eventUnsubscribe?: () => void;
   private isStreaming = false;
   private readonly queuedMessageBuffer: QueuedUserMessages;
+  private readonly pendingSteeringMessages: string[] = [];
   private readonly interruptLifecycle: InterruptLifecycle;
   private readonly diffReviewService: DiffReviewService;
   private readonly maintenanceService: SessionMaintenanceService;
@@ -493,6 +498,8 @@ export class ChatController {
       beforeSubmit: (text: string) => this.beforeSubmit(text),
       onChange: (text: string) => this.handleEditorChange(text),
       onSubmit: (text: string) => void this.onUserInput(text),
+      onSteerSubmit: (text: string) => void this.submitSteeringMessage(text),
+      onFlushQueueAsSteer: () => void this.flushQueuedUserMessagesAsSteering(),
     };
   }
 
@@ -1329,6 +1336,48 @@ export class ChatController {
     this.queuedMessageBuffer.enqueue(text, () => this.view.requestRender());
   }
 
+  private async submitSteeringMessage(text: string): Promise<void> {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    if (!this.isStreaming) {
+      await this.handleSubmit(trimmed);
+      return;
+    }
+
+    if (!this.runtime.isTurnRunning) {
+      this.queueUserMessage(trimmed);
+      this.view.addSystemMessage("current task cannot be steered; message queued", "warn");
+      return;
+    }
+
+    this.pendingSteeringMessages.push(trimmed);
+    this.runtime.requestTurnBoundaryStop();
+    this.view.addSystemMessage("steering queued for next turn boundary", "success");
+    this.view.requestRender();
+  }
+
+  private flushQueuedUserMessagesAsSteering(): void {
+    if (this.queuedMessageBuffer.length === 0) {
+      this.view.addSystemMessage("no queued messages to steer", "warn");
+      return;
+    }
+
+    if (!this.isStreaming || !this.runtime.isTurnRunning) {
+      this.view.addSystemMessage(
+        "current task cannot be steered; queued messages unchanged",
+        "warn",
+      );
+      return;
+    }
+
+    const messages = this.queuedMessageBuffer.flush();
+    this.pendingSteeringMessages.push(...messages);
+    this.runtime.requestTurnBoundaryStop();
+    this.view.addSystemMessage("queued messages will steer at the next turn boundary", "success");
+    this.view.requestRender();
+  }
+
   private popQueuedUserMessageIntoEditor(): void {
     this.queuedMessageBuffer.popIntoEditor({
       getEditorText: () => this.view.getEditorText(),
@@ -1346,6 +1395,28 @@ export class ChatController {
     this.queuedMessageBuffer.dequeueIntoEditor({
       getEditorText: () => this.view.getEditorText(),
       setEditorText: (text) => this.view.setEditorText(text),
+    });
+  }
+
+  private dequeuePendingSteeringMessagesIntoEditor(): void {
+    if (this.pendingSteeringMessages.length === 0) return;
+
+    const editorText = this.view.getEditorText();
+    const parts: string[] = [];
+    if (editorText !== "") {
+      parts.push(editorText);
+    }
+    parts.push(...this.pendingSteeringMessages.splice(0));
+    this.view.setEditorText(joinQueuedUserMessages(parts));
+  }
+
+  private async drainPendingSteeringMessages(): Promise<void> {
+    const messages = this.pendingSteeringMessages.splice(0);
+    if (messages.length === 0) return;
+
+    const text = messages.join("\n\n");
+    await this.sendUserMessage(text, {
+      textForModel: formatSteeringUserMessage(messages),
     });
   }
 
@@ -2926,7 +2997,10 @@ export class ChatController {
       this.queuedMessageBuffer.markPendingIdleNotification();
       this.view.requestRender();
       if (runResult.aborted || runResult.blocked) {
+        this.dequeuePendingSteeringMessagesIntoEditor();
         this.dequeueQueuedUserMessagesIntoEditor();
+      } else if (this.pendingSteeringMessages.length > 0) {
+        void this.drainPendingSteeringMessages();
       } else {
         void this.drainQueuedUserMessages();
       }

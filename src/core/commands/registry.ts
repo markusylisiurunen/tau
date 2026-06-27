@@ -207,6 +207,8 @@ export class CommandRegistry<Ctx = unknown> {
       ["ctrl+f", "expand @<file> and @@skill:<name> mentions"],
       ["ctrl+s", "stash input to clipboard"],
       ["ctrl+y", "toggle voice recording"],
+      ["ctrl+enter", "steer running assistant with editor input"],
+      ["alt+s", "steer running assistant with queued messages"],
       ["enter x2", "retry last response"],
       ["esc x2", "clear current prompt"],
       ["esc", "interrupt active task"],

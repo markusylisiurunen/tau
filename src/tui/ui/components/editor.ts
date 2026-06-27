@@ -634,20 +634,8 @@ export class Editor implements Component {
 
     // Submit (Enter)
     if (kb.matches(data, "tui.input.submit")) {
-      if (this.disableSubmit) return;
-
-      let result = this.state.lines.join("\n").trim();
-      result = this.expandPasteMarkers(result);
-
-      this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
-      this.pastes.clear();
-      this.pasteCounter = 0;
-      this.historyIndex = -1;
-      this.undoStack.clear();
-      this.lastAction = null;
-
-      if (this.onChange) this.onChange("");
-      if (this.onSubmit) this.onSubmit(result);
+      const result = this.takeSubmission();
+      if (result !== undefined && this.onSubmit) this.onSubmit(result);
       return;
     }
 
@@ -786,6 +774,23 @@ export class Editor implements Component {
     }
 
     return layoutLines;
+  }
+
+  protected takeSubmission(): string | undefined {
+    if (this.disableSubmit) return undefined;
+
+    let result = this.state.lines.join("\n").trim();
+    result = this.expandPasteMarkers(result);
+
+    this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
+    this.pastes.clear();
+    this.pasteCounter = 0;
+    this.historyIndex = -1;
+    this.undoStack.clear();
+    this.lastAction = null;
+
+    if (this.onChange) this.onChange("");
+    return result;
   }
 
   getText(): string {

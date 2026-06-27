@@ -183,6 +183,7 @@ export function App() {
     () => parseDiff(patch, bootstrap?.files, bootstrap?.context.sessionId),
     [patch, bootstrap],
   );
+  const emptyContent = status || (diff ? "no changes to review" : "loading…");
 
   const diffRendererReady = useDiffRendererReady(files, reviewState.codeTheme);
 
@@ -734,9 +735,7 @@ export function App() {
           onOpenThread={openThread}
         />
         <main className="content">
-          {files.length === 0 && (
-            <div className="empty">{status || "loading…"}</div>
-          )}
+          {files.length === 0 && <div className="empty">{emptyContent}</div>}
           {files.map((file) => {
             const fileThreads =
               threadsByFileId.get(file.id) ?? emptyAnnotations;

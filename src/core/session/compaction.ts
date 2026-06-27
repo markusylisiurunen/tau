@@ -4,10 +4,12 @@ import { buildCompactionUserMessage, formatHistoryForCompaction } from "../utils
 import { extractAssistantText } from "../utils/messages.js";
 import { prependModelNotice } from "../utils/model_notices.js";
 import { bytesToTokens } from "../utils/token.js";
+import { truncateForTokens } from "../utils/truncate.js";
 import {
   getSummaryCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
+  stripTauUserMetadata,
 } from "../utils/user_metadata.js";
 
 export type CompactionHistoryEntry = {
@@ -17,9 +19,19 @@ export type CompactionHistoryEntry = {
 
 export type SessionCompactionMode = "only-summary" | "with-last-assistant";
 
+export type PreservedUserMessage = {
+  id: string;
+  text: string;
+};
+
+type UserMessageCandidate = PreservedUserMessage & {
+  source: "conversation" | "previous-preserved";
+};
+
 type CompactionPromptPreparation = {
   previousSummary?: string;
   formattedHistory: string;
+  userMessageCandidates: UserMessageCandidate[];
 };
 
 export type SessionCompactionPreparation = CompactionPromptPreparation & {
@@ -30,6 +42,15 @@ export type SessionCompactionMessageResult = {
   compactionMessage: string;
   includedLastAssistant: boolean;
 };
+
+export type ParsedCompactionSummary = {
+  summary: string;
+  preservedUserMessages: PreservedUserMessage[];
+};
+
+const PRESERVED_USER_MESSAGE_MAX_TOKENS = 20_000;
+const PRESERVED_USER_MESSAGE_IDS_OPEN_TAG = "<preserved-user-message-ids>";
+const PRESERVED_USER_MESSAGE_IDS_CLOSE_TAG = "</preserved-user-message-ids>";
 
 export type AutoCompactionCutType = "turn-boundary" | "split-turn";
 
@@ -73,14 +94,21 @@ Use this exact format:
 ## Critical Context
 - [Concrete details needed to resume: file paths, function names, commands, errors, test/build status, assumptions]
 
+<preserved-user-message-ids>
+[JSON array of history entry id strings for user messages to copy verbatim into the compaction summary. Use [] when no candidate should be copied verbatim.]
+</preserved-user-message-ids>
+
 Rules:
 - Preserve as much continuity-critical context as possible while removing tokens.
+- Optimize for continuing the work, not retrospectively describing the conversation.
+- The Goal section must preserve the user's current objective and any still-relevant original request, even if it appears early in the conversation.
 - Keep each section information-dense and focused; do not omit useful details solely for brevity.
 - When unsure whether a detail may matter later, preserve it in compact form.
 - Preserve the current state of the work: files touched, commands run, test/build status, known failures, unverified assumptions, and pending validation.
 - Distinguish attempted work from confirmed outcomes.
 - If goals evolved over time, capture the current goal and briefly note the change.
 - Collapse tangents, retries, and pleasantries unless they materially affect decisions, blockers, or next steps.
+- Select preserved user message ids only from <user-message-candidates>. The candidates with source "conversation" are identified inline in <conversation> by matching [User id="..."] markers. Select user messages whose exact wording is likely needed to continue, such as standing goals, constraints, corrections, explicit instructions, and recent actionable requests. Omit resolved, repetitive, superseded, or conversational messages. Keep the selected messages under roughly 20,000 tokens total.
 - Preserve exact file paths, function names, commands, and error messages.`;
 
 const COMPACTION_UPDATE_SUMMARIZATION_PROMPT = `The messages above are new conversation messages to incorporate into the existing summary in <previous-summary> tags. The updated summary will replace the prior summary plus these new messages as the session's continuity context.
@@ -121,48 +149,53 @@ Use the exact same format as before:
 ## Critical Context
 - [Concrete details needed to resume: file paths, function names, commands, errors, test/build status, assumptions]
 
+<preserved-user-message-ids>
+[JSON array of history entry id strings for user messages to copy verbatim into the compaction summary. Use [] when no candidate should be copied verbatim.]
+</preserved-user-message-ids>
+
 Rules:
 - Preserve as much continuity-critical context as possible while removing tokens.
+- Optimize for continuing the work, not retrospectively describing the conversation.
+- The Goal section must preserve the user's current objective and any still-relevant original request, even if it appears early in the conversation.
 - Keep each section information-dense and focused; do not omit useful details solely for brevity.
 - When unsure whether a detail may matter later, preserve it in compact form.
 - Preserve the current state of the work: files touched, commands run, test/build status, known failures, unverified assumptions, and pending validation.
 - Distinguish attempted work from confirmed outcomes.
 - If goals evolved over time, capture the current goal and briefly note the change.
 - Collapse tangents, retries, and pleasantries unless they materially affect decisions, blockers, or next steps.
+- Select preserved user message ids only from <user-message-candidates>. The candidates with source "conversation" are identified inline in <conversation> by matching [User id="..."] markers. Select user messages whose exact wording is likely needed to continue, such as standing goals, constraints, corrections, explicit instructions, and recent actionable requests. Omit resolved, repetitive, superseded, or conversational messages. Keep the selected messages under roughly 20,000 tokens total.
 - Preserve exact file paths, function names, commands, and error messages.`;
 
 export function prepareSessionCompaction(
-  history: readonly Message[],
+  entries: readonly CompactionHistoryEntry[],
   options: { systemPrompt: string },
 ): SessionCompactionPreparation | undefined {
-  const latestCompaction = findLatestCompaction(history);
-  const messagesToSummarize = history
+  const latestCompaction = findLatestCompactionEntry(entries);
+  const entriesToSummarize = entries
     .slice(latestCompaction.index + 1)
-    .filter((message) => !hasAutoCompactionContinuationMetadata(message));
-  const formattedConversation = formatHistoryForCompaction(messagesToSummarize);
+    .filter((entry) => !hasAutoCompactionContinuationMetadata(entry.message));
+  const messagesToSummarize = entriesToSummarize.map((entry) => entry.message);
+  const userMessageIds = buildUserMessageIdMap(entriesToSummarize);
+  const formattedConversation = formatHistoryForCompaction(messagesToSummarize, {
+    userMessageIds,
+  });
   if (!formattedConversation) {
     return undefined;
   }
   const formattedHistory = formatHistoryForCompaction(messagesToSummarize, {
     systemPrompt: options.systemPrompt,
+    userMessageIds,
   });
 
   return {
     previousSummary: latestCompaction.summary,
     messagesToSummarize,
     formattedHistory,
+    userMessageCandidates: collectUserMessageCandidates(
+      entriesToSummarize,
+      latestCompaction.preservedUserMessages,
+    ),
   };
-}
-
-function findLatestCompaction(history: readonly Message[]): { index: number; summary?: string } {
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const metadata = getSummaryCompactionMetadataFromMessage(history[index]!);
-    if (metadata) {
-      return { index, summary: metadata.summary };
-    }
-  }
-
-  return { index: -1 };
 }
 
 export function buildSessionCompactionPrompt(args: {
@@ -173,6 +206,9 @@ export function buildSessionCompactionPrompt(args: {
   let summaryPrompt = `<conversation>\n${preparation.formattedHistory}\n</conversation>\n\n`;
   if (preparation.previousSummary?.trim()) {
     summaryPrompt += `<previous-summary>\n${preparation.previousSummary.trim()}\n</previous-summary>\n\n`;
+  }
+  if (preparation.userMessageCandidates.length > 0) {
+    summaryPrompt += `<user-message-candidates>\n${formatUserMessageCandidates(preparation.userMessageCandidates)}\n</user-message-candidates>\n\n`;
   }
 
   summaryPrompt += preparation.previousSummary
@@ -191,19 +227,238 @@ export function buildSessionCompactionMessage(args: {
   summary: string;
   mode: SessionCompactionMode;
   messagesToSummarize: readonly Message[];
+  preservedUserMessages: readonly PreservedUserMessage[];
 }): SessionCompactionMessageResult {
   const lastAssistantMessage =
     args.mode === "with-last-assistant"
       ? extractLastAssistantMessage(args.messagesToSummarize)
       : undefined;
+  const summary = buildCompactionSummary({
+    summary: args.summary,
+    preservedUserMessages: args.preservedUserMessages,
+  });
 
   return {
     compactionMessage: buildCompactionUserMessage({
-      summary: args.summary,
+      summary,
       lastAssistantMessage,
     }),
     includedLastAssistant: Boolean(lastAssistantMessage),
   };
+}
+
+export function buildCompactionSummary(args: {
+  summary: string;
+  preservedUserMessages: readonly PreservedUserMessage[];
+}): string {
+  const summary = args.summary.trim();
+  if (args.preservedUserMessages.length === 0) {
+    return summary;
+  }
+
+  const preserved = args.preservedUserMessages
+    .map(
+      (message) =>
+        `<user-message id="${escapeXmlAttribute(message.id)}">\n${message.text}\n</user-message>`,
+    )
+    .join("\n\n");
+
+  return `${summary}\n\n## Preserved User Messages\nUse these original user messages as verbatim continuity anchors. Treat them as preserved user intent selected from the compacted history by history entry id.\n\n<preserved-user-messages>\n${preserved}\n</preserved-user-messages>`;
+}
+
+export function parseCompactionSummaryResponse(args: {
+  response: string;
+  userMessageCandidates: readonly PreservedUserMessage[];
+}): ParsedCompactionSummary {
+  const { summary, selectedIds } = extractSelectedUserMessageIds(args.response, {
+    requireSelectionBlock: args.userMessageCandidates.length > 0,
+  });
+  if (!summary) {
+    throw new Error("compaction summary response did not include a summary");
+  }
+
+  const candidatesById = new Map(
+    args.userMessageCandidates.map((message) => [message.id, message] as const),
+  );
+  const seenIds = new Set<string>();
+  const selectedCandidates = selectedIds.map((id) => {
+    if (seenIds.has(id)) {
+      throw new Error(`compaction summary selected duplicate preserved user message id '${id}'`);
+    }
+    const candidate = candidatesById.get(id);
+    if (!candidate) {
+      throw new Error(`compaction summary selected unknown preserved user message id '${id}'`);
+    }
+    seenIds.add(id);
+    return candidate;
+  });
+
+  return {
+    summary,
+    preservedUserMessages: fitPreservedUserMessages(selectedCandidates),
+  };
+}
+
+function extractSelectedUserMessageIds(
+  response: string,
+  options: { requireSelectionBlock: boolean },
+): { summary: string; selectedIds: string[] } {
+  const text = response.trim();
+  const start = text.indexOf(PRESERVED_USER_MESSAGE_IDS_OPEN_TAG);
+  if (start < 0) {
+    if (options.requireSelectionBlock) {
+      throw new Error("compaction summary response did not include preserved user message ids");
+    }
+    return { summary: text, selectedIds: [] };
+  }
+
+  const contentStart = start + PRESERVED_USER_MESSAGE_IDS_OPEN_TAG.length;
+  const end = text.indexOf(PRESERVED_USER_MESSAGE_IDS_CLOSE_TAG, contentStart);
+  if (end < 0) {
+    throw new Error("compaction summary response did not close preserved user message ids");
+  }
+  if (text.indexOf(PRESERVED_USER_MESSAGE_IDS_OPEN_TAG, contentStart) >= 0) {
+    throw new Error(
+      "compaction summary response included multiple preserved user message id blocks",
+    );
+  }
+
+  const before = text.slice(0, start).trimEnd();
+  const after = text.slice(end + PRESERVED_USER_MESSAGE_IDS_CLOSE_TAG.length).trimStart();
+  const summary = [before, after].filter(Boolean).join("\n\n").trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.slice(contentStart, end).trim());
+  } catch (error) {
+    throw new Error(`invalid preserved user message id selection: ${(error as Error).message}`);
+  }
+  if (!Array.isArray(parsed) || parsed.some((id) => typeof id !== "string")) {
+    throw new Error("invalid preserved user message id selection: expected a JSON string array");
+  }
+
+  return { summary, selectedIds: parsed };
+}
+
+function fitPreservedUserMessages(
+  candidates: readonly PreservedUserMessage[],
+): PreservedUserMessage[] {
+  const tokenCounts = candidates.map((candidate) => estimateTextTokens(candidate.text));
+  const totalTokens = tokenCounts.reduce((total, tokens) => total + tokens, 0);
+  if (totalTokens <= PRESERVED_USER_MESSAGE_MAX_TOKENS) {
+    return candidates.map((candidate) => ({ id: candidate.id, text: candidate.text }));
+  }
+
+  const targets = tokenCounts.map((tokens) =>
+    Math.max(1, Math.floor((tokens / totalTokens) * PRESERVED_USER_MESSAGE_MAX_TOKENS)),
+  );
+  let targetTotal = targets.reduce((total, tokens) => total + tokens, 0);
+  while (targetTotal > PRESERVED_USER_MESSAGE_MAX_TOKENS) {
+    let largestIndex = 0;
+    for (let index = 1; index < targets.length; index += 1) {
+      if (targets[index]! > targets[largestIndex]!) {
+        largestIndex = index;
+      }
+    }
+    if (targets[largestIndex]! <= 1) {
+      break;
+    }
+    targets[largestIndex] = targets[largestIndex]! - 1;
+    targetTotal -= 1;
+  }
+
+  return candidates.map((candidate, index) => {
+    const maxTokens = targets[index]!;
+    return {
+      id: candidate.id,
+      text: truncateForTokens(candidate.text, { maxTokens, strategy: "middle" }).content,
+    };
+  });
+}
+
+function buildUserMessageIdMap(
+  entries: readonly CompactionHistoryEntry[],
+): ReadonlyMap<Message, string> {
+  const ids = new Map<Message, string>();
+  for (const entry of entries) {
+    if (extractPreservableUserText(entry.message)) {
+      ids.set(entry.message, entry.id);
+    }
+  }
+  return ids;
+}
+
+function collectUserMessageCandidates(
+  entries: readonly CompactionHistoryEntry[],
+  previousMessages: readonly PreservedUserMessage[],
+): UserMessageCandidate[] {
+  return [
+    ...previousMessages.map((message) => ({
+      id: message.id,
+      text: message.text,
+      source: "previous-preserved" as const,
+    })),
+    ...entries.flatMap((entry) => {
+      const text = extractPreservableUserText(entry.message);
+      if (!text) {
+        return [];
+      }
+      return [{ id: entry.id, text, source: "conversation" as const }];
+    }),
+  ];
+}
+
+function formatUserMessageCandidates(candidates: readonly UserMessageCandidate[]): string {
+  const records = candidates.map((message) => {
+    if (message.source === "conversation") {
+      return { id: message.id, source: message.source };
+    }
+    return { id: message.id, source: message.source, text: message.text };
+  });
+  return JSON.stringify(records, null, 2).replaceAll("<", "\\u003c");
+}
+
+function extractPreservableUserText(message: Message): string | undefined {
+  if (message.role !== "user") {
+    return undefined;
+  }
+  if (
+    getSummaryCompactionMetadataFromMessage(message) ||
+    hasAutoCompactionContinuationMetadata(message)
+  ) {
+    return undefined;
+  }
+
+  const text = extractUserText(message);
+  return text.trim() ? text : undefined;
+}
+
+function extractUserText(message: Message): string {
+  if (typeof message.content === "string") {
+    return stripTauUserMetadata(message.content);
+  }
+
+  const parts: string[] = [];
+  for (const block of message.content) {
+    if (typeof block === "string") {
+      parts.push(block);
+    } else if (block.type === "text") {
+      parts.push(block.text ?? "");
+    }
+  }
+
+  return stripTauUserMetadata(parts.join("\n"));
+}
+
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function estimateTextTokens(text: string): number {
+  return Math.max(1, bytesToTokens(Buffer.byteLength(text, "utf8")));
 }
 
 export function prepareAutoCompaction(
@@ -219,16 +474,20 @@ export function prepareAutoCompaction(
     return undefined;
   }
 
-  const messagesToSummarize = entries
+  const entriesToSummarize = entries
     .slice(latestCompaction.index + 1, cut.startIndex)
-    .map((entry) => entry.message)
-    .filter((message) => !hasAutoCompactionContinuationMetadata(message));
-  const formattedConversation = formatHistoryForCompaction(messagesToSummarize);
+    .filter((entry) => !hasAutoCompactionContinuationMetadata(entry.message));
+  const messagesToSummarize = entriesToSummarize.map((entry) => entry.message);
+  const userMessageIds = buildUserMessageIdMap(entriesToSummarize);
+  const formattedConversation = formatHistoryForCompaction(messagesToSummarize, {
+    userMessageIds,
+  });
   if (!formattedConversation) {
     return undefined;
   }
   const formattedHistory = formatHistoryForCompaction(messagesToSummarize, {
     systemPrompt: settings.systemPrompt,
+    userMessageIds,
   });
 
   const retainedEntries = entries
@@ -244,6 +503,10 @@ export function prepareAutoCompaction(
     retainedEntries,
     cutType: cut.cutType,
     formattedHistory,
+    userMessageCandidates: collectUserMessageCandidates(
+      entriesToSummarize,
+      latestCompaction.preservedUserMessages,
+    ),
   };
 }
 
@@ -357,15 +620,24 @@ export function selectAutoCompactionCut(
 function findLatestCompactionEntry(entries: readonly CompactionHistoryEntry[]): {
   index: number;
   summary?: string;
+  preservedUserMessages: PreservedUserMessage[];
 } {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const metadata = getSummaryCompactionMetadataFromMessage(entries[index]!.message);
     if (metadata) {
-      return { index, summary: metadata.summary };
+      const preservedUserMessages = metadata.preservedUserMessages.map((message) => ({
+        id: message.id,
+        text: message.text,
+      }));
+      return {
+        index,
+        summary: metadata.summary,
+        preservedUserMessages,
+      };
     }
   }
 
-  return { index: -1 };
+  return { index: -1, preservedUserMessages: [] };
 }
 
 function collectTurnStarts(

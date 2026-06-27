@@ -121,7 +121,7 @@ function serializeToolResultMessage(message: ToolResultMessage): string {
 
 export function formatHistoryForCompaction(
   history: readonly Message[],
-  options?: { systemPrompt?: string },
+  options?: { systemPrompt?: string; userMessageIds?: ReadonlyMap<Message, string> },
 ): string {
   const lines: string[] = [];
   const systemPrompt = options?.systemPrompt?.trim();
@@ -133,7 +133,9 @@ export function formatHistoryForCompaction(
     if (message.role === "user") {
       const text = stripTauUserMetadata(extractTextFromContent(message.content));
       if (text) {
-        lines.push(formatCompactionBlock("[User]:", text));
+        const id = options?.userMessageIds?.get(message);
+        const marker = id ? `[User id=${JSON.stringify(id)}]:` : "[User]:";
+        lines.push(formatCompactionBlock(marker, text));
       }
       continue;
     }

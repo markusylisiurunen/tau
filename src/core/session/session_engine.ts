@@ -42,9 +42,11 @@ import {
 import {
   buildAutoCompactionContinuationMessage,
   buildAutoCompactionPrompt,
+  buildCompactionSummary,
   buildSessionCompactionMessage,
   buildSessionCompactionPrompt,
   COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
+  parseCompactionSummaryResponse,
   prepareAutoCompaction,
   prepareSessionCompaction,
   type SessionCompactionMode,
@@ -342,7 +344,7 @@ export class SessionEngine {
   }
 
   async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {
-    const preparation = prepareSessionCompaction(this.rawHistory, {
+    const preparation = prepareSessionCompaction(this.historyEntries, {
       systemPrompt: this.systemPrompt,
     });
     if (!preparation) {
@@ -354,15 +356,20 @@ export class SessionEngine {
       guidance: options.guidance,
     });
 
-    const summary = await this.runCompactionSummary(summaryPrompt, {
+    const summaryResponse = await this.runCompactionSummary(summaryPrompt, {
       sessionId: `tau-summary-${randomUUID()}`,
       signal: options.signal,
     });
+    const summaryResult = parseCompactionSummaryResponse({
+      response: summaryResponse,
+      userMessageCandidates: preparation.userMessageCandidates,
+    });
 
     const { compactionMessage, includedLastAssistant } = buildSessionCompactionMessage({
-      summary,
+      summary: summaryResult.summary,
       mode: options.mode,
       messagesToSummarize: preparation.messagesToSummarize,
+      preservedUserMessages: summaryResult.preservedUserMessages,
     });
 
     const textWithModelNotice = prependModelNotice(
@@ -373,7 +380,8 @@ export class SessionEngine {
       {
         type: "compaction",
         version: 1,
-        summary,
+        summary: summaryResult.summary,
+        preservedUserMessages: summaryResult.preservedUserMessages,
       },
     ]);
 
@@ -725,12 +733,23 @@ export class SessionEngine {
       return undefined;
     }
 
-    const summary = await this.runCompactionSummary(buildAutoCompactionPrompt(preparation), {
-      sessionId: `tau-auto-summary-${randomUUID()}`,
-      signal,
+    const summaryResponse = await this.runCompactionSummary(
+      buildAutoCompactionPrompt(preparation),
+      {
+        sessionId: `tau-auto-summary-${randomUUID()}`,
+        signal,
+      },
+    );
+    const summaryResult = parseCompactionSummaryResponse({
+      response: summaryResponse,
+      userMessageCandidates: preparation.userMessageCandidates,
     });
 
-    const compactionMessage = buildCompactionUserMessage({ summary });
+    const compactionSummary = buildCompactionSummary({
+      summary: summaryResult.summary,
+      preservedUserMessages: summaryResult.preservedUserMessages,
+    });
+    const compactionMessage = buildCompactionUserMessage({ summary: compactionSummary });
     const retainedMessageCount = preparation.retainedEntries.length;
     const modelNotice = resolveModelNotice(this.config, this.persona.model);
     const textWithModelNotice = prependModelNotice(compactionMessage, modelNotice);
@@ -738,7 +757,8 @@ export class SessionEngine {
       {
         type: "auto-compaction",
         version: 1,
-        summary,
+        summary: summaryResult.summary,
+        preservedUserMessages: summaryResult.preservedUserMessages,
         cutType: preparation.cutType,
         retainedMessageCount,
       },

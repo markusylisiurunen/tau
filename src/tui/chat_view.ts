@@ -55,6 +55,7 @@ export type ChatViewInputHandlers = {
   onCtrlF?: () => void;
   onAltUp?: () => void;
   onAltDown?: () => void;
+  onAltC?: () => void;
   onCtrlG?: () => void;
   beforeSubmit?: (text: string) => boolean;
   onChange?: (text: string) => void;
@@ -398,6 +399,7 @@ export class TuiChatView implements ChatView {
     this.editor.onCtrlF = handlers.onCtrlF;
     this.editor.onAltUp = handlers.onAltUp;
     this.editor.onAltDown = handlers.onAltDown;
+    this.editor.onAltC = handlers.onAltC;
     this.editor.onCtrlG = handlers.onCtrlG;
     this.editor.beforeSubmit = handlers.beforeSubmit;
     this.editor.onChange = handlers.onChange;

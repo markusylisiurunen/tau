@@ -37,6 +37,7 @@ export class CustomEditor extends Editor {
   public onCtrlG?: () => void;
   public onAltUp?: () => void;
   public onAltDown?: () => void;
+  public onAltC?: () => void;
   public beforeSubmit?: (text: string) => boolean;
 
   constructor(theme: Theme) {
@@ -125,6 +126,7 @@ export class CustomEditor extends Editor {
     const isEscape = matchesKey(data, Key.escape);
     const isAltUp = matchesKey(data, Key.alt("up")) || data === "\x1b[1;3A";
     const isAltDown = matchesKey(data, Key.alt("down")) || data === "\x1b[1;3B";
+    const isAltC = matchesKey(data, Key.alt("c")) || data === "\x1bc";
 
     if (!isEscape) {
       this.lastEscapeAt = undefined;
@@ -189,6 +191,11 @@ export class CustomEditor extends Editor {
 
     if (isAltDown && this.onAltDown && !this.isShowingAutocomplete()) {
       this.onAltDown();
+      return;
+    }
+
+    if (isAltC && this.onAltC && !this.isShowingAutocomplete()) {
+      this.onAltC();
       return;
     }
 

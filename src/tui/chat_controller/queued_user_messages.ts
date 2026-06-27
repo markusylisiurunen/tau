@@ -34,6 +34,15 @@ export class QueuedUserMessages {
     editor.setEditorText(last);
   }
 
+  collapse(): boolean {
+    if (this.messages.length < 2) return false;
+
+    const collapsed = this.messages.join("\n\n---\n\n");
+    this.messages.length = 0;
+    this.messages.push(collapsed);
+    return true;
+  }
+
   dequeueIntoEditor(editor: EditorAdapter): void {
     if (this.messages.length === 0) return;
 

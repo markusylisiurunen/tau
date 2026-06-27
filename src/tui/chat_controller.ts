@@ -488,6 +488,7 @@ export class ChatController {
       },
       onAltUp: () => this.popQueuedUserMessageIntoEditor(),
       onAltDown: () => this.cycleSubagentSelection(),
+      onAltC: () => this.collapseQueuedUserMessages(),
       onCtrlG: () => this.terminateSelectedSubagent(),
       beforeSubmit: (text: string) => this.beforeSubmit(text),
       onChange: (text: string) => this.handleEditorChange(text),
@@ -1333,6 +1334,12 @@ export class ChatController {
       getEditorText: () => this.view.getEditorText(),
       setEditorText: (text) => this.view.setEditorText(text),
     });
+  }
+
+  private collapseQueuedUserMessages(): void {
+    if (this.queuedMessageBuffer.collapse()) {
+      this.view.requestRender();
+    }
   }
 
   private dequeueQueuedUserMessagesIntoEditor(): void {

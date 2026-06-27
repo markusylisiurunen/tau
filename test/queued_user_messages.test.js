@@ -37,6 +37,15 @@ describe("QueuedUserMessages", () => {
     expect(queue).toEqual([]);
   });
 
+  it("collapses queued messages into one message", () => {
+    const queue = ["one", "two", "three"];
+    const manager = new QueuedUserMessages(queue);
+
+    expect(manager.collapse()).toBe(true);
+
+    expect(queue).toEqual(["one\n\n---\n\ntwo\n\n---\n\nthree"]);
+  });
+
   it("fires pending idle notification once after draining", async () => {
     const queue = [];
     const manager = new QueuedUserMessages(queue);

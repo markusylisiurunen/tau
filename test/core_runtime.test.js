@@ -10,6 +10,8 @@ import { personas } from "../dist/core/personas.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
 import {
   buildAutoCompactionContinuationMessage,
+  buildSessionCompactionPrompt,
+  parseCompactionSummaryResponse,
   prepareAutoCompaction,
   prepareSessionCompaction,
   selectAutoCompactionCut,
@@ -225,6 +227,7 @@ describe("core session rewind APIs", () => {
         type: "compaction",
         version: 1,
         summary: "summary",
+        preservedUserMessages: [],
       },
     ]);
 
@@ -255,7 +258,9 @@ describe("core session rewind APIs", () => {
 
     try {
       faux.setResponses([
-        fauxAssistantMessage("## Goal\nKeep current request"),
+        fauxAssistantMessage(
+          compactionSummary("## Goal\nKeep current request", ["old-request", "middle-request"]),
+        ),
         fauxAssistantMessage("done"),
       ]);
       const persona = {
@@ -282,18 +287,23 @@ describe("core session rewind APIs", () => {
         },
       });
 
-      session.addUserText("old request");
+      session.addUserText("old request", { historyEntryId: "old-request" });
       session.addMessage(assistantMessageWithUsage("old answer", 1000));
-      session.addUserText(`middle request ${"x".repeat(6000)}`);
+      session.addUserText(`middle request ${"x".repeat(6000)}`, {
+        historyEntryId: "middle-request",
+      });
       session.addMessage(assistantMessageWithUsage("middle answer", 1000));
-      session.addUserText("current request");
+      session.addUserText("current request", { historyEntryId: "current-request" });
 
       const events = [];
       for await (const event of session.events(new AbortController().signal)) {
         events.push(event);
       }
 
-      expect(events).toContainEqual({
+      const compactionEnd = events.find(
+        (event) => event.type === "compaction_end" && event.outcome === "compacted",
+      );
+      expect(compactionEnd).toEqual({
         type: "compaction_end",
         reason: "threshold",
         outcome: "compacted",
@@ -302,6 +312,9 @@ describe("core session rewind APIs", () => {
           retainedMessageCount: 1,
         }),
       });
+      expect(compactionEnd.result.compactionMessage).toContain("<preserved-user-messages>");
+      expect(compactionEnd.result.compactionMessage).toContain("old request");
+      expect(compactionEnd.result.compactionMessage).toContain("middle request");
     } finally {
       unregisterFauxProvider();
     }
@@ -316,7 +329,7 @@ describe("core session rewind APIs", () => {
 
     try {
       faux.setResponses([
-        fauxAssistantMessage("## Goal\nPreserve the request"),
+        fauxAssistantMessage(compactionSummary("## Goal\nPreserve the request", ["old-request"])),
         fauxAssistantMessage([fauxToolCall("fake_tool", {}, { id: "fake-call" })], {
           stopReason: "toolUse",
         }),
@@ -375,9 +388,11 @@ describe("core session rewind APIs", () => {
         },
       });
 
-      session.addUserText(`old request ${"x".repeat(10000)}`);
+      session.addUserText(`old request ${"x".repeat(10000)}`, { historyEntryId: "old-request" });
       session.addMessage(assistantMessageWithUsage("old answer", 1600));
-      const submittedUserHistoryEntryId = session.addUserText("current request");
+      const submittedUserHistoryEntryId = session.addUserText("current request", {
+        historyEntryId: "current-request",
+      });
 
       const events = [];
       for await (const event of session.events(new AbortController().signal)) {
@@ -934,6 +949,7 @@ describe("compaction context message", () => {
         type: "compaction",
         version: 1,
         summary: "## Goal\nShip feature",
+        preservedUserMessages: [{ id: "history-one", text: "ship the feature" }],
       },
     ]);
     const message = {
@@ -949,6 +965,7 @@ describe("compaction context message", () => {
       type: "compaction",
       version: 1,
       summary: "## Goal\nShip feature",
+      preservedUserMessages: [{ id: "history-one", text: "ship the feature" }],
     });
   });
 
@@ -973,13 +990,71 @@ describe("compaction context message", () => {
     });
     const history = [continuation, userMessage("new request")];
 
-    const result = prepareSessionCompaction(history, { systemPrompt: "project instructions" });
+    const result = prepareSessionCompaction(historyEntries(history), {
+      systemPrompt: "project instructions",
+    });
 
     expect(result.messagesToSummarize).toHaveLength(1);
+    expect(result.userMessageCandidates).toEqual([
+      { id: "entry-1", text: "new request", source: "conversation" },
+    ]);
     expect(result.formattedHistory).toContain("[System prompt]:\nproject instructions");
     expect(result.formattedHistory).toContain("new request");
     expect(result.formattedHistory).not.toContain(
       "The conversation context before this point has been compacted",
+    );
+  });
+
+  it("asks the summarizer to select preserved user message ids", () => {
+    const entries = historyEntries([
+      userMessage("keep this standing constraint"),
+      assistantMessage("done"),
+      userMessage("ignore this resolved aside"),
+    ]);
+    const preparation = prepareSessionCompaction(entries, {
+      systemPrompt: "project instructions",
+    });
+
+    const prompt = buildSessionCompactionPrompt({ preparation });
+    expect(prompt).toContain("<user-message-candidates>");
+    expect(prompt).toContain('"id": "entry-0"');
+    expect(prompt).toContain('"id": "entry-2"');
+    expect(prompt).toContain('[User id="entry-0"]:');
+    expect(prompt).toContain('[User id="entry-2"]:');
+    expect(prompt).toContain("<preserved-user-message-ids>");
+
+    const parsed = parseCompactionSummaryResponse({
+      response: compactionSummary("## Goal\nContinue", ["entry-0"]),
+      userMessageCandidates: preparation.userMessageCandidates,
+    });
+
+    expect(parsed).toEqual({
+      summary: "## Goal\nContinue",
+      preservedUserMessages: [{ id: "entry-0", text: "keep this standing constraint" }],
+    });
+  });
+
+  it("middle-truncates selected preserved user messages by size", () => {
+    const first = `first start ${"a".repeat(60000)} first end`;
+    const second = `second start ${"b".repeat(120000)} second end`;
+
+    const parsed = parseCompactionSummaryResponse({
+      response: compactionSummary("## Goal\nContinue", ["first", "second"]),
+      userMessageCandidates: [
+        { id: "first", text: first },
+        { id: "second", text: second },
+      ],
+    });
+
+    expect(parsed.preservedUserMessages).toHaveLength(2);
+    expect(parsed.preservedUserMessages[0].text).toContain("first start");
+    expect(parsed.preservedUserMessages[0].text).toContain("tokens truncated");
+    expect(parsed.preservedUserMessages[0].text).toContain("first end");
+    expect(parsed.preservedUserMessages[1].text).toContain("second start");
+    expect(parsed.preservedUserMessages[1].text).toContain("tokens truncated");
+    expect(parsed.preservedUserMessages[1].text).toContain("second end");
+    expect(parsed.preservedUserMessages[1].text.length).toBeGreaterThan(
+      parsed.preservedUserMessages[0].text.length,
     );
   });
 
@@ -1005,6 +1080,7 @@ describe("compaction context message", () => {
           type: "compaction",
           version: 1,
           summary: "old summary",
+          preservedUserMessages: [{ id: "entry-old", text: "old request" }],
         },
       ],
     );
@@ -1021,10 +1097,16 @@ describe("compaction context message", () => {
       },
     ];
 
-    const result = prepareSessionCompaction(history, { systemPrompt: "project instructions" });
+    const result = prepareSessionCompaction(historyEntries(history), {
+      systemPrompt: "project instructions",
+    });
 
     expect(result.previousSummary).toBe("old summary");
     expect(result.messagesToSummarize).toHaveLength(1);
+    expect(result.userMessageCandidates).toEqual([
+      { id: "entry-old", text: "old request", source: "previous-preserved" },
+      { id: "entry-1", text: "new request", source: "conversation" },
+    ]);
     expect(result.formattedHistory).toContain("new request");
     expect(result.formattedHistory).not.toContain("old summary");
   });
@@ -1044,10 +1126,16 @@ describe("compaction context message", () => {
       },
     ];
 
-    const result = prepareSessionCompaction(history, { systemPrompt: "project instructions" });
+    const result = prepareSessionCompaction(historyEntries(history), {
+      systemPrompt: "project instructions",
+    });
 
     expect(result.previousSummary).toBeUndefined();
     expect(result.messagesToSummarize).toHaveLength(2);
+    expect(result.userMessageCandidates).toEqual([
+      { id: "entry-0", text: oldVisibleCompactionText, source: "conversation" },
+      { id: "entry-1", text: "new request", source: "conversation" },
+    ]);
     expect(result.formattedHistory).toContain("old summary");
     expect(result.formattedHistory).toContain("new request");
   });
@@ -1120,6 +1208,7 @@ describe("compaction context message", () => {
           type: "auto-compaction",
           version: 1,
           summary: "old summary",
+          preservedUserMessages: [],
           cutType: "turn-boundary",
           retainedMessageCount: 2,
         },
@@ -1143,6 +1232,9 @@ describe("compaction context message", () => {
     });
 
     expect(preparation.cutType).toBe("split-turn");
+    expect(preparation.userMessageCandidates).toEqual([
+      { id: "entry-1", text: "current request", source: "conversation" },
+    ]);
     expect(preparation.formattedHistory).toContain("current request");
     expect(preparation.formattedHistory).not.toContain(
       "The conversation context before this point has been compacted",
@@ -1159,6 +1251,7 @@ describe("compaction context message", () => {
           type: "auto-compaction",
           version: 1,
           summary: "old summary",
+          preservedUserMessages: [],
           cutType: "split-turn",
           retainedMessageCount: 2,
         },
@@ -1200,6 +1293,7 @@ describe("compaction context message", () => {
           type: "auto-compaction",
           version: 1,
           summary: "old summary",
+          preservedUserMessages: [],
           cutType: "turn-boundary",
           retainedMessageCount: 2,
         },
@@ -1224,6 +1318,10 @@ describe("compaction context message", () => {
     });
 
     expect(preparation.previousSummary).toBe("old summary");
+    expect(preparation.userMessageCandidates).toEqual([
+      { id: "entry-1", text: "retained old request", source: "conversation" },
+      { id: "entry-3", text: `new request ${"x".repeat(9000)}`, source: "conversation" },
+    ]);
     expect(preparation.formattedHistory).toContain("retained old request");
     expect(preparation.formattedHistory).toContain("new request");
     expect(preparation.formattedHistory).not.toContain(
@@ -1234,6 +1332,7 @@ describe("compaction context message", () => {
       type: "auto-compaction",
       version: 1,
       summary: "old summary",
+      preservedUserMessages: [],
       cutType: "turn-boundary",
       retainedMessageCount: 2,
     });
@@ -1242,6 +1341,10 @@ describe("compaction context message", () => {
     expect(hasAutoCompactionContinuationMetadata(continuation)).toBe(true);
   });
 });
+
+function compactionSummary(summary, preservedUserMessageIds = []) {
+  return `${summary}\n\n<preserved-user-message-ids>\n${JSON.stringify(preservedUserMessageIds)}\n</preserved-user-message-ids>`;
+}
 
 function historyEntries(messages) {
   return messages.map((message, index) => ({ id: `entry-${index}`, message }));

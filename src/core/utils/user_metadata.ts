@@ -4,10 +4,16 @@ import type { Message } from "@earendil-works/pi-ai";
 export const TAU_USER_METADATA_PREFIX = "\u001eTAU_METADATA_V1:";
 const TAU_USER_METADATA_SUFFIX = "\u001e";
 
+export type TauPreservedUserMessage = {
+  id: string;
+  text: string;
+};
+
 export type TauCompactionUserMetadata = {
   type: "compaction";
   version: 1;
   summary: string;
+  preservedUserMessages: TauPreservedUserMessage[];
 };
 
 export type TauAutoCompactionCutType = "turn-boundary" | "split-turn";
@@ -16,6 +22,7 @@ export type TauAutoCompactionUserMetadata = {
   type: "auto-compaction";
   version: 1;
   summary: string;
+  preservedUserMessages: TauPreservedUserMessage[];
   cutType: TauAutoCompactionCutType;
   retainedMessageCount: number;
 };
@@ -92,8 +99,44 @@ function assertMetadataKeys(
   }
 }
 
+function parsePreservedUserMessages(value: unknown): TauPreservedUserMessage[] {
+  if (!Array.isArray(value)) {
+    throw new Error("invalid tau user metadata: preserved user messages must be an array");
+  }
+
+  const seenIds = new Set<string>();
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object") {
+      throw new Error(
+        `invalid tau user metadata: preserved user message ${index} must be an object`,
+      );
+    }
+
+    const record = item as Record<string, unknown>;
+    assertMetadataKeys(record, ["id", "text"]);
+    if (typeof record.id !== "string" || record.id.trim() === "") {
+      throw new Error(
+        `invalid tau user metadata: preserved user message ${index} id must be a non-empty string`,
+      );
+    }
+    if (seenIds.has(record.id)) {
+      throw new Error(
+        `invalid tau user metadata: preserved user message id '${record.id}' is duplicated`,
+      );
+    }
+    if (typeof record.text !== "string" || record.text.trim() === "") {
+      throw new Error(
+        `invalid tau user metadata: preserved user message ${index} text must be a non-empty string`,
+      );
+    }
+
+    seenIds.add(record.id);
+    return { id: record.id, text: record.text };
+  });
+}
+
 function parseCompactionMetadataRecord(record: Record<string, unknown>): TauCompactionUserMetadata {
-  assertMetadataKeys(record, ["type", "version", "summary"]);
+  assertMetadataKeys(record, ["type", "version", "summary", "preservedUserMessages"]);
   if (record.version !== 1) {
     throw new Error("invalid tau user metadata: unsupported compaction metadata version");
   }
@@ -104,13 +147,21 @@ function parseCompactionMetadataRecord(record: Record<string, unknown>): TauComp
     type: "compaction",
     version: 1,
     summary: record.summary,
+    preservedUserMessages: parsePreservedUserMessages(record.preservedUserMessages),
   };
 }
 
 function parseAutoCompactionMetadataRecord(
   record: Record<string, unknown>,
 ): TauAutoCompactionUserMetadata {
-  assertMetadataKeys(record, ["type", "version", "summary", "cutType", "retainedMessageCount"]);
+  assertMetadataKeys(record, [
+    "type",
+    "version",
+    "summary",
+    "preservedUserMessages",
+    "cutType",
+    "retainedMessageCount",
+  ]);
   if (record.version !== 1) {
     throw new Error("invalid tau user metadata: unsupported auto-compaction metadata version");
   }
@@ -135,6 +186,7 @@ function parseAutoCompactionMetadataRecord(
     type: "auto-compaction",
     version: 1,
     summary: record.summary,
+    preservedUserMessages: parsePreservedUserMessages(record.preservedUserMessages),
     cutType: record.cutType,
     retainedMessageCount: record.retainedMessageCount,
   };

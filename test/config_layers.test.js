@@ -92,7 +92,6 @@ describe("config paths", () => {
         JSON.stringify({
           defaultRisk: "read-only",
           apiKeys: { openai: "global", anthropic: "anthropic-key", mistral: "mistral-key" },
-          bashCommands: [{ id: "check", cmd: "npm run check" }],
           diffTool: {
             command: "./scripts/global-diff-tool",
             args: ["--global"],
@@ -103,6 +102,28 @@ describe("config paths", () => {
             defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
           },
           speechToText: { provider: "mistral" },
+          cloudflareSandbox: {
+            bridges: {
+              default: {
+                url: "https://global.example.workers.dev",
+                apiKeyEnv: "GLOBAL_SANDBOX_KEY",
+              },
+              shared: {
+                url: "https://shared.example.workers.dev",
+              },
+            },
+          },
+          flySprites: {
+            apis: {
+              default: {
+                baseURL: "https://api.sprites.dev",
+                tokenEnv: "GLOBAL_SPRITES_TOKEN",
+              },
+              shared: {
+                tokenEnv: "SHARED_SPRITES_TOKEN",
+              },
+            },
+          },
           autoCompact: { enabled: false, reserveTokens: 1000 },
           modelSystemNotices: {
             "openai/gpt-5.4": "global codex notice",
@@ -116,10 +137,6 @@ describe("config paths", () => {
         JSON.stringify({
           defaultRisk: "read-write",
           apiKeys: { openai: "repo", google: "google-key" },
-          bashCommands: [
-            { id: "check", cmd: "repo check" },
-            { id: "test", cmd: "repo test" },
-          ],
           diffTool: {
             command: "./scripts/repo-diff-tool",
             args: ["--repo"],
@@ -130,6 +147,24 @@ describe("config paths", () => {
             defaultLaunchModels: ["openai/gpt-5.4:high"],
           },
           speechToText: { provider: "gemini" },
+          cloudflareSandbox: {
+            bridges: {
+              default: {
+                url: "https://repo.example.workers.dev",
+                apiKeyEnv: "REPO_SANDBOX_KEY",
+                home: "/home/sandbox",
+              },
+            },
+          },
+          flySprites: {
+            apis: {
+              default: {
+                baseURL: "https://repo.sprites.example",
+                tokenEnv: "REPO_SPRITES_TOKEN",
+                home: "/home/sprite",
+              },
+            },
+          },
           autoCompact: { keepRecentTokens: 2000 },
           modelSystemNotices: {
             "openai/gpt-5.4": "repo codex notice",
@@ -141,7 +176,6 @@ describe("config paths", () => {
         join(nested, ".tau", "config.json"),
         JSON.stringify({
           defaultPersona: "custom-persona",
-          bashCommands: [{ id: "test", cmd: "nested test" }],
           agentContextFiles: ["AGENTS.md"],
         }),
       );
@@ -161,10 +195,6 @@ describe("config paths", () => {
         google: "google-key",
         mistral: "mistral-key",
       });
-      expect(config.bashCommands).toEqual([
-        { id: "check", cmd: "repo check", cwd: repo },
-        { id: "test", cmd: "nested test", cwd: nested },
-      ]);
       expect(config.diffTool).toEqual({
         command: join(repo, "scripts", "repo-diff-tool"),
         args: ["--repo"],
@@ -179,6 +209,30 @@ describe("config paths", () => {
         defaultLaunchModels: ["openai/gpt-5.4:high"],
       });
       expect(config.speechToText).toEqual({ provider: "gemini" });
+      expect(config.cloudflareSandbox).toEqual({
+        bridges: {
+          default: {
+            url: "https://repo.example.workers.dev",
+            apiKeyEnv: "REPO_SANDBOX_KEY",
+            home: "/home/sandbox",
+          },
+          shared: {
+            url: "https://shared.example.workers.dev",
+          },
+        },
+      });
+      expect(config.flySprites).toEqual({
+        apis: {
+          default: {
+            baseURL: "https://repo.sprites.example",
+            tokenEnv: "REPO_SPRITES_TOKEN",
+            home: "/home/sprite",
+          },
+          shared: {
+            tokenEnv: "SHARED_SPRITES_TOKEN",
+          },
+        },
+      });
       expect(config.autoCompact).toEqual({
         enabled: false,
         reserveTokens: 1000,

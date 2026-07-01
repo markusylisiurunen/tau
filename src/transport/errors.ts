@@ -1,41 +1,34 @@
-import type { TauSdkRequestId } from "./types.js";
+import type {
+  SessionProtocolError,
+  SessionProtocolErrorCode,
+  SessionProtocolRequestId,
+} from "../protocol/session_protocol.js";
 
-export type TauRpcErrorCode =
-  | "parse_error"
-  | "invalid_request"
-  | "method_not_found"
-  | "invalid_params"
-  | "busy"
-  | "internal_error";
+export type TauSessionProtocolErrorCode = SessionProtocolErrorCode;
+export type TauSessionProtocolError = SessionProtocolError;
 
-export type TauRpcError = {
-  code: TauRpcErrorCode;
-  message: string;
-  data?: unknown;
-};
-
-export class TauSdkError extends Error {
+export class TauSessionClientError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
-    this.name = "TauSdkError";
+    this.name = "TauSessionClientError";
   }
 }
 
-export class TauRpcResponseError extends TauSdkError {
-  readonly code: TauRpcErrorCode;
-  readonly requestId: TauSdkRequestId;
+export class TauSessionProtocolResponseError extends TauSessionClientError {
+  readonly code: TauSessionProtocolErrorCode;
+  readonly requestId: SessionProtocolRequestId;
   readonly data?: unknown;
 
-  constructor(options: { requestId: TauSdkRequestId; error: TauRpcError }) {
+  constructor(options: { requestId: SessionProtocolRequestId; error: TauSessionProtocolError }) {
     super(options.error.message);
-    this.name = "TauRpcResponseError";
+    this.name = "TauSessionProtocolResponseError";
     this.code = options.error.code;
     this.requestId = options.requestId;
     this.data = options.error.data;
   }
 }
 
-export class TauTransportError extends TauSdkError {
+export class TauTransportError extends TauSessionClientError {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "TauTransportError";

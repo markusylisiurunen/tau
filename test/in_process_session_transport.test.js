@@ -1,0 +1,373 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  createTauSdkClientFromTransport,
+  TauSessionProtocolResponseError,
+} from "../dist/sdk/index.js";
+import { InProcessSessionProtocolTransport } from "../dist/transport/in_process_session_transport.js";
+import {
+  createProtocolBootstrap,
+  createProtocolExecResult,
+  createProtocolSnapshot,
+} from "./helpers/session_protocol_fixtures.js";
+
+const bootstrap = createProtocolBootstrap();
+
+const localCreateInput = { executionEnvironment: { kind: "local", cwd: "/repo" } };
+
+function createNoticeDelta(sessionId, revision, text) {
+  return {
+    version: 1,
+    type: "session.delta",
+    sessionId,
+    fromRevision: revision,
+    toRevision: revision + 1,
+    reason: "notice",
+    delta: {
+      type: "snapshot.patch",
+      changes: [
+        {
+          type: "timeline.append",
+          item: {
+            type: "notice",
+            id: `notice-${revision}`,
+            notice: { severity: "info", text, timestamp: revision },
+          },
+        },
+      ],
+    },
+  };
+}
+
+function createHostedSession(sessionId, sessions, options = {}) {
+  const deltaHandlers = new Set();
+  const historyEntries = [];
+  let nextHistoryEntryId = 1;
+  let running = false;
+  let releaseTurn;
+  let pendingTurnResult = { aborted: false };
+  let riskLevel = bootstrap.riskLevel;
+
+  const hostedSession = {
+    get isTurnRunning() {
+      return running;
+    },
+    get sessionId() {
+      return sessionId;
+    },
+    onDelta(handler) {
+      deltaHandlers.add(handler);
+      return () => deltaHandlers.delete(handler);
+    },
+    onEphemeral() {
+      return () => {};
+    },
+    session: {
+      addUserText(text, options) {
+        const id = options?.historyEntryId ?? `history-${nextHistoryEntryId++}`;
+        historyEntries.push({
+          id,
+          message: {
+            role: "user",
+            content: [{ type: "text", text }],
+          },
+        });
+        return id;
+      },
+      reset() {},
+      get historyEntries() {
+        return historyEntries;
+      },
+      get sessionId() {
+        return sessionId;
+      },
+    },
+    async record(options) {
+      const userHistoryEntryId = hostedSession.session.addUserText(
+        options.text,
+        options.historyEntryId ? { historyEntryId: options.historyEntryId } : undefined,
+      );
+      return {
+        snapshot: await hostedSession.snapshot(),
+        userHistoryEntryId,
+      };
+    },
+    async runTurn() {
+      running = true;
+      let result = { aborted: false };
+      try {
+        for (const handler of deltaHandlers) {
+          handler(createNoticeDelta(sessionId, historyEntries.length + 1, `running ${sessionId}`));
+        }
+        if (options.holdTurns) {
+          await new Promise((resolve) => {
+            releaseTurn = resolve;
+          });
+        }
+        result = pendingTurnResult;
+        return result;
+      } finally {
+        running = false;
+        releaseTurn = undefined;
+        pendingTurnResult = { aborted: false };
+      }
+    },
+    requestTurnBoundaryStop: vi.fn(() => running),
+    interruptTurn: vi.fn(() => {
+      if (!running || !releaseTurn) {
+        return false;
+      }
+
+      pendingTurnResult = { aborted: true };
+      releaseTurn();
+      return true;
+    }),
+    async exec() {
+      return createProtocolExecResult({
+        output: "/repo\n",
+      });
+    },
+    setRiskLevel(nextRiskLevel) {
+      riskLevel = nextRiskLevel;
+    },
+    async snapshot() {
+      return createProtocolSnapshot({
+        sessionId,
+        revision: historyEntries.length + 1,
+        lifecycle: running ? "running" : "idle",
+        bootstrap: { ...bootstrap, riskLevel },
+        historyEntries: historyEntries.map((entry) => ({
+          id: entry.id,
+          message: entry.message,
+        })),
+      });
+    },
+    dispose() {
+      sessions.delete(sessionId);
+    },
+  };
+
+  sessions.set(sessionId, hostedSession);
+  return hostedSession;
+}
+
+function createHost() {
+  const sessions = new Map();
+  let nextSessionId = 1;
+  const createSession = (sessionOptions) =>
+    createHostedSession(`session-${nextSessionId++}`, sessions, sessionOptions);
+
+  return {
+    createSession,
+    sessions,
+    host: {
+      async createSession() {
+        return createSession();
+      },
+      async observeSession(sessionId) {
+        return sessions.get(sessionId);
+      },
+      async listSessions() {
+        return [...sessions.values()].map((session) => ({
+          sessionId: session.sessionId,
+          lifecycle: session.isTurnRunning ? "running" : "idle",
+        }));
+      },
+      async shutdown() {
+        sessions.clear();
+      },
+    },
+  };
+}
+
+async function waitFor(predicate, timeoutMs = 2000) {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error("waitFor timeout");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+describe("InProcessSessionProtocolTransport", () => {
+  it("drives the sdk session facade directly against a session host", async () => {
+    const { host, sessions } = createHost();
+    const transport = new InProcessSessionProtocolTransport({ host });
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.create(localCreateInput);
+    const deltas = [];
+    const unsubscribe = session.onDelta((delta) => deltas.push(delta));
+
+    await expect(session.submit("hello")).resolves.toEqual({
+      userHistoryEntryId: "history-1",
+      turn: { aborted: false },
+    });
+
+    expect(deltas).toEqual([createNoticeDelta("session-1", 2, "running session-1")]);
+
+    await expect(session.snapshot()).resolves.toEqual(
+      createProtocolSnapshot({
+        sessionId: "session-1",
+        revision: 2,
+        historyEntries: [
+          {
+            id: "history-1",
+            message: { role: "user", content: [{ type: "text", text: "hello" }] },
+          },
+        ],
+      }),
+    );
+
+    await expect(session.retry()).resolves.toEqual({
+      turn: { aborted: false },
+    });
+
+    await expect(session.exec("pwd")).resolves.toEqual({
+      output: "/repo\n",
+      stdout: "/repo\n",
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
+    });
+
+    await expect(session.snapshot()).resolves.toEqual(
+      createProtocolSnapshot({
+        sessionId: "session-1",
+        revision: 2,
+        historyEntries: [
+          {
+            id: "history-1",
+            message: { role: "user", content: [{ type: "text", text: "hello" }] },
+          },
+        ],
+      }),
+    );
+
+    unsubscribe();
+    await client.close();
+    expect(sessions.size).toBe(1);
+
+    const reconnectedTransport = new InProcessSessionProtocolTransport({ host });
+    const reconnectedClient = await createTauSdkClientFromTransport(reconnectedTransport);
+    const reconnectedSession = await reconnectedClient.sessions.observe("session-1");
+    await expect(reconnectedSession.snapshot()).resolves.toEqual(
+      createProtocolSnapshot({
+        sessionId: "session-1",
+        revision: 2,
+        historyEntries: [
+          {
+            id: "history-1",
+            message: { role: "user", content: [{ type: "text", text: "hello" }] },
+          },
+        ],
+      }),
+    );
+
+    await reconnectedSession.unobserve();
+    await reconnectedClient.close();
+    expect(sessions.size).toBe(1);
+  });
+
+  it("keeps transport event delivery isolated from listener failures", async () => {
+    const { host } = createHost();
+    const transport = new InProcessSessionProtocolTransport({ host });
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.create(localCreateInput);
+    const deltas = [];
+    session.onDelta(() => {
+      throw new Error("listener failed");
+    });
+    session.onDelta((delta) => deltas.push(delta));
+
+    await expect(session.submit("hello")).resolves.toEqual({
+      userHistoryEntryId: "history-1",
+      turn: { aborted: false },
+    });
+
+    expect(deltas).toHaveLength(1);
+    await client.close();
+  });
+
+  it("detaches without interrupting an active hosted turn", async () => {
+    const { createSession, host, sessions } = createHost();
+    const heldSession = createSession({ holdTurns: true });
+    const transport = new InProcessSessionProtocolTransport({ host });
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.observe(heldSession.sessionId);
+
+    const submit = session.submit("long turn");
+    const submitClosed = expect(submit).rejects.toBeInstanceOf(Error);
+    await waitFor(() => heldSession.isTurnRunning);
+
+    await client.close();
+    await submitClosed;
+    expect(heldSession.isTurnRunning).toBe(true);
+    expect(heldSession.interruptTurn).not.toHaveBeenCalled();
+    expect(sessions.size).toBe(1);
+
+    const reconnectedTransport = new InProcessSessionProtocolTransport({ host });
+    const reconnectedClient = await createTauSdkClientFromTransport(reconnectedTransport);
+    const reconnectedSession = await reconnectedClient.sessions.observe("session-1");
+
+    await expect(reconnectedSession.snapshot()).resolves.toEqual(
+      createProtocolSnapshot({
+        sessionId: "session-1",
+        revision: 2,
+        lifecycle: "running",
+        historyEntries: [
+          {
+            id: "history-1",
+            message: { role: "user", content: [{ type: "text", text: "long turn" }] },
+          },
+        ],
+      }),
+    );
+    await expect(reconnectedSession.interrupt()).resolves.toEqual({
+      interrupted: true,
+      isTurnRunning: true,
+    });
+    await waitFor(() => !heldSession.isTurnRunning);
+
+    await reconnectedSession.unobserve();
+    await reconnectedClient.close();
+    expect(sessions.size).toBe(1);
+  });
+
+  it("can shut down an owned host on close", async () => {
+    const { host, sessions } = createHost();
+    const transport = new InProcessSessionProtocolTransport({ host, closeMode: "shutdown-host" });
+    const client = await createTauSdkClientFromTransport(transport);
+
+    await client.sessions.create(localCreateInput);
+    expect(sessions.size).toBe(1);
+
+    await client.close();
+    expect(sessions.size).toBe(0);
+  });
+
+  it("rejects protocol errors from the in-process host", async () => {
+    const { host } = createHost();
+    const transport = new InProcessSessionProtocolTransport({ host });
+    const client = await createTauSdkClientFromTransport(transport);
+
+    await expect(client.sessions.observe("missing")).rejects.toBeInstanceOf(
+      TauSessionProtocolResponseError,
+    );
+
+    await client.close();
+  });
+
+  it("validates request params before dispatching directly to the host", async () => {
+    const { host } = createHost();
+    const transport = new InProcessSessionProtocolTransport({ host });
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.create(localCreateInput);
+
+    await expect(session.submit("hello", { historyEntryId: "" })).rejects.toMatchObject({
+      code: "invalid_params",
+      message: "session.submit params.historyEntryId must be a non-empty string when provided",
+    });
+
+    await client.close();
+  });
+});

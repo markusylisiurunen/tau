@@ -2,7 +2,6 @@ import { type LoadedModelResolver, loadModelResolver } from "../models/catalog.j
 import { parsePersonaReference } from "../persona_reference.js";
 import type { PromptTemplate } from "../prompts.js";
 import type { Persona, Skill } from "../types.js";
-import type { BashCommand } from "./bash_commands.js";
 import type { ThemeDefinition } from "./content_loader.js";
 import { loadAllContent } from "./content_loader.js";
 import type { ConfigDeps } from "./deps.js";
@@ -28,7 +27,6 @@ export interface RuntimeConfigResult {
   prompts: PromptTemplate[];
   skills: Skill[];
   themes: ThemeDefinition[];
-  bashCommands: BashCommand[];
   diffTool?: DiffToolConfig;
   warnings: string[];
 }
@@ -91,7 +89,6 @@ export async function loadRuntimeConfig(
     prompts: content.prompts,
     skills: content.skills,
     themes: content.themes,
-    bashCommands: bootstrap.config.bashCommands ?? [],
     diffTool: bootstrap.config.diffTool,
     warnings,
   };

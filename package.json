@@ -15,8 +15,8 @@
     }
   },
   "scripts": {
-    "build": "(cd src/diff_tool/app && npm run build) && tsc -p tsconfig.json",
-    "postbuild": "node scripts/copy-starter.js && node scripts/copy-static-prompts.js && node scripts/copy-diff-tool-app.js && find dist -name '*.d.ts' ! -path 'dist/sdk/*' -delete",
+    "build": "rm -rf dist tsconfig.tsbuildinfo && (cd src/diff_tool/app && npm run build) && tsc -p tsconfig.json",
+    "postbuild": "node scripts/copy-starter.js && node scripts/copy-static-prompts.js && node scripts/copy-diff-tool-app.js && find dist -name '*.d.ts' ! -path 'dist/sdk/*' ! -path 'dist/protocol/*' ! -path 'dist/transport/index.d.ts' ! -path 'dist/transport/session_transport.d.ts' ! -path 'dist/transport/stdio_session_transport.d.ts' ! -path 'dist/transport/websocket_session_transport.d.ts' ! -path 'dist/transport/errors.d.ts' -delete",
     "check": "prettier --log-level warn -w .tau/**/*.md docs/**/*.md src/core/static/**/*.md starter/**/*.md *.md && biome check --write . && tsc -p tsconfig.json --noEmit && (cd src/diff_tool/app && npm run check)",
     "precheck": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "prebuild": "node scripts/generate-version.js && node scripts/generate-themes.js",
@@ -29,17 +29,20 @@
   "dependencies": {
     "@earendil-works/pi-ai": "^0.80.2",
     "@earendil-works/pi-tui": "^0.80.2",
+    "@fly/sprites": "^0.0.1",
     "chalk": "^5.6.2",
     "file-type": "^21.3.4",
     "sharp": "^0.35.2",
     "strip-ansi": "^7.2.0",
     "typebox": "^1.3.1",
+    "ws": "^8.21.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.1",
     "@types/node": "^25.9.4",
+    "@types/ws": "^8.18.1",
     "colorjs.io": "^0.6.1",
     "prettier": "^3.8.5",
     "typescript": "^5.9.3",

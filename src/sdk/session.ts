@@ -1,0 +1,620 @@
+import type {
+  SessionProtocolCreateParams,
+  SessionProtocolEphemeralAgentTool,
+  SessionProtocolInitializeParams,
+  SessionProtocolResultByMethod,
+} from "../protocol/session_protocol.js";
+import { validateSessionProtocolParams } from "../protocol/session_protocol.js";
+import {
+  type SessionProtocolTransport,
+  TauSessionClientError,
+  TauTransportError,
+} from "../transport/index.js";
+import type {
+  TauSdkClient,
+  TauSdkDeltaListener,
+  TauSdkEphemeralListener,
+  TauSdkInitializeParams,
+  TauSdkSession,
+  TauSdkSessionClient,
+  TauSdkSessionUserMessageOptions,
+  TauSdkTransportClientOptions,
+} from "./types.js";
+
+const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
+const DEFAULT_INITIALIZE_PARAMS: SessionProtocolInitializeParams = {
+  client: {
+    name: "tau-sdk",
+    version: "1",
+  },
+};
+
+export async function createTauSdkClientFromTransport(
+  transport: SessionProtocolTransport,
+  options: TauSdkTransportClientOptions = {},
+): Promise<TauSdkClient> {
+  const initializeParams = resolveTauSdkInitializeParams(options.initialize);
+  const client = new TauSdkClientImpl(transport);
+
+  try {
+    await transport.connect(
+      initializeParams,
+      options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
+    );
+    return client;
+  } catch (error) {
+    await client.close();
+    throw error;
+  }
+}
+
+class TauSdkClientImpl implements TauSdkClient {
+  readonly sessions: TauSdkSessionClient;
+
+  constructor(private readonly transport: SessionProtocolTransport) {
+    this.sessions = new TauSdkSessionClientImpl(this);
+  }
+
+  get ready() {
+    return this.transport.ready;
+  }
+
+  subscribe(listener: TauSdkDeltaListener): () => void {
+    return this.transport.onDelta(listener);
+  }
+
+  subscribeEphemeral(listener: TauSdkEphemeralListener): () => void {
+    return this.transport.onEphemeral(listener);
+  }
+
+  createObservedSession(sessionId: string): TauSdkSessionImpl {
+    return new TauSdkSessionImpl(this, sessionId);
+  }
+
+  createSession(
+    input: SessionProtocolCreateParams,
+  ): Promise<SessionProtocolResultByMethod["session.create"]> {
+    return this.transport.request("session.create", input);
+  }
+
+  listSessions(): Promise<SessionProtocolResultByMethod["session.list"]> {
+    return this.transport.request("session.list", {});
+  }
+
+  observeSession(sessionId: string): Promise<SessionProtocolResultByMethod["session.observe"]> {
+    return this.transport.request("session.observe", { sessionId });
+  }
+
+  unobserveSession(sessionId: string): Promise<SessionProtocolResultByMethod["session.unobserve"]> {
+    return this.transport.request("session.unobserve", { sessionId });
+  }
+
+  async close(): Promise<void> {
+    await this.transport.close();
+  }
+
+  sendSubmit(
+    sessionId: string,
+    text: string,
+    options: TauSdkSessionUserMessageOptions,
+  ): Promise<SessionProtocolResultByMethod["session.submit"]> {
+    return this.transport.request("session.submit", {
+      sessionId,
+      text,
+      ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
+    });
+  }
+
+  sendQueue(
+    sessionId: string,
+    text: string,
+    options: TauSdkSessionUserMessageOptions,
+  ): Promise<SessionProtocolResultByMethod["session.queue"]> {
+    return this.transport.request("session.queue", {
+      sessionId,
+      text,
+      ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
+    });
+  }
+
+  sendSteer(
+    sessionId: string,
+    text: string,
+    options: TauSdkSessionUserMessageOptions,
+  ): Promise<SessionProtocolResultByMethod["session.steer"]> {
+    return this.transport.request("session.steer", {
+      sessionId,
+      text,
+      ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
+    });
+  }
+
+  sendRecord(
+    sessionId: string,
+    text: string,
+    options: TauSdkSessionUserMessageOptions,
+  ): Promise<SessionProtocolResultByMethod["session.record"]> {
+    return this.transport.request("session.record", {
+      sessionId,
+      text,
+      ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
+    });
+  }
+
+  sendRetry(sessionId: string): Promise<SessionProtocolResultByMethod["session.retry"]> {
+    return this.transport.request("session.retry", { sessionId });
+  }
+
+  sendExec(
+    sessionId: string,
+    command: string,
+    options: { cwd?: string; timeoutMs?: number } = {},
+  ): Promise<SessionProtocolResultByMethod["session.exec"]> {
+    return this.transport.request("session.exec", {
+      sessionId,
+      command,
+      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    });
+  }
+
+  sendInterrupt(sessionId: string): Promise<SessionProtocolResultByMethod["session.interrupt"]> {
+    return this.transport.request("session.interrupt", { sessionId });
+  }
+
+  sendSnapshot(sessionId: string): Promise<SessionProtocolResultByMethod["session.snapshot"]> {
+    return this.transport.request("session.snapshot", { sessionId });
+  }
+
+  sendSetRisk(
+    sessionId: string,
+    riskLevel: "read-only" | "read-write",
+  ): Promise<SessionProtocolResultByMethod["session.setRisk"]> {
+    return this.transport.request("session.setRisk", { sessionId, riskLevel });
+  }
+
+  sendSetReasoning(
+    sessionId: string,
+    reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh",
+  ): Promise<SessionProtocolResultByMethod["session.setReasoning"]> {
+    return this.transport.request("session.setReasoning", {
+      sessionId,
+      reasoning,
+    });
+  }
+
+  sendSetPersona(
+    sessionId: string,
+    personaId: string,
+  ): Promise<SessionProtocolResultByMethod["session.setPersona"]> {
+    return this.transport.request("session.setPersona", {
+      sessionId,
+      personaId,
+    });
+  }
+
+  sendResolvePrompt(
+    sessionId: string,
+    promptId: string,
+  ): Promise<SessionProtocolResultByMethod["session.resolvePrompt"]> {
+    return this.transport.request("session.resolvePrompt", {
+      sessionId,
+      promptId,
+    });
+  }
+
+  sendAutocompletePaths(
+    sessionId: string,
+    options: { query: string; limit: number },
+  ): Promise<SessionProtocolResultByMethod["session.autocompletePaths"]> {
+    return this.transport.request("session.autocompletePaths", {
+      sessionId,
+      query: options.query,
+      limit: options.limit,
+    });
+  }
+
+  sendReload(sessionId: string): Promise<SessionProtocolResultByMethod["session.reload"]> {
+    return this.transport.request("session.reload", { sessionId });
+  }
+
+  sendCompact(
+    sessionId: string,
+    mode: "summary-only" | "summary-and-last",
+    options: { guidance?: string },
+  ): Promise<SessionProtocolResultByMethod["session.compact"]> {
+    return this.transport.request("session.compact", {
+      sessionId,
+      mode,
+      ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
+    });
+  }
+
+  sendPrune(
+    sessionId: string,
+    strategy: "earliest" | "largest" | "smart",
+    options: { fraction: number; guidance?: string },
+  ): Promise<SessionProtocolResultByMethod["session.prune"]> {
+    return this.transport.request("session.prune", {
+      sessionId,
+      strategy,
+      fraction: options.fraction,
+      ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
+    });
+  }
+
+  sendRewind(
+    sessionId: string,
+    historyEntryId: string,
+  ): Promise<SessionProtocolResultByMethod["session.rewind"]> {
+    return this.transport.request("session.rewind", {
+      sessionId,
+      historyEntryId,
+    });
+  }
+
+  sendTerminateSubagent(
+    sessionId: string,
+    subagentId: string,
+  ): Promise<SessionProtocolResultByMethod["session.terminateSubagent"]> {
+    return this.transport.request("session.terminateSubagent", {
+      sessionId,
+      subagentId,
+    });
+  }
+
+  sendEphemeralCreate(
+    sessionId: string,
+    options: {
+      instructions: string;
+      tools: SessionProtocolEphemeralAgentTool[];
+      riskLevel: "read-only" | "read-write";
+    },
+  ): Promise<SessionProtocolResultByMethod["session.ephemeral.create"]> {
+    return this.transport.request("session.ephemeral.create", {
+      sessionId,
+      instructions: options.instructions,
+      tools: options.tools,
+      riskLevel: options.riskLevel,
+    });
+  }
+
+  sendEphemeralSubmit(
+    sessionId: string,
+    options: {
+      contextId: string;
+      threadId: string;
+      forkFromThreadId?: string;
+      message: string;
+    },
+  ): Promise<SessionProtocolResultByMethod["session.ephemeral.submit"]> {
+    return this.transport.request("session.ephemeral.submit", {
+      sessionId,
+      contextId: options.contextId,
+      threadId: options.threadId,
+      ...(options.forkFromThreadId !== undefined
+        ? { forkFromThreadId: options.forkFromThreadId }
+        : {}),
+      message: options.message,
+    });
+  }
+
+  sendEphemeralClose(
+    sessionId: string,
+    contextId: string,
+  ): Promise<SessionProtocolResultByMethod["session.ephemeral.close"]> {
+    return this.transport.request("session.ephemeral.close", {
+      sessionId,
+      contextId,
+    });
+  }
+}
+
+export function resolveTauSdkInitializeParams(
+  params: TauSdkInitializeParams | undefined,
+): SessionProtocolInitializeParams {
+  const candidate = params ?? DEFAULT_INITIALIZE_PARAMS;
+  const validated = validateSessionProtocolParams("initialize", candidate);
+  if (!validated.ok) {
+    throw new TauTransportError(validated.error.message);
+  }
+
+  return validated.value;
+}
+
+class TauSdkSessionClientImpl implements TauSdkSessionClient {
+  constructor(private readonly client: TauSdkClientImpl) {}
+
+  async create(input: SessionProtocolCreateParams): Promise<TauSdkSession> {
+    const snapshot = await this.client.createSession(input);
+    const session = this.client.createObservedSession(snapshot.sessionId);
+    session.discardBufferedDeltasThrough(snapshot.revision);
+    return session;
+  }
+
+  async list() {
+    const result = await this.client.listSessions();
+    return result.sessions;
+  }
+
+  async observe(sessionId: string): Promise<TauSdkSession> {
+    const session = this.client.createObservedSession(sessionId);
+    try {
+      const snapshot = await this.client.observeSession(sessionId);
+      session.assertSessionId(snapshot.sessionId);
+      session.discardBufferedDeltasThrough(snapshot.revision);
+      return session;
+    } catch (error) {
+      session.disposeLocal();
+      throw error;
+    }
+  }
+}
+
+class TauSdkSessionImpl implements TauSdkSession {
+  private isUnobserved = false;
+  private readonly deltaListeners = new Set<TauSdkDeltaListener>();
+  private readonly ephemeralListeners = new Set<TauSdkEphemeralListener>();
+  private readonly bufferedDeltas: Parameters<TauSdkDeltaListener>[0][] = [];
+  private readonly unsubscribeClientDeltas: () => void;
+  private readonly unsubscribeClientEphemeral: () => void;
+
+  constructor(
+    private readonly client: TauSdkClientImpl,
+    private sessionId: string,
+  ) {
+    this.unsubscribeClientDeltas = this.client.subscribe((delta) => this.handleDelta(delta));
+    this.unsubscribeClientEphemeral = this.client.subscribeEphemeral((message) =>
+      this.handleEphemeral(message),
+    );
+  }
+
+  get id(): string {
+    return this.sessionId;
+  }
+
+  onDelta(listener: TauSdkDeltaListener): () => void {
+    this.assertActive();
+    this.deltaListeners.add(listener);
+    for (const delta of this.bufferedDeltas.splice(0)) {
+      try {
+        listener(delta);
+      } catch {
+        // SDK delta listeners must not break session event delivery.
+      }
+    }
+    return () => {
+      this.deltaListeners.delete(listener);
+    };
+  }
+
+  onEphemeral(listener: TauSdkEphemeralListener): () => void {
+    this.assertActive();
+    this.ephemeralListeners.add(listener);
+    return () => {
+      this.ephemeralListeners.delete(listener);
+    };
+  }
+
+  submit(
+    text: string,
+    options: TauSdkSessionUserMessageOptions = {},
+  ): Promise<SessionProtocolResultByMethod["session.submit"]> {
+    return this.client.sendSubmit(this.activeSessionId(), text, options);
+  }
+
+  async record(
+    text: string,
+    options: TauSdkSessionUserMessageOptions = {},
+  ): Promise<SessionProtocolResultByMethod["session.record"]> {
+    return await this.client.sendRecord(this.activeSessionId(), text, options);
+  }
+
+  queue(
+    text: string,
+    options: TauSdkSessionUserMessageOptions = {},
+  ): Promise<SessionProtocolResultByMethod["session.queue"]> {
+    return this.client.sendQueue(this.activeSessionId(), text, options);
+  }
+
+  steer(
+    text: string,
+    options: TauSdkSessionUserMessageOptions = {},
+  ): Promise<SessionProtocolResultByMethod["session.steer"]> {
+    return this.client.sendSteer(this.activeSessionId(), text, options);
+  }
+
+  async retry(): Promise<SessionProtocolResultByMethod["session.retry"]> {
+    return await this.client.sendRetry(this.activeSessionId());
+  }
+
+  async exec(
+    command: string,
+    options: { cwd?: string; timeoutMs?: number } = {},
+  ): Promise<SessionProtocolResultByMethod["session.exec"]> {
+    return await this.client.sendExec(this.activeSessionId(), command, options);
+  }
+
+  async interrupt(): Promise<SessionProtocolResultByMethod["session.interrupt"]> {
+    return await this.client.sendInterrupt(this.activeSessionId());
+  }
+
+  async snapshot(): Promise<SessionProtocolResultByMethod["session.snapshot"]> {
+    const snapshot = await this.client.sendSnapshot(this.activeSessionId());
+    this.discardBufferedDeltasThrough(snapshot.revision);
+    return snapshot;
+  }
+
+  async setRiskLevel(
+    riskLevel: "read-only" | "read-write",
+  ): Promise<SessionProtocolResultByMethod["session.setRisk"]> {
+    const snapshot = await this.client.sendSetRisk(this.activeSessionId(), riskLevel);
+    this.discardBufferedDeltasThrough(snapshot.revision);
+    return snapshot;
+  }
+
+  async setReasoning(
+    reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh",
+  ): Promise<SessionProtocolResultByMethod["session.setReasoning"]> {
+    const snapshot = await this.client.sendSetReasoning(this.activeSessionId(), reasoning);
+    this.discardBufferedDeltasThrough(snapshot.revision);
+    return snapshot;
+  }
+
+  async setPersona(
+    personaId: string,
+  ): Promise<SessionProtocolResultByMethod["session.setPersona"]> {
+    const snapshot = await this.client.sendSetPersona(this.activeSessionId(), personaId);
+    this.discardBufferedDeltasThrough(snapshot.revision);
+    return snapshot;
+  }
+
+  async resolvePrompt(
+    promptId: string,
+  ): Promise<SessionProtocolResultByMethod["session.resolvePrompt"]> {
+    return await this.client.sendResolvePrompt(this.activeSessionId(), promptId);
+  }
+
+  async autocompletePaths(options: {
+    query: string;
+    limit: number;
+  }): Promise<SessionProtocolResultByMethod["session.autocompletePaths"]> {
+    return await this.client.sendAutocompletePaths(this.activeSessionId(), options);
+  }
+
+  async reload(): Promise<SessionProtocolResultByMethod["session.reload"]> {
+    const result = await this.client.sendReload(this.activeSessionId());
+    this.discardBufferedDeltasThrough(result.snapshot.revision);
+    return result;
+  }
+
+  async compact(
+    mode: "summary-only" | "summary-and-last",
+    options: { guidance?: string } = {},
+  ): Promise<SessionProtocolResultByMethod["session.compact"]> {
+    const result = await this.client.sendCompact(this.activeSessionId(), mode, options);
+    this.discardBufferedDeltasThrough(result.snapshot.revision);
+    return result;
+  }
+
+  async pruneToolResults(
+    strategy: "earliest" | "largest" | "smart",
+    options: { fraction: number; guidance?: string },
+  ): Promise<SessionProtocolResultByMethod["session.prune"]> {
+    const result = await this.client.sendPrune(this.activeSessionId(), strategy, options);
+    this.discardBufferedDeltasThrough(result.snapshot.revision);
+    return result;
+  }
+
+  async rewindToHistoryEntryId(
+    historyEntryId: string,
+  ): Promise<SessionProtocolResultByMethod["session.rewind"]> {
+    const result = await this.client.sendRewind(this.activeSessionId(), historyEntryId);
+    this.discardBufferedDeltasThrough(result.snapshot.revision);
+    return result;
+  }
+
+  async terminateSubagent(
+    subagentId: string,
+  ): Promise<SessionProtocolResultByMethod["session.terminateSubagent"]> {
+    return await this.client.sendTerminateSubagent(this.activeSessionId(), subagentId);
+  }
+
+  async createEphemeralContext(options: {
+    instructions: string;
+    tools: SessionProtocolEphemeralAgentTool[];
+    riskLevel: "read-only" | "read-write";
+  }): Promise<SessionProtocolResultByMethod["session.ephemeral.create"]> {
+    return await this.client.sendEphemeralCreate(this.activeSessionId(), options);
+  }
+
+  async submitEphemeralThread(options: {
+    contextId: string;
+    threadId: string;
+    forkFromThreadId?: string;
+    message: string;
+  }): Promise<SessionProtocolResultByMethod["session.ephemeral.submit"]> {
+    return await this.client.sendEphemeralSubmit(this.activeSessionId(), options);
+  }
+
+  async closeEphemeralContext(
+    contextId: string,
+  ): Promise<SessionProtocolResultByMethod["session.ephemeral.close"]> {
+    return await this.client.sendEphemeralClose(this.activeSessionId(), contextId);
+  }
+
+  async unobserve(): Promise<SessionProtocolResultByMethod["session.unobserve"]> {
+    const result = await this.client.unobserveSession(this.activeSessionId());
+    this.disposeLocal();
+    return result;
+  }
+
+  private handleDelta(delta: Parameters<TauSdkDeltaListener>[0]): void {
+    if (this.isUnobserved || delta.sessionId !== this.sessionId) {
+      return;
+    }
+
+    if (this.deltaListeners.size === 0) {
+      this.bufferedDeltas.push(delta);
+      return;
+    }
+
+    for (const listener of [...this.deltaListeners]) {
+      try {
+        listener(delta);
+      } catch {
+        // SDK delta listeners must not break session event delivery.
+      }
+    }
+  }
+
+  private handleEphemeral(message: Parameters<TauSdkEphemeralListener>[0]): void {
+    if (this.isUnobserved || message.sessionId !== this.sessionId) {
+      return;
+    }
+
+    for (const listener of [...this.ephemeralListeners]) {
+      try {
+        listener(message);
+      } catch {
+        // SDK ephemeral listeners must not break event delivery.
+      }
+    }
+  }
+
+  assertSessionId(sessionId: string): void {
+    if (sessionId !== this.sessionId) {
+      throw new TauSessionClientError(
+        `observed session id '${sessionId}' did not match requested session id '${this.sessionId}'`,
+      );
+    }
+  }
+
+  discardBufferedDeltasThrough(revision: number): void {
+    const retained = this.bufferedDeltas.filter((delta) => delta.toRevision > revision);
+    this.bufferedDeltas.splice(0, this.bufferedDeltas.length, ...retained);
+  }
+
+  disposeLocal(): void {
+    if (this.isUnobserved) {
+      return;
+    }
+    this.isUnobserved = true;
+    this.unsubscribeClientDeltas();
+    this.unsubscribeClientEphemeral();
+    this.deltaListeners.clear();
+    this.ephemeralListeners.clear();
+    this.bufferedDeltas.splice(0);
+  }
+
+  private activeSessionId(): string {
+    this.assertActive();
+    return this.sessionId;
+  }
+
+  private assertActive(): void {
+    if (this.isUnobserved) {
+      throw new TauSessionClientError("tau sdk session is unobserved");
+    }
+  }
+}

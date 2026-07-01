@@ -1,119 +1,157 @@
-import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
-import type { Message } from "@earendil-works/pi-ai";
+import type {
+  SessionProtocolAutocompletePathsResult,
+  SessionProtocolCompactResult,
+  SessionProtocolCreateParams,
+  SessionProtocolDeltaMessage,
+  SessionProtocolEphemeralAgentTool,
+  SessionProtocolEphemeralCloseResult,
+  SessionProtocolEphemeralCreateResult,
+  SessionProtocolEphemeralMessage,
+  SessionProtocolEphemeralSubmitResult,
+  SessionProtocolExecResult,
+  SessionProtocolInitializeParams,
+  SessionProtocolInterruptResult,
+  SessionProtocolMethod,
+  SessionProtocolPruneResult,
+  SessionProtocolQueueResult,
+  SessionProtocolReadyMessage,
+  SessionProtocolRecordResult,
+  SessionProtocolReloadResult,
+  SessionProtocolRequestId,
+  SessionProtocolResolvePromptResult,
+  SessionProtocolRetryResult,
+  SessionProtocolRewindResult,
+  SessionProtocolSessionSummary,
+  SessionProtocolSnapshot,
+  SessionProtocolSteerResult,
+  SessionProtocolSubmitResult,
+  SessionProtocolTerminateSubagentResult,
+  SessionProtocolUnobserveResult,
+} from "../protocol/session_protocol.js";
+import type { WebSocketSessionProtocolTransportOptions } from "../transport/index.js";
 
-export type TauSdkRequestId = string | number;
+export type TauSdkRequestId = SessionProtocolRequestId;
+export type TauSdkSessionProtocolMethod = SessionProtocolMethod;
+export type TauSdkInitializeParams = SessionProtocolInitializeParams;
+export type TauSdkDelta = SessionProtocolDeltaMessage;
+export type TauSdkEphemeral = SessionProtocolEphemeralMessage;
+export type TauSdkReadyMessage = SessionProtocolReadyMessage;
+export type TauSdkCreateSessionInput = SessionProtocolCreateParams;
+export type TauSdkSessionSummary = SessionProtocolSessionSummary;
+export type TauSdkSessionSubmitResult = SessionProtocolSubmitResult;
+export type TauSdkSessionQueueResult = SessionProtocolQueueResult;
+export type TauSdkSessionSteerResult = SessionProtocolSteerResult;
+export type TauSdkSessionRecordResult = SessionProtocolRecordResult;
+export type TauSdkSessionInterruptResult = SessionProtocolInterruptResult;
+export type TauSdkSessionExecResult = SessionProtocolExecResult;
+export type TauSdkSessionSnapshotResult = SessionProtocolSnapshot;
+export type TauSdkSessionSetRiskResult = SessionProtocolSnapshot;
+export type TauSdkSessionSetReasoningResult = SessionProtocolSnapshot;
+export type TauSdkSessionSetPersonaResult = SessionProtocolSnapshot;
+export type TauSdkSessionCompactResult = SessionProtocolCompactResult;
+export type TauSdkSessionPruneResult = SessionProtocolPruneResult;
+export type TauSdkSessionRewindResult = SessionProtocolRewindResult;
+export type TauSdkSessionReloadResult = SessionProtocolReloadResult;
+export type TauSdkResolvePromptResult = SessionProtocolResolvePromptResult;
+export type TauSdkAutocompletePathsResult = SessionProtocolAutocompletePathsResult;
+export type TauSdkSessionRetryResult = SessionProtocolRetryResult;
+export type TauSdkSessionTerminateSubagentResult = SessionProtocolTerminateSubagentResult;
+export type TauSdkSessionUnobserveResult = SessionProtocolUnobserveResult;
+export type TauSdkEphemeralAgentTool = SessionProtocolEphemeralAgentTool;
+export type TauSdkEphemeralCreateResult = SessionProtocolEphemeralCreateResult;
+export type TauSdkEphemeralSubmitResult = SessionProtocolEphemeralSubmitResult;
+export type TauSdkEphemeralCloseResult = SessionProtocolEphemeralCloseResult;
 
-export type TauSdkRpcMethod =
-  | "initialize"
-  | "session.submit"
-  | "session.interrupt"
-  | "session.snapshot"
-  | "session.reset"
-  | "session.shutdown";
-
-export type TauSdkInitializeParams = {
-  client: {
-    name: string;
-    version: string;
-  };
-};
-
-export type TauSdkEvent = {
-  version: 1;
-  type: "event";
-  event: {
-    version: number;
-    event: unknown;
-  };
-  requestId?: TauSdkRequestId;
-};
-
-export type TauSdkReadyMessage = {
-  version: 1;
-  type: "ready";
-  sessionId: string;
-  methods: TauSdkRpcMethod[];
-  coreEventVersion: number;
-};
-
-export type TauSdkSessionSubmitResult = {
-  userHistoryEntryId: string;
-  turn: {
-    aborted: boolean;
-    blocked?: {
-      reason: "auto-compaction-failed";
-      message: string;
-    };
-  };
-};
-
-export type TauSdkSessionInterruptResult = {
-  interrupted: boolean;
-  isTurnRunning: boolean;
-};
-
-export type TauSdkHistoryEntry = {
-  id: string;
-  message: Message;
-};
-
-export type TauSdkSessionSnapshotResult = {
-  sessionId: string;
-  isTurnRunning: boolean;
-  historyLength: number;
-  history: Message[];
-  historyEntries: TauSdkHistoryEntry[];
-};
-
-export type TauSdkSessionResetResult = {
-  previousSessionId: string;
-  sessionId: string;
-};
-
-export type TauSdkSessionShutdownResult = {
-  shutdown: true;
-};
-
-export type TauSdkSpawnFunction = (
-  command: string,
-  args: string[],
-  options: SpawnOptionsWithoutStdio,
-) => ChildProcessWithoutNullStreams;
-
-export type TauSdkClientOptions = {
-  cwd?: string;
-  env?: NodeJS.ProcessEnv;
-  persona?: string;
-  riskLevel?: "read-only" | "read-write";
-  noAgentContextFiles?: boolean;
-  executable?: string;
-  executableArgs?: string[];
-  scriptPath?: string | null;
-  scriptArgs?: string[];
-  rpcArgs?: string[];
+export type TauSdkTransportClientOptions = {
   connectTimeoutMs?: number;
   initialize?: TauSdkInitializeParams;
-  spawn?: TauSdkSpawnFunction;
 };
 
-export type TauSdkSubmitOptions = {
+export type TauSdkClientOptions = TauSdkTransportClientOptions & {
+  cwd?: string;
+  persona?: string;
+  reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  riskLevel?: "read-only" | "read-write";
+  noAgentContextFiles?: boolean;
+};
+
+export type TauSdkWebSocketClientOptions = TauSdkTransportClientOptions &
+  WebSocketSessionProtocolTransportOptions;
+
+export type TauSdkSessionUserMessageOptions = {
   historyEntryId?: string;
-  mode?: "submit" | "steer";
 };
 
-export type TauSdkEventListener = (event: TauSdkEvent) => void;
+export type TauSdkDeltaListener = (delta: TauSdkDelta) => void;
+export type TauSdkEphemeralListener = (message: TauSdkEphemeral) => void;
+
+export type TauSdkSession = {
+  readonly id: string;
+  onDelta(listener: TauSdkDeltaListener): () => void;
+  onEphemeral(listener: TauSdkEphemeralListener): () => void;
+  record(
+    text: string,
+    options?: TauSdkSessionUserMessageOptions,
+  ): Promise<TauSdkSessionRecordResult>;
+  submit(
+    text: string,
+    options?: TauSdkSessionUserMessageOptions,
+  ): Promise<TauSdkSessionSubmitResult>;
+  queue(text: string, options?: TauSdkSessionUserMessageOptions): Promise<TauSdkSessionQueueResult>;
+  steer(text: string, options?: TauSdkSessionUserMessageOptions): Promise<TauSdkSessionSteerResult>;
+  retry(): Promise<TauSdkSessionRetryResult>;
+  exec(
+    command: string,
+    options?: { cwd?: string; timeoutMs?: number },
+  ): Promise<TauSdkSessionExecResult>;
+  interrupt(): Promise<TauSdkSessionInterruptResult>;
+  snapshot(): Promise<TauSdkSessionSnapshotResult>;
+  setRiskLevel(riskLevel: "read-only" | "read-write"): Promise<TauSdkSessionSetRiskResult>;
+  setReasoning(
+    reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh",
+  ): Promise<TauSdkSessionSetReasoningResult>;
+  setPersona(personaId: string): Promise<TauSdkSessionSetPersonaResult>;
+  resolvePrompt(promptId: string): Promise<TauSdkResolvePromptResult>;
+  autocompletePaths(options: {
+    query: string;
+    limit: number;
+  }): Promise<TauSdkAutocompletePathsResult>;
+  reload(): Promise<TauSdkSessionReloadResult>;
+  compact(
+    mode: "summary-only" | "summary-and-last",
+    options?: { guidance?: string },
+  ): Promise<TauSdkSessionCompactResult>;
+  pruneToolResults(
+    strategy: "earliest" | "largest" | "smart",
+    options: { fraction: number; guidance?: string },
+  ): Promise<TauSdkSessionPruneResult>;
+  rewindToHistoryEntryId(historyEntryId: string): Promise<TauSdkSessionRewindResult>;
+  terminateSubagent(subagentId: string): Promise<TauSdkSessionTerminateSubagentResult>;
+  createEphemeralContext(options: {
+    instructions: string;
+    tools: TauSdkEphemeralAgentTool[];
+    riskLevel: "read-only" | "read-write";
+  }): Promise<TauSdkEphemeralCreateResult>;
+  submitEphemeralThread(options: {
+    contextId: string;
+    threadId: string;
+    forkFromThreadId?: string;
+    message: string;
+  }): Promise<TauSdkEphemeralSubmitResult>;
+  closeEphemeralContext(contextId: string): Promise<TauSdkEphemeralCloseResult>;
+  unobserve(): Promise<TauSdkSessionUnobserveResult>;
+};
+
+export type TauSdkSessionClient = {
+  create(input: TauSdkCreateSessionInput): Promise<TauSdkSession>;
+  list(): Promise<TauSdkSessionSummary[]>;
+  observe(sessionId: string): Promise<TauSdkSession>;
+};
 
 export type TauSdkClient = {
   readonly ready: TauSdkReadyMessage;
-  submit(text: string, options?: TauSdkSubmitOptions): Promise<TauSdkSessionSubmitResult>;
-  steer(
-    text: string,
-    options?: Omit<TauSdkSubmitOptions, "mode">,
-  ): Promise<TauSdkSessionSubmitResult>;
-  interrupt(): Promise<TauSdkSessionInterruptResult>;
-  snapshot(): Promise<TauSdkSessionSnapshotResult>;
-  reset(): Promise<TauSdkSessionResetResult>;
-  shutdown(): Promise<TauSdkSessionShutdownResult>;
+  readonly sessions: TauSdkSessionClient;
+  subscribe(listener: TauSdkDeltaListener): () => void;
+  subscribeEphemeral(listener: TauSdkEphemeralListener): () => void;
   close(): Promise<void>;
-  onEvent(listener: TauSdkEventListener): () => void;
 };

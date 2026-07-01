@@ -22,9 +22,13 @@ describe("sdk npm pack types", () => {
 
     try {
       const packDir = join(tempRoot, "pack");
+      const npmCacheDir = join(tempRoot, "npm-cache");
       mkdirSync(packDir, { recursive: true });
+      mkdirSync(npmCacheDir, { recursive: true });
 
-      const packResult = run("npm", ["pack", "--json", "--pack-destination", packDir]);
+      const packResult = run("npm", ["pack", "--json", "--pack-destination", packDir], {
+        env: { ...process.env, npm_config_cache: npmCacheDir },
+      });
       expect(packResult.status).toBe(0);
 
       const packEntries = JSON.parse(packResult.stdout);
@@ -33,6 +37,12 @@ describe("sdk npm pack types", () => {
       const packageFilename = packEntries[0]?.filename;
       expect(typeof packageFilename).toBe("string");
       expect(packageFilename.length).toBeGreaterThan(0);
+      const packedFiles = new Set(packEntries[0]?.files?.map((file) => file.path) ?? []);
+      expect(packedFiles.size).toBeGreaterThan(0);
+      expect(packedFiles.has("dist/core/modes/rpc_adapter.js")).toBe(false);
+      expect(packedFiles.has("dist/sdk/errors.js")).toBe(false);
+      expect(packedFiles.has("dist/sdk/stdio_transport.js")).toBe(false);
+      expect(packedFiles.has("dist/sdk/stdio_transport.d.ts")).toBe(false);
 
       const tarballPath = join(packDir, packageFilename);
       const consumerDir = join(tempRoot, "consumer");
@@ -62,33 +72,67 @@ describe("sdk npm pack types", () => {
       );
       writeFileSync(
         join(piAiDir, "index.d.ts"),
-        "export type Message = { role: string; content: unknown };\n",
+        [
+          "export type TextContent = { type: 'text'; text: string };",
+          "export type ThinkingContent = { type: 'thinking'; thinking: string };",
+          "export type ToolCall = { type: 'tool-call'; id: string; name: string; input: unknown };",
+          "export type Message = { role: string; content: unknown; api?: string; provider?: string; model?: string; stopReason?: string; usage?: unknown; timestamp?: number };",
+          "",
+        ].join("\n"),
       );
 
       const validFixturePath = join(consumerDir, "valid.ts");
       writeFileSync(
         validFixturePath,
         [
-          'import type { TauSdkEvent, TauSdkReadyMessage } from "@markusylisiurunen/tau/sdk";',
+          'import type { SessionProtocolSnapshot, SessionProtocolTransport, TauSdkClient, TauSdkCreateSessionInput, TauSdkDelta, TauSdkInitializeParams, TauSdkRequestId, TauSdkSessionExecResult, TauSdkSessionSetReasoningResult, TauSdkSessionSetRiskResult, TauSdkReadyMessage, TauSdkTransportClientOptions } from "@markusylisiurunen/tau/sdk";',
+          'import { StdioSessionProtocolTransport, applySessionProtocolDelta, createTauSdkClient, createTauSdkClientFromTransport, createTauSdkWebSocketClient } from "@markusylisiurunen/tau/sdk";',
           "",
-          "const sdkEvent: TauSdkEvent = {",
+          "const sdkDelta: TauSdkDelta = {",
           "  version: 1,",
-          '  type: "event",',
-          "  event: {",
-          "    version: 1,",
-          '    event: { type: "notice" },',
-          "  },",
+          '  type: "session.delta",',
+          '  sessionId: "session-1",',
+          "  fromRevision: 1,",
+          "  toRevision: 2,",
+          '  reason: "notice",',
+          '  delta: { type: "snapshot.patch", changes: [{ type: "lifecycle.set", lifecycle: "idle" }] },',
           "};",
           "",
           "const sdkReady: TauSdkReadyMessage = {",
           "  version: 1,",
           '  type: "ready",',
-          '  sessionId: "session-1",',
           '  methods: ["initialize", "session.submit"],',
-          "  coreEventVersion: 1,",
           "};",
           "",
-          "void sdkEvent;",
+          "const transportOptions: TauSdkTransportClientOptions = {",
+          '  initialize: { client: { name: "fixture", version: "1" } },',
+          "};",
+          "",
+          "declare const transport: SessionProtocolTransport;",
+          "declare const spawnedProcess: ConstructorParameters<typeof StdioSessionProtocolTransport>[0];",
+          "declare const client: TauSdkClient;",
+          "const createInput: TauSdkCreateSessionInput = { executionEnvironment: { kind: 'local', cwd: '/repo' } };",
+          "const initializeParams: TauSdkInitializeParams = { client: { name: 'fixture', version: '1' } };",
+          "const requestId: TauSdkRequestId = 'req-1';",
+          "declare const execResult: TauSdkSessionExecResult;",
+          "declare const setRiskResult: TauSdkSessionSetRiskResult;",
+          "declare const setReasoningResult: TauSdkSessionSetReasoningResult;",
+          "declare const snapshot: SessionProtocolSnapshot;",
+          "const patchedSnapshot = applySessionProtocolDelta(snapshot, sdkDelta);",
+          "client.subscribe((delta) => { void delta.sessionId; });",
+          "client.subscribeEphemeral((message) => { void message.sessionId; });",
+          "void createTauSdkClient({ cwd: '/repo' });",
+          "void createTauSdkClientFromTransport(transport, transportOptions);",
+          'void createTauSdkWebSocketClient({ url: "ws://localhost:8787", authToken: "secret" });',
+          "void new StdioSessionProtocolTransport(spawnedProcess);",
+          "void createInput;",
+          "void initializeParams;",
+          "void requestId;",
+          "void execResult;",
+          "void setRiskResult;",
+          "void setReasoningResult;",
+          "void patchedSnapshot;",
+          "void sdkDelta;",
           "void sdkReady;",
           "",
         ].join("\n"),
@@ -98,15 +142,16 @@ describe("sdk npm pack types", () => {
       writeFileSync(
         invalidFixturePath,
         [
-          'import type { TauSdkEvent, TauSdkReadyMessage } from "@markusylisiurunen/tau/sdk";',
+          'import type { TauSdkDelta, TauSdkReadyMessage } from "@markusylisiurunen/tau/sdk";',
           "",
-          "const badEvent: TauSdkEvent = {",
+          "const badDelta: TauSdkDelta = {",
           "  version: 2,",
-          '  type: "event",',
-          "  event: {",
-          '    version: "1",',
-          "    event: {},",
-          "  },",
+          '  type: "session.delta",',
+          '  sessionId: "session-1",',
+          '  fromRevision: "1",',
+          "  toRevision: 2,",
+          '  reason: "unknown",',
+          "  delta: {},",
           "};",
           "",
           "const badReady: TauSdkReadyMessage = {",
@@ -114,10 +159,9 @@ describe("sdk npm pack types", () => {
           '  type: "ready",',
           '  sessionId: "session-1",',
           '  methods: ["session.unknown"],',
-          '  coreEventVersion: "1",',
           "};",
           "",
-          "void badEvent;",
+          "void badDelta;",
           "void badReady;",
           "",
         ].join("\n"),

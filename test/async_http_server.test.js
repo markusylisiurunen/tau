@@ -125,6 +125,20 @@ describe("async http protocol", () => {
 
   it("parses and rejects send-message body", () => {
     expect(parseSendMessageBody({ text: "  hi  " })).toEqual({ text: "hi" });
+    expect(
+      parseSendMessageBody({
+        text: "  hi  ",
+        mode: "steer",
+        additionalSystemMessage: "  from webhook  ",
+      }),
+    ).toEqual({
+      text: "hi",
+      mode: "steer",
+      additionalSystemMessage: "from webhook",
+    });
+    expect(() => parseSendMessageBody({ text: "hi", mode: "queue" })).toThrow(
+      AsyncHttpRequestParseError,
+    );
     expect(() => parseSendMessageBody({ text: "", legacy: true })).toThrow(
       AsyncHttpRequestParseError,
     );
@@ -211,6 +225,36 @@ describe("async http server", () => {
       },
     });
     expect(manager.interruptSession).toHaveBeenCalledWith("s1");
+  });
+
+  it("forwards send-message mode and per-message system context", async () => {
+    const manager = createManager();
+    const handle = await startAsyncHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "secret",
+      sessionManager: manager,
+    });
+    handles.push(handle);
+
+    const response = await fetch(`${handle.baseUrl}/v1/sessions/s1/messages`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        text: "keep this in mind",
+        mode: "steer",
+        additionalSystemMessage: "from webhook",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(manager.sendMessage).toHaveBeenCalledWith("s1", "keep this in mind", {
+      mode: "steer",
+      additionalSystemMessage: "from webhook",
+    });
   });
 
   it("returns 400 for malformed json request bodies", async () => {

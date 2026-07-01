@@ -20,10 +20,13 @@ export type {
   AsyncServerConfig,
   AsyncServerTelegramBotConfig,
   AsyncServerTelegramConfig,
-  BashCommand,
+  CloudflareSandboxBridgeConfig,
+  CloudflareSandboxConfig,
   Config,
   ConfigDeps,
   DiffToolConfig,
+  FlySpritesApiConfig,
+  FlySpritesConfig,
   RuntimeBootstrap,
   ThemeAppearance,
   ThemeDefinition,
@@ -93,8 +96,6 @@ export type {
   SessionPromptComposition,
 } from "./runtime/session_prompt_composer.js";
 export { composeSessionPrompts } from "./runtime/session_prompt_composer.js";
-export type { Checkpoint } from "./session/checkpoint.js";
-export { createCheckpoint, parseCheckpoint } from "./session/checkpoint.js";
 export type { RunToolCommandOptions } from "./tool/index.js";
 export {
   computePdfPatchRegions,

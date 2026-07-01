@@ -55,6 +55,16 @@ export function safeParseCoreEventEnvelope(
     return fail("core event envelope must be an object");
   }
 
+  const envelopeKeys = Object.keys(value);
+  const unsupportedEnvelopeKeys = envelopeKeys.filter(
+    (key) => key !== "version" && key !== "event",
+  );
+  if (unsupportedEnvelopeKeys.length > 0) {
+    return fail(
+      `core event envelope contains unsupported fields: ${unsupportedEnvelopeKeys.join(", ")}`,
+    );
+  }
+
   if (!isCoreEventVersion(value.version)) {
     return fail(`unsupported core event version: ${String(value.version)}`);
   }
@@ -80,26 +90,52 @@ export function isCoreEventVersion(value: unknown): value is CoreEventVersion {
 function isValidCoreEvent(value: UnknownRecord, eventType: string): boolean {
   switch (eventType) {
     case "assistant_start":
-      return typeof value.historyEntryId === "string";
+      return (
+        hasOnlyKeys(value, ["type", "historyEntryId"]) && typeof value.historyEntryId === "string"
+      );
     case "assistant_final":
-      return typeof value.historyEntryId === "string" && isAssistantMessage(value.message);
+      return (
+        hasOnlyKeys(value, ["type", "historyEntryId", "message"]) &&
+        typeof value.historyEntryId === "string" &&
+        isAssistantMessage(value.message)
+      );
     case "assistant_partial":
-      return typeof value.historyEntryId === "string" && isAssistantPartialSnapshot(value.snapshot);
+      return (
+        hasOnlyKeys(value, ["type", "historyEntryId", "snapshot"]) &&
+        typeof value.historyEntryId === "string" &&
+        isAssistantPartialSnapshot(value.snapshot)
+      );
     case "notice":
-      return isOneOf(value.severity, noticeSeverities) && typeof value.text === "string";
+      return (
+        hasOnlyKeys(value, ["type", "severity", "text"]) &&
+        isOneOf(value.severity, noticeSeverities) &&
+        typeof value.text === "string"
+      );
     case "tool_ui":
-      return isToolUiEvent(value.uiEvent);
+      return hasOnlyKeys(value, ["type", "uiEvent"]) && isToolUiEvent(value.uiEvent);
     case "subagent_ui":
-      return typeof value.originHistoryEntryId === "string" && isSubagentUiEvent(value.event);
+      return (
+        hasOnlyKeys(value, ["type", "event", "originHistoryEntryId"]) &&
+        typeof value.originHistoryEntryId === "string" &&
+        isSubagentUiEvent(value.event)
+      );
     case "tool_result":
-      return typeof value.historyEntryId === "string" && isToolResultMessage(value.message);
+      return (
+        hasOnlyKeys(value, ["type", "historyEntryId", "message"]) &&
+        typeof value.historyEntryId === "string" &&
+        isToolResultMessage(value.message)
+      );
     case "compaction_start":
-      return isOneOf(value.reason, compactionReasons);
+      return hasOnlyKeys(value, ["type", "reason"]) && isOneOf(value.reason, compactionReasons);
     case "compaction_end":
       return isCompactionEndEvent(value);
     default:
       return false;
   }
+}
+
+function hasOnlyKeys(value: UnknownRecord, allowedKeys: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowedKeys.includes(key));
 }
 
 function isCompactionEndEvent(value: UnknownRecord): boolean {
@@ -109,12 +145,24 @@ function isCompactionEndEvent(value: UnknownRecord): boolean {
 
   switch (value.outcome) {
     case "compacted":
-      return value.errorMessage === undefined && isCompactionResult(value.result);
+      return (
+        hasOnlyKeys(value, ["type", "reason", "outcome", "result"]) &&
+        value.errorMessage === undefined &&
+        isCompactionResult(value.result)
+      );
     case "failed":
-      return value.result === undefined && typeof value.errorMessage === "string";
+      return (
+        hasOnlyKeys(value, ["type", "reason", "outcome", "errorMessage"]) &&
+        value.result === undefined &&
+        typeof value.errorMessage === "string"
+      );
     case "skipped":
     case "aborted":
-      return value.result === undefined && value.errorMessage === undefined;
+      return (
+        hasOnlyKeys(value, ["type", "reason", "outcome"]) &&
+        value.result === undefined &&
+        value.errorMessage === undefined
+      );
   }
 }
 
@@ -156,7 +204,9 @@ function isAssistantPartialSnapshot(value: unknown): boolean {
     typeof value.text === "string" &&
     typeof value.thinking === "string" &&
     typeof value.hasTextStarted === "boolean" &&
-    typeof value.hasAnyThinking === "boolean"
+    typeof value.hasAnyThinking === "boolean" &&
+    (value.hasTextStarted || value.text.length === 0) &&
+    (value.hasAnyThinking || value.thinking.length === 0)
   );
 }
 
@@ -167,6 +217,14 @@ function isToolUiEvent(value: unknown): boolean {
 
   if (value.type === "tool_pruned") {
     return typeof value.toolCallId === "string" && typeof value.content === "string";
+  }
+
+  if (value.type === "tool_call_queued") {
+    return (
+      typeof value.toolCallId === "string" &&
+      typeof value.toolName === "string" &&
+      typeof value.headerTarget === "string"
+    );
   }
 
   return typeof value.headerTarget === "string";

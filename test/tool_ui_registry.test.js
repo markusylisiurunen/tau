@@ -25,6 +25,17 @@ describe("ToolUiRegistry", () => {
   const theme = createTagTheme();
   const registry = createToolUiRegistry();
 
+  it("renders queued tool call events", () => {
+    const queued = renderEvent(registry, theme, {
+      type: "tool_call_queued",
+      toolCallId: "q1",
+      toolName: "bash",
+      headerTarget: "bash",
+    });
+    expect(queued).toContain("queued");
+    expect(queued).toContain("bash");
+  });
+
   it("renders bash tool events", () => {
     const truncationInfo = {
       output: "ok",

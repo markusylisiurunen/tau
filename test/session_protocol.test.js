@@ -1,0 +1,1860 @@
+import { describe, expect, it } from "vitest";
+import {
+  applySessionProtocolDelta,
+  createSessionProtocolDeltaMessage,
+  createSessionProtocolEphemeralMessage,
+  createSessionProtocolErrorResponse,
+  createSessionProtocolReadyMessage,
+  createSessionProtocolRequest,
+  createSessionProtocolSuccessResponse,
+  parseSessionProtocolOutgoingLine,
+  parseSessionProtocolRequestLine,
+  SESSION_PROTOCOL_ERROR_CODES,
+  SESSION_PROTOCOL_METHODS,
+  SESSION_PROTOCOL_VERSION,
+  validateSessionProtocolParams,
+  validateSessionProtocolResult,
+} from "../dist/protocol/session_protocol.js";
+import {
+  createProtocolBootstrap,
+  createProtocolCatalog,
+  createProtocolExecResult,
+  createProtocolSnapshot,
+} from "./helpers/session_protocol_fixtures.js";
+
+const bootstrap = createProtocolBootstrap();
+const catalog = createProtocolCatalog();
+
+describe("session_protocol", () => {
+  it("parses valid request lines", () => {
+    const parsed = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-1",
+        method: "session.submit",
+        params: { sessionId: "session-1", text: "hello" },
+      }),
+    );
+
+    expect(parsed).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-1",
+        method: "session.submit",
+        params: { sessionId: "session-1", text: "hello" },
+      },
+    });
+
+    const list = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-2",
+        method: "session.list",
+        params: {},
+      }),
+    );
+    expect(list).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-2",
+        method: "session.list",
+        params: {},
+      },
+    });
+
+    const create = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-create",
+        method: "session.create",
+        params: { executionEnvironment: { kind: "local", cwd: "/repo" } },
+      }),
+    );
+    expect(create).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-create",
+        method: "session.create",
+        params: { executionEnvironment: { kind: "local", cwd: "/repo" } },
+      },
+    });
+
+    const attach = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-3",
+        method: "session.observe",
+        params: { sessionId: "session-1" },
+      }),
+    );
+    expect(attach).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-3",
+        method: "session.observe",
+        params: { sessionId: "session-1" },
+      },
+    });
+
+    const retry = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-retry",
+        method: "session.retry",
+        params: { sessionId: "session-1" },
+      }),
+    );
+    expect(retry).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-retry",
+        method: "session.retry",
+        params: { sessionId: "session-1" },
+      },
+    });
+
+    const exec = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-exec-bash",
+        method: "session.exec",
+        params: {
+          sessionId: "session-1",
+          command: "git diff",
+          cwd: "/repo",
+          timeoutMs: 30000,
+        },
+      }),
+    );
+    expect(exec).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-exec-bash",
+        method: "session.exec",
+        params: {
+          sessionId: "session-1",
+          command: "git diff",
+          cwd: "/repo",
+          timeoutMs: 30000,
+        },
+      },
+    });
+
+    const record = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-add-user",
+        method: "session.record",
+        params: {
+          sessionId: "session-1",
+          text: "review",
+          historyEntryId: "history-1",
+        },
+      }),
+    );
+    expect(record).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-add-user",
+        method: "session.record",
+        params: {
+          sessionId: "session-1",
+          text: "review",
+          historyEntryId: "history-1",
+        },
+      },
+    });
+
+    const setRisk = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-risk",
+        method: "session.setRisk",
+        params: { sessionId: "session-1", riskLevel: "read-write" },
+      }),
+    );
+    expect(setRisk).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-risk",
+        method: "session.setRisk",
+        params: { sessionId: "session-1", riskLevel: "read-write" },
+      },
+    });
+
+    const setReasoning = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-reasoning",
+        method: "session.setReasoning",
+        params: { sessionId: "session-1", reasoning: "high" },
+      }),
+    );
+    expect(setReasoning).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-reasoning",
+        method: "session.setReasoning",
+        params: { sessionId: "session-1", reasoning: "high" },
+      },
+    });
+
+    const autocompletePaths = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-autocomplete-paths",
+        method: "session.autocompletePaths",
+        params: { sessionId: "session-1", query: "src", limit: 25 },
+      }),
+    );
+    expect(autocompletePaths).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-autocomplete-paths",
+        method: "session.autocompletePaths",
+        params: { sessionId: "session-1", query: "src", limit: 25 },
+      },
+    });
+
+    const rewind = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-rewind",
+        method: "session.rewind",
+        params: { sessionId: "session-1", historyEntryId: "history-1" },
+      }),
+    );
+    expect(rewind).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-rewind",
+        method: "session.rewind",
+        params: { sessionId: "session-1", historyEntryId: "history-1" },
+      },
+    });
+
+    const terminateSubagent = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-terminate-subagent",
+        method: "session.terminateSubagent",
+        params: { sessionId: "session-1", subagentId: "subagent-1" },
+      }),
+    );
+    expect(terminateSubagent).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-terminate-subagent",
+        method: "session.terminateSubagent",
+        params: { sessionId: "session-1", subagentId: "subagent-1" },
+      },
+    });
+
+    const ephemeralCreate = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-ephemeral-create",
+        method: "session.ephemeral.create",
+        params: {
+          sessionId: "session-1",
+          instructions: "review this",
+          tools: ["bash", "view_image"],
+          riskLevel: "read-only",
+        },
+      }),
+    );
+    expect(ephemeralCreate).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-ephemeral-create",
+        method: "session.ephemeral.create",
+        params: {
+          sessionId: "session-1",
+          instructions: "review this",
+          tools: ["bash", "view_image"],
+          riskLevel: "read-only",
+        },
+      },
+    });
+
+    const ephemeralSubmit = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-ephemeral-submit",
+        method: "session.ephemeral.submit",
+        params: {
+          sessionId: "session-1",
+          contextId: "ephemeral-1",
+          threadId: "thread-1",
+          forkFromThreadId: "thread-0",
+          message: "review this",
+        },
+      }),
+    );
+    expect(ephemeralSubmit).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-ephemeral-submit",
+        method: "session.ephemeral.submit",
+        params: {
+          sessionId: "session-1",
+          contextId: "ephemeral-1",
+          threadId: "thread-1",
+          forkFromThreadId: "thread-0",
+          message: "review this",
+        },
+      },
+    });
+
+    const ephemeralClose = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-ephemeral-close",
+        method: "session.ephemeral.close",
+        params: { sessionId: "session-1", contextId: "ephemeral-1" },
+      }),
+    );
+    expect(ephemeralClose).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-ephemeral-close",
+        method: "session.ephemeral.close",
+        params: { sessionId: "session-1", contextId: "ephemeral-1" },
+      },
+    });
+
+    const compact = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-compact",
+        method: "session.compact",
+        params: {
+          sessionId: "session-1",
+          mode: "summary-and-last",
+          guidance: "preserve decisions",
+        },
+      }),
+    );
+    expect(compact).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-compact",
+        method: "session.compact",
+        params: {
+          sessionId: "session-1",
+          mode: "summary-and-last",
+          guidance: "preserve decisions",
+        },
+      },
+    });
+
+    const prune = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-prune",
+        method: "session.prune",
+        params: {
+          sessionId: "session-1",
+          strategy: "smart",
+          fraction: 0.4,
+          guidance: "keep errors",
+        },
+      }),
+    );
+    expect(prune).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-prune",
+        method: "session.prune",
+        params: {
+          sessionId: "session-1",
+          strategy: "smart",
+          fraction: 0.4,
+          guidance: "keep errors",
+        },
+      },
+    });
+  });
+
+  it("returns structured parse and validation errors", () => {
+    const malformed = parseSessionProtocolRequestLine("{not-json}");
+    expect(malformed.ok).toBe(false);
+    expect(malformed.error.code).toBe(SESSION_PROTOCOL_ERROR_CODES.parseError);
+
+    const unknownMethod = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-unknown",
+        method: "session.unknown",
+        params: {},
+      }),
+    );
+    expect(unknownMethod).toEqual({
+      ok: false,
+      id: "req-unknown",
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.methodNotFound,
+      }),
+    });
+
+    const emptyId = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "",
+        method: "session.snapshot",
+        params: { sessionId: "session-1" },
+      }),
+    );
+    expect(emptyId).toEqual({
+      ok: false,
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      }),
+    });
+
+    const invalidSubmit = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-invalid-submit",
+        method: "session.submit",
+        params: { sessionId: "session-1", text: 123 },
+      }),
+    );
+    expect(invalidSubmit).toEqual({
+      ok: false,
+      id: "req-invalid-submit",
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+
+    const requestWithUnsupportedFields = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-unsupported",
+        method: "session.submit",
+        params: { sessionId: "session-1", text: "hello" },
+        legacy: true,
+      }),
+    );
+    expect(requestWithUnsupportedFields).toEqual({
+      ok: false,
+      id: "req-unsupported",
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "request contains unsupported top-level fields",
+      }),
+    });
+
+    const requestWithoutParams = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-without-params",
+        method: "session.snapshot",
+      }),
+    );
+    expect(requestWithoutParams).toEqual({
+      ok: false,
+      id: "req-without-params",
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "request.params is required",
+      }),
+    });
+  });
+
+  it("returns structured parse errors for malformed outgoing messages", () => {
+    const malformed = parseSessionProtocolOutgoingLine("{bad-json}");
+    expect(malformed).toEqual({
+      ok: false,
+      reason: "parse_error",
+      messageType: null,
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.parseError,
+      }),
+    });
+
+    const badVersion = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: 99,
+        type: "ready",
+        methods: [...SESSION_PROTOCOL_METHODS],
+      }),
+    );
+    expect(badVersion).toEqual({
+      ok: false,
+      reason: "unsupported_version",
+      messageType: null,
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "unsupported session protocol version: 99",
+      }),
+    });
+
+    const duplicateReadyMethods = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "ready",
+        methods: [SESSION_PROTOCOL_METHODS[0], SESSION_PROTOCOL_METHODS[0]],
+      }),
+    );
+    expect(duplicateReadyMethods).toEqual({
+      ok: false,
+      reason: "invalid_payload",
+      messageType: "ready",
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("duplicate session protocol method"),
+      }),
+    });
+
+    const malformedResponse = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "response",
+        id: "req-9",
+        ok: false,
+        error: { code: "not-a-code", message: 123 },
+      }),
+    );
+    expect(malformedResponse).toEqual({
+      ok: false,
+      reason: "invalid_payload",
+      messageType: "response",
+      id: "req-9",
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      }),
+    });
+
+    const responseWithEmptyId = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "response",
+        id: "",
+        ok: true,
+        result: {},
+      }),
+    );
+    expect(responseWithEmptyId).toEqual({
+      ok: false,
+      reason: "response_invalid_id",
+      messageType: "response",
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      }),
+    });
+
+    const responseWithUnsupportedFields = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "response",
+        id: "req-10",
+        ok: true,
+        result: { shutdown: true },
+        error: {
+          code: SESSION_PROTOCOL_ERROR_CODES.internalError,
+          message: "should not be here",
+        },
+      }),
+    );
+    expect(responseWithUnsupportedFields).toEqual({
+      ok: false,
+      reason: "invalid_payload",
+      messageType: "response",
+      id: "req-10",
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "successful response must only include result payload",
+      }),
+    });
+
+    const oldEventEnvelope = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "event",
+        sessionId: "session-1",
+        sessionRevision: 1,
+        event: { type: "notice", severity: "info", text: "ok" },
+        extra: "not canonical",
+      }),
+    );
+    expect(oldEventEnvelope).toEqual({
+      ok: false,
+      reason: "unsupported_message_type",
+      messageType: null,
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "unsupported session protocol message type: event",
+      }),
+    });
+  });
+
+  it("validates per-method params", () => {
+    expect(
+      validateSessionProtocolParams("initialize", {
+        client: { name: "tau-sdk", version: "1" },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        client: {
+          name: "tau-sdk",
+          version: "1",
+        },
+      },
+    });
+
+    const invalidInitialize = validateSessionProtocolParams("initialize", {});
+    expect(invalidInitialize).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+
+    expect(
+      validateSessionProtocolParams("session.interrupt", {
+        sessionId: "session-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1" },
+    });
+    expect(
+      validateSessionProtocolParams("session.create", {
+        executionEnvironment: { kind: "local", cwd: "/repo" },
+        personaId: "coder",
+        riskLevel: "read-write",
+        reasoning: "high",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        executionEnvironment: { kind: "local", cwd: "/repo" },
+        personaId: "coder",
+        riskLevel: "read-write",
+        reasoning: "high",
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.create", {
+        executionEnvironment: {
+          kind: "cloudflare-sandbox",
+          bridgeId: "default",
+          sandboxId: "sandbox-1",
+          cwd: "/workspace/repo",
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        executionEnvironment: {
+          kind: "cloudflare-sandbox",
+          bridgeId: "default",
+          sandboxId: "sandbox-1",
+          cwd: "/workspace/repo",
+        },
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.create", {
+        executionEnvironment: {
+          kind: "fly-sprite",
+          apiId: "default",
+          spriteName: "sprite-1",
+          cwd: "/home/sprite/repo",
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        executionEnvironment: {
+          kind: "fly-sprite",
+          apiId: "default",
+          spriteName: "sprite-1",
+          cwd: "/home/sprite/repo",
+        },
+      },
+    });
+    expect(validateSessionProtocolParams("session.create", {})).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+        message: "session.create params.executionEnvironment must be an object",
+      }),
+    });
+    expect(validateSessionProtocolParams("session.list", {})).toEqual({
+      ok: true,
+      value: {},
+    });
+    expect(
+      validateSessionProtocolParams("session.observe", {
+        sessionId: "session-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1" },
+    });
+    expect(
+      validateSessionProtocolParams("session.reload", {
+        sessionId: "session-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1" },
+    });
+    expect(
+      validateSessionProtocolParams("session.retry", {
+        sessionId: "session-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1" },
+    });
+    expect(
+      validateSessionProtocolParams("session.autocompletePaths", {
+        sessionId: "session-1",
+        query: "src",
+        limit: 25,
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", query: "src", limit: 25 },
+    });
+    expect(
+      validateSessionProtocolParams("session.exec", {
+        sessionId: "session-1",
+        command: "pwd",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", command: "pwd" },
+    });
+    expect(
+      validateSessionProtocolParams("session.exec", {
+        sessionId: "session-1",
+        command: "git diff",
+        cwd: "/repo",
+        timeoutMs: 30000,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        command: "git diff",
+        cwd: "/repo",
+        timeoutMs: 30000,
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.record", {
+        sessionId: "session-1",
+        text: "review",
+        historyEntryId: "history-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        text: "review",
+        historyEntryId: "history-1",
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.setReasoning", {
+        sessionId: "session-1",
+        reasoning: "high",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", reasoning: "high" },
+    });
+    expect(
+      validateSessionProtocolParams("session.rewind", {
+        sessionId: "session-1",
+        historyEntryId: "history-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", historyEntryId: "history-1" },
+    });
+    expect(
+      validateSessionProtocolParams("session.terminateSubagent", {
+        sessionId: "session-1",
+        subagentId: "subagent-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", subagentId: "subagent-1" },
+    });
+    expect(
+      validateSessionProtocolParams("session.ephemeral.create", {
+        sessionId: "session-1",
+        instructions: "review this",
+        tools: ["bash", "view_image"],
+        riskLevel: "read-only",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        instructions: "review this",
+        tools: ["bash", "view_image"],
+        riskLevel: "read-only",
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.ephemeral.submit", {
+        sessionId: "session-1",
+        contextId: "ephemeral-1",
+        threadId: "thread-1",
+        message: "review this",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        contextId: "ephemeral-1",
+        threadId: "thread-1",
+        message: "review this",
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.ephemeral.close", {
+        sessionId: "session-1",
+        contextId: "ephemeral-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", contextId: "ephemeral-1" },
+    });
+
+    const submitWithEmptyHistoryId = validateSessionProtocolParams("session.submit", {
+      sessionId: "session-1",
+      text: "hello",
+      historyEntryId: "",
+    });
+    expect(submitWithEmptyHistoryId).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+        message: "session.submit params.historyEntryId must be a non-empty string when provided",
+      }),
+    });
+
+    expect(
+      validateSessionProtocolParams("session.ephemeral.submit", {
+        sessionId: "session-1",
+        contextId: "ephemeral-1",
+        threadId: "thread-1",
+        forkFromThreadId: "",
+        message: "review this",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+        message:
+          "session.ephemeral.submit params.forkFromThreadId must be a non-empty string when provided",
+      }),
+    });
+  });
+
+  it("constructs outbound requests through shared method params validation", () => {
+    expect(
+      createSessionProtocolRequest("req-out", "session.submit", {
+        sessionId: "session-1",
+        text: "hello",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-out",
+        method: "session.submit",
+        params: { sessionId: "session-1", text: "hello" },
+      },
+    });
+
+    expect(
+      createSessionProtocolRequest("req-bad", "session.submit", {
+        sessionId: "session-1",
+        text: "hello",
+        mode: "submit",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+        message: "session.submit params only support sessionId, text, and optional historyEntryId",
+      }),
+    });
+
+    expect(
+      createSessionProtocolRequest("", "session.submit", {
+        sessionId: "session-1",
+        text: "hello",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "request id must be a non-empty string",
+      }),
+    });
+  });
+
+  it("validates per-method results", () => {
+    expect(
+      validateSessionProtocolResult("initialize", {
+        protocolVersion: SESSION_PROTOCOL_VERSION,
+        methods: [SESSION_PROTOCOL_METHODS[0], SESSION_PROTOCOL_METHODS[0]],
+        alreadyInitialized: false,
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("duplicate session protocol method"),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.retry", {
+        turn: { aborted: false },
+      }),
+    ).toEqual({
+      ok: true,
+      value: { turn: { aborted: false } },
+    });
+    expect(
+      validateSessionProtocolResult("session.retry", {
+        userHistoryEntryId: "history-user",
+        turn: { aborted: false },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("Unrecognized key"),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.exec", createProtocolExecResult({ command: "pwd" })),
+    ).toEqual({
+      ok: true,
+      value: createProtocolExecResult({ command: "pwd" }),
+    });
+    expect(
+      validateSessionProtocolResult("session.autocompletePaths", {
+        paths: ["src/main.ts", "src/tui/"],
+      }),
+    ).toEqual({
+      ok: true,
+      value: { paths: ["src/main.ts", "src/tui/"] },
+    });
+
+    expect(
+      validateSessionProtocolResult(
+        "session.snapshot",
+        createProtocolSnapshot({ bootstrap, catalog }),
+      ),
+    ).toEqual({
+      ok: true,
+      value: createProtocolSnapshot({ bootstrap, catalog }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.rewind", {
+        snapshot: createProtocolSnapshot({ bootstrap, catalog, revision: 2 }),
+        historyEntryId: "history-1",
+        text: "rewound text",
+        removedEntryIds: ["history-1", "assistant-1"],
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        snapshot: createProtocolSnapshot({ bootstrap, catalog, revision: 2 }),
+        historyEntryId: "history-1",
+        text: "rewound text",
+        removedEntryIds: ["history-1", "assistant-1"],
+      },
+    });
+
+    expect(
+      validateSessionProtocolResult("session.terminateSubagent", {
+        found: true,
+      }),
+    ).toEqual({
+      ok: true,
+      value: { found: true },
+    });
+    expect(
+      validateSessionProtocolResult("session.ephemeral.create", {
+        contextId: "ephemeral-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { contextId: "ephemeral-1" },
+    });
+    expect(
+      validateSessionProtocolResult("session.ephemeral.submit", {
+        threadId: "thread-1",
+        response: "looks good",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { threadId: "thread-1", response: "looks good" },
+    });
+    expect(
+      validateSessionProtocolResult("session.ephemeral.close", {
+        closed: true,
+      }),
+    ).toEqual({
+      ok: true,
+      value: { closed: true },
+    });
+
+    expect(
+      validateSessionProtocolResult("session.exec", {
+        output: "diff",
+        stdout: "diff",
+        stderr: "",
+        exitCode: 0,
+        truncated: false,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        output: "diff",
+        stdout: "diff",
+        stderr: "",
+        exitCode: 0,
+        truncated: false,
+      },
+    });
+
+    const recordSnapshot = createProtocolSnapshot({
+      revision: 2,
+      historyEntries: [
+        {
+          id: "history-1",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "review" }],
+          },
+        },
+      ],
+    });
+    expect(
+      validateSessionProtocolResult("session.record", {
+        snapshot: recordSnapshot,
+        userHistoryEntryId: "history-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        snapshot: recordSnapshot,
+        userHistoryEntryId: "history-1",
+      },
+    });
+
+    const reloadSnapshot = createProtocolSnapshot();
+    expect(
+      validateSessionProtocolResult("session.reload", {
+        snapshot: reloadSnapshot,
+        warnings: ["config warning"],
+        counts: { personas: 1, prompts: 1, skills: 0 },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        snapshot: reloadSnapshot,
+        warnings: ["config warning"],
+        counts: { personas: 1, prompts: 1, skills: 0 },
+      },
+    });
+
+    const flySnapshot = createProtocolSnapshot({
+      executionEnvironment: {
+        kind: "fly-sprite",
+        apiId: "default",
+        spriteName: "sprite-1",
+        cwd: "/home/sprite/repo",
+        home: "/home/sprite",
+      },
+    });
+    expect(validateSessionProtocolResult("session.snapshot", flySnapshot)).toEqual({
+      ok: true,
+      value: flySnapshot,
+    });
+
+    const cloudflareSnapshot = createProtocolSnapshot({
+      executionEnvironment: {
+        kind: "cloudflare-sandbox",
+        bridgeId: "default",
+        sandboxId: "sandbox-1",
+        cwd: "/workspace/repo",
+        home: "/home/sandbox",
+      },
+    });
+    expect(validateSessionProtocolResult("session.snapshot", cloudflareSnapshot)).toEqual({
+      ok: true,
+      value: cloudflareSnapshot,
+    });
+
+    const promptSnapshot = createProtocolSnapshot({
+      bootstrap: {
+        ...bootstrap,
+        prompt: {
+          environmentTag: "\n<environment></environment>\n",
+          subagentPrompts: { reviewer: "\nsubagent prompt\n" },
+        },
+      },
+      executionEnvironment: {
+        kind: "local",
+        cwd: "/repo with spaces",
+        home: "/home/user",
+      },
+    });
+    expect(validateSessionProtocolResult("session.snapshot", promptSnapshot)).toEqual({
+      ok: true,
+      value: promptSnapshot,
+    });
+
+    const runningDraftSnapshot = createProtocolSnapshot({
+      lifecycle: "running",
+      messages: [
+        {
+          id: "system",
+          state: "committed",
+          modelVisible: true,
+          message: { role: "system", content: "system prompt", timestamp: 0 },
+        },
+        {
+          id: "assistant-entry-1",
+          state: "draft",
+          modelVisible: false,
+          message: {
+            role: "assistant",
+            timestamp: 1,
+            content: [
+              { type: "thinking", thinking: "checking" },
+              { type: "text", text: "working" },
+            ],
+          },
+        },
+      ],
+    });
+    expect(validateSessionProtocolResult("session.snapshot", runningDraftSnapshot)).toEqual({
+      ok: true,
+      value: runningDraftSnapshot,
+    });
+
+    const hiddenMessageSnapshot = createProtocolSnapshot({
+      messages: [
+        {
+          id: "system",
+          state: "committed",
+          modelVisible: true,
+          message: { role: "system", content: "system prompt", timestamp: 0 },
+        },
+        {
+          id: "model-only-1",
+          state: "committed",
+          modelVisible: true,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "hidden from default timeline" }],
+          },
+        },
+      ],
+      timeline: [],
+    });
+    expect(validateSessionProtocolResult("session.snapshot", hiddenMessageSnapshot)).toEqual({
+      ok: true,
+      value: hiddenMessageSnapshot,
+    });
+
+    const interruptedSnapshot = createProtocolSnapshot({
+      messages: [
+        {
+          id: "system",
+          state: "committed",
+          modelVisible: true,
+          message: { role: "system", content: "system prompt", timestamp: 0 },
+        },
+        {
+          id: "assistant-entry-1",
+          state: "interrupted",
+          modelVisible: true,
+          message: {
+            role: "assistant",
+            api: "openai-responses",
+            provider: "openai",
+            model: "gpt-5.5",
+            stopReason: "aborted",
+            content: [{ type: "text", text: "partial response kept" }],
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0,
+              },
+            },
+            timestamp: 1,
+          },
+        },
+      ],
+    });
+    expect(validateSessionProtocolResult("session.snapshot", interruptedSnapshot)).toEqual({
+      ok: true,
+      value: interruptedSnapshot,
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        status: "running",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("Unrecognized key"),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        runtimeConfig: {},
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("Unrecognized key"),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult(
+        "session.snapshot",
+        createProtocolSnapshot({
+          bootstrap: {
+            ...bootstrap,
+            model: {
+              ...bootstrap.persona.model,
+              headers: { authorization: "Bearer secret", "x-custom": "secret" },
+            },
+          },
+        }),
+      ),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("session.snapshot result is invalid"),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        sessionId: "session-1",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("session.snapshot result is invalid"),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        history: [{ role: "alien", content: [] }],
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("session.snapshot result is invalid"),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        messages: [
+          {
+            id: "system",
+            state: "committed",
+            modelVisible: true,
+            message: { role: "system", content: "system prompt", timestamp: 0 },
+          },
+          {
+            id: "entry-1",
+            state: "committed",
+            modelVisible: true,
+            message: { role: "user", content: [{ type: "text", text: "one" }] },
+          },
+          {
+            id: "entry-1",
+            state: "committed",
+            modelVisible: true,
+            message: { role: "user", content: [{ type: "text", text: "two" }] },
+          },
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("duplicate message id 'entry-1'"),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        timeline: [
+          {
+            type: "message",
+            id: "timeline-missing",
+            messageId: "missing-message",
+          },
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining(
+          "timeline message item 'timeline-missing' references unknown message 'missing-message'",
+        ),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        bootstrap: {
+          ...createProtocolSnapshot().bootstrap,
+          prompt: {
+            ...createProtocolSnapshot().bootstrap.prompt,
+            baseSystemPrompt: "old inline prompt",
+          },
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("session.snapshot result is invalid"),
+      }),
+    });
+  });
+
+  it("builds ready/delta/error messages with versioned envelopes", () => {
+    const ready = createSessionProtocolReadyMessage();
+    expect(ready).toEqual(
+      expect.objectContaining({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "ready",
+        methods: SESSION_PROTOCOL_METHODS,
+      }),
+    );
+    expect(ready).not.toHaveProperty("sessionId");
+
+    const delta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 1,
+      toRevision: 2,
+      reason: "notice",
+      delta: {
+        type: "snapshot.patch",
+        changes: [{ type: "lifecycle.set", lifecycle: "idle" }],
+      },
+    });
+    expect(delta).toEqual({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: "session-1",
+      fromRevision: 1,
+      toRevision: 2,
+      reason: "notice",
+      delta: {
+        type: "snapshot.patch",
+        changes: [{ type: "lifecycle.set", lifecycle: "idle" }],
+      },
+    });
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(delta))).toEqual({
+      ok: true,
+      message: delta,
+    });
+
+    const ephemeral = createSessionProtocolEphemeralMessage({
+      sessionId: "session-1",
+      event: {
+        type: "ephemeral-agent.thread-update",
+        contextId: "ephemeral-1",
+        threadId: "thread-1",
+        update: {
+          costTotal: 0,
+          usage: {
+            input: 1,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 3,
+            contextWindow: 400000,
+          },
+          lastActivityText: "reviewing diff",
+        },
+      },
+    });
+    expect(ephemeral).toEqual({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.ephemeral",
+      sessionId: "session-1",
+      event: {
+        type: "ephemeral-agent.thread-update",
+        contextId: "ephemeral-1",
+        threadId: "thread-1",
+        update: {
+          costTotal: 0,
+          usage: {
+            input: 1,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 3,
+            contextWindow: 400000,
+          },
+          lastActivityText: "reviewing diff",
+        },
+      },
+    });
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(ephemeral))).toEqual({
+      ok: true,
+      message: ephemeral,
+    });
+
+    const contentDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 2,
+      toRevision: 3,
+      reason: "assistant-stream",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "message.content.append",
+            messageId: "assistant-entry-1",
+            text: " world",
+            thinking: " more",
+            timestamp: 2,
+          },
+        ],
+      },
+    });
+    const patchedSnapshot = applySessionProtocolDelta(
+      createProtocolSnapshot({
+        sessionId: "session-1",
+        revision: 2,
+        lifecycle: "running",
+        messages: [
+          {
+            id: "system",
+            state: "committed",
+            modelVisible: true,
+            message: { role: "system", content: "system prompt", timestamp: 0 },
+          },
+          {
+            id: "assistant-entry-1",
+            state: "draft",
+            modelVisible: false,
+            message: {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "some" },
+                { type: "text", text: "hello" },
+              ],
+              timestamp: 1,
+            },
+          },
+        ],
+      }),
+      contentDelta,
+    );
+    expect(patchedSnapshot.messages[1].message).toEqual({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "some more" },
+        { type: "text", text: "hello world" },
+      ],
+      timestamp: 2,
+    });
+    const lateThinkingDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 2,
+      toRevision: 3,
+      reason: "assistant-stream",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "message.content.append",
+            messageId: "assistant-entry-1",
+            thinking: "late thought",
+            timestamp: 2,
+          },
+        ],
+      },
+    });
+    const lateThinkingSnapshot = applySessionProtocolDelta(
+      createProtocolSnapshot({
+        sessionId: "session-1",
+        revision: 2,
+        lifecycle: "running",
+        messages: [
+          {
+            id: "system",
+            state: "committed",
+            modelVisible: true,
+            message: { role: "system", content: "system prompt", timestamp: 0 },
+          },
+          {
+            id: "assistant-entry-1",
+            state: "draft",
+            modelVisible: false,
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "hello" }],
+              timestamp: 1,
+            },
+          },
+        ],
+      }),
+      lateThinkingDelta,
+    );
+    expect(lateThinkingSnapshot.messages[1].message.content).toEqual([
+      { type: "thinking", thinking: "late thought" },
+      { type: "text", text: "hello" },
+    ]);
+
+    const keyedSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 3,
+      tools: {
+        "tool-1": {
+          id: "tool-1",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          call: { messageId: "assistant-entry-1", contentIndex: 0 },
+          status: "queued",
+          facetIds: [],
+        },
+      },
+      facets: {
+        "tool-ui-tool-1": {
+          id: "tool-ui-tool-1",
+          subject: { type: "tool", id: "tool-1" },
+          kind: "tau.tool-ui-events",
+          version: 1,
+          data: { events: [] },
+        },
+      },
+      agents: {},
+    });
+    const keyedDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 3,
+      toRevision: 4,
+      reason: "tool-run",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "tool.set",
+            tool: {
+              ...keyedSnapshot.tools["tool-1"],
+              status: "running",
+              startedAt: 10,
+              facetIds: ["tool-ui-tool-1"],
+            },
+          },
+          {
+            type: "facet.set",
+            facet: {
+              ...keyedSnapshot.facets["tool-ui-tool-1"],
+              data: {
+                events: [
+                  {
+                    type: "bash_started",
+                    toolCallId: "tool-1",
+                    command: "echo hi",
+                    headerTarget: "echo hi",
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    });
+    const keyedPatchedSnapshot = applySessionProtocolDelta(keyedSnapshot, keyedDelta);
+    expect(keyedPatchedSnapshot).toEqual(
+      expect.objectContaining({
+        revision: 4,
+        tools: expect.objectContaining({
+          "tool-1": expect.objectContaining({
+            status: "running",
+            startedAt: 10,
+          }),
+        }),
+        facets: expect.objectContaining({
+          "tool-ui-tool-1": expect.objectContaining({
+            data: {
+              events: [
+                expect.objectContaining({
+                  type: "bash_started",
+                  toolCallId: "tool-1",
+                }),
+              ],
+            },
+          }),
+        }),
+      }),
+    );
+    expect(keyedPatchedSnapshot.messages).toBe(keyedSnapshot.messages);
+    expect(keyedPatchedSnapshot.timeline).toBe(keyedSnapshot.timeline);
+    expect(keyedPatchedSnapshot.tools).not.toBe(keyedSnapshot.tools);
+    expect(keyedPatchedSnapshot.facets).not.toBe(keyedSnapshot.facets);
+
+    expect(() =>
+      applySessionProtocolDelta(
+        createProtocolSnapshot({
+          sessionId: "session-1",
+          revision: 2,
+          lifecycle: "idle",
+          messages: [
+            {
+              id: "system",
+              state: "committed",
+              modelVisible: true,
+              message: {
+                role: "system",
+                content: "system prompt",
+                timestamp: 0,
+              },
+            },
+            {
+              id: "assistant-entry-1",
+              state: "committed",
+              modelVisible: true,
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "hello" }],
+                timestamp: 1,
+              },
+            },
+          ],
+        }),
+        contentDelta,
+      ),
+    ).toThrow("message.content.append targets non-draft message");
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 2,
+        toRevision: 3,
+        reason: "assistant-stream",
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "message.content.append",
+              messageId: "assistant-entry-1",
+              timestamp: 2,
+            },
+          ],
+        },
+      }),
+    ).toThrow("message.content.append requires text or thinking");
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 2,
+        toRevision: 3,
+        reason: "assistant-stream",
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "message.content.append",
+              messageId: "assistant-entry-1",
+              text: "",
+              timestamp: 2,
+            },
+          ],
+        },
+      }),
+    ).toThrow("message.content.append requires text or thinking");
+
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: null,
+        toRevision: 2,
+        reason: "notice",
+        delta: { type: "snapshot.patch", changes: [] },
+      }),
+    ).toThrow("session protocol delta message is invalid");
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 2,
+        toRevision: 2,
+        reason: "notice",
+        delta: { type: "snapshot.patch", changes: [] },
+      }),
+    ).toThrow("snapshot.patch toRevision must be greater than fromRevision");
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "",
+        fromRevision: 1,
+        toRevision: 2,
+        reason: "notice",
+        delta: { type: "snapshot.patch", changes: [] },
+      }),
+    ).toThrow("session protocol delta message is invalid");
+
+    const successResponse = createSessionProtocolSuccessResponse("req-1", "session.interrupt", {
+      interrupted: false,
+      isTurnRunning: false,
+    });
+    expect(successResponse).toEqual({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "response",
+      id: "req-1",
+      ok: true,
+      result: { interrupted: false, isTurnRunning: false },
+    });
+    expect(
+      createSessionProtocolSuccessResponse("req-2", "session.unobserve", {
+        unobserved: true,
+      }),
+    ).toEqual({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "response",
+      id: "req-2",
+      ok: true,
+      result: { unobserved: true },
+    });
+    expect(() =>
+      createSessionProtocolSuccessResponse("req-bad", "session.interrupt", {
+        shutdown: true,
+      }),
+    ).toThrow("session.interrupt result is invalid");
+    expect(() =>
+      createSessionProtocolSuccessResponse("", "session.interrupt", {
+        interrupted: false,
+        isTurnRunning: false,
+      }),
+    ).toThrow("session protocol success response is invalid");
+
+    const errorResponse = createSessionProtocolErrorResponse(
+      "req-2",
+      SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      "bad request",
+    );
+    expect(errorResponse).toEqual({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "response",
+      id: "req-2",
+      ok: false,
+      error: {
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "bad request",
+      },
+    });
+    expect(() =>
+      createSessionProtocolErrorResponse("req-bad", "not-a-code", "bad request"),
+    ).toThrow("session protocol error response is invalid");
+  });
+});

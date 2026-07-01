@@ -29,7 +29,7 @@ describe("diff_review prompt", () => {
       "Keep the review centered on that scope by default. That scoped patch is the default review target, even when it is narrower than the repo's overall changes.",
     );
     expect(prompt).toContain(
-      "The review context reflects the initial diff Tau captured when `/diff` opened.",
+      "The review context reflects the initial diff Tau captured when the review session started.",
     );
     expect(prompt).toContain(
       "Keep answers concise unless the user asks for more. Prefer dense, direct, prose-style responses",
@@ -39,7 +39,7 @@ describe("diff_review prompt", () => {
     expect(prompt).toContain("Initial review scope: git diff --staged");
     expect(prompt).toContain("Files in review scope:");
     expect(prompt).toContain(
-      "This review context is the exact change selection captured when /diff opened. It may be narrower than the full set of current repo changes.",
+      "This review context is the exact change selection captured when the review session started. It may be narrower than the full set of current repo changes.",
     );
     expect(prompt).toContain("Treat this scoped patch as the default review target.");
     expect(prompt).toContain(

@@ -10,7 +10,7 @@ function createToolCall(args = { source: "git_diff", diffArgs: ["--staged"] }) {
   };
 }
 
-function createSession(overrides = {}) {
+function createBridge(overrides = {}) {
   return {
     snapshot: {
       files: [{ path: "src/a.ts" }, { path: "src/b.ts" }],
@@ -37,8 +37,8 @@ describe("diff_review tool", () => {
     const result = new Promise((resolve) => {
       resolveResult = resolve;
     });
-    const session = createSession();
-    const startSession = vi.fn(async () => ({ session, result }));
+    const bridge = createBridge();
+    const startSession = vi.fn(async () => ({ bridge, result }));
     const definition = createDiffReviewToolDefinition({
       getDiffToolConfig: () => ({ command: "tau-diff-tool" }),
       startSession,
@@ -97,8 +97,8 @@ describe("diff_review tool", () => {
 
   it("starts patch-file reviews with multiple patch files", async () => {
     const result = Promise.resolve({ status: "cancelled", reason: "tool_cancelled" });
-    const session = createSession();
-    const startSession = vi.fn(async () => ({ session, result }));
+    const bridge = createBridge();
+    const startSession = vi.fn(async () => ({ bridge, result }));
     const definition = createDiffReviewToolDefinition({
       getDiffToolConfig: () => ({ command: "tau-diff-tool" }),
       startSession,

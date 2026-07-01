@@ -1,5 +1,5 @@
 import type { Tool } from "@earendil-works/pi-ai";
-import type { BashCommand, VirtualBundle } from "./config/index.js";
+import type { VirtualBundle } from "./config/index.js";
 import type { PromptTemplate } from "./prompts.js";
 import { createDefaultCoreDeps } from "./runtime/deps.js";
 import {
@@ -56,13 +56,6 @@ function formatPrompt(p: PromptTemplate): string {
   return lines.join("\n");
 }
 
-function formatBashCommand(cmd: BashCommand): string {
-  const lines = [`  id: ${cmd.id}`, `  cmd: ${cmd.cmd}`];
-  if (cmd.description) lines.push(`  description: ${cmd.description}`);
-  if (cmd.cwd) lines.push(`  cwd: ${cmd.cwd}`);
-  return lines.join("\n");
-}
-
 function formatSkill(s: Skill): string {
   return [`  name: ${s.name}`, `  description: ${s.description}`, `  path: ${s.path}`].join("\n");
 }
@@ -86,7 +79,6 @@ function getActiveSkills(persona: Persona | undefined, skills: Skill[]): Skill[]
 export function printDebugInfo(args: {
   personas: Persona[];
   prompts: PromptTemplate[];
-  bashCommands: BashCommand[];
   skills: Skill[];
   selectedPersona?: Persona;
   noAgentContextFiles: boolean;
@@ -97,7 +89,6 @@ export function printDebugInfo(args: {
   const {
     personas,
     prompts,
-    bashCommands,
     skills,
     selectedPersona,
     noAgentContextFiles,
@@ -147,17 +138,6 @@ export function printDebugInfo(args: {
     for (const p of prompts) {
       console.log(`\n- ${p.id}`);
       console.log(formatPrompt(p));
-    }
-  }
-
-  // Bash commands
-  section(`bash commands (${bashCommands.length})`);
-  if (bashCommands.length === 0) {
-    console.log("\n  (none)");
-  } else {
-    for (const cmd of bashCommands) {
-      console.log(`\n- ${cmd.id}`);
-      console.log(formatBashCommand(cmd));
     }
   }
 

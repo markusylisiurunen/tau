@@ -10,7 +10,6 @@ import {
 export type CliOptions = {
   help: boolean;
   debug: boolean;
-  loadPath?: string;
   personaId?: string;
   reasoningOverride?: ReasoningEffort;
   riskLevel?: RiskLevel;
@@ -121,7 +120,6 @@ function parseValue(
 export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let help = false;
   let debug = false;
-  let loadPath: string | undefined;
   let personaId: string | undefined;
   let reasoningOverride: ReasoningEffort | undefined;
   let riskLevel: RiskLevel | undefined;
@@ -138,13 +136,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
 
     if (arg === "--debug") {
       debug = true;
-      continue;
-    }
-
-    if (arg === "--load" || arg === "-l" || arg.startsWith("--load=") || arg.startsWith("-l=")) {
-      const parsed = parseValue(arg, argv, i);
-      loadPath = parsed.value;
-      i = parsed.nextIndex;
       continue;
     }
 
@@ -189,7 +180,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   return {
     help,
     debug,
-    loadPath,
     personaId,
     reasoningOverride,
     riskLevel,
@@ -210,6 +200,9 @@ export function printHelp(personas: Persona[]): void {
       "usage:",
       "  tau [options]",
       "  tau rpc [options]",
+      "  tau serve [--host <host>] [--port <port>] [options]",
+      "  tau attach [--session <id> | --new --cwd <path> [execution options]] [--auth-token <token>] ws://host:port",
+      "  tau attach [--session <id> | --new --cwd <path> [execution options]] -- <command> [args...]",
       "  tau auth <subcommand>",
       "  tau usage [options]",
       "  tau install [options]",
@@ -220,7 +213,6 @@ export function printHelp(personas: Persona[]): void {
       "options:",
       "  --help                        show this help and exit.",
       "  --debug                       print debug info (personas, prompts, skills, system prompt) and exit.",
-      "  --load, -l <file>             load a checkpoint file.",
       `  --persona, -p <id>[:<level>]  start with a persona. available: ${personaList}.`,
       `                                optionally specify reasoning level. levels: ${reasoningList}.`,
       `                                if not specified, uses resolved config defaultPersona.`,
@@ -231,6 +223,8 @@ export function printHelp(personas: Persona[]): void {
       "",
       "subcommands:",
       "  rpc                           run headless stdio RPC mode (no TUI).",
+      "  serve                         host Tau sessions over WebSocket.",
+      "  attach                        run the TUI against a session-protocol transport.",
       "  auth                          authenticate/list/logout Codex OAuth accounts.",
       "  usage                         summarize usage logs.",
       "  install                       install starter prompts and skills.",
@@ -243,7 +237,10 @@ export function printHelp(personas: Persona[]): void {
       "  tau -p opus-4.8-coder",
       "  tau --persona gpt-5.4-chat:medium --risk read-write",
       "  tau -p gpt-5.4-coder:high -r read-write",
-      "  tau -l /tmp/tau-checkpoint-abc123/checkpoint.json",
+      "  tau serve --host 0.0.0.0 --port 8787 --risk read-only",
+      "  tau attach --new --cwd /repo ws://127.0.0.1:8787",
+      "  tau attach ws://127.0.0.1:8787",
+      "  tau attach --new --cwd /repo -- ssh vps 'tau rpc --risk read-only'",
       "",
       "notes:",
       "  use `tau auth login codex` to authenticate ChatGPT subscription credentials.",
@@ -251,7 +248,7 @@ export function printHelp(personas: Persona[]): void {
       "  use `tau usage` to view daily usage totals from ~/.config/tau/logs.",
       "  use `tau install` to install starter prompts and skills.",
       "  use `tau tool pdf-unpack <file.pdf>` to extract markdown and page image patches from a PDF.",
-      "  /diff uses Tau's built-in browser diff tool by default; config.diffTool overrides it.",
+      "  /diff opens the local diff review tool and delegates review work to the session host.",
       "  you can switch persona during a session with /persona:<id>.",
       "  insert prompt templates with /prompt:<id>.",
       "  you can change model risk level during a session with /risk:read-only or /risk:read-write.",
@@ -268,13 +265,11 @@ export function printDiffToolHelp(): void {
       "usage:",
       "  tau diff-tool [--help]",
       "",
-      "the built-in browser diff review demo tool used by /diff when config.diffTool is not set.",
-      "tau launches this automatically during an active diff review session.",
-      "it expects TAU_DIFF_* environment variables from Tau and is not meant to be launched directly.",
+      "the built-in browser diff review demo tool and reference implementation for the diff-review protocol.",
+      "it expects TAU_DIFF_* environment variables from a diff-review session and is primarily useful for protocol development.",
       "",
       "examples:",
       "  tau diff-tool --help",
-      "  /diff --staged    # launches tau diff-tool automatically unless diffTool is configured",
     ].join("\n"),
   );
 }

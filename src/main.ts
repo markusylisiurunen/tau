@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 import { readFileSync, writeSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import type { RuntimeConfigResult } from "./core/config/index.js";
 import type {
   AuthPromptFn,
-  BashCommand,
-  Checkpoint,
   CliOptions,
   Config,
   Persona,
@@ -22,7 +20,6 @@ import type {
 import {
   AsyncCliError,
   AuthStorage,
-  ChatRuntime,
   CliError,
   createDefaultConfigDeps,
   createDefaultCoreDeps,
@@ -32,7 +29,6 @@ import {
   loadConfig,
   loadRuntimeBootstrap,
   loadRuntimeConfig,
-  parseCheckpoint,
   parseCliArgs,
   parsePersonaString,
   printAsyncHelp,
@@ -41,7 +37,6 @@ import {
   printHelp,
   printInstallHelp,
   printUsageHelp,
-  resolveRuntimePromptBootstrap,
   runAsyncCommand,
   runInstallCommand,
   runListCommand,
@@ -50,6 +45,7 @@ import {
   runRpcServer,
   runToolCommand,
   runUsageCommand,
+  runWebSocketSessionServer,
   ToolCatalog,
   ToolCliError,
   UsageCliError,
@@ -61,13 +57,26 @@ import {
   DiffToolLaunchEnvironmentError,
   runBuiltInDiffToolCommand,
 } from "./diff_tool/index.js";
-import { ChatApp } from "./tui/index.js";
+import { CloudflareSandboxExecutionEnvironmentResolver } from "./execution/cloudflare_sandbox_execution_environment.js";
+import { CompositeExecutionEnvironmentResolver } from "./execution/execution_environment.js";
+import { FlySpriteExecutionEnvironmentResolver } from "./execution/fly_sprite_execution_environment.js";
+import { LocalExecutionEnvironmentResolver } from "./execution/local_execution_environment.js";
+import { LocalSessionHost } from "./host/local_session_host.js";
+import type {
+  SessionProtocolCreateParams,
+  SessionProtocolExecutionEnvironmentInput,
+} from "./protocol/session_protocol.js";
+import { createTauSdkClient } from "./sdk/client.js";
+import { FileSessionStore, getDefaultSessionStoreDirectory } from "./store/file_session_store.js";
+import { SessionChatApp } from "./tui/index.js";
 import { detectTerminalAppearance } from "./tui/terminal_appearance.js";
 
 const cwd = process.cwd();
 const configDeps = createDefaultConfigDeps();
 const argv = process.argv.slice(2);
 const isRpcSubcommand = argv[0] === "rpc";
+const isAttachSubcommand = argv[0] === "attach";
+const isServeSubcommand = argv[0] === "serve";
 const isDiffToolSubcommand = argv[0] === "diff-tool";
 
 const startupPlatformError = getStartupPlatformError(process.platform);
@@ -111,9 +120,353 @@ function printAuthHelp(): void {
   );
 }
 
+type AttachCliOptions = {
+  help: boolean;
+  sessionId?: string;
+  createNew: boolean;
+  cwd?: string;
+  executionKind?: SessionProtocolExecutionEnvironmentInput["kind"];
+  cloudflareBridgeId?: string;
+  cloudflareSandboxId?: string;
+  flyApiId?: string;
+  flySpriteName?: string;
+  target?: AttachTarget;
+  authToken?: string;
+};
+
+type AttachTarget =
+  | {
+      transport: "stdio";
+      command: string[];
+    }
+  | {
+      transport: "websocket";
+      url: string;
+    };
+
+type ServeCliOptions = {
+  help: boolean;
+  hostname: string;
+  port: number;
+  authToken?: string;
+  cliArgs: string[];
+};
+
+function parseAttachArgs(args: string[]): AttachCliOptions {
+  let help = false;
+  let sessionId: string | undefined;
+  let createNew = false;
+  let cwd: string | undefined;
+  let executionKind: SessionProtocolExecutionEnvironmentInput["kind"] | undefined;
+  let cloudflareBridgeId: string | undefined;
+  let cloudflareSandboxId: string | undefined;
+  let flyApiId: string | undefined;
+  let flySpriteName: string | undefined;
+  let authToken: string | undefined;
+  let target: AttachTarget | undefined;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg === "--") {
+      target = { transport: "stdio", command: args.slice(i + 1) };
+      break;
+    }
+    if (arg === "--help" || arg === "-h") {
+      help = true;
+      continue;
+    }
+    if (arg === "--session" || arg.startsWith("--session=")) {
+      const parsed = parseAttachValue(arg, args, i);
+      sessionId = parsed.value;
+      i = parsed.nextIndex;
+      continue;
+    }
+    if (arg === "--new") {
+      createNew = true;
+      continue;
+    }
+    if (arg === "--cwd" || arg.startsWith("--cwd=")) {
+      const parsed = parseAttachValue(arg, args, i);
+      cwd = parsed.value;
+      i = parsed.nextIndex;
+      continue;
+    }
+    if (arg === "--execution-kind" || arg.startsWith("--execution-kind=")) {
+      const parsed = parseAttachValue(arg, args, i);
+      if (
+        parsed.value !== "local" &&
+        parsed.value !== "cloudflare-sandbox" &&
+        parsed.value !== "fly-sprite"
+      ) {
+        throw new CliError("--execution-kind must be local, cloudflare-sandbox, or fly-sprite");
+      }
+      executionKind = parsed.value;
+      i = parsed.nextIndex;
+      continue;
+    }
+    if (arg === "--cloudflare-bridge" || arg.startsWith("--cloudflare-bridge=")) {
+      const parsed = parseAttachValue(arg, args, i);
+      cloudflareBridgeId = parsed.value;
+      executionKind ??= "cloudflare-sandbox";
+      i = parsed.nextIndex;
+      continue;
+    }
+    if (arg === "--cloudflare-sandbox" || arg.startsWith("--cloudflare-sandbox=")) {
+      const parsed = parseAttachValue(arg, args, i);
+      cloudflareSandboxId = parsed.value;
+      executionKind ??= "cloudflare-sandbox";
+      i = parsed.nextIndex;
+      continue;
+    }
+    if (arg === "--fly-api" || arg.startsWith("--fly-api=")) {
+      const parsed = parseAttachValue(arg, args, i);
+      flyApiId = parsed.value;
+      executionKind ??= "fly-sprite";
+      i = parsed.nextIndex;
+      continue;
+    }
+    if (arg === "--fly-sprite" || arg.startsWith("--fly-sprite=")) {
+      const parsed = parseAttachValue(arg, args, i);
+      flySpriteName = parsed.value;
+      executionKind ??= "fly-sprite";
+      i = parsed.nextIndex;
+      continue;
+    }
+    if (arg === "--auth-token" || arg.startsWith("--auth-token=")) {
+      const parsed = parseAttachValue(arg, args, i);
+      authToken = parsed.value;
+      i = parsed.nextIndex;
+      continue;
+    }
+    if (isWebSocketUrl(arg)) {
+      target = { transport: "websocket", url: arg };
+      if (i !== args.length - 1) {
+        throw new CliError("websocket attach target does not accept trailing arguments");
+      }
+      break;
+    }
+    throw new CliError(`unknown attach option: ${arg}`);
+  }
+
+  if (!help && !target) {
+    throw new CliError("missing attach target");
+  }
+
+  if (target?.transport === "stdio" && target.command.length === 0) {
+    throw new CliError("missing attach command after --");
+  }
+
+  if (sessionId !== undefined && createNew) {
+    throw new CliError("--session and --new cannot be used together");
+  }
+
+  if (!help && createNew && !cwd) {
+    throw new CliError("--new requires --cwd <absolute-path>");
+  }
+
+  if (!help && createNew && cwd && !isAbsolute(cwd)) {
+    throw new CliError("--new requires --cwd <absolute-path>");
+  }
+
+  if (!help && createNew) {
+    const kind = executionKind ?? "local";
+    if (kind === "cloudflare-sandbox" && (!cloudflareBridgeId || !cloudflareSandboxId)) {
+      throw new CliError(
+        "--new --execution-kind cloudflare-sandbox requires --cloudflare-bridge and --cloudflare-sandbox",
+      );
+    }
+    if (kind === "fly-sprite" && (!flyApiId || !flySpriteName)) {
+      throw new CliError("--new --execution-kind fly-sprite requires --fly-api and --fly-sprite");
+    }
+  }
+
+  return {
+    help,
+    sessionId,
+    createNew,
+    cwd,
+    executionKind,
+    cloudflareBridgeId,
+    cloudflareSandboxId,
+    flyApiId,
+    flySpriteName,
+    target,
+    authToken,
+  };
+}
+
+function parseServeArgs(args: string[]): ServeCliOptions {
+  let help = false;
+  let hostname = "127.0.0.1";
+  let port = 8787;
+  let authToken: string | undefined;
+  const cliArgs: string[] = [];
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg === "--help" || arg === "-h") {
+      help = true;
+      continue;
+    }
+    if (arg === "--host" || arg.startsWith("--host=")) {
+      const parsed = parseAttachValue(arg, args, i);
+      hostname = parsed.value;
+      i = parsed.nextIndex;
+      continue;
+    }
+    if (arg === "--port" || arg.startsWith("--port=")) {
+      const parsed = parseAttachValue(arg, args, i);
+      port = parsePort(parsed.value);
+      i = parsed.nextIndex;
+      continue;
+    }
+    if (arg === "--auth-token" || arg.startsWith("--auth-token=")) {
+      const parsed = parseAttachValue(arg, args, i);
+      authToken = parsed.value;
+      i = parsed.nextIndex;
+      continue;
+    }
+
+    cliArgs.push(arg);
+  }
+
+  return { help, hostname, port, authToken, cliArgs };
+}
+
+function parseAttachValue(
+  arg: string,
+  argv: string[],
+  index: number,
+): { value: string; nextIndex: number } {
+  const eqIndex = arg.indexOf("=");
+  if (eqIndex !== -1) {
+    const value = arg.slice(eqIndex + 1);
+    if (!value) {
+      throw new CliError(`missing value for ${arg.slice(0, eqIndex)}`);
+    }
+    return { value, nextIndex: index };
+  }
+
+  const next = argv[index + 1];
+  if (!next || next.startsWith("-")) {
+    throw new CliError(`missing value for ${arg}`);
+  }
+  return { value: next, nextIndex: index + 1 };
+}
+
+function buildAttachCreateInput(attach: AttachCliOptions): SessionProtocolCreateParams {
+  const cwd = attach.cwd;
+  if (!cwd) {
+    throw new CliError("--new requires --cwd <absolute-path>");
+  }
+
+  const kind = attach.executionKind ?? "local";
+  switch (kind) {
+    case "local":
+      return { executionEnvironment: { kind: "local", cwd } };
+    case "cloudflare-sandbox":
+      if (!attach.cloudflareBridgeId || !attach.cloudflareSandboxId) {
+        throw new CliError(
+          "--new --execution-kind cloudflare-sandbox requires --cloudflare-bridge and --cloudflare-sandbox",
+        );
+      }
+      return {
+        executionEnvironment: {
+          kind: "cloudflare-sandbox",
+          bridgeId: attach.cloudflareBridgeId,
+          sandboxId: attach.cloudflareSandboxId,
+          cwd,
+        },
+      };
+    case "fly-sprite":
+      if (!attach.flyApiId || !attach.flySpriteName) {
+        throw new CliError("--new --execution-kind fly-sprite requires --fly-api and --fly-sprite");
+      }
+      return {
+        executionEnvironment: {
+          kind: "fly-sprite",
+          apiId: attach.flyApiId,
+          spriteName: attach.flySpriteName,
+          cwd,
+        },
+      };
+  }
+}
+
+function printAttachHelp(): void {
+  console.log(
+    [
+      "tau attach - terminal TUI over a session protocol transport",
+      "",
+      "usage:",
+      "  tau attach [--session <id> | --new --cwd <path> [execution options]] [--auth-token <token>] ws://host:port",
+      "  tau attach [--session <id> | --new --cwd <path> [execution options]] -- <command> [args...]",
+      "",
+      "options:",
+      "  --session <id>                 attach to an existing hosted session.",
+      "  --new                          create and attach to a new hosted session.",
+      "  --cwd <path>                   absolute cwd for a new session's execution environment.",
+      "  --execution-kind <kind>        local, cloudflare-sandbox, or fly-sprite. default: local.",
+      "  --cloudflare-bridge <id>       configured Cloudflare Sandbox bridge id.",
+      "  --cloudflare-sandbox <id>      already-provisioned Cloudflare sandbox id.",
+      "  --fly-api <id>                 configured Fly Sprites API id.",
+      "  --fly-sprite <name>            already-provisioned Fly Sprite name.",
+      "  --auth-token <token>           token for websocket servers started with --auth-token.",
+      "  --help, -h                     show this help and exit.",
+      "",
+      "examples:",
+      "  tau attach ws://127.0.0.1:8787",
+      "  tau attach --new --cwd /srv/workspaces/repo ws://127.0.0.1:8787",
+      "  tau attach --new --execution-kind cloudflare-sandbox --cloudflare-bridge default --cloudflare-sandbox sandbox-1 --cwd /workspace/repo ws://127.0.0.1:8787",
+      "  tau attach --new --execution-kind fly-sprite --fly-api default --fly-sprite sprite-1 --cwd /home/sprite/repo ws://127.0.0.1:8787",
+      "  tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 --auth-token $TAU_WS_AUTH_TOKEN ws://vps:8787",
+      "  tau attach -- tau rpc --risk read-only",
+      "  tau attach --new --cwd /repo -- tau rpc --risk read-only",
+      "  tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /repo && tau rpc --risk read-only'",
+      "",
+      "without --session or --new, attach lists hosted sessions and prompts for a selection.",
+      "stdio commands and websocket servers both speak Tau's session protocol.",
+    ].join("\n"),
+  );
+}
+
+function printServeHelp(): void {
+  console.log(
+    [
+      "tau serve - host Tau sessions over WebSocket",
+      "",
+      "usage:",
+      "  tau serve [--host <host>] [--port <port>] [--auth-token <token>] [options]",
+      "",
+      "options:",
+      "  --host <host>        bind hostname or address. default: 127.0.0.1",
+      "  --port <port>        bind TCP port. default: 8787",
+      "  --auth-token <token> require tau attach / SDK websocket clients to provide this token.",
+      "  --help, -h           show this help and exit.",
+      "",
+      "tau session options such as --risk and --persona are accepted too.",
+      "",
+      "examples:",
+      "  tau serve --risk read-only",
+      "  tau serve --host 0.0.0.0 --port 8787 --auth-token $TAU_WS_AUTH_TOKEN --risk read-only",
+    ].join("\n"),
+  );
+}
+
+function isWebSocketUrl(value: string): boolean {
+  return value.startsWith("ws://") || value.startsWith("wss://");
+}
+
+function parsePort(value: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new CliError(`invalid port: ${value}`);
+  }
+  return port;
+}
+
 // Load configuration + content from file
 let config: Config;
-let bashCommands: BashCommand[] = [];
 
 async function readPipedStdin(): Promise<string | undefined> {
   if (process.stdin.isTTY) return undefined;
@@ -143,43 +496,105 @@ function omitTuiOnlyTools(persona: Persona): Persona {
   };
 }
 
-async function runRpcMode(options: {
+async function resolveHostedSessionBootstrap(options: {
+  cli: CliOptions;
+  runtime: RuntimeConfigResult;
+  cwd: string;
+}): Promise<{
+  persona: Persona;
+  riskLevel: RiskLevel;
+  discoveredSkills: Skill[];
+  personas: Persona[];
+  prompts: RuntimeConfigResult["prompts"];
+  config: Config;
+}> {
+  const runtime = options.runtime;
+  if (runtime.personas.length === 0) {
+    throw new Error(
+      `no personas available for execution environment cwd '${options.cwd}'. add a custom persona or enable built-ins.`,
+    );
+  }
+
+  let personaId = options.cli.personaId;
+  let reasoningOverride = options.cli.reasoningOverride;
+  if (!personaId && runtime.config.defaultPersona) {
+    const parsedDefaultPersona = parsePersonaString(
+      runtime.config.defaultPersona,
+      runtime.personas,
+    );
+    personaId = parsedDefaultPersona.personaId;
+    if (reasoningOverride === undefined && parsedDefaultPersona.reasoning !== undefined) {
+      reasoningOverride = parsedDefaultPersona.reasoning;
+    }
+  }
+
+  const personaBase = personaId
+    ? runtime.personas.find((persona) => persona.id === personaId)
+    : runtime.personas[0];
+  if (!personaBase) {
+    throw new Error(
+      `persona '${personaId}' is not available for execution environment cwd '${options.cwd}'`,
+    );
+  }
+
+  const persona = omitTuiOnlyTools(clonePersonaForSession(personaBase));
+  if (reasoningOverride !== undefined) {
+    persona.settings.reasoning = reasoningOverride;
+  }
+
+  return {
+    persona,
+    riskLevel: options.cli.riskLevel ?? runtime.config.defaultRisk ?? "read-only",
+    discoveredSkills: runtime.skills,
+    personas: runtime.personas.map(omitTuiOnlyTools),
+    prompts: runtime.prompts,
+    config: runtime.config,
+  };
+}
+
+function createLocalSessionHost(options: {
   cli: CliOptions;
   config: Config;
   persona: Persona;
   riskLevel: RiskLevel;
   skills: Skill[];
-  history?: Checkpoint["history"];
-}): Promise<void> {
+}): LocalSessionHost {
   const deps = createDefaultCoreDeps();
   const persona = omitTuiOnlyTools(options.persona);
-  const runtimeCwd = deps.env.cwd();
   const home = deps.env.home() || process.env.HOME || homedir();
-  const bootstrap = resolveRuntimePromptBootstrap({
-    persona,
-    discoveredSkills: options.skills,
-    cwd: runtimeCwd,
+  const toolBackend = createLocalToolExecutionBackend();
+  const localExecutionEnvironmentResolver = new LocalExecutionEnvironmentResolver({
     home,
-    includeAgentContext: !options.cli.noAgentContextFiles,
     readFile: (path) => readFileSync(path, "utf-8"),
+    toolBackend,
+  });
+  const executionEnvironmentResolver = new CompositeExecutionEnvironmentResolver({
+    local: localExecutionEnvironmentResolver,
+    ...(options.config.cloudflareSandbox?.bridges
+      ? {
+          "cloudflare-sandbox": new CloudflareSandboxExecutionEnvironmentResolver({
+            bridges: options.config.cloudflareSandbox.bridges,
+          }),
+        }
+      : {}),
+    ...(options.config.flySprites?.apis
+      ? {
+          "fly-sprite": new FlySpriteExecutionEnvironmentResolver({
+            apis: options.config.flySprites.apis,
+          }),
+        }
+      : {}),
   });
 
-  if (bootstrap.warnings.length > 0) {
-    // eslint-disable-next-line no-console
-    console.error("config warnings:");
-    for (const warning of bootstrap.warnings) {
-      // eslint-disable-next-line no-console
-      console.error(`- ${warning}`);
-    }
-    // eslint-disable-next-line no-console
-    console.error("");
-  }
-
-  const runtime = ChatRuntime.create({
+  return new LocalSessionHost({
+    store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
     persona,
     riskLevel: options.riskLevel,
-    toolRegistry: ToolCatalog.createRegistry(createLocalToolExecutionBackend()),
-    promptContext: bootstrap.promptContext,
+    discoveredSkills: options.skills,
+    personas: [persona],
+    prompts: [],
+    executionEnvironmentResolver,
+    includeAgentContext: !options.cli.noAgentContextFiles,
     environment: {
       now: () => deps.clock.now(),
       platform: () => deps.env.platform(),
@@ -187,11 +602,26 @@ async function runRpcMode(options: {
     },
     config: options.config,
     deps,
+    resolveSessionBootstrap: async ({ executionEnvironment }) => {
+      const snapshot = executionEnvironment.snapshot();
+      const runtime = await executionEnvironment.resolveRuntimeConfig();
+      return await resolveHostedSessionBootstrap({
+        cli: options.cli,
+        runtime,
+        cwd: snapshot.cwd,
+      });
+    },
   });
+}
 
-  for (const message of options.history ?? []) {
-    runtime.session.addMessage(message);
-  }
+async function runRpcMode(options: {
+  cli: CliOptions;
+  config: Config;
+  persona: Persona;
+  riskLevel: RiskLevel;
+  skills: Skill[];
+}): Promise<void> {
+  const sessionHost = createLocalSessionHost(options);
 
   const abortController = new AbortController();
   const requestShutdown = () => {
@@ -208,7 +638,7 @@ async function runRpcMode(options: {
 
   try {
     await runRpcServer({
-      runtime,
+      host: sessionHost,
       input: process.stdin,
       output: process.stdout,
       signal: abortController.signal,
@@ -321,6 +751,7 @@ if (argv[0] === "async") {
       cwd,
       env: process.env,
       config: asyncConfig,
+      createSessionClient: createTauSdkClient,
     });
     process.exit(0);
   } catch (err) {
@@ -383,7 +814,7 @@ if (isDiffToolSubcommand) {
   } catch (err) {
     if (err instanceof DiffToolLaunchEnvironmentError) {
       // eslint-disable-next-line no-console
-      console.error("tau diff-tool must be launched by Tau during /diff.");
+      console.error("tau diff-tool must be launched with a Tau diff-review session environment.");
       // eslint-disable-next-line no-console
       console.error(err.message);
       // eslint-disable-next-line no-console
@@ -406,7 +837,6 @@ try {
   prompts = runtime.prompts;
   skills = runtime.skills;
   themes = runtime.themes;
-  bashCommands = runtime.bashCommands;
   if (runtime.warnings.length > 0) {
     // eslint-disable-next-line no-console
     console.error("config warnings:");
@@ -424,7 +854,6 @@ try {
 
   runtimeBootstrap = loadRuntimeBootstrap(cwd, configDeps);
   config = runtimeBootstrap.config;
-  bashCommands = config.bashCommands ?? [];
 
   const { virtualBundle } = runtimeBootstrap;
   const hasBuiltins =
@@ -446,7 +875,115 @@ try {
   themes = virtualBundle.themes;
 }
 
-const cliArgv = isRpcSubcommand ? argv.slice(1) : argv;
+if (isAttachSubcommand) {
+  let attach: AttachCliOptions;
+  try {
+    attach = parseAttachArgs(argv.slice(1));
+  } catch (err) {
+    if (err instanceof CliError) {
+      // eslint-disable-next-line no-console
+      console.error(err.message);
+      // eslint-disable-next-line no-console
+      console.error("");
+      printAttachHelp();
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  if (attach.help) {
+    printAttachHelp();
+    process.exit(0);
+  }
+
+  if (!attach.target) {
+    throw new Error("missing attach target");
+  }
+
+  const terminalAppearance = await detectTerminalAppearance();
+  const defaultDiffTool = createBuiltInDiffToolConfig({
+    nodeExecutablePath: process.execPath,
+    cliEntryPath: fileURLToPath(import.meta.url),
+    codeTheme: config.builtInDiffTool?.codeTheme,
+  });
+  const sessionSelection = attach.sessionId
+    ? ({ mode: "attach", sessionId: attach.sessionId } as const)
+    : attach.createNew
+      ? ({
+          mode: "create",
+          input: buildAttachCreateInput(attach),
+        } as const)
+      : ({ mode: "select" } as const);
+  const app =
+    attach.target.transport === "stdio"
+      ? await SessionChatApp.connect({
+          transport: "stdio",
+          command: attach.target.command[0]!,
+          args: attach.target.command.slice(1),
+          sessionSelection,
+          terminalAppearance,
+          themeId: config.defaultTheme,
+          themes,
+          config,
+          defaultDiffTool,
+        })
+      : await SessionChatApp.connect({
+          transport: "websocket",
+          url: attach.target.url,
+          authToken: attach.authToken ?? process.env.TAU_WS_AUTH_TOKEN,
+          sessionSelection,
+          terminalAppearance,
+          themeId: config.defaultTheme,
+          themes,
+          config,
+          defaultDiffTool,
+        });
+
+  let isShuttingDown = false;
+  const shutdown = async (code = 0) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    await app.stop();
+    process.exit(code);
+  };
+
+  process.on("SIGINT", () => void shutdown(0));
+  process.on("SIGTERM", () => void shutdown(0));
+
+  try {
+    await app.start();
+    await new Promise<void>(() => undefined);
+  } catch (err) {
+    await app.stop();
+    // eslint-disable-next-line no-console
+    console.error(err);
+    process.exit(1);
+  }
+}
+
+let serve: ServeCliOptions | undefined;
+if (isServeSubcommand) {
+  try {
+    serve = parseServeArgs(argv.slice(1));
+  } catch (err) {
+    if (err instanceof CliError) {
+      // eslint-disable-next-line no-console
+      console.error(err.message);
+      // eslint-disable-next-line no-console
+      console.error("");
+      printServeHelp();
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  if (serve.help) {
+    printServeHelp();
+    process.exit(0);
+  }
+}
+
+const cliArgv = isRpcSubcommand ? argv.slice(1) : isServeSubcommand ? serve!.cliArgs : argv;
 
 let cli: CliOptions;
 try {
@@ -474,34 +1011,10 @@ if (isRpcSubcommand && cli.caffeinated) {
   process.exit(1);
 }
 
-let checkpointPersonaId: string | undefined;
-let checkpointReasoning: ReasoningEffort | undefined;
-let checkpointRiskLevel: Checkpoint["riskLevel"] | undefined;
-let checkpointHistory: Checkpoint["history"] | undefined;
-
-if (cli.loadPath) {
-  const checkpointPath = resolve(cwd, cli.loadPath);
-  let checkpoint: Checkpoint;
-  try {
-    const raw = await readFile(checkpointPath, "utf8");
-    checkpoint = parseCheckpoint(raw);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`failed to load checkpoint: ${(err as Error).message}`);
-    process.exit(1);
-  }
-
-  const parsedPersona = parsePersonaString(checkpoint.personaId, personas);
-  checkpointPersonaId = parsedPersona.personaId;
-  if (!checkpointPersonaId) {
-    // eslint-disable-next-line no-console
-    console.error(
-      `checkpoint persona '${checkpoint.personaId}' not found. falling back to default persona.`,
-    );
-  }
-  checkpointReasoning = checkpoint.reasoning;
-  checkpointRiskLevel = checkpoint.riskLevel;
-  checkpointHistory = checkpoint.history;
+if (isServeSubcommand && cli.caffeinated) {
+  // eslint-disable-next-line no-console
+  console.error("--caffeinated is only supported in TUI mode.");
+  process.exit(1);
 }
 
 let initialPersonaId: string | undefined;
@@ -509,11 +1022,6 @@ let reasoningOverride: ReasoningEffort | undefined = cli.reasoningOverride;
 
 if (cli.personaId) {
   initialPersonaId = cli.personaId;
-} else if (checkpointPersonaId) {
-  initialPersonaId = checkpointPersonaId;
-  if (reasoningOverride === undefined && checkpointReasoning !== undefined) {
-    reasoningOverride = checkpointReasoning;
-  }
 } else if (config.defaultPersona) {
   const parsedDefaultPersona = parsePersonaString(config.defaultPersona, personas);
   initialPersonaId = parsedDefaultPersona.personaId;
@@ -526,7 +1034,7 @@ if (cli.personaId) {
   }
 }
 
-const initialRiskLevel = cli.riskLevel ?? checkpointRiskLevel ?? config.defaultRisk;
+const initialRiskLevel = cli.riskLevel ?? config.defaultRisk;
 
 if (cli.debug) {
   let debugPersona: Persona | undefined;
@@ -547,7 +1055,6 @@ if (cli.debug) {
   printDebugInfo({
     personas,
     prompts,
-    bashCommands,
     skills,
     virtualBundle,
     selectedPersona: debugPersona,
@@ -577,6 +1084,49 @@ if (reasoningOverride !== undefined) {
 
 const effectiveRiskLevel: RiskLevel = initialRiskLevel ?? "read-only";
 
+if (isServeSubcommand) {
+  const sessionHost = createLocalSessionHost({
+    cli,
+    config,
+    persona: initialPersona,
+    riskLevel: effectiveRiskLevel,
+    skills,
+  });
+
+  const abortController = new AbortController();
+  const requestShutdown = () => {
+    if (!abortController.signal.aborted) {
+      abortController.abort();
+    }
+  };
+  const onSigInt = () => requestShutdown();
+  const onSigTerm = () => requestShutdown();
+  process.on("SIGINT", onSigInt);
+  process.on("SIGTERM", onSigTerm);
+
+  try {
+    await runWebSocketSessionServer({
+      host: sessionHost,
+      hostname: serve!.hostname,
+      port: serve!.port,
+      authToken: serve!.authToken ?? process.env.TAU_WS_AUTH_TOKEN,
+      signal: abortController.signal,
+      onListening: (address) => {
+        // eslint-disable-next-line no-console
+        console.error(`tau websocket server listening on ws://${address.hostname}:${address.port}`);
+      },
+    });
+    process.exit(0);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error((err as Error).message);
+    process.exit(1);
+  } finally {
+    process.off("SIGINT", onSigInt);
+    process.off("SIGTERM", onSigTerm);
+  }
+}
+
 if (isRpcSubcommand) {
   try {
     await runRpcMode({
@@ -585,7 +1135,6 @@ if (isRpcSubcommand) {
       persona: initialPersona,
       riskLevel: effectiveRiskLevel,
       skills,
-      history: checkpointHistory,
     });
     process.exit(0);
   } catch (err) {
@@ -604,19 +1153,30 @@ const defaultDiffTool = createBuiltInDiffToolConfig({
   codeTheme: config.builtInDiffTool?.codeTheme,
 });
 
-const app = new ChatApp({
-  personas,
-  prompts,
-  skills,
-  themes,
-  bashCommands,
-  terminalAppearance,
-  initialPersonaId,
-  initialReasoningOverride: reasoningOverride,
-  initialUserMessage,
-  initialRiskLevel: effectiveRiskLevel,
-  initialHistory: checkpointHistory,
+const sessionClient = await createTauSdkClient({
+  cwd,
+  persona: initialPersonaId,
+  reasoning: reasoningOverride,
+  riskLevel: effectiveRiskLevel,
   noAgentContextFiles: cli.noAgentContextFiles,
+  initialize: { client: { name: "tau-tui", version: "1" } },
+});
+const app = await SessionChatApp.open({
+  client: sessionClient,
+  targetLabel: "in-process",
+  sessionSelection: {
+    mode: "create",
+    input: {
+      executionEnvironment: { kind: "local", cwd },
+      ...(initialPersonaId !== undefined ? { personaId: initialPersonaId } : {}),
+      riskLevel: effectiveRiskLevel,
+      ...(reasoningOverride !== undefined ? { reasoning: reasoningOverride } : {}),
+    },
+  },
+  themes,
+  terminalAppearance,
+  themeId: config.defaultTheme,
+  initialUserMessage,
   config,
   defaultDiffTool,
   caffeinated: cli.caffeinated,

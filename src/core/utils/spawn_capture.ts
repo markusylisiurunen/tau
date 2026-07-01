@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { truncateToBytesFromEnd } from "./truncate.js";
 
-export type SpawnCaptureOutputMode = "split" | "combined";
+export type SpawnCaptureOutputMode = "split" | "combined" | "combined-and-split";
 export type SpawnCaptureStrategy = "head" | "tail";
 
 export type SpawnCaptureResult = {
@@ -94,8 +94,8 @@ export async function spawnWithCapture(
       child.stdin.end(input);
     }
 
-    const captureCombined = captureOutput === "combined";
-    const captureSplit = captureOutput === "split";
+    const captureCombined = captureOutput === "combined" || captureOutput === "combined-and-split";
+    const captureSplit = captureOutput === "split" || captureOutput === "combined-and-split";
 
     const stdoutBuffer: CaptureBuffer = { text: "", bytes: 0 };
     const stderrBuffer: CaptureBuffer = { text: "", bytes: 0 };

@@ -1,12 +1,102 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { CORE_EVENT_VERSION } from "../dist/core/events/types.js";
-import { RPC_ERROR_CODES, RPC_PROTOCOL_VERSION } from "../dist/core/modes/rpc_protocol.js";
 import { RpcServer, runRpcServer } from "../dist/core/modes/rpc_server.js";
+import {
+  SESSION_PROTOCOL_ERROR_CODES,
+  SESSION_PROTOCOL_VERSION,
+} from "../dist/protocol/session_protocol.js";
+import {
+  createProtocolBootstrap,
+  createProtocolExecResult,
+  createProtocolSnapshot,
+} from "./helpers/session_protocol_fixtures.js";
+
+const bootstrap = createProtocolBootstrap();
+
+const localCreateParams = { executionEnvironment: { kind: "local", cwd: "/repo" } };
+
+function createNoticeDelta(sessionId, revision, text) {
+  return {
+    version: SESSION_PROTOCOL_VERSION,
+    type: "session.delta",
+    sessionId,
+    fromRevision: revision,
+    toRevision: revision + 1,
+    reason: "notice",
+    delta: {
+      type: "snapshot.patch",
+      changes: [
+        {
+          type: "timeline.append",
+          item: {
+            type: "notice",
+            id: `notice-${revision}-${text}`,
+            notice: { severity: "info", text, timestamp: revision },
+          },
+        },
+      ],
+    },
+  };
+}
+
+function createAgentDelta(sessionId, revision, event, originMessageId) {
+  return {
+    version: SESSION_PROTOCOL_VERSION,
+    type: "session.delta",
+    sessionId,
+    fromRevision: revision,
+    toRevision: revision + 1,
+    reason: "agent-run",
+    delta: {
+      type: "snapshot.patch",
+      changes: [
+        {
+          type: "agent.set",
+          agent: {
+            id: event.id,
+            name: "default",
+            title: event.title ?? event.id,
+            status: event.type === "finished" ? "succeeded" : "running",
+            originMessageId,
+            costTotal: event.costTotal ?? 0,
+            turns: event.turns ?? 0,
+            toolCalls: event.toolCalls ?? 0,
+            usage: event.usage ?? {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              contextWindowUsageTokens: 0,
+              contextWindow: 200000,
+            },
+            startedAt: revision,
+            abortRequested: false,
+            ...(event.text !== undefined ? { progress: event.text } : {}),
+          },
+        },
+      ],
+    },
+  };
+}
+
+function createResetDelta(sessionId, fromRevision, snapshot, reason = "configuration") {
+  return {
+    version: SESSION_PROTOCOL_VERSION,
+    type: "session.delta",
+    sessionId,
+    fromRevision,
+    toRevision: snapshot.revision,
+    reason,
+    delta: {
+      type: "snapshot.reset",
+      snapshot,
+    },
+  };
+}
 
 function request(id, method, params) {
   return JSON.stringify({
-    version: RPC_PROTOCOL_VERSION,
+    version: SESSION_PROTOCOL_VERSION,
     type: "request",
     id,
     method,
@@ -16,107 +106,244 @@ function request(id, method, params) {
 
 function createHarness(options = {}) {
   const lines = [];
-  const eventHandlers = new Set();
-  const historyEntries = [];
-  let sessionId = "session-1";
-  let nextSessionId = 2;
-  let running = false;
-  let nextId = 1;
-  let releaseTurn;
-  let pendingTurnResult = { aborted: false };
-  let pendingTurn = null;
+  const sessions = new Map();
+  let nextSessionId = 1;
 
-  const emitCoreEvent = (event) => {
-    for (const handler of eventHandlers) {
-      handler(event);
-    }
-  };
+  const createHostedSession = () => {
+    const deltaHandlers = new Set();
+    const historyEntries = [];
+    const snapshotDelays = [...(options.snapshotDelays ?? [])];
+    let sessionId = `session-${nextSessionId++}`;
+    let running = false;
+    let nextHistoryId = 1;
+    let releaseTurn;
+    let pendingTurnResult = { aborted: false };
+    let pendingTurn = null;
+    let riskLevel = bootstrap.riskLevel;
 
-  const runtime = {
-    get isTurnRunning() {
-      return running;
-    },
-    session: {
-      addUserText(text, addOptions) {
-        const id = addOptions?.historyEntryId ?? `history-${nextId++}`;
-        historyEntries.push({
-          id,
-          message: {
-            role: "user",
-            content: [{ type: "text", text }],
-            timestamp: Date.now(),
-          },
-        });
-        return id;
-      },
-      onEvent(handler) {
-        eventHandlers.add(handler);
-        return () => eventHandlers.delete(handler);
-      },
-      reset() {
-        historyEntries.length = 0;
-        sessionId = `session-${nextSessionId++}`;
-      },
-      dispose() {},
-      get history() {
-        return historyEntries.map((entry) => entry.message);
-      },
-      get historyEntries() {
-        return historyEntries;
+    const emitDelta = (delta) => {
+      for (const handler of deltaHandlers) {
+        handler(delta);
+      }
+    };
+
+    const record = async (recordOptions) => {
+      const userHistoryEntryId = hostedSession.session.addUserText(
+        recordOptions.text,
+        recordOptions.historyEntryId ? { historyEntryId: recordOptions.historyEntryId } : undefined,
+      );
+      return {
+        snapshot: await hostedSession.snapshot(),
+        userHistoryEntryId,
+      };
+    };
+
+    const hostedSession = {
+      get isTurnRunning() {
+        return running;
       },
       get sessionId() {
         return sessionId;
       },
-    },
-    async runTurn() {
-      running = true;
-      try {
-        if (options.runTurn) {
-          return await options.runTurn();
+      onDelta(handler) {
+        deltaHandlers.add(handler);
+        return () => deltaHandlers.delete(handler);
+      },
+      onEphemeral() {
+        return () => {};
+      },
+      async snapshot() {
+        const snapshotDelay = snapshotDelays.shift() ?? 0;
+        if (typeof snapshotDelay === "function") {
+          await snapshotDelay();
+        } else if (snapshotDelay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, snapshotDelay));
         }
 
-        emitCoreEvent({ type: "notice", severity: "info", text: "streaming" });
-        pendingTurn = new Promise((resolve) => {
-          releaseTurn = resolve;
+        const snapshot = createProtocolSnapshot({
+          sessionId,
+          revision: historyEntries.length + 1,
+          lifecycle: running ? "running" : "idle",
+          bootstrap: { ...bootstrap, riskLevel },
+          executionEnvironment: { kind: "local", cwd: "/repo", home: "/home/user" },
+          historyEntries: historyEntries.map((entry) => ({
+            id: entry.id,
+            message: entry.message,
+          })),
         });
-        await pendingTurn;
-        emitCoreEvent({ type: "notice", severity: "info", text: "finished" });
-        return pendingTurnResult;
-      } finally {
-        running = false;
-        pendingTurn = null;
-        pendingTurnResult = { aborted: false };
-      }
+        options.onSnapshot?.(snapshot);
+        return snapshot;
+      },
+      session: {
+        addUserText(text, addOptions) {
+          const id = addOptions?.historyEntryId ?? `history-${nextHistoryId++}`;
+          historyEntries.push({
+            id,
+            message: {
+              role: "user",
+              content: [{ type: "text", text }],
+              timestamp: Date.now(),
+            },
+          });
+          return id;
+        },
+        reset() {
+          const previousSessionId = sessionId;
+          historyEntries.length = 0;
+          sessionId = `session-${nextSessionId++}`;
+          sessions.delete(previousSessionId);
+          sessions.set(sessionId, hostedSession);
+        },
+        dispose() {},
+        get historyEntries() {
+          return historyEntries;
+        },
+        get sessionId() {
+          return sessionId;
+        },
+      },
+      async record(recordOptions) {
+        if (options.record) {
+          return await options.record(recordOptions, record);
+        }
+        return await record(recordOptions);
+      },
+      async runTurn() {
+        running = true;
+        try {
+          if (options.runTurn) {
+            return await options.runTurn();
+          }
+
+          emitDelta(createNoticeDelta(sessionId, historyEntries.length + 1, "streaming"));
+          pendingTurn = new Promise((resolve) => {
+            releaseTurn = resolve;
+          });
+          await pendingTurn;
+          if (options.afterTurnRelease) {
+            await options.afterTurnRelease();
+          }
+          emitDelta(createNoticeDelta(sessionId, historyEntries.length + 2, "finished"));
+          return pendingTurnResult;
+        } finally {
+          running = false;
+          pendingTurn = null;
+          pendingTurnResult = { aborted: false };
+        }
+      },
+      requestTurnBoundaryStop: vi.fn(() => running),
+      async exec(runOptions) {
+        if (options.exec) {
+          return await options.exec(runOptions);
+        }
+        return createProtocolExecResult({
+          command: runOptions.command,
+        });
+      },
+      async setRiskLevel(nextRiskLevel) {
+        riskLevel = nextRiskLevel;
+        const snapshot = createProtocolSnapshot({
+          sessionId,
+          revision: historyEntries.length + 2,
+          lifecycle: running ? "running" : "idle",
+          bootstrap: { ...bootstrap, riskLevel },
+          executionEnvironment: { kind: "local", cwd: "/repo", home: "/home/user" },
+          historyEntries: historyEntries.map((entry) => ({
+            id: entry.id,
+            message: entry.message,
+          })),
+        });
+        emitDelta(createResetDelta(sessionId, historyEntries.length + 1, snapshot));
+        return snapshot;
+      },
+      async compact(compactOptions) {
+        const compactionMessage = `compacted with ${compactOptions.mode}`;
+        historyEntries.splice(0, historyEntries.length, {
+          id: `history-${nextHistoryId++}`,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: compactionMessage }],
+            timestamp: Date.now(),
+          },
+        });
+        return {
+          snapshot: await hostedSession.snapshot(),
+          compactionMessage,
+          includedLastAssistant: compactOptions.mode === "summary-and-last",
+        };
+      },
+      async pruneToolResults(pruneOptions) {
+        return {
+          snapshot: await hostedSession.snapshot(),
+          message: `pruned with ${pruneOptions.strategy}`,
+          noop: false,
+          bashResultsPruned: 1,
+          editCallsPruned: 2,
+          editResultsPruned: 1,
+          bytesPruned: 1024,
+        };
+      },
+      interruptTurn() {
+        if (!running || !releaseTurn) {
+          return false;
+        }
+        pendingTurnResult = { aborted: true };
+        releaseTurn();
+        return true;
+      },
+      releaseTurn: () => releaseTurn?.(),
+      canReleaseTurn: () => Boolean(releaseTurn),
+      emitNotice: (text, revision = historyEntries.length + 1) => {
+        emitDelta(createNoticeDelta(sessionId, revision, text));
+      },
+      emitSubagent: (event, originHistoryEntryId) => {
+        emitDelta(
+          createAgentDelta(sessionId, historyEntries.length + 1, event, originHistoryEntryId),
+        );
+      },
+    };
+
+    sessions.set(sessionId, hostedSession);
+    return hostedSession;
+  };
+
+  const seededSession = options.precreate === false ? undefined : createHostedSession();
+  const hostShutdown = vi.fn(() => {
+    sessions.clear();
+  });
+  const host = {
+    async createSession() {
+      return createHostedSession();
     },
-    requestTurnBoundaryStop: vi.fn(() => running),
-    interruptTurn() {
-      if (!running || !releaseTurn) {
-        return false;
-      }
-      pendingTurnResult = { aborted: true };
-      releaseTurn();
-      return true;
+    async observeSession(sessionId) {
+      return sessions.get(sessionId);
+    },
+    async listSessions() {
+      return [...sessions.values()].map((session) => ({
+        sessionId: session.sessionId,
+        lifecycle: session.isTurnRunning ? "running" : "idle",
+      }));
+    },
+    async shutdown() {
+      hostShutdown();
     },
   };
 
   const server = new RpcServer({
-    runtime,
+    host,
     send: (line) => lines.push(JSON.parse(line)),
-    emitReadyOnStart: true,
   });
 
   return {
     lines,
     server,
-    runtime,
-    releaseTurn: () => releaseTurn?.(),
-    emitSubagent: (event, originHistoryEntryId) => {
-      emitCoreEvent({
-        type: "subagent_ui",
-        event,
-        originHistoryEntryId,
-      });
-    },
+    host,
+    hostShutdown,
+    seededSession,
+    releaseTurn: () => seededSession?.releaseTurn(),
+    emitNotice: (text, revision) => seededSession?.emitNotice(text, revision),
+    emitSubagent: (event, originHistoryEntryId) =>
+      seededSession?.emitSubagent(event, originHistoryEntryId),
   };
 }
 
@@ -138,18 +365,248 @@ function parseNdjson(text) {
     .map((line) => JSON.parse(line));
 }
 
+function deltaHasNotice(line, text) {
+  return (
+    line.type === "session.delta" &&
+    line.delta?.type === "snapshot.patch" &&
+    line.delta.changes.some(
+      (change) => change.type === "timeline.append" && change.item.notice?.text === text,
+    )
+  );
+}
+
+function deltaHasAgent(line, id, progress) {
+  return (
+    line.type === "session.delta" &&
+    line.delta?.type === "snapshot.patch" &&
+    line.delta.changes.some(
+      (change) =>
+        change.type === "agent.set" &&
+        change.agent.id === id &&
+        (progress === undefined || change.agent.progress === progress),
+    )
+  );
+}
+
+function snapshotHasUserText(snapshot, text) {
+  return snapshot.messages.some(
+    (entry) =>
+      entry.message.role === "user" &&
+      entry.message.content.some((content) => content.type === "text" && content.text === text),
+  );
+}
+
 describe("rpc_server", () => {
+  it("starts without creating an implicit session", async () => {
+    const harness = createHarness({ precreate: false });
+
+    expect(harness.lines[0]).toEqual(
+      expect.objectContaining({
+        type: "ready",
+      }),
+    );
+    expect(harness.lines[0]).not.toHaveProperty("sessionId");
+
+    await harness.server.handleLine(request("list", "session.list", {}));
+    const list = harness.lines.find((line) => line.type === "response" && line.id === "list");
+    expect(list.result).toEqual({ sessions: [] });
+  });
+
+  it("creates additional sessions and routes requests by session id", async () => {
+    const harness = createHarness();
+
+    await harness.server.handleLine(request("create", "session.create", localCreateParams));
+    const created = harness.lines.find((line) => line.type === "response" && line.id === "create");
+    expect(created).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          sessionId: "session-2",
+          lifecycle: "idle",
+        }),
+      }),
+    );
+
+    await harness.server.handleLine(request("list", "session.list", {}));
+    const list = harness.lines.find((line) => line.type === "response" && line.id === "list");
+    expect(list.result).toEqual({
+      sessions: [
+        { sessionId: "session-1", lifecycle: "idle" },
+        { sessionId: "session-2", lifecycle: "idle" },
+      ],
+    });
+
+    await harness.server.handleLine(
+      request("bash-created", "session.exec", {
+        sessionId: "session-2",
+        command: "pwd",
+      }),
+    );
+    const bash = harness.lines.find(
+      (line) => line.type === "response" && line.id === "bash-created",
+    );
+    expect(bash).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: { output: "/repo\n", stdout: "/repo\n", stderr: "", exitCode: 0, truncated: false },
+      }),
+    );
+
+    const submit = harness.server.handleLine(
+      request("submit-created", "session.submit", {
+        sessionId: "session-2",
+        text: "created session turn",
+      }),
+    );
+    await waitFor(() =>
+      harness.lines.some(
+        (line) =>
+          line.type === "session.delta" &&
+          line.sessionId === "session-2" &&
+          line.delta?.changes?.some(
+            (change) =>
+              change.type === "timeline.append" && change.item.notice?.text === "streaming",
+          ),
+      ),
+    );
+    const createdSubmitEvent = harness.lines.find(
+      (line) =>
+        line.type === "session.delta" &&
+        line.sessionId === "session-2" &&
+        line.delta?.changes?.some(
+          (change) => change.type === "timeline.append" && change.item.notice?.text === "streaming",
+        ),
+    );
+    expect(createdSubmitEvent).toEqual(
+      expect.objectContaining({
+        sessionId: "session-2",
+        reason: "notice",
+      }),
+    );
+    (await harness.host.observeSession("session-2")).releaseTurn();
+    await submit;
+
+    await harness.server.handleLine(
+      request("risk-created", "session.setRisk", {
+        sessionId: "session-2",
+        riskLevel: "read-write",
+      }),
+    );
+    const riskChanged = harness.lines.find(
+      (line) => line.type === "response" && line.id === "risk-created",
+    );
+    expect(riskChanged).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          sessionId: "session-2",
+          settings: expect.objectContaining({ riskLevel: "read-write" }),
+        }),
+      }),
+    );
+
+    await harness.server.handleLine(
+      request("compact-created", "session.compact", {
+        sessionId: "session-2",
+        mode: "summary-and-last",
+        guidance: "preserve decisions",
+      }),
+    );
+    const compacted = harness.lines.find(
+      (line) => line.type === "response" && line.id === "compact-created",
+    );
+    expect(compacted).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          compactionMessage: "compacted with summary-and-last",
+          includedLastAssistant: true,
+          snapshot: expect.objectContaining({
+            sessionId: "session-2",
+            messages: expect.arrayContaining([
+              expect.objectContaining({
+                message: expect.objectContaining({
+                  role: "user",
+                  content: [{ type: "text", text: "compacted with summary-and-last" }],
+                }),
+              }),
+            ]),
+          }),
+        }),
+      }),
+    );
+
+    await harness.server.handleLine(
+      request("prune-created", "session.prune", {
+        sessionId: "session-2",
+        strategy: "smart",
+        fraction: 0.5,
+        guidance: "keep errors",
+      }),
+    );
+    const pruned = harness.lines.find(
+      (line) => line.type === "response" && line.id === "prune-created",
+    );
+    expect(pruned).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          message: "pruned with smart",
+          noop: false,
+          bashResultsPruned: 1,
+          editCallsPruned: 2,
+          editResultsPruned: 1,
+          bytesPruned: 1024,
+          snapshot: expect.objectContaining({ sessionId: "session-2" }),
+        }),
+      }),
+    );
+
+    await harness.server.handleLine(
+      request("detach-created", "session.unobserve", { sessionId: "session-2" }),
+    );
+    await harness.server.handleLine(
+      request("snapshot-created", "session.snapshot", { sessionId: "session-2" }),
+    );
+    const unobservedSnapshot = harness.lines.find(
+      (line) => line.type === "response" && line.id === "snapshot-created",
+    );
+    expect(unobservedSnapshot).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({ sessionId: "session-2" }),
+      }),
+    );
+  });
+
   it("streams submit events, forwards subagent events, and rejects overlapping submit with busy", async () => {
     const harness = createHarness();
 
     const firstSubmit = harness.server.handleLine(
-      request("submit-1", "session.submit", { text: "first turn" }),
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
     );
 
-    await Promise.resolve();
+    await waitFor(() =>
+      harness.lines.some(
+        (line) =>
+          line.type === "session.delta" &&
+          line.delta?.changes?.some(
+            (change) =>
+              change.type === "timeline.append" && change.item.notice?.text === "streaming",
+          ),
+      ),
+    );
     harness.emitSubagent({ type: "spawned", id: "agent-1", title: "research" }, "history-1");
 
-    await harness.server.handleLine(request("submit-2", "session.submit", { text: "second turn" }));
+    await harness.server.handleLine(
+      request("submit-2", "session.submit", {
+        sessionId: "session-1",
+        text: "second turn",
+      }),
+    );
 
     harness.releaseTurn();
     await firstSubmit;
@@ -158,54 +615,42 @@ describe("rpc_server", () => {
     expect(ready).toEqual(
       expect.objectContaining({
         type: "ready",
-        sessionId: "session-1",
-        coreEventVersion: CORE_EVENT_VERSION,
       }),
     );
+    expect(ready).not.toHaveProperty("sessionId");
 
     const submitEvent = harness.lines.find(
       (line) =>
-        line.type === "event" &&
-        line.requestId === "submit-1" &&
-        line.event?.event?.type === "notice" &&
-        line.event?.event?.text === "streaming",
+        line.type === "session.delta" &&
+        line.delta?.changes?.some(
+          (change) => change.type === "timeline.append" && change.item.notice?.text === "streaming",
+        ),
     );
     expect(submitEvent).toEqual(
       expect.objectContaining({
-        type: "event",
-        requestId: "submit-1",
-        event: expect.objectContaining({
-          version: CORE_EVENT_VERSION,
-          event: expect.objectContaining({ type: "notice", text: "streaming" }),
-        }),
+        type: "session.delta",
+        reason: "notice",
       }),
     );
 
     const subagentEvent = harness.lines.find(
-      (line) => line.type === "event" && line.event?.event?.type === "subagent_ui",
+      (line) => line.type === "session.delta" && line.reason === "agent-run",
     );
     expect(subagentEvent).toEqual(
       expect.objectContaining({
-        type: "event",
-        event: expect.objectContaining({
-          version: CORE_EVENT_VERSION,
-          event: expect.objectContaining({
-            type: "subagent_ui",
-            event: { type: "spawned", id: "agent-1", title: "research" },
-          }),
-        }),
+        type: "session.delta",
+        reason: "agent-run",
       }),
     );
-    expect(subagentEvent.requestId).toBe("submit-1");
 
     const busy = harness.lines.find((line) => line.type === "response" && line.id === "submit-2");
     expect(busy).toEqual({
-      version: RPC_PROTOCOL_VERSION,
+      version: SESSION_PROTOCOL_VERSION,
       type: "response",
       id: "submit-2",
       ok: false,
       error: {
-        code: RPC_ERROR_CODES.busy,
+        code: SESSION_PROTOCOL_ERROR_CODES.busy,
         message: "a session turn is already running",
       },
     });
@@ -226,27 +671,339 @@ describe("rpc_server", () => {
     );
   });
 
+  it("broadcasts non-core session updates across handlers and supports detach", async () => {
+    const harness = createHarness();
+    const observerLines = [];
+    const observer = new RpcServer({
+      host: harness.host,
+      send: (line) => observerLines.push(JSON.parse(line)),
+    });
+
+    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
+    await harness.server.handleLine(
+      request("risk", "session.setRisk", {
+        sessionId: "session-1",
+        riskLevel: "read-write",
+      }),
+    );
+
+    await waitFor(() =>
+      observerLines.some(
+        (line) =>
+          line.type === "session.delta" &&
+          line.sessionId === "session-1" &&
+          line.delta?.type === "snapshot.reset" &&
+          line.reason === "configuration",
+      ),
+    );
+    const update = observerLines.find((line) => line.type === "session.delta");
+    expect(update).toEqual(
+      expect.objectContaining({
+        sessionId: "session-1",
+        toRevision: expect.any(Number),
+        reason: "configuration",
+        delta: expect.objectContaining({ type: "snapshot.reset" }),
+      }),
+    );
+
+    await observer.handleLine(request("detach", "session.unobserve", { sessionId: "session-1" }));
+    const detach = observerLines.find((line) => line.type === "response" && line.id === "detach");
+    expect(detach).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: { unobserved: true },
+      }),
+    );
+    const updateCountAfterDetach = observerLines.filter(
+      (line) => line.type === "session.delta",
+    ).length;
+
+    await harness.server.handleLine(
+      request("risk-again", "session.setRisk", {
+        sessionId: "session-1",
+        riskLevel: "read-only",
+      }),
+    );
+    await Promise.resolve();
+
+    expect(observerLines.filter((line) => line.type === "session.delta")).toHaveLength(
+      updateCountAfterDetach,
+    );
+
+    await observer.close();
+  });
+
+  it("buffers initial observed deltas until after the observe snapshot response", async () => {
+    let harness;
+    harness = createHarness({
+      snapshotDelays: [
+        async () => {
+          harness.emitNotice("during observe snapshot", 1);
+        },
+      ],
+    });
+    const observerLines = [];
+    const observer = new RpcServer({
+      host: harness.host,
+      send: (line) => observerLines.push(JSON.parse(line)),
+    });
+
+    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
+
+    const responseIndex = observerLines.findIndex(
+      (line) => line.type === "response" && line.id === "attach",
+    );
+    const deltaIndex = observerLines.findIndex((line) =>
+      deltaHasNotice(line, "during observe snapshot"),
+    );
+    expect(responseIndex).toBeGreaterThanOrEqual(0);
+    expect(deltaIndex).toBeGreaterThan(responseIndex);
+    expect(observerLines[responseIndex].result).toEqual(
+      expect.objectContaining({
+        sessionId: "session-1",
+        revision: 1,
+      }),
+    );
+    expect(observerLines[deltaIndex]).toEqual(
+      expect.objectContaining({
+        fromRevision: 1,
+        toRevision: 2,
+      }),
+    );
+
+    await observer.close();
+  });
+
+  it("keeps forwarding deltas while a repeated observe snapshot is pending", async () => {
+    let harness;
+    harness = createHarness({
+      snapshotDelays: [
+        0,
+        async () => {
+          harness.emitNotice("during repeated observe snapshot", 1);
+        },
+      ],
+    });
+    const observerLines = [];
+    const observer = new RpcServer({
+      host: harness.host,
+      send: (line) => observerLines.push(JSON.parse(line)),
+    });
+
+    await observer.handleLine(request("attach-1", "session.observe", { sessionId: "session-1" }));
+    observerLines.splice(0);
+    await observer.handleLine(request("attach-2", "session.observe", { sessionId: "session-1" }));
+
+    const responseIndex = observerLines.findIndex(
+      (line) => line.type === "response" && line.id === "attach-2",
+    );
+    const deltaIndex = observerLines.findIndex((line) =>
+      deltaHasNotice(line, "during repeated observe snapshot"),
+    );
+    expect(responseIndex).toBeGreaterThanOrEqual(0);
+    expect(deltaIndex).toBeGreaterThanOrEqual(0);
+    expect(deltaIndex).toBeLessThan(responseIndex);
+
+    await observer.close();
+  });
+
+  it("does not keep forwarding deltas after an observe snapshot failure", async () => {
+    const harness = createHarness({
+      snapshotDelays: [
+        async () => {
+          throw new Error("snapshot unavailable");
+        },
+      ],
+    });
+    const observerLines = [];
+    const observer = new RpcServer({
+      host: harness.host,
+      send: (line) => observerLines.push(JSON.parse(line)),
+    });
+
+    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
+    expect(observerLines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "response",
+          id: "attach",
+          ok: false,
+        }),
+      ]),
+    );
+
+    harness.emitNotice("after failed observe", 1);
+    await Promise.resolve();
+
+    expect(observerLines.some((line) => deltaHasNotice(line, "after failed observe"))).toBe(false);
+    await observer.close();
+  });
+
+  it("continues forwarding deltas after a repeated observe snapshot failure", async () => {
+    let harness;
+    harness = createHarness({
+      snapshotDelays: [
+        0,
+        async () => {
+          harness.emitNotice("during failed repeated observe", 1);
+          throw new Error("snapshot unavailable");
+        },
+      ],
+    });
+    const observerLines = [];
+    const observer = new RpcServer({
+      host: harness.host,
+      send: (line) => observerLines.push(JSON.parse(line)),
+    });
+
+    await observer.handleLine(request("attach-1", "session.observe", { sessionId: "session-1" }));
+    observerLines.splice(0);
+    await observer.handleLine(request("attach-2", "session.observe", { sessionId: "session-1" }));
+
+    expect(observerLines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "response",
+          id: "attach-2",
+          ok: false,
+        }),
+      ]),
+    );
+    expect(
+      observerLines.some((line) => deltaHasNotice(line, "during failed repeated observe")),
+    ).toBe(true);
+
+    await observer.close();
+  });
+
+  it("commits accepted submit input before running the turn and snapshots after turn failure", async () => {
+    const snapshots = [];
+    let committedBeforeRun = false;
+    const harness = createHarness({
+      onSnapshot: (snapshot) => snapshots.push(snapshot),
+      runTurn: async () => {
+        committedBeforeRun = snapshots.some((snapshot) =>
+          snapshotHasUserText(snapshot, "durable before model"),
+        );
+        throw new Error("model failed before streaming");
+      },
+    });
+
+    await harness.server.handleLine(
+      request("submit", "session.submit", {
+        sessionId: "session-1",
+        text: "durable before model",
+      }),
+    );
+
+    expect(committedBeforeRun).toBe(true);
+    expect(
+      snapshots.filter((snapshot) => snapshotHasUserText(snapshot, "durable before model")),
+    ).toHaveLength(2);
+    expect(harness.lines.find((line) => line.type === "response" && line.id === "submit")).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: SESSION_PROTOCOL_ERROR_CODES.internalError,
+          message: "failed to run session turn",
+        }),
+      }),
+    );
+  });
+
+  it("preserves event order across async snapshot commits", async () => {
+    const harness = createHarness({ snapshotDelays: [50, 0] });
+
+    const submit = harness.server.handleLine(
+      request("submit", "session.submit", {
+        sessionId: "session-1",
+        text: "ordered events",
+      }),
+    );
+
+    await waitFor(() => harness.seededSession.canReleaseTurn());
+    harness.releaseTurn();
+    await submit;
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "finished")));
+
+    const noticeTexts = harness.lines
+      .filter((line) => line.type === "session.delta" && line.reason === "notice")
+      .flatMap((line) =>
+        line.delta.changes
+          .filter((change) => change.type === "timeline.append" && change.item.notice)
+          .map((change) => change.item.notice.text),
+      );
+    expect(noticeTexts).toEqual(["streaming", "finished"]);
+  });
+
+  it("waits for interrupted active submits before host shutdown on close", async () => {
+    let releaseSubmit;
+    const submitBlocker = () =>
+      new Promise((resolve) => {
+        releaseSubmit = resolve;
+      });
+    const harness = createHarness({ afterTurnRelease: submitBlocker });
+
+    const submitPromise = harness.server.handleLine(
+      request("submit", "session.submit", {
+        sessionId: "session-1",
+        text: "close while submit is still settling",
+      }),
+    );
+    await waitFor(() => harness.seededSession.canReleaseTurn());
+
+    const closePromise = harness.server.close();
+    await Promise.resolve();
+
+    expect(harness.hostShutdown).not.toHaveBeenCalled();
+    await waitFor(() => releaseSubmit);
+    expect(harness.seededSession.isTurnRunning).toBe(true);
+    releaseSubmit();
+    await closePromise;
+    await submitPromise;
+
+    expect(harness.hostShutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not emit protocol output after close", async () => {
+    const harness = createHarness();
+    await harness.server.close();
+    const lineCount = harness.lines.length;
+
+    await harness.server.handleLine("{bad-json");
+    await harness.server.handleLine(
+      request("snapshot", "session.snapshot", { sessionId: "session-1" }),
+    );
+
+    expect(harness.lines).toHaveLength(lineCount);
+  });
+
   it("batches steering submits while a turn is running", async () => {
     const harness = createHarness();
 
     const firstSubmit = harness.server.handleLine(
-      request("submit-1", "session.submit", { text: "first turn" }),
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
     );
 
-    await waitFor(() =>
-      harness.lines.some(
-        (line) => line.type === "event" && line.event?.event?.text === "streaming",
-      ),
-    );
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
     const steerOne = harness.server.handleLine(
-      request("steer-1", "session.submit", { text: "change direction", mode: "steer" }),
+      request("steer-1", "session.steer", {
+        sessionId: "session-1",
+        text: "change direction",
+      }),
     );
     const steerTwo = harness.server.handleLine(
-      request("steer-2", "session.submit", { text: "also check docs", mode: "steer" }),
+      request("steer-2", "session.steer", {
+        sessionId: "session-1",
+        text: "also check docs",
+      }),
     );
 
-    await Promise.resolve();
-    expect(harness.runtime.requestTurnBoundaryStop).toHaveBeenCalled();
+    await waitFor(() => harness.seededSession.requestTurnBoundaryStop.mock.calls.length > 0);
+    expect(harness.seededSession.requestTurnBoundaryStop).toHaveBeenCalled();
     expect(harness.lines.some((line) => line.id === "steer-1" && line.type === "response")).toBe(
       false,
     );
@@ -254,12 +1011,12 @@ describe("rpc_server", () => {
     harness.releaseTurn();
     await firstSubmit;
     await waitFor(() =>
-      harness.runtime.session.historyEntries.some((entry) =>
+      harness.seededSession.session.historyEntries.some((entry) =>
         entry.message.content[0].text.includes("change direction"),
       ),
     );
 
-    const steeringEntry = harness.runtime.session.historyEntries.find((entry) =>
+    const steeringEntry = harness.seededSession.session.historyEntries.find((entry) =>
       entry.message.content[0].text.includes("change direction"),
     );
     harness.emitSubagent({ type: "spawned", id: "agent-2", title: "research" }, steeringEntry.id);
@@ -269,13 +1026,9 @@ describe("rpc_server", () => {
     expect(steeringEntry.message.content[0].text).toContain("<system>");
     expect(steeringEntry.message.content[0].text).toContain("change direction\n\nalso check docs");
 
-    const steeringSubagentEvent = harness.lines.find(
-      (line) =>
-        line.type === "event" &&
-        line.event?.event?.type === "subagent_ui" &&
-        line.event?.event?.event?.id === "agent-2",
-    );
-    expect(steeringSubagentEvent.requestId).toBe("steer-1");
+    await waitFor(() => harness.lines.some((line) => deltaHasAgent(line, "agent-2")));
+    const steeringSubagentEvent = harness.lines.find((line) => deltaHasAgent(line, "agent-2"));
+    expect(steeringSubagentEvent).toBeDefined();
 
     for (const id of ["steer-1", "steer-2"]) {
       expect(harness.lines.find((line) => line.type === "response" && line.id === id)).toEqual(
@@ -294,56 +1047,68 @@ describe("rpc_server", () => {
     const harness = createHarness();
 
     const firstSubmit = harness.server.handleLine(
-      request("submit-1", "session.submit", { text: "first turn" }),
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
     );
 
-    await waitFor(() =>
-      harness.lines.some(
-        (line) => line.type === "event" && line.event?.event?.text === "streaming",
-      ),
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
+    await harness.server.handleLine(
+      request("steer-1", "session.steer", {
+        sessionId: "session-1",
+        text: "change direction",
+      }),
     );
     await harness.server.handleLine(
-      request("steer-1", "session.submit", { text: "change direction", mode: "steer" }),
+      request("interrupt", "session.interrupt", { sessionId: "session-1" }),
     );
-    await harness.server.handleLine(request("interrupt", "session.interrupt", {}));
     await firstSubmit;
 
     expect(
-      harness.runtime.session.historyEntries.some((entry) =>
+      harness.seededSession.session.historyEntries.some((entry) =>
         entry.message.content[0].text.includes("change direction"),
       ),
     ).toBe(false);
     expect(harness.lines.find((line) => line.type === "response" && line.id === "steer-1")).toEqual(
       {
-        version: RPC_PROTOCOL_VERSION,
+        version: SESSION_PROTOCOL_VERSION,
         type: "response",
         id: "steer-1",
         ok: false,
         error: {
-          code: RPC_ERROR_CODES.invalidRequest,
+          code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
           message: "session was interrupted",
         },
       },
     );
   });
 
-  it("keeps subagent request correlation stable across later submits", async () => {
+  it("broadcasts late subagent events during later submits", async () => {
     const harness = createHarness();
 
     const firstSubmit = harness.server.handleLine(
-      request("submit-1", "session.submit", { text: "first turn" }),
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
     );
 
-    await Promise.resolve();
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
     harness.emitSubagent({ type: "spawned", id: "agent-1", title: "research" }, "history-1");
     harness.releaseTurn();
     await firstSubmit;
 
     const secondSubmit = harness.server.handleLine(
-      request("submit-2", "session.submit", { text: "second turn" }),
+      request("submit-2", "session.submit", {
+        sessionId: "session-1",
+        text: "second turn",
+      }),
     );
 
-    await Promise.resolve();
+    await waitFor(
+      () => harness.lines.filter((line) => deltaHasNotice(line, "streaming")).length >= 2,
+    );
     harness.emitSubagent(
       {
         type: "subagent_progress",
@@ -367,45 +1132,56 @@ describe("rpc_server", () => {
     harness.releaseTurn();
     await secondSubmit;
 
-    const lateSubagentEvent = harness.lines.find(
-      (line) =>
-        line.type === "event" &&
-        line.event?.event?.type === "subagent_ui" &&
-        line.event?.event?.event?.type === "subagent_progress",
+    const lateSubagentEvent = harness.lines.find((line) =>
+      deltaHasAgent(line, "agent-1", "still working"),
     );
     expect(lateSubagentEvent).toEqual(
       expect.objectContaining({
-        type: "event",
-        requestId: "submit-1",
+        type: "session.delta",
+        reason: "agent-run",
       }),
     );
 
-    const secondSubmitEvent = harness.lines.find(
-      (line) =>
-        line.type === "event" &&
-        line.requestId === "submit-2" &&
-        line.event?.event?.type === "notice",
-    );
+    const secondSubmitEvent = harness.lines.find((line) => deltaHasNotice(line, "streaming"));
     expect(secondSubmitEvent).toBeDefined();
   });
 
-  it("handles interrupt, snapshot, reset, shutdown, and malformed lines", async () => {
+  it("handles interrupt, snapshot, unsupported methods, and malformed lines", async () => {
     const harness = createHarness();
 
     const runningSubmit = harness.server.handleLine(
-      request("submit", "session.submit", { text: "interrupt me" }),
+      request("submit", "session.submit", {
+        sessionId: "session-1",
+        text: "interrupt me",
+      }),
     );
-    await Promise.resolve();
-    await Promise.resolve();
+    await waitFor(() => harness.seededSession.canReleaseTurn());
 
-    await harness.server.handleLine(request("interrupt", "session.interrupt", {}));
+    await harness.server.handleLine(
+      request("interrupt", "session.interrupt", { sessionId: "session-1" }),
+    );
     await runningSubmit;
 
-    await harness.server.handleLine(request("snapshot", "session.snapshot", {}));
-    await harness.server.handleLine(request("reset", "session.reset", {}));
-    await harness.server.handleLine(request("shutdown", "session.shutdown", {}));
+    await harness.server.handleLine(request("list", "session.list", {}));
+    await harness.server.handleLine(
+      request("attach", "session.observe", { sessionId: "session-1" }),
+    );
+    await harness.server.handleLine(
+      request("attach-missing", "session.observe", { sessionId: "missing-session" }),
+    );
+    await harness.server.handleLine(
+      request("snapshot", "session.snapshot", { sessionId: "session-1" }),
+    );
+    await harness.server.handleLine(
+      request("unknown-1", "session.unknownCommand", { sessionId: "session-1" }),
+    );
+    await harness.server.handleLine(
+      request("unknown-2", "session.unrecognizedCommand", { sessionId: "session-1" }),
+    );
     await harness.server.handleLine("{bad-json");
-    await harness.server.handleLine(request("after", "session.snapshot", {}));
+    await harness.server.handleLine(
+      request("after", "session.snapshot", { sessionId: "session-1" }),
+    );
 
     const interrupt = harness.lines.find(
       (line) => line.type === "response" && line.id === "interrupt",
@@ -431,27 +1207,70 @@ describe("rpc_server", () => {
       }),
     );
 
+    const list = harness.lines.find((line) => line.type === "response" && line.id === "list");
+    expect(list.result).toEqual({
+      sessions: [{ sessionId: "session-1", lifecycle: "idle" }],
+    });
+
+    const attach = harness.lines.find((line) => line.type === "response" && line.id === "attach");
+    expect(attach.result).toEqual(
+      expect.objectContaining({
+        sessionId: "session-1",
+        lifecycle: "idle",
+      }),
+    );
+
+    const attachMissing = harness.lines.find(
+      (line) => line.type === "response" && line.id === "attach-missing",
+    );
+    expect(attachMissing).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: SESSION_PROTOCOL_ERROR_CODES.notFound,
+          message: "session not found",
+          data: { sessionId: "missing-session" },
+        }),
+      }),
+    );
+
     const snapshot = harness.lines.find(
       (line) => line.type === "response" && line.id === "snapshot",
     );
     expect(snapshot.result).toEqual(
       expect.objectContaining({
         sessionId: "session-1",
-        isTurnRunning: false,
-        historyLength: 1,
+        lifecycle: "idle",
       }),
     );
 
-    const reset = harness.lines.find((line) => line.type === "response" && line.id === "reset");
-    expect(reset.result).toEqual({ previousSessionId: "session-1", sessionId: "session-2" });
-
-    const shutdown = harness.lines.find(
-      (line) => line.type === "response" && line.id === "shutdown",
+    const unknown1 = harness.lines.find(
+      (line) => line.type === "response" && line.id === "unknown-1",
     );
-    expect(shutdown.result).toEqual({ shutdown: true });
+    expect(unknown1).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: SESSION_PROTOCOL_ERROR_CODES.methodNotFound,
+        }),
+      }),
+    );
+
+    const unknown2 = harness.lines.find(
+      (line) => line.type === "response" && line.id === "unknown-2",
+    );
+    expect(unknown2).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: SESSION_PROTOCOL_ERROR_CODES.methodNotFound,
+        }),
+      }),
+    );
 
     const malformed = harness.lines.find(
-      (line) => line.type === "response" && line.error?.code === RPC_ERROR_CODES.parseError,
+      (line) =>
+        line.type === "response" && line.error?.code === SESSION_PROTOCOL_ERROR_CODES.parseError,
     );
     expect(malformed).toEqual(
       expect.objectContaining({
@@ -459,138 +1278,44 @@ describe("rpc_server", () => {
       }),
     );
 
-    const afterShutdown = harness.lines.find(
+    const afterSnapshot = harness.lines.find(
       (line) => line.type === "response" && line.id === "after",
     );
-    expect(afterShutdown).toEqual({
-      version: RPC_PROTOCOL_VERSION,
-      type: "response",
-      id: "after",
-      ok: false,
-      error: {
-        code: RPC_ERROR_CODES.invalidRequest,
-        message: "rpc server is shut down",
-      },
+    expect(afterSnapshot).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({ sessionId: "session-1" }),
+      }),
+    );
+  });
+
+  it("commits the submit snapshot before responding", async () => {
+    let snapshotStarted = false;
+    let releaseSnapshot;
+    const snapshotBlocker = () =>
+      new Promise((resolve) => {
+        snapshotStarted = true;
+        releaseSnapshot = resolve;
+      });
+    const harness = createHarness({
+      snapshotDelays: [snapshotBlocker],
+      runTurn: async () => ({ aborted: false }),
     });
-  });
 
-  it("serializes concurrent reset requests in arrival order", async () => {
-    const harness = createHarness();
-
-    await Promise.all([
-      harness.server.handleLine(request("reset-1", "session.reset", {})),
-      harness.server.handleLine(request("reset-2", "session.reset", {})),
-    ]);
-
-    const resetOne = harness.lines.find(
-      (line) => line.type === "response" && line.id === "reset-1",
-    );
-    expect(resetOne).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: {
-          previousSessionId: "session-1",
-          sessionId: "session-2",
-        },
+    const submitPromise = harness.server.handleLine(
+      request("submit", "session.submit", {
+        sessionId: "session-1",
+        text: "commit me",
       }),
     );
 
-    const resetTwo = harness.lines.find(
-      (line) => line.type === "response" && line.id === "reset-2",
-    );
-    expect(resetTwo).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: {
-          previousSessionId: "session-2",
-          sessionId: "session-3",
-        },
-      }),
-    );
-  });
-
-  it("serializes reset and shutdown interleavings", async () => {
-    const resetThenShutdown = createHarness();
-
-    await Promise.all([
-      resetThenShutdown.server.handleLine(request("reset", "session.reset", {})),
-      resetThenShutdown.server.handleLine(request("shutdown", "session.shutdown", {})),
-    ]);
-
-    const resetThenShutdownReset = resetThenShutdown.lines.find(
-      (line) => line.type === "response" && line.id === "reset",
-    );
-    expect(resetThenShutdownReset).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: {
-          previousSessionId: "session-1",
-          sessionId: "session-2",
-        },
-      }),
+    await waitFor(() => snapshotStarted);
+    expect(harness.lines.some((line) => line.type === "response" && line.id === "submit")).toBe(
+      false,
     );
 
-    const resetThenShutdownShutdown = resetThenShutdown.lines.find(
-      (line) => line.type === "response" && line.id === "shutdown",
-    );
-    expect(resetThenShutdownShutdown).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: {
-          shutdown: true,
-        },
-      }),
-    );
-
-    const resetThenShutdownResetIndex = resetThenShutdown.lines.findIndex(
-      (line) => line.type === "response" && line.id === "reset",
-    );
-    const resetThenShutdownShutdownIndex = resetThenShutdown.lines.findIndex(
-      (line) => line.type === "response" && line.id === "shutdown",
-    );
-    expect(resetThenShutdownResetIndex).toBeLessThan(resetThenShutdownShutdownIndex);
-
-    const shutdownThenReset = createHarness();
-
-    await Promise.all([
-      shutdownThenReset.server.handleLine(request("shutdown", "session.shutdown", {})),
-      shutdownThenReset.server.handleLine(request("reset", "session.reset", {})),
-    ]);
-
-    const shutdownThenResetShutdown = shutdownThenReset.lines.find(
-      (line) => line.type === "response" && line.id === "shutdown",
-    );
-    expect(shutdownThenResetShutdown).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: {
-          shutdown: true,
-        },
-      }),
-    );
-
-    const shutdownThenResetReset = shutdownThenReset.lines.find(
-      (line) => line.type === "response" && line.id === "reset",
-    );
-    expect(shutdownThenResetReset).toEqual({
-      version: RPC_PROTOCOL_VERSION,
-      type: "response",
-      id: "reset",
-      ok: false,
-      error: {
-        code: RPC_ERROR_CODES.invalidRequest,
-        message: "rpc server is shut down",
-      },
-    });
-  });
-
-  it("allows submit to start when it arrives before a mutating request", async () => {
-    const harness = createHarness();
-
-    await Promise.all([
-      harness.server.handleLine(request("submit", "session.submit", { text: "before reset" })),
-      harness.server.handleLine(request("reset", "session.reset", {})),
-    ]);
+    releaseSnapshot();
+    await submitPromise;
 
     const submit = harness.lines.find((line) => line.type === "response" && line.id === "submit");
     expect(submit).toEqual(
@@ -598,93 +1323,171 @@ describe("rpc_server", () => {
         ok: true,
         result: {
           userHistoryEntryId: "history-1",
-          turn: { aborted: true },
-        },
-      }),
-    );
-
-    const reset = harness.lines.find((line) => line.type === "response" && line.id === "reset");
-    expect(reset).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: {
-          previousSessionId: "session-1",
-          sessionId: "session-2",
+          turn: { aborted: false },
         },
       }),
     );
   });
 
-  it("returns busy for submit when a mutating request is in progress", async () => {
+  it("queues user messages behind an active turn without requesting a turn-boundary stop", async () => {
     const harness = createHarness();
 
-    await Promise.all([
-      harness.server.handleLine(request("reset", "session.reset", {})),
-      harness.server.handleLine(request("submit", "session.submit", { text: "after reset" })),
-    ]);
-
-    const submitBusy = harness.lines.find(
-      (line) => line.type === "response" && line.id === "submit",
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
     );
-    expect(submitBusy).toEqual({
-      version: RPC_PROTOCOL_VERSION,
-      type: "response",
-      id: "submit",
-      ok: false,
-      error: {
-        code: RPC_ERROR_CODES.busy,
-        message: "a mutating session request is in progress",
+
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
+    await harness.server.handleLine(
+      request("queue-1", "session.queue", {
+        sessionId: "session-1",
+        text: "second turn",
+      }),
+    );
+
+    expect(harness.seededSession.requestTurnBoundaryStop).not.toHaveBeenCalled();
+    expect(harness.lines.some((line) => line.type === "response" && line.id === "queue-1")).toBe(
+      false,
+    );
+
+    harness.releaseTurn();
+    await firstSubmit;
+    await waitFor(() =>
+      harness.seededSession.session.historyEntries.some((entry) =>
+        entry.message.content[0].text.includes("second turn"),
+      ),
+    );
+
+    const queuedEntry = harness.seededSession.session.historyEntries.find((entry) =>
+      entry.message.content[0].text.includes("second turn"),
+    );
+    harness.releaseTurn();
+    await waitFor(() =>
+      harness.lines.some((line) => line.type === "response" && line.id === "queue-1"),
+    );
+
+    const queueResponse = harness.lines.find(
+      (line) => line.type === "response" && line.id === "queue-1",
+    );
+    expect(queueResponse).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          userHistoryEntryId: queuedEntry.id,
+          turn: { aborted: false },
+        },
+      }),
+    );
+  });
+
+  it("drains queued user messages after an active execution bash command", async () => {
+    let releaseExecution;
+    const harness = createHarness({
+      exec: async (runOptions) =>
+        await new Promise((resolve) => {
+          releaseExecution = () =>
+            resolve(
+              createProtocolExecResult({
+                command: runOptions.command,
+              }),
+            );
+        }),
+    });
+
+    const execution = harness.server.handleLine(
+      request("exec-1", "session.exec", {
+        sessionId: "session-1",
+        command: "pwd",
+      }),
+    );
+    await waitFor(() => Boolean(releaseExecution));
+
+    await harness.server.handleLine(
+      request("queue-1", "session.queue", {
+        sessionId: "session-1",
+        text: "after execution",
+      }),
+    );
+
+    expect(harness.lines.some((line) => line.type === "response" && line.id === "queue-1")).toBe(
+      false,
+    );
+
+    releaseExecution();
+    await execution;
+    await waitFor(() =>
+      harness.seededSession.session.historyEntries.some((entry) =>
+        entry.message.content[0].text.includes("after execution"),
+      ),
+    );
+
+    const queuedEntry = harness.seededSession.session.historyEntries.find((entry) =>
+      entry.message.content[0].text.includes("after execution"),
+    );
+    harness.releaseTurn();
+    await waitFor(() =>
+      harness.lines.some((line) => line.type === "response" && line.id === "queue-1"),
+    );
+
+    const queueResponse = harness.lines.find(
+      (line) => line.type === "response" && line.id === "queue-1",
+    );
+    expect(queueResponse).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          userHistoryEntryId: queuedEntry.id,
+          turn: { aborted: false },
+        },
+      }),
+    );
+  });
+
+  it("responds when a queued user message cannot be committed after the active turn", async () => {
+    let recordCount = 0;
+    const harness = createHarness({
+      record: async (recordOptions, defaultRecord) => {
+        recordCount += 1;
+        if (recordCount > 1) {
+          throw new Error("queued commit failed");
+        }
+        return await defaultRecord(recordOptions);
       },
     });
-  });
 
-  it("returns success for interrupt while shutdown is in flight", async () => {
-    const harness = createHarness();
-
-    const submitPromise = harness.server.handleLine(
-      request("submit", "session.submit", { text: "interrupt me while shutting down" }),
-    );
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const shutdownPromise = harness.server.handleLine(request("shutdown", "session.shutdown", {}));
-    const interruptPromise = harness.server.handleLine(
-      request("interrupt", "session.interrupt", {}),
-    );
-
-    await Promise.all([submitPromise, shutdownPromise, interruptPromise]);
-
-    const shutdown = harness.lines.find(
-      (line) => line.type === "response" && line.id === "shutdown",
-    );
-    expect(shutdown).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: {
-          shutdown: true,
-        },
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
       }),
     );
 
-    const interrupt = harness.lines.find(
-      (line) => line.type === "response" && line.id === "interrupt",
-    );
-    expect(interrupt).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: {
-          interrupted: expect.any(Boolean),
-          isTurnRunning: expect.any(Boolean),
-        },
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
+    await harness.server.handleLine(
+      request("queue-1", "session.queue", {
+        sessionId: "session-1",
+        text: "second turn",
       }),
     );
 
-    const submit = harness.lines.find((line) => line.type === "response" && line.id === "submit");
-    expect(submit).toEqual(
+    harness.releaseTurn();
+    await firstSubmit;
+    await waitFor(() =>
+      harness.lines.some((line) => line.type === "response" && line.id === "queue-1"),
+    );
+
+    const queueResponse = harness.lines.find(
+      (line) => line.type === "response" && line.id === "queue-1",
+    );
+    expect(queueResponse).toEqual(
       expect.objectContaining({
-        ok: true,
-        result: expect.objectContaining({
-          turn: { aborted: true },
+        ok: false,
+        error: expect.objectContaining({
+          code: SESSION_PROTOCOL_ERROR_CODES.internalError,
+          message: "failed to drain pending user message",
+          data: { cause: "queued commit failed" },
         }),
       }),
     );
@@ -702,14 +1505,16 @@ describe("rpc_server", () => {
     });
 
     const runPromise = runRpcServer({
-      runtime: harness.runtime,
+      host: harness.host,
       input,
       output,
     });
 
-    input.write(`${request("submit-loop", "session.submit", { text: "hello" })}\n`);
+    input.write(
+      `${request("submit-loop", "session.submit", { sessionId: "session-1", text: "hello" })}\n`,
+    );
     await new Promise((resolve) => setTimeout(resolve, 0));
-    input.write(`${request("interrupt-loop", "session.interrupt", {})}\n`);
+    input.write(`${request("interrupt-loop", "session.interrupt", { sessionId: "session-1" })}\n`);
     input.end();
 
     await runPromise;
@@ -738,9 +1543,8 @@ describe("rpc_server", () => {
       }),
     );
 
-    const submitEvent = lines.find(
-      (line) => line.type === "event" && line.requestId === "submit-loop" && line.event?.event,
-    );
+    const submitEvent = lines.find((line) => line.type === "session.delta");
     expect(submitEvent).toBeDefined();
+    await expect(harness.host.observeSession("session-1")).resolves.toBeUndefined();
   });
 });

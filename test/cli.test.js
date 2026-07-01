@@ -94,6 +94,22 @@ describe("cli", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("rejects relative attach --new cwd before connecting", () => {
+    const mainPath = resolve(process.cwd(), "dist/main.js");
+    const result = spawnSync(
+      process.execPath,
+      [mainPath, "attach", "--new", "--cwd", "relative/path", "ws://127.0.0.1:1"],
+      {
+        encoding: "utf8",
+        env: process.env,
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("--new requires --cwd <absolute-path>");
+    expect(result.stdout).toContain("tau attach - terminal TUI over a session protocol transport");
+  });
+
   it("shows a clear error when diff-tool is launched outside a Tau diff review session", () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
     const result = spawnSync(process.execPath, [mainPath, "diff-tool"], {
@@ -102,7 +118,9 @@ describe("cli", () => {
     });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("tau diff-tool must be launched by Tau during /diff.");
+    expect(result.stderr).toContain(
+      "tau diff-tool must be launched with a Tau diff-review session environment.",
+    );
     expect(result.stderr).toContain("missing TAU_DIFF_SOCKET");
     expect(result.stdout).toContain("tau diff-tool [--help]");
   });

@@ -20,9 +20,9 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 
 ## Architecture
 
-- **ChatApp** (`src/tui/app.ts`): Thin wiring between the controller and TUI view adapter
-- **ChatController** (`src/tui/chat_controller.ts`): Composition/wiring layer for TUI session state, commands, and core events; delegates assistant turns and prompt composition to core runtime helpers plus focused controller modules
-- **Chat controller modules** (`src/tui/chat_controller/`): Focused controller helpers for interrupt lifecycle, queued message draining, and maintenance commands (`/compact`, `/prune`)
+- **SessionChatApp** (`src/tui/session_chat_app.ts`): Canonical TUI wiring for both local `tau` and remote `tau attach`; creates or observes a session through the SDK/session protocol facade and connects it to the TUI view adapter
+- **SessionChatController** (`src/tui/session_chat_controller.ts`): Session-protocol TUI controller for rendering snapshots/deltas, user input, local presentation commands, and session protocol mutations
+- **Session chat controller modules** (`src/tui/chat_controller/`): Focused helpers used by `SessionChatController` for queued messages, history labels, status formatting, and clipboard helpers
 - **TuiChatView** (`src/tui/chat_view.ts`): TUI adapter for rendering, editor, and tool UI
 - **CoreSession** (`src/core/session/core_session.ts`): Owns session state and emits core events for consumers
 - **SessionEngine** (`src/core/session/session_engine.ts`): Internal streaming/tool dispatch runner used by CoreSession, and host for manual and automatic session compaction
@@ -30,14 +30,19 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **ConversationTurnRuntime** (`src/core/runtime/conversation_turn_runtime.ts`): Assistant-turn runner with interruption and abort handling for core event streams
 - **Session prompt composer** (`src/core/runtime/session_prompt_composer.ts`): Composes main-session and subagent system prompts with environment and context blocks
 - **Runtime bootstrap resolver** (`src/core/runtime/runtime_bootstrap.ts`): Shared startup resolver for prompt context, AGENTS context, and persona skill filtering used by TUI/RPC/subagent working-directory prompt rebuilds
+- **Execution environment** (`src/execution/execution_environment.ts`, `src/execution/local_execution_environment.ts`, `src/execution/tool_backend_execution_environment.ts`, `src/execution/cloudflare_sandbox_execution_environment.ts`, `src/execution/fly_sprite_execution_environment.ts`): Contract for resolving execution-environment-owned runtime config/content, prompt context, tool registries, and execution-environment snapshots, plus local filesystem/process-backed, Cloudflare Sandbox bridge-backed, and Fly Sprites SDK-backed implementations
+- **Session host** (`src/host/session_host.ts`, `src/host/local_session_host.ts`, `src/host/session_protocol_handler.ts`): Canonical host/session interfaces, host-backed session protocol handling, and local session host that creates, recovers, attaches, lists, snapshots, and shuts down runtime-backed sessions
+- **Session protocol** (`src/protocol/session_protocol.ts`): Canonical session request/response/delta protocol DTOs and strict parsers carried by stdio and WebSocket transports and SDK clients
+- **Transport** (`src/transport/session_transport.ts`, `src/transport/in_process_session_transport.ts`, `src/transport/stdio_session_transport.ts`, `src/transport/websocket_session_transport.ts`): Session protocol transport contract plus in-process, stdio, and WebSocket transport implementations used by SDK clients
+- **Session store** (`src/store/session_store.ts`, `src/store/memory_session_store.ts`, `src/store/file_session_store.ts`): Session snapshot persistence boundary plus in-memory and file-backed store implementations; `tau`, `tau rpc`, and `tau serve` use the file store under `~/.config/tau/sessions`
 - **Model catalog** (`src/core/models/catalog.ts`): Unified provider/model registry (pi-ai + Tau extensions) with layered `models.json` overlays used for model resolution metadata
 - **Model runtime** (`src/core/utils/model_stream.ts`, `src/core/auth/credential_store.ts`): pi-ai `Models` runtime wrapper used for main-session, subagent, and maintenance model calls, with Tau config/auth storage exposed through pi-ai credential resolution
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly, manual compaction preparation, and automatic compaction cut-point/retained-tail preparation
-- **Diff review** (`src/core/diff_review/`): Initial git-diff context capture, local diff-tool protocol server, explicit protocol shutdown handshake (`session.close`), and read-only review-thread execution for blocking `/diff` sessions
-- **Built-in diff tool** (`src/diff_tool/`): Browser demo launcher used by `/diff` when `diffTool` is not configured. Treat this subtree as an isolated island: keep diff-tool-specific prompts, HTTP handlers, state, and UI code inside `src/diff_tool/`; only share narrow protocol/types with `src/core/diff_review/`. The built-in tool is the reference implementation for custom diff tools, including the server-initiated `session.close` shutdown flow.
+- **Diff review** (`src/core/diff_review/`): Diff snapshot DTOs/capture and the TUI-local diff-tool protocol bridge with explicit protocol shutdown handshake (`session.close`). The session TUI captures snapshots through generic session execution primitives and drives generic ephemeral agents for review-thread work.
+- **Built-in diff tool** (`src/diff_tool/`): Browser demo/reference implementation for the diff-review tool protocol. Treat this subtree as an isolated island: keep diff-tool-specific prompts, HTTP handlers, state, and UI code inside `src/diff_tool/`; only share narrow protocol/types with `src/core/diff_review/`. The built-in tool is the reference implementation for custom diff tools, including the server-initiated `session.close` shutdown flow.
 - **Core events** (`src/core/events/`): Serializable event protocol emitted by the core runtime
-- **Mode adapters** (`src/core/modes/`): ModeAdapter interface plus RPC protocol/server wiring for alternate front-ends
-- **SDK client** (`src/sdk/`): Node SDK facade that drives Tau through the same RPC subprocess protocol (`tau rpc`)
+- **Mode/session-server wiring** (`src/core/modes/`): Local app mode interface plus stdio and WebSocket session-protocol server wiring
+- **SDK client** (`src/sdk/client.ts`, `src/sdk/session.ts`): Node SDK in-process/WebSocket/bootstrap helpers plus session facade for driving Tau through session protocol transports; the default SDK client owns an in-process local host and shuts it down on close after persisting live snapshots
 - **Async daemon runtime** (`src/core/async/`): Async CLI + daemon stack (`cli.ts`, `cron.ts`, `http_protocol.ts`, `http_server.ts`, `server_config.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools on the local host
@@ -47,15 +52,20 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
 - **Tool UI registry** (`src/tui/ui/tool_ui_registry.ts`): Maps ToolUiEvent types to tool output view models
 
-**Data flow**: TUI mode: User input → `ChatApp` → `ChatController.onUserInput()` → `CoreSession.events()` (yields core events) → `ChatController.onEvent()` → `TuiChatView` rendering. RPC mode: NDJSON requests on stdin → RPC server (`src/core/modes/rpc_server.ts`) → `ChatRuntime`/`CoreSession` → NDJSON responses/events on stdout. SDK mode: Node code → `src/sdk/client.ts` → spawned `tau rpc` subprocess over stdin/stdout NDJSON. Async mode: `tau async daemon` → async HTTP server (`src/core/async/http_server.ts`) + session manager (`src/core/async/session_manager.ts`) + optional cron scheduler (`src/core/async/cron.ts`) + optional Telegram long-poll adapter (`src/core/async/telegram.ts`) over `getUpdates`/`getFile`/`sendMessage`.
+**Data flow**: Local TUI mode: User input → `SessionChatApp` → `SessionChatController.onUserInput()` → SDK session facade → in-process session protocol transport → local session host (`src/host/local_session_host.ts`) backed by local execution environment (`src/execution/local_execution_environment.ts`) and file session store (`src/store/file_session_store.ts`) → `ChatRuntime`/`CoreSession` → snapshot-owned session deltas (`session.delta`) → SDK/session controller → `TuiChatView` rendering from `SessionSnapshot`. Remote attach mode uses the same `SessionChatApp` and `SessionChatController`, but swaps the in-process transport for WebSocket (`ws://`) or stdio/SSH (`tau rpc`) transport. RPC mode: session protocol NDJSON requests on stdin → RPC line server (`src/core/modes/rpc_server.ts`) → host-backed protocol handler (`src/host/session_protocol_handler.ts`) → local session host/execution-environment resolver/session store/`ChatRuntime`/`CoreSession` → session protocol NDJSON responses/deltas on stdout. WebSocket server mode: WebSocket text messages → `src/core/modes/websocket_server.ts` → host-backed protocol handler → local session host/execution-environment resolver/session store/`ChatRuntime`/`CoreSession` → WebSocket response/delta messages. RPC and WebSocket servers start without an implicit hosted session or project cwd; clients must call `session.list`, `session.observe`, or `session.create` with an already-provisioned execution environment, and `session.create` resolves Tau config/content from that execution environment cwd before creating the runtime. SDK mode: Node code → `src/sdk/client.ts` → either the default in-process session protocol transport backed by a local host, a WebSocket session transport to `tau serve`, or an explicitly supplied transport such as stdio/SSH running `tau rpc`. Async mode: `tau async daemon` → async HTTP server (`src/core/async/http_server.ts`) + session manager (`src/core/async/session_manager.ts`) + optional cron scheduler (`src/core/async/cron.ts`) + optional Telegram long-poll adapter (`src/core/async/telegram.ts`) over `getUpdates`/`getFile`/`sendMessage`; HTTP `send-message` accepts normal submit mode, explicit steering mode, and per-message `additionalSystemMessage`.
 
-**Engine events**: `CoreSession.events()` yields `assistant_start`/`partial`/`final` for streaming text, `tool_ui` for tool progress (including live intermediate updates from long-running tools such as `diff_review`), `tool_result` when tools complete, `notice` for warnings, and `compaction_start`/`compaction_end` for automatic compaction (`compaction_end.outcome` is `compacted`, `skipped`, `aborted`, or `failed`; compacted results include summary and hidden-continuation history ids). Assistant and tool-result events include stable `historyEntryId` values so the UI can correlate rendered rows with session history across rewind operations. Subagent UI updates (spawned, progress, optional emit_output messages when enabled, finished) are emitted as `subagent_ui` on the same core event channel via `CoreSession.onEvent()`, including stable origin correlation metadata for RPC request mapping. The core event protocol lives in `src/core/events/`. Tools can return immediate results or two-phase results (emit start event, run async, emit completion) for progress indication.
+**Session deltas**: `src/protocol/session_protocol.ts` is the canonical wire contract. Observed clients receive `session.delta` messages containing either `snapshot.patch` changes or `snapshot.reset`; applying them to the previous `SessionSnapshot` must reconstruct the next snapshot. The snapshot is the renderable source of truth and owns current `settings`, lightweight session `catalog`, execution environment identity, complete synchronized `messages`, default `timeline`, semantic `tools`, semantic `agents`, and client-only `facets`. Effective system instructions are the first committed message. Themes are TUI-local and are not stored in snapshots. Prompt catalog entries contain metadata only; prompt bodies are loaded lazily from the execution environment through `session.resolvePrompt`. File/path autocomplete is not stored in snapshots; clients request bounded suggestions lazily through `session.autocompletePaths`. Hosted turn events are consumed through `ConversationTurnRuntime.run({ onEvent })`, where the host awaits each snapshot mutation before the runtime consumes the next event. Background subagent progress uses a narrow subagent event subscription and the same serialized snapshot mutation queue. High-rate assistant streaming must stay on the shared protocol path: coalesce partials, use `message.content.append` instead of full-message replacement where possible, and avoid local-only shortcuts.
 
 ## Key modules
 
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
 - `docs/` - Extended user-facing docs that complement README.md (`rpc.md` documents RPC mode/protocol, `sdk.md` documents the Node SDK API, `async.md` documents async daemon/client + Telegram, `models.md` documents custom model configuration/overrides)
-- `src/sdk/` - SDK client modules for spawning and talking to the RPC subprocess (`tau rpc`) from Node
+- `src/protocol/` - Canonical session protocol types, constructors, serializers, and parsers shared by transports and SDK clients
+- `src/transport/` - Session protocol transport interfaces and concrete transports such as in-process and stdio
+- `src/execution/` - Execution environment contract and local filesystem/process-backed implementation
+- `src/host/` - Canonical Tau host/session contracts, host-backed protocol handling, and local session-host boundary code for creating runtime-backed sessions
+- `src/store/` - Session store contracts and implementations for persisted snapshot ownership
+- `src/sdk/` - SDK facade modules for programmatic session control from Node
 - `src/core/`
   - `personas.ts` - Built-in persona definitions and system prompt blocks
   - `prompts.ts` - Prompt template types
@@ -68,7 +78,6 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `debug.ts` - `--debug` output
   - `config/deps.ts` - Config loader dependencies
   - `config/paths.ts` - Config level discovery
-  - `config/bash_commands.ts` - Bash command parsing and merge rules
   - `config/diff_tool.ts` - Diff-tool config parsing and config-root command resolution
   - `config/runtime.ts` - Runtime config loader (config + content)
   - `config/virtual_bundle.ts` - Built-in content bundling
@@ -85,14 +94,14 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `auth/auth_paths.ts` - Auth file path resolution
   - `auth/auth_messages.ts` - Auth error messaging
   - `auth/codex_prompt.ts` - Codex system prompt handling
-  - `diff_review/` - Blocking diff-review subsystem (initial review-context capture, local protocol server, review threads)
+  - `diff_review/` - Blocking diff-review subsystem (snapshot capture helpers and local diff-tool protocol bridge)
   - `events/` - Core event protocol types and serialization
   - `session/` - Turn processing, streaming, tool dispatch, and manual/automatic compaction
   - `session/compaction.ts` - Core compaction preparation/prompt building, automatic cut-point selection, retained-tail handling, and synthetic summary message construction
   - `tools/` - Tool definitions (bash, write, edit, diff_review, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent, emit_output, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
   - `tools/execution_backend.ts` - Local tool execution backend and cwd scoping helper
   - `subagents/` - Default subagent prompt and runner
-  - `modes/` - ModeAdapter interface plus RPC protocol/server (`rpc_protocol.ts`, `rpc_server.ts`)
+  - `modes/` - Local app mode interface plus stdio session-protocol line server (`rpc_server.ts`) and WebSocket session server (`websocket_server.ts`)
   - `runtime/chat_runtime.ts` - High-level runtime that coordinates session updates, turn execution, and prompt composition
   - `runtime/conversation_turn_runtime.ts` - Assistant-turn runtime with interruption and abort handling
   - `runtime/session_prompt_composer.ts` - Session prompt composition for main-session and subagent prompts
@@ -100,7 +109,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `runtime/deps.ts` - Core dependency injection
   - `utils/context_builder.ts` - System prompt assembly
   - `utils/agents_files.ts` - AGENTS.md discovery
-  - `utils/project_files.ts` - Project file discovery for `@<path>` autocomplete
+  - `utils/project_files.ts` - Bounded project path suggestions for `@<path>` autocomplete
   - `utils/tool_preview.ts` - Tool UI preview truncation
   - `utils/truncate.ts` - Truncation helpers
   - `utils/model_stream.ts` - Model streaming wrapper
@@ -113,12 +122,12 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `utils/git.ts` - Git helpers
   - `utils/messages.ts` - Message helpers
 
-- `src/diff_tool/` - Built-in browser diff review demo tool (`tau diff-tool`) used as the default `/diff` fallback
+- `src/diff_tool/` - Built-in browser diff review demo tool (`tau diff-tool`) and reference implementation for the diff-review tool protocol
 - `src/tui/`
-  - `app.ts` - ChatApp wiring
-  - `chat_controller.ts` - UI-agnostic controller composition/wiring
-  - `chat_controller/` - Focused controller modules (`interrupt_lifecycle.ts`, `queued_user_messages.ts`, `session_maintenance_service.ts`)
-  - `chat_view.ts` - TUI view adapter used by ChatApp
+  - `session_chat_app.ts` - Canonical TUI wiring for local and remote session-protocol clients
+  - `session_chat_controller.ts` - Session snapshot/delta controller for TUI behavior, commands, and protocol mutations
+  - `chat_controller/` - Focused helper modules used by `SessionChatController`
+  - `chat_view.ts` - TUI view adapter used by `SessionChatApp`
   - `tool_ui_router.ts` - Tool UI event sequencing and routing
   - `terminal.ts` - Terminal adapter
   - `clipboard.ts` - Clipboard helper
@@ -137,7 +146,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 | `write` | Create/overwrite files | `read-write` |
 | `edit` | Replace exact text in files | `read-write` |
 | `view_image` | View an image file | `read-only` |
-| `diff_review` | Launch interactive TUI diff review when explicitly requested by the user | `read-only` or `read-write` |
+| `diff_review` | Diff-review tool definition; the session TUI launches local diff review through the session host protocol | `read-only` or `read-write` |
 | `spawn_agent` | Start a background subagent | `read-only` or `read-write` |
 | `send_input_to_agent` | Send input to an idle subagent | `read-only` or `read-write` |
 | `wait_for_agent` | Await subagent completion | `read-only` or `read-write` |
@@ -148,7 +157,7 @@ Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog
 
 Risk levels (`read-only`, `read-write`) gate model tool calls. Subagents inherit the session risk level unless overridden in persona config. The model declares intent via `safetyLevel` on bash calls.
 
-Main session system prompts are immutable after session start to preserve model caching. The environment tag is not updated mid-session. `/risk` and `/cd` changes are injected as system messages on the next user turn instead. Subagent prompts are rebuilt on risk changes so inherited risk applies to subagents.
+Main session system prompts are immutable after session start to preserve model caching. The environment tag is not updated mid-session. `/risk` changes are injected as system messages on the next user turn instead. Subagent prompts are rebuilt on risk changes so inherited risk applies to subagents.
 
 Prompt/context tag style: use dash-case for XML-like tag names in prompt text (for example `<risk-level>`, `<available-skills>`, `<tool-call>`, `<tool-result>`, `<last-assistant-message-verbatim>`). Do not introduce new snake_case tag names.
 
@@ -193,7 +202,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `builtInDiffTool`, `bashCommands`, `agentContextFiles`, `subagents`, `autoCompact`, `modelSystemNotices`, `speechToText`, `async`). This level is only included when cwd is inside home.
+- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `builtInDiffTool`, `agentContextFiles`, `subagents`, `autoCompact`, `modelSystemNotices`, `speechToText`, `cloudflareSandbox`, `flySprites`, `async`). This level is only included when cwd is inside home.
   - `apiKeys` (optional): Map of provider id to API key (`apiKeys.<provider>`). Keys merge by provider id across config levels.
   - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
   - `apiKeys.mistral` (optional): Mistral API key for `/listen`, Telegram audio transcription, and PDF OCR.
@@ -203,20 +212,21 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.
   - `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.
   - `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Must be non-empty and matches are exact/case-sensitive. Defaults to `gold`.
-  - `diffTool` (optional): Override launcher for `/diff` (`command`, optional `args`, optional `env`). When omitted, `/diff` uses Tau's built-in `tau diff-tool` browser demo. Relative `command` paths resolve from the config level root.
+  - `diffTool` (optional): Diff-review tool launcher config (`command`, optional `args`, optional `env`). Relative `command` paths resolve from the config level root. `/diff` launches this tool from the TUI side while host-owned review work runs through the session protocol.
   - `builtInDiffTool` (optional): Built-in diff tool settings used only by the fallback launcher. `codeTheme` sets the initial code theme, defaults to `github-dark-dimmed`, and accepts the dark themes listed in README.md; users can still switch themes in the diff tool UI.
   - `subagents.defaultLaunchModels` (optional): Allowlisted `spawn_agent` launch overrides for the built-in `default` subagent (`<provider>/<model>:<effort>` entries).
   - `autoCompact` (optional): Automatic compaction settings, merged field-by-field. Defaults are `{ "enabled": true, "reserveTokens": 16384, "keepRecentTokens": 20000 }`. Threshold detection uses only provider-reported assistant usage against `model.contextWindow - reserveTokens`; Tau's token heuristic is only used after threshold crossing to choose the retained-tail cut point, with retention capped at that threshold. Auto-compaction summarizes older context, asks the compaction model to select original user messages to append verbatim inside the summary by history id, keeps a recent tail, inserts a hidden continuation user message, and emits `compaction_start`/`compaction_end` core events. Context-overflow compact-and-retry is not implemented.
   - `modelSystemNotices` (optional): Map of `<provider>/<model>` to notice text. Provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). Tau prepends the notice as a `<system>` block before each user message sent to that model (main session and subagents).
   - `speechToText` (optional): Speech-to-text config for `/listen` and Telegram audio transcription. `provider` is required when present and accepts `mistral` (default, Voxtral) or `gemini` (Gemini 3.5 Flash with minimal thinking).
+  - `cloudflareSandbox.bridges` (optional): Host-owned Cloudflare Sandbox bridge targets for hosted execution environments. Each bridge has `url`, optional `apiKey`, optional `apiKeyEnv`, and optional `home`. `session.create` references bridges by id plus an already-provisioned `sandboxId` and real sandbox `cwd`; Tau does not create or provision Cloudflare sandboxes during session creation. Tau resolves config/content from the sandbox `cwd`, while bridge credentials are resolved by the host and are not persisted in session snapshots.
+  - `flySprites.apis` (optional): Host-owned Fly Sprites API targets for hosted execution environments. Each API has optional `baseURL`, optional `token`, optional `tokenEnv`, and optional `home`. `session.create` references APIs by id plus an already-provisioned `spriteName` and real Sprite `cwd`; Tau does not create or provision Sprites during session creation. Tau resolves config/content from the Sprite `cwd`, while API tokens are resolved by the host and are not persisted in session snapshots.
   - `async.client` (optional): Async client config (`defaultTarget`, `defaultProjectId`, `targets.<id>.url`, `targets.<id>.token`, `targets.<id>.timeoutMs`).
-  - daemon-side async settings are loaded from a separate JSON file passed via `tau async daemon --config-file <path>` (`host`, `port`, `authToken`, `maxSessions`, `telegram` (map keyed by bot id, with optional `allowedProjectIds`; sessions are chat-scoped within each bot, and allowed groups share one group session namespace), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `systemMessage`, and project fields like `workingDirectory`, `description`, `bootstrapCommands`, and `backgroundBootstrapCommands`). Async repositories use automatic persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`, refreshed with pruned fetches and reinitialized if the configured repo changes; session workspaces are cloned from those caches and remain ephemeral. On daemon startup, Tau removes existing entries under configured async workspace roots (`workspaceRoot` plus any per-project overrides) before adapters start, leaves repository caches intact, and the Telegram adapter prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Assume zero or one async daemon process per host; concurrent daemons are unsupported.
+  - daemon-side async settings are loaded from a separate JSON file passed via `tau async daemon --config-file <path>` (`host`, `port`, `authToken`, `maxSessions`, `telegram` (map keyed by bot id, with optional `allowedProjectIds`; sessions are chat-scoped within each bot, and allowed groups share one group session namespace), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `systemMessage`, and project fields like `workingDirectory`, `description`, `bootstrapCommands`, and `backgroundBootstrapCommands`). HTTP `POST /v1/sessions/:sessionId/messages` accepts `text`, optional `mode` (`submit` or `steer`), and optional `additionalSystemMessage`; normal submit returns `busy` while a session is running, while steering is accepted during active work. Async repositories use automatic persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`, refreshed with pruned fetches and reinitialized if the configured repo changes; session workspaces are cloned from those caches and remain ephemeral. On daemon startup, Tau removes existing entries under configured async workspace roots (`workspaceRoot` plus any per-project overrides) before adapters start, leaves repository caches intact, and the Telegram adapter prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Assume zero or one async daemon process per host; concurrent daemons are unsupported.
 
-- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `autoCompact`, `modelSystemNotices`, and `async.client` merge per field; `diffTool` is selected from the most specific level, overrides the built-in `tau diff-tool` fallback when present, and its relative `command` is resolved from that level root; `builtInDiffTool` is selected from the most specific level and only applies when `diffTool` is not configured; `bashCommands` merge by `id` and run from the config level root (directory containing `.tau`, or home for the global config); `agentContextFiles` are additive.
+- **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `autoCompact`, `modelSystemNotices`, `cloudflareSandbox.bridges`, `flySprites.apis`, and `async.client` merge per field; `diffTool` is selected from the most specific level, and its relative `command` is resolved from that level root; `builtInDiffTool` is selected from the most specific level and applies to the built-in `tau diff-tool` demo; `agentContextFiles` are additive.
 - **Model overrides**: `~/.config/tau/models.json` (global, only when cwd is under home) and `.tau/models.json` (project) are discovered using the same level resolution as `config.json`. Entries overlay bundled model definitions by `provider + model id` (most specific wins). Known providers only.
 - **Project Context**: `AGENTS.md` (searched from current directory up to home/root), plus optional additional `AGENTS.md` files configured via `agentContextFiles` in config (paths resolved relative to the directory containing `.tau/`, or relative to home for the global config when it is in scope). Entries are only included when their directory is an ancestor or descendant of the current working directory; sibling paths are ignored. Tau also includes a paths-only listing of child-directory `AGENTS.md` files under the current working directory, excluding files already injected in full.
-- **Bash commands**: `bashCommands` entries in any in-scope config file (`{ "bashCommands": [{ "id", "cmd", "description?" }] }`). Each command runs with cwd set to the config level root (same root used to resolve `agentContextFiles`).
-- **Diff review**: `/diff [git diff args...]` only starts when the main TUI session is idle. Plain `/diff` captures the current working-tree review scope at launch time, including tracked staged + unstaged changes plus untracked text files that fit within Tau's snapshot limits; `/diff <git diff args...>` captures the resolved `git diff` output for those arguments instead. Tau starts the built-in `tau diff-tool` browser demo when `diffTool` is not configured, lets `diffTool` override that fallback when it is configured, shows diff-review status in the chat stream, keeps the editor usable while blocking normal TUI submission, and appends returned review text as a review-styled user message without auto-running the assistant. The main assistant can also call the TUI-only `diff_review` tool when the user explicitly asks the agent to start a diff review; it can capture structured `git diff` args or one or more prebuilt patch files for selected-hunk reviews, shows live status in a normal tool card, and returns the review as a normal tool result so the assistant continues in the same turn. The built-in browser shows that captured review snapshot, but review agents inspect the live repo state while using the captured snapshot as their starting point. The `/diff` model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that review context; `diff_review` tool results include equivalent context as plain tool output instead. If the tool never connects or disconnects before returning a result, Tau cancels the review and unblocks the session.
+- **Diff review**: `/diff` is a TUI-local feature. The diff tool process runs where the TUI runs and speaks only the narrow diff-review protocol with the TUI. The TUI captures git snapshots through `session.exec`, drives generic host-owned ephemeral agent contexts through `session.ephemeral.create`, `session.ephemeral.submit`, and `session.ephemeral.close`, and receives non-persisted agent progress through `session.ephemeral`.
 
 - **Prompts**: `~/.config/tau/prompts/*.md` and `.tau/prompts/*.md` (discovered by walking up from cwd to home/root; most specific wins on conflicts). Prompt file names (without `.md`) must match their `id`.
 - **Themes**: `~/.config/tau/themes/*.json` and `.tau/themes/*.json` (same discovery rules as prompts/config). Theme values accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, or `hsl(h, s%, l%)`. Missing palette tokens render as plain text when a theme is selected. Built-in themes auto-adapt to dark/light terminal backgrounds via OSC 11 detection at startup (best effort, dark fallback). Custom themes remain single-variant.
@@ -254,20 +264,23 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 ## CLI flags
 
 - `--help`, `-h` - Show help and exit
-- `--debug` - Print debug info (loaded personas, prompts, bash commands, skills, full system prompt, tool schemas) and exit
-- `--load`, `-l <file>` - Load a checkpoint file
+- `--debug` - Print debug info (loaded personas, prompts, skills, full system prompt, tool schemas) and exit
+- `--load`, `-l <file>` - Load a checkpoint file in TUI mode
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
 - `--risk <level>`, `-r` - Set initial risk level (`read-only`, `read-write`)
 - `--caffeinated` - Keep macOS awake during active assistant turns in TUI mode (currently a no-op on Linux)
 - `--no-agent-context-files` - Disable AGENTS.md injection into the system prompt
 
-These startup flags apply to both interactive TUI mode (`tau`) and headless RPC mode (`tau rpc`), except `--caffeinated` (macOS-only TUI flag, rejected in RPC mode).
+These startup flags apply to interactive TUI mode (`tau`), headless RPC mode (`tau rpc`), and WebSocket server mode (`tau serve`), except `--load` (TUI-only because hosted servers start without a session) and `--caffeinated` (macOS-only TUI flag, rejected outside TUI mode).
 
 The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you can inspect exactly what system prompt a given configuration produces.
 
 ## CLI subcommands
 
 - `tau rpc` - Run headless stdio RPC mode (NDJSON request/response + core event streaming)
+- `tau serve [--host <host>] [--port <port>] [--auth-token <token>]` - Host session protocol over WebSocket (`TAU_WS_AUTH_TOKEN` can provide the token)
+- `tau attach [--session <id> | --new --cwd <path>] [--auth-token <token>] ws://host:port` - Run the terminal UI against a WebSocket session host
+- `tau attach [--session <id> | --new --cwd <path>] -- <command...>` - Run the terminal UI against a session-protocol command, for example `ssh vps 'tau rpc --risk read-only'`; without `--session` or `--new`, attach lists hosted sessions and prompts for a selection, and new sessions require a host-local execution cwd
 - `tau auth login codex` - OAuth login for ChatGPT Plus/Pro; stores `~/.config/tau/auth.json`
 - `tau auth list` - List authenticated accounts and usage windows
 - `tau auth logout codex --account <email>` - Remove stored OAuth credentials
@@ -276,7 +289,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau tool pdf-unpack <file.pdf>` - OCR a PDF with Mistral, render local page patches with `pdftoppm`, and print the artifact paths.
 - `tau async daemon --config-file <path>` - Run async daemon HTTP API (plus optional Telegram DM adapter)
 - `tau async --project <id> <prompt...> | <prompt...> | -- <prompt...> | list | status <id> | logs <id> | send <id> <text...> | interrupt <id> | cron list | cron runs [jobId] | cron run <jobId>` - Async client commands (`<prompt...>` uses `async.client.defaultProjectId` when set).
-- `tau diff-tool [--help]` - Built-in browser diff review demo tool used as the default `/diff` fallback
+- `tau diff-tool [--help]` - Built-in browser diff review demo tool and reference implementation for the diff-review protocol
 - `TAU_ASYNC_AUTH_TOKEN` (env var) - Optional override for daemon-file `authToken` in daemon mode
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
 - `PARALLEL_API_KEY` (env var) - Optional override for `apiKeys.parallel` used by `web_search`/`web_fetch`
@@ -285,24 +298,24 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 ## Commands
 
-- `/help`, `/new`, `/rewind`, `/cd`, `/diff [git diff args...]`, `/copy:text`, `/copy:code`, `/checkpoint`, `/reload`, `/listen` (macOS only; can record while assistant works; warns on Linux), `/speak` (macOS only; speaks the last assistant message)
+- `/help`, `/new`, `/rewind`, `/diff [git diff args...]` (opens the TUI-local diff review tool), `/copy:text`, `/copy:code`, `/reload`, `/listen` (macOS only; can record while assistant works; warns on Linux), `/speak` (macOS only; speaks the last assistant message)
 - `/compact:summary-only`, `/compact:summary-and-last` - Manually compact history into a single synthetic user summary message with compaction-model-selected original user messages copied verbatim inside the summary (optionally includes last assistant message verbatim when available); automatic compaction is separate and keeps a retained recent tail
 - `/prune:earliest`, `/prune:largest`, `/prune:smart` - Prune tool results and compact edit call payloads/results
-- `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`, `/bash:<id>`
+- `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model)
 - `!!<cmd>` - Direct bash execution without adding output to the model context
 - `#<request>` - Memory mode for updating AGENTS.md (single-line only)
 
-Slash commands only trigger on single-line inputs. `/diff` treats its payload as raw `git diff` args, defaults to plain `git diff` when no args are provided, and uses the built-in `tau diff-tool` browser demo unless `diffTool` is configured. Unknown slash-prefixed text is sent as a normal prompt.
+Slash commands only trigger on single-line inputs. `/diff` launches the local diff tool and records returned review feedback without auto-running the assistant. Unknown slash-prefixed text is sent as a normal prompt.
 
-RPC mode command surface is protocol-based (`initialize`, `session.submit`, `session.interrupt`, `session.snapshot`, `session.reset`, `session.shutdown`) over NDJSON stdin/stdout.
+RPC mode command surface is protocol-based (`initialize`, `session.create`, `session.list`, `session.observe`, `session.unobserve`, `session.record`, `session.submit`, `session.queue`, `session.steer`, `session.retry`, `session.exec`, `session.interrupt`, `session.snapshot`, `session.setRisk`, `session.setReasoning`, `session.setPersona`, `session.resolvePrompt`, `session.autocompletePaths`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, `session.terminateSubagent`, `session.ephemeral.create`, `session.ephemeral.submit`, `session.ephemeral.close`) over NDJSON stdin/stdout.
 
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+F` (expand @<file> and @@skill:<name> mentions), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (terminate selected subagent), `Ctrl+Enter` (steer running assistant with editor input), `Alt+S` (steer running assistant with queued messages), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+C` (collapse queued messages into one), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work, including cancelling `/diff`), `Ctrl+C` (press twice to exit)
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (terminate selected subagent), `Ctrl+Enter` (steer running assistant with editor input), `Alt+S` (steer running assistant with queued messages), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+C` (collapse queued messages into one), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work), `Ctrl+C` (press twice to exit)
 
 ## Development
 
 - `npm run check` - Apply repository formatting, then typecheck, including `src/diff_tool/app`
-- `npm run build` - Build `src/diff_tool/app`, then compile to dist/ (TypeScript emits `.d.ts` files, then `postbuild` removes every declaration outside `dist/sdk/` via `find dist -name '*.d.ts' ! -path 'dist/sdk/*' -delete`)
+- `npm run build` - Clear `dist/` and `tsconfig.tsbuildinfo`, build `src/diff_tool/app`, then compile to `dist/` (TypeScript emits `.d.ts` files, then `postbuild` removes declarations outside the published SDK/protocol/transport surfaces)
 - `npm test` - Build + run UI tests
 - fresh clones also need `npm ci` in `src/diff_tool/app` because the built-in diff tool app has its own package.json
 
@@ -356,7 +369,7 @@ EOF
 ## Adding a slash command
 
 1. `src/core/commands/registry.ts`: Add to `Command` type and register it in `createCommandRegistry()`
-2. `src/tui/chat_controller.ts`: Wire the handler in `commandHandlers`
+2. `src/tui/session_chat_controller.ts`: Wire the handler in `commandHandlers`
 3. `src/tui/ui/slash_autocomplete.ts`: If the command needs argument suggestions, extend the parser
 
 ## Security

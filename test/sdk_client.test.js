@@ -1,18 +1,26 @@
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { CORE_EVENT_VERSION } from "../dist/core/events/types.js";
-import { RPC_METHODS, RPC_PROTOCOL_VERSION } from "../dist/core/modes/rpc_protocol.js";
 import {
-  createTauSdkClient,
+  SESSION_PROTOCOL_METHODS,
+  SESSION_PROTOCOL_VERSION,
+} from "../dist/protocol/session_protocol.js";
+import {
+  createTauSdkClientFromTransport,
   TauProcessError,
-  TauRpcResponseError,
+  TauSessionClientError,
   TauTransportError,
 } from "../dist/sdk/index.js";
+import { StdioSessionProtocolTransport } from "../dist/transport/stdio_session_transport.js";
+import {
+  createProtocolBootstrap,
+  createProtocolExecResult,
+  createProtocolSnapshot,
+} from "./helpers/session_protocol_fixtures.js";
 
 class FakeChildProcess extends EventEmitter {
-  constructor() {
+  constructor(options = {}) {
     super();
     this.stdin = new PassThrough();
     this.stdout = new PassThrough();
@@ -28,6 +36,7 @@ class FakeChildProcess extends EventEmitter {
     this.exitCode = null;
     this.signalCode = null;
     this.killed = false;
+    this.autoExitOnKill = options.autoExitOnKill ?? true;
 
     this.stdin.on("data", (chunk) => {
       this._stdinBuffer += chunk.toString();
@@ -80,24 +89,217 @@ class FakeChildProcess extends EventEmitter {
   kill(signal = "SIGTERM") {
     this.killed = true;
     this.killSignals.push(signal);
-    this.exit(null, typeof signal === "string" ? signal : null);
+    if (this.autoExitOnKill) {
+      this.exit(null, typeof signal === "string" ? signal : null);
+    }
     return true;
   }
 }
 
-function createReadyMessage(sessionId = "session-1") {
+function createReadyMessage() {
   return {
-    version: RPC_PROTOCOL_VERSION,
+    version: SESSION_PROTOCOL_VERSION,
     type: "ready",
-    sessionId,
-    methods: [...RPC_METHODS],
-    coreEventVersion: CORE_EVENT_VERSION,
+    methods: [...SESSION_PROTOCOL_METHODS],
   };
+}
+
+const bootstrap = createProtocolBootstrap();
+
+const localCreateInput = { executionEnvironment: { kind: "local", cwd: "/repo" } };
+
+function createSnapshot(sessionId) {
+  return createProtocolSnapshot({
+    sessionId,
+    bootstrap,
+  });
+}
+
+function createNoticeDelta(sessionId, revision, text) {
+  return {
+    version: SESSION_PROTOCOL_VERSION,
+    type: "session.delta",
+    sessionId,
+    fromRevision: revision,
+    toRevision: revision + 1,
+    reason: "notice",
+    delta: {
+      type: "snapshot.patch",
+      changes: [
+        {
+          type: "timeline.append",
+          item: {
+            type: "notice",
+            id: `notice-${revision}`,
+            notice: { severity: "info", text, timestamp: revision },
+          },
+        },
+      ],
+    },
+  };
+}
+
+class FakeSessionProtocolTransport {
+  constructor() {
+    this.ready = createReadyMessage();
+    this.connect = vi.fn(async (initializeParams, timeoutMs) => {
+      this.initializeParams = initializeParams;
+      this.connectTimeoutMs = timeoutMs;
+    });
+    this.request = vi.fn(async (method, params) => {
+      this.requests.push({ method, params });
+      await this.onRequest?.(method, params);
+      switch (method) {
+        case "session.create":
+          return createSnapshot("session-2");
+        case "session.observe":
+        case "session.snapshot":
+          return createSnapshot(params.sessionId);
+        case "session.setRisk":
+          return createProtocolSnapshot({
+            sessionId: params.sessionId,
+            bootstrap: { ...bootstrap, riskLevel: params.riskLevel },
+          });
+        case "session.setReasoning":
+          return createProtocolSnapshot({
+            sessionId: params.sessionId,
+            bootstrap: {
+              ...bootstrap,
+              persona: {
+                ...bootstrap.persona,
+                settings: { ...bootstrap.persona.settings, reasoning: params.reasoning },
+              },
+            },
+          });
+        case "session.resolvePrompt":
+          return { promptId: params.promptId, text: `prompt body for ${params.promptId}` };
+        case "session.reload":
+          return {
+            snapshot: {
+              ...createSnapshot(params.sessionId),
+              revision: 4,
+            },
+            warnings: [],
+            counts: { personas: 1, prompts: 1, skills: 0 },
+          };
+        case "session.compact":
+          return {
+            snapshot: createProtocolSnapshot({
+              sessionId: params.sessionId,
+              revision: 2,
+              historyEntries: [
+                {
+                  id: "summary-entry",
+                  message: {
+                    role: "user",
+                    content: [{ type: "text", text: "compacted summary" }],
+                  },
+                },
+              ],
+            }),
+            compactionMessage: "compacted summary",
+            includedLastAssistant: params.mode === "summary-and-last",
+          };
+        case "session.prune":
+          return {
+            snapshot: {
+              ...createSnapshot(params.sessionId),
+              revision: 3,
+            },
+            message: `pruned with ${params.strategy}`,
+            noop: false,
+            bashResultsPruned: 1,
+            editCallsPruned: 2,
+            editResultsPruned: 1,
+            bytesPruned: 1024,
+          };
+        case "session.rewind":
+          return {
+            snapshot: createProtocolSnapshot({
+              sessionId: params.sessionId,
+              revision: 5,
+              historyEntries: [],
+            }),
+            historyEntryId: params.historyEntryId,
+            text: "rewound text",
+            removedEntryIds: [params.historyEntryId, "assistant-1"],
+          };
+        case "session.terminateSubagent":
+          return { found: params.subagentId === "subagent-1" };
+        case "session.list":
+          return { sessions: [{ sessionId: "session-1", lifecycle: "idle" }] };
+        case "session.submit":
+        case "session.queue":
+        case "session.steer":
+          return {
+            userHistoryEntryId: params.historyEntryId ?? "entry-1",
+            turn: { aborted: false },
+          };
+        case "session.retry":
+          return { turn: { aborted: false } };
+        case "session.exec":
+          return {
+            output: "raw output",
+            stdout: "raw output",
+            stderr: "",
+            exitCode: 0,
+            truncated: false,
+          };
+        case "session.record":
+          return {
+            snapshot: createProtocolSnapshot({
+              sessionId: params.sessionId,
+              revision: 6,
+              historyEntries: [
+                {
+                  id: params.historyEntryId ?? "added-user",
+                  message: { role: "user", content: [{ type: "text", text: params.text }] },
+                },
+              ],
+            }),
+            userHistoryEntryId: params.historyEntryId ?? "added-user",
+          };
+        case "session.interrupt":
+          return { interrupted: true, isTurnRunning: false };
+        case "session.unobserve":
+          return { unobserved: true };
+        default:
+          throw new Error(`unexpected method ${method}`);
+      }
+    });
+    this.close = vi.fn(async () => {
+      this.closed = true;
+    });
+  }
+
+  requests = [];
+  listeners = new Set();
+  initializeParams;
+  connectTimeoutMs;
+  closed = false;
+  onRequest;
+
+  onDelta(listener) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  onEphemeral() {
+    return () => {};
+  }
+
+  emitDelta(delta) {
+    for (const listener of this.listeners) {
+      listener(delta);
+    }
+  }
 }
 
 function createSuccessResponse(id, result) {
   return {
-    version: RPC_PROTOCOL_VERSION,
+    version: SESSION_PROTOCOL_VERSION,
     type: "response",
     id,
     ok: true,
@@ -107,7 +309,7 @@ function createSuccessResponse(id, result) {
 
 function createErrorResponse(id, error) {
   return {
-    version: RPC_PROTOCOL_VERSION,
+    version: SESSION_PROTOCOL_VERSION,
     type: "response",
     id,
     ok: false,
@@ -139,27 +341,27 @@ async function createConnectedClient(child, options = {}) {
     if (request.method === "initialize") {
       child.send(
         createSuccessResponse(request.id, {
-          protocolVersion: RPC_PROTOCOL_VERSION,
-          sessionId: "session-1",
-          methods: [...RPC_METHODS],
+          protocolVersion: SESSION_PROTOCOL_VERSION,
+          methods: [...SESSION_PROTOCOL_METHODS],
           alreadyInitialized: false,
         }),
       );
     }
+    if (request.method === "session.observe") {
+      child.send(createSuccessResponse(request.id, createSnapshot(request.params.sessionId)));
+    }
   });
 
-  const spawn = vi.fn(() => child);
-  const clientPromise = createTauSdkClient({
-    spawn,
-    scriptPath: "/fake/main.js",
+  const transport = new StdioSessionProtocolTransport(child);
+  const clientPromise = createTauSdkClientFromTransport(transport, {
     connectTimeoutMs: 500,
     ...options,
   });
 
-  child.send(createReadyMessage("session-1"));
+  child.send(createReadyMessage());
   const client = await clientPromise;
 
-  return { client, spawn };
+  return { client, transport };
 }
 
 describe("sdk_client", () => {
@@ -172,30 +374,374 @@ describe("sdk_client", () => {
       new URL("../dist/sdk/types.d.ts", import.meta.url),
       "utf8",
     );
-    const errorsDeclaration = readFileSync(
-      new URL("../dist/sdk/errors.d.ts", import.meta.url),
+    const sessionDeclaration = readFileSync(
+      new URL("../dist/sdk/session.d.ts", import.meta.url),
+      "utf8",
+    );
+    const transportErrorsDeclaration = readFileSync(
+      new URL("../dist/transport/errors.d.ts", import.meta.url),
+      "utf8",
+    );
+    const transportDeclaration = readFileSync(
+      new URL("../dist/transport/session_transport.d.ts", import.meta.url),
+      "utf8",
+    );
+    const stdioTransportDeclaration = readFileSync(
+      new URL("../dist/transport/stdio_session_transport.d.ts", import.meta.url),
+      "utf8",
+    );
+    const protocolDeclaration = readFileSync(
+      new URL("../dist/protocol/session_protocol.d.ts", import.meta.url),
       "utf8",
     );
 
+    expect(
+      existsSync(new URL("../dist/transport/in_process_session_transport.d.ts", import.meta.url)),
+    ).toBe(false);
     expect(indexDeclaration).not.toContain("../core/");
     expect(typesDeclaration).not.toContain("../core/");
-    expect(errorsDeclaration).not.toContain("../core/");
+    expect(sessionDeclaration).not.toContain("../core/");
+    expect(transportErrorsDeclaration).not.toContain("../core/");
+    expect(transportDeclaration).not.toContain("../core/");
+    expect(stdioTransportDeclaration).not.toContain("../core/");
+    expect(protocolDeclaration).not.toContain("../core/");
   });
 
-  it("spawns rpc process, correlates responses by request id, and streams events", async () => {
+  it("creates the same sdk session facade from an arbitrary session protocol transport", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    const client = await createTauSdkClientFromTransport(transport, {
+      connectTimeoutMs: 42,
+      initialize: { client: { name: " custom-client ", version: " 2 " } },
+    });
+
+    expect(transport.connect).toHaveBeenCalledTimes(1);
+    expect(transport.initializeParams).toEqual({
+      client: { name: " custom-client ", version: " 2 " },
+    });
+    expect(transport.connectTimeoutMs).toBe(42);
+
+    const readySession = await client.sessions.observe("session-1");
+    await expect(readySession.submit("hello", { historyEntryId: "entry-custom" })).resolves.toEqual(
+      {
+        userHistoryEntryId: "entry-custom",
+        turn: { aborted: false },
+      },
+    );
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.submit",
+      params: {
+        sessionId: "session-1",
+        text: "hello",
+        historyEntryId: "entry-custom",
+      },
+    });
+
+    await expect(readySession.queue("queued")).resolves.toEqual({
+      userHistoryEntryId: "entry-1",
+      turn: { aborted: false },
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.queue",
+      params: { sessionId: "session-1", text: "queued" },
+    });
+
+    await expect(readySession.steer("steer")).resolves.toEqual({
+      userHistoryEntryId: "entry-1",
+      turn: { aborted: false },
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.steer",
+      params: { sessionId: "session-1", text: "steer" },
+    });
+
+    await expect(readySession.retry()).resolves.toEqual({
+      turn: { aborted: false },
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.retry",
+      params: { sessionId: "session-1" },
+    });
+
+    await expect(readySession.exec("pwd")).resolves.toEqual({
+      output: "raw output",
+      stdout: "raw output",
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.exec",
+      params: { sessionId: "session-1", command: "pwd" },
+    });
+
+    await expect(
+      readySession.exec("git diff", { cwd: "/repo", timeoutMs: 30000 }),
+    ).resolves.toEqual({
+      output: "raw output",
+      stdout: "raw output",
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.exec",
+      params: { sessionId: "session-1", command: "git diff", cwd: "/repo", timeoutMs: 30000 },
+    });
+
+    await expect(readySession.record("review", { historyEntryId: "review-1" })).resolves.toEqual({
+      snapshot: expect.objectContaining({
+        sessionId: "session-1",
+        revision: 6,
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            id: "review-1",
+            message: expect.objectContaining({
+              role: "user",
+              content: [{ type: "text", text: "review" }],
+            }),
+          }),
+        ]),
+      }),
+      userHistoryEntryId: "review-1",
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.record",
+      params: { sessionId: "session-1", text: "review", historyEntryId: "review-1" },
+    });
+
+    await expect(readySession.setRiskLevel("read-write")).resolves.toEqual(
+      expect.objectContaining({
+        settings: expect.objectContaining({ riskLevel: "read-write" }),
+      }),
+    );
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.setRisk",
+      params: { sessionId: "session-1", riskLevel: "read-write" },
+    });
+
+    await expect(readySession.setReasoning("high")).resolves.toEqual(
+      expect.objectContaining({
+        settings: expect.objectContaining({ reasoning: "high" }),
+      }),
+    );
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.setReasoning",
+      params: { sessionId: "session-1", reasoning: "high" },
+    });
+
+    await expect(readySession.resolvePrompt("fix")).resolves.toEqual({
+      promptId: "fix",
+      text: "prompt body for fix",
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.resolvePrompt",
+      params: { sessionId: "session-1", promptId: "fix" },
+    });
+
+    await expect(
+      readySession.compact("summary-and-last", { guidance: "preserve decisions" }),
+    ).resolves.toEqual({
+      snapshot: expect.objectContaining({
+        sessionId: "session-1",
+        revision: 2,
+      }),
+      compactionMessage: "compacted summary",
+      includedLastAssistant: true,
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.compact",
+      params: {
+        sessionId: "session-1",
+        mode: "summary-and-last",
+        guidance: "preserve decisions",
+      },
+    });
+
+    await expect(
+      readySession.pruneToolResults("smart", { fraction: 0.5, guidance: "keep errors" }),
+    ).resolves.toEqual({
+      snapshot: expect.objectContaining({
+        sessionId: "session-1",
+        revision: 3,
+      }),
+      message: "pruned with smart",
+      noop: false,
+      bashResultsPruned: 1,
+      editCallsPruned: 2,
+      editResultsPruned: 1,
+      bytesPruned: 1024,
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.prune",
+      params: {
+        sessionId: "session-1",
+        strategy: "smart",
+        fraction: 0.5,
+        guidance: "keep errors",
+      },
+    });
+
+    await expect(readySession.rewindToHistoryEntryId("history-1")).resolves.toEqual({
+      snapshot: expect.objectContaining({
+        sessionId: "session-1",
+        revision: 5,
+        messages: [
+          expect.objectContaining({
+            id: "system",
+            message: expect.objectContaining({ role: "system" }),
+          }),
+        ],
+      }),
+      historyEntryId: "history-1",
+      text: "rewound text",
+      removedEntryIds: ["history-1", "assistant-1"],
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.rewind",
+      params: { sessionId: "session-1", historyEntryId: "history-1" },
+    });
+
+    await expect(readySession.terminateSubagent("subagent-1")).resolves.toEqual({ found: true });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.terminateSubagent",
+      params: { sessionId: "session-1", subagentId: "subagent-1" },
+    });
+
+    const unobservedSession = await client.sessions.observe("session-1");
+    await expect(unobservedSession.unobserve()).resolves.toEqual({ unobserved: true });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.unobserve",
+      params: { sessionId: "session-1" },
+    });
+    await expect(unobservedSession.snapshot()).rejects.toMatchObject({
+      message: "tau sdk session is unobserved",
+    });
+
+    const createdSession = await client.sessions.create(localCreateInput);
+    const receivedDeltas = [];
+    const unsubscribe = createdSession.onDelta((delta) => receivedDeltas.push(delta));
+    const matchingDelta = createNoticeDelta("session-2", 1, "hi");
+
+    transport.emitDelta({
+      ...matchingDelta,
+      sessionId: "session-2",
+    });
+    transport.emitDelta({
+      ...matchingDelta,
+      sessionId: "session-1",
+    });
+
+    expect(createdSession.id).toBe("session-2");
+    expect(receivedDeltas).toEqual([matchingDelta]);
+
+    await expect(createdSession.unobserve()).resolves.toEqual({ unobserved: true });
+    await expect(createdSession.snapshot()).rejects.toBeInstanceOf(TauSessionClientError);
+    await expect(createdSession.snapshot()).rejects.toMatchObject({
+      message: "tau sdk session is unobserved",
+    });
+
+    transport.emitDelta(matchingDelta);
+    expect(receivedDeltas).toEqual([matchingDelta]);
+    unsubscribe();
+
+    const bufferedDelta = createNoticeDelta("session-1", 7, "buffered before listener");
+    transport.onRequest = (method) => {
+      if (method === "session.observe") {
+        transport.emitDelta(bufferedDelta);
+      }
+    };
+    const bufferedSession = await client.sessions.observe("session-1");
+    transport.onRequest = undefined;
+
+    const bufferedDeltas = [];
+    bufferedSession.onDelta((delta) => bufferedDeltas.push(delta));
+    expect(bufferedDeltas).toEqual([bufferedDelta]);
+
+    const afterListenerDelta = createNoticeDelta("session-1", 8, "after listener");
+    transport.emitDelta(afterListenerDelta);
+    expect(bufferedDeltas).toEqual([bufferedDelta, afterListenerDelta]);
+
+    await client.close();
+    expect(transport.closed).toBe(true);
+  });
+
+  it("closes transport when transport-backed sdk initialization fails", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    const error = new TauTransportError("connect failed");
+    transport.connect.mockRejectedValueOnce(error);
+
+    await expect(createTauSdkClientFromTransport(transport)).rejects.toBe(error);
+    expect(transport.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("initializes the stdio transport only once across repeated connect calls", async () => {
+    const child = new FakeChildProcess();
+    const transport = new StdioSessionProtocolTransport(child);
+    const initializeParams = { client: { name: "fixture", version: "1" } };
+    const connectOne = transport.connect(initializeParams, 500);
+    const connectTwo = transport.connect({ client: { name: "ignored", version: "2" } }, 500);
+
+    child.send(createReadyMessage());
+    const initializeRequest = await waitForRequest(
+      child,
+      (request) => request.method === "initialize",
+    );
+    child.send(
+      createSuccessResponse(initializeRequest.id, {
+        protocolVersion: SESSION_PROTOCOL_VERSION,
+        methods: [...SESSION_PROTOCOL_METHODS],
+        alreadyInitialized: false,
+      }),
+    );
+
+    await Promise.all([connectOne, connectTwo]);
+    expect(child.requests.filter((request) => request.method === "initialize")).toEqual([
+      expect.objectContaining({
+        params: initializeParams,
+      }),
+    ]);
+
+    await transport.connect({ client: { name: "ignored-later", version: "3" } }, 500);
+    expect(child.requests.filter((request) => request.method === "initialize")).toHaveLength(1);
+
+    await transport.close();
+  });
+
+  it("correlates stdio transport responses by request id and streams events", async () => {
     const child = new FakeChildProcess();
     const submitRequests = [];
+    const retryRequests = [];
+    const execRequests = [];
+    const createdSessionId = "session-2";
 
     child.on("request", (request) => {
       if (request.method === "initialize") {
         child.send(
           createSuccessResponse(request.id, {
-            protocolVersion: RPC_PROTOCOL_VERSION,
-            sessionId: "session-1",
-            methods: [...RPC_METHODS],
+            protocolVersion: SESSION_PROTOCOL_VERSION,
+            methods: [...SESSION_PROTOCOL_METHODS],
             alreadyInitialized: false,
           }),
         );
+        return;
+      }
+
+      if (request.method === "session.list") {
+        child.send(
+          createSuccessResponse(request.id, {
+            sessions: [{ sessionId: "session-1", lifecycle: "idle" }],
+          }),
+        );
+        return;
+      }
+
+      if (request.method === "session.create") {
+        child.send(createSuccessResponse(request.id, createSnapshot(createdSessionId)));
+        return;
+      }
+
+      if (request.method === "session.observe") {
+        child.send(createSuccessResponse(request.id, createSnapshot(request.params.sessionId)));
         return;
       }
 
@@ -204,32 +750,8 @@ describe("sdk_client", () => {
         if (submitRequests.length === 2) {
           const [first, second] = submitRequests;
 
-          child.send({
-            version: RPC_PROTOCOL_VERSION,
-            type: "event",
-            requestId: first.id,
-            event: {
-              version: CORE_EVENT_VERSION,
-              event: {
-                type: "notice",
-                severity: "info",
-                text: "first-event",
-              },
-            },
-          });
-
-          child.send({
-            version: RPC_PROTOCOL_VERSION,
-            type: "event",
-            event: {
-              version: CORE_EVENT_VERSION,
-              event: {
-                type: "notice",
-                severity: "info",
-                text: "global-event",
-              },
-            },
-          });
+          child.send(createNoticeDelta("session-1", 2, "first-delta"));
+          child.send(createNoticeDelta("session-1", 3, "global-delta"));
 
           child.send(
             createSuccessResponse(second.id, {
@@ -245,29 +767,35 @@ describe("sdk_client", () => {
           );
         }
       }
+
+      if (request.method === "session.retry") {
+        retryRequests.push(request);
+        child.send(createSuccessResponse(request.id, { turn: { aborted: false } }));
+      }
+
+      if (request.method === "session.exec") {
+        execRequests.push(request);
+        child.send(
+          createSuccessResponse(
+            request.id,
+            createProtocolExecResult({
+              output: "/repo\n",
+            }),
+          ),
+        );
+      }
     });
 
-    const spawn = vi.fn(() => child);
-    const clientPromise = createTauSdkClient({
-      spawn,
+    const transport = new StdioSessionProtocolTransport(child);
+    const clientPromise = createTauSdkClientFromTransport(transport, {
       persona: "gpt-5.4-coder",
       riskLevel: "read-only",
       noAgentContextFiles: true,
       connectTimeoutMs: 500,
     });
 
-    child.send(createReadyMessage("session-1"));
+    child.send(createReadyMessage());
     const client = await clientPromise;
-
-    expect(spawn).toHaveBeenCalledTimes(1);
-    const [command, args] = spawn.mock.calls[0];
-    expect(command).toBe(process.execPath);
-    expect(args).toContain("rpc");
-    expect(args).toContain("--persona");
-    expect(args).toContain("gpt-5.4-coder");
-    expect(args).toContain("--risk");
-    expect(args).toContain("read-only");
-    expect(args).toContain("--no-agent-context-files");
 
     const initializeRequest = child.requests.find((request) => request.method === "initialize");
     expect(initializeRequest?.params).toEqual({
@@ -277,13 +805,26 @@ describe("sdk_client", () => {
       },
     });
 
-    const events = [];
-    client.onEvent((event) => {
-      events.push(event);
-    });
+    const sessionDeltas = [];
 
-    const firstSubmit = client.submit("first turn");
-    const secondSubmit = client.submit("second turn", { historyEntryId: "custom-history-id" });
+    await expect(client.sessions.list()).resolves.toEqual([
+      { sessionId: "session-1", lifecycle: "idle" },
+    ]);
+    const session = await client.sessions.observe("session-1");
+    expect(session.id).toBe("session-1");
+    session.onDelta((delta) => {
+      sessionDeltas.push(delta);
+    });
+    const createdSession = await client.sessions.create(localCreateInput);
+    expect(createdSession.id).toBe(createdSessionId);
+    await expect(client.sessions.list()).resolves.toEqual([
+      { sessionId: "session-1", lifecycle: "idle" },
+    ]);
+
+    const firstSubmit = session.submit("first turn");
+    const secondSubmit = session.submit("second turn", {
+      historyEntryId: "custom-history-id",
+    });
 
     await expect(firstSubmit).resolves.toEqual({
       userHistoryEntryId: "history-1",
@@ -293,23 +834,45 @@ describe("sdk_client", () => {
       userHistoryEntryId: "history-2",
       turn: { aborted: true },
     });
+    expect(submitRequests.map((request) => request.params)).toEqual([
+      { sessionId: "session-1", text: "first turn" },
+      {
+        sessionId: "session-1",
+        text: "second turn",
+        historyEntryId: "custom-history-id",
+      },
+    ]);
 
-    expect(events).toEqual([
-      expect.objectContaining({ type: "event", requestId: expect.any(Number) }),
-      expect.objectContaining({ type: "event" }),
+    await expect(session.retry()).resolves.toEqual({
+      turn: { aborted: false },
+    });
+    expect(retryRequests.map((request) => request.params)).toEqual([{ sessionId: "session-1" }]);
+
+    await expect(session.exec("pwd")).resolves.toEqual({
+      output: "/repo\n",
+      stdout: "/repo\n",
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
+    });
+    expect(execRequests.map((request) => request.params)).toEqual([
+      { sessionId: "session-1", command: "pwd" },
+    ]);
+
+    expect(sessionDeltas).toEqual([
+      createNoticeDelta("session-1", 2, "first-delta"),
+      createNoticeDelta("session-1", 3, "global-delta"),
     ]);
 
     await client.close();
   });
 
-  it("rejects invalid initialize metadata before sending rpc requests", async () => {
+  it("rejects invalid initialize metadata before connecting the transport", async () => {
     const child = new FakeChildProcess();
-    const spawn = vi.fn(() => child);
+    const transport = new StdioSessionProtocolTransport(child);
 
     await expect(
-      createTauSdkClient({
-        spawn,
-        scriptPath: "/fake/main.js",
+      createTauSdkClientFromTransport(transport, {
         initialize: {
           client: {
             name: "",
@@ -319,16 +882,16 @@ describe("sdk_client", () => {
       }),
     ).rejects.toMatchObject({
       name: "TauTransportError",
-      message: "sdk initialize.client.name and initialize.client.version must be non-empty strings",
+      message: "initialize.client.name must be a non-empty string",
     });
 
-    expect(spawn).not.toHaveBeenCalled();
     expect(child.requests).toEqual([]);
   });
 
-  it("throws TauRpcResponseError for rpc error responses", async () => {
+  it("throws TauSessionProtocolResponseError for session protocol error responses", async () => {
     const child = new FakeChildProcess();
     const { client } = await createConnectedClient(child);
+    const session = await client.sessions.observe("session-1");
 
     child.on("request", (request) => {
       if (request.method === "session.submit") {
@@ -341,25 +904,25 @@ describe("sdk_client", () => {
       }
     });
 
-    await expect(client.submit("hello")).rejects.toMatchObject({
-      name: "TauRpcResponseError",
+    await expect(session.submit("hello")).rejects.toMatchObject({
+      name: "TauSessionProtocolResponseError",
       code: "busy",
-      requestId: expect.any(Number),
+      requestId: expect.any(String),
       message: "a session turn is already running",
     });
-    await expect(client.submit("hello")).rejects.toBeInstanceOf(TauRpcResponseError);
 
     await client.close();
   });
 
-  it("rejects malformed rpc responses via shared outgoing parser", async () => {
+  it("rejects malformed session protocol responses via shared outgoing parser", async () => {
     const child = new FakeChildProcess();
     const { client } = await createConnectedClient(child);
+    const session = await client.sessions.observe("session-1");
 
     child.on("request", (request) => {
       if (request.method === "session.submit") {
         child.send({
-          version: RPC_PROTOCOL_VERSION,
+          version: SESSION_PROTOCOL_VERSION,
           type: "response",
           id: request.id,
           ok: false,
@@ -379,12 +942,12 @@ describe("sdk_client", () => {
       }
     });
 
-    await expect(client.submit("hello")).rejects.toMatchObject({
+    await expect(session.submit("hello")).rejects.toMatchObject({
       name: "TauTransportError",
-      message: "received malformed rpc response",
+      message: "received malformed session protocol response",
     });
 
-    await expect(client.interrupt()).resolves.toEqual({
+    await expect(session.interrupt()).resolves.toEqual({
       interrupted: false,
       isTurnRunning: false,
     });
@@ -392,54 +955,111 @@ describe("sdk_client", () => {
     await client.close();
   });
 
-  it("ignores malformed rpc responses with no matching pending request", async () => {
+  it("rejects successful session protocol responses with invalid method results", async () => {
     const child = new FakeChildProcess();
     const { client } = await createConnectedClient(child);
-
-    child.send({
-      version: RPC_PROTOCOL_VERSION,
-      type: "response",
-      id: 999,
-      ok: false,
-      error: {
-        code: "busy",
-      },
-    });
+    const session = await client.sessions.observe("session-1");
 
     child.on("request", (request) => {
       if (request.method === "session.snapshot") {
         child.send(
           createSuccessResponse(request.id, {
             sessionId: "session-1",
-            isTurnRunning: false,
-            historyLength: 0,
-            history: [],
+            status: "idle",
+            executionEnvironment: { kind: "local", cwd: "/repo", home: "/home/user" },
             historyEntries: [],
           }),
         );
       }
     });
 
-    await expect(client.snapshot()).resolves.toEqual({
-      sessionId: "session-1",
-      isTurnRunning: false,
-      historyLength: 0,
-      history: [],
-      historyEntries: [],
+    await expect(session.snapshot()).rejects.toMatchObject({
+      name: "TauTransportError",
+      message: expect.stringContaining(
+        "received invalid session protocol response result: session.snapshot result is invalid",
+      ),
     });
 
     await client.close();
   });
 
-  it("fails transport when outgoing rpc payload is malformed", async () => {
+  it("fails transport when outgoing session protocol payload is malformed", async () => {
     const child = new FakeChildProcess();
     const { client } = await createConnectedClient(child);
+    const session = await client.sessions.observe("session-1");
 
     child.sendRaw("[]");
 
-    await expect(client.snapshot()).rejects.toMatchObject({
+    await expect(session.snapshot()).rejects.toMatchObject({
       name: "TauTransportError",
-      message: "received invalid rpc payload from tau process: rpc payload must be a JSON object",
+      message:
+        "received invalid session protocol payload from tau process: session protocol payload must be a JSON object",
+    });
+
+    await client.close();
+  });
+
+  it("fails stdio transport on responses for unknown request ids", async () => {
+    const child = new FakeChildProcess();
+    const { client } = await createConnectedClient(child);
+
+    child.send(
+      createSuccessResponse("unknown-request", {
+        sessions: [],
+      }),
+    );
+    await Promise.resolve();
+
+    await expect(client.sessions.list()).rejects.toMatchObject({
+      name: "TauTransportError",
+      message: "received response for unknown session protocol request 'unknown-request'",
+    });
+
+    await client.close();
+  });
+
+  it("fails stdio transport on error responses for unknown request ids", async () => {
+    const child = new FakeChildProcess();
+    const { client } = await createConnectedClient(child);
+
+    child.send({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "response",
+      id: "unknown-request",
+      ok: false,
+      error: {
+        code: "internal_error",
+        message: "late failure",
+      },
+    });
+    await Promise.resolve();
+
+    await expect(client.sessions.list()).rejects.toMatchObject({
+      name: "TauTransportError",
+      message: "received response for unknown session protocol request 'unknown-request'",
+    });
+
+    await client.close();
+  });
+
+  it("fails stdio transport on malformed responses for unknown request ids", async () => {
+    const child = new FakeChildProcess();
+    const { client } = await createConnectedClient(child);
+
+    child.send({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "response",
+      id: "unknown-request",
+      ok: false,
+      error: {
+        code: "internal_error",
+      },
+    });
+    await Promise.resolve();
+
+    await expect(client.sessions.list()).rejects.toMatchObject({
+      name: "TauTransportError",
+      message: "received malformed response for unknown session protocol request 'unknown-request'",
     });
 
     await client.close();
@@ -448,8 +1068,9 @@ describe("sdk_client", () => {
   it("rejects pending requests when rpc subprocess exits", async () => {
     const child = new FakeChildProcess();
     const { client } = await createConnectedClient(child);
+    const session = await client.sessions.observe("session-1");
 
-    const snapshotPromise = client.snapshot();
+    const snapshotPromise = session.snapshot();
     await waitForRequest(child, (request) => request.method === "session.snapshot");
 
     child.writeStderr("fatal stderr\n");
@@ -462,28 +1083,38 @@ describe("sdk_client", () => {
       stderr: "fatal stderr\n",
     });
 
-    await expect(client.interrupt()).rejects.toBeInstanceOf(TauTransportError);
+    await expect(session.interrupt()).rejects.toBeInstanceOf(TauTransportError);
   });
 
-  it("close and shutdown are idempotent", async () => {
+  it("close is idempotent", async () => {
     const child = new FakeChildProcess();
     const { client } = await createConnectedClient(child);
 
-    let shutdownRequests = 0;
-    child.on("request", (request) => {
-      if (request.method === "session.shutdown") {
-        shutdownRequests += 1;
-        child.send(createSuccessResponse(request.id, { shutdown: true }));
-      }
-    });
-
-    const firstShutdown = await client.shutdown();
-    const secondShutdown = await client.shutdown();
-    expect(firstShutdown).toEqual({ shutdown: true });
-    expect(secondShutdown).toEqual({ shutdown: true });
-    expect(shutdownRequests).toBe(1);
-
     await expect(client.close()).resolves.toBeUndefined();
     await expect(client.close()).resolves.toBeUndefined();
+  });
+
+  it("waits for subprocess exit after escalating close to sigkill", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = new FakeChildProcess({ autoExitOnKill: false });
+      const transport = new StdioSessionProtocolTransport(child);
+
+      const closePromise = transport.close();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(child.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+
+      let closed = false;
+      closePromise.then(() => {
+        closed = true;
+      });
+      await Promise.resolve();
+      expect(closed).toBe(false);
+
+      child.exit(null, "SIGKILL");
+      await expect(closePromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

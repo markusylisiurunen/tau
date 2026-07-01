@@ -85,9 +85,58 @@ tau can run without the TUI via NDJSON RPC over stdin/stdout:
 tau rpc --persona gpt-5.4-coder --risk read-only
 ```
 
-RPC mode reuses the same startup config, persona loading, and risk handling as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message). `--caffeinated` is a macOS-only TUI flag and is rejected in RPC mode.
+RPC mode reuses the same startup config, persona loading, and risk handling as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message). `--caffeinated` is a macOS-only TUI flag and is rejected outside TUI mode.
 
 for protocol details and examples, see [docs/rpc.md](docs/rpc.md).
+
+## protocol TUI attach
+
+tau can host sessions over WebSocket:
+
+```sh
+tau serve --host 0.0.0.0 --port 8787 --auth-token "$TAU_WS_AUTH_TOKEN" --risk read-only
+```
+
+WebSocket auth tokens authorize full session access. Prefer `wss://` behind a trusted TLS proxy on untrusted networks, avoid putting tokens in URLs or shell history, and treat any proxy/access logs that capture headers, query strings, or WebSocket handshake details as sensitive.
+
+then attach the terminal UI from another machine:
+
+```sh
+tau attach --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787
+```
+
+Without `--session` or `--new`, attach lists hosted sessions and prompts for the session to open. Use `--session <id>` to attach to an existing persisted session directly:
+
+```sh
+tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787
+```
+
+Use `--new --cwd <path>` to create and attach to a fresh hosted session in an already-provisioned directory on the host:
+
+```sh
+tau attach --new --cwd /srv/workspaces/repo --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787
+```
+
+For non-local execution environments, add the execution kind and provider ids:
+
+```sh
+tau attach --new --execution-kind cloudflare-sandbox --cloudflare-bridge default --cloudflare-sandbox sandbox-1 --cwd /workspace/repo ws://vps:8787
+tau attach --new --execution-kind fly-sprite --fly-api default --fly-sprite sprite-1 --cwd /home/sprite/repo ws://vps:8787
+```
+
+tau can also run the terminal UI against any command that speaks the same session protocol on stdin/stdout:
+
+```sh
+tau attach -- ssh vps 'cd /path/to/repo && tau rpc --risk read-only'
+```
+
+For stdio attach, use `--session <id>` before `--`:
+
+```sh
+tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/to/repo && tau rpc --risk read-only'
+```
+
+Session attach renders the authoritative session snapshot, streams live `session.delta` updates, submits normal user input, supports steering/interruption, runs `!`/`!!` shell commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, changes the session risk level with `/risk:<level>` or `Ctrl+R`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, and creates a new session with `/new`.
 
 ## async daemon (HTTP + Telegram)
 
@@ -117,6 +166,8 @@ project id for `tau async <prompt...>` resolves from `--project <id>` first, the
 
 use `tau async -- <prompt...>` when prompt text starts with a reserved command word (for example, `list`).
 
+The HTTP API accepts `POST /v1/sessions` with `projectId` and optional `prompt`. `POST /v1/sessions/:sessionId/messages` accepts `text`, optional `mode` (`submit` or `steer`), and optional `additionalSystemMessage`; normal submit returns a busy error while the session is running, while steering is accepted during active work and runs at the next safe boundary.
+
 for daemon/API/Telegram details, see [docs/async.md](docs/async.md).
 
 daemon config uses a bot-id map (`telegram.<botId>.botToken`), with optional per-bot `allowedProjectIds` scoping. Telegram sessions are chat-scoped per bot (no cross-chat or cross-bot session sharing); allowed group chats share one group session namespace and trigger only on explicit `@botusername` mentions.
@@ -137,31 +188,48 @@ tau tool pdf-unpack ./docs/spec.pdf
 
 ## SDK usage (Node)
 
-tau also ships a Node SDK at `@markusylisiurunen/tau/sdk` that talks to the same RPC subprocess (`tau rpc`) behind the scenes.
+tau also ships a Node SDK at `@markusylisiurunen/tau/sdk` that uses the same session protocol. By default it runs against an in-process Tau host; `tau serve` provides the same protocol over WebSocket.
 
 ```ts
 import { createTauSdkClient } from "@markusylisiurunen/tau/sdk";
 
 const client = await createTauSdkClient();
-const unsubscribe = client.onEvent((event) => {
-  // stream core events
+const session = await client.sessions.create({
+  executionEnvironment: {
+    kind: "local",
+    cwd: process.cwd(),
+  },
+});
+const unsubscribe = session.onDelta((delta) => {
+  // stream reconstructable session deltas
 });
 
 try {
-  const result = await client.submit("summarize this repo");
+  const result = await session.submit("summarize this repo");
   console.log(result.userHistoryEntryId, result.turn.aborted);
 
-  const snapshot = await client.snapshot();
-  console.log(snapshot.sessionId, snapshot.historyLength);
+  const snapshot = await session.snapshot();
+  console.log(snapshot.sessionId, snapshot.messages.length);
 
-  await client.shutdown();
+  await session.unobserve();
 } finally {
   unsubscribe();
   await client.close();
 }
 ```
 
-for full API details (options, methods, events, and errors), see [docs/sdk.md](docs/sdk.md).
+WebSocket clients can connect to a `tau serve` host:
+
+```ts
+import { createTauSdkWebSocketClient } from "@markusylisiurunen/tau/sdk";
+
+const client = await createTauSdkWebSocketClient({
+  url: "wss://tau.example.com",
+  authToken: process.env.TAU_WS_AUTH_TOKEN,
+});
+```
+
+for full API details (options, methods, events, and errors), see [docs/sdk.md](docs/sdk.md). `client.close()` closes the client transport; for the default in-process client, it also shuts down the owned host after persisting live session snapshots.
 
 ## install starter prompts and skills
 
@@ -267,7 +335,7 @@ start tau with `--caffeinated` to keep macOS awake while an assistant turn is ru
 tau --caffeinated
 ```
 
-tau uses `caffeinate -i` and only holds the sleep assertion during active assistant turns. it does not keep the display awake, and it does not apply to `tau rpc` mode. on Linux, `--caffeinated` is accepted but currently a no-op.
+tau uses `caffeinate -i` and only holds the sleep assertion during active assistant turns. it does not keep the display awake, and it does not apply to hosted modes. on Linux, `--caffeinated` is accepted in TUI mode but currently a no-op.
 
 ## personas
 
@@ -327,16 +395,16 @@ toggle visibility of the model's thinking with `ctrl+t`.
 
 ## working with files
 
-reference files in your message with `@<path>` (for example, `@src/tui/app.ts`). autocomplete helps you find the right path. press `ctrl+f` to expand file contents into the conversation, letting the model see the actual code.
+reference files in your message with `@<path>` (for example, `@src/tui/session_chat_app.ts`). autocomplete helps you find the right path.
 
-reference skills with `@@skill:<name>` (for example, `@@skill:skill-name`). autocomplete will suggest available skills. press `ctrl+f` to expand the skill's `SKILL.md` into the conversation.
+reference skills with `@@skill:<name>` (for example, `@@skill:skill-name`). autocomplete will suggest available skills.
 
 to explicitly target a sub-agent, use `@@agent:<name>` (for example, `@@agent:default`).
 
 you can also pipe content directly:
 
 ```sh
-cat src/tui/app.ts | tau --persona opus-4.8-chat
+cat src/tui/session_chat_app.ts | tau --persona opus-4.8-chat
 ```
 
 by default, tau injects your AGENTS.md into the system prompt. use `--no-agent-context-files` to disable this behavior. tau searches for AGENTS.md in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home). tau also includes a paths-only listing of `AGENTS.md` files in child directories under the current working directory, excluding any file already injected in full.
@@ -372,12 +440,10 @@ tau supports slash commands for common actions:
 | `/rewind` | open a picker to rewind context from a selected user message |
 | `/copy:text` | copy the last assistant message |
 | `/copy:code` | copy just the code blocks |
-| `/checkpoint` | save a checkpoint file for loading later |
-| `/reload` | reload personas, model overrides, prompts, skills, themes, bash commands, and AGENTS.md |
+| `/reload` | reload personas, model overrides, prompts, skills, and AGENTS.md |
 | `/listen` | start microphone recording and transcribe into the editor (macOS only) |
 | `/speak` | speak the last assistant message aloud (macOS only) |
-| `/cd` | change the working directory |
-| `/diff [git diff args...]` | open the diff review tool for a captured review snapshot: plain `/diff` uses the current working tree, while `/diff ...` uses the requested `git diff` args (built-in browser demo by default, `diffTool` overrides it) |
+| `/diff [git diff args...]` | open the local diff review tool for the current session; git snapshot and review-agent work run on the session host |
 | `/compact:summary-only` | compress history into one synthetic user summary message |
 | `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present |
 | `/prune:earliest` | prune bash tool results from oldest to newest and compact edit payloads/results |
@@ -386,17 +452,14 @@ tau supports slash commands for common actions:
 | `/persona:<id>` | switch to a different persona |
 | `/prompt:<id>` | insert a saved prompt template |
 | `/theme:<id>` | switch to a loaded theme |
-| `/bash:<id>` | run a saved shell command |
 | `/risk:read-only` | allow read-only tool calls |
 | `/risk:read-write` | allow all tools |
 | `!<cmd>` | run a shell command directly (bypasses risk checks) |
 | `!!<cmd>` | run a shell command without adding output to the model context |
 
-use `tau -l <file>` to resume from a checkpoint created by `/checkpoint`.
-
 tau automatically compacts long sessions when provider-reported usage approaches the model context limit. automatic compaction summarizes older context, asks the compaction model to select original user messages to append verbatim inside the summary by history id, retains a recent tail verbatim, and inserts a hidden continuation note so the assistant continues without asking you to repeat context.
 
-the compact commands are manual and useful when you want to force a reset. they replace prior context with a single synthetic user summary message, including compaction-model-selected original user messages verbatim inside that summary, and do not retain a recent tail. `/compact:summary-and-last` also includes the last assistant message verbatim when present.
+the compact commands are manual and useful when you want to force context replacement. they replace prior context with a single synthetic user summary message, including compaction-model-selected original user messages verbatim inside that summary, and do not retain a recent tail. `/compact:summary-and-last` also includes the last assistant message verbatim when present.
 
 the prune commands drop bash tool results from the active context without summarizing and compact edit call payloads/results. all three accept an optional fraction between `0` and `1` (for example, `/prune:largest 0.4`) and default to `0.25` when omitted. `/prune:smart` also accepts optional guidance text, either after a fraction (for example, `/prune:smart 0.3 keep only repetitive output`) or by itself (for example, `/prune:smart keep build logs`).
 
@@ -406,9 +469,7 @@ the prune commands drop bash tool results from the active context without summar
 
 `/rewind` opens a picker over prior user messages in the current context. it truncates history from the selected message onward (including the selected message) and prefills the editor with that message so you can retry from there.
 
-`/diff` only starts when tau is idle. it captures the requested `git diff` output at launch time as the initial review context, opens tau's built-in browser diff review demo when `diffTool` is not configured, and lets `diffTool` override that launcher when it is configured. the built-in browser shows that captured diff, but review agents inspect the live repo state while using the captured diff context as their starting point. tau shows review status in the chat stream, keeps the editor usable for drafting, but blocks normal submission until the tool returns review text or cancels. returned review text is appended as a review-styled user message without auto-running the assistant, and the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that review context. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session. press `esc` to cancel locally.
-
-the main assistant also has a TUI-only `diff_review` tool. it uses the same captured review session and live status UI as `/diff`, but it is only for cases where you explicitly ask the agent to start a diff review. when the review returns, the feedback is delivered as a normal tool result so the assistant continues in the same turn; it is not inserted as a separate hidden-system user message.
+`/diff` starts a TUI-local diff review. The diff tool process runs where the TUI runs, connects back to the TUI over the diff-review protocol, and the TUI captures git snapshots through session execution while driving generic ephemeral review agents over the session protocol. Returned review text is recorded into the session as a review-styled user message without auto-running the assistant.
 
 ## keyboard shortcuts
 
@@ -419,7 +480,6 @@ the main assistant also has a TUI-only `diff_review` tool. it uses the same capt
 | `ctrl+p`     | cycle personality                            |
 | `ctrl+t`     | toggle thinking visibility                   |
 | `ctrl+o`     | toggle compact tool display                  |
-| `ctrl+f`     | expand @<file> and @@skill:<name> mentions   |
 | `ctrl+s`     | stash input to clipboard                     |
 | `ctrl+y`     | toggle voice recording (`/listen`)           |
 | `ctrl+g`     | terminate selected sub-agent                 |
@@ -430,7 +490,7 @@ the main assistant also has a TUI-only `diff_review` tool. it uses the same capt
 | `alt+up`     | pop queued message                           |
 | `alt+c`      | collapse queued messages into one            |
 | `alt+down`   | cycle active sub-agents                      |
-| `esc`        | interrupt active task or cancel `/diff`      |
+| `esc`        | interrupt active task                        |
 | `ctrl+c`     | press twice to exit                          |
 
 ## configuration
@@ -474,6 +534,22 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
   "speechToText": {
     "provider": "mistral"
   },
+  "cloudflareSandbox": {
+    "bridges": {
+      "default": {
+        "url": "https://tau-sandbox-bridge.example.workers.dev",
+        "apiKeyEnv": "TAU_CLOUDFLARE_SANDBOX_API_KEY"
+      }
+    }
+  },
+  "flySprites": {
+    "apis": {
+      "default": {
+        "baseURL": "https://api.sprites.dev",
+        "tokenEnv": "SPRITES_TOKEN"
+      }
+    }
+  },
   "modelSystemNotices": {
     "openai-codex/gpt-5.5": "avoid apply_patch heredocs, use tau tools directly"
   }
@@ -490,13 +566,17 @@ the `defaultTheme` field sets the theme id to load at startup. it must be non-em
 
 `speechToText.provider` selects the `/listen` and Telegram audio transcription provider. supported values are `mistral` (default, uses Voxtral) and `gemini` (uses Gemini 3.5 Flash with minimal thinking).
 
-tau ships a built-in browser diff review demo tool, so `/diff` works without any `diffTool` config. set `diffTool` only when you want to override that default launcher. `command` is required when `diffTool` is present. `args` and `env` are optional. relative `command` paths resolve from the config level root (directory containing `.tau`, or home for the global config). set `builtInDiffTool.codeTheme` to choose the built-in diff tool's initial code theme, for example `{ "builtInDiffTool": { "codeTheme": "github-dark-dimmed" } }`. the default is `github-dark-dimmed`.
+`cloudflareSandbox.bridges` configures host-owned Cloudflare Sandbox bridge targets for hosted sessions. session requests refer to a bridge by id and a pre-existing sandbox id; Tau does not create sandboxes, clone repos, install dependencies, inject secrets, or run readiness checks during `session.create`. paths such as `cwd` are real paths inside the sandbox execution environment. Tau resolves session config/content from that execution environment cwd when creating the session and on `/reload`; bridge credentials stay on the host through either `apiKey` or `apiKeyEnv` and are not stored in session snapshots.
+
+`flySprites.apis` configures host-owned Fly Sprites API targets for hosted sessions. session requests refer to an API by id and a pre-existing Sprite name; Tau does not create Sprites, clone repos, install dependencies, inject secrets, or run readiness checks during `session.create`. paths such as `cwd` are real paths inside the Sprite. Tau resolves session config/content from that execution environment cwd when creating the session and on `/reload`; API tokens stay on the host through either `token` or `tokenEnv` and are not stored in session snapshots.
+
+tau ships a built-in browser diff review tool as `tau diff-tool`. `/diff` launches the configured diff tool locally from the TUI process. `diffTool` overrides the built-in fallback; `command` is required when `diffTool` is present, `args` and `env` are optional, and relative `command` paths resolve from the config level root (directory containing `.tau`, or home for the global config). set `builtInDiffTool.codeTheme` to choose the built-in diff tool's initial code theme, for example `{ "builtInDiffTool": { "codeTheme": "github-dark-dimmed" } }`. the default is `github-dark-dimmed`.
 
 supported built-in diff tool code themes are: `andromeeda`, `aurora-x`, `ayu-dark`, `ayu-mirage`, `catppuccin-frappe`, `catppuccin-macchiato`, `catppuccin-mocha`, `dark-plus`, `dracula`, `dracula-soft`, `everforest-dark`, `github-dark`, `github-dark-default`, `github-dark-dimmed`, `github-dark-high-contrast`, `gruvbox-dark-hard`, `gruvbox-dark-medium`, `gruvbox-dark-soft`, `horizon`, `horizon-bright`, `houston`, `kanagawa-dragon`, `kanagawa-wave`, `laserwave`, `material-theme`, `material-theme-darker`, `material-theme-ocean`, `material-theme-palenight`, `min-dark`, `monokai`, `night-owl`, `nord`, `one-dark-pro`, `plastic`, `poimandres`, `red`, `rose-pine`, `rose-pine-moon`, `slack-dark`, `solarized-dark`, `synthwave-84`, `tokyo-night`, `vesper`, `vitesse-black`, `vitesse-dark`.
 
 the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launch overrides for the built-in `default` sub-agent. values must use `<provider>/<model>:<effort>`.
 
-`autoCompact` controls automatic session compaction and merges field-by-field across config levels. it is enabled by default with `reserveTokens: 16384` and `keepRecentTokens: 20000`. tau triggers it only after provider-reported assistant usage crosses the model context window minus the reserve, then summarizes older context, asks the compaction model to select original user messages to append verbatim inside the summary by history id, and retains recent messages verbatim (capped at that threshold). manual `/compact:*` commands remain summary-reset commands.
+`autoCompact` controls automatic session compaction and merges field-by-field across config levels. it is enabled by default with `reserveTokens: 16384` and `keepRecentTokens: 20000`. tau triggers it only after provider-reported assistant usage crosses the model context window minus the reserve, then summarizes older context, asks the compaction model to select original user messages to append verbatim inside the summary by history id, and retains recent messages verbatim (capped at that threshold). manual `/compact:*` commands remain summary-replacement commands.
 
 the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). when a message is sent to that model, tau prepends the notice as a `<system>...</system>` block before the user content. this applies to main-session user messages and sub-agent prompts, regardless of persona id.
 
@@ -534,33 +614,9 @@ tau async daemon --config-file <path>
 
 see [docs/async.md](docs/async.md) for daemon config schema (`host`, `port`, `authToken`, `telegram` (map keyed by bot id), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `projects.<id>.ref`, `projects.<id>.workingDirectory`, `projects.<id>.description`, `projects.<id>.bootstrapCommands`, `projects.<id>.backgroundBootstrapCommands`) and GitHub repo requirements (`owner/repo`, cached via `gh repo clone -- --bare`).
 
-### project bash commands
-
-define shortcuts for common shell commands in any in-scope config file (`~/.config/tau/config.json` when cwd is under home, or `.tau/config.json` in the cwd ancestry). entries merge by `id` with the most specific level winning:
-
-```json
-{
-  "bashCommands": [
-    {
-      "id": "check",
-      "description": "lint + typecheck",
-      "cmd": "npm run check"
-    },
-    {
-      "id": "test",
-      "cmd": "npm test"
-    }
-  ]
-}
-```
-
-run them with `/bash:check` or `/bash:test`.
-
-commands run with cwd set to the config level root (directory containing `.tau`, or home for the global config).
-
 ### diff review tool
 
-tau ships `tau diff-tool`, a built-in browser diff review demo tool. `/diff` launches it by default when `diffTool` is not configured. configure `builtInDiffTool.codeTheme` to choose the built-in tool's initial code theme; the default is `github-dark-dimmed`.
+tau ships `tau diff-tool`, a built-in browser diff review tool and reference implementation of the diff-review tool protocol. Configure `builtInDiffTool.codeTheme` to choose the built-in tool's initial code theme; the default is `github-dark-dimmed`.
 
 if you want a different launcher, configure `diffTool` in any in-scope config file. when present, it overrides the built-in fallback:
 
@@ -574,11 +630,7 @@ if you want a different launcher, configure `diffTool` in any in-scope config fi
 }
 ```
 
-`tau diff-tool --help` shows the built-in demo tool's standalone help text.
-
-plain `/diff` captures the current working-tree review scope before launch, including tracked staged + unstaged changes plus untracked text files that fit within tau's snapshot limits. `/diff [git diff args...]` with arguments passes those raw arguments to `git diff`, so `/diff --staged` and `/diff -- src/foo.ts` still work. tau shows diff-review status in the chat stream, keeps the editor usable while blocking submission, and appends returned review text as a review-styled user message without auto-running the assistant. the built-in browser shows that captured review snapshot, but review agents inspect the live repo state while using the captured snapshot as their starting point. the model-visible message is wrapped in a hidden `<system>` block that identifies it as diff review feedback for that review context. if the tool never connects or disconnects before returning a result, tau cancels the review and unblocks the session. during normal shutdown, tau now asks the diff tool to exit via the diff-review protocol before closing the transport. custom diff tools should follow the built-in tool and treat that explicit shutdown request as the canonical way to stop.
-
-in the TUI, the main assistant can also call the `diff_review` tool when you explicitly ask it to start a diff review. the tool can capture structured `git diff` args or one or more prebuilt patch files for selected-hunk reviews, shows the same live session status in a normal tool card, and returns review feedback to the model as a normal tool result so the assistant can continue immediately.
+`tau diff-tool --help` shows the built-in demo tool's standalone help text. Custom diff tools should follow the built-in tool and treat the explicit `session.close` shutdown request as the canonical way to stop.
 
 ### additional agents context
 
@@ -688,7 +740,7 @@ optional fields: `license`, `compatibility` (<=500 chars), `metadata` (string ma
 
 enable skills per persona with the `skills` frontmatter field. you can list specific skill names (matched by `name` in skill frontmatter), use `"*"` to enable all discovered skills, or set `skills: []` to disable skills completely. built-in personas and custom personas with omitted `skills` default to `skills: "*"`. if a project skill conflicts with a user skill by name, the project skill wins. tau injects an index of enabled skills into the system prompt containing only each skill's `name`, `description`, and file path.
 
-use `/reload` to pick up changes to personas, model overrides, prompts, skills, themes, bash commands, and AGENTS.md without restarting.
+use `/reload` to pick up changes to personas, model overrides, prompts, skills, and AGENTS.md without restarting.
 
 ## how it works
 

@@ -13,6 +13,8 @@ const GREP_KILL_GRACE_MS = 2_000;
 
 export type BashExecutionResult = {
   output: string;
+  stdout: string;
+  stderr: string;
   exitCode: number | null;
   truncated: boolean;
 };
@@ -53,6 +55,7 @@ export type GrepExecutionResult = {
 };
 
 export interface ToolExecutionBackend {
+  dispose(): Promise<void>;
   runBash(
     command: string,
     options?: { timeoutMs?: number; signal?: AbortSignal; cwd?: string },
@@ -83,6 +86,8 @@ export function createLocalToolExecutionBackend(
   const resolveCwd = (cwd?: string): string => (cwd ? resolve(cwdProvider(), cwd) : cwdProvider());
 
   return {
+    async dispose() {},
+
     async runBash(command, options = {}) {
       const timeoutMs = options.timeoutMs;
       const signal = options.signal;
@@ -113,11 +118,13 @@ export function createLocalToolExecutionBackend(
         maxCaptureBytes: BASH_MAX_CAPTURE_BYTES,
         maxCaptureMode: "ignore",
         maxCaptureStrategy: "tail",
-        captureOutput: "combined",
+        captureOutput: "combined-and-split",
         killGraceMs: BASH_KILL_GRACE_MS,
       });
 
       let output = result.output ?? "";
+      const stdout = result.stdout;
+      let stderr = result.stderr;
       const truncated = result.captureLimitExceeded;
 
       let terminationNote: string | undefined;
@@ -133,9 +140,10 @@ export function createLocalToolExecutionBackend(
       if (note && !output.includes(note)) {
         const noteText = `${output && !output.endsWith("\n") ? "\n" : ""}${note}\n`;
         output += noteText;
+        stderr += noteText;
       }
 
-      return { output, exitCode: result.exitCode, truncated };
+      return { output, stdout, stderr, exitCode: result.exitCode, truncated };
     },
 
     async readFile(path) {
@@ -246,6 +254,9 @@ export function scopeToolExecutionBackend(
     cwd ? resolve(workingDirectory, cwd) : workingDirectory;
 
   return {
+    dispose() {
+      return backend.dispose();
+    },
     runBash(command, options = {}) {
       return backend.runBash(command, {
         ...options,

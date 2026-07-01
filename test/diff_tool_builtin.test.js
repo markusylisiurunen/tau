@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import { describe, expect, it, vi } from "vitest";
-import { DiffReviewSession } from "../src/core/diff_review/session.ts";
+import { DiffReviewBridge } from "../src/core/diff_review/bridge.ts";
 import { DiffReviewSnapshot, formatDiffReviewScope } from "../src/core/diff_review/snapshot.ts";
 import { personas } from "../src/core/personas.ts";
 import {
@@ -9,6 +9,34 @@ import {
   DiffToolHttpServer,
   parseDiffToolLaunchEnvironment,
 } from "../src/diff_tool/index.ts";
+
+function createSubmitThreadMessage(createThread) {
+  const threads = new Map();
+  return async ({ threadId, forkFromThreadId, message }) => {
+    let thread = threads.get(threadId);
+    if (!thread) {
+      const forkSource = forkFromThreadId ? threads.get(forkFromThreadId) : undefined;
+      thread = createThread({
+        threadId,
+        ...(forkSource ? { forkFrom: forkSource.createForkSource() } : {}),
+      });
+      threads.set(threadId, thread);
+    }
+    return {
+      threadId,
+      response: await thread.submitMessage(message),
+    };
+  };
+}
+
+function createDiffReviewBridge(options) {
+  const { createThread = () => createThreadSession(), contextWindow, ...rest } = options;
+  return new DiffReviewBridge({
+    contextWindow: contextWindow ?? personas[0].model.contextWindow,
+    submitThreadMessage: createSubmitThreadMessage(createThread),
+    ...rest,
+  });
+}
 
 function createSnapshot() {
   return new DiffReviewSnapshot({
@@ -148,7 +176,7 @@ describe("built-in diff tool", () => {
   it("persists review state on the server and returns the composed review to Tau", async () => {
     const threadMessages = new Map();
     const createdThreads = [];
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -165,19 +193,19 @@ describe("built-in diff tool", () => {
       },
     });
 
-    await session.start();
+    await bridge.start();
     const client = new DiffReviewProtocolClient(
-      parseDiffToolLaunchEnvironment(session.launchEnvironment),
+      parseDiffToolLaunchEnvironment(bridge.launchEnvironment),
     );
     const server = new DiffToolHttpServer({ client });
 
     try {
       const started = await server.start();
-      expect(session.getUiState().diffToolUiText).toBe(started.url);
+      expect(bridge.getUiState().diffToolUiText).toBe(started.url);
 
       const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
       expect(bootstrap.context).toEqual({
-        sessionId: session.sessionId,
+        sessionId: bridge.sessionId,
         repoRoot: "/repo",
         cwd: "/repo/packages/app",
         diffArgs: ["--staged"],
@@ -359,7 +387,7 @@ describe("built-in diff tool", () => {
         threadId: askedDetachedThread.state.threads[1].threadId,
         forkFrom: expect.any(Object),
       });
-      expect(session.getUiState()).toEqual({
+      expect(bridge.getUiState()).toEqual({
         diffToolUiText: started.url,
         reviewAgents: [
           {
@@ -412,7 +440,7 @@ describe("built-in diff tool", () => {
         headers: { "content-type": "application/json" },
       });
       expect(reviewResult).toEqual({ status: "returned" });
-      await expect(session.result).resolves.toEqual({
+      await expect(bridge.result).resolves.toEqual({
         status: "returned",
         review:
           "The notes below include thread transcripts from the review. In those transcripts:\n\n- **user** is a comment written by the reviewer\n- **agent** is a generated reply within that review thread\n\nTreat thread dialogue as supporting review context, not automatically as a final conclusion.\n\n---\n\n## thread 1\n\n`src/a.ts:1 (new)`\n\n**user**\n\nWhat changed?\n\n**user**\n\nAny risks?\n\n**agent**\n\n" +
@@ -423,7 +451,7 @@ describe("built-in diff tool", () => {
       await server.waitUntilClosed();
     } finally {
       await server.close();
-      await session.close();
+      await bridge.close();
     }
   });
 
@@ -481,7 +509,7 @@ describe("built-in diff tool", () => {
       continueBootstrap = resolve;
     });
     let threadCount = 0;
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -500,9 +528,9 @@ describe("built-in diff tool", () => {
         }),
     });
 
-    await session.start();
+    await bridge.start();
     const client = new DiffReviewProtocolClient(
-      parseDiffToolLaunchEnvironment(session.launchEnvironment),
+      parseDiffToolLaunchEnvironment(bridge.launchEnvironment),
     );
     const server = new DiffToolHttpServer({ client });
 
@@ -520,7 +548,7 @@ describe("built-in diff tool", () => {
         patch: createSnapshot().patch,
       });
       expect(threadCount).toBe(1);
-      expect(session.getUiState().reviewAgents).toEqual([
+      expect(bridge.getUiState().reviewAgents).toEqual([
         {
           threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
           status: "running",
@@ -538,16 +566,16 @@ describe("built-in diff tool", () => {
 
       continueBootstrap();
       await server.close();
-      await session.close();
+      await bridge.close();
     } finally {
       continueBootstrap?.();
       await server.close();
-      await session.close();
+      await bridge.close();
     }
   });
 
   it("shuts down the browser demo when Tau cancels the session externally", async () => {
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -559,20 +587,20 @@ describe("built-in diff tool", () => {
         }),
     });
 
-    await session.start();
+    await bridge.start();
     const client = new DiffReviewProtocolClient(
-      parseDiffToolLaunchEnvironment(session.launchEnvironment),
+      parseDiffToolLaunchEnvironment(bridge.launchEnvironment),
     );
     const server = new DiffToolHttpServer({ client });
 
     try {
       await server.start();
 
-      await session.cancel("controller_cancelled");
+      await bridge.cancel("controller_cancelled");
       await server.waitUntilClosed();
     } finally {
       await server.close();
-      await session.close();
+      await bridge.close();
     }
   });
 
@@ -585,7 +613,7 @@ describe("built-in diff tool", () => {
     const bootstrapCompletion = new Promise((resolve) => {
       continueBootstrap = resolve;
     });
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -603,9 +631,9 @@ describe("built-in diff tool", () => {
         }),
     });
 
-    await session.start();
+    await bridge.start();
     const client = new DiffReviewProtocolClient(
-      parseDiffToolLaunchEnvironment(session.launchEnvironment),
+      parseDiffToolLaunchEnvironment(bridge.launchEnvironment),
     );
     const server = new DiffToolHttpServer({ client });
 
@@ -621,7 +649,7 @@ describe("built-in diff tool", () => {
 
       await expect(
         Promise.race([
-          session.cancel("controller_cancelled"),
+          bridge.cancel("controller_cancelled"),
           new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 250)),
         ]),
       ).resolves.toBeUndefined();
@@ -637,7 +665,7 @@ describe("built-in diff tool", () => {
     } finally {
       continueBootstrap?.();
       await server.close();
-      await session.close();
+      await bridge.close();
     }
   });
 

@@ -38,6 +38,7 @@ export type CreateChatRuntimeOptions = {
   toolRegistry: ToolRegistry;
   promptContext: ChatRuntimePromptContext;
   environment: ChatRuntimeEnvironment;
+  initialPromptComposition?: SessionPromptComposition;
   config?: Config;
   deps?: CoreDeps;
 };
@@ -52,16 +53,18 @@ export class ChatRuntime {
   private latestPromptComposition: SessionPromptComposition;
 
   static create(options: CreateChatRuntimeOptions): ChatRuntime {
-    const promptComposition = composeSessionPrompts({
-      persona: options.persona,
-      riskLevel: options.riskLevel,
-      cwd: options.promptContext.cwd,
-      datetime: new Date(options.environment.now()).toISOString(),
-      platform: options.environment.platform(),
-      nodeVersion: options.environment.nodeVersion(),
-      skillsBlock: options.promptContext.skillsBlock,
-      projectContextBlock: options.promptContext.projectContextBlock,
-    });
+    const promptComposition =
+      options.initialPromptComposition ??
+      composeSessionPrompts({
+        persona: options.persona,
+        riskLevel: options.riskLevel,
+        cwd: options.promptContext.cwd,
+        datetime: new Date(options.environment.now()).toISOString(),
+        platform: options.environment.platform(),
+        nodeVersion: options.environment.nodeVersion(),
+        skillsBlock: options.promptContext.skillsBlock,
+        projectContextBlock: options.promptContext.projectContextBlock,
+      });
 
     const session = new CoreSession({
       persona: options.persona,
@@ -117,8 +120,18 @@ export class ChatRuntime {
     return this.latestPromptComposition;
   }
 
-  runTurn(): Promise<ConversationTurnResult> {
-    return this.turnRuntime.run();
+  get persona(): Persona {
+    return this.currentPersona;
+  }
+
+  get currentRiskLevel(): RiskLevel {
+    return this.riskLevel;
+  }
+
+  runTurn(
+    options?: Parameters<ConversationTurnRuntime["run"]>[0],
+  ): Promise<ConversationTurnResult> {
+    return this.turnRuntime.run(options);
   }
 
   requestTurnBoundaryStop(): boolean {

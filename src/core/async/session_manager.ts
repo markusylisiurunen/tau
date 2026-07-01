@@ -1,9 +1,17 @@
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
-import { createTauSdkClient } from "../../sdk/client.js";
-import type { TauSdkClient, TauSdkClientOptions, TauSdkEvent } from "../../sdk/types.js";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type {
+  SessionProtocolCreateParams,
+  SessionProtocolDeltaMessage,
+  SessionProtocolFacet,
+  SessionProtocolInterruptResult,
+  SessionProtocolSteerResult,
+  SessionProtocolSubmitResult,
+  SessionProtocolUnobserveResult,
+} from "../../protocol/session_protocol.js";
 import type { AsyncProjectConfig } from "../config/schema.js";
-import { safeParseCoreEventEnvelope } from "../events/parser.js";
+import type { RiskLevel } from "../types.js";
 import { extractAssistantText } from "../utils/messages.js";
 import {
   cleanupWorkspacePath as cleanupWorkspacePathOnDisk,
@@ -56,7 +64,7 @@ export type AsyncSessionRecord = {
   createdAt: string;
   updatedAt: string;
   workspacePath?: string;
-  rpcSessionId?: string;
+  tauSessionId?: string;
   error?: string;
 };
 
@@ -94,13 +102,15 @@ type SessionEntry = {
   project: AsyncProjectConfig;
   abortController: AbortController;
   cancelRequested: boolean;
-  client?: TauSdkClient;
+  client?: AsyncSessionClient;
+  tauSession?: AsyncTauSession;
   unsubscribeClientEvents?: () => void;
   clientClosePromise?: Promise<void>;
   activeSubmit?: Promise<void>;
   initializePromise?: Promise<void>;
   backgroundBootstrapPromise?: Promise<void>;
   workspaceCleanupPromise?: Promise<void>;
+  consumedFacetEventCounts: Map<string, number>;
 };
 
 export type AsyncSessionManagerEvent =
@@ -137,6 +147,31 @@ export type AsyncSessionSubmitOptions = {
   mode?: "submit" | "steer";
 };
 
+export type AsyncSessionClientOptions = {
+  cwd: string;
+  persona?: string;
+  riskLevel?: RiskLevel;
+  noAgentContextFiles?: boolean;
+};
+
+export type AsyncSessionClientEvent = SessionProtocolDeltaMessage;
+
+export type AsyncTauSession = {
+  readonly id: string;
+  onDelta(listener: (event: AsyncSessionClientEvent) => void): () => void;
+  submit(text: string): Promise<SessionProtocolSubmitResult>;
+  steer(text: string): Promise<SessionProtocolSteerResult>;
+  interrupt(): Promise<SessionProtocolInterruptResult>;
+  unobserve(): Promise<SessionProtocolUnobserveResult>;
+};
+
+export type AsyncSessionClient = {
+  sessions: {
+    create(input: SessionProtocolCreateParams): Promise<AsyncTauSession>;
+  };
+  close(): Promise<void>;
+};
+
 export type AsyncSessionInterruptResult = {
   session: AsyncSessionRecord;
   interrupted: boolean;
@@ -171,7 +206,7 @@ export type AsyncSessionManagerOptions = {
   maxSessions?: number;
   systemMessage?: string;
   now?: () => Date;
-  createClient?: (options: TauSdkClientOptions) => Promise<TauSdkClient>;
+  createClient: (options: AsyncSessionClientOptions) => Promise<AsyncSessionClient>;
   prepareWorkspace?: (options: PrepareWorkspaceOptions) => Promise<{
     workspacePath: string;
     sessionCwd: string;
@@ -188,7 +223,9 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   private readonly maxSessions?: number;
   private readonly systemMessage?: string;
   private readonly now: () => Date;
-  private readonly createClient: (options: TauSdkClientOptions) => Promise<TauSdkClient>;
+  private readonly createClient: (
+    options: AsyncSessionClientOptions,
+  ) => Promise<AsyncSessionClient>;
   private readonly prepareWorkspace: (
     options: PrepareWorkspaceOptions,
   ) => Promise<{ workspacePath: string; sessionCwd: string }>;
@@ -204,7 +241,10 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     this.maxSessions = options.maxSessions;
     this.systemMessage = options.systemMessage?.trim() || undefined;
     this.now = options.now ?? (() => new Date());
-    this.createClient = options.createClient ?? createTauSdkClient;
+    if (!options.createClient) {
+      throw new Error("missing async session client factory");
+    }
+    this.createClient = options.createClient;
     this.prepareWorkspace = options.prepareWorkspace ?? prepareWorkspace;
     this.runBootstrapCommands = options.runBootstrapCommands ?? runBootstrapCommands;
     this.cleanupWorkspacePath = options.cleanupWorkspacePath ?? cleanupWorkspacePathOnDisk;
@@ -243,6 +283,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       project,
       abortController: new AbortController(),
       cancelRequested: false,
+      consumedFacetEventCounts: new Map(),
     };
 
     this.sessions.set(id, entry);
@@ -310,7 +351,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       );
     }
 
-    if (!entry.client) {
+    if (!entry.tauSession) {
       throw new AsyncSessionManagerError("not_ready", "session is still preparing");
     }
 
@@ -334,11 +375,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       };
     }
 
-    if (!entry.client) {
+    if (!entry.tauSession) {
       throw new AsyncSessionManagerError("not_ready", "session is still preparing");
     }
 
-    const result = await entry.client.interrupt();
+    const result = await entry.tauSession.interrupt();
     this.log(entry, "info", "interrupt requested", {
       interrupted: result.interrupted,
       isTurnRunning: result.isTurnRunning,
@@ -423,23 +464,30 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
       const clientConnectStart = process.hrtime.bigint();
       const client = await this.createClient(this.buildClientOptions(entry, workspace.sessionCwd));
+      entry.client = client;
+      const tauSession = await client.sessions.create({
+        executionEnvironment: {
+          kind: "local",
+          cwd: workspace.sessionCwd,
+        },
+      });
       const clientConnectDurationMs = elapsedMs(clientConnectStart);
 
       if (entry.cancelRequested) {
-        entry.client = client;
+        entry.tauSession = tauSession;
         await this.stopClient(entry);
         return;
       }
 
-      entry.client = client;
-      entry.record.rpcSessionId = client.ready.sessionId;
+      entry.tauSession = tauSession;
+      entry.record.tauSessionId = tauSession.id;
       this.touch(entry);
-      this.log(entry, "info", "rpc client connected", {
-        rpcSessionId: client.ready.sessionId,
+      this.log(entry, "info", "session client connected", {
+        tauSessionId: tauSession.id,
         durationMs: clientConnectDurationMs,
       });
 
-      entry.unsubscribeClientEvents = client.onEvent((event) => {
+      entry.unsubscribeClientEvents = tauSession.onDelta((event) => {
         this.handleClientEvent(entry, event);
       });
 
@@ -519,7 +567,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     additionalSystemMessage?: string,
     mode: "submit" | "steer" = "submit",
   ): Promise<void> {
-    if (!entry.client) {
+    if (!entry.tauSession) {
       throw new AsyncSessionManagerError("not_ready", "session is still preparing");
     }
 
@@ -534,14 +582,14 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     });
 
     const previousSubmit = entry.activeSubmit;
-    const client = entry.client;
+    const tauSession = entry.tauSession;
     const payload = this.buildSubmitPayload(text, additionalSystemMessage);
 
     let submitPromise!: Promise<void>;
     submitPromise = (async () => {
       try {
         const result =
-          mode === "steer" ? await client.submit(payload, { mode }) : await client.submit(payload);
+          mode === "steer" ? await tauSession.steer(payload) : await tauSession.submit(payload);
         this.log(entry, result.turn.blocked ? "error" : "info", "message finished", {
           source,
           aborted: result.turn.aborted,
@@ -572,20 +620,22 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       ? Promise.all([previousSubmit, submitPromise]).then(() => undefined)
       : submitPromise;
     entry.activeSubmit = trackedSubmit;
-    void trackedSubmit.finally(() => {
-      if (entry.activeSubmit === trackedSubmit) {
-        entry.activeSubmit = undefined;
-        if (!entry.cancelRequested && entry.record.state === "running") {
-          this.setState(entry, "waiting-input");
+    void trackedSubmit
+      .catch(() => undefined)
+      .finally(() => {
+        if (entry.activeSubmit === trackedSubmit) {
+          entry.activeSubmit = undefined;
+          if (!entry.cancelRequested && entry.record.state === "running") {
+            this.setState(entry, "waiting-input");
+          }
         }
-      }
-    });
+      });
 
     return submitPromise;
   }
 
-  private buildClientOptions(entry: SessionEntry, cwd: string): TauSdkClientOptions {
-    const options: TauSdkClientOptions = { cwd };
+  private buildClientOptions(entry: SessionEntry, cwd: string): AsyncSessionClientOptions {
+    const options: AsyncSessionClientOptions = { cwd };
     if (entry.project.persona) {
       options.persona = entry.project.persona;
     }
@@ -703,11 +753,12 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     }
 
     const client = entry.client;
+    const tauSession = entry.tauSession;
 
     let closePromise: Promise<void>;
     closePromise = (async () => {
       try {
-        await client.interrupt();
+        await tauSession?.interrupt();
       } catch (error) {
         this.log(entry, "warn", "interrupt failed", {
           cause: error instanceof Error ? error.message : String(error),
@@ -715,9 +766,9 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
       }
 
       try {
-        await client.shutdown();
+        await tauSession?.unobserve();
       } catch (error) {
-        this.log(entry, "warn", "shutdown failed", {
+        this.log(entry, "warn", "unobserve failed", {
           cause: error instanceof Error ? error.message : String(error),
         });
       }
@@ -736,6 +787,9 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
       if (entry.client === client) {
         entry.client = undefined;
+      }
+      if (entry.tauSession === tauSession) {
+        entry.tauSession = undefined;
       }
     });
 
@@ -860,55 +914,72 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     }
   }
 
-  private handleClientEvent(entry: SessionEntry, sdkEvent: TauSdkEvent): void {
-    if (!entry.activeSubmit) {
+  private handleClientEvent(entry: SessionEntry, clientEvent: AsyncSessionClientEvent): void {
+    if (clientEvent.delta.type !== "snapshot.patch") {
       return;
     }
 
-    const parsedEnvelope = safeParseCoreEventEnvelope(sdkEvent.event);
-    if (!parsedEnvelope.ok) {
-      return;
-    }
-
-    const { event: coreEvent } = parsedEnvelope.value;
-
-    switch (coreEvent.type) {
-      case "tool_ui": {
-        switch (coreEvent.uiEvent.type) {
-          case "bash_started":
-            this.emitProgress(entry, {
-              type: "bash-command",
-              command: coreEvent.uiEvent.command,
-            });
-            return;
-          case "edit_success":
-            this.emitProgress(entry, {
-              type: "edited-file",
-              path: coreEvent.uiEvent.path,
-            });
-            return;
-          case "write_success":
-            this.emitProgress(entry, {
-              type: "wrote-file",
-              path: coreEvent.uiEvent.path,
-            });
-            return;
-          default:
-            return;
-        }
+    for (const change of clientEvent.delta.changes) {
+      if (change.type === "facet.set") {
+        this.handleFacetProgress(entry, change.facet);
+        continue;
       }
-      case "assistant_final": {
-        const text = extractAssistantText(coreEvent.message);
+      if (
+        change.type === "message.replace" &&
+        change.message.state === "committed" &&
+        isAssistantMessage(change.message.message)
+      ) {
+        const text = extractAssistantText(change.message.message);
         if (text) {
           this.emitProgress(entry, {
             type: "assistant-message",
             text,
           });
         }
-        return;
       }
-      default:
-        return;
+    }
+  }
+
+  private handleFacetProgress(entry: SessionEntry, facet: SessionProtocolFacet): void {
+    if (facet.kind !== "tau.tool-ui-events" || !Array.isArray(facet.data.events)) {
+      return;
+    }
+    const consumed = Math.min(
+      entry.consumedFacetEventCounts.get(facet.id) ?? 0,
+      facet.data.events.length,
+    );
+    entry.consumedFacetEventCounts.set(facet.id, facet.data.events.length);
+
+    for (const event of facet.data.events.slice(consumed)) {
+      if (!isToolUiEvent(event)) {
+        continue;
+      }
+      switch (event.type) {
+        case "bash_started":
+          if (typeof event.command === "string") {
+            this.emitProgress(entry, {
+              type: "bash-command",
+              command: event.command,
+            });
+          }
+          break;
+        case "edit_success":
+          if (typeof event.path === "string") {
+            this.emitProgress(entry, {
+              type: "edited-file",
+              path: event.path,
+            });
+          }
+          break;
+        case "write_success":
+          if (typeof event.path === "string") {
+            this.emitProgress(entry, {
+              type: "wrote-file",
+              path: event.path,
+            });
+          }
+          break;
+      }
     }
   }
 
@@ -926,6 +997,33 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   private toRecord(entry: SessionEntry): AsyncSessionRecord {
     return { ...entry.record };
   }
+}
+
+function isAssistantMessage(message: unknown): message is AssistantMessage {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    "role" in message &&
+    message.role === "assistant" &&
+    "usage" in message &&
+    "stopReason" in message
+  );
+}
+
+function isToolUiEvent(value: unknown): value is {
+  type: string;
+  toolCallId: string;
+  command?: string;
+  path?: string;
+} {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    typeof value.type === "string" &&
+    "toolCallId" in value &&
+    typeof value.toolCallId === "string"
+  );
 }
 
 type AsyncScopedSessionManagerOptions = {

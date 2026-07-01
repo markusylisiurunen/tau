@@ -10,8 +10,6 @@ import { formatPersonaReference, parsePersonaReference } from "../persona_refere
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS, type RiskLevel, RiskLevelSchema } from "../types.js";
 import { normalizeModelNoticeKey, parseModelNoticeKey } from "../utils/model_notices.js";
-import type { BashCommand } from "./bash_commands.js";
-import { parseBashCommands } from "./bash_commands.js";
 import type { ConfigDeps } from "./deps.js";
 import type { DiffToolConfig } from "./diff_tool.js";
 import { parseDiffToolConfig, resolveDiffToolConfig } from "./diff_tool.js";
@@ -26,7 +24,6 @@ export interface Config {
   disableBuiltinPersonas?: boolean;
   disableBuiltinThemes?: boolean;
   defaultTheme?: string;
-  bashCommands?: BashCommand[];
   diffTool?: DiffToolConfig;
   builtInDiffTool?: BuiltInDiffToolConfig;
   agentContextFiles?: string[];
@@ -36,6 +33,8 @@ export interface Config {
   autoCompact?: AutoCompactConfig;
   modelSystemNotices?: Record<string, string>;
   speechToText?: SpeechToTextConfig;
+  cloudflareSandbox?: CloudflareSandboxConfig;
+  flySprites?: FlySpritesConfig;
   async?: AsyncConfig;
 }
 
@@ -47,6 +46,28 @@ export type SpeechToTextProvider = "mistral" | "gemini";
 
 export type SpeechToTextConfig = {
   provider: SpeechToTextProvider;
+};
+
+export type CloudflareSandboxBridgeConfig = {
+  url: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  home?: string;
+};
+
+export type CloudflareSandboxConfig = {
+  bridges?: Record<string, CloudflareSandboxBridgeConfig>;
+};
+
+export type FlySpritesApiConfig = {
+  baseURL?: string;
+  token?: string;
+  tokenEnv?: string;
+  home?: string;
+};
+
+export type FlySpritesConfig = {
+  apis?: Record<string, FlySpritesApiConfig>;
 };
 
 export type AutoCompactConfig = {
@@ -185,7 +206,6 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS = new Set([
   "disableBuiltinPersonas",
   "disableBuiltinThemes",
   "defaultTheme",
-  "bashCommands",
   "diffTool",
   "builtInDiffTool",
   "agentContextFiles",
@@ -193,6 +213,8 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS = new Set([
   "autoCompact",
   "modelSystemNotices",
   "speechToText",
+  "cloudflareSandbox",
+  "flySprites",
   "async",
 ]);
 
@@ -206,6 +228,32 @@ const SpeechToTextConfigSchema = z
     provider: z.enum(["mistral", "gemini"]),
   })
   .passthrough();
+const CloudflareSandboxBridgeSchema = z
+  .object({
+    url: NonEmptyStringSchema,
+    apiKey: NonEmptyStringSchema.optional(),
+    apiKeyEnv: NonEmptyStringSchema.optional(),
+    home: NonEmptyStringSchema.optional(),
+  })
+  .strict();
+const CloudflareSandboxConfigSchema = z
+  .object({
+    bridges: z.record(NonEmptyStringSchema, CloudflareSandboxBridgeSchema).optional(),
+  })
+  .strict();
+const FlySpritesApiSchema = z
+  .object({
+    baseURL: NonEmptyStringSchema.optional(),
+    token: NonEmptyStringSchema.optional(),
+    tokenEnv: NonEmptyStringSchema.optional(),
+    home: NonEmptyStringSchema.optional(),
+  })
+  .strict();
+const FlySpritesConfigSchema = z
+  .object({
+    apis: z.record(NonEmptyStringSchema, FlySpritesApiSchema).optional(),
+  })
+  .strict();
 const SubagentsConfigSchema = z
   .object({
     defaultLaunchModels: z.array(z.string()).optional(),
@@ -407,15 +455,6 @@ function validateConfigData(
   Object.assign(config as Record<string, unknown>, scalarResult.values);
   errors.push(...scalarResult.errors);
 
-  const bashResult = parseBashCommands(data.bashCommands, sourceLabel);
-  assignParsedConfigValue(
-    config,
-    errors,
-    "bashCommands",
-    bashResult.commands.length > 0 ? bashResult.commands : undefined,
-    bashResult.errors,
-  );
-
   const diffToolResult = parseDiffToolConfig(data.diffTool, sourceLabel);
   assignParsedConfigValue(config, errors, "diffTool", diffToolResult.config, diffToolResult.errors);
 
@@ -475,6 +514,24 @@ function validateConfigData(
     "speechToText",
     speechToTextResult.config,
     speechToTextResult.errors,
+  );
+
+  const cloudflareSandboxResult = parseCloudflareSandboxConfig(data.cloudflareSandbox, sourceLabel);
+  assignParsedConfigValue(
+    config,
+    errors,
+    "cloudflareSandbox",
+    cloudflareSandboxResult.config,
+    cloudflareSandboxResult.errors,
+  );
+
+  const flySpritesResult = parseFlySpritesConfig(data.flySprites, sourceLabel);
+  assignParsedConfigValue(
+    config,
+    errors,
+    "flySprites",
+    flySpritesResult.config,
+    flySpritesResult.errors,
   );
 
   const asyncResult = parseAsyncConfig(data.async, sourceLabel);
@@ -546,6 +603,52 @@ function parseSpeechToTextConfig(
   }
 
   return { config: { provider: parsed.data.provider }, errors: [] };
+}
+
+function parseCloudflareSandboxConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: CloudflareSandboxConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  const parsed = CloudflareSandboxConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      errors: [
+        `${sourceLabel}: 'cloudflareSandbox' must be an object with a 'bridges' map of bridge configs.`,
+      ],
+    };
+  }
+
+  const bridges = parsed.data.bridges;
+  return {
+    config: bridges && Object.keys(bridges).length > 0 ? { bridges } : undefined,
+    errors: [],
+  };
+}
+
+function parseFlySpritesConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: FlySpritesConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  const parsed = FlySpritesConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      errors: [`${sourceLabel}: 'flySprites' must be an object with an 'apis' map of API configs.`],
+    };
+  }
+
+  const apis = parsed.data.apis;
+  return {
+    config: apis && Object.keys(apis).length > 0 ? { apis } : undefined,
+    errors: [],
+  };
 }
 
 function parseSubagentsConfig(
@@ -945,6 +1048,44 @@ function mergeAsyncClientConfig(
   return merged;
 }
 
+function mergeCloudflareSandboxConfig(
+  target: CloudflareSandboxConfig | undefined,
+  overlay: CloudflareSandboxConfig | undefined,
+): CloudflareSandboxConfig | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  const bridges = new Map<string, CloudflareSandboxBridgeConfig>();
+  for (const [id, bridge] of Object.entries(target?.bridges ?? {})) {
+    bridges.set(id, { ...bridge });
+  }
+  for (const [id, bridge] of Object.entries(overlay?.bridges ?? {})) {
+    bridges.set(id, { ...bridge });
+  }
+
+  return bridges.size > 0 ? { bridges: Object.fromEntries(bridges.entries()) } : undefined;
+}
+
+function mergeFlySpritesConfig(
+  target: FlySpritesConfig | undefined,
+  overlay: FlySpritesConfig | undefined,
+): FlySpritesConfig | undefined {
+  if (!target && !overlay) {
+    return undefined;
+  }
+
+  const apis = new Map<string, FlySpritesApiConfig>();
+  for (const [id, api] of Object.entries(target?.apis ?? {})) {
+    apis.set(id, { ...api });
+  }
+  for (const [id, api] of Object.entries(overlay?.apis ?? {})) {
+    apis.set(id, { ...api });
+  }
+
+  return apis.size > 0 ? { apis: Object.fromEntries(apis.entries()) } : undefined;
+}
+
 function mergeAsyncConfig(
   target: AsyncConfig | undefined,
   overlay: AsyncConfig | undefined,
@@ -967,11 +1108,6 @@ function resolveAgentContextPaths(level: ConfigLevel, rawPaths: string[]): strin
   return rawPaths.map((entry) => resolve(root, entry));
 }
 
-function resolveBashCommands(level: ConfigLevel, commands: BashCommand[]): BashCommand[] {
-  const root = level.levelRoot;
-  return commands.map((cmd) => ({ ...cmd, cwd: root }));
-}
-
 function dedupePaths(paths: string[]): string[] {
   const seen = new Set<string>();
   const unique: string[] = [];
@@ -991,8 +1127,9 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let subagents: Config["subagents"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
   let speechToText: SpeechToTextConfig | undefined;
+  let cloudflareSandbox: CloudflareSandboxConfig | undefined;
+  let flySprites: FlySpritesConfig | undefined;
   let asyncConfig: AsyncConfig | undefined;
-  const bashCommands = new Map<string, BashCommand>();
   const agentContextFiles: string[] = [];
 
   for (let i = 0; i < levels.length; i += 1) {
@@ -1014,6 +1151,8 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     if (config.speechToText !== undefined) {
       speechToText = { ...config.speechToText };
     }
+    cloudflareSandbox = mergeCloudflareSandboxConfig(cloudflareSandbox, config.cloudflareSandbox);
+    flySprites = mergeFlySpritesConfig(flySprites, config.flySprites);
     asyncConfig = mergeAsyncConfig(asyncConfig, config.async);
 
     if (config.defaultPersona !== undefined) {
@@ -1034,12 +1173,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
     if (config.defaultTheme !== undefined) {
       merged.defaultTheme = config.defaultTheme;
-    }
-
-    if (config.bashCommands) {
-      for (const cmd of resolveBashCommands(level, config.bashCommands)) {
-        bashCommands.set(cmd.id.toLowerCase(), cmd);
-      }
     }
 
     if (config.agentContextFiles) {
@@ -1071,12 +1204,16 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     merged.speechToText = speechToText;
   }
 
-  if (asyncConfig && Object.keys(asyncConfig).length > 0) {
-    merged.async = asyncConfig;
+  if (cloudflareSandbox) {
+    merged.cloudflareSandbox = cloudflareSandbox;
   }
 
-  if (bashCommands.size > 0) {
-    merged.bashCommands = Array.from(bashCommands.values());
+  if (flySprites) {
+    merged.flySprites = flySprites;
+  }
+
+  if (asyncConfig && Object.keys(asyncConfig).length > 0) {
+    merged.async = asyncConfig;
   }
 
   if (agentContextFiles.length > 0) {

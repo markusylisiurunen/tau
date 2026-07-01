@@ -21,7 +21,8 @@ Sloppy cleanup accumulates more debt than the original slop. Understand first, t
 - **Scope is flexible.** The target is the starting point, not a fence. If a larger refactor inside the touched area makes the overall codebase meaningfully better, do it. If you spot a real bug adjacent to your changes, fix it and call it out.
 - **One way to do a thing.** When two shapes, two parsers, or two code paths exist for the same concept, collapse to one. Pick the cleaner one, delete the other.
 - **Validate at the edge; trust internals.** Normalize and reject at the system boundary (HTTP handler, deserializer, CLI entry). Downstream code takes well-formed values and uses them. Stop re-validating, re-parsing, and re-defaulting at every layer.
-- **Types are your first reviewer.** Prefer required fields, non-nullable types, and exhaustive switches. When you add a new argument, option, or field, add it as required. Changing every call site is the point: the compiler tells you exactly what was forgotten. Never choose optional to avoid editing files.
+- **Types are your first reviewer.** Prefer required fields, non-nullable types, and exhaustive switches. When you add a new argument, option, field, or method to a shared contract, make it required unless absence is a real domain state. Changing every call site is the point: the compiler tells you exactly what was forgotten. Never choose optional to avoid editing files.
+- **Make contracts explicit.** Optionality is for meaningful absence, not convenience. If callers should always make a choice, require the field. If implementations should all expose a capability, require the method. Use explicit empty values or no-op implementations at the edge instead of pushing `?.`, `??`, and implicit defaults through the codebase.
 - **Simple beats clever.** Dumb, direct, obvious code wins over elegant abstractions. If you can delete an indirection, delete it. Optimize for clarity, never for the amount of code you had to edit.
 - **Defensive code is noise.** Guards against states the types forbid, checks for inputs callers never produce, and catch-alls that swallow real errors clutter code without adding safety. They are harder to read and easier to misinterpret than the straight-line version. Delete them.
 - **Match the codebase.** Read surrounding code. Follow existing naming, structure, and style. "Cleaner" does not mean "my preferred style"; it means closer to the repo's established patterns. For Tau, use TypeScript, 2-space Biome formatting, lower-case file names, semantic UI theme tokens, and existing error/event patterns.
@@ -95,7 +96,7 @@ interface Input {
 // inside: attachments: input.attachments ?? [], system: input.system ?? [],
 ```
 
-Require them in the type. Delete the `??`. Update call sites to pass `[]` or `null` explicitly.
+Require them in the type. Delete the `??`. Update call sites to pass `[]`, `null`, or an explicit implementation when that is the real contract.
 
 ### Defensive spreading to "only include when truthy"
 

@@ -63,6 +63,7 @@ Notes:
 - Provider-level fields (`api`, `baseUrl`, `headers`, `compat`) apply to all models on that provider.
 - Model-level fields override provider-level and bundled values.
 - `headers` are merged (provider headers first, model headers override by key).
+- `headers` may contain secrets or tenant-specific routing data. Tau uses them only for runtime model calls and does not persist or broadcast them in session protocol snapshots.
 - `compat` is shallow-merged.
 
 ## behavior for unbundled model ids

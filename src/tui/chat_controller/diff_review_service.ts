@@ -1,9 +1,9 @@
 import type { DiffToolConfig } from "../../core/config/index.js";
 import type {
+  DiffReviewBridge,
+  DiffReviewBridgeUiState,
   DiffReviewResult,
-  DiffReviewSession,
-  DiffReviewSessionUiState,
-  StartedDiffReviewSession,
+  StartedDiffReviewBridge,
 } from "../../core/diff_review/index.js";
 import {
   type DiffReviewSnapshotSource,
@@ -31,7 +31,7 @@ export type DiffReviewServiceOptions = {
     source: DiffReviewSnapshotSource;
     diffTool: DiffToolConfig;
     signal: AbortSignal;
-  }) => Promise<StartedDiffReviewSession>;
+  }) => Promise<StartedDiffReviewBridge>;
   onReviewReturned: (review: DiffReviewReturnedReview) => void;
 };
 
@@ -41,10 +41,10 @@ type DiffReviewState = {
   diffCommand: string;
   reviewedFiles: string[];
   abortController: AbortController;
-  session?: DiffReviewSession;
+  bridge?: DiffReviewBridge;
   cancelRequested: boolean;
   diffToolUiText?: string;
-  reviewAgents: DiffReviewSessionUiState["reviewAgents"];
+  reviewAgents: DiffReviewBridgeUiState["reviewAgents"];
   removeUiStateListener?: () => void;
   messageFinalized: boolean;
 };
@@ -60,7 +60,7 @@ export class DiffReviewService {
     source: DiffReviewSnapshotSource;
     diffTool: DiffToolConfig;
     signal: AbortSignal;
-  }) => Promise<StartedDiffReviewSession>;
+  }) => Promise<StartedDiffReviewBridge>;
   private readonly onReviewReturned: (review: DiffReviewReturnedReview) => void;
   private state?: DiffReviewState;
 
@@ -139,12 +139,12 @@ export class DiffReviewService {
           return true;
         }
 
-        if (!state.session || state.cancelRequested) {
+        if (!state.bridge || state.cancelRequested) {
           return false;
         }
 
         state.cancelRequested = true;
-        void state.session.cancel("controller_cancelled");
+        void state.bridge.cancel("controller_cancelled");
         return true;
       },
     };
@@ -157,16 +157,16 @@ export class DiffReviewService {
         signal: state.abortController.signal,
       });
       if (state.abortController.signal.aborted) {
-        await started.session.cancel("controller_cancelled");
+        await started.bridge.cancel("controller_cancelled");
         finalizeDiffReviewMessage(state, this.view, "cancelled");
         return;
       }
 
       state.phase = "active";
-      state.session = started.session;
-      state.reviewedFiles = started.session.snapshot?.files.map((file) => file.path) ?? [];
-      updateDiffReviewUiState(state, started.session.getUiState(), this.view);
-      state.removeUiStateListener = started.session.onUiStateChange((uiState) => {
+      state.bridge = started.bridge;
+      state.reviewedFiles = started.bridge.snapshot?.files.map((file) => file.path) ?? [];
+      updateDiffReviewUiState(state, started.bridge.getUiState(), this.view);
+      state.removeUiStateListener = started.bridge.onUiStateChange((uiState) => {
         if (this.state !== state) {
           return;
         }
@@ -210,8 +210,8 @@ export class DiffReviewService {
       state.abortController.abort();
     }
 
-    if (state.session) {
-      await state.session.cancel("controller_cancelled");
+    if (state.bridge) {
+      await state.bridge.cancel("controller_cancelled");
     }
   }
 
@@ -304,7 +304,7 @@ function finalizeDiffReviewMessage(
 
 function updateDiffReviewUiState(
   state: DiffReviewState,
-  uiState: DiffReviewSessionUiState,
+  uiState: DiffReviewBridgeUiState,
   view: ChatView,
 ): void {
   state.diffToolUiText = uiState.diffToolUiText;

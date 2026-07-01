@@ -1,17 +1,66 @@
-export { createTauSdkClient } from "./client.js";
-export type { TauRpcError, TauRpcErrorCode } from "./errors.js";
-export { TauProcessError, TauRpcResponseError, TauSdkError, TauTransportError } from "./errors.js";
 export type {
+  SessionProtocolDelta,
+  SessionProtocolSnapshot,
+} from "../protocol/index.js";
+export { applySessionProtocolDelta } from "../protocol/index.js";
+export type {
+  SessionProtocolDeltaListener,
+  SessionProtocolEphemeralListener,
+  SessionProtocolSpawnedProcess,
+  SessionProtocolTransport,
+  TauSessionProtocolError,
+  TauSessionProtocolErrorCode,
+  WebSocketSessionProtocolTransportOptions,
+} from "../transport/index.js";
+export {
+  StdioSessionProtocolTransport,
+  TauProcessError,
+  TauSessionClientError,
+  TauSessionProtocolResponseError,
+  TauTransportError,
+  WebSocketSessionProtocolTransport,
+} from "../transport/index.js";
+export { createTauSdkClient, createTauSdkWebSocketClient } from "./client.js";
+export { createTauSdkClientFromTransport } from "./session.js";
+export type {
+  TauSdkAutocompletePathsResult,
   TauSdkClient,
   TauSdkClientOptions,
-  TauSdkEvent,
-  TauSdkEventListener,
+  TauSdkCreateSessionInput,
+  TauSdkDelta,
+  TauSdkDeltaListener,
+  TauSdkEphemeral,
+  TauSdkEphemeralAgentTool,
+  TauSdkEphemeralCloseResult,
+  TauSdkEphemeralCreateResult,
+  TauSdkEphemeralListener,
+  TauSdkEphemeralSubmitResult,
+  TauSdkInitializeParams,
   TauSdkReadyMessage,
+  TauSdkRequestId,
+  TauSdkResolvePromptResult,
+  TauSdkSession,
+  TauSdkSessionClient,
+  TauSdkSessionCompactResult,
+  TauSdkSessionExecResult,
   TauSdkSessionInterruptResult,
-  TauSdkSessionResetResult,
-  TauSdkSessionShutdownResult,
+  TauSdkSessionProtocolMethod,
+  TauSdkSessionPruneResult,
+  TauSdkSessionQueueResult,
+  TauSdkSessionRecordResult,
+  TauSdkSessionReloadResult,
+  TauSdkSessionRetryResult,
+  TauSdkSessionRewindResult,
+  TauSdkSessionSetPersonaResult,
+  TauSdkSessionSetReasoningResult,
+  TauSdkSessionSetRiskResult,
   TauSdkSessionSnapshotResult,
+  TauSdkSessionSteerResult,
   TauSdkSessionSubmitResult,
-  TauSdkSpawnFunction,
-  TauSdkSubmitOptions,
+  TauSdkSessionSummary,
+  TauSdkSessionTerminateSubagentResult,
+  TauSdkSessionUnobserveResult,
+  TauSdkSessionUserMessageOptions,
+  TauSdkTransportClientOptions,
+  TauSdkWebSocketClientOptions,
 } from "./types.js";

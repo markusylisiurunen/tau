@@ -1,10 +1,19 @@
-import { describe, expect, it } from "vitest";
-import { runToolCalls } from "../dist/core/session/runner.js";
+import { describe, expect, it, vi } from "vitest";
+import { prepareSessionCompaction } from "../dist/core/session/compaction.js";
+import { runDirectBashCommand } from "../dist/core/session/direct_bash.js";
+import { pruneSessionHistory } from "../dist/core/session/pruning.js";
+import { runModelSubturn, runToolCalls } from "../dist/core/session/runner.js";
+import { BASH_DEFAULT_TIMEOUT_MS } from "../dist/core/tools/bash.js";
+import { scopeToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { ToolRegistry } from "../dist/core/tools/registry.js";
+import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../dist/core/tools/tool_names.js";
+import { buildCompactionUserMessage } from "../dist/core/utils/compact.js";
+import { autocompleteProjectPathsWithBackend } from "../dist/core/utils/project_files.js";
+import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
 
 function createToolResult(toolCall, text) {
   return {
-    role: "tool",
+    role: "toolResult",
     toolCallId: toolCall.id,
     toolName: toolCall.name,
     timestamp: Date.now(),
@@ -13,7 +22,197 @@ function createToolResult(toolCall, text) {
   };
 }
 
+function createModelStream(events, result, error) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const event of events) {
+        yield event;
+      }
+      if (error) {
+        throw error;
+      }
+    },
+    async result() {
+      if (error) {
+        throw error;
+      }
+      return result;
+    },
+  };
+}
+
 describe("session runner tool dispatch context", () => {
+  it("coalesces rapid assistant partials and flushes the final accumulated partial", async () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    const finalMessage = {
+      role: "assistant",
+      api: "anthropic",
+      provider: "anthropic",
+      model: "claude-opus",
+      stopReason: "end_turn",
+      content: [{ type: "text", text: "abc" }],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [
+            { type: "text_delta", delta: "a" },
+            { type: "text_delta", delta: "b" },
+            { type: "text_delta", delta: "c" },
+          ],
+          finalMessage,
+        );
+      },
+    };
+
+    try {
+      const events = [];
+      const runner = runModelSubturn({
+        model: {},
+        context: {},
+        modelRuntime,
+        streamOptions: {},
+        signal: new AbortController().signal,
+        emitPartials: true,
+      });
+      while (true) {
+        const next = await runner.next();
+        if (next.done) {
+          expect(next.value).toBe(finalMessage);
+          break;
+        }
+        events.push(next.value);
+      }
+
+      expect(events).toEqual([
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "a",
+            thinking: "",
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "abc",
+            thinking: "",
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+      ]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("flushes the latest pending assistant partial before a stream error", async () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [
+            { type: "text_delta", delta: "a" },
+            { type: "text_delta", delta: "b" },
+          ],
+          undefined,
+          new Error("stream failed"),
+        );
+      },
+    };
+
+    try {
+      const events = [];
+      const runner = runModelSubturn({
+        model: {},
+        context: {},
+        modelRuntime,
+        streamOptions: {},
+        signal: new AbortController().signal,
+        emitPartials: true,
+      });
+      await expect(async () => {
+        while (true) {
+          const next = await runner.next();
+          if (next.done) {
+            break;
+          }
+          events.push(next.value);
+        }
+      }).rejects.toThrow("stream failed");
+
+      expect(events.map((event) => event.snapshot.text)).toEqual(["a", "ab"]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("does not emit empty assistant partials for thinking start events", async () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    const finalMessage = {
+      role: "assistant",
+      api: "anthropic",
+      provider: "anthropic",
+      model: "claude-opus",
+      stopReason: "end_turn",
+      content: [{ type: "text", text: "hello" }],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [{ type: "thinking_start" }, { type: "text_delta", delta: "hello" }],
+          finalMessage,
+        );
+      },
+    };
+
+    try {
+      const events = [];
+      const runner = runModelSubturn({
+        model: {},
+        context: {},
+        modelRuntime,
+        streamOptions: {},
+        signal: new AbortController().signal,
+        emitPartials: true,
+      });
+      while (true) {
+        const next = await runner.next();
+        if (next.done) {
+          expect(next.value).toBe(finalMessage);
+          break;
+        }
+        events.push(next.value);
+      }
+
+      expect(events.map((event) => event.snapshot.text)).toEqual(["hello"]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("emits phased intermediate tool UI events before the final tool result", async () => {
     const signal = new AbortController().signal;
     const toolCall = {
@@ -121,11 +320,176 @@ describe("session runner tool dispatch context", () => {
       "tool_ui",
       "tool_ui",
       "tool_ui",
+      "tool_ui",
       "tool_result",
     ]);
-    expect(events[0].uiEvent.type).toBe("bash_started");
-    expect(events[1].uiEvent.type).toBe("bash_execution");
-    expect(events[2].uiEvent.type).toBe("bash_blocked");
+    expect(events[0].uiEvent.type).toBe("tool_call_queued");
+    expect(events[1].uiEvent.type).toBe("bash_started");
+    expect(events[2].uiEvent.type).toBe("bash_execution");
+    expect(events[3].uiEvent.type).toBe("bash_blocked");
+  });
+
+  it("emits queued UI events for all valid calls before executing the first tool", async () => {
+    const signal = new AbortController().signal;
+    const slowCall = {
+      id: "slow-call",
+      type: "toolCall",
+      name: "slow_tool",
+      arguments: {},
+    };
+    const fastCall = {
+      id: "fast-call",
+      type: "toolCall",
+      name: "fast_tool",
+      arguments: {},
+    };
+
+    let resolveSlow;
+    const slowRun = new Promise((resolve) => {
+      resolveSlow = resolve;
+    });
+    let fastDispatched = false;
+
+    const slowDefinition = {
+      schema: {
+        name: "slow_tool",
+        description: "test",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+      },
+      async dispatch(call) {
+        return {
+          kind: "phased",
+          startedUiEvent: {
+            type: "bash_started",
+            toolCallId: call.id,
+            command: "sleep 30",
+            headerTarget: "sleep 30",
+          },
+          run: slowRun.then(() => ({
+            kind: "single",
+            toolResult: createToolResult(call, "slow ok"),
+            uiEvent: {
+              type: "bash_execution",
+              toolCallId: call.id,
+              command: "sleep 30",
+              headerTarget: "sleep 30",
+              exitCode: 0,
+              truncationInfo: {
+                output: "",
+                model: {
+                  content: "",
+                  truncated: false,
+                  totalBytes: 0,
+                  totalLines: 0,
+                  outputBytes: 0,
+                  outputLines: 0,
+                },
+                captureTruncated: false,
+              },
+              uiText: {
+                previewLines: [],
+                fullLines: [],
+              },
+            },
+          })),
+        };
+      },
+    };
+
+    const fastDefinition = {
+      schema: {
+        name: "fast_tool",
+        description: "test",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+      },
+      async dispatch(call) {
+        fastDispatched = true;
+        return {
+          kind: "single",
+          toolResult: createToolResult(call, "fast ok"),
+          uiEvent: {
+            type: "write_success",
+            toolCallId: call.id,
+            path: "fast.txt",
+            headerTarget: "fast.txt",
+            bytes: 2,
+            lines: 1,
+            content: "ok",
+            uiText: {
+              previewLines: [{ text: "ok" }],
+              fullLines: [{ text: "ok" }],
+            },
+          },
+        };
+      },
+    };
+
+    const toolRegistry = new ToolRegistry([slowDefinition, fastDefinition]);
+    const dispatchContext = {
+      scope: "subagent",
+      config: {},
+      toolRegistry,
+      authPath: "/tmp/auth.json",
+      originHistoryEntryId: "history-1",
+      cwd: "/repo/subagent",
+      subagentContext: {
+        id: "subagent-1",
+        name: "default",
+        title: "default",
+        originHistoryEntryId: "history-1",
+        controlPlane: { recordEmitOutput: () => {} },
+      },
+    };
+
+    const iterator = runToolCalls({
+      toolCalls: [slowCall, fastCall],
+      toolRegistry,
+      enabledTools: toolRegistry.schemas,
+      riskLevel: "read-only",
+      signal,
+      dispatchContext,
+    })[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        type: "tool_ui",
+        uiEvent: { type: "tool_call_queued", toolCallId: "slow-call" },
+      },
+    });
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        type: "tool_ui",
+        uiEvent: { type: "tool_call_queued", toolCallId: "fast-call" },
+      },
+    });
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        type: "tool_ui",
+        uiEvent: { type: "bash_started", toolCallId: "slow-call" },
+      },
+    });
+    expect(fastDispatched).toBe(false);
+
+    resolveSlow();
+    const rest = [];
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) break;
+      rest.push(next.value);
+    }
+
+    expect(fastDispatched).toBe(true);
+    expect(
+      rest.map((event) => (event.type === "tool_ui" ? event.uiEvent.type : event.type)),
+    ).toEqual(["bash_execution", "write_success", "tool_result", "tool_result"]);
   });
 
   it("passes dispatchContext to tool definitions", async () => {
@@ -193,9 +557,18 @@ describe("session runner tool dispatch context", () => {
     expect(receivedContext).toBe(dispatchContext);
     expect(events).toEqual([
       {
+        type: "tool_ui",
+        uiEvent: {
+          type: "tool_call_queued",
+          toolCallId: "tool-call-1",
+          toolName: "fake_tool",
+          headerTarget: "fake_tool",
+        },
+      },
+      {
         type: "tool_result",
         message: expect.objectContaining({
-          role: "tool",
+          role: "toolResult",
           toolCallId: "tool-call-1",
           toolName: "fake_tool",
           isError: false,
@@ -204,3 +577,295 @@ describe("session runner tool dispatch context", () => {
     ]);
   });
 });
+
+describe("session pruning", () => {
+  it("prunes bash results plus edit call payloads and success results", () => {
+    const entries = [
+      {
+        id: "assistant-edit",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "edit-1",
+              name: TOOL_NAME_EDIT,
+              arguments: {
+                path: "src/example.ts",
+                oldText: "before\nsame",
+                newText: "after\nsame",
+              },
+            },
+          ],
+          timestamp: 1,
+        },
+      },
+      {
+        id: "edit-result",
+        message: {
+          role: "toolResult",
+          toolCallId: "edit-1",
+          toolName: TOOL_NAME_EDIT,
+          content: [{ type: "text", text: "Successfully edited src/example.ts" }],
+          isError: false,
+          timestamp: 2,
+        },
+      },
+      {
+        id: "bash-result",
+        message: {
+          role: "toolResult",
+          toolCallId: "bash-1",
+          toolName: TOOL_NAME_BASH,
+          content: [{ type: "text", text: "x".repeat(12_000) }],
+          isError: false,
+          timestamp: 3,
+        },
+      },
+    ];
+
+    const result = pruneSessionHistory({
+      historyEntries: entries,
+      replaceMessageById(historyEntryId, message) {
+        const index = entries.findIndex((entry) => entry.id === historyEntryId);
+        if (index < 0) {
+          return false;
+        }
+        entries[index] = { ...entries[index], message };
+        return true;
+      },
+      options: { strategy: "earliest", fraction: 1 },
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        noop: false,
+        bashResultsPruned: 1,
+        editCallsPruned: 1,
+        editResultsPruned: 1,
+      }),
+    );
+    expect(entries[0].message.content[0].arguments.oldText).toBe("[Content pruned]");
+    expect(entries[0].message.content[0].arguments.newText).toBe("[Content pruned]");
+
+    const editText = entries[1].message.content[0].text;
+    expect(editText).toContain("[Tool result pruned] Edit diff");
+    expect(editText).toContain("- before");
+    expect(editText).toContain("+ after");
+
+    const bashText = entries[2].message.content[0].text;
+    expect(bashText).toContain("[Tool result pruned] bash output removed");
+    expect(result.prunedToolResults.map((item) => item.toolCallId)).toEqual(["edit-1", "bash-1"]);
+  });
+
+  it("fails fast when a selected prune replacement cannot be applied", () => {
+    const entries = [
+      {
+        id: "bash-result",
+        message: {
+          role: "toolResult",
+          toolCallId: "bash-1",
+          toolName: TOOL_NAME_BASH,
+          content: [{ type: "text", text: "x".repeat(12_000) }],
+          isError: false,
+          timestamp: 1,
+        },
+      },
+    ];
+
+    expect(() =>
+      pruneSessionHistory({
+        historyEntries: entries,
+        replaceMessageById: () => false,
+        options: { strategy: "earliest", fraction: 1 },
+      }),
+    ).toThrow("failed to replace pruned bash tool result 'bash-result'");
+  });
+});
+
+describe("session compaction preparation", () => {
+  it("de-duplicates preserved user message candidates across repeated compactions", () => {
+    const summaryText = prependTauUserMetadata(buildCompactionUserMessage({ summary: "old" }), [
+      {
+        type: "auto-compaction",
+        version: 1,
+        summary: "old",
+        preservedUserMessages: [{ id: "entry-1", text: "retained request from summary" }],
+        cutType: "turn-boundary",
+        retainedMessageCount: 1,
+      },
+    ]);
+    const entries = [
+      { id: "summary", message: userMessage(summaryText) },
+      {
+        id: "entry-1",
+        message: userMessage("retained request from live history"),
+      },
+      { id: "entry-2", message: userMessage("new request") },
+    ];
+
+    const preparation = prepareSessionCompaction(entries, {
+      systemPrompt: "system",
+    });
+
+    expect(preparation.userMessageCandidates).toEqual([
+      {
+        id: "entry-1",
+        text: "retained request from live history",
+        source: "conversation",
+      },
+      { id: "entry-2", text: "new request", source: "conversation" },
+    ]);
+  });
+});
+
+describe("session execution backend plumbing", () => {
+  it("scopes backend cwd and filesystem paths to the execution environment", async () => {
+    const calls = [];
+    const backend = {
+      async dispose() {},
+      async runBash(command, options = {}) {
+        calls.push(["runBash", command, options.cwd]);
+        return {
+          output: "",
+          stdout: "",
+          stderr: "",
+          exitCode: 0,
+          truncated: false,
+        };
+      },
+      async readFile(path) {
+        calls.push(["readFile", path]);
+        return { path, content: "" };
+      },
+      async readFileBinary(path) {
+        calls.push(["readFileBinary", path]);
+        return { path, content: Buffer.from(""), bytes: 0 };
+      },
+      async writeFile(path, content) {
+        calls.push(["writeFile", path, content]);
+        return { path, bytes: Buffer.byteLength(content), lines: 1 };
+      },
+      async listDir(path) {
+        calls.push(["listDir", path]);
+        return { path, entries: [] };
+      },
+      async grep(options) {
+        calls.push(["grep", options.paths]);
+        return {
+          output: "",
+          exitCode: 0,
+          captureTruncated: false,
+          resolvedPaths: options.paths,
+        };
+      },
+    };
+
+    const scoped = scopeToolExecutionBackend(backend, "/remote/work");
+
+    await scoped.runBash("pwd");
+    await scoped.runBash("pwd", { cwd: "subdir" });
+    await scoped.readFile("src/a.ts");
+    await scoped.readFileBinary("asset.bin");
+    await scoped.writeFile("out.txt", "ok");
+    await scoped.listDir(".");
+    await scoped.grep({
+      baseArgs: [],
+      pattern: "needle",
+      paths: ["src", "/tmp/file.ts"],
+      timeoutMs: 1000,
+    });
+
+    expect(calls).toEqual([
+      ["runBash", "pwd", "/remote/work"],
+      ["runBash", "pwd", "/remote/work/subdir"],
+      ["readFile", "/remote/work/src/a.ts"],
+      ["readFileBinary", "/remote/work/asset.bin"],
+      ["writeFile", "/remote/work/out.txt", "ok"],
+      ["listDir", "/remote/work"],
+      ["grep", ["/remote/work/src", "/tmp/file.ts"]],
+    ]);
+  });
+
+  it("autocompletes project paths from backend stdout and keeps partial results on non-zero exit", async () => {
+    const calls = [];
+    const backend = {
+      async runBash(command, options = {}) {
+        calls.push({ command, options });
+        return {
+          output: "src/a.ts\nrg warning on stderr\n",
+          stdout: "src/a.ts\nsrc/nested/b.ts\n",
+          exitCode: 2,
+        };
+      },
+    };
+
+    await expect(
+      autocompleteProjectPathsWithBackend(backend, {
+        query: "src",
+        limit: 10,
+        cwd: ".",
+      }),
+    ).resolves.toEqual(["src/", "src/a.ts", "src/nested/", "src/nested/b.ts"]);
+    expect(calls).toEqual([
+      {
+        command: "rg --files --hidden --glob '!.git/'",
+        options: { cwd: ".", timeoutMs: 5000 },
+      },
+    ]);
+  });
+
+  it("runs direct bash with default timeout, abort signal, and optional context recording", async () => {
+    const signal = new AbortController().signal;
+    const received = [];
+    const backend = {
+      async runBash(command, options = {}) {
+        received.push({ command, options });
+        return {
+          output: "hello\n",
+          stdout: "hello\n",
+          stderr: "",
+          exitCode: 0,
+          truncated: false,
+        };
+      },
+    };
+    const addUserText = vi.fn(async () => "history-1");
+
+    const result = await runDirectBashCommand({
+      command: "echo hello",
+      backend,
+      signal,
+      addToContext: true,
+      addUserText,
+      now: () => 100,
+    });
+
+    expect(received).toEqual([
+      {
+        command: "echo hello",
+        options: { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS },
+      },
+    ]);
+    expect(addUserText).toHaveBeenCalledWith("Bash command output:\n$ echo hello\nhello");
+    expect(result.userHistoryEntryId).toBe("history-1");
+
+    await runDirectBashCommand({
+      command: "echo skipped",
+      backend,
+      addToContext: false,
+      addUserText,
+      now: () => 100,
+    });
+
+    expect(addUserText).toHaveBeenCalledTimes(1);
+  });
+});
+
+function userMessage(text) {
+  return {
+    role: "user",
+    content: [{ type: "text", text }],
+    timestamp: 0,
+  };
+}

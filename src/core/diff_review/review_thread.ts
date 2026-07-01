@@ -5,7 +5,10 @@ import { ConversationTurnRuntime } from "../runtime/conversation_turn_runtime.js
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { resolveRuntimePromptBootstrap } from "../runtime/runtime_bootstrap.js";
-import { composeSessionPrompts } from "../runtime/session_prompt_composer.js";
+import {
+  composeSessionPrompts,
+  type SessionPromptComposition,
+} from "../runtime/session_prompt_composer.js";
 import { CoreSession, type HistoryEntry } from "../session/core_session.js";
 import { renderDiffReviewWrapperPrompt } from "../static/index.js";
 import { ToolCatalog } from "../tools/catalog.js";
@@ -40,15 +43,9 @@ export type DiffReviewThreadUpdate = {
 };
 
 export type DiffReviewThreadForkSource = {
+  threadId?: string;
   historyEntries: readonly HistoryEntry[];
   usageBaseline: DiffReviewAgentUsageSnapshot;
-};
-
-export type DiffReviewThreadSession = {
-  submitMessage(message: string): Promise<string>;
-  interrupt(): boolean;
-  dispose(): void;
-  createForkSource(): DiffReviewThreadForkSource;
 };
 
 export type CreateDiffReviewThreadOptions = {
@@ -60,11 +57,12 @@ export type CreateDiffReviewThreadOptions = {
   includeAgentContext?: boolean;
   deps?: CoreDeps;
   toolExecutionBackend?: ToolExecutionBackend;
+  promptComposition?: SessionPromptComposition;
   onUpdate?: (update: DiffReviewThreadUpdate) => void;
   forkFrom?: DiffReviewThreadForkSource;
 };
 
-export class DiffReviewThread implements DiffReviewThreadSession {
+export class DiffReviewThread {
   private readonly session: CoreSession;
   private readonly runtime: ConversationTurnRuntime;
   private readonly personaId: string;
@@ -94,24 +92,28 @@ export class DiffReviewThread implements DiffReviewThreadSession {
       contextWindow: options.persona.model.contextWindow,
     };
     const persona = createDiffReviewPersona(options.persona, options.snapshot);
-    const promptBootstrap = resolveRuntimePromptBootstrap({
-      persona,
-      discoveredSkills: options.discoveredSkills ?? [],
-      cwd: options.snapshot.cwd,
-      home: deps.env.home(),
-      includeAgentContext: options.includeAgentContext ?? true,
-      readFile: deps.fs.readFile,
-    });
-    const promptComposition = composeSessionPrompts({
-      persona,
-      riskLevel: "read-only",
-      cwd: promptBootstrap.promptContext.cwd,
-      datetime: new Date(deps.clock.now()).toISOString(),
-      platform: deps.env.platform(),
-      nodeVersion: deps.env.nodeVersion(),
-      skillsBlock: promptBootstrap.promptContext.skillsBlock,
-      projectContextBlock: promptBootstrap.promptContext.projectContextBlock,
-    });
+    const promptBootstrap = options.promptComposition
+      ? undefined
+      : resolveRuntimePromptBootstrap({
+          persona,
+          discoveredSkills: options.discoveredSkills ?? [],
+          cwd: options.snapshot.cwd,
+          home: deps.env.home(),
+          includeAgentContext: options.includeAgentContext ?? true,
+          readFile: deps.fs.readFile,
+        });
+    const promptComposition =
+      options.promptComposition ??
+      composeSessionPrompts({
+        persona,
+        riskLevel: "read-only",
+        cwd: promptBootstrap!.promptContext.cwd,
+        datetime: new Date(deps.clock.now()).toISOString(),
+        platform: deps.env.platform(),
+        nodeVersion: deps.env.nodeVersion(),
+        skillsBlock: promptBootstrap!.promptContext.skillsBlock,
+        projectContextBlock: promptBootstrap!.promptContext.projectContextBlock,
+      });
     const toolRegistry = ToolCatalog.createSubagentRegistry(
       [TOOL_NAME_BASH, TOOL_NAME_VIEW_IMAGE],
       options.config,
@@ -126,9 +128,10 @@ export class DiffReviewThread implements DiffReviewThreadSession {
       toolRegistry,
       config: options.config,
       deps,
-      cwd: promptBootstrap.promptContext.cwd,
-      home: promptBootstrap.promptContext.home,
-      includeAgentContext: promptBootstrap.promptContext.includeAgentContext,
+      cwd: promptBootstrap?.promptContext.cwd ?? options.snapshot.cwd,
+      home: promptBootstrap?.promptContext.home ?? deps.env.home(),
+      includeAgentContext:
+        promptBootstrap?.promptContext.includeAgentContext ?? options.includeAgentContext ?? true,
     });
     if (options.forkFrom) {
       this.usage = { ...options.forkFrom.usageBaseline };
@@ -268,6 +271,29 @@ export function buildDiffReviewSystemPrompt(
   });
 }
 
+export function buildDiffReviewInstructions(snapshot: DiffReviewSnapshot): string {
+  return [
+    "You are Tau's diff review assistant.",
+    "",
+    "### Rules",
+    "",
+    "Keep the following in mind as you work:",
+    "",
+    "- The user is working in Tau's diff review workflow. Treat the review context below as the user-selected review scope. It may be only part of the current repo changes.",
+    "- Keep the review centered on that scope by default. That scoped patch is the default review target, even when it is narrower than the repo's overall changes.",
+    "- The review context reflects the initial diff Tau captured when the review session started. The live repo state is authoritative when you inspect code or answer follow-up questions.",
+    "- Support the full review workflow within that scope: explain what changed, answer follow-up questions, assess correctness and regression risk, discuss tradeoffs, and point out missing validation when it matters.",
+    "- If answering well requires nearby or out-of-scope repo context, inspect it as needed, but use it to support the in-scope review unless the user asks to broaden the review target.",
+    "- Never mutate files, install packages, or act like a general coding agent. You are here to help review and explain code, not to implement changes.",
+    "- Keep answers concise unless the user asks for more. Prefer dense, direct, prose-style responses with minimal preamble and only use bullets when they genuinely help.",
+    "- Be concrete and technically specific. Reference files or code paths when useful. Distinguish confirmed facts from inference, and say when something cannot be verified from the available context.",
+    "",
+    "### Review context",
+    "",
+    buildReviewContextBlock(snapshot),
+  ].join("\n");
+}
+
 function createDiffReviewPersona(persona: Persona, snapshot: DiffReviewSnapshot): Persona {
   return {
     ...persona,
@@ -303,7 +329,7 @@ function buildReviewContextBlock(snapshot: DiffReviewSnapshot): string {
     "Files in review scope:",
     changedFiles,
     "",
-    "This review context is the exact change selection captured when /diff opened. It may be narrower than the full set of current repo changes.",
+    "This review context is the exact change selection captured when the review session started. It may be narrower than the full set of current repo changes.",
     "Treat this scoped patch as the default review target.",
     "If answering well requires code outside this scope, inspect it as needed, but use it as supporting context unless the user broadens the review target.",
     "The current repo state is authoritative. Use read-only tools to inspect relevant repo context when needed.",

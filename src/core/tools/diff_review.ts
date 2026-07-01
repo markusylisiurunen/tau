@@ -3,11 +3,11 @@ import { Type } from "typebox";
 import { z } from "zod";
 import type { DiffToolConfig } from "../config/index.js";
 import type {
+  DiffReviewBridge,
+  DiffReviewBridgeUiState,
   DiffReviewResult,
-  DiffReviewSession,
-  DiffReviewSessionUiState,
   DiffReviewSnapshotSource,
-  StartedDiffReviewSession,
+  StartedDiffReviewBridge,
 } from "../diff_review/index.js";
 import { formatDiffReviewScope } from "../diff_review/snapshot.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
@@ -28,7 +28,7 @@ export type DiffReviewToolStartSession = (args: {
   source: DiffReviewSnapshotSource;
   diffTool: DiffToolConfig;
   signal: AbortSignal;
-}) => Promise<StartedDiffReviewSession>;
+}) => Promise<StartedDiffReviewBridge>;
 
 export type DiffReviewToolOptions = {
   getDiffToolConfig: () => DiffToolConfig | undefined;
@@ -218,8 +218,8 @@ class ToolUiEventQueue implements AsyncIterable<ToolUiEvent> {
 }
 
 function cloneReviewAgents(
-  reviewAgents: DiffReviewSessionUiState["reviewAgents"],
-): DiffReviewSessionUiState["reviewAgents"] {
+  reviewAgents: DiffReviewBridgeUiState["reviewAgents"],
+): DiffReviewBridgeUiState["reviewAgents"] {
   return reviewAgents.map((agent) => ({
     ...agent,
     usage: { ...agent.usage },
@@ -229,7 +229,7 @@ function cloneReviewAgents(
 function createUpdateEvent(args: {
   toolCallId: string;
   command: string;
-  uiState: DiffReviewSessionUiState;
+  uiState: DiffReviewBridgeUiState;
   reviewedFiles: string[];
 }): ToolUiEvent {
   return {
@@ -247,7 +247,7 @@ function createFinishedEvent(args: {
   toolCallId: string;
   command: string;
   status: "success" | "cancelled" | "error";
-  uiState?: DiffReviewSessionUiState;
+  uiState?: DiffReviewBridgeUiState;
   reviewedFiles: string[];
   message?: string;
   uiText?: ToolUiText;
@@ -266,8 +266,8 @@ function createFinishedEvent(args: {
   };
 }
 
-function getReviewedFiles(session: DiffReviewSession): string[] {
-  return session.snapshot.files.map((file) => file.path);
+function getReviewedFiles(bridge: DiffReviewBridge): string[] {
+  return bridge.snapshot.files.map((file) => file.path);
 }
 
 function formatReviewedFiles(files: string[]): string[] {
@@ -367,7 +367,7 @@ export function createDiffReviewToolDefinition(options?: DiffReviewToolOptions):
         return createBlockedResult(
           toolCall,
           command,
-          "diff_review is only available in interactive TUI sessions.",
+          "diff_review is not available because this session host did not provide a diff-review launcher.",
         );
       }
 
@@ -392,7 +392,7 @@ export function createDiffReviewToolDefinition(options?: DiffReviewToolOptions):
         },
         uiEvents: events,
         run: (async (): Promise<ToolDispatchResult> => {
-          let session: DiffReviewSession | undefined;
+          let bridge: DiffReviewBridge | undefined;
           let removeUiStateListener: (() => void) | undefined;
           let abortListener: (() => void) | undefined;
           let reviewedFiles: string[] = [];
@@ -411,11 +411,11 @@ export function createDiffReviewToolDefinition(options?: DiffReviewToolOptions):
               diffTool,
               signal,
             });
-            const activeSession = started.session;
-            session = activeSession;
-            reviewedFiles = getReviewedFiles(activeSession);
+            const activeBridge = started.bridge;
+            bridge = activeBridge;
+            reviewedFiles = getReviewedFiles(activeBridge);
 
-            const emitUpdate = (uiState: DiffReviewSessionUiState) => {
+            const emitUpdate = (uiState: DiffReviewBridgeUiState) => {
               events.push(
                 createUpdateEvent({
                   toolCallId: toolCall.id,
@@ -426,18 +426,18 @@ export function createDiffReviewToolDefinition(options?: DiffReviewToolOptions):
               );
             };
 
-            removeUiStateListener = activeSession.onUiStateChange(emitUpdate);
+            removeUiStateListener = activeBridge.onUiStateChange(emitUpdate);
             abortListener = () => {
-              void activeSession.cancel("controller_cancelled");
+              void activeBridge.cancel("controller_cancelled");
             };
             if (signal.aborted) {
-              await activeSession.cancel("controller_cancelled");
+              await activeBridge.cancel("controller_cancelled");
             } else {
               signal.addEventListener("abort", abortListener, { once: true });
             }
 
             const result = await started.result;
-            const uiState = activeSession.getUiState();
+            const uiState = activeBridge.getUiState();
 
             if (result.status === "returned") {
               const toolText = formatReturnedReviewToolResult({
@@ -483,7 +483,7 @@ export function createDiffReviewToolDefinition(options?: DiffReviewToolOptions):
               toolCallId: toolCall.id,
               command,
               status,
-              uiState: session?.getUiState(),
+              uiState: bridge?.getUiState(),
               reviewedFiles,
               message,
               uiText: buildDiffReviewResultUiText({

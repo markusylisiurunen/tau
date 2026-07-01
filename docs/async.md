@@ -166,8 +166,10 @@ Request validation notes:
 
 - `POST /v1/sessions` only accepts `projectId` and optional `prompt`.
 - when provided, `prompt` must be a non-blank string.
-- `POST /v1/sessions/:sessionId/messages` only accepts `text`.
+- `POST /v1/sessions/:sessionId/messages` only accepts `text`, optional `mode` (`submit` or `steer`), and optional `additionalSystemMessage`.
 - `GET /v1/cron/runs?jobId=...` rejects blank `jobId` values.
+
+`additionalSystemMessage` has system-instruction authority for that submitted message. Only expose it to trusted authenticated callers, and do not pass through unreviewed end-user text as an additional system message.
 
 Requests under `/v1/*` require:
 

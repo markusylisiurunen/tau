@@ -1,21 +1,10 @@
-import { spawnWithCapture } from "./spawn_capture.js";
+import { fuzzyFilter } from "./fuzzy.js";
 
-const MAX_STDOUT_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_COUNT = 50_000;
 const MAX_DIRECTORY_COUNT = 25_000;
 const MAX_ENTRY_COUNT = MAX_FILE_COUNT + MAX_DIRECTORY_COUNT;
 const RIPGREP_TIMEOUT_MS = 5000;
-
-async function runRipgrepFiles(cwd: string): Promise<{ status: number; stdout: string }> {
-  const result = await spawnWithCapture("rg", ["--files", "--hidden", "--glob", "!.git/"], {
-    cwd,
-    maxCaptureBytes: MAX_STDOUT_BYTES,
-    timeoutMs: RIPGREP_TIMEOUT_MS,
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-
-  return { status: result.exitCode ?? 1, stdout: result.stdout };
-}
+const MAX_AUTOCOMPLETE_SCAN_ENTRIES = 50_000;
 
 function listFilesFromOutput(stdout: string): string[] {
   const files: string[] = [];
@@ -69,13 +58,25 @@ function combineEntries(files: Iterable<string>, dirs: Iterable<string>): string
   return [...out].sort();
 }
 
-export async function listProjectFilesAsync(cwd: string): Promise<string[]> {
+export async function autocompleteProjectPathsWithBackend(
+  backend: {
+    runBash(
+      command: string,
+      options?: { timeoutMs?: number; cwd?: string },
+    ): Promise<{ output: string; stdout: string; exitCode: number | null }>;
+  },
+  options: { query: string; limit: number; cwd?: string },
+): Promise<string[]> {
   try {
-    const res = await runRipgrepFiles(cwd);
-    if (res.status !== 0 && !res.stdout) return [];
+    const res = await backend.runBash("rg --files --hidden --glob '!.git/'", {
+      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+      timeoutMs: RIPGREP_TIMEOUT_MS,
+    });
+    if (res.exitCode !== 0 && !res.stdout) return [];
 
-    const files = listFilesFromOutput(res.stdout);
-    return combineEntries(files, listDirectoriesFromFiles(files));
+    const files = listFilesFromOutput(res.stdout).slice(0, MAX_AUTOCOMPLETE_SCAN_ENTRIES);
+    const entries = combineEntries(files, listDirectoriesFromFiles(files));
+    return fuzzyFilter(entries, options.query, (path) => path).slice(0, options.limit);
   } catch {
     return [];
   }

@@ -34,11 +34,6 @@ export interface ThemeSuggestion {
   label?: string;
 }
 
-export interface BashSuggestion {
-  id: string;
-  description?: string;
-}
-
 type MentionKindSuggestion = {
   kind: MentionKind;
   description: string;
@@ -49,8 +44,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
   private getPersonas: () => PersonaSuggestion[];
   private getPrompts: () => PromptSuggestion[];
   private getThemes: () => ThemeSuggestion[];
-  private getBashCommands: () => BashSuggestion[];
-  private getFiles: () => string[];
+  private getPaths: (query: string, limit: number, signal: AbortSignal) => Promise<string[]>;
   private getSkills: () => string[];
   private getAgents: () => string[];
   private getRiskLevels: () => RiskLevel[];
@@ -60,8 +54,11 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     personas: () => PersonaSuggestion[],
     prompts: () => PromptSuggestion[] = () => [],
     themes: () => ThemeSuggestion[] = () => [],
-    bashCommands: () => BashSuggestion[] = () => [],
-    files: () => string[] = () => [],
+    paths: (
+      query: string,
+      limit: number,
+      signal: AbortSignal,
+    ) => Promise<string[]> = async () => [],
     skills: () => string[] = () => [],
     agents: () => string[] = () => [],
     riskLevels: () => RiskLevel[] = () => ["read-only", "read-write"],
@@ -70,8 +67,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     this.getPersonas = personas;
     this.getPrompts = prompts;
     this.getThemes = themes;
-    this.getBashCommands = bashCommands;
-    this.getFiles = files;
+    this.getPaths = paths;
     this.getSkills = skills;
     this.getAgents = agents;
     this.getRiskLevels = riskLevels;
@@ -86,7 +82,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     const line = lines[cursorLine] ?? "";
     const beforeCursor = line.slice(0, cursorCol);
 
-    const mentionSuggestions = this.getMentionSuggestions(beforeCursor);
+    const mentionSuggestions = await this.getMentionSuggestions(beforeCursor, _options.signal);
     if (mentionSuggestions) return mentionSuggestions;
 
     if (!beforeCursor.startsWith("/")) return null;
@@ -136,26 +132,26 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
 
   private getMentionSuggestions(
     beforeCursor: string,
-  ): { items: AutocompleteItem[]; prefix: string } | null {
+    signal: AbortSignal,
+  ): Promise<{ items: AutocompleteItem[]; prefix: string } | null> {
     const token = getMentionAutocompleteToken(beforeCursor);
-    if (!token) return null;
+    if (!token) return Promise.resolve(null);
 
     if (token.startsWith("@@")) {
-      return this.getTypedMentionSuggestions(token);
+      return Promise.resolve(this.getTypedMentionSuggestions(token));
     }
 
-    return this.getFileMentionSuggestions(token);
+    return this.getFileMentionSuggestions(token, signal);
   }
 
-  private getFileMentionSuggestions(
+  private async getFileMentionSuggestions(
     token: string,
-  ): { items: AutocompleteItem[]; prefix: string } | null {
-    const source = this.getFiles();
-    if (source.length === 0) return null;
-
+    signal: AbortSignal,
+  ): Promise<{ items: AutocompleteItem[]; prefix: string } | null> {
     const valuePrefix = token.slice(1);
-    const filtered = fuzzyFilter(source, valuePrefix, (path) => path);
-    const items = filtered.slice(0, 25).map((path) => ({ value: path, label: path }));
+    const paths = await this.getPaths(valuePrefix, 25, signal);
+    if (signal.aborted) return null;
+    const items = paths.map((path) => ({ value: path, label: path }));
 
     if (items.length === 0) return null;
     return { items, prefix: token };
@@ -250,14 +246,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     const riskMatch = afterSlash.match(/^risk:(.*)$/i);
     if (riskMatch) {
       return this.buildRiskSuggestions(riskMatch[1] ?? "");
-    }
-
-    const bashMatch = afterSlash.match(/^bash:(.*)$/i);
-    if (bashMatch) {
-      return this.buildArgSuggestions(
-        bashMatch[1] ?? "",
-        this.getBashCommands().map((b) => ({ id: b.id, label: b.description })),
-      );
     }
 
     return null;
@@ -371,21 +359,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
       }
     }
 
-    const hasBash = commandInfos.some((command) => command.argument === "bash");
-    if (hasBash) {
-      for (const b of this.getBashCommands()) {
-        const full = `bash:${b.id}`;
-        candidates.push({
-          item: {
-            value: full,
-            label: full,
-            description: b.description ? b.description : "run saved bash command",
-          },
-          searchText: `${b.id} ${b.description ?? ""} ${full}`,
-        });
-      }
-    }
-
     const filteredCandidates = fuzzyFilter(candidates, afterSlash, (c) => c.searchText);
     const items = filteredCandidates.map((c) => c.item);
 
@@ -411,8 +384,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
       lowerBeforePrefix.endsWith("/persona:") ||
       lowerBeforePrefix.endsWith("/prompt:") ||
       lowerBeforePrefix.endsWith("/theme:") ||
-      lowerBeforePrefix.endsWith("/risk:") ||
-      lowerBeforePrefix.endsWith("/bash:");
+      lowerBeforePrefix.endsWith("/risk:");
 
     if (isArgCompletion) {
       return item.value;

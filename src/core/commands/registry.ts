@@ -6,10 +6,8 @@ export type Command = (
   | { type: "help" }
   | { type: "copyText" }
   | { type: "copyCode" }
-  | { type: "checkpoint" }
   | { type: "new" }
   | { type: "rewind" }
-  | { type: "cd"; path: string }
   | { type: "diff"; argsText: string }
   | { type: "compactSummaryOnly" }
   | { type: "compactSummaryAndLast" }
@@ -20,7 +18,6 @@ export type Command = (
   | { type: "listen" }
   | { type: "speak" }
   | { type: "risk"; level: RiskLevel }
-  | { type: "bash"; id: string }
   | { type: "persona"; id: string }
   | { type: "prompt"; id: string }
   | { type: "theme"; id: string }
@@ -28,7 +25,7 @@ export type Command = (
 ) & { extra?: string };
 
 export type CommandId = Command["type"];
-export type CommandArgument = "none" | "risk" | "bash" | "persona" | "prompt" | "theme";
+export type CommandArgument = "none" | "risk" | "persona" | "prompt" | "theme";
 export type CommandSection = "base" | "risk" | "trailing";
 
 export interface CommandInfo {
@@ -51,10 +48,8 @@ export interface CommandDispatchContext {
   help: () => void;
   copyText: () => Promise<void>;
   copyCode: () => Promise<void>;
-  checkpoint: () => Promise<void>;
   newSession: () => Promise<void>;
   rewind: () => void;
-  cd: (path: string) => void;
   diff: (argsText: string) => Promise<void> | void;
   compactSummaryOnly: (extra?: string) => Promise<void>;
   compactSummaryAndLast: (extra?: string) => Promise<void>;
@@ -68,7 +63,6 @@ export interface CommandDispatchContext {
   persona: (id: string) => void;
   prompt: (id: string) => void;
   theme: (id: string) => void;
-  bash: (id: string) => Promise<void>;
   unknown: (raw: string) => void;
 }
 
@@ -77,6 +71,7 @@ export interface HelpTextOptions {
   skills?: Skill[];
   riskLevels?: RiskLevel[];
   themes?: string[];
+  formatPath?: (path: string) => string;
 }
 
 const DEFAULT_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
@@ -103,8 +98,8 @@ export function getRiskLevelAutocompleteOptions(
   }));
 }
 
-function formatSkillPath(fullPath: string): string {
-  return formatPathForDisplay(dirname(dirname(fullPath)));
+function formatSkillPath(fullPath: string, formatPath: (path: string) => string): string {
+  return formatPath(dirname(dirname(fullPath)));
 }
 
 function splitCommandInput(raw: string): { command: string; extra?: string } {
@@ -155,11 +150,12 @@ export class CommandRegistry<Ctx = unknown> {
   buildHelpText(options: HelpTextOptions = {}): string {
     const lines: string[] = [];
     const { agentsFiles, skills, riskLevels, themes } = options;
+    const formatPath = options.formatPath ?? formatPathForDisplay;
 
     if (agentsFiles && agentsFiles.length > 0) {
       lines.push("context:");
       agentsFiles.forEach((agentsFile) => {
-        lines.push(`  ${formatPathForDisplay(agentsFile)}`);
+        lines.push(`  ${formatPath(agentsFile)}`);
       });
     }
     if (skills && skills.length > 0) {
@@ -168,7 +164,7 @@ export class CommandRegistry<Ctx = unknown> {
       }
       lines.push("skills:");
       skills.forEach((skill) => {
-        lines.push(`  ${skill.name} (${formatSkillPath(skill.path)})`);
+        lines.push(`  ${skill.name} (${formatSkillPath(skill.path, formatPath)})`);
       });
     }
     if (lines.length > 0) {
@@ -204,7 +200,6 @@ export class CommandRegistry<Ctx = unknown> {
       ["ctrl+p", "cycle personality"],
       ["ctrl+t", "toggle thoughts visibility"],
       ["ctrl+o", "toggle compact tool UI"],
-      ["ctrl+f", "expand @<file> and @@skill:<name> mentions"],
       ["ctrl+s", "stash input to clipboard"],
       ["ctrl+y", "toggle voice recording"],
       ["ctrl+enter", "steer running assistant with editor input"],
@@ -279,25 +274,10 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
   });
 
   registry.register({
-    id: "cd",
-    usage: "/cd",
-    description: "change working directory",
-    autocompleteDescription: "change working directory",
-    argument: "none",
-    section: "base",
-    parse: (raw) => {
-      const { command, extra } = splitCommandInput(raw);
-      if (command !== "/cd") return null;
-      return { type: "cd", path: extra ?? "", extra };
-    },
-    run: (ctx, command) => ctx.cd(command.path),
-  });
-
-  registry.register({
     id: "diff",
     usage: "/diff [git diff args...]",
-    description: "review a git diff with the external diff tool",
-    autocompleteDescription: "review a git diff with the external diff tool",
+    description: "open the local diff review tool for the session diff",
+    autocompleteDescription: "open diff review for git diff args",
     argument: "none",
     section: "base",
     parse: (raw) => {
@@ -386,8 +366,8 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
   registry.register({
     id: "reload",
     usage: "/reload",
-    description: "reload prompts, skills, themes, bash commands, and AGENTS.md",
-    autocompleteDescription: "reload prompts, skills, themes, bash commands, and AGENTS.md",
+    description: "reload prompts, skills, themes, and AGENTS.md",
+    autocompleteDescription: "reload prompts, skills, themes, and AGENTS.md",
     argument: "none",
     section: "base",
     parse: (raw) => {
@@ -460,21 +440,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
   });
 
   registry.register({
-    id: "checkpoint",
-    usage: "/checkpoint",
-    description: "save a checkpoint file",
-    autocompleteDescription: "save a checkpoint file",
-    argument: "none",
-    section: "base",
-    parse: (raw) => {
-      const { command, extra } = splitCommandInput(raw);
-      if (command !== "/checkpoint") return null;
-      return { type: "checkpoint", extra };
-    },
-    run: (ctx) => ctx.checkpoint(),
-  });
-
-  registry.register({
     id: "risk",
     usage: "/risk:<level>",
     description: "set risk level",
@@ -489,22 +454,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "risk", level: parsed.data, extra };
     },
     run: (ctx, command) => ctx.risk(command.level),
-  });
-
-  registry.register({
-    id: "bash",
-    usage: "/bash:<id>",
-    description: "run saved bash command",
-    argument: "bash",
-    section: "trailing",
-    parse: (raw) => {
-      const { command, extra } = splitCommandInput(raw);
-      const match = command.match(/^\/bash:(.+)$/i);
-      const id = match?.[1]?.trim() ?? "";
-      if (!id) return null;
-      return { type: "bash", id, extra };
-    },
-    run: (ctx, command) => ctx.bash(command.id),
   });
 
   registry.register({

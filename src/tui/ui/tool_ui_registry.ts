@@ -58,6 +58,26 @@ function buildSimpleToolRunningView(
   };
 }
 
+function buildToolQueuedView(theme: Theme, toolName: string): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const queuedColor = (s: string) => palette.textMuted(s);
+
+  const header = buildToolHeaderLine({
+    bulletStyle: queuedColor,
+    bullet: "⏵",
+    label: "queued",
+    labelStyle: palette.textMuted,
+    accent: inlineText(toolName),
+    accentStyle: palette.brandAccent,
+  });
+
+  return {
+    borderColor: queuedColor,
+    expanded: { title: queuedColor(text.bold(`queued ${toolName}`)) },
+    compact: { header },
+  };
+}
+
 function buildSimpleToolFinishedView(args: {
   theme: Theme;
   label: string;
@@ -382,6 +402,11 @@ export class ToolUiRegistry {
 
 export function createToolUiRegistry(): ToolUiRegistry {
   const registry = new ToolUiRegistry();
+
+  registry.register("tool_call_queued", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "tool_call_queued" }>;
+    return buildToolQueuedView(context.theme, uiEvent.toolName);
+  });
 
   registry.register("bash_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "bash_started" }>;

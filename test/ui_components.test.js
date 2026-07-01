@@ -41,7 +41,6 @@ function createSlashProvider(options = {}) {
     () => options.personas ?? [],
     () => options.prompts ?? [],
     () => options.themes ?? [],
-    () => options.bashCommands ?? [],
     () => options.files ?? [],
     () => options.skills ?? [],
     () => options.agents ?? [],
@@ -207,6 +206,21 @@ test("AssistantMessageComponent toggles thinking visibility", () => {
   component.setThinkingVisibility(true);
   text = renderText(component, 80);
   expect(text).toContain("hmm");
+});
+
+test("AssistantMessageComponent toggles partial thinking visibility", () => {
+  const theme = createTagTheme();
+  const component = new AssistantMessageComponent(theme, undefined, false);
+
+  component.update({ type: "assistant_partial", text: "hello", thinking: "hmm" });
+  let text = renderText(component, 80);
+  expect(text).not.toContain("hmm");
+  expect(text).toContain("hello");
+
+  component.setThinkingVisibility(true);
+  text = renderText(component, 80);
+  expect(text).toContain("hmm");
+  expect(text).toContain("hello");
 });
 
 test("ChatContainerComponent hides empty assistant messages even when thoughts are visible", () => {

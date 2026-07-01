@@ -11,8 +11,8 @@ function createProvider(options = {}) {
     () => [],
     () => [],
     () => [],
-    () => [],
-    () => options.files ?? [],
+    async (query, limit) =>
+      (options.files ?? []).filter((path) => path.includes(query)).slice(0, limit),
     () => options.skills ?? [],
     () => options.agents ?? [],
     () => ["read-only", "read-write"],
@@ -35,10 +35,15 @@ async function getSlashValues(provider, text) {
 
 describe("slash mention autocomplete", () => {
   it("uses @ as the default file mention syntax", async () => {
-    const provider = createProvider({ files: ["src/core.ts", "src/tui/app.ts"] });
+    const provider = createProvider({
+      files: ["src/core.ts", "src/tui/session_chat_app.ts"],
+    });
 
-    expect(await getMentionValues(provider, "@")).toEqual(["src/core.ts", "src/tui/app.ts"]);
-    expect(await getMentionValues(provider, "@src/tui")).toEqual(["src/tui/app.ts"]);
+    expect(await getMentionValues(provider, "@")).toEqual([
+      "src/core.ts",
+      "src/tui/session_chat_app.ts",
+    ]);
+    expect(await getMentionValues(provider, "@src/tui")).toEqual(["src/tui/session_chat_app.ts"]);
   });
 
   it("uses @@ to suggest mention kinds and @@kind: to suggest entries", async () => {

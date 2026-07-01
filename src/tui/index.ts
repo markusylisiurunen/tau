@@ -1,2 +1,2 @@
-export type { ChatAppOptions } from "./app.js";
-export { ChatApp } from "./app.js";
+export type { SessionChatAppOptions, SessionChatTransportOptions } from "./session_chat_app.js";
+export { SessionChatApp } from "./session_chat_app.js";

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path/posix";
-import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import {
   type CommandDispatchContext,
   type CommandRegistry,
@@ -1344,6 +1344,13 @@ export class SessionChatController {
       };
     }
 
+    if (
+      message.message.role === "toolResult" &&
+      hasToolUiFacetForToolCall(this.snapshot, (message.message as ToolResultMessage).toolCallId)
+    ) {
+      return undefined;
+    }
+
     if (isCoreMessage(message.message)) {
       return buildHistoryMessageModel(message.message);
     }
@@ -2366,6 +2373,15 @@ function createSessionDiffReviewSnapshotDeps(session: TauSdkSession) {
 
 function isMessageInTimeline(snapshot: SessionProtocolSnapshot, messageId: string): boolean {
   return snapshot.timeline.some((item) => item.type === "message" && item.messageId === messageId);
+}
+
+function hasToolUiFacetForToolCall(snapshot: SessionProtocolSnapshot, toolCallId: string): boolean {
+  return Object.values(snapshot.facets).some(
+    (facet) =>
+      facet.kind === "tau.tool-ui-events" &&
+      facet.subject.type === "tool" &&
+      facet.subject.id === toolCallId,
+  );
 }
 
 function assistantPartialFromProtocolMessage(message: SessionProtocolMessage): {

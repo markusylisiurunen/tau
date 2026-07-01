@@ -42,6 +42,11 @@ export class ChatContainerComponent extends Container {
 
   addMessage(model: ChatMessageModel, id?: string): string {
     const finalId = id ?? this.generateId();
+    if (this.idToIndex.has(finalId)) {
+      this.replaceMessage(finalId, model);
+      return finalId;
+    }
+
     const record: ChatMessageRecord = { id: finalId, model, rendered: false };
     this.allMessages.push(record);
     this.idToIndex.set(finalId, this.allMessages.length - 1);

@@ -1988,6 +1988,127 @@ describe("SessionChatController", () => {
     await controller.dispose();
   });
 
+  it("does not render tool-result transcript messages when a matching tool UI facet exists", async () => {
+    const baseSnapshot = createSnapshot();
+    const assistantMessage = createAssistantToolCallMessage([
+      {
+        type: "toolCall",
+        id: "tool-a",
+        name: "bash",
+        arguments: { command: "echo a" },
+      },
+    ]);
+    const snapshot = updateSnapshot(baseSnapshot, {
+      messages: [
+        ...baseSnapshot.messages,
+        {
+          id: "assistant-tools",
+          state: "committed",
+          modelVisible: true,
+          message: assistantMessage,
+        },
+        {
+          id: "tool-a",
+          state: "committed",
+          modelVisible: true,
+          message: {
+            role: "toolResult",
+            toolCallId: "tool-a",
+            toolName: "bash",
+            content: [{ type: "text", text: "a\n" }],
+            isError: false,
+            timestamp: 2,
+          },
+        },
+      ],
+      timeline: [
+        {
+          type: "message",
+          id: "timeline-assistant-tools",
+          messageId: "assistant-tools",
+        },
+        {
+          type: "message",
+          id: "timeline-tool-a",
+          messageId: "tool-a",
+        },
+      ],
+      tools: {
+        "tool-a": {
+          id: "tool-a",
+          toolCallId: "tool-a",
+          toolName: "bash",
+          call: { messageId: "assistant-tools", contentIndex: 0 },
+          status: "succeeded",
+          resultMessageId: "tool-a",
+          facetIds: ["tool-ui-tool-a"],
+        },
+      },
+      facets: {
+        "tool-ui-tool-a": {
+          id: "tool-ui-tool-a",
+          subject: { type: "tool", id: "tool-a" },
+          kind: "tau.tool-ui-events",
+          version: 1,
+          data: {
+            events: [
+              {
+                type: "tool_call_queued",
+                toolCallId: "tool-a",
+                toolName: "bash",
+                headerTarget: "bash",
+              },
+              {
+                type: "bash_execution",
+                toolCallId: "tool-a",
+                command: "echo a",
+                headerTarget: "echo a",
+                exitCode: 0,
+                truncationInfo: {
+                  output: "a\n",
+                  model: {
+                    content: "a\n",
+                    truncated: false,
+                    truncatedBy: null,
+                    totalLines: 2,
+                    totalBytes: 2,
+                    outputLines: 2,
+                    outputBytes: 2,
+                    maxLines: 2,
+                    maxTokens: 8192,
+                  },
+                  captureTruncated: false,
+                },
+                uiText: {
+                  previewLines: [{ text: "a" }],
+                  statusLine: "exit 0",
+                  fullLines: [{ text: "a" }],
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+    });
+
+    controller.start();
+
+    expect(view.messages.some((message) => message.id === "tool-a")).toBe(false);
+    expect(view.toolEvents.map((event) => event.type)).toEqual([
+      "tool_call_queued",
+      "bash_execution",
+    ]);
+    await controller.dispose();
+  });
+
   it("applies appended tool UI facet deltas without replaying all tool facets", async () => {
     const queuedEvent = {
       type: "tool_call_queued",

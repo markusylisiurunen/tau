@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
@@ -21,6 +20,17 @@ export type DiffReviewFile = {
   newPath?: string;
 };
 
+export type DiffReviewSnapshotData = {
+  id: string;
+  repoRoot: string;
+  cwd: string;
+  diffArgs: string[];
+  patch: string;
+  files: DiffReviewFile[];
+  patchByPath: Record<string, string>;
+  scopeLabel: string;
+};
+
 export type DiffReviewSnapshotSource =
   | {
       kind: "git_diff";
@@ -36,7 +46,13 @@ export type CaptureDiffReviewSnapshotOptions = {
   cwd: string;
   source: DiffReviewSnapshotSource;
   signal?: AbortSignal;
-  deps?: Partial<Pick<CoreDeps, "spawn" | "env" | "fs">>;
+  deps?: Partial<DiffSnapshotDeps>;
+};
+
+type DiffSnapshotDeps = Pick<CoreDeps, "spawn" | "env"> & {
+  fs: {
+    readFile: (path: string) => string | Promise<string>;
+  };
 };
 
 const GIT_TIMEOUT_MS = 30_000;
@@ -64,7 +80,7 @@ export class DiffReviewSnapshot {
     scopeLabel: string;
     id?: string;
   }) {
-    this.id = args.id ?? `tau-diff-${randomUUID()}`;
+    this.id = args.id ?? `diff-${randomUUID()}`;
     this.repoRoot = args.repoRoot;
     this.cwd = args.cwd;
     this.diffArgs = [...args.diffArgs];
@@ -84,6 +100,40 @@ export class DiffReviewSnapshot {
   toDiffCommand(): string {
     return this.scopeLabel;
   }
+}
+
+export function diffReviewSnapshotToData(snapshot: DiffReviewSnapshot): DiffReviewSnapshotData {
+  const patchByPath: Record<string, string> = {};
+  for (const file of snapshot.files) {
+    const patch = snapshot.getFilePatch(file.path);
+    if (patch !== undefined) {
+      patchByPath[file.path] = patch;
+    }
+  }
+
+  return {
+    id: snapshot.id,
+    repoRoot: snapshot.repoRoot,
+    cwd: snapshot.cwd,
+    diffArgs: [...snapshot.diffArgs],
+    patch: snapshot.patch,
+    files: snapshot.files.map((file) => ({ ...file })),
+    patchByPath,
+    scopeLabel: snapshot.toDiffCommand(),
+  };
+}
+
+export function diffReviewSnapshotFromData(data: DiffReviewSnapshotData): DiffReviewSnapshot {
+  return new DiffReviewSnapshot({
+    id: data.id,
+    repoRoot: data.repoRoot,
+    cwd: data.cwd,
+    diffArgs: data.diffArgs,
+    patch: data.patch,
+    files: data.files,
+    patchByPath: new Map(Object.entries(data.patchByPath)),
+    scopeLabel: data.scopeLabel,
+  });
 }
 
 export function formatDiffReviewScope(diffArgs: string[]): string {
@@ -130,9 +180,7 @@ function throwIfSnapshotAborted(signal?: AbortSignal): void {
   }
 }
 
-function createDiffSnapshotDeps(
-  deps?: Partial<Pick<CoreDeps, "spawn" | "env" | "fs">>,
-): Pick<CoreDeps, "spawn" | "env" | "fs"> {
+function createDiffSnapshotDeps(deps?: Partial<DiffSnapshotDeps>): DiffSnapshotDeps {
   const defaults = createDefaultCoreDeps();
   return {
     spawn: deps?.spawn ?? defaults.spawn,
@@ -143,7 +191,7 @@ function createDiffSnapshotDeps(
 
 async function resolveGitRepoRoot(
   cwd: string,
-  deps: Pick<CoreDeps, "spawn" | "env">,
+  deps: Pick<DiffSnapshotDeps, "spawn" | "env">,
   signal?: AbortSignal,
 ): Promise<string> {
   const output = await runGitCommand(
@@ -165,7 +213,7 @@ async function resolveGitRepoRoot(
 async function capturePatchFilesSnapshot(
   cwd: string,
   patchFiles: string[],
-  deps: Pick<CoreDeps, "fs">,
+  deps: Pick<DiffSnapshotDeps, "fs">,
   signal?: AbortSignal,
 ): Promise<CapturedSnapshotData> {
   const sections: string[] = [];
@@ -173,14 +221,7 @@ async function capturePatchFilesSnapshot(
   for (const patchFile of patchFiles) {
     throwIfSnapshotAborted(signal);
     const patchPath = resolve(cwd, patchFile);
-    const patchBytes = statSync(patchPath).size;
-    if (totalBytes + patchBytes > GIT_MAX_CAPTURE_BYTES) {
-      throw new Error(
-        `patch files exceeded ${GIT_MAX_CAPTURE_BYTES} bytes while capturing diff review snapshot`,
-      );
-    }
-
-    const patch = deps.fs.readFile(patchPath);
+    const patch = await deps.fs.readFile(patchPath);
     totalBytes += Buffer.byteLength(patch, "utf-8");
     if (totalBytes > GIT_MAX_CAPTURE_BYTES) {
       throw new Error(
@@ -208,7 +249,7 @@ async function capturePatchFilesSnapshot(
 async function captureExplicitDiffSnapshot(
   cwd: string,
   diffArgs: string[],
-  deps: Pick<CoreDeps, "spawn" | "env">,
+  deps: Pick<DiffSnapshotDeps, "spawn" | "env">,
   signal?: AbortSignal,
 ): Promise<CapturedSnapshotData> {
   const patch = await runGitCommand(cwd, ["diff", ...diffArgs], deps, {}, signal);
@@ -228,7 +269,7 @@ async function captureExplicitDiffSnapshot(
 
 async function captureWorkingTreeSnapshot(
   repoRoot: string,
-  deps: Pick<CoreDeps, "spawn" | "env">,
+  deps: DiffSnapshotDeps,
   signal?: AbortSignal,
 ): Promise<CapturedSnapshotData> {
   const hasHead = await gitRefExists(repoRoot, "HEAD", deps, signal);
@@ -250,7 +291,7 @@ async function captureWorkingTreeSnapshot(
 
 async function captureTrackedWorkingTreeSnapshot(
   repoRoot: string,
-  deps: Pick<CoreDeps, "spawn" | "env">,
+  deps: Pick<DiffSnapshotDeps, "spawn" | "env">,
   signal?: AbortSignal,
 ): Promise<CapturedSnapshotData> {
   const patch = await runGitCommand(repoRoot, ["diff", "HEAD"], deps, {}, signal);
@@ -270,7 +311,7 @@ async function captureTrackedWorkingTreeSnapshot(
 
 async function captureTrackedWorkingTreeSnapshotWithoutHead(
   repoRoot: string,
-  deps: Pick<CoreDeps, "spawn" | "env">,
+  deps: Pick<DiffSnapshotDeps, "spawn" | "env">,
   signal?: AbortSignal,
 ): Promise<CapturedSnapshotData> {
   const unstagedPatch = await runGitCommand(repoRoot, ["diff"], deps, {}, signal);
@@ -305,7 +346,7 @@ async function captureTrackedWorkingTreeSnapshotWithoutHead(
 
 async function captureUntrackedFilePatches(
   repoRoot: string,
-  deps: Pick<CoreDeps, "spawn" | "env">,
+  deps: DiffSnapshotDeps,
   signal?: AbortSignal,
 ): Promise<{
   files: DiffReviewFile[];
@@ -327,16 +368,18 @@ async function captureUntrackedFilePatches(
 
   for (const path of paths) {
     const filePath = resolve(repoRoot, path);
-    if (!existsSync(filePath)) {
+    let content: string;
+    try {
+      content = await deps.fs.readFile(filePath);
+    } catch {
       continue;
     }
 
-    const content = readFileSync(filePath);
-    if (content.length > MAX_UNTRACKED_TEXT_BYTES || content.includes(0)) {
+    if (Buffer.byteLength(content, "utf-8") > MAX_UNTRACKED_TEXT_BYTES || content.includes("\0")) {
       continue;
     }
 
-    const patch = createUntrackedFilePatch(path, content.toString("utf-8"));
+    const patch = createUntrackedFilePatch(path, content);
     files.push({
       path,
       status: "added",
@@ -464,7 +507,7 @@ function parseNullSeparatedPaths(output: string): string[] {
 async function gitRefExists(
   cwd: string,
   ref: string,
-  deps: Pick<CoreDeps, "spawn" | "env">,
+  deps: Pick<DiffSnapshotDeps, "spawn" | "env">,
   signal?: AbortSignal,
 ): Promise<boolean> {
   const result = await deps.spawn("git", ["rev-parse", "--verify", ref], {
@@ -502,7 +545,7 @@ async function gitRefExists(
 async function runGitCommand(
   cwd: string,
   args: string[],
-  deps: Pick<CoreDeps, "spawn" | "env">,
+  deps: Pick<DiffSnapshotDeps, "spawn" | "env">,
   options: { invalidRepoMessage?: string } = {},
   signal?: AbortSignal,
 ): Promise<string> {
@@ -538,7 +581,7 @@ async function runGitCommand(
   throw new Error(message || `git ${args.join(" ")} failed`);
 }
 
-function buildGitEnv(deps: Pick<CoreDeps, "env">): Record<string, string> {
+function buildGitEnv(deps: Pick<DiffSnapshotDeps, "env">): Record<string, string> {
   return {
     ...deps.env.env(),
     GIT_TERMINAL_PROMPT: "0",

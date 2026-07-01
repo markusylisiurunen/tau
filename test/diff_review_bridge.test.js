@@ -2,8 +2,8 @@ import { once } from "node:events";
 import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DiffReviewBridge } from "../src/core/diff_review/bridge.ts";
 import { DIFF_REVIEW_PROTOCOL_VERSION } from "../src/core/diff_review/protocol.ts";
-import { DiffReviewSession } from "../src/core/diff_review/session.ts";
 import { DiffReviewSnapshot, formatDiffReviewScope } from "../src/core/diff_review/snapshot.ts";
 import { personas } from "../src/core/personas.ts";
 
@@ -45,6 +45,34 @@ function createThreadSession(overrides = {}, contextWindow = 200_000) {
     },
     ...overrides,
   };
+}
+
+function createSubmitThreadMessage(createThread) {
+  const threads = new Map();
+  return async ({ threadId, forkFromThreadId, message }) => {
+    let thread = threads.get(threadId);
+    if (!thread) {
+      const forkSource = forkFromThreadId ? threads.get(forkFromThreadId) : undefined;
+      thread = createThread({
+        threadId,
+        ...(forkSource ? { forkFrom: forkSource.createForkSource() } : {}),
+      });
+      threads.set(threadId, thread);
+    }
+    return {
+      threadId,
+      response: await thread.submitMessage(message),
+    };
+  };
+}
+
+function createDiffReviewBridge(options) {
+  const { createThread = () => createThreadSession(), contextWindow, ...rest } = options;
+  return new DiffReviewBridge({
+    contextWindow: contextWindow ?? personas[0].model.contextWindow,
+    submitThreadMessage: createSubmitThreadMessage(createThread),
+    ...rest,
+  });
 }
 
 function createSnapshot() {
@@ -94,8 +122,8 @@ function createSnapshot() {
   });
 }
 
-async function connectClient(session, options = {}) {
-  const socket = createConnection(session.launchEnvironment.TAU_DIFF_SOCKET);
+async function connectClient(bridge, options = {}) {
+  const socket = createConnection(bridge.launchEnvironment.TAU_DIFF_SOCKET);
   const rl = createInterface({ input: socket, crlfDelay: Number.POSITIVE_INFINITY });
   const pending = new Map();
   const serverRequests = [];
@@ -104,7 +132,9 @@ async function connectClient(session, options = {}) {
     const message = JSON.parse(line);
     if (message.type === "request") {
       serverRequests.push(message);
-      if (message.method === "session.close" && options.ackSessionClose !== false) {
+      if (message.method === "session.close" && options.sessionCloseResponse) {
+        socket.write(`${JSON.stringify({ ...options.sessionCloseResponse, id: message.id })}\n`);
+      } else if (message.method === "session.close" && options.ackSessionClose !== false) {
         socket.write(
           `${JSON.stringify({
             version: DIFF_REVIEW_PROTOCOL_VERSION,
@@ -140,14 +170,22 @@ async function connectClient(session, options = {}) {
   return { socket, rl, send, serverRequests };
 }
 
+async function waitFor(predicate) {
+  for (let i = 0; i < 100; i += 1) {
+    if (predicate()) return;
+    await Promise.resolve();
+  }
+  throw new Error("timed out waiting for condition");
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("diff_review session", () => {
+describe("diff review bridge", () => {
   it("serves snapshot data, threads, and returned reviews over the diff protocol", async () => {
     const threadMessages = new Map();
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -162,12 +200,12 @@ describe("diff_review session", () => {
         }),
     });
 
-    await session.start();
-    const client = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
 
     try {
       const init = await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
       expect(init).toEqual({
         version: DIFF_REVIEW_PROTOCOL_VERSION,
@@ -176,7 +214,7 @@ describe("diff_review session", () => {
         ok: true,
         result: {
           protocolVersion: DIFF_REVIEW_PROTOCOL_VERSION,
-          sessionId: session.sessionId,
+          sessionId: bridge.sessionId,
           methods: expect.any(Array),
           alreadyInitialized: false,
         },
@@ -184,7 +222,7 @@ describe("diff_review session", () => {
 
       const context = await client.send("ctx", "session.get_context", {});
       expect(context.result).toEqual({
-        sessionId: session.sessionId,
+        sessionId: bridge.sessionId,
         repoRoot: "/repo",
         cwd: "/repo/packages/app",
         diffArgs: ["--staged"],
@@ -233,20 +271,170 @@ describe("diff_review session", () => {
         review: "Looks good overall.",
       });
       expect(review.result).toEqual({ status: "returned" });
-      await expect(session.result).resolves.toEqual({
+      await expect(bridge.result).resolves.toEqual({
         status: "returned",
         review: "Looks good overall.",
       });
     } finally {
       client.rl.close();
       client.socket.destroy();
-      await session.close();
+      await bridge.close();
+    }
+  });
+
+  it("waits for the diff tool close ack before resolving returned reviews", async () => {
+    const bridge = createDiffReviewBridge({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: () => createThreadSession(),
+    });
+
+    await bridge.start();
+    const client = await connectClient(bridge, { ackSessionClose: false });
+
+    try {
+      await client.send("init", "initialize", {
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
+      });
+
+      let resultResolved = false;
+      const result = bridge.result.then((value) => {
+        resultResolved = true;
+        return value;
+      });
+      const review = await client.send("return", "session.return_review", {
+        review: "Looks good overall.",
+      });
+      expect(review.result).toEqual({ status: "returned" });
+      await waitFor(() =>
+        client.serverRequests.some((message) => message.method === "session.close"),
+      );
+      await Promise.resolve();
+      expect(resultResolved).toBe(false);
+
+      const closeRequest = client.serverRequests.find(
+        (message) => message.method === "session.close",
+      );
+      client.socket.write(
+        `${JSON.stringify({
+          version: DIFF_REVIEW_PROTOCOL_VERSION,
+          type: "response",
+          id: closeRequest.id,
+          ok: true,
+          result: { status: "closed" },
+        })}\n`,
+      );
+
+      await expect(result).resolves.toEqual({
+        status: "returned",
+        review: "Looks good overall.",
+      });
+    } finally {
+      client.rl.close();
+      client.socket.destroy();
+      await bridge.close();
+    }
+  });
+
+  it("still resolves returned reviews when the diff tool close request fails", async () => {
+    const bridge = createDiffReviewBridge({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: () => createThreadSession(),
+    });
+
+    await bridge.start();
+    const client = await connectClient(bridge, {
+      sessionCloseResponse: {
+        version: DIFF_REVIEW_PROTOCOL_VERSION,
+        type: "response",
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: "close failed",
+        },
+      },
+    });
+
+    try {
+      await client.send("init", "initialize", {
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
+      });
+
+      await expect(
+        client.send("return", "session.return_review", {
+          review: "Looks good overall.",
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: { status: "returned" },
+      });
+      await expect(bridge.result).resolves.toEqual({
+        status: "returned",
+        review: "Looks good overall.",
+      });
+    } finally {
+      client.rl.close();
+      client.socket.destroy();
+      await bridge.close();
+    }
+  });
+
+  it("still resolves returned reviews when the diff tool close request times out", async () => {
+    const bridge = createDiffReviewBridge({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: () => createThreadSession(),
+    });
+
+    await bridge.start();
+    const client = await connectClient(bridge, { ackSessionClose: false });
+
+    try {
+      await client.send("init", "initialize", {
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
+      });
+
+      vi.useFakeTimers();
+      let resultResolved = false;
+      const result = bridge.result.then((value) => {
+        resultResolved = true;
+        return value;
+      });
+      await expect(
+        client.send("return", "session.return_review", {
+          review: "Looks good overall.",
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: { status: "returned" },
+      });
+      await waitFor(() =>
+        client.serverRequests.some((message) => message.method === "session.close"),
+      );
+      await Promise.resolve();
+      expect(resultResolved).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(result).resolves.toEqual({
+        status: "returned",
+        review: "Looks good overall.",
+      });
+    } finally {
+      vi.useRealTimers();
+      client.rl.close();
+      client.socket.destroy();
+      await bridge.close();
     }
   });
 
   it("forks new threads from existing context", async () => {
     const createdThreads = [];
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -260,12 +448,12 @@ describe("diff_review session", () => {
       },
     });
 
-    await session.start();
-    const client = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
 
     try {
       await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
 
       const bootstrap = await client.send("bootstrap", "thread.submit_message", {
@@ -275,7 +463,7 @@ describe("diff_review session", () => {
         threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         response: `root ${bootstrap.result.threadId}: build context`,
       });
-      expect(session.getUiState().reviewAgents).toEqual([
+      expect(bridge.getUiState().reviewAgents).toEqual([
         {
           threadId: bootstrap.result.threadId,
           status: "idle",
@@ -297,7 +485,7 @@ describe("diff_review session", () => {
         threadId: forked.result.threadId,
         forkFrom: expect.any(Object),
       });
-      expect(session.getUiState().reviewAgents).toEqual([
+      expect(bridge.getUiState().reviewAgents).toEqual([
         {
           threadId: bootstrap.result.threadId,
           status: "idle",
@@ -329,7 +517,7 @@ describe("diff_review session", () => {
     } finally {
       client.rl.close();
       client.socket.destroy();
-      await session.close();
+      await bridge.close();
     }
   });
 
@@ -343,7 +531,7 @@ describe("diff_review session", () => {
     const threadCompletion = new Promise((resolve) => {
       continueThread = resolve;
     });
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -363,12 +551,12 @@ describe("diff_review session", () => {
       },
     });
 
-    await session.start();
-    const client = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
 
     try {
       await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
 
       const activePromise = client.send("active", "thread.submit_message", {
@@ -402,7 +590,7 @@ describe("diff_review session", () => {
     } finally {
       client.rl.close();
       client.socket.destroy();
-      await session.close();
+      await bridge.close();
     }
   });
 
@@ -415,7 +603,7 @@ describe("diff_review session", () => {
     const threadCompletion = new Promise((resolve) => {
       continueThread = resolve;
     });
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -433,12 +621,12 @@ describe("diff_review session", () => {
         }),
     });
 
-    await session.start();
-    const client = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
 
     try {
       await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
 
       const submitPromise = client.send("thread", "thread.submit_message", {
@@ -467,7 +655,7 @@ describe("diff_review session", () => {
     } finally {
       client.rl.close();
       client.socket.destroy();
-      await session.close();
+      await bridge.close();
     }
   });
 
@@ -480,7 +668,7 @@ describe("diff_review session", () => {
     const threadCompletion = new Promise((resolve) => {
       continueThread = resolve;
     });
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -501,12 +689,12 @@ describe("diff_review session", () => {
         }),
     });
 
-    await session.start();
-    const client = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
 
     try {
       await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
 
       const created = await client.send("create", "thread.submit_message", {
@@ -546,7 +734,7 @@ describe("diff_review session", () => {
     } finally {
       client.rl.close();
       client.socket.destroy();
-      await session.close();
+      await bridge.close();
     }
   });
 
@@ -569,19 +757,19 @@ describe("diff_review session", () => {
       patchByPath: new Map([[exactPath, patch]]),
       scopeLabel: formatDiffReviewScope([]),
     });
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot,
       persona: personas[0],
       config: {},
       createThread: () => createThreadSession(),
     });
 
-    await session.start();
-    const client = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
 
     try {
       await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
 
       const fileDiff = await client.send("diff-file", "session.get_diff", { path: exactPath });
@@ -607,7 +795,7 @@ describe("diff_review session", () => {
     } finally {
       client.rl.close();
       client.socket.destroy();
-      await session.close();
+      await bridge.close();
     }
   });
 
@@ -622,7 +810,7 @@ describe("diff_review session", () => {
     });
     const stateUpdates = [];
 
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -640,23 +828,23 @@ describe("diff_review session", () => {
         }),
     });
 
-    const removeUiStateListener = session.onUiStateChange((state) => {
+    const removeUiStateListener = bridge.onUiStateChange((state) => {
       stateUpdates.push(state);
     });
 
-    await session.start();
-    const client = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
 
     try {
       await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
 
       const uiText = await client.send("ui-text", "session.set_ui_text", {
         text: "http://127.0.0.1:4321",
       });
       expect(uiText.result).toEqual({ status: "updated" });
-      expect(session.getUiState()).toEqual({
+      expect(bridge.getUiState()).toEqual({
         diffToolUiText: "http://127.0.0.1:4321",
         reviewAgents: [],
       });
@@ -666,7 +854,7 @@ describe("diff_review session", () => {
       });
       await threadStarted;
 
-      expect(session.getUiState().reviewAgents).toEqual([
+      expect(bridge.getUiState().reviewAgents).toEqual([
         {
           threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
           status: "running",
@@ -681,7 +869,7 @@ describe("diff_review session", () => {
         threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         response: "review reply",
       });
-      expect(session.getUiState()).toEqual({
+      expect(bridge.getUiState()).toEqual({
         diffToolUiText: "http://127.0.0.1:4321",
         reviewAgents: [
           {
@@ -726,11 +914,11 @@ describe("diff_review session", () => {
       removeUiStateListener();
       client.rl.close();
       client.socket.destroy();
-      await session.close();
+      await bridge.close();
     }
   });
 
-  it("interrupts active review agents before returning a review", async () => {
+  it("returns a review without owning review-agent interruption", async () => {
     let releaseThreadStarted;
     const threadStarted = new Promise((resolve) => {
       releaseThreadStarted = resolve;
@@ -740,7 +928,7 @@ describe("diff_review session", () => {
       releaseThreadCompletion = resolve;
     });
     let interruptCount = 0;
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -759,12 +947,12 @@ describe("diff_review session", () => {
         }),
     });
 
-    await session.start();
-    const client = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
 
     try {
       await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
 
       void client.send("thread", "thread.submit_message", {
@@ -776,20 +964,21 @@ describe("diff_review session", () => {
         review: "Looks good overall.",
       });
       expect(review.result).toEqual({ status: "returned" });
-      await expect(session.result).resolves.toEqual({
+      await expect(bridge.result).resolves.toEqual({
         status: "returned",
         review: "Looks good overall.",
       });
-      expect(interruptCount).toBe(1);
+      expect(interruptCount).toBe(0);
     } finally {
+      releaseThreadCompletion();
       client.rl.close();
       client.socket.destroy();
-      await session.close();
+      await bridge.close();
     }
   });
 
   it("asks the diff tool to close before tearing down an externally cancelled session", async () => {
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -801,16 +990,16 @@ describe("diff_review session", () => {
         }),
     });
 
-    await session.start();
-    const client = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
 
     try {
       await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
 
-      await session.cancel("controller_cancelled");
-      await expect(session.result).resolves.toEqual({
+      await bridge.cancel("controller_cancelled");
+      await expect(bridge.result).resolves.toEqual({
         status: "cancelled",
         reason: "controller_cancelled",
       });
@@ -827,14 +1016,14 @@ describe("diff_review session", () => {
     } finally {
       client.rl.close();
       client.socket.destroy();
-      await session.close();
+      await bridge.close();
     }
   });
 
   it("cancels the review if the diff tool never initializes", async () => {
     vi.useFakeTimers();
 
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -849,10 +1038,10 @@ describe("diff_review session", () => {
         }),
     });
 
-    await session.start();
+    await bridge.start();
 
     try {
-      const resultPromise = session.result;
+      const resultPromise = bridge.result;
       await vi.advanceTimersByTimeAsync(60_000);
 
       await expect(resultPromise).resolves.toEqual({
@@ -860,12 +1049,12 @@ describe("diff_review session", () => {
         reason: "tool_disconnected",
       });
     } finally {
-      await session.close();
+      await bridge.close();
     }
   });
 
   it("cancels the review when the initialized client disconnects", async () => {
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -880,27 +1069,27 @@ describe("diff_review session", () => {
         }),
     });
 
-    await session.start();
-    const client = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
 
     try {
       await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
       client.rl.close();
       client.socket.destroy();
 
-      await expect(session.result).resolves.toEqual({
+      await expect(bridge.result).resolves.toEqual({
         status: "cancelled",
         reason: "tool_disconnected",
       });
     } finally {
-      await session.close();
+      await bridge.close();
     }
   });
 
-  it("cancels cleanly when the tool disconnects right after session.cancel", async () => {
-    const session = new DiffReviewSession({
+  it("cancels cleanly when the tool disconnects right after bridge.cancel", async () => {
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -915,15 +1104,15 @@ describe("diff_review session", () => {
         }),
     });
 
-    await session.start();
-    const client = await connectClient(session, {
+    await bridge.start();
+    const client = await connectClient(bridge, {
       ackSessionClose: false,
       closeAfterResponseId: "cancel",
     });
 
     try {
       await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
 
       await expect(client.send("cancel", "session.cancel")).resolves.toEqual({
@@ -933,19 +1122,19 @@ describe("diff_review session", () => {
         ok: true,
         result: { status: "cancelled" },
       });
-      await expect(session.result).resolves.toEqual({
+      await expect(bridge.result).resolves.toEqual({
         status: "cancelled",
         reason: "tool_cancelled",
       });
     } finally {
       client.rl.close();
       client.socket.destroy();
-      await session.close();
+      await bridge.close();
     }
   });
 
   it("cancels the review when the initialized client disconnects even if another socket is open", async () => {
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -960,30 +1149,30 @@ describe("diff_review session", () => {
         }),
     });
 
-    await session.start();
-    const client = await connectClient(session);
-    const extraClient = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
+    const extraClient = await connectClient(bridge);
 
     try {
       await client.send("init", "initialize", {
-        token: session.launchEnvironment.TAU_DIFF_TOKEN,
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
       });
       client.rl.close();
       client.socket.destroy();
 
-      await expect(session.result).resolves.toEqual({
+      await expect(bridge.result).resolves.toEqual({
         status: "cancelled",
         reason: "tool_disconnected",
       });
     } finally {
       extraClient.rl.close();
       extraClient.socket.destroy();
-      await session.close();
+      await bridge.close();
     }
   });
 
   it("cancels the review when the only client disconnects before initialize", async () => {
-    const session = new DiffReviewSession({
+    const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
@@ -998,19 +1187,19 @@ describe("diff_review session", () => {
         }),
     });
 
-    await session.start();
-    const client = await connectClient(session);
+    await bridge.start();
+    const client = await connectClient(bridge);
 
     try {
       client.rl.close();
       client.socket.destroy();
 
-      await expect(session.result).resolves.toEqual({
+      await expect(bridge.result).resolves.toEqual({
         status: "cancelled",
         reason: "tool_disconnected",
       });
     } finally {
-      await session.close();
+      await bridge.close();
     }
   });
 });

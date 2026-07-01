@@ -4,11 +4,9 @@ import { existsSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { createInterface, type Interface } from "node:readline";
-import type { Config, DiffToolConfig } from "../config/index.js";
+import type { DiffToolConfig } from "../config/index.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
-import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import type { Persona, Skill } from "../types.js";
 import type {
   DiffReviewMessage,
   DiffReviewMethod,
@@ -29,18 +27,8 @@ import {
   parseDiffReviewMessageLine,
   serializeDiffReviewMessage,
 } from "./protocol.js";
-import {
-  type DiffReviewAgentUsageSnapshot,
-  DiffReviewThread,
-  type DiffReviewThreadForkSource,
-  type DiffReviewThreadSession,
-  type DiffReviewThreadUpdate,
-} from "./review_thread.js";
-import {
-  captureDiffReviewSnapshot,
-  type DiffReviewSnapshot,
-  type DiffReviewSnapshotSource,
-} from "./snapshot.js";
+import type { DiffReviewAgentUsageSnapshot, DiffReviewThreadUpdate } from "./review_thread.js";
+import type { DiffReviewSnapshot } from "./snapshot.js";
 
 export type DiffReviewCancelledReason =
   | "tool_cancelled"
@@ -58,38 +46,38 @@ export type DiffReviewResult =
       reason: DiffReviewCancelledReason;
     };
 
-export type CreateDiffReviewThreadSessionOptions = {
+export type DiffReviewSubmitThreadMessageOptions = {
   threadId: string;
-  forkFrom?: DiffReviewThreadForkSource;
-  onUpdate?: (update: DiffReviewThreadUpdate) => void;
+  forkFromThreadId?: string;
+  message: string;
 };
 
-export type DiffReviewSessionOptions = {
-  snapshot: DiffReviewSnapshot;
-  persona: Persona;
-  config: Config;
-  discoveredSkills?: Skill[];
-  includeAgentContext?: boolean;
-  deps?: CoreDeps;
-  toolExecutionBackend?: ToolExecutionBackend;
-  createThread?: (options: CreateDiffReviewThreadSessionOptions) => DiffReviewThreadSession;
+export type DiffReviewSubmitThreadMessageResult = {
+  threadId: string;
+  response: string;
 };
 
-export type StartDiffReviewSessionOptions = {
-  cwd: string;
-  source: DiffReviewSnapshotSource;
-  signal?: AbortSignal;
+export type DiffReviewSubmitThreadMessage = (
+  options: DiffReviewSubmitThreadMessageOptions,
+) => Promise<DiffReviewSubmitThreadMessageResult>;
+
+export type DiffReviewToolLauncher = (options: {
   diffTool: DiffToolConfig;
-  persona: Persona;
-  config: Config;
-  discoveredSkills?: Skill[];
-  includeAgentContext?: boolean;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}) => Promise<void>;
+
+export type DiffReviewBridgeOptions = {
+  snapshot: DiffReviewSnapshot;
+  contextWindow: number;
+  submitThreadMessage: DiffReviewSubmitThreadMessage;
   deps?: CoreDeps;
-  toolExecutionBackend?: ToolExecutionBackend;
+  toolLaunchCwd?: string;
+  toolLauncher?: DiffReviewToolLauncher;
 };
 
-export type StartedDiffReviewSession = {
-  session: DiffReviewSession;
+export type StartedDiffReviewBridge = {
+  bridge: DiffReviewBridge;
   result: Promise<DiffReviewResult>;
 };
 
@@ -103,12 +91,12 @@ export type DiffReviewAgentActivity = {
   lastActivityText?: string;
 };
 
-export type DiffReviewSessionUiState = {
+export type DiffReviewBridgeUiState = {
   diffToolUiText?: string;
   reviewAgents: DiffReviewAgentActivity[];
 };
 
-export type DiffReviewSessionUiStateListener = (state: DiffReviewSessionUiState) => void;
+export type DiffReviewBridgeUiStateListener = (state: DiffReviewBridgeUiState) => void;
 
 type PendingToolResponse = {
   method: DiffReviewServerMethod;
@@ -142,24 +130,44 @@ class DiffReviewRequestError extends Error {
 const DIFF_REVIEW_INITIALIZE_TIMEOUT_MS = 10_000;
 const DIFF_REVIEW_CLOSE_TIMEOUT_MS = 1_000;
 
-export class DiffReviewSession {
+async function launchDiffToolProcess(options: {
+  diffTool: DiffToolConfig;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(options.diffTool.command, options.diffTool.args ?? [], {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: "ignore",
+      detached: true,
+    });
+
+    const onError = (error: Error) => reject(error);
+    child.once("error", onError);
+    child.once("spawn", () => {
+      child.off("error", onError);
+      child.unref();
+      resolve();
+    });
+  });
+}
+
+export class DiffReviewBridge {
   readonly sessionId: string;
   readonly snapshot: DiffReviewSnapshot;
-  private readonly persona: Persona;
-  private readonly config: Config;
+  private readonly contextWindow: number;
+  private readonly submitThreadMessage: DiffReviewSubmitThreadMessage;
   private readonly deps: CoreDeps;
-  private readonly toolExecutionBackend?: ToolExecutionBackend;
-  private readonly createThreadSession: (
-    options: CreateDiffReviewThreadSessionOptions,
-  ) => DiffReviewThreadSession;
+  private readonly toolLaunchCwd?: string;
+  private readonly toolLauncher: DiffReviewToolLauncher;
   private readonly socketPath: string;
   private readonly authToken: string;
   private server?: Server;
-  private readonly threads = new Map<string, DiffReviewThreadSession>();
   private readonly reviewAgentRecords = new Map<string, DiffReviewAgentRecord>();
   private readonly connections = new Set<DiffReviewClientConnection>();
-  private readonly uiStateListeners = new Set<DiffReviewSessionUiStateListener>();
-  private uiState: DiffReviewSessionUiState = {
+  private readonly uiStateListeners = new Set<DiffReviewBridgeUiStateListener>();
+  private uiState: DiffReviewBridgeUiState = {
     reviewAgents: [],
   };
   private initializedConnection?: DiffReviewClientConnection;
@@ -169,30 +177,16 @@ export class DiffReviewSession {
   private completedResult?: DiffReviewResult;
   private closed = false;
 
-  constructor(options: DiffReviewSessionOptions) {
-    this.sessionId = `tau-diff-review-${randomUUID()}`;
+  constructor(options: DiffReviewBridgeOptions) {
+    this.sessionId = `diff-review-${randomUUID()}`;
     this.snapshot = options.snapshot;
-    this.persona = options.persona;
-    this.config = options.config;
+    this.contextWindow = options.contextWindow;
+    this.submitThreadMessage = options.submitThreadMessage;
     this.deps = options.deps ?? createDefaultCoreDeps();
-    this.toolExecutionBackend = options.toolExecutionBackend;
+    this.toolLaunchCwd = options.toolLaunchCwd;
+    this.toolLauncher = options.toolLauncher ?? launchDiffToolProcess;
     this.socketPath = join("/tmp", `tau-diff-${randomBytes(8).toString("hex")}.sock`);
     this.authToken = randomBytes(24).toString("hex");
-    this.createThreadSession =
-      options.createThread ??
-      ((threadOptions) =>
-        new DiffReviewThread({
-          threadId: threadOptions.threadId,
-          snapshot: this.snapshot,
-          persona: this.persona,
-          config: this.config,
-          discoveredSkills: options.discoveredSkills,
-          includeAgentContext: options.includeAgentContext,
-          deps: this.deps,
-          toolExecutionBackend: this.toolExecutionBackend,
-          onUpdate: threadOptions.onUpdate,
-          forkFrom: threadOptions.forkFrom,
-        }));
     this.completionPromise = new Promise<DiffReviewResult>((resolve) => {
       this.completionResolver = resolve;
     });
@@ -206,11 +200,11 @@ export class DiffReviewSession {
     return DIFF_REVIEW_PROTOCOL_VERSION;
   }
 
-  getUiState(): DiffReviewSessionUiState {
+  getUiState(): DiffReviewBridgeUiState {
     return cloneDiffReviewUiState(this.uiState);
   }
 
-  onUiStateChange(listener: DiffReviewSessionUiStateListener): () => void {
+  onUiStateChange(listener: DiffReviewBridgeUiStateListener): () => void {
     this.uiStateListeners.add(listener);
     listener(this.getUiState());
     return () => {
@@ -271,21 +265,10 @@ export class DiffReviewSession {
       ...this.launchEnvironment,
     };
 
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(diffTool.command, diffTool.args ?? [], {
-        cwd: this.snapshot.cwd,
-        env,
-        stdio: "ignore",
-        detached: true,
-      });
-
-      const onError = (error: Error) => reject(error);
-      child.once("error", onError);
-      child.once("spawn", () => {
-        child.off("error", onError);
-        child.unref();
-        resolve();
-      });
+    await this.toolLauncher({
+      diffTool,
+      cwd: this.toolLaunchCwd ?? this.snapshot.cwd,
+      env,
     });
   }
 
@@ -303,7 +286,6 @@ export class DiffReviewSession {
     }
 
     this.closed = true;
-    this.disposeReviewAgents();
     await this.closeServer();
   }
 
@@ -532,18 +514,22 @@ export class DiffReviewSession {
     let acquired:
       | {
           threadId: string;
-          thread: DiffReviewThreadSession;
+          forkFromThreadId?: string;
         }
       | undefined;
     try {
       acquired = this.acquireThreadForSubmit(request.params);
-      const response = await acquired.thread.submitMessage(request.params.message);
+      const result = await this.submitThreadMessage({
+        threadId: acquired.threadId,
+        ...(acquired.forkFromThreadId ? { forkFromThreadId: acquired.forkFromThreadId } : {}),
+        message: request.params.message,
+      });
       if (this.completedResult || connection.socket.destroyed) {
         return;
       }
       await this.respond(connection, request.id, request.method, {
-        threadId: acquired.threadId,
-        response,
+        threadId: result.threadId,
+        response: result.response,
       });
     } catch (error) {
       if (this.completedResult || connection.socket.destroyed) {
@@ -568,22 +554,18 @@ export class DiffReviewSession {
 
   private acquireThreadForSubmit(params: { threadId?: string; forkFromThreadId?: string }): {
     threadId: string;
-    thread: DiffReviewThreadSession;
+    forkFromThreadId?: string;
   } {
     if (params.threadId) {
-      const existing = this.threads.get(params.threadId);
-      if (!existing) {
+      if (!this.reviewAgentRecords.has(params.threadId)) {
         throw new DiffReviewRequestError("invalidParams", `unknown thread '${params.threadId}'`);
       }
       this.markReviewAgentRunning(params.threadId);
-      return { threadId: params.threadId, thread: existing };
+      return { threadId: params.threadId };
     }
 
     const threadId = randomUUID();
-    const forkSource = params.forkFromThreadId
-      ? this.threads.get(params.forkFromThreadId)
-      : undefined;
-    if (params.forkFromThreadId && !forkSource) {
+    if (params.forkFromThreadId && !this.reviewAgentRecords.has(params.forkFromThreadId)) {
       throw new DiffReviewRequestError(
         "invalidParams",
         `unknown fork source thread '${params.forkFromThreadId}'`,
@@ -596,14 +578,12 @@ export class DiffReviewSession {
       );
     }
 
-    const created = this.createThreadSession({
-      threadId,
-      ...(forkSource ? { forkFrom: forkSource.createForkSource() } : {}),
-      onUpdate: (update) => this.applyReviewAgentUpdate(threadId, update),
-    });
-    this.threads.set(threadId, created);
+    this.ensureReviewAgentRecord(threadId);
     this.markReviewAgentRunning(threadId);
-    return { threadId, thread: created };
+    return {
+      threadId,
+      ...(params.forkFromThreadId ? { forkFromThreadId: params.forkFromThreadId } : {}),
+    };
   }
 
   private updateDiffToolUiText(text: string): void {
@@ -630,7 +610,7 @@ export class DiffReviewSession {
       status: "idle",
       activeRequestCount: 0,
       costTotal: 0,
-      usage: createEmptyReviewAgentUsage(this.persona.model.contextWindow),
+      usage: createEmptyReviewAgentUsage(this.contextWindow),
     };
     this.reviewAgentRecords.set(threadId, created);
     return created;
@@ -662,7 +642,7 @@ export class DiffReviewSession {
     }
   }
 
-  private applyReviewAgentUpdate(threadId: string, update: DiffReviewThreadUpdate): void {
+  applyThreadUpdate(threadId: string, update: DiffReviewThreadUpdate): void {
     const record = this.ensureReviewAgentRecord(threadId);
     let changed = false;
 
@@ -688,18 +668,6 @@ export class DiffReviewSession {
 
   private hasActiveReviewAgentRequest(threadId: string): boolean {
     return (this.reviewAgentRecords.get(threadId)?.activeRequestCount ?? 0) > 0;
-  }
-
-  private interruptAllReviewAgents(): void {
-    for (const thread of this.threads.values()) {
-      thread.interrupt();
-    }
-  }
-
-  private disposeReviewAgents(): void {
-    for (const thread of this.threads.values()) {
-      thread.dispose();
-    }
   }
 
   private syncReviewAgents(): void {
@@ -753,11 +721,13 @@ export class DiffReviewSession {
 
     this.clearInitializeTimeout();
     this.completedResult = result;
-    this.interruptAllReviewAgents();
-    this.completionResolver?.(result);
-    this.completionResolver = undefined;
-    await this.requestToolShutdown();
-    await this.close();
+    try {
+      await this.requestToolShutdown();
+      await this.close();
+    } finally {
+      this.completionResolver?.(result);
+      this.completionResolver = undefined;
+    }
   }
 
   private async requestToolShutdown(): Promise<void> {
@@ -1005,7 +975,7 @@ function isSameUsageSnapshot(
   );
 }
 
-function cloneDiffReviewUiState(state: DiffReviewSessionUiState): DiffReviewSessionUiState {
+function cloneDiffReviewUiState(state: DiffReviewBridgeUiState): DiffReviewBridgeUiState {
   return {
     ...(state.diffToolUiText ? { diffToolUiText: state.diffToolUiText } : {}),
     reviewAgents: state.reviewAgents.map((agent) => ({
@@ -1016,51 +986,4 @@ function cloneDiffReviewUiState(state: DiffReviewSessionUiState): DiffReviewSess
       ...(agent.lastActivityText ? { lastActivityText: agent.lastActivityText } : {}),
     })),
   };
-}
-
-export async function startDiffReviewSession(
-  options: StartDiffReviewSessionOptions,
-): Promise<StartedDiffReviewSession> {
-  throwIfDiffReviewStartAborted(options.signal);
-
-  const snapshot = await captureDiffReviewSnapshot({
-    cwd: options.cwd,
-    source: options.source,
-    signal: options.signal,
-    deps: options.deps,
-  });
-  throwIfDiffReviewStartAborted(options.signal);
-
-  const session = new DiffReviewSession({
-    snapshot,
-    persona: options.persona,
-    config: options.config,
-    discoveredSkills: options.discoveredSkills,
-    includeAgentContext: options.includeAgentContext,
-    deps: options.deps,
-    toolExecutionBackend: options.toolExecutionBackend,
-  });
-
-  await session.start();
-
-  try {
-    throwIfDiffReviewStartAborted(options.signal);
-    await session.launchTool(options.diffTool);
-  } catch (error) {
-    await session.cancel("launch_failed");
-    throw error;
-  }
-
-  return {
-    session,
-    result: session.result,
-  };
-}
-
-function throwIfDiffReviewStartAborted(signal?: AbortSignal): void {
-  if (!signal?.aborted) {
-    return;
-  }
-
-  throw new Error("diff review start aborted");
 }

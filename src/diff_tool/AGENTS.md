@@ -1,6 +1,6 @@
 # Diff tool
 
-Built-in browser-based diff review tool for `/diff`. Launched as a child process by Tau when no external `diffTool` is configured.
+Built-in browser-based diff review tool and reference implementation for the diff-review protocol. The session TUI launches this tool locally for `/diff`.
 
 Keep `src/diff_tool/` as an isolated island. Diff-tool-specific prompts, HTTP handlers, review state, and browser UI code stay here. Shared contracts with Tau core should stay narrow and explicit: the diff-review protocol client plus shared protocol/types. Do not import diff-tool-only logic from `src/core/`.
 
@@ -89,11 +89,11 @@ The Vite dev server proxies `/api` requests to the mock server. Open the URL Vit
 
 Customize the mock data by editing the constants at the top of `dev-server.js`. The `PORT` environment variable controls the listen port (default: `9100`).
 
-### Developing against a real Tau session
+### Developing against a real diff-review session
 
-To test against an actual `/diff` session:
+For local UI development without Tau, use the mock server above. To point Vite at a real TUI-created diff-review session:
 
-1. Start Tau and run `/diff` (the diff tool process starts and logs its URL)
+1. Start the diff-review session from the host entrypoint
 2. Note the port from the log output
 3. Run Vite with the proxy pointed at that port:
    ```sh

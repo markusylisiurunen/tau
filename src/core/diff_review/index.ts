@@ -1,4 +1,19 @@
 export type {
+  DiffReviewAgentActivity,
+  DiffReviewAgentStatus,
+  DiffReviewBridgeOptions,
+  DiffReviewBridgeUiState,
+  DiffReviewBridgeUiStateListener,
+  DiffReviewCancelledReason,
+  DiffReviewResult,
+  DiffReviewSubmitThreadMessage,
+  DiffReviewSubmitThreadMessageOptions,
+  DiffReviewSubmitThreadMessageResult,
+  DiffReviewToolLauncher,
+  StartedDiffReviewBridge,
+} from "./bridge.js";
+export { DiffReviewBridge } from "./bridge.js";
+export type {
   DiffReviewClientMethod,
   DiffReviewError,
   DiffReviewErrorCode,
@@ -51,30 +66,17 @@ export {
   serializeDiffReviewMessage,
   validateDiffReviewParams,
 } from "./protocol.js";
-export type {
-  DiffReviewAgentUsageSnapshot,
-  DiffReviewThreadForkSource,
-  DiffReviewThreadSession,
-  DiffReviewThreadUpdate,
-} from "./review_thread.js";
-export { DiffReviewThread } from "./review_thread.js";
-export type {
-  CreateDiffReviewThreadSessionOptions,
-  DiffReviewAgentActivity,
-  DiffReviewAgentStatus,
-  DiffReviewCancelledReason,
-  DiffReviewResult,
-  DiffReviewSessionOptions,
-  DiffReviewSessionUiState,
-  DiffReviewSessionUiStateListener,
-  StartDiffReviewSessionOptions,
-  StartedDiffReviewSession,
-} from "./session.js";
-export { DiffReviewSession, startDiffReviewSession } from "./session.js";
+export type { DiffReviewAgentUsageSnapshot, DiffReviewThreadUpdate } from "./review_thread.js";
 export type {
   CaptureDiffReviewSnapshotOptions,
   DiffReviewFile,
   DiffReviewFileStatus,
+  DiffReviewSnapshotData,
   DiffReviewSnapshotSource,
 } from "./snapshot.js";
-export { captureDiffReviewSnapshot, DiffReviewSnapshot } from "./snapshot.js";
+export {
+  captureDiffReviewSnapshot,
+  DiffReviewSnapshot,
+  diffReviewSnapshotFromData,
+  diffReviewSnapshotToData,
+} from "./snapshot.js";

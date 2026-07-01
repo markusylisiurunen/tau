@@ -172,7 +172,13 @@ const createSessionBodySchema = z
   })
   .strict();
 
-const sendMessageBodySchema = z.object({ text: trimmedNonEmptyStringSchema }).strict();
+const sendMessageBodySchema = z
+  .object({
+    text: trimmedNonEmptyStringSchema,
+    mode: z.enum(["submit", "steer"]).optional(),
+    additionalSystemMessage: trimmedNonEmptyStringSchema.optional(),
+  })
+  .strict();
 
 const cronRunsQueryInputSchema = z
   .object({
@@ -199,7 +205,11 @@ export function parseCreateSessionBody(raw: unknown): { projectId: string; promp
   return parseSchemaOrThrow(createSessionBodySchema, raw, "invalid create-session body");
 }
 
-export function parseSendMessageBody(raw: unknown): { text: string } {
+export function parseSendMessageBody(raw: unknown): {
+  text: string;
+  mode?: "submit" | "steer";
+  additionalSystemMessage?: string;
+} {
   return parseSchemaOrThrow(sendMessageBodySchema, raw, "invalid send-message body");
 }
 

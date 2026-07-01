@@ -218,9 +218,19 @@ export async function startAsyncHttpServer(
               }
 
               const parsed = parseSendMessageBody(rawBody);
+              const sendOptions =
+                parsed.mode !== undefined || parsed.additionalSystemMessage !== undefined
+                  ? {
+                      ...(parsed.mode === undefined ? {} : { mode: parsed.mode }),
+                      ...(parsed.additionalSystemMessage === undefined
+                        ? {}
+                        : { additionalSystemMessage: parsed.additionalSystemMessage }),
+                    }
+                  : undefined;
               const session = await options.sessionManager.sendMessage(
                 route.sessionId,
                 parsed.text,
+                sendOptions,
               );
               sendOk(response, 200, { session: serializeSession(session) });
             } catch (error) {

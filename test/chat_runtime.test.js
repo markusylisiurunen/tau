@@ -135,6 +135,32 @@ describe("ChatRuntime", () => {
     );
   });
 
+  it("creates a runtime with an explicit initial prompt composition", () => {
+    const backend = createLocalToolExecutionBackend();
+    const toolRegistry = ToolCatalog.createRegistry(backend);
+    const initialPromptComposition = {
+      environmentTag: "<environment><datetime>persisted</datetime></environment>",
+      baseSystemPrompt: "persisted system prompt",
+      subagentPrompts: {
+        default: "persisted subagent prompt",
+      },
+    };
+
+    const runtime = ChatRuntime.create({
+      persona: createPersona(),
+      riskLevel: "read-only",
+      toolRegistry,
+      promptContext: {
+        cwd: "/repo",
+      },
+      environment: createEnvironment(Date.parse("2027-01-01T00:00:00.000Z")),
+      initialPromptComposition,
+    });
+
+    expect(runtime.promptComposition).toEqual(initialPromptComposition);
+    expect(runtime.promptComposition.baseSystemPrompt).not.toContain("2027-01-01");
+  });
+
   it("rebuilds full system prompts with main and subagent content", () => {
     const { session, calls } = createStubSession();
     const persona = createPersona();

@@ -32,6 +32,55 @@ describe("ConversationTurnRuntime", () => {
     expect(runtime.isRunning).toBe(false);
   });
 
+  it("waits for event handlers before consuming the next streamed event", async () => {
+    const order = [];
+    let releaseFirstHandler;
+    let firstHandlerStarted;
+    const firstHandlerBlocked = new Promise((resolve) => {
+      releaseFirstHandler = resolve;
+    });
+    const firstHandlerSeen = new Promise((resolve) => {
+      firstHandlerStarted = resolve;
+    });
+
+    const session = {
+      async *events() {
+        order.push("yield first");
+        yield { type: "notice", severity: "info", text: "first" };
+        order.push("after first handler");
+        yield { type: "notice", severity: "info", text: "second" };
+        order.push("after second handler");
+      },
+    };
+
+    const runtime = new ConversationTurnRuntime(session);
+    const run = runtime.run({
+      async onEvent(event) {
+        order.push(`handle ${event.text} start`);
+        if (event.text === "first") {
+          firstHandlerStarted();
+          await firstHandlerBlocked;
+        }
+        order.push(`handle ${event.text} end`);
+      },
+    });
+
+    await firstHandlerSeen;
+    expect(order).toEqual(["yield first", "handle first start"]);
+
+    releaseFirstHandler();
+    await expect(run).resolves.toEqual(expect.objectContaining({ aborted: false }));
+    expect(order).toEqual([
+      "yield first",
+      "handle first start",
+      "handle first end",
+      "after first handler",
+      "handle second start",
+      "handle second end",
+      "after second handler",
+    ]);
+  });
+
   it("prevents concurrent runs", async () => {
     let release;
     const blocked = new Promise((resolve) => {
@@ -79,6 +128,49 @@ describe("ConversationTurnRuntime", () => {
         message: "summary failed",
       },
     });
+  });
+
+  it("closes the event stream and preserves handler failures", async () => {
+    let returned = false;
+    let abortedAtReturn = false;
+    const session = {
+      events(signal) {
+        let emitted = false;
+        return {
+          async next() {
+            if (emitted) {
+              return { done: true, value: { aborted: signal.aborted } };
+            }
+            emitted = true;
+            return {
+              done: false,
+              value: { type: "notice", severity: "info", text: "before failure" },
+            };
+          },
+          async return() {
+            returned = true;
+            abortedAtReturn = signal.aborted;
+            return { done: true, value: { aborted: true } };
+          },
+          [Symbol.asyncIterator]() {
+            return this;
+          },
+        };
+      },
+    };
+
+    const runtime = new ConversationTurnRuntime(session);
+
+    await expect(
+      runtime.run({
+        onEvent() {
+          throw new Error("snapshot write failed");
+        },
+      }),
+    ).rejects.toThrow("snapshot write failed");
+    expect(returned).toBe(true);
+    expect(abortedAtReturn).toBe(true);
+    expect(runtime.isRunning).toBe(false);
   });
 
   it("interrupts the active run and reports aborted status", async () => {

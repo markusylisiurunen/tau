@@ -26,11 +26,12 @@ import { createWriteToolDefinition } from "./write.js";
 
 const SUBAGENT_EMIT_OUTPUT_ENABLED = false;
 
+export type ToolCatalogOptions = {
+  diffReview?: DiffReviewToolOptions;
+};
+
 export const ToolCatalog = {
-  createRegistry(
-    backend: ToolExecutionBackend,
-    options?: { diffReview?: DiffReviewToolOptions },
-  ): ToolRegistry {
+  createRegistry(backend: ToolExecutionBackend, options?: ToolCatalogOptions): ToolRegistry {
     return new ToolRegistry([
       createBashToolDefinition(backend),
       createWriteToolDefinition(backend),

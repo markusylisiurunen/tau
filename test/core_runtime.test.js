@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
+import { resolveRuntimePromptBootstrapAsync } from "../dist/core/runtime/runtime_bootstrap.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
 import {
   buildAutoCompactionContinuationMessage,
@@ -55,10 +56,8 @@ describe("command registry", () => {
       help: () => calls.push({ type: "help" }),
       copyText: async () => calls.push({ type: "copyText" }),
       copyCode: async () => calls.push({ type: "copyCode" }),
-      checkpoint: async () => calls.push({ type: "checkpoint" }),
       newSession: () => calls.push({ type: "new" }),
       rewind: () => calls.push({ type: "rewind" }),
-      cd: () => calls.push({ type: "cd" }),
       diff: (argsText) => calls.push({ type: "diff", argsText }),
       compactSummaryOnly: async () => calls.push({ type: "compactSummaryOnly" }),
       compactSummaryAndLast: async () => calls.push({ type: "compactSummaryAndLast" }),
@@ -72,7 +71,6 @@ describe("command registry", () => {
       persona: (id) => calls.push({ type: "persona", id }),
       prompt: (id) => calls.push({ type: "prompt", id }),
       theme: (id) => calls.push({ type: "theme", id }),
-      bash: async (id) => calls.push({ type: "bash", id }),
       unknown: (raw) => calls.push({ type: "unknown", raw }),
     };
 
@@ -247,6 +245,30 @@ describe("core session rewind APIs", () => {
     expect(session.historyEntries).toHaveLength(1);
     expect(session.historyEntries[0].message.content[0].text).toBe("visible summary");
     expect(session.listRewindCandidates()[0].text).toBe("visible summary");
+  });
+
+  it("returns cloned public history snapshots", () => {
+    const backend = createLocalToolExecutionBackend();
+    const toolRegistry = ToolCatalog.createRegistry(backend);
+    const session = new CoreSession({
+      persona: personas[0],
+      systemPrompt: "system",
+      subagentPrompts: {},
+      riskLevel: "read-only",
+      toolRegistry,
+    });
+
+    session.addUserText("original");
+
+    session.history[0].content[0].text = "mutated history";
+    session.rawHistory[0].content[0].text = "mutated raw history";
+    session.historyEntries[0].message.content[0].text = "mutated entry";
+    session.rawHistoryEntries[0].message.content[0].text = "mutated raw entry";
+
+    expect(session.history[0].content[0].text).toBe("original");
+    expect(session.rawHistory[0].content[0].text).toBe("original");
+    expect(session.historyEntries[0].message.content[0].text).toBe("original");
+    expect(session.rawHistoryEntries[0].message.content[0].text).toBe("original");
   });
 
   it("clamps auto-compaction retention to the threshold budget", async () => {
@@ -659,6 +681,51 @@ describe("runtime prompt bootstrap", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  it("keeps ancestor AGENTS files when resolving prompt context through a command", async () => {
+    const persona = {
+      id: "test-persona",
+      label: "test persona",
+      model: personas[0].model,
+      systemPrompt: "test prompt",
+      settings: {},
+      source: "project",
+      skills: "*",
+    };
+
+    const resolved = await resolveRuntimePromptBootstrapAsync({
+      persona,
+      discoveredSkills: [],
+      cwd: "/workspace/repo",
+      home: "/workspace",
+      includeAgentContext: true,
+      fs: {
+        async runBash(command) {
+          expect(command).toContain("for file in");
+          return {
+            output: [
+              `A\t${Buffer.from("/workspace/repo/AGENTS.md", "utf-8").toString("base64")}\t${Buffer.from("repo instructions", "utf-8").toString("base64")}`,
+              `A\t${Buffer.from("/workspace/AGENTS.md", "utf-8").toString("base64")}\t${Buffer.from("workspace instructions", "utf-8").toString("base64")}`,
+              `C\t${Buffer.from("/workspace/repo/src/AGENTS.md", "utf-8").toString("base64")}`,
+              "",
+            ].join("\n"),
+            exitCode: 0,
+          };
+        },
+        async readFile() {
+          throw new Error("readFile should not be called when command output includes content");
+        },
+        async listDir() {
+          throw new Error("listDir should not be called when runBash is available");
+        },
+      },
+    });
+
+    expect(resolved.agentsFiles).toEqual(["/workspace/repo/AGENTS.md", "/workspace/AGENTS.md"]);
+    expect(resolved.promptContext.projectContextBlock).toContain("repo instructions");
+    expect(resolved.promptContext.projectContextBlock).toContain("workspace instructions");
+    expect(resolved.promptContext.projectContextBlock).toContain("/workspace/repo/src/AGENTS.md");
   });
 });
 

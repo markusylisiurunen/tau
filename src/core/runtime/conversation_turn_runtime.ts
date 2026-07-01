@@ -16,7 +16,9 @@ export class ConversationTurnRuntime {
     return this.abortController !== undefined;
   }
 
-  async run(options?: { onEvent?: (event: CoreEvent) => void }): Promise<ConversationTurnResult> {
+  async run(options?: {
+    onEvent?: (event: CoreEvent) => void | Promise<void>;
+  }): Promise<ConversationTurnResult> {
     if (this.abortController) {
       throw new Error("conversation turn is already running");
     }
@@ -26,6 +28,7 @@ export class ConversationTurnRuntime {
 
     try {
       let result: ProcessTurnResult | undefined;
+      let eventHandlerError: unknown;
       try {
         this.stopAtBoundaryRequested = false;
         const stream = this.session.events(abortController.signal, {
@@ -38,16 +41,29 @@ export class ConversationTurnRuntime {
             break;
           }
 
-          options?.onEvent?.(next.value);
+          try {
+            await options?.onEvent?.(next.value);
+          } catch (err) {
+            eventHandlerError = err;
+            abortController.abort();
+            await stream.return?.({ aborted: true });
+            break;
+          }
           if (abortController.signal.aborted) {
             await stream.return?.({ aborted: true });
             break;
           }
         }
       } catch (err) {
+        if (eventHandlerError !== undefined) {
+          throw eventHandlerError;
+        }
         if (!abortController.signal.aborted) {
           throw err;
         }
+      }
+      if (eventHandlerError !== undefined) {
+        throw eventHandlerError;
       }
 
       return {

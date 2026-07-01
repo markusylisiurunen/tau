@@ -27,6 +27,8 @@ import type { ModelRuntime } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { MessageAccumulator } from "./message_accumulator.js";
 
+const ASSISTANT_PARTIAL_MIN_INTERVAL_MS = 33;
+
 export type ModelRunnerEvent = CoreNoticeEvent | RunnerAssistantPartialEvent;
 export type ToolRunnerEvent = CoreNoticeEvent | CoreToolUiEvent | RunnerToolResultEvent;
 export type RunnerEvent = ModelRunnerEvent | ToolRunnerEvent;
@@ -66,19 +68,47 @@ export async function* runModelSubturn(
   ): AsyncGenerator<ModelRunnerEvent, AssistantMessage, void> {
     const stream = modelRuntime.streamModel(model, context, attemptOptions);
     const accumulator = emitPartials ? new MessageAccumulator() : undefined;
+    let lastPartialEmittedAt = 0;
+    let hasPendingPartial = false;
 
-    for await (const event of stream) {
-      if (accumulator) {
-        accumulator.processEvent(event as AssistantMessageEvent);
+    const emitPartialIfPending = async function* (): AsyncGenerator<ModelRunnerEvent, void, void> {
+      if (!accumulator || !hasPendingPartial) {
+        return;
       }
+      const snapshot = accumulator.snapshot;
+      hasPendingPartial = false;
+      if (!snapshot.hasTextStarted && !snapshot.hasAnyThinking) {
+        return;
+      }
+      yield { type: "assistant_partial", snapshot };
+      lastPartialEmittedAt = Date.now();
+    };
 
-      if (event.type === "text_delta" || event.type.startsWith("thinking_")) {
+    try {
+      for await (const event of stream) {
         if (accumulator) {
-          yield { type: "assistant_partial", snapshot: accumulator.snapshot };
+          accumulator.processEvent(event as AssistantMessageEvent);
+        }
+
+        if (event.type === "text_delta" || event.type.startsWith("thinking_")) {
+          if (accumulator) {
+            hasPendingPartial = true;
+            const now = Date.now();
+            if (
+              lastPartialEmittedAt === 0 ||
+              now - lastPartialEmittedAt >= ASSISTANT_PARTIAL_MIN_INTERVAL_MS
+            ) {
+              yield* emitPartialIfPending();
+            }
+          }
         }
       }
+    } catch (error) {
+      yield* emitPartialIfPending();
+      throw error;
     }
 
+    yield* emitPartialIfPending();
     return await stream.result();
   };
 
@@ -287,6 +317,19 @@ export async function* runToolCalls(
     }
 
     validToolCalls.push({ index: i, toolCall, def });
+  }
+
+  for (const { toolCall } of validToolCalls) {
+    if (signal.aborted) break;
+    yield {
+      type: "tool_ui",
+      uiEvent: {
+        type: "tool_call_queued",
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        headerTarget: toolCall.name,
+      },
+    };
   }
 
   // Step 2: Execute tools in original order.

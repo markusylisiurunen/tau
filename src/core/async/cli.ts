@@ -4,7 +4,11 @@ import type { Config } from "../config/schema.js";
 import { getGoogleApiKey, getMistralApiKey, loadConfig } from "../config/schema.js";
 import { AsyncDaemonRuntimeError, startAsyncDaemonRuntime } from "./daemon_runtime.js";
 import { AsyncDaemonConfigError, loadAsyncDaemonConfig } from "./server_config.js";
-import { createAsyncSessionManager } from "./session_manager.js";
+import {
+  type AsyncSessionClient,
+  type AsyncSessionClientOptions,
+  createAsyncSessionManager,
+} from "./session_manager.js";
 import { cleanupWorkspaceRootsOnStartup } from "./workspace.js";
 
 export class AsyncCliError extends Error {
@@ -67,6 +71,7 @@ export type RunAsyncCommandOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   config?: Config;
+  createSessionClient?: (options: AsyncSessionClientOptions) => Promise<AsyncSessionClient>;
   fetchImpl?: typeof fetch;
   stdout?: (line: string) => void;
 };
@@ -583,6 +588,7 @@ async function runDaemon(args: {
   configFilePath: string;
   env: NodeJS.ProcessEnv;
   config: Config;
+  createSessionClient?: (options: AsyncSessionClientOptions) => Promise<AsyncSessionClient>;
   stdout: (line: string) => void;
 }): Promise<void> {
   let daemonConfig: ReturnType<typeof loadAsyncDaemonConfig>;
@@ -607,11 +613,16 @@ async function runDaemon(args: {
     );
   }
 
+  if (!args.createSessionClient) {
+    throw new AsyncCliError("missing async session client factory");
+  }
+
   const sessionManager = createAsyncSessionManager({
     projects: daemonConfig.projects,
     workspaceRoot: daemonConfig.workspaceRoot,
     maxSessions: daemonConfig.maxSessions,
     systemMessage: daemonConfig.systemMessage,
+    createClient: args.createSessionClient,
   });
 
   const startupCleanupResults = await cleanupWorkspaceRootsOnStartup(
@@ -687,7 +698,13 @@ export async function runAsyncCommand(
       throw new AsyncCliError("missing --config-file <path> for daemon mode");
     }
 
-    await runDaemon({ configFilePath: parsed.configFilePath, env, config, stdout });
+    await runDaemon({
+      configFilePath: parsed.configFilePath,
+      env,
+      config,
+      createSessionClient: options.createSessionClient,
+      stdout,
+    });
     return;
   }
 

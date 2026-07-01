@@ -154,7 +154,7 @@ export function buildEnvironmentTag(args: {
     `  <risk-level level="${args.riskLevel}">${riskDesc}</risk-level>`,
     `  <node>${nodeVersion}</node>`,
     `  <platform>${platform}</platform>`,
-    "  <notes>This environment tag reflects the current session environment. If the user changes risk level or cwd, you will be informed in a <system> tag at the start of the next user message.</notes>",
+    "  <notes>This environment tag reflects the current session environment. If the user changes risk level, you will be informed in a <system> tag at the start of the next user message.</notes>",
     "</environment>",
   );
 
@@ -164,28 +164,4 @@ export function buildEnvironmentTag(args: {
 export function formatRiskLevelChangeNotice(change: { from: RiskLevel; to: RiskLevel }): string {
   const toDesc = describeRiskLevel(change.to);
   return `<system>Risk level changed by user from '${change.from}' to '${change.to}'. ${toDesc} This overrides the initial risk level described in the system prompt.</system>`;
-}
-
-export function formatCwdChangeNotice(change: { from: string; to: string }): string {
-  return `<system>Working directory changed by user from '${change.from}' to '${change.to}'. All relative paths should now resolve from '${change.to}'.</system>`;
-}
-
-export function formatProjectContextChangeNotice(change: { projectContextBlock?: string }): string {
-  if (!change.projectContextBlock?.trim()) {
-    return "<system>Project context changed by user after '/cd'. AGENTS/project context is now empty in the current working directory scope.</system>";
-  }
-
-  const sanitizedProjectContextBlock = change.projectContextBlock.replaceAll(
-    "</system>",
-    "<\\/system>",
-  );
-
-  return [
-    "<system>",
-    "Project context changed by user after '/cd'. Replace any previously provided AGENTS/project context with the following updated block.",
-    "<project-context-update>",
-    sanitizedProjectContextBlock,
-    "</project-context-update>",
-    "</system>",
-  ].join("\n");
 }

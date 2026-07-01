@@ -4,6 +4,7 @@ import {
   createAsyncSessionManager,
   createScopedAsyncSessionManager,
 } from "../dist/core/async/session_manager.js";
+import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
 
 function deferred() {
   let resolve;
@@ -33,15 +34,22 @@ function createClientHarness() {
 
   let eventListener;
 
-  const client = {
-    ready: { sessionId: "rpc-1" },
-    submit,
+  const session = {
+    id: "rpc-1",
+    submit: submit,
+    steer: vi.fn(async () => {
+      return await submitDeferred.promise;
+    }),
     interrupt: vi.fn(async () => ({ interrupted: true, isTurnRunning: true })),
-    snapshot: vi.fn(async () => ({ sessionId: "rpc-1", isTurnRunning: false, historyLength: 0 })),
-    reset: vi.fn(async () => ({ previousSessionId: "rpc-1", sessionId: "rpc-2" })),
-    shutdown: vi.fn(async () => ({ shutdown: true })),
-    close: vi.fn(async () => {}),
-    onEvent: vi.fn((listener) => {
+    snapshot: vi.fn(async () =>
+      createProtocolSnapshot({
+        sessionId: "rpc-1",
+        revision: 1,
+        executionEnvironment: { kind: "local", cwd: "/tmp/ws/demo", home: "/home/user" },
+      }),
+    ),
+    unobserve: vi.fn(async () => ({ unobserved: true })),
+    onDelta: vi.fn((listener) => {
       eventListener = listener;
       return () => {
         if (eventListener === listener) {
@@ -51,11 +59,53 @@ function createClientHarness() {
     }),
   };
 
+  const client = {
+    ready: {
+      version: 1,
+      type: "ready",
+      protocolVersion: 1,
+      methods: [],
+    },
+    sessions: {
+      attach: vi.fn(async () => session),
+      create: vi.fn(async () => session),
+      list: vi.fn(async () => [{ sessionId: "rpc-1", lifecycle: "idle" }]),
+    },
+    close: vi.fn(async () => {}),
+  };
+
   return {
     client,
+    session,
     submitDeferred,
-    emitEvent: (event) => {
-      eventListener?.(event);
+    emitDelta: (delta) => {
+      eventListener?.(delta);
+    },
+  };
+}
+
+function createPatchDelta(changes, revision = 1) {
+  return {
+    version: 1,
+    type: "session.delta",
+    sessionId: "rpc-1",
+    fromRevision: revision,
+    toRevision: revision + 1,
+    reason: "tool-run",
+    delta: { type: "snapshot.patch", changes },
+  };
+}
+
+function createToolUiFacetChange(toolCallId, eventOrEvents) {
+  const events = Array.isArray(eventOrEvents) ? eventOrEvents : [eventOrEvents];
+  return {
+    type: "facet.set",
+    facet: {
+      id: `tool-ui-${toolCallId}`,
+      subject: { type: "tool", id: toolCallId },
+      kind: "tau.tool-ui-events",
+      version: 1,
+      data: { events },
     },
   };
 }
@@ -89,7 +139,7 @@ describe("async session manager", () => {
       expect.objectContaining({
         state: "waiting-input",
         workspacePath: "/tmp/ws/demo",
-        rpcSessionId: "rpc-1",
+        tauSessionId: "rpc-1",
       }),
     );
   });
@@ -239,7 +289,7 @@ describe("async session manager", () => {
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
     await manager.sendMessage(created.id, "write issue about X");
-    expect(clientHarness.client.submit).toHaveBeenCalledWith(
+    expect(clientHarness.session.submit).toHaveBeenCalledWith(
       "<system>\nfollow project conventions\n</system>\nwrite issue about X",
     );
 
@@ -273,7 +323,7 @@ describe("async session manager", () => {
     await manager.sendMessage(created.id, "write issue about X", {
       additionalSystemMessage: "this message came from telegram",
     });
-    expect(clientHarness.client.submit).toHaveBeenCalledWith(
+    expect(clientHarness.session.submit).toHaveBeenCalledWith(
       "<system>\nfollow project conventions\nthis message came from telegram\n</system>\nwrite issue about X",
     );
 
@@ -286,19 +336,12 @@ describe("async session manager", () => {
   });
 
   it("allows explicit steering submissions while a session is running", async () => {
+    const clientHarness = createClientHarness();
     const firstSubmit = deferred();
     const steeringSubmit = deferred();
     const submitDeferreds = [firstSubmit, steeringSubmit];
-    const client = {
-      ready: { sessionId: "rpc-1" },
-      submit: vi.fn(async () => await submitDeferreds.shift().promise),
-      interrupt: vi.fn(async () => ({ interrupted: true, isTurnRunning: true })),
-      snapshot: vi.fn(async () => ({ sessionId: "rpc-1", isTurnRunning: false, historyLength: 0 })),
-      reset: vi.fn(async () => ({ previousSessionId: "rpc-1", sessionId: "rpc-2" })),
-      shutdown: vi.fn(async () => ({ shutdown: true })),
-      close: vi.fn(async () => {}),
-      onEvent: vi.fn(() => () => {}),
-    };
+    clientHarness.session.submit = vi.fn(async () => await submitDeferreds.shift().promise);
+    clientHarness.session.steer = vi.fn(async () => await submitDeferreds.shift().promise);
     const manager = createAsyncSessionManager({
       projects: {
         demo: {
@@ -309,7 +352,7 @@ describe("async session manager", () => {
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
       })),
-      createClient: vi.fn(async () => client),
+      createClient: vi.fn(async () => clientHarness.client),
     });
 
     const created = await manager.createSession({ projectId: "demo" });
@@ -318,8 +361,8 @@ describe("async session manager", () => {
     await manager.sendMessage(created.id, "start work");
     await manager.sendMessage(created.id, "steer it", { mode: "steer" });
 
-    expect(client.submit).toHaveBeenNthCalledWith(1, "start work");
-    expect(client.submit).toHaveBeenNthCalledWith(2, "steer it", { mode: "steer" });
+    expect(clientHarness.session.submit).toHaveBeenCalledWith("start work");
+    expect(clientHarness.session.steer).toHaveBeenCalledWith("steer it");
     expect(manager.getSession(created.id)?.state).toBe("running");
 
     firstSubmit.resolve({ userHistoryEntryId: "history-1", turn: { aborted: false } });
@@ -359,7 +402,7 @@ describe("async session manager", () => {
 
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
-    expect(clientHarness.client.submit).toHaveBeenCalledWith(
+    expect(clientHarness.session.submit).toHaveBeenCalledWith(
       "<system>\nfollow project conventions\nthis prompt came from cron\n</system>\ncheck docs drift",
     );
   });
@@ -384,7 +427,7 @@ describe("async session manager", () => {
 
     const accepted = await manager.sendMessage(created.id, "first");
     expect(accepted.state).toBe("running");
-    expect(clientHarness.client.submit).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.submit).toHaveBeenCalledTimes(1);
 
     await expect(manager.sendMessage(created.id, "second")).rejects.toEqual(
       expect.objectContaining({
@@ -402,7 +445,7 @@ describe("async session manager", () => {
 
   it("marks the session failed and closes the client when submit rejects", async () => {
     const clientHarness = createClientHarness();
-    clientHarness.client.submit = vi.fn(async () => {
+    clientHarness.session.submit = vi.fn(async () => {
       throw new Error("submit boom");
     });
 
@@ -436,8 +479,8 @@ describe("async session manager", () => {
     );
 
     await waitFor(() => clientHarness.client.close.mock.calls.length === 1);
-    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
-    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
 
     const logs = manager.getLogs(created.id) ?? [];
@@ -446,7 +489,7 @@ describe("async session manager", () => {
 
   it("does not duplicate error logs when initial prompt submit fails", async () => {
     const clientHarness = createClientHarness();
-    clientHarness.client.submit = vi.fn(async () => {
+    clientHarness.session.submit = vi.fn(async () => {
       throw new Error("submit boom");
     });
 
@@ -469,14 +512,14 @@ describe("async session manager", () => {
     const logs = manager.getLogs(created.id) ?? [];
     expect(logs.filter((entry) => entry.message === "submit failed")).toHaveLength(1);
     expect(logs.filter((entry) => entry.message === "session failed")).toHaveLength(0);
-    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
-    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
   });
 
   it("interrupts a running session without closing it", async () => {
     const clientHarness = createClientHarness();
-    clientHarness.client.interrupt = vi.fn(async () => {
+    clientHarness.session.interrupt = vi.fn(async () => {
       clientHarness.submitDeferred.resolve({
         userHistoryEntryId: "history-interrupt",
         turn: { aborted: true },
@@ -509,8 +552,8 @@ describe("async session manager", () => {
 
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
-    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
-    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(0);
+    expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(0);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(0);
 
     const logs = manager.getLogs(created.id) ?? [];
@@ -545,12 +588,12 @@ describe("async session manager", () => {
       }),
     );
 
-    expect(clientHarness.client.interrupt).not.toHaveBeenCalled();
+    expect(clientHarness.session.interrupt).not.toHaveBeenCalled();
   });
 
   it("closes terminal failed sessions", async () => {
     const clientHarness = createClientHarness();
-    clientHarness.client.submit = vi.fn(async () => {
+    clientHarness.session.submit = vi.fn(async () => {
       throw new Error("submit boom");
     });
 
@@ -576,14 +619,14 @@ describe("async session manager", () => {
     const closed = await manager.closeSession(created.id);
     expect(closed.state).toBe("failed");
     expect(manager.getSession(created.id)).toBeUndefined();
-    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
-    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
   });
 
   it("closes a running session and shuts down the sdk client", async () => {
     const clientHarness = createClientHarness();
-    clientHarness.client.interrupt = vi.fn(async () => {
+    clientHarness.session.interrupt = vi.fn(async () => {
       clientHarness.submitDeferred.resolve({
         userHistoryEntryId: "history-2",
         turn: { aborted: true },
@@ -616,8 +659,8 @@ describe("async session manager", () => {
     await runningSubmit;
 
     expect(manager.getSession(created.id)).toBeUndefined();
-    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
-    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
   });
 
@@ -683,8 +726,8 @@ describe("async session manager", () => {
     expect(manager.getSession(created.id)).toBeUndefined();
     expect(manager.listSessions()).toEqual([]);
     expect(manager.getLogs(created.id)).toBeUndefined();
-    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
-    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
     expect(cleanupWorkspacePath).toHaveBeenCalledTimes(1);
     expect(cleanupWorkspacePath).toHaveBeenCalledWith("/tmp/ws/demo");
@@ -781,7 +824,7 @@ describe("async session manager", () => {
 
   it("closes active sessions and sdk clients during manager shutdown", async () => {
     const clientHarness = createClientHarness();
-    clientHarness.client.interrupt = vi.fn(async () => {
+    clientHarness.session.interrupt = vi.fn(async () => {
       clientHarness.submitDeferred.resolve({
         userHistoryEntryId: "history-4",
         turn: { aborted: true },
@@ -814,8 +857,8 @@ describe("async session manager", () => {
     await runningSubmit;
 
     expect(manager.getSession(created.id)?.state).toBe("running");
-    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
-    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
     expect(cleanupWorkspacePath).toHaveBeenCalledTimes(1);
     expect(cleanupWorkspacePath).toHaveBeenCalledWith("/tmp/ws/demo");
@@ -824,13 +867,13 @@ describe("async session manager", () => {
     expect(logs.some((entry) => entry.message === "manager shutdown requested")).toBe(true);
   });
 
-  it("close is idempotent and tolerates client shutdown failures", async () => {
+  it("close is idempotent and tolerates client detach failures", async () => {
     const clientHarness = createClientHarness();
-    clientHarness.client.interrupt = vi.fn(async () => {
+    clientHarness.session.interrupt = vi.fn(async () => {
       throw new Error("interrupt boom");
     });
-    clientHarness.client.shutdown = vi.fn(async () => {
-      throw new Error("shutdown boom");
+    clientHarness.session.unobserve = vi.fn(async () => {
+      throw new Error("detach boom");
     });
     clientHarness.client.close = vi.fn(async () => {
       throw new Error("close boom");
@@ -859,15 +902,15 @@ describe("async session manager", () => {
     );
 
     expect(manager.getSession(created.id)?.state).toBe("waiting-input");
-    expect(clientHarness.client.interrupt).toHaveBeenCalledTimes(1);
-    expect(clientHarness.client.shutdown).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
     expect(cleanupWorkspacePath).toHaveBeenCalledTimes(1);
     expect(cleanupWorkspacePath).toHaveBeenCalledWith("/tmp/ws/demo");
 
     const logs = manager.getLogs(created.id) ?? [];
     expect(logs.some((entry) => entry.message === "interrupt failed")).toBe(true);
-    expect(logs.some((entry) => entry.message === "shutdown failed")).toBe(true);
+    expect(logs.some((entry) => entry.message === "unobserve failed")).toBe(true);
     expect(logs.some((entry) => entry.message === "close failed")).toBe(true);
   });
 
@@ -897,81 +940,77 @@ describe("async session manager", () => {
     const sendPromise = manager.sendMessage(created.id, "run tasks");
     await waitFor(() => manager.getSession(created.id)?.state === "running");
 
-    clientHarness.emitEvent({
-      version: 1,
-      type: "event",
-      event: {
-        version: 1,
-        event: {
-          type: "tool_ui",
-          uiEvent: {
-            type: "bash_started",
-            toolCallId: "1",
-            command: "npm run check",
-            headerTarget: "npm run check",
-          },
-        },
-      },
-    });
+    clientHarness.emitDelta(
+      createPatchDelta([
+        createToolUiFacetChange("1", {
+          type: "bash_started",
+          toolCallId: "1",
+          command: "npm run check",
+          headerTarget: "npm run check",
+        }),
+      ]),
+    );
 
-    clientHarness.emitEvent({
-      version: 1,
-      type: "event",
-      event: {
-        version: 1,
-        event: {
-          type: "tool_ui",
-          uiEvent: {
-            type: "edit_success",
-            toolCallId: "2",
-            path: "src/core/async/telegram.ts",
-            headerTarget: "src/core/async/telegram.ts",
-            oldLength: 1,
-            newLength: 2,
-            oldText: "a",
-            newText: "b",
-            uiText: { previewLines: [], fullLines: [] },
-          },
-        },
-      },
-    });
+    clientHarness.emitDelta(
+      createPatchDelta([
+        createToolUiFacetChange("2", {
+          type: "edit_success",
+          toolCallId: "2",
+          path: "src/core/async/telegram.ts",
+          headerTarget: "src/core/async/telegram.ts",
+          oldLength: 1,
+          newLength: 2,
+          oldText: "a",
+          newText: "b",
+          uiText: { previewLines: [], fullLines: [] },
+        }),
+      ]),
+    );
 
-    clientHarness.emitEvent({
-      version: 1,
-      type: "event",
-      event: {
-        version: 1,
-        event: {
-          type: "tool_ui",
-          uiEvent: {
-            type: "write_success",
-            toolCallId: "3",
-            path: "docs/async.md",
-            headerTarget: "docs/async.md",
-            bytes: 10,
-            lines: 1,
-            content: "hello",
-            uiText: { previewLines: [], fullLines: [] },
-          },
-        },
-      },
-    });
+    clientHarness.emitDelta(
+      createPatchDelta([
+        createToolUiFacetChange("3", {
+          type: "write_success",
+          toolCallId: "3",
+          path: "docs/async.md",
+          headerTarget: "docs/async.md",
+          bytes: 10,
+          lines: 1,
+          content: "hello",
+          uiText: { previewLines: [], fullLines: [] },
+        }),
+      ]),
+    );
 
-    clientHarness.emitEvent({
-      version: 1,
-      type: "event",
-      event: {
-        version: 1,
-        event: {
-          type: "assistant_final",
-          historyEntryId: "h1",
+    clientHarness.emitDelta(
+      createPatchDelta([
+        {
+          type: "message.replace",
           message: {
-            role: "assistant",
-            content: [{ type: "text", text: "done" }],
+            id: "h1",
+            state: "committed",
+            modelVisible: true,
+            message: {
+              role: "assistant",
+              api: "openai-responses",
+              provider: "openai",
+              model: "gpt-5.5",
+              usage: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 0,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              content: [{ type: "text", text: "done" }],
+              timestamp: 0,
+            },
           },
         },
-      },
-    });
+      ]),
+    );
 
     clientHarness.submitDeferred.resolve({
       userHistoryEntryId: "history-progress",
@@ -1018,6 +1057,74 @@ describe("async session manager", () => {
           event.progress.text === "done",
       ),
     ).toBe(true);
+  });
+
+  it("does not replay already consumed tool facet progress events", async () => {
+    const clientHarness = createClientHarness();
+    const manager = createAsyncSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+        },
+      },
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+      })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const events = [];
+    manager.onEvent((event) => {
+      events.push(event);
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    const sendPromise = manager.sendMessage(created.id, "run tasks");
+    await waitFor(() => manager.getSession(created.id)?.state === "running");
+
+    const bashStarted = {
+      type: "bash_started",
+      toolCallId: "1",
+      command: "npm run check",
+      headerTarget: "npm run check",
+    };
+    const writeSuccess = {
+      type: "write_success",
+      toolCallId: "1",
+      path: "docs/async.md",
+      headerTarget: "docs/async.md",
+      bytes: 10,
+      lines: 1,
+      content: "hello",
+      uiText: { previewLines: [], fullLines: [] },
+    };
+
+    clientHarness.emitDelta(createPatchDelta([createToolUiFacetChange("1", bashStarted)]));
+    clientHarness.emitDelta(
+      createPatchDelta([createToolUiFacetChange("1", [bashStarted, writeSuccess])]),
+    );
+
+    clientHarness.submitDeferred.resolve({
+      userHistoryEntryId: "history-progress",
+      turn: { aborted: false },
+    });
+    await sendPromise;
+
+    const progressEvents = events.filter((event) => event.type === "session-progress");
+    expect(
+      progressEvents.filter(
+        (event) =>
+          event.progress.type === "bash-command" && event.progress.command === "npm run check",
+      ),
+    ).toHaveLength(1);
+    expect(
+      progressEvents.filter(
+        (event) => event.progress.type === "wrote-file" && event.progress.path === "docs/async.md",
+      ),
+    ).toHaveLength(1);
   });
 
   it("emits lightweight lifecycle events", async () => {
@@ -1071,7 +1178,10 @@ describe("async session manager", () => {
   });
 
   it("throws invalid_project for unknown projects", async () => {
-    const manager = createAsyncSessionManager({ projects: {} });
+    const manager = createAsyncSessionManager({
+      projects: {},
+      createClient: vi.fn(async () => createClientHarness().client),
+    });
 
     await expect(manager.createSession({ projectId: "missing" })).rejects.toEqual(
       expect.objectContaining({

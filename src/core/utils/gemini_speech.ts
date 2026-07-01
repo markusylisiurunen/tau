@@ -467,7 +467,7 @@ function buildSpeechRewritePrompt(sourceText: string): string {
     "",
     "Examples of good rewrites:",
     '- `src/core/utils/gemini_speech.ts:372` → "gemini_speech.ts, line 372"',
-    '- `src/tui/chat_controller.ts:1819-1855` → "chat_controller.ts, lines 1819 to 1855"',
+    '- `src/tui/session_chat_controller.ts:1819-1855` → "session_chat_controller.ts, lines 1819 to 1855"',
     '- `src/core/session/compaction.ts` → "compaction.ts"',
     '- `/Users/markus/.config/tau/config.json` → "the tau config.json in your home directory"',
     '- `rg --heading -n -t ts "ToolUiText" src` → "ripgrep for ToolUiText in TypeScript files under src"',

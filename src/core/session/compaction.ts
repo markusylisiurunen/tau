@@ -391,20 +391,24 @@ function collectUserMessageCandidates(
   entries: readonly CompactionHistoryEntry[],
   previousMessages: readonly PreservedUserMessage[],
 ): UserMessageCandidate[] {
-  return [
-    ...previousMessages.map((message) => ({
+  const candidates = new Map<string, UserMessageCandidate>();
+  for (const message of previousMessages) {
+    candidates.set(message.id, {
       id: message.id,
       text: message.text,
-      source: "previous-preserved" as const,
-    })),
-    ...entries.flatMap((entry) => {
-      const text = extractPreservableUserText(entry.message);
-      if (!text) {
-        return [];
-      }
-      return [{ id: entry.id, text, source: "conversation" as const }];
-    }),
-  ];
+      source: "previous-preserved",
+    });
+  }
+
+  for (const entry of entries) {
+    const text = extractPreservableUserText(entry.message);
+    if (!text) {
+      continue;
+    }
+    candidates.set(entry.id, { id: entry.id, text, source: "conversation" });
+  }
+
+  return [...candidates.values()];
 }
 
 function formatUserMessageCandidates(candidates: readonly UserMessageCandidate[]): string {

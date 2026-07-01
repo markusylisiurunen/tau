@@ -22,7 +22,7 @@ import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
 import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
-import type { Persona, RiskLevel } from "../types.js";
+import type { Persona, ReasoningEffort, RiskLevel } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
@@ -51,6 +51,15 @@ import {
   prepareSessionCompaction,
   type SessionCompactionMode,
 } from "./compaction.js";
+import {
+  buildSmartPruneSystemPrompt,
+  clampPruneReasoning,
+  parseSmartPruneResponse,
+  prepareSessionSmartPrunePrompt,
+  pruneSessionHistory,
+  type SessionPruneOptions,
+  type SessionPruneResult,
+} from "./pruning.js";
 import { runModelSubturn, runToolCalls } from "./runner.js";
 
 const MAX_ASSISTANT_SUBTURNS = 200;
@@ -78,6 +87,8 @@ export type SessionCompactionResult = {
   compactionMessage: string;
   includedLastAssistant: boolean;
 };
+
+export type { SessionPruneOptions, SessionPruneResult };
 
 export type AutoCompactionBlockedTurn = {
   reason: "auto-compaction-failed";
@@ -121,8 +132,9 @@ export class SessionEngine {
   private modelResolver: ModelResolver;
   private readonly subagentControlPlane: SubagentControlPlane;
   private readonly eventListeners = new Set<(event: CoreEvent) => void>();
+  private readonly subagentEventListeners = new Set<(event: CoreSubagentUiEvent) => void>();
   private historyEntries: HistoryEntry[] = [];
-  private sessionId = `tau-main-${randomUUID()}`;
+  private sessionId: string = randomUUID();
 
   constructor(options: SessionEngineOptions) {
     this.persona = options.persona;
@@ -151,14 +163,27 @@ export class SessionEngine {
   reset(): void {
     this.closeProviderSessions();
     this.historyEntries = [];
-    this.sessionId = `tau-main-${randomUUID()}`;
+    this.sessionId = randomUUID();
+    this.subagentControlPlane.reset();
+  }
+
+  restoreState(input: { sessionId: string; historyEntries: readonly HistoryEntry[] }): void {
+    this.closeProviderSessions();
+    this.historyEntries = input.historyEntries.map((entry) => ({
+      id: entry.id,
+      message: structuredClone(entry.message),
+    }));
+    this.sessionId = input.sessionId;
     this.subagentControlPlane.reset();
   }
 
   private replaceHistoryEntries(entries: readonly HistoryEntry[]): void {
     this.closeProviderSessions();
-    this.historyEntries = entries.map((entry) => ({ ...entry }));
-    this.sessionId = `tau-main-${randomUUID()}`;
+    this.historyEntries = entries.map((entry) => ({
+      id: entry.id,
+      message: structuredClone(entry.message),
+    }));
+    this.sessionId = randomUUID();
   }
 
   dispose(): void {
@@ -206,6 +231,11 @@ export class SessionEngine {
   onEvent(handler: (event: CoreEvent) => void): () => void {
     this.eventListeners.add(handler);
     return () => this.eventListeners.delete(handler);
+  }
+
+  onSubagentEvent(handler: (event: CoreSubagentUiEvent) => void): () => void {
+    this.subagentEventListeners.add(handler);
+    return () => this.subagentEventListeners.delete(handler);
   }
 
   async terminateSubagent(id: string): Promise<boolean> {
@@ -310,7 +340,7 @@ export class SessionEngine {
 
   get history(): readonly Message[] {
     return this.visibleHistoryEntries.map((entry) =>
-      stripTauUserMetadataFromMessage(entry.message),
+      structuredClone(stripTauUserMetadataFromMessage(entry.message)),
     );
   }
 
@@ -325,17 +355,20 @@ export class SessionEngine {
   }
 
   get rawHistory(): readonly Message[] {
-    return this.historyEntries.map((entry) => entry.message);
+    return this.historyEntries.map((entry) => structuredClone(entry.message));
   }
 
   get rawHistoryEntriesSnapshot(): readonly HistoryEntry[] {
-    return this.historyEntries;
+    return this.historyEntries.map((entry) => ({
+      id: entry.id,
+      message: structuredClone(entry.message),
+    }));
   }
 
   get historyEntriesSnapshot(): readonly HistoryEntry[] {
     return this.visibleHistoryEntries.map((entry) => ({
       ...entry,
-      message: stripTauUserMetadataFromMessage(entry.message),
+      message: structuredClone(stripTauUserMetadataFromMessage(entry.message)),
     }));
   }
 
@@ -357,7 +390,7 @@ export class SessionEngine {
     });
 
     const summaryResponse = await this.runCompactionSummary(summaryPrompt, {
-      sessionId: `tau-summary-${randomUUID()}`,
+      sessionId: `summary-${randomUUID()}`,
       signal: options.signal,
     });
     const summaryResult = parseCompactionSummaryResponse({
@@ -399,6 +432,74 @@ export class SessionEngine {
       compactionMessage,
       includedLastAssistant,
     };
+  }
+
+  async pruneToolResults(
+    options: Omit<SessionPruneOptions, "smartSelection"> & { signal?: AbortSignal },
+  ): Promise<SessionPruneResult> {
+    let smartSelection: string[] | undefined;
+    if (options.strategy === "smart") {
+      const request = prepareSessionSmartPrunePrompt({
+        historyEntries: this.historyEntries,
+        fraction: options.fraction,
+        ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
+      });
+      smartSelection = request
+        ? await this.runSmartPruneSelection(request.prompt, { signal: options.signal })
+        : [];
+    }
+
+    return pruneSessionHistory({
+      historyEntries: this.historyEntries,
+      replaceMessageById: (historyEntryId, message) =>
+        this.replaceMessageById(historyEntryId, message),
+      options: {
+        strategy: options.strategy,
+        fraction: options.fraction,
+        ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
+        ...(smartSelection !== undefined ? { smartSelection } : {}),
+      },
+    });
+  }
+
+  private async runSmartPruneSelection(
+    prompt: string,
+    options: { signal?: AbortSignal },
+  ): Promise<string[]> {
+    const reasoning = this.clampSmartPruneReasoning(this.persona.settings.reasoning);
+    const stream = this.modelRuntime.streamModel(
+      this.persona.model,
+      {
+        systemPrompt: buildSmartPruneSystemPrompt(),
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: prompt }],
+            timestamp: this.deps.clock.now(),
+          },
+        ],
+      },
+      {
+        ...(reasoning ? { reasoning } : {}),
+        sessionId: `prune-${randomUUID()}`,
+        ...(options.signal ? { signal: options.signal } : {}),
+      },
+    );
+
+    const final = await stream.result();
+    const raw = extractAssistantText(final).trim();
+    const parsed = parseSmartPruneResponse(raw);
+    if (!parsed) {
+      throw new Error("model returned an invalid prune selection.");
+    }
+
+    return parsed;
+  }
+
+  private clampSmartPruneReasoning(
+    reasoning?: ReasoningEffort,
+  ): Exclude<ReasoningEffort, "none"> | undefined {
+    return clampPruneReasoning(reasoning);
   }
 
   private async runCompactionSummary(
@@ -502,6 +603,9 @@ export class SessionEngine {
       event,
       originHistoryEntryId,
     };
+    for (const listener of this.subagentEventListeners) {
+      listener(coreEvent);
+    }
     this.emitEvent(coreEvent);
   }
 
@@ -736,7 +840,7 @@ export class SessionEngine {
     const summaryResponse = await this.runCompactionSummary(
       buildAutoCompactionPrompt(preparation),
       {
-        sessionId: `tau-auto-summary-${randomUUID()}`,
+        sessionId: `auto-summary-${randomUUID()}`,
         signal,
       },
     );

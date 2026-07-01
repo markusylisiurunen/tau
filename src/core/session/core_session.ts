@@ -12,6 +12,8 @@ import {
   type SessionCompactionOptions,
   type SessionCompactionResult,
   SessionEngine,
+  type SessionPruneOptions,
+  type SessionPruneResult,
 } from "./session_engine.js";
 
 export type {
@@ -23,6 +25,8 @@ export type {
   RewindResult,
   SessionCompactionOptions,
   SessionCompactionResult,
+  SessionPruneOptions,
+  SessionPruneResult,
 };
 
 export type CoreSessionOptions = {
@@ -47,6 +51,10 @@ export class CoreSession {
 
   reset(): void {
     this.engine.reset();
+  }
+
+  restoreState(input: { sessionId: string; historyEntries: readonly HistoryEntry[] }): void {
+    this.engine.restoreState(input);
   }
 
   dispose(): void {
@@ -75,6 +83,10 @@ export class CoreSession {
 
   onEvent(handler: (event: CoreEvent) => void): () => void {
     return this.engine.onEvent(handler);
+  }
+
+  onSubagentEvent(handler: (event: CoreSubagentUiEvent) => void): () => void {
+    return this.engine.onSubagentEvent(handler);
   }
 
   async terminateSubagent(id: string): Promise<boolean> {
@@ -127,6 +139,12 @@ export class CoreSession {
 
   async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {
     return await this.engine.compact(options);
+  }
+
+  async pruneToolResults(
+    options: Omit<SessionPruneOptions, "smartSelection"> & { signal?: AbortSignal },
+  ): Promise<SessionPruneResult> {
+    return await this.engine.pruneToolResults(options);
   }
 
   async *events(

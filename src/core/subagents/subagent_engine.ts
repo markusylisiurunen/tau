@@ -168,7 +168,7 @@ export async function runSubagent(options: {
   const formatIssueSummary = (): string =>
     issues.length > 0 ? ` (Recent issues: ${issues.slice(-3).join("; ")})` : "";
 
-  const sessionId = options.sessionId ?? `tau-subagent-${runtimeConfig.name}-${randomUUID()}`;
+  const sessionId = options.sessionId ?? `subagent-${runtimeConfig.name}-${randomUUID()}`;
   const noteProviderError = async (message?: string) => {
     try {
       await modelRuntime.noteProviderError(runtimeConfig.model.provider, {

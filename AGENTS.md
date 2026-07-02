@@ -353,7 +353,7 @@ If you need dependency details (rare), check `references/repos/` first and treat
 
 **Branch names**: Lowercase, a few descriptive words. Do not include prefixes or issue references.
 
-**PR style**: Titles and descriptions are concise, lowercase except for proper nouns. When explicitly working a GitHub issue and opening a PR, end the PR body with a closing keyword line (for example, `fixes #123`) so GitHub auto-links and closes the issue.
+**PR style**: Titles are concise and lowercase except for proper nouns. PR bodies should use prose-first sections, with `## why` and `## what` always present and `## details` included only when it adds useful context. When the PR is associated with an issue, always end the PR body with a closing keyword line (for example, `fixes #123`) so GitHub auto-links and closes the issue.
 
 **GitHub operations**: Use `gh` for all GitHub-related operations in this project and omit `--repo` since it resolves automatically from this repository. To view an issue with comments, run `gh issue view <id> --json closed,author,labels,title,body,comments`. When creating PRs with `gh pr create`, use a heredoc for multi-line bodies. Example:
 

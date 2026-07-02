@@ -46,7 +46,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Async daemon runtime** (`src/core/async/`): Async CLI + daemon stack (`cli.ts`, `cron.ts`, `http_protocol.ts`, `http_server.ts`, `server_config.ts`, `session_manager.ts`, `telegram.ts`, `workspace.ts`)
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Execution backend for filesystem/process tools on the local host
-- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, view_image, diff_review, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent) and sub-agent (configured allowed tools) registries
+- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, view_image, diff_review, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent) and sub-agent (configured allowed tools) registries
 - **TUI**: Terminal rendering via `@earendil-works/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
@@ -98,7 +98,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `events/` - Core event protocol types and serialization
   - `session/` - Turn processing, streaming, tool dispatch, and manual/automatic compaction
   - `session/compaction.ts` - Core compaction preparation/prompt building, automatic cut-point selection, retained-tail handling, and synthetic summary message construction
-  - `tools/` - Tool definitions (bash, write, edit, diff_review, spawn_agent, send_input_to_agent, wait_for_agent, terminate_agent, emit_output, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
+  - `tools/` - Tool definitions (bash, write, edit, diff_review, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent, emit_output, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
   - `tools/execution_backend.ts` - Local tool execution backend and cwd scoping helper
   - `subagents/` - Default subagent prompt and runner
   - `modes/` - Local app mode interface plus stdio session-protocol line server (`rpc_server.ts`) and WebSocket session server (`websocket_server.ts`)
@@ -149,7 +149,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 | `diff_review` | Diff-review tool definition; the session TUI launches local diff review through the session host protocol | `read-only` or `read-write` |
 | `spawn_agent` | Start a background subagent | `read-only` or `read-write` |
 | `send_input_to_agent` | Send input to an idle subagent | `read-only` or `read-write` |
-| `wait_for_agent` | Await subagent completion | `read-only` or `read-write` |
+| `wait_for_agents` | Await completed subagent outputs, returning when at least one requested agent finishes | `read-only` or `read-write` |
 | `terminate_agent` | Stop a running subagent | `read-only` or `read-write` |
 | `emit_output` | Subagent-only output to main (currently disabled in subagent registries) | `read-only` or `read-write` |
 
@@ -196,7 +196,7 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `allowedReasoningLevels`: list of reasoning levels shown in the UI
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted on custom personas, defaults to `"*"`; set `skills: []` to disable skills completely.
 - `subagents`: optional map of subagent definitions. The built-in `default` subagent is implicitly enabled unless `default: false` is provided. Custom subagents must be defined as `{ systemPrompt, description?, provider+model?, reasoning?, serviceTier?, tools?, riskLevel?, launchModels? }` with lowercase-dash names (max 64 chars). `launchModels` values are allowlisted launch overrides in `<provider>/<model>:<effort>` format. Persona/subagent model ids may be unbundled as long as provider is known (Tau derives provider defaults when needed, and `models.json` can override fields). The `default` subagent cannot be overridden.
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `diff_review`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `diff_review` (and subagent tools when subagents are enabled). risk levels still apply.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `diff_review`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `diff_review` (and subagent tools when subagents are enabled). risk levels still apply.
 
 On conflicts, the most specific level wins (built-ins are the base layer).
 
@@ -353,7 +353,7 @@ If you need dependency details (rare), check `references/repos/` first and treat
 
 **Branch names**: Lowercase, a few descriptive words. Do not include prefixes or issue references.
 
-**PR style**: Titles and descriptions are concise, lowercase except for proper nouns. When explicitly working a GitHub issue and opening a PR, end the PR body with a closing keyword line (for example, `fixes #123`) so GitHub auto-links and closes the issue.
+**PR style**: Titles are concise and lowercase except for proper nouns. PR bodies should be written as readable, prose-first narratives with `## why` and `## what` always present and `## details` included only when it adds useful context. Use `## why` to orient the reader and briefly explain why the PR exists. Use `## what` to describe what changed to address that reason. Use `## details` as an optional free-form section for extra context that helps the reader understand the change. Keep formatting minimal and use it only when it makes the description easier to read; bullet points are fine when they are useful. Do not include routine verification commands in the PR body, since running the expected checks is part of normal development flow. When the PR is associated with an issue, always end the PR body with a closing keyword line (for example, `fixes #123`) so GitHub auto-links and closes the issue.
 
 **GitHub operations**: Use `gh` for all GitHub-related operations in this project and omit `--repo` since it resolves automatically from this repository. To view an issue with comments, run `gh issue view <id> --json closed,author,labels,title,body,comments`. When creating PRs with `gh pr create`, use a heredoc for multi-line bodies. Example:
 

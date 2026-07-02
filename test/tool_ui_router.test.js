@@ -323,24 +323,24 @@ describe("ToolUiRouter lifecycle tracking", () => {
       },
       {
         started: {
-          type: "wait_for_agent_started",
+          type: "wait_for_agents_started",
           toolCallId: "wait-finish",
           agentIds: ["agent-1", "agent-2"],
         },
         terminal: {
-          type: "wait_for_agent_finished",
+          type: "wait_for_agents_finished",
           toolCallId: "wait-finish",
           agentIds: ["agent-1", "agent-2"],
           status: "success",
           message: "ready",
         },
         blockedStarted: {
-          type: "wait_for_agent_started",
+          type: "wait_for_agents_started",
           toolCallId: "wait-blocked",
           agentIds: ["agent-3"],
         },
         blocked: {
-          type: "wait_for_agent_blocked",
+          type: "wait_for_agents_blocked",
           toolCallId: "wait-blocked",
           reason: "blocked",
         },
@@ -424,7 +424,7 @@ describe("ToolUiRouter lifecycle tracking", () => {
       command: "echo pending int",
     });
     harness.router.handle({
-      type: "wait_for_agent_started",
+      type: "wait_for_agents_started",
       toolCallId: "wait-pending-int",
       agentIds: ["agent-1", "agent-2"],
     });
@@ -436,7 +436,7 @@ describe("ToolUiRouter lifecycle tracking", () => {
     expect(bashEvent.reason).toBe("interrupted");
 
     const subagentEvent = findLatestReplacedEvent(harness.replaced, "wait-pending-int");
-    expect(subagentEvent.type).toBe("wait_for_agent_finished");
+    expect(subagentEvent.type).toBe("wait_for_agents_finished");
     expect(subagentEvent.status).toBe("error");
     expect(subagentEvent.message).toBe("interrupted");
   });

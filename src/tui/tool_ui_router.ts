@@ -3,7 +3,7 @@ import {
   TOOL_NAME_SEND_INPUT_TO_AGENT,
   TOOL_NAME_SPAWN_AGENT,
   TOOL_NAME_TERMINATE_AGENT,
-  TOOL_NAME_WAIT_FOR_AGENT,
+  TOOL_NAME_WAIT_FOR_AGENTS,
 } from "../core/tools/tool_names.js";
 import type { ChatContainerComponent } from "./ui/chat_container.js";
 
@@ -28,7 +28,7 @@ type RunningSubagentTool =
       title: string;
     }
   | {
-      kind: typeof TOOL_NAME_WAIT_FOR_AGENT;
+      kind: typeof TOOL_NAME_WAIT_FOR_AGENTS;
       agentIds: string[];
     }
   | {
@@ -48,8 +48,8 @@ type SubagentTerminalEventType =
   | "spawn_agent_blocked"
   | "send_input_to_agent_finished"
   | "send_input_to_agent_blocked"
-  | "wait_for_agent_finished"
-  | "wait_for_agent_blocked"
+  | "wait_for_agents_finished"
+  | "wait_for_agents_blocked"
   | "terminate_agent_finished"
   | "terminate_agent_blocked";
 
@@ -69,8 +69,8 @@ const SUBAGENT_TERMINAL_EVENT_TYPES = new Set<SubagentTerminalEventType>([
   "spawn_agent_blocked",
   "send_input_to_agent_finished",
   "send_input_to_agent_blocked",
-  "wait_for_agent_finished",
-  "wait_for_agent_blocked",
+  "wait_for_agents_finished",
+  "wait_for_agents_blocked",
   "terminate_agent_finished",
   "terminate_agent_blocked",
 ]);
@@ -221,9 +221,9 @@ export class ToolUiRouter {
       };
     }
 
-    if (uiEvent.type === "wait_for_agent_started") {
+    if (uiEvent.type === "wait_for_agents_started") {
       return {
-        kind: TOOL_NAME_WAIT_FOR_AGENT,
+        kind: TOOL_NAME_WAIT_FOR_AGENTS,
         agentIds: uiEvent.agentIds,
       };
     }
@@ -350,10 +350,10 @@ export class ToolUiRouter {
       };
     }
 
-    if (running.kind === TOOL_NAME_WAIT_FOR_AGENT) {
+    if (running.kind === TOOL_NAME_WAIT_FOR_AGENTS) {
       const headerTarget = running.agentIds.length > 0 ? running.agentIds.join(", ") : "(no ids)";
       return {
-        type: "wait_for_agent_finished",
+        type: "wait_for_agents_finished",
         toolCallId,
         agentIds: running.agentIds,
         headerTarget,

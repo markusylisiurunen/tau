@@ -117,22 +117,25 @@ type ToolUiEventWithHeaderTarget = {
       reason: string;
     }
   | {
-      type: "wait_for_agent_started";
+      type: "wait_for_agents_started";
       toolCallId: string;
       agentIds: string[];
+      headerTarget: string;
     }
   | {
-      type: "wait_for_agent_finished";
+      type: "wait_for_agents_finished";
       toolCallId: string;
       agentIds: string[];
+      headerTarget: string;
       status: "success" | "error";
       message?: string;
       uiText?: ToolUiText;
     }
   | {
-      type: "wait_for_agent_blocked";
+      type: "wait_for_agents_blocked";
       toolCallId: string;
       agentIds?: string[];
+      headerTarget: string;
       reason: string;
     }
   | {

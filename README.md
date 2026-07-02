@@ -363,7 +363,7 @@ tau --persona opus-4.8-coder
 
 ## sub-agents
 
-some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, and `terminate_agent` tools. sub-agents report progress in the subagent panel, and `wait_for_agent` returns their final output when they finish.
+some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, and `terminate_agent` tools. sub-agents report progress in the subagent panel, and `wait_for_agents` returns completed outputs as soon as at least one requested agent finishes.
 
 the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, tool access (minus sub-agent management tools), risk level, and system prompt. the inherited main prompt is wrapped with default sub-agent-specific rules, and those wrapper rules take precedence on conflicts. custom sub-agents can override model, reasoning, tools, and risk level. a sub-agent configured with `riskLevel: read-write` can perform writes even when the main session is `read-only`.
 
@@ -692,7 +692,7 @@ optional frontmatter fields:
         - openai/gpt-5.4:high
         - anthropic/claude-haiku-4-5:medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `diff_review`, `spawn_agent`, `send_input_to_agent`, `wait_for_agent`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `diff_review` (and subagent tools when subagents are enabled). risk levels still apply.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `diff_review`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `diff_review` (and subagent tools when subagents are enabled). risk levels still apply.
 
 the markdown body becomes the system prompt.
 

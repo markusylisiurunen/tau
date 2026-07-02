@@ -15,22 +15,22 @@ import {
   type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
-import { TOOL_NAME_WAIT_FOR_AGENT } from "./tool_names.js";
+import { TOOL_NAME_WAIT_FOR_AGENTS } from "./tool_names.js";
 
-const WAIT_FOR_AGENT_DESCRIPTION = [
-  "Wait for one or more subagents to finish and return their outputs.",
+const WAIT_FOR_AGENTS_DESCRIPTION = [
+  "Wait for one or more subagents and return as soon as at least one requested subagent finishes.",
   "Provide the list of subagent ids returned by spawn_agent.",
 ].join(" ");
 
-const WAIT_FOR_AGENT_IDS_DESCRIPTION = "List of subagent ids to wait for.";
-const WAIT_FOR_AGENT_OUTPUT_MAX_TOKENS = 256;
+const WAIT_FOR_AGENTS_IDS_DESCRIPTION = "List of subagent ids to wait for.";
+const WAIT_FOR_AGENTS_OUTPUT_MAX_TOKENS = 256;
 
-export const WAIT_FOR_AGENT_TOOL: Tool = {
-  name: TOOL_NAME_WAIT_FOR_AGENT,
-  description: WAIT_FOR_AGENT_DESCRIPTION,
+export const WAIT_FOR_AGENTS_TOOL: Tool = {
+  name: TOOL_NAME_WAIT_FOR_AGENTS,
+  description: WAIT_FOR_AGENTS_DESCRIPTION,
   parameters: Type.Object(
     {
-      ids: Type.Array(Type.String({ description: WAIT_FOR_AGENT_IDS_DESCRIPTION }), {
+      ids: Type.Array(Type.String({ description: WAIT_FOR_AGENTS_IDS_DESCRIPTION }), {
         minItems: 1,
       }),
     },
@@ -82,8 +82,24 @@ function formatSubagentOutputLinesForUi(result: SubagentResult, maxTokens: numbe
   return [header, ...bodyLines];
 }
 
-function formatWaitOutput(results: SubagentResult[], maxTokensPerSubagent?: number): string {
+function formatWaitOutput(
+  results: SubagentResult[],
+  requestedIds: string[],
+  maxTokensPerSubagent?: number,
+): string {
   const output: string[] = [];
+  const finishedIds = results.map((result) => result.id);
+  const finishedIdSet = new Set(finishedIds);
+  const runningIds = requestedIds.filter((id) => !finishedIdSet.has(id));
+
+  if (runningIds.length > 0) {
+    output.push(
+      `Finished: ${finishedIds.join(", ")}. Still running: ${runningIds.join(", ")}. ` +
+        "Call wait_for_agents again with the still-running ids to collect their outputs.",
+    );
+    output.push("");
+  }
+
   results.forEach((result, index) => {
     if (index > 0) output.push("");
     const lines = maxTokensPerSubagent
@@ -111,9 +127,9 @@ function getWaitCostTotal(results: SubagentResult[]): number {
   return results.reduce((sum, result) => sum + result.costTotal, 0);
 }
 
-export function createWaitForAgentToolDefinition(): ToolDefinition {
+export function createWaitForAgentsToolDefinition(): ToolDefinition {
   return {
-    schema: WAIT_FOR_AGENT_TOOL,
+    schema: WAIT_FOR_AGENTS_TOOL,
     async dispatch(
       toolCall: ToolCall,
       _riskLevel: RiskLevel,
@@ -130,7 +146,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
         const uiEvent: ToolUiEvent = {
-          type: "wait_for_agent_blocked",
+          type: "wait_for_agents_blocked",
           toolCallId: toolCall.id,
           agentIds: ids,
           headerTarget,
@@ -158,7 +174,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
       const dedupedTarget = formatHeaderTarget(deduped);
 
       if (!isMainToolDispatchContext(context)) {
-        return blocked("The wait_for_agent tool is only available in the main session.");
+        return blocked("The wait_for_agents tool is only available in the main session.");
       }
 
       const controlPlane = context.subagentControlPlane;
@@ -166,16 +182,20 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
       return {
         kind: "phased",
         startedUiEvent: {
-          type: "wait_for_agent_started",
+          type: "wait_for_agents_started",
           toolCallId: toolCall.id,
           agentIds: deduped,
           headerTarget: dedupedTarget,
         },
         run: (async (): Promise<ToolDispatchResult> => {
           try {
-            const results = await controlPlane.waitFor(deduped, signal);
-            const resultText = formatWaitOutput(results);
-            const outputText = formatWaitOutput(results, WAIT_FOR_AGENT_OUTPUT_MAX_TOKENS);
+            const results = await controlPlane.waitForAgents(deduped, signal);
+            const resultText = formatWaitOutput(results, deduped);
+            const outputText = formatWaitOutput(
+              results,
+              deduped,
+              WAIT_FOR_AGENTS_OUTPUT_MAX_TOKENS,
+            );
             const hasFailures = results.some((result) => result.status !== "success");
             const statusText = formatSubagentStatusLine({
               costTotal: getWaitCostTotal(results),
@@ -187,7 +207,7 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
               fullText: resultText,
             });
             const uiEvent: ToolUiEvent = {
-              type: "wait_for_agent_finished",
+              type: "wait_for_agents_finished",
               toolCallId: toolCall.id,
               agentIds: deduped,
               headerTarget: dedupedTarget,
@@ -199,14 +219,14 @@ export function createWaitForAgentToolDefinition(): ToolDefinition {
             return { kind: "single", toolResult, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            const reason = message.trim() || "The wait_for_agent request failed.";
+            const reason = message.trim() || "The wait_for_agents request failed.";
             const uiText = buildSubagentUiText({
               output: reason,
               statusText: "error",
               fullText: reason,
             });
             const uiEvent: ToolUiEvent = {
-              type: "wait_for_agent_finished",
+              type: "wait_for_agents_finished",
               toolCallId: toolCall.id,
               agentIds: deduped,
               headerTarget: dedupedTarget,

@@ -131,7 +131,7 @@ describe("ToolUiRegistry", () => {
     expect(sendFinished).toContain("agent-1");
 
     const waitStarted = renderEvent(registry, theme, {
-      type: "wait_for_agent_started",
+      type: "wait_for_agents_started",
       toolCallId: "w1",
       agentIds: ["agent-1", "agent-2"],
       headerTarget: "agent-1, agent-2",
@@ -139,7 +139,7 @@ describe("ToolUiRegistry", () => {
     expect(waitStarted).toContain("waiting");
 
     const waitFinished = renderEvent(registry, theme, {
-      type: "wait_for_agent_finished",
+      type: "wait_for_agents_finished",
       toolCallId: "w1",
       agentIds: ["agent-1", "agent-2"],
       headerTarget: "agent-1, agent-2",

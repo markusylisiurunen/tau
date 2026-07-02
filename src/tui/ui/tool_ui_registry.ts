@@ -573,8 +573,8 @@ export function createToolUiRegistry(): ToolUiRegistry {
     });
   });
 
-  registry.register("wait_for_agent_started", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_started" }>;
+  registry.register("wait_for_agents_started", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agents_started" }>;
     const title = uiEvent.headerTarget;
     return buildSubagentRunningView({
       theme: context.theme,
@@ -583,8 +583,8 @@ export function createToolUiRegistry(): ToolUiRegistry {
     });
   });
 
-  registry.register("wait_for_agent_finished", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_finished" }>;
+  registry.register("wait_for_agents_finished", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agents_finished" }>;
     const title = uiEvent.headerTarget;
     return buildSubagentFinishedView({
       theme: context.theme,
@@ -600,8 +600,8 @@ export function createToolUiRegistry(): ToolUiRegistry {
     });
   });
 
-  registry.register("wait_for_agent_blocked", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agent_blocked" }>;
+  registry.register("wait_for_agents_blocked", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "wait_for_agents_blocked" }>;
     const title = uiEvent.headerTarget;
     return buildSimpleToolFinishedView({
       theme: context.theme,

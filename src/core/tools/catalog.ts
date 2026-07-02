@@ -19,7 +19,7 @@ import {
   TOOL_NAME_WRITE,
 } from "./tool_names.js";
 import { createViewImageToolDefinition } from "./view_image.js";
-import { createWaitForAgentToolDefinition } from "./wait_for_agent.js";
+import { createWaitForAgentsToolDefinition } from "./wait_for_agents.js";
 import { createWebFetchToolDefinition } from "./web_fetch.js";
 import { createWebSearchToolDefinition } from "./web_search.js";
 import { createWriteToolDefinition } from "./write.js";
@@ -40,7 +40,7 @@ export const ToolCatalog = {
       createDiffReviewToolDefinition(options?.diffReview),
       createSpawnAgentToolDefinition(backend),
       createSendInputToAgentToolDefinition(backend),
-      createWaitForAgentToolDefinition(),
+      createWaitForAgentsToolDefinition(),
       createTerminateAgentToolDefinition(),
     ]);
   },

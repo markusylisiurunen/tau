@@ -27,7 +27,7 @@ import { TOOL_NAME_SPAWN_AGENT } from "./tool_names.js";
 
 const SPAWN_AGENT_DESCRIPTION = [
   "Spawn a subagent to run in the background and return its id.",
-  "Use wait_for_agent to collect outputs once it finishes.",
+  "Use wait_for_agents to collect outputs once it finishes.",
   "See your system instructions for available subagents and their capabilities.",
 ].join(" ");
 

@@ -8,7 +8,7 @@ import {
   TOOL_NAME_SPAWN_AGENT,
   TOOL_NAME_TERMINATE_AGENT,
   TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WAIT_FOR_AGENT,
+  TOOL_NAME_WAIT_FOR_AGENTS,
   TOOL_NAME_WRITE,
 } from "./tools/tool_names.js";
 import type { Persona } from "./types.js";
@@ -329,7 +329,7 @@ const BASE_TOOLS: NonNullable<Persona["tools"]> = [
 const SUBAGENT_TOOLS: NonNullable<Persona["tools"]> = [
   TOOL_NAME_SPAWN_AGENT,
   TOOL_NAME_SEND_INPUT_TO_AGENT,
-  TOOL_NAME_WAIT_FOR_AGENT,
+  TOOL_NAME_WAIT_FOR_AGENTS,
   TOOL_NAME_TERMINATE_AGENT,
 ];
 

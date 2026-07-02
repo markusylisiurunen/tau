@@ -119,7 +119,7 @@ export { createSendInputToAgentToolDefinition } from "./tools/send_input_to_agen
 export { createSpawnAgentToolDefinition } from "./tools/spawn_agent.js";
 export { createTerminateAgentToolDefinition } from "./tools/terminate_agent.js";
 export { createViewImageToolDefinition } from "./tools/view_image.js";
-export { createWaitForAgentToolDefinition } from "./tools/wait_for_agent.js";
+export { createWaitForAgentsToolDefinition } from "./tools/wait_for_agents.js";
 export { createWriteToolDefinition } from "./tools/write.js";
 export type { Persona, ReasoningEffort, RiskLevel, Skill } from "./types.js";
 export { REASONING_LEVELS } from "./types.js";

@@ -274,16 +274,20 @@ export class SubagentControlPlane {
     this.emit({ type: "subagent_emit_output", id, text: payload });
   }
 
-  async waitFor(ids: string[], signal?: AbortSignal): Promise<SubagentResult[]> {
+  async waitForAgents(ids: string[], signal?: AbortSignal): Promise<SubagentResult[]> {
     const missing = ids.filter((id) => !this.records.has(id));
     if (missing.length > 0) {
       throw new Error(`Unknown subagent ID(s): ${missing.join(", ")}`);
     }
 
+    const completed = this.getCompletedRecords(ids);
+    if (completed.length > 0) {
+      return completed.map((record) => this.toResult(record));
+    }
+
     const completions = ids.map((id) => this.waitForRecord(id));
-    const all = Promise.all(completions);
-    const resolved = await raceWithAbort(all, signal);
-    return resolved.map((record) => this.toResult(record));
+    await raceWithAbort(Promise.race(completions), signal);
+    return this.getCompletedRecords(ids).map((record) => this.toResult(record));
   }
 
   async terminate(id: string, signal?: AbortSignal): Promise<SubagentResult | undefined> {
@@ -400,6 +404,14 @@ export class SubagentControlPlane {
         }
         return record;
       });
+  }
+
+  private getCompletedRecords(ids: string[]): SubagentRecord[] {
+    return ids
+      .map((id) => this.records.get(id))
+      .filter(
+        (record): record is SubagentRecord => record !== undefined && record.status !== "running",
+      );
   }
 
   private async waitForRecord(id: string): Promise<SubagentRecord> {

@@ -18,7 +18,6 @@ import type {
   ThemeDefinition,
 } from "./core/index.js";
 import {
-  AsyncCliError,
   AuthStorage,
   CliError,
   createDefaultConfigDeps,
@@ -31,21 +30,22 @@ import {
   loadRuntimeConfig,
   parseCliArgs,
   parsePersonaString,
-  printAsyncHelp,
   printDebugInfo,
   printDiffToolHelp,
   printHelp,
   printInstallHelp,
+  printTelegramHelp,
   printUsageHelp,
-  runAsyncCommand,
   runInstallCommand,
   runListCommand,
   runLoginCommand,
   runLogoutCommand,
   runRpcServer,
+  runTelegramCommand,
   runToolCommand,
   runUsageCommand,
   runWebSocketSessionServer,
+  TelegramCliError,
   ToolCatalog,
   ToolCliError,
   UsageCliError,
@@ -744,23 +744,23 @@ if (argv[0] === "install") {
   }
 }
 
-if (argv[0] === "async") {
+if (argv[0] === "telegram") {
   try {
-    const asyncConfig = loadConfig(cwd, configDeps);
-    await runAsyncCommand(argv.slice(1), {
+    const telegramConfig = loadConfig(cwd, configDeps);
+    await runTelegramCommand(argv.slice(1), {
       cwd,
       env: process.env,
-      config: asyncConfig,
+      config: telegramConfig,
       createSessionClient: createTauSdkClient,
     });
     process.exit(0);
   } catch (err) {
-    if (err instanceof AsyncCliError) {
+    if (err instanceof TelegramCliError) {
       // eslint-disable-next-line no-console
       console.error(err.message);
       // eslint-disable-next-line no-console
       console.error("");
-      printAsyncHelp();
+      printTelegramHelp();
       process.exit(1);
     }
     throw err;

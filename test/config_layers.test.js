@@ -420,126 +420,6 @@ describe("config paths", () => {
     }
   });
 
-  it("merges async client config targets by key", () => {
-    const fx = setupFixture();
-
-    try {
-      const repo = join(fx.home, "repo");
-      const nested = join(repo, "packages", "pkg1");
-      mkdirSync(nested, { recursive: true });
-      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
-      mkdirSync(join(repo, ".tau"), { recursive: true });
-      mkdirSync(join(nested, ".tau"), { recursive: true });
-
-      writeFileSync(
-        join(fx.home, ".config", "tau", "config.json"),
-        JSON.stringify({
-          async: {
-            client: {
-              defaultTarget: "global",
-              defaultProjectId: "global-project",
-              targets: {
-                global: { url: "http://global", token: "global-token", timeoutMs: 5000 },
-              },
-            },
-          },
-        }),
-      );
-
-      writeFileSync(
-        join(repo, ".tau", "config.json"),
-        JSON.stringify({
-          async: {
-            client: {
-              defaultTarget: "repo",
-              defaultProjectId: "repo-project",
-              targets: {
-                repo: { url: "http://repo", token: "repo-token" },
-              },
-            },
-          },
-        }),
-      );
-
-      const deps = createConfigDeps({
-        cwd: nested,
-        home: fx.home,
-        env: {},
-      });
-
-      const config = loadConfig(nested, deps);
-      expect(config.async).toEqual({
-        client: {
-          defaultTarget: "repo",
-          defaultProjectId: "repo-project",
-          targets: {
-            global: { url: "http://global", token: "global-token", timeoutMs: 5000 },
-            repo: { url: "http://repo", token: "repo-token" },
-          },
-        },
-      });
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("allows partial async client target overrides across config levels", () => {
-    const fx = setupFixture();
-
-    try {
-      const repo = join(fx.home, "repo");
-      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
-      mkdirSync(join(repo, ".tau"), { recursive: true });
-
-      writeFileSync(
-        join(fx.home, ".config", "tau", "config.json"),
-        JSON.stringify({
-          async: {
-            client: {
-              targets: {
-                dev: { url: "http://global", token: "global-token", timeoutMs: 5000 },
-              },
-            },
-          },
-        }),
-      );
-
-      writeFileSync(
-        join(repo, ".tau", "config.json"),
-        JSON.stringify({
-          async: {
-            client: {
-              targets: {
-                dev: { timeoutMs: 1000 },
-              },
-            },
-          },
-        }),
-      );
-
-      const deps = createConfigDeps({
-        cwd: repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const levels = resolveConfigLevels(deps, { cwd: repo });
-      const modelResolver = loadModelResolver({ deps, levels });
-      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
-
-      expect(result.errors).toEqual([]);
-      expect(result.config.async).toEqual({
-        client: {
-          targets: {
-            dev: { url: "http://global", token: "global-token", timeoutMs: 1000 },
-          },
-        },
-      });
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("reports unknown top-level config keys", () => {
     const fx = setupFixture();
 
@@ -547,7 +427,7 @@ describe("config paths", () => {
       mkdirSync(join(fx.repo, ".tau"), { recursive: true });
       writeFileSync(
         join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({ bogus: { value: "ignored" } }),
+        JSON.stringify({ async: { client: {} } }),
         "utf-8",
       );
 
@@ -562,7 +442,7 @@ describe("config paths", () => {
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
 
       expect(result.errors).toContain(
-        `${join(fx.repo, ".tau", "config.json")}: unknown key in config: bogus.`,
+        `${join(fx.repo, ".tau", "config.json")}: unknown key in config: async.`,
       );
     } finally {
       fx.cleanup();

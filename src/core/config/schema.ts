@@ -35,7 +35,6 @@ export interface Config {
   speechToText?: SpeechToTextConfig;
   cloudflareSandbox?: CloudflareSandboxConfig;
   flySprites?: FlySpritesConfig;
-  async?: AsyncConfig;
 }
 
 export type BuiltInDiffToolConfig = {
@@ -90,19 +89,7 @@ export function normalizeAutoCompactConfig(
   return { ...DEFAULT_AUTO_COMPACT_CONFIG, ...config };
 }
 
-export type AsyncClientTargetConfig = {
-  url?: string;
-  token?: string;
-  timeoutMs?: number;
-};
-
-export type AsyncClientConfig = {
-  defaultTarget?: string;
-  defaultProjectId?: string;
-  targets?: Record<string, AsyncClientTargetConfig>;
-};
-
-export type AsyncServerTelegramBotConfig = {
+export type TelegramBotConfig = {
   botToken?: string;
   allowedProjectIds?: string[];
   allowedUserIds?: number[];
@@ -113,17 +100,9 @@ export type AsyncServerTelegramBotConfig = {
   requestTimeoutSeconds?: number;
 };
 
-export type AsyncServerTelegramConfig = Record<string, AsyncServerTelegramBotConfig>;
+export type TelegramBotConfigMap = Record<string, TelegramBotConfig>;
 
-export type AsyncServerConfig = {
-  host?: string;
-  port?: number;
-  authToken?: string;
-  maxSessions?: number;
-  telegram?: AsyncServerTelegramConfig;
-};
-
-export type AsyncProjectConfig = {
+export type TelegramProjectConfig = {
   repo: string;
   ref?: string;
   workspaceRoot?: string;
@@ -134,10 +113,6 @@ export type AsyncProjectConfig = {
   persona?: string;
   riskLevel?: RiskLevel;
   noAgentContextFiles?: boolean;
-};
-
-export type AsyncConfig = {
-  client?: AsyncClientConfig;
 };
 
 type ConfigDiagnostics = {
@@ -215,7 +190,6 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS = new Set([
   "speechToText",
   "cloudflareSandbox",
   "flySprites",
-  "async",
 ]);
 
 const NonEmptyStringSchema = z.string().trim().min(1);
@@ -268,11 +242,6 @@ const AutoCompactConfigSchema = z
     keepRecentTokens: PositiveIntegerSchema.optional(),
   })
   .strict();
-const AsyncClientTargetSchema = z.object({
-  url: NonEmptyStringSchema.optional(),
-  token: NonEmptyStringSchema.optional(),
-  timeoutMs: PositiveIntegerSchema.optional(),
-});
 
 function parseOptionalFields(
   data: Record<string, unknown>,
@@ -533,9 +502,6 @@ function validateConfigData(
     flySpritesResult.config,
     flySpritesResult.errors,
   );
-
-  const asyncResult = parseAsyncConfig(data.async, sourceLabel);
-  assignParsedConfigValue(config, errors, "async", asyncResult.config, asyncResult.errors);
 
   return { config, errors };
 }
@@ -803,147 +769,6 @@ function parseModelSystemNotices(
   return { notices, errors };
 }
 
-function parseAsyncClientTarget(
-  raw: unknown,
-  sourceLabel: string,
-  key: string,
-): { config?: AsyncClientTargetConfig; errors: string[] } {
-  const parsedRecord = StringRecordSchema.safeParse(raw);
-  if (!parsedRecord.success) {
-    return { errors: [`${sourceLabel}: async.client.targets.${key} must be an object.`] };
-  }
-
-  const parsedTarget = AsyncClientTargetSchema.safeParse(parsedRecord.data);
-  if (parsedTarget.success) {
-    return { config: parsedTarget.data, errors: [] };
-  }
-
-  const errors = new Set<string>();
-  for (const issue of parsedTarget.error.issues) {
-    switch (issue.path[0]) {
-      case "url":
-        errors.add(`${sourceLabel}: async.client.targets.${key}.url must be a non-empty string.`);
-        break;
-      case "token":
-        errors.add(`${sourceLabel}: async.client.targets.${key}.token must be a non-empty string.`);
-        break;
-      case "timeoutMs":
-        errors.add(
-          `${sourceLabel}: async.client.targets.${key}.timeoutMs must be a positive integer.`,
-        );
-        break;
-      default:
-        break;
-    }
-  }
-
-  return { errors: [...errors] };
-}
-
-function parseAsyncClientConfig(
-  raw: unknown,
-  sourceLabel: string,
-): { config?: AsyncClientConfig; errors: string[] } {
-  if (raw === undefined) {
-    return { errors: [] };
-  }
-
-  const parsedRecord = StringRecordSchema.safeParse(raw);
-  if (!parsedRecord.success) {
-    return { errors: [`${sourceLabel}: async.client must be an object.`] };
-  }
-
-  const data = parsedRecord.data;
-  const config: AsyncClientConfig = {};
-  const scalarResult = parseOptionalFields(data, sourceLabel, [
-    [
-      "defaultTarget",
-      NonEmptyStringSchema,
-      "async.client.defaultTarget must be a non-empty string.",
-    ],
-    [
-      "defaultProjectId",
-      NonEmptyStringSchema,
-      "async.client.defaultProjectId must be a non-empty string.",
-    ],
-  ]);
-  Object.assign(config as Record<string, unknown>, scalarResult.values);
-
-  const errors: string[] = [...scalarResult.errors];
-
-  if (data.targets !== undefined) {
-    const parsedTargetsRecord = StringRecordSchema.safeParse(data.targets);
-    if (!parsedTargetsRecord.success) {
-      errors.push(`${sourceLabel}: async.client.targets must be an object.`);
-    } else {
-      const targets: Record<string, AsyncClientTargetConfig> = {};
-      for (const [key, value] of Object.entries(parsedTargetsRecord.data)) {
-        const parsedTargetKey = NonEmptyStringSchema.safeParse(key);
-        if (!parsedTargetKey.success) {
-          errors.push(`${sourceLabel}: async.client.targets keys must be non-empty.`);
-          continue;
-        }
-
-        const parsedTarget = parseAsyncClientTarget(value, sourceLabel, key);
-        if (parsedTarget.config) {
-          targets[key] = parsedTarget.config;
-        }
-        errors.push(...parsedTarget.errors);
-      }
-
-      if (Object.keys(targets).length > 0) {
-        config.targets = targets;
-      }
-    }
-  }
-
-  if (Object.keys(config).length === 0) {
-    return { errors };
-  }
-
-  return { config, errors };
-}
-
-function parseAsyncConfig(
-  raw: unknown,
-  sourceLabel: string,
-): { config?: AsyncConfig; errors: string[] } {
-  if (raw === undefined) {
-    return { errors: [] };
-  }
-
-  const parsedRecord = StringRecordSchema.safeParse(raw);
-  if (!parsedRecord.success) {
-    return { errors: [`${sourceLabel}: 'async' must be an object.`] };
-  }
-
-  const data = parsedRecord.data;
-  const config: AsyncConfig = {};
-  const errors: string[] = [];
-
-  const clientResult = parseAsyncClientConfig(data.client, sourceLabel);
-  if (clientResult.config) {
-    config.client = clientResult.config;
-  }
-  errors.push(...clientResult.errors);
-
-  const movedAsyncFields = ["server", "projects"] as const;
-  for (const field of movedAsyncFields) {
-    if (data[field] === undefined) {
-      continue;
-    }
-    errors.push(
-      `${sourceLabel}: async.${field} was moved to daemon config file. use 'tau async daemon --config-file <path>'.`,
-    );
-  }
-
-  if (Object.keys(config).length === 0) {
-    return { errors };
-  }
-
-  return { config, errors };
-}
-
 function loadConfigFile(
   level: ConfigLevel,
   deps: ConfigDeps,
@@ -1009,45 +834,6 @@ function mergeSubagentsConfig(
   return merged;
 }
 
-function mergeAsyncClientConfig(
-  target: AsyncClientConfig | undefined,
-  overlay: AsyncClientConfig | undefined,
-): AsyncClientConfig | undefined {
-  if (!target && !overlay) {
-    return undefined;
-  }
-
-  const merged: AsyncClientConfig = {
-    ...(target ?? {}),
-  };
-
-  if (overlay?.defaultTarget !== undefined) {
-    merged.defaultTarget = overlay.defaultTarget;
-  }
-
-  if (overlay?.defaultProjectId !== undefined) {
-    merged.defaultProjectId = overlay.defaultProjectId;
-  }
-
-  if (target?.targets || overlay?.targets) {
-    const targets = new Map<string, AsyncClientTargetConfig>();
-
-    for (const [key, value] of Object.entries(target?.targets ?? {})) {
-      targets.set(key, { ...value });
-    }
-
-    for (const [key, value] of Object.entries(overlay?.targets ?? {})) {
-      targets.set(key, mergeOptionalObject(targets.get(key), value) ?? value);
-    }
-
-    if (targets.size > 0) {
-      merged.targets = Object.fromEntries(targets.entries());
-    }
-  }
-
-  return merged;
-}
-
 function mergeCloudflareSandboxConfig(
   target: CloudflareSandboxConfig | undefined,
   overlay: CloudflareSandboxConfig | undefined,
@@ -1086,23 +872,6 @@ function mergeFlySpritesConfig(
   return apis.size > 0 ? { apis: Object.fromEntries(apis.entries()) } : undefined;
 }
 
-function mergeAsyncConfig(
-  target: AsyncConfig | undefined,
-  overlay: AsyncConfig | undefined,
-): AsyncConfig | undefined {
-  if (!target && !overlay) {
-    return undefined;
-  }
-
-  const merged: AsyncConfig = {
-    ...(target ?? {}),
-    ...(overlay ?? {}),
-    client: mergeAsyncClientConfig(target?.client, overlay?.client),
-  };
-
-  return merged;
-}
-
 function resolveAgentContextPaths(level: ConfigLevel, rawPaths: string[]): string[] {
   const root = level.levelRoot;
   return rawPaths.map((entry) => resolve(root, entry));
@@ -1129,7 +898,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let speechToText: SpeechToTextConfig | undefined;
   let cloudflareSandbox: CloudflareSandboxConfig | undefined;
   let flySprites: FlySpritesConfig | undefined;
-  let asyncConfig: AsyncConfig | undefined;
   const agentContextFiles: string[] = [];
 
   for (let i = 0; i < levels.length; i += 1) {
@@ -1153,7 +921,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     }
     cloudflareSandbox = mergeCloudflareSandboxConfig(cloudflareSandbox, config.cloudflareSandbox);
     flySprites = mergeFlySpritesConfig(flySprites, config.flySprites);
-    asyncConfig = mergeAsyncConfig(asyncConfig, config.async);
 
     if (config.defaultPersona !== undefined) {
       merged.defaultPersona = config.defaultPersona;
@@ -1210,10 +977,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (flySprites) {
     merged.flySprites = flySprites;
-  }
-
-  if (asyncConfig && Object.keys(asyncConfig).length > 0) {
-    merged.async = asyncConfig;
   }
 
   if (agentContextFiles.length > 0) {

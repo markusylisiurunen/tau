@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
-import { startAsyncTelegramAdapter } from "../dist/core/async/telegram.js";
+import { startTelegramAdapter } from "../dist/core/telegram/adapter.js";
 
 async function startAdapter(options) {
-  return startAsyncTelegramAdapter({
+  return startTelegramAdapter({
     botId: "bot-default",
     ...options,
   });
@@ -42,6 +42,9 @@ function getRequestUrl(input) {
 function createApiHarness(updateBatches, options = {}) {
   const queue = [...updateBatches];
   const sendMessages = [];
+  const sendRichMessages = [];
+  const messageDrafts = [];
+  const chatActions = [];
   const downloadFileCalls = [];
   const setCommandsCalls = [];
   const setMessageReactions = [];
@@ -58,6 +61,15 @@ function createApiHarness(updateBatches, options = {}) {
     }),
     sendMessage: vi.fn(async (chatId, text, options) => {
       sendMessages.push({ chatId, text, options, sentAt: Date.now() });
+    }),
+    sendRichMessage: vi.fn(async (chatId, markdown, options) => {
+      sendRichMessages.push({ chatId, markdown, options, sentAt: Date.now() });
+    }),
+    sendMessageDraft: vi.fn(async (chatId, draftId, text) => {
+      messageDrafts.push({ chatId, draftId, text, sentAt: Date.now() });
+    }),
+    sendChatAction: vi.fn(async (chatId, action) => {
+      chatActions.push({ chatId, action, sentAt: Date.now() });
     }),
     downloadFile: vi.fn(async (fileId) => {
       downloadFileCalls.push(fileId);
@@ -77,6 +89,9 @@ function createApiHarness(updateBatches, options = {}) {
   return {
     api,
     sendMessages,
+    sendRichMessages,
+    messageDrafts,
+    chatActions,
     downloadFileCalls,
     setCommandsCalls,
     setMessageReactions,
@@ -187,7 +202,7 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
   };
 }
 
-describe("async telegram adapter", () => {
+describe("telegram adapter", () => {
   it("advertises telegram slash commands", async () => {
     const apiHarness = createApiHarness([]);
     const managerHarness = createSessionManagerHarness();
@@ -204,16 +219,9 @@ describe("async telegram adapter", () => {
     try {
       await waitFor(() => apiHarness.setCommandsCalls.length === 1);
       expect(apiHarness.setCommandsCalls[0]).toEqual([
-        { command: "help", description: "show supported commands" },
         { command: "new", description: "start a new session" },
-        { command: "projects", description: "list configured projects" },
-        { command: "use", description: "switch active session" },
-        { command: "sessions", description: "list sessions" },
         { command: "status", description: "show active session status" },
         { command: "interrupt", description: "interrupt active run" },
-        { command: "close", description: "close session(s)" },
-        { command: "verbose", description: "stream progress updates" },
-        { command: "quiet", description: "only send final assistant message" },
       ]);
     } finally {
       await adapter.close();
@@ -228,7 +236,7 @@ describe("async telegram adapter", () => {
           message: {
             chat: { id: 10, type: "group" },
             from: { id: 5 },
-            text: "/sessions",
+            text: "/new",
           },
         },
         {
@@ -236,24 +244,13 @@ describe("async telegram adapter", () => {
           message: {
             chat: { id: 20, type: "private" },
             from: { id: 5 },
-            text: "/sessions",
+            text: "/new",
           },
         },
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness(
-      [
-        {
-          id: "s1",
-          projectId: "demo",
-          state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
-      ],
-      { defaultOwnerId: ownerIdForChat(20) },
-    );
+    const managerHarness = createSessionManagerHarness();
 
     const adapter = await startAdapter({
       botToken: "token",
@@ -265,10 +262,12 @@ describe("async telegram adapter", () => {
     });
 
     try {
-      await waitFor(() => apiHarness.sendMessages.length === 1);
-      expect(managerHarness.manager.listSessions).toHaveBeenCalledTimes(1);
-      expect(apiHarness.sendMessages[0].chatId).toBe(20);
-      expect(apiHarness.sendMessages[0].text).toContain("s1");
+      await waitFor(() => managerHarness.manager.createSession.mock.calls.length === 1);
+      expect(managerHarness.manager.createSession).toHaveBeenCalledWith({
+        projectId: "demo",
+        ownerId: ownerIdForChat(20),
+      });
+      expect(apiHarness.sendMessages).toEqual([]);
     } finally {
       await adapter.close();
     }
@@ -579,7 +578,7 @@ describe("async telegram adapter", () => {
           message: {
             chat: { id: groupChatId, type: "group" },
             from: { id: 7, first_name: "Ada" },
-            text: "/sessions",
+            text: "/new",
           },
         },
         {
@@ -587,7 +586,7 @@ describe("async telegram adapter", () => {
           message: {
             chat: { id: groupChatId, type: "group" },
             from: { id: 7, first_name: "Ada" },
-            text: "/sessions@other_bot @tau_bot",
+            text: "/new@other_bot @tau_bot",
           },
         },
         {
@@ -595,7 +594,7 @@ describe("async telegram adapter", () => {
           message: {
             chat: { id: groupChatId, type: "group" },
             from: { id: 7, first_name: "Ada" },
-            text: "/sessions@tau_bot",
+            text: "/new@tau_bot",
           },
         },
         {
@@ -603,7 +602,7 @@ describe("async telegram adapter", () => {
           message: {
             chat: { id: groupChatId, type: "group" },
             from: { id: 7, first_name: "Ada" },
-            text: "/sessions @tau_bot",
+            text: "/new @tau_bot",
           },
         },
         {
@@ -611,23 +610,12 @@ describe("async telegram adapter", () => {
           message: {
             chat: { id: groupChatId, type: "group" },
             from: { id: 7, first_name: "Ada" },
-            text: "@tau_bot /sessions",
+            text: "@tau_bot /new",
           },
         },
       ],
     ]);
-    const managerHarness = createSessionManagerHarness(
-      [
-        {
-          id: "s-group",
-          projectId: "demo",
-          state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
-      ],
-      { defaultOwnerId: ownerIdForChat(groupChatId) },
-    );
+    const managerHarness = createSessionManagerHarness();
 
     const adapter = await startAdapter({
       botToken: "token",
@@ -640,17 +628,11 @@ describe("async telegram adapter", () => {
     });
 
     try {
-      await waitFor(() => apiHarness.sendMessages.length === 3);
-      expect(managerHarness.manager.listSessions).toHaveBeenCalledTimes(3);
-      expect(apiHarness.sendMessages.map((message) => message.chatId)).toEqual([
-        groupChatId,
-        groupChatId,
-        groupChatId,
-      ]);
-      expect(apiHarness.sendMessages.map((message) => message.text)).toEqual([
-        expect.stringContaining("s-group"),
-        expect.stringContaining("s-group"),
-        expect.stringContaining("s-group"),
+      await waitFor(() => managerHarness.manager.createSession.mock.calls.length === 3);
+      expect(managerHarness.manager.createSession.mock.calls).toEqual([
+        [{ projectId: "demo", ownerId: ownerIdForChat(groupChatId) }],
+        [{ projectId: "demo", ownerId: ownerIdForChat(groupChatId) }],
+        [{ projectId: "demo", ownerId: ownerIdForChat(groupChatId) }],
       ]);
     } finally {
       await adapter.close();
@@ -835,14 +817,6 @@ describe("async telegram adapter", () => {
         {
           update_id: 1,
           message: {
-            chat: { id: 210, type: "private" },
-            from: { id: 7 },
-            text: "/use s21",
-          },
-        },
-        {
-          update_id: 2,
-          message: {
             message_id: 902,
             chat: { id: 210, type: "private" },
             from: { id: 7 },
@@ -903,14 +877,6 @@ describe("async telegram adapter", () => {
       [
         {
           update_id: 1,
-          message: {
-            chat: { id: 211, type: "private" },
-            from: { id: 7 },
-            text: "/use s22",
-          },
-        },
-        {
-          update_id: 2,
           message: {
             chat: { id: 211, type: "private" },
             from: { id: 7 },
@@ -985,7 +951,7 @@ describe("async telegram adapter", () => {
     }
   });
 
-  it("supports /close all for waiting-input and failed sessions", async () => {
+  it("rejects removed session-management commands", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -999,46 +965,7 @@ describe("async telegram adapter", () => {
       ],
     ]);
 
-    const managerHarness = createSessionManagerHarness(
-      [
-        {
-          id: "s1",
-          projectId: "demo",
-          state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
-        {
-          id: "s2",
-          projectId: "demo",
-          state: "running",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
-        {
-          id: "s3",
-          projectId: "demo",
-          state: "failed",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
-        {
-          id: "s5",
-          projectId: "demo",
-          state: "queued",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
-        {
-          id: "s6",
-          projectId: "demo",
-          state: "preparing-workspace",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
-      ],
-      { defaultOwnerId: ownerIdForChat(330) },
-    );
+    const managerHarness = createSessionManagerHarness();
 
     const adapter = await startAdapter({
       botToken: "token",
@@ -1050,12 +977,11 @@ describe("async telegram adapter", () => {
     });
 
     try {
-      await waitFor(() => managerHarness.manager.closeSession.mock.calls.length === 2);
-      expect(managerHarness.manager.closeSession).toHaveBeenCalledWith("s1");
-      expect(managerHarness.manager.closeSession).toHaveBeenCalledWith("s3");
-      expect(
-        apiHarness.sendMessages.some((entry) => entry.text === "closed 2 idle sessions."),
-      ).toBe(true);
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(apiHarness.sendMessages[0].text).toBe(
+        "unsupported command. supported commands: /new, /status, /interrupt",
+      );
+      expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
     } finally {
       await adapter.close();
     }
@@ -1069,15 +995,7 @@ describe("async telegram adapter", () => {
           message: {
             chat: { id: 470, type: "private" },
             from: { id: 7 },
-            text: "/use s12",
-          },
-        },
-        {
-          update_id: 2,
-          message: {
-            chat: { id: 470, type: "private" },
-            from: { id: 7 },
-            text: "/quiet",
+            text: "start",
           },
         },
       ],
@@ -1106,7 +1024,7 @@ describe("async telegram adapter", () => {
     });
 
     try {
-      await waitFor(() => apiHarness.sendMessages.length >= 2);
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
 
       managerHarness.manager.emit({
         type: "session-state-changed",
@@ -1162,8 +1080,18 @@ describe("async telegram adapter", () => {
         updatedAt: "2024-01-01T00:05:00.000Z",
       });
 
-      await waitFor(() => apiHarness.sendMessages.some((entry) => entry.text === "final answer"));
+      await waitFor(() =>
+        apiHarness.sendRichMessages.some((entry) => entry.markdown === "final answer"),
+      );
 
+      expect(apiHarness.chatActions).toContainEqual(
+        expect.objectContaining({ chatId: 470, action: "typing" }),
+      );
+      expect(apiHarness.messageDrafts).toEqual([
+        expect.objectContaining({ chatId: 470, text: "" }),
+        expect.objectContaining({ chatId: 470, text: "intermediate" }),
+        expect.objectContaining({ chatId: 470, text: "final answer" }),
+      ]);
       expect(
         apiHarness.sendMessages.some((entry) => entry.text.includes("(s12) run started")),
       ).toBe(false);
@@ -1181,6 +1109,57 @@ describe("async telegram adapter", () => {
     }
   });
 
+  it("logs notification send failures from session events", async () => {
+    const apiHarness = createApiHarness([
+      [{ update_id: 1, message: { chat: { id: 472, type: "private" }, text: "/new" } }],
+    ]);
+    apiHarness.api.sendRichMessage.mockRejectedValueOnce(new Error("telegram unavailable"));
+    const managerHarness = createSessionManagerHarness();
+    const logs = [];
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.createSession.mock.calls.length === 1);
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s1",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:04:00.000Z",
+        progress: { type: "assistant-message", text: "final answer" },
+      });
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s1",
+        projectId: "demo",
+        previousState: "running",
+        state: "waiting-input",
+        updatedAt: "2024-01-01T00:05:00.000Z",
+      });
+
+      await waitFor(() =>
+        logs.some(
+          (entry) =>
+            entry.level === "warn" &&
+            entry.message === "failed to send telegram notification" &&
+            entry.data?.cause === "telegram unavailable",
+        ),
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("splits oversized quiet-mode replies into multiple telegram messages", async () => {
     const apiHarness = createApiHarness([
       [
@@ -1189,7 +1168,7 @@ describe("async telegram adapter", () => {
           message: {
             chat: { id: 471, type: "private" },
             from: { id: 7 },
-            text: "/use s13",
+            text: "start",
           },
         },
       ],
@@ -1217,10 +1196,10 @@ describe("async telegram adapter", () => {
       requestTimeoutSeconds: 1,
     });
 
-    const finalAnswer = "🙂".repeat(1500);
+    const finalAnswer = "🙂".repeat(9000);
 
     try {
-      await waitFor(() => apiHarness.sendMessages.length >= 1);
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
 
       managerHarness.manager.emit({
         type: "session-state-changed",
@@ -1254,15 +1233,19 @@ describe("async telegram adapter", () => {
 
       await waitFor(
         () =>
-          apiHarness.sendMessages.filter((entry) => String(entry.text).startsWith("🙂")).length ===
-          2,
+          apiHarness.sendRichMessages.filter((entry) => String(entry.markdown).startsWith("🙂"))
+            .length === 2,
         4000,
       );
 
-      const chunks = apiHarness.sendMessages.filter((entry) => String(entry.text).startsWith("🙂"));
-      expect(chunks.map((entry) => entry.text).join("")).toBe(finalAnswer);
+      const chunks = apiHarness.sendRichMessages.filter((entry) =>
+        String(entry.markdown).startsWith("🙂"),
+      );
+      expect(chunks.map((entry) => entry.markdown).join("")).toBe(finalAnswer);
       for (const chunk of chunks) {
-        expect(Buffer.byteLength(chunk.text, "utf8")).toBeLessThanOrEqual(3891);
+        expect(Buffer.byteLength(chunk.markdown, "utf8")).toBeLessThanOrEqual(
+          Math.floor(32 * 1024 * 0.95),
+        );
       }
       expect(chunks[1].sentAt - chunks[0].sentAt).toBeGreaterThanOrEqual(900);
     } finally {

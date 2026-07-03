@@ -1,6 +1,6 @@
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import type { AsyncProjectConfig } from "../config/schema.js";
+import type { TelegramProjectConfig } from "../config/schema.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
 
 export type WorkspaceLogLevel = "info" | "error";
@@ -14,7 +14,7 @@ export type WorkspaceLogEntry = {
 export type PrepareWorkspaceOptions = {
   sessionId: string;
   projectId: string;
-  project: AsyncProjectConfig;
+  project: TelegramProjectConfig;
   workspaceRoot: string;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;

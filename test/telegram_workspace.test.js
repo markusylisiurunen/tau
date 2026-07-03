@@ -11,9 +11,12 @@ vi.mock("../dist/core/utils/spawn_capture.js", () => ({
   spawnWithCapture: spawnWithCaptureMock,
 }));
 
-import { cleanupWorkspaceRootsOnStartup, prepareWorkspace } from "../dist/core/async/workspace.js";
+import {
+  cleanupWorkspaceRootsOnStartup,
+  prepareWorkspace,
+} from "../dist/core/telegram/workspace.js";
 
-describe("async workspace", () => {
+describe("telegram workspace", () => {
   const tempRoots = [];
 
   afterEach(async () => {
@@ -24,7 +27,7 @@ describe("async workspace", () => {
   });
 
   async function createWorkspaceRoot() {
-    const root = await mkdtemp(join(tmpdir(), "tau-async-workspace-"));
+    const root = await mkdtemp(join(tmpdir(), "tau-telegram-workspace-"));
     tempRoots.push(root);
     return join(root, "workspaces");
   }
@@ -48,7 +51,7 @@ describe("async workspace", () => {
   });
 
   it("returns failure records for non-directory roots and continues", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "tau-async-workspace-"));
+    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-workspace-"));
     tempRoots.push(tempRoot);
     const notDirectoryPath = join(tempRoot, "not-a-directory");
     await writeFile(notDirectoryPath, "value");

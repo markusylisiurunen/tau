@@ -2,15 +2,15 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { z } from "zod";
-import type { AsyncProjectConfig, SpeechToTextProvider } from "../config/schema.js";
+import type { SpeechToTextProvider, TelegramProjectConfig } from "../config/schema.js";
 import { transcribeAudio } from "../utils/speech_to_text.js";
 import { formatZodError } from "../utils/zod.js";
 import {
-  type AsyncSessionManager,
-  AsyncSessionManagerError,
-  type AsyncSessionManagerEvent,
-  type AsyncSessionRecord,
-  createScopedAsyncSessionManager,
+  createScopedTelegramSessionManager,
+  type TelegramSessionManager,
+  TelegramSessionManagerError,
+  type TelegramSessionManagerEvent,
+  type TelegramSessionRecord,
 } from "./session_manager.js";
 
 type TelegramChat = {
@@ -87,7 +87,7 @@ type TelegramBotCommand = {
   description: string;
 };
 
-export type AsyncTelegramApi = {
+export type TelegramApi = {
   getMe(): Promise<TelegramBotInfo>;
   getUpdates(args: {
     offset: number;
@@ -101,24 +101,33 @@ export type AsyncTelegramApi = {
       replyMarkup?: TelegramInlineKeyboardMarkup;
     },
   ): Promise<void>;
+  sendRichMessage(
+    chatId: number,
+    markdown: string,
+    options?: {
+      replyMarkup?: TelegramInlineKeyboardMarkup;
+    },
+  ): Promise<void>;
+  sendMessageDraft(chatId: number, draftId: number, text: string): Promise<void>;
+  sendChatAction(chatId: number, action: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
-  setCommands?(commands: TelegramBotCommand[]): Promise<void>;
-  setMessageReaction?(chatId: number, messageId: number): Promise<void>;
-  answerCallbackQuery?(callbackQueryId: string, text?: string): Promise<void>;
+  setCommands(commands: TelegramBotCommand[]): Promise<void>;
+  setMessageReaction(chatId: number, messageId: number): Promise<void>;
+  answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
 };
 
-export type AsyncTelegramLogLevel = "info" | "warn" | "error";
+export type TelegramLogLevel = "info" | "warn" | "error";
 
-export type AsyncTelegramLogEntry = {
-  level: AsyncTelegramLogLevel;
+export type TelegramLogEntry = {
+  level: TelegramLogLevel;
   message: string;
   data?: unknown;
 };
 
-export type AsyncTelegramAdapterOptions = {
+export type TelegramAdapterOptions = {
   botId: string;
   botToken: string;
-  projects: Record<string, AsyncProjectConfig>;
+  projects: Record<string, TelegramProjectConfig>;
   defaultProjectId?: string;
   systemMessage?: string;
   allowedUserIds?: number[];
@@ -128,13 +137,13 @@ export type AsyncTelegramAdapterOptions = {
   speechToTextProvider?: SpeechToTextProvider;
   geminiApiKey?: string;
   mistralApiKey?: string;
-  sessionManager: AsyncSessionManager;
-  api?: AsyncTelegramApi;
+  sessionManager: TelegramSessionManager;
+  api?: TelegramApi;
   fetchImpl?: typeof fetch;
-  onLog?: (entry: AsyncTelegramLogEntry) => void;
+  onLog?: (entry: TelegramLogEntry) => void;
 };
 
-export type AsyncTelegramAdapterHandle = {
+export type TelegramAdapterHandle = {
   close(): Promise<void>;
 };
 
@@ -197,8 +206,13 @@ type TelegramGroupPendingMessage = {
   errors?: string[];
 };
 
-type ResolvedAsyncTelegramAdapterOptions = AsyncTelegramAdapterOptions & {
-  api: AsyncTelegramApi;
+type TelegramDraftState = {
+  draftId: number;
+  preambleTimeout?: ReturnType<typeof setTimeout>;
+};
+
+type ResolvedTelegramAdapterOptions = TelegramAdapterOptions & {
+  api: TelegramApi;
   botUsername: string;
 };
 
@@ -214,22 +228,27 @@ const DEFAULT_TELEGRAM_DOCUMENT_MIME_TYPE = "application/octet-stream";
 const MESSAGE_QUEUED_REACTION_EMOJI = "👀";
 const MESSAGE_QUEUED_REACTION_DELAY_MS = 1000;
 const TELEGRAM_MAX_MESSAGE_BYTES = 4096;
+const TELEGRAM_MAX_RICH_MESSAGE_BYTES = 32 * 1024;
 
 const TELEGRAM_MESSAGE_BYTE_BUFFER_RATIO = 0.95;
 const TELEGRAM_SAFE_MESSAGE_BYTES = Math.floor(
   TELEGRAM_MAX_MESSAGE_BYTES * TELEGRAM_MESSAGE_BYTE_BUFFER_RATIO,
 );
+const TELEGRAM_RICH_MESSAGE_SAFE_BYTES = Math.floor(
+  TELEGRAM_MAX_RICH_MESSAGE_BYTES * TELEGRAM_MESSAGE_BYTE_BUFFER_RATIO,
+);
 const TELEGRAM_MESSAGE_SPLIT_DELAY_MS = 1000;
+const TELEGRAM_DRAFT_MAX_CHARS = 4096;
+const TELEGRAM_DRAFT_PREAMBLE_VISIBLE_MS = 5000;
+const TELEGRAM_TYPING_REFRESH_MS = 4000;
 const ABORTED = Symbol("aborted");
 const CALLBACK_ACTION_PREFIX = "tau:action:";
-const CALLBACK_USE_PREFIX = "tau:use:";
-const MAX_SESSION_PREVIEW_CHARS = 64;
 const MAX_TELEGRAM_ATTACHMENTS_PER_TURN = 10;
 const MAX_TELEGRAM_ATTACHMENT_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
 const MAX_TELEGRAM_GROUP_PENDING_MESSAGES = 50;
 const TELEGRAM_ATTACHMENT_TEMP_DIR_PREFIX = "tau-telegram-attachments-";
-const NO_ACTIVE_SESSION_MESSAGE = "no active session. use /new or /sessions";
+const NO_ACTIVE_SESSION_MESSAGE = "no active session. use /new";
 
 const SUPPORTED_TEXT_ATTACHMENT_EXTENSIONS = new Set([
   ".txt",
@@ -306,9 +325,7 @@ async function sweepStaleTelegramAttachmentTempDirs(): Promise<void> {
   }
 }
 
-type QuickAction = "new" | "sessions" | "status" | "interrupt" | "close" | "quiet" | "verbose";
-
-type SessionVerbosity = "verbose" | "quiet";
+type QuickAction = "new" | "status" | "interrupt";
 
 type TelegramCommandHandler = (
   chatId: number,
@@ -323,12 +340,6 @@ type TelegramCommandDefinition = {
   callbackAction?: QuickAction;
   handler: TelegramCommandHandler;
 };
-
-const QUICK_ACTION_ROWS: readonly (readonly QuickAction[])[] = [
-  ["new", "sessions", "status"],
-  ["interrupt", "close"],
-  ["quiet", "verbose"],
-];
 
 function splitCommandText(text: string): string[] {
   return text
@@ -452,8 +463,8 @@ function truncateText(text: string, maxChars: number): string {
   return `${trimmed.slice(0, maxChars - 1)}…`;
 }
 
-function splitTelegramMessage(text: string): string[] {
-  if (Buffer.byteLength(text, "utf8") <= TELEGRAM_SAFE_MESSAGE_BYTES) {
+function splitTelegramTextByBytes(text: string, maxBytes: number): string[] {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
     return [text];
   }
 
@@ -462,7 +473,7 @@ function splitTelegramMessage(text: string): string[] {
 
   for (const character of text) {
     const nextChunk = `${currentChunk}${character}`;
-    if (Buffer.byteLength(nextChunk, "utf8") <= TELEGRAM_SAFE_MESSAGE_BYTES) {
+    if (Buffer.byteLength(nextChunk, "utf8") <= maxBytes) {
       currentChunk = nextChunk;
       continue;
     }
@@ -481,6 +492,14 @@ function splitTelegramMessage(text: string): string[] {
   }
 
   return chunks;
+}
+
+function splitTelegramMessage(text: string): string[] {
+  return splitTelegramTextByBytes(text, TELEGRAM_SAFE_MESSAGE_BYTES);
+}
+
+function splitTelegramRichMessage(text: string): string[] {
+  return splitTelegramTextByBytes(text, TELEGRAM_RICH_MESSAGE_SAFE_BYTES);
 }
 
 function normalizeSizeBytes(value: number | undefined): number | undefined {
@@ -645,11 +664,13 @@ function formatTelegramSender(user: TelegramUser | undefined): string {
   return `id ${user.id}`;
 }
 
-function formatTelegramSessionName(session: Pick<AsyncSessionRecord, "id" | "projectId">): string {
+function formatTelegramSessionName(
+  session: Pick<TelegramSessionRecord, "id" | "projectId">,
+): string {
   return `${session.projectId} session ${session.id}`;
 }
 
-function formatSessionStatus(session: AsyncSessionRecord): string {
+function formatSessionStatus(session: TelegramSessionRecord): string {
   const sessionName = formatTelegramSessionName(session);
   if (session.state === "failed" && session.error) {
     return `your ${sessionName} failed. ${session.error}`;
@@ -747,7 +768,7 @@ const TelegramGetFileResultSchema = z.object({ file_path: z.string() });
 const TelegramGetMeResultSchema = telegramObject({ username: z.string() });
 const TelegramAckResultSchema = z.literal(true);
 
-function createTelegramApi(botToken: string): AsyncTelegramApi {
+function createTelegramApi(botToken: string): TelegramApi {
   const apiUrl = `https://api.telegram.org/bot${botToken}`;
 
   async function callTelegramMethod<Result>(
@@ -819,6 +840,40 @@ function createTelegramApi(botToken: string): AsyncTelegramApi {
         z.unknown(),
       );
     },
+    async sendRichMessage(chatId, markdown, options) {
+      await callTelegramMethod(
+        "sendRichMessage",
+        {
+          chat_id: chatId,
+          rich_message: {
+            markdown,
+          },
+          ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
+        },
+        z.unknown(),
+      );
+    },
+    async sendMessageDraft(chatId, draftId, text) {
+      await callTelegramMethod(
+        "sendMessageDraft",
+        {
+          chat_id: chatId,
+          draft_id: draftId,
+          text,
+        },
+        TelegramAckResultSchema,
+      );
+    },
+    async sendChatAction(chatId, action) {
+      await callTelegramMethod(
+        "sendChatAction",
+        {
+          chat_id: chatId,
+          action,
+        },
+        TelegramAckResultSchema,
+      );
+    },
     async downloadFile(fileId) {
       const parsed = await callTelegramMethod(
         "getFile",
@@ -875,8 +930,8 @@ function createTelegramApi(botToken: string): AsyncTelegramApi {
   };
 }
 
-class AsyncTelegramAdapterImpl {
-  private readonly projects: Record<string, AsyncProjectConfig>;
+class TelegramAdapterImpl {
+  private readonly projects: Record<string, TelegramProjectConfig>;
   private readonly defaultProjectId?: string;
   private readonly systemMessage?: string;
   private readonly allowedUserIds?: Set<number>;
@@ -887,13 +942,13 @@ class AsyncTelegramAdapterImpl {
   private readonly speechToTextProvider: SpeechToTextProvider;
   private readonly geminiApiKey?: string;
   private readonly mistralApiKey?: string;
-  private readonly sessionManager: AsyncSessionManager;
+  private readonly sessionManager: TelegramSessionManager;
   private readonly enforceChatOwnership: boolean;
   private readonly botOwnerPrefix: string;
   private readonly allowedProjectIds: string[];
-  private readonly api: AsyncTelegramApi;
+  private readonly api: TelegramApi;
   private readonly fetchImpl?: typeof fetch;
-  private readonly onLog?: (entry: AsyncTelegramLogEntry) => void;
+  private readonly onLog?: (entry: TelegramLogEntry) => void;
   private readonly commandDefinitions: TelegramCommandDefinition[];
   private readonly commandHandlers: Map<string, TelegramCommandHandler>;
   private readonly callbackActionHandlers: Map<QuickAction, TelegramCommandHandler>;
@@ -901,7 +956,9 @@ class AsyncTelegramAdapterImpl {
   private readonly activeSessionsByChat = new Map<number, string>();
   private readonly sessionsByChat = new Map<number, Set<string>>();
   private readonly chatsBySession = new Map<string, Set<number>>();
-  private readonly sessionVerbosityBySession = new Map<string, SessionVerbosity>();
+  private readonly chatTypesByChat = new Map<number, string>();
+  private readonly typingIntervalsBySessionChat = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly draftStatesBySessionChat = new Map<string, TelegramDraftState>();
   private readonly lastCommandBySession = new Map<string, string>();
   private readonly lastAssistantMessageBySession = new Map<string, string>();
   private readonly latestAssistantMessageByRun = new Map<string, string>();
@@ -918,7 +975,7 @@ class AsyncTelegramAdapterImpl {
   private nextUpdateOffset = 0;
   private closed = false;
 
-  constructor(options: ResolvedAsyncTelegramAdapterOptions) {
+  constructor(options: ResolvedTelegramAdapterOptions) {
     const botId = options.botId.trim();
     if (!botId) {
       throw new Error("telegram bot id must be a non-empty string");
@@ -984,6 +1041,11 @@ class AsyncTelegramAdapterImpl {
       await this.loopPromise;
       await this.waitForInFlightUpdateTasks();
 
+      for (const sessionId of Array.from(this.chatsBySession.keys())) {
+        this.stopTypingIndicators(sessionId);
+        this.clearSessionDrafts(sessionId);
+      }
+
       for (const sessionId of Array.from(this.attachmentTempDirsBySession.keys())) {
         await this.cleanupSessionAttachmentTempDirs(sessionId);
       }
@@ -994,44 +1056,19 @@ class AsyncTelegramAdapterImpl {
     }
   }
 
-  private log(level: AsyncTelegramLogLevel, message: string, data?: unknown): void {
+  private log(level: TelegramLogLevel, message: string, data?: unknown): void {
     this.onLog?.({ level, message, ...(data === undefined ? {} : { data }) });
   }
 
   private createCommandDefinitions(): TelegramCommandDefinition[] {
     return [
       {
-        command: "/help",
-        description: "show supported commands",
-        usage: "/help",
-        handler: async (chatId) => this.handleHelp(chatId),
-      },
-      {
         command: "/new",
         description: "start a new session",
-        usage: "/new [projectId]",
+        usage: "/new",
         callbackAction: "new",
         handler: async (chatId, args, sourceMessageId) =>
           this.handleNew(chatId, args, sourceMessageId),
-      },
-      {
-        command: "/projects",
-        description: "list configured projects",
-        usage: "/projects",
-        handler: async (chatId) => this.handleProjects(chatId),
-      },
-      {
-        command: "/use",
-        description: "switch active session",
-        usage: "/use <sessionId|prefix|index>",
-        handler: async (chatId, args) => this.handleUse(chatId, args),
-      },
-      {
-        command: "/sessions",
-        description: "list sessions",
-        usage: "/sessions",
-        callbackAction: "sessions",
-        handler: async (chatId) => this.handleSessions(chatId),
       },
       {
         command: "/status",
@@ -1047,35 +1084,10 @@ class AsyncTelegramAdapterImpl {
         callbackAction: "interrupt",
         handler: async (chatId) => this.handleInterrupt(chatId),
       },
-      {
-        command: "/close",
-        description: "close session(s)",
-        usage: "/close [<sessionId>|all]",
-        callbackAction: "close",
-        handler: async (chatId, args) => this.handleClose(chatId, args),
-      },
-      {
-        command: "/verbose",
-        description: "stream progress updates",
-        usage: "/verbose",
-        callbackAction: "verbose",
-        handler: async (chatId) => this.handleVerbosityCommand(chatId, "verbose"),
-      },
-      {
-        command: "/quiet",
-        description: "only send final assistant message",
-        usage: "/quiet",
-        callbackAction: "quiet",
-        handler: async (chatId) => this.handleVerbosityCommand(chatId, "quiet"),
-      },
     ];
   }
 
   private async syncCommands(): Promise<void> {
-    if (!this.api.setCommands) {
-      return;
-    }
-
     const commands: TelegramBotCommand[] = this.commandDefinitions.map((definition) => ({
       command: definition.command.slice(1),
       description: definition.description,
@@ -1247,6 +1259,8 @@ class AsyncTelegramAdapterImpl {
     if (!chat) {
       return;
     }
+
+    this.chatTypesByChat.set(chat.id, chat.type);
 
     if (chat.type === "private") {
       await this.handlePrivateMessage(chat.id, message);
@@ -1796,12 +1810,12 @@ class AsyncTelegramAdapterImpl {
     return `${this.botOwnerPrefix}:chat:${chatId}`;
   }
 
-  private getSessionManagerForChat(chatId: number): AsyncSessionManager {
+  private getSessionManagerForChat(chatId: number): TelegramSessionManager {
     if (!this.enforceChatOwnership) {
       return this.sessionManager;
     }
 
-    return createScopedAsyncSessionManager({
+    return createScopedTelegramSessionManager({
       sessionManager: this.sessionManager,
       ownerId: this.ownerIdForChat(chatId),
       allowedProjectIds: this.allowedProjectIds,
@@ -1819,7 +1833,10 @@ class AsyncTelegramAdapterImpl {
     const handler = this.commandHandlers.get(command);
 
     if (!handler) {
-      await this.reply(chatId, "unsupported command. use /help");
+      await this.reply(
+        chatId,
+        "unsupported command. supported commands: /new, /status, /interrupt",
+      );
       return;
     }
 
@@ -1827,16 +1844,6 @@ class AsyncTelegramAdapterImpl {
   }
 
   private async handleCallback(chatId: number, callbackData: string): Promise<boolean> {
-    if (callbackData.startsWith(CALLBACK_USE_PREFIX)) {
-      const sessionId = callbackData.slice(CALLBACK_USE_PREFIX.length).trim();
-      if (!sessionId) {
-        return false;
-      }
-
-      await this.handleUse(chatId, [sessionId]);
-      return true;
-    }
-
     if (!callbackData.startsWith(CALLBACK_ACTION_PREFIX)) {
       return false;
     }
@@ -1851,95 +1858,32 @@ class AsyncTelegramAdapterImpl {
     return true;
   }
 
-  private async handleHelp(chatId: number): Promise<void> {
-    const lines = [
-      "commands:",
-      ...this.commandDefinitions.map((definition) => definition.usage),
-      "",
-      "tip: use /sessions and tap a session button to switch quickly",
-    ];
-
-    await this.reply(chatId, lines.join("\n"), {
-      replyMarkup: this.buildQuickActionsKeyboard(),
-    });
-  }
-
   private resolveNewCommand(args: string[]): NewCommandResolution {
-    const projectIds = Object.keys(this.projects);
-
-    const resolveFallbackProjectId = (): { projectId?: string; error?: string } => {
-      if (this.defaultProjectId) {
-        if (!this.projects[this.defaultProjectId]) {
-          return {
-            error: `telegram.<botId>.defaultProjectId '${this.defaultProjectId}' is not configured`,
-          };
-        }
-        return { projectId: this.defaultProjectId };
-      }
-
-      if (projectIds.length === 1) {
-        return { projectId: projectIds[0] };
-      }
-
-      if (projectIds.length === 0) {
-        return { error: "no async projects configured" };
-      }
-
-      return {
-        error: "missing project id. usage: /new [projectId]. use /projects to list options",
-      };
-    };
-
-    if (args.length > 1) {
-      return { error: "usage: /new [projectId]" };
+    if (args.length > 0) {
+      return { error: "usage: /new" };
     }
 
-    if (args.length === 1) {
-      const projectId = args[0];
-      if (!projectId) {
-        return { error: "usage: /new [projectId]" };
-      }
-
-      if (!this.projects[projectId]) {
+    const projectIds = Object.keys(this.projects);
+    if (this.defaultProjectId) {
+      if (!this.projects[this.defaultProjectId]) {
         return {
-          error: `unknown project '${projectId}'. usage: /new [projectId]. use /projects to list options`,
+          error: `telegram.<botId>.defaultProjectId '${this.defaultProjectId}' is not configured`,
         };
       }
-
-      return { projectId };
+      return { projectId: this.defaultProjectId };
     }
 
-    const fallback = resolveFallbackProjectId();
-    if (!fallback.projectId) {
-      return {
-        error: fallback.error ?? "unable to resolve project id",
-      };
+    if (projectIds.length === 1) {
+      return { projectId: projectIds[0]! };
+    }
+
+    if (projectIds.length === 0) {
+      return { error: "no telegram projects configured" };
     }
 
     return {
-      projectId: fallback.projectId,
+      error: "multiple projects configured. set defaultProjectId for this bot before using /new",
     };
-  }
-
-  private async handleProjects(chatId: number): Promise<void> {
-    const entries = Object.entries(this.projects).sort(([left], [right]) =>
-      left.localeCompare(right),
-    );
-
-    if (entries.length === 0) {
-      await this.reply(chatId, "no async projects configured");
-      return;
-    }
-
-    const lines = entries.map(([projectId, project]) => {
-      if (!project.description) {
-        return projectId;
-      }
-
-      return `${projectId}: ${project.description}`;
-    });
-
-    await this.reply(chatId, [`projects:`, ...lines].join("\n"));
   }
 
   private async handleNew(chatId: number, args: string[], sourceMessageId?: number): Promise<void> {
@@ -1951,158 +1895,21 @@ class AsyncTelegramAdapterImpl {
 
     try {
       const sessionManager = this.getSessionManagerForChat(chatId);
+      const previousSession = this.getActiveSession(chatId);
+      if (previousSession) {
+        await sessionManager.closeSession(previousSession.id);
+        this.clearClosedSession(previousSession.id);
+      }
+
       const session = await sessionManager.createSession({
         projectId: parsed.projectId,
       });
 
       this.setActiveSession(chatId, session.id);
-      this.sessionVerbosityBySession.set(session.id, "quiet");
       void this.reactToQueuedMessage(chatId, sourceMessageId);
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
-  }
-
-  private async handleUse(chatId: number, args: string[]): Promise<void> {
-    const selector = args[0]?.trim();
-    if (!selector) {
-      await this.reply(chatId, "usage: /use <sessionId|prefix|index>");
-      return;
-    }
-
-    const sessionManager = this.getSessionManagerForChat(chatId);
-    const sessions = sessionManager.listSessions();
-    const selectedSession = this.resolveSessionSelector(selector, sessions, sessionManager);
-    if ("error" in selectedSession) {
-      await this.reply(chatId, selectedSession.error);
-      return;
-    }
-
-    this.setActiveSession(chatId, selectedSession.session.id);
-    await this.reply(chatId, `switched to ${formatTelegramSessionName(selectedSession.session)}.`);
-  }
-
-  private resolveSessionSelector(
-    selector: string,
-    sessions: AsyncSessionRecord[],
-    sessionManager: AsyncSessionManager,
-  ): { session: AsyncSessionRecord } | { error: string } {
-    const exactSession = sessionManager.getSession(selector);
-    if (exactSession) {
-      return { session: exactSession };
-    }
-
-    if (/^\d+$/.test(selector)) {
-      const index = Number.parseInt(selector, 10);
-      if (index <= 0 || index > sessions.length) {
-        return {
-          error:
-            sessions.length === 0
-              ? "no sessions"
-              : `session index '${selector}' is out of range (1-${sessions.length})`,
-        };
-      }
-
-      const indexedSession = sessions[index - 1];
-      if (!indexedSession) {
-        return { error: "session index lookup failed" };
-      }
-
-      return { session: indexedSession };
-    }
-
-    const prefixMatches = sessions.filter((session) => session.id.startsWith(selector));
-    if (prefixMatches.length === 1) {
-      const [prefixMatch] = prefixMatches;
-      if (!prefixMatch) {
-        return { error: "session prefix lookup failed" };
-      }
-
-      return { session: prefixMatch };
-    }
-
-    if (prefixMatches.length > 1) {
-      return {
-        error: `session prefix '${selector}' is ambiguous: ${prefixMatches.map((session) => session.id).join(", ")}`,
-      };
-    }
-
-    return { error: `session '${selector}' not found` };
-  }
-
-  private async handleSessions(chatId: number): Promise<void> {
-    const sessionManager = this.getSessionManagerForChat(chatId);
-    const sessions = sessionManager.listSessions();
-    const lines = this.formatSessions(chatId, sessions);
-
-    await this.reply(chatId, lines.join("\n"), {
-      replyMarkup: this.buildSessionsKeyboard(chatId, sessions),
-    });
-  }
-
-  private formatSessions(chatId: number, sessions: AsyncSessionRecord[]): string[] {
-    if (sessions.length === 0) {
-      return ["no sessions"];
-    }
-
-    const activeSessionId = this.activeSessionsByChat.get(chatId);
-    return [
-      "sessions:",
-      ...sessions.map((session, index) => {
-        const marker = session.id === activeSessionId ? "*" : "-";
-        const preview = this.formatSessionPreview(session.id);
-        return `${index + 1}. ${marker} ${session.id} ${session.projectId} ${session.state}${preview ? ` · ${preview}` : ""}`;
-      }),
-    ];
-  }
-
-  private formatSessionPreview(sessionId: string): string | undefined {
-    const previews: string[] = [];
-
-    const lastCommand = this.lastCommandBySession.get(sessionId);
-    if (lastCommand) {
-      previews.push(`$ ${truncateText(lastCommand, MAX_SESSION_PREVIEW_CHARS)}`);
-    }
-
-    const lastAssistantMessage = this.lastAssistantMessageBySession.get(sessionId);
-    if (lastAssistantMessage) {
-      previews.push(truncateText(lastAssistantMessage, MAX_SESSION_PREVIEW_CHARS));
-    }
-
-    if (previews.length === 0) {
-      return undefined;
-    }
-
-    return previews.join(" | ");
-  }
-
-  private buildSessionsKeyboard(
-    chatId: number,
-    sessions: AsyncSessionRecord[],
-  ): TelegramInlineKeyboardMarkup {
-    const activeSessionId = this.activeSessionsByChat.get(chatId);
-    const inlineKeyboard: TelegramInlineKeyboardButton[][] = sessions.map((session, index) => [
-      {
-        text: `${index + 1}. ${session.id}${session.id === activeSessionId ? " *" : ""}`,
-        callback_data: `${CALLBACK_USE_PREFIX}${session.id}`,
-      },
-    ]);
-
-    inlineKeyboard.push(...this.buildQuickActionsKeyboard().inline_keyboard);
-    return {
-      inline_keyboard: inlineKeyboard,
-    };
-  }
-
-  private buildQuickActionsKeyboard(): TelegramInlineKeyboardMarkup {
-    return {
-      inline_keyboard: QUICK_ACTION_ROWS.map((row) =>
-        row.map((action) => ({
-          text: `/${action}`,
-          callback_data: `${CALLBACK_ACTION_PREFIX}${action}`,
-        })),
-      ),
-    };
   }
 
   private async handleStatus(chatId: number): Promise<void> {
@@ -2111,9 +1918,7 @@ class AsyncTelegramAdapterImpl {
       return;
     }
 
-    await this.reply(chatId, formatSessionStatus(session), {
-      replyMarkup: this.buildQuickActionsKeyboard(),
-    });
+    await this.reply(chatId, formatSessionStatus(session));
   }
 
   private async handleInterrupt(chatId: number): Promise<void> {
@@ -2137,65 +1942,6 @@ class AsyncTelegramAdapterImpl {
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
-  }
-
-  private async handleClose(chatId: number, args: string[]): Promise<void> {
-    if (args.length > 1) {
-      await this.reply(chatId, "usage: /close [<sessionId>|all]");
-      return;
-    }
-
-    const target = args[0]?.trim();
-    if (target === "all") {
-      try {
-        const sessionManager = this.getSessionManagerForChat(chatId);
-        const closed = await sessionManager.closeInactiveSessions();
-        for (const session of closed) {
-          this.clearClosedSession(session.id);
-        }
-
-        if (closed.length === 0) {
-          await this.reply(chatId, "there are no idle sessions to close.");
-          return;
-        }
-
-        const label = closed.length === 1 ? "session" : "sessions";
-        await this.reply(chatId, `closed ${closed.length} idle ${label}.`);
-      } catch (error) {
-        await this.reply(chatId, this.formatManagerError(error));
-      }
-
-      return;
-    }
-
-    const sessionId = target ?? this.getActiveSession(chatId)?.id;
-    if (!sessionId) {
-      await this.reply(chatId, NO_ACTIVE_SESSION_MESSAGE);
-      return;
-    }
-
-    try {
-      const sessionManager = this.getSessionManagerForChat(chatId);
-      const closed = await sessionManager.closeSession(sessionId);
-      this.clearClosedSession(closed.id);
-      await this.reply(chatId, `closed ${formatTelegramSessionName(closed)}.`);
-    } catch (error) {
-      await this.reply(chatId, this.formatManagerError(error));
-    }
-  }
-
-  private async handleVerbosityCommand(chatId: number, verbosity: SessionVerbosity): Promise<void> {
-    const session = await this.requireActiveSession(chatId);
-    if (!session) {
-      return;
-    }
-
-    this.sessionVerbosityBySession.set(session.id, verbosity);
-    const message =
-      verbosity === "quiet"
-        ? `${formatTelegramSessionName(session)} is now quiet.`
-        : `${formatTelegramSessionName(session)} will now show progress updates.`;
-    await this.reply(chatId, message);
   }
 
   private async handleMessage(
@@ -2466,7 +2212,7 @@ class AsyncTelegramAdapterImpl {
     }
   }
 
-  private async requireActiveSession(chatId: number): Promise<AsyncSessionRecord | undefined> {
+  private async requireActiveSession(chatId: number): Promise<TelegramSessionRecord | undefined> {
     const session = this.getActiveSession(chatId);
     if (!session) {
       await this.reply(chatId, NO_ACTIVE_SESSION_MESSAGE);
@@ -2478,7 +2224,7 @@ class AsyncTelegramAdapterImpl {
 
   private async requireActiveOrSingleSession(
     chatId: number,
-  ): Promise<AsyncSessionRecord | undefined> {
+  ): Promise<TelegramSessionRecord | undefined> {
     const session = this.getActiveOrSingleSession(chatId);
     if (!session) {
       await this.reply(chatId, NO_ACTIVE_SESSION_MESSAGE);
@@ -2538,7 +2284,7 @@ class AsyncTelegramAdapterImpl {
     await this.reply(chatId, `skipped attachment ${attachmentLabel}: ${reason}`);
   }
 
-  private getActiveSession(chatId: number): AsyncSessionRecord | undefined {
+  private getActiveSession(chatId: number): TelegramSessionRecord | undefined {
     const sessionId = this.activeSessionsByChat.get(chatId);
     if (!sessionId) {
       return undefined;
@@ -2555,7 +2301,7 @@ class AsyncTelegramAdapterImpl {
     return session;
   }
 
-  private getActiveOrSingleSession(chatId: number): AsyncSessionRecord | undefined {
+  private getActiveOrSingleSession(chatId: number): TelegramSessionRecord | undefined {
     const activeSession = this.getActiveSession(chatId);
     if (activeSession) {
       return activeSession;
@@ -2622,6 +2368,9 @@ class AsyncTelegramAdapterImpl {
   }
 
   private clearClosedSession(sessionId: string): void {
+    this.stopTypingIndicators(sessionId);
+    this.clearSessionDrafts(sessionId);
+
     for (const [chatId, activeSessionId] of this.activeSessionsByChat) {
       if (activeSessionId === sessionId) {
         this.activeSessionsByChat.delete(chatId);
@@ -2633,22 +2382,17 @@ class AsyncTelegramAdapterImpl {
       this.unlinkChatFromSession(chatId, sessionId);
     }
 
-    this.sessionVerbosityBySession.delete(sessionId);
     this.lastCommandBySession.delete(sessionId);
     this.lastAssistantMessageBySession.delete(sessionId);
     this.latestAssistantMessageByRun.delete(sessionId);
     this.clearSessionAttachments(sessionId);
   }
 
-  private getSessionVerbosity(sessionId: string): SessionVerbosity {
-    return this.sessionVerbosityBySession.get(sessionId) ?? "quiet";
+  private isVerboseSession(_sessionId: string): boolean {
+    return false;
   }
 
-  private isVerboseSession(sessionId: string): boolean {
-    return this.getSessionVerbosity(sessionId) === "verbose";
-  }
-
-  private onSessionEvent(event: AsyncSessionManagerEvent): void {
+  private onSessionEvent(event: TelegramSessionManagerEvent): void {
     if (event.type === "session-progress") {
       if (!this.chatsBySession.has(event.sessionId)) {
         return;
@@ -2668,6 +2412,8 @@ class AsyncTelegramAdapterImpl {
 
     if (event.state === "running") {
       this.latestAssistantMessageByRun.delete(event.sessionId);
+      this.startTypingIndicators(event.sessionId);
+      this.showDraftThinking(event.sessionId);
       if (this.isVerboseSession(event.sessionId)) {
         this.notifyLifecycle(event.sessionId, event.projectId, "started");
       }
@@ -2676,6 +2422,8 @@ class AsyncTelegramAdapterImpl {
 
     if (event.state === "failed") {
       this.latestAssistantMessageByRun.delete(event.sessionId);
+      this.stopTypingIndicators(event.sessionId);
+      this.clearSessionDrafts(event.sessionId);
       this.notifyLifecycle(event.sessionId, event.projectId, "failed");
       return;
     }
@@ -2689,6 +2437,8 @@ class AsyncTelegramAdapterImpl {
     }
 
     if (event.state === "waiting-input" && event.previousState === "running") {
+      this.stopTypingIndicators(event.sessionId);
+      this.clearSessionDrafts(event.sessionId);
       if (this.isVerboseSession(event.sessionId)) {
         this.notifyLifecycle(event.sessionId, event.projectId, "finished");
         return;
@@ -2697,13 +2447,13 @@ class AsyncTelegramAdapterImpl {
       const message = this.latestAssistantMessageByRun.get(event.sessionId);
       this.latestAssistantMessageByRun.delete(event.sessionId);
       if (message) {
-        this.notifySession(event.sessionId, message);
+        this.notifySession(event.sessionId, message, { rich: true });
       }
     }
   }
 
   private handleSessionProgress(
-    event: Extract<AsyncSessionManagerEvent, { type: "session-progress" }>,
+    event: Extract<TelegramSessionManagerEvent, { type: "session-progress" }>,
   ): void {
     const isVerbose = this.isVerboseSession(event.sessionId);
 
@@ -2749,6 +2499,7 @@ class AsyncTelegramAdapterImpl {
 
     this.lastAssistantMessageBySession.set(event.sessionId, event.progress.text);
     this.latestAssistantMessageByRun.set(event.sessionId, event.progress.text);
+    this.showDraftPreamble(event.sessionId, event.progress.text);
 
     if (!isVerbose) {
       return;
@@ -2782,22 +2533,160 @@ class AsyncTelegramAdapterImpl {
     );
   }
 
-  private notifySession(sessionId: string, text: string): void {
+  private notifySession(sessionId: string, text: string, options: { rich?: boolean } = {}): void {
     const chatIds = this.chatsBySession.get(sessionId);
     if (!chatIds || chatIds.size === 0) {
       return;
     }
 
     for (const chatId of chatIds) {
-      void this.reply(chatId, text);
+      void this.reply(chatId, text, { rich: options.rich }).catch((error) => {
+        this.log("warn", "failed to send telegram notification", {
+          chatId,
+          cause: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
   }
 
-  private async reactToQueuedMessage(chatId: number, messageId?: number): Promise<void> {
-    if (!this.api.setMessageReaction) {
+  private startTypingIndicators(sessionId: string): void {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (!chatIds) {
       return;
     }
 
+    for (const chatId of chatIds) {
+      const key = this.getSessionChatKey(sessionId, chatId);
+      if (this.typingIntervalsBySessionChat.has(key)) {
+        continue;
+      }
+
+      const sendTyping = () => {
+        void this.api.sendChatAction(chatId, "typing").catch((error) => {
+          this.log("warn", "failed to send telegram typing action", {
+            chatId,
+            cause: error instanceof Error ? error.message : String(error),
+          });
+        });
+      };
+
+      sendTyping();
+      const interval = setInterval(sendTyping, TELEGRAM_TYPING_REFRESH_MS);
+      interval.unref?.();
+      this.typingIntervalsBySessionChat.set(key, interval);
+    }
+  }
+
+  private stopTypingIndicators(sessionId: string): void {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (!chatIds) {
+      return;
+    }
+
+    for (const chatId of chatIds) {
+      const key = this.getSessionChatKey(sessionId, chatId);
+      const interval = this.typingIntervalsBySessionChat.get(key);
+      if (interval) {
+        clearInterval(interval);
+        this.typingIntervalsBySessionChat.delete(key);
+      }
+    }
+  }
+
+  private showDraftThinking(sessionId: string): void {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (!chatIds) {
+      return;
+    }
+
+    for (const chatId of chatIds) {
+      if (this.chatTypesByChat.get(chatId) !== "private") {
+        continue;
+      }
+
+      void this.updateMessageDraft(sessionId, chatId, "");
+    }
+  }
+
+  private showDraftPreamble(sessionId: string, text: string): void {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (!chatIds) {
+      return;
+    }
+
+    for (const chatId of chatIds) {
+      if (this.chatTypesByChat.get(chatId) !== "private") {
+        continue;
+      }
+
+      const key = this.getSessionChatKey(sessionId, chatId);
+      const state = this.getDraftState(key);
+      if (state.preambleTimeout) {
+        clearTimeout(state.preambleTimeout);
+      }
+
+      void this.updateMessageDraft(sessionId, chatId, truncateText(text, TELEGRAM_DRAFT_MAX_CHARS));
+      const timeout = setTimeout(() => {
+        const currentState = this.draftStatesBySessionChat.get(key);
+        if (currentState === state) {
+          void this.updateMessageDraft(sessionId, chatId, "");
+        }
+      }, TELEGRAM_DRAFT_PREAMBLE_VISIBLE_MS);
+      timeout.unref?.();
+      state.preambleTimeout = timeout;
+    }
+  }
+
+  private async updateMessageDraft(sessionId: string, chatId: number, text: string): Promise<void> {
+    const key = this.getSessionChatKey(sessionId, chatId);
+    const state = this.getDraftState(key);
+
+    try {
+      await this.api.sendMessageDraft(chatId, state.draftId, text);
+    } catch (error) {
+      this.log("warn", "failed to update telegram message draft", {
+        chatId,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private clearSessionDrafts(sessionId: string): void {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (!chatIds) {
+      return;
+    }
+
+    for (const chatId of chatIds) {
+      const key = this.getSessionChatKey(sessionId, chatId);
+      const state = this.draftStatesBySessionChat.get(key);
+      if (state?.preambleTimeout) {
+        clearTimeout(state.preambleTimeout);
+      }
+      this.draftStatesBySessionChat.delete(key);
+    }
+  }
+
+  private getDraftState(key: string): TelegramDraftState {
+    const existing = this.draftStatesBySessionChat.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const state = { draftId: this.createDraftId() };
+    this.draftStatesBySessionChat.set(key, state);
+    return state;
+  }
+
+  private createDraftId(): number {
+    return Math.floor(Math.random() * 2_000_000_000) + 1;
+  }
+
+  private getSessionChatKey(sessionId: string, chatId: number): string {
+    return `${sessionId}:${chatId}`;
+  }
+
+  private async reactToQueuedMessage(chatId: number, messageId?: number): Promise<void> {
     if (typeof messageId !== "number" || !Number.isInteger(messageId) || messageId <= 0) {
       return;
     }
@@ -2819,10 +2708,6 @@ class AsyncTelegramAdapterImpl {
   }
 
   private async answerCallbackQuery(callbackQueryId?: string, text?: string): Promise<void> {
-    if (!this.api.answerCallbackQuery) {
-      return;
-    }
-
     const trimmedCallbackQueryId = callbackQueryId?.trim();
     if (!trimmedCallbackQueryId) {
       return;
@@ -2847,7 +2732,7 @@ class AsyncTelegramAdapterImpl {
   }
 
   private formatManagerError(error: unknown): string {
-    if (error instanceof AsyncSessionManagerError) {
+    if (error instanceof TelegramSessionManagerError) {
       return error.message;
     }
 
@@ -2859,22 +2744,46 @@ class AsyncTelegramAdapterImpl {
     text: string,
     options?: {
       replyMarkup?: TelegramInlineKeyboardMarkup;
+      rich?: boolean;
     },
+  ): Promise<void> {
+    if (options?.rich === true) {
+      await this.replyWithRichMessage(chatId, text, options.replyMarkup);
+      return;
+    }
+
+    await this.replyWithPlainMessage(chatId, text, options?.replyMarkup);
+  }
+
+  private async replyWithRichMessage(
+    chatId: number,
+    text: string,
+    replyMarkup?: TelegramInlineKeyboardMarkup,
+  ): Promise<void> {
+    const chunks = splitTelegramRichMessage(text);
+
+    for (const [index, chunk] of chunks.entries()) {
+      await this.api.sendRichMessage(chatId, chunk, {
+        replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
+      });
+
+      if (index < chunks.length - 1) {
+        await this.wait(TELEGRAM_MESSAGE_SPLIT_DELAY_MS);
+      }
+    }
+  }
+
+  private async replyWithPlainMessage(
+    chatId: number,
+    text: string,
+    replyMarkup?: TelegramInlineKeyboardMarkup,
   ): Promise<void> {
     const chunks = splitTelegramMessage(text);
 
     for (const [index, chunk] of chunks.entries()) {
-      try {
-        await this.api.sendMessage(chatId, chunk, {
-          replyMarkup: index === chunks.length - 1 ? options?.replyMarkup : undefined,
-        });
-      } catch (error) {
-        this.log("warn", "failed to send telegram message", {
-          chatId,
-          cause: error instanceof Error ? error.message : String(error),
-        });
-        return;
-      }
+      await this.api.sendMessage(chatId, chunk, {
+        replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
+      });
 
       if (index < chunks.length - 1) {
         await this.wait(TELEGRAM_MESSAGE_SPLIT_DELAY_MS);
@@ -2904,9 +2813,9 @@ class AsyncTelegramAdapterImpl {
   }
 }
 
-export async function startAsyncTelegramAdapter(
-  options: AsyncTelegramAdapterOptions,
-): Promise<AsyncTelegramAdapterHandle> {
+export async function startTelegramAdapter(
+  options: TelegramAdapterOptions,
+): Promise<TelegramAdapterHandle> {
   await sweepStaleTelegramAttachmentTempDirs();
   const api = options.api ?? createTelegramApi(options.botToken);
   const botUsername = normalizeTelegramUsername((await api.getMe()).username);
@@ -2914,7 +2823,7 @@ export async function startAsyncTelegramAdapter(
     throw new Error("telegram bot username is missing");
   }
 
-  const adapter = new AsyncTelegramAdapterImpl({
+  const adapter = new TelegramAdapterImpl({
     ...options,
     api,
     botUsername,

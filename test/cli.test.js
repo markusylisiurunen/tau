@@ -42,18 +42,18 @@ describe("cli", () => {
     );
   });
 
-  it("prints async help text when async command parsing fails", () => {
+  it("prints telegram help text when telegram command parsing fails", () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, "async"], {
+    const result = spawnSync(process.execPath, [mainPath, "telegram"], {
       encoding: "utf8",
       env: process.env,
     });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("missing async command or prompt");
+    expect(result.stderr).toContain("missing --config-file <path>");
     expect(result.stderr).toContain("\n\n");
     expect(result.stdout).toContain("usage:");
-    expect(result.stdout).toContain("tau async daemon");
+    expect(result.stdout).toContain("tau telegram --config-file <path>");
   });
 
   it("prints pdf-unpack help", () => {

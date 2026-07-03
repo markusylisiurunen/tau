@@ -67,6 +67,13 @@ class FakeChildProcess extends EventEmitter {
     this.stdout.write(`${JSON.stringify(message)}\n`);
   }
 
+  sendChunked(message, chunkSize = 1) {
+    const line = `${JSON.stringify(message)}\n`;
+    for (let index = 0; index < line.length; index += chunkSize) {
+      this.stdout.write(line.slice(index, index + chunkSize));
+    }
+  }
+
   sendRaw(line) {
     this.stdout.write(`${line}\n`);
   }
@@ -148,7 +155,10 @@ class FakeSessionProtocolTransport {
     });
     this.request = vi.fn(async (method, params) => {
       this.requests.push({ method, params });
-      await this.onRequest?.(method, params);
+      const overrideResult = await this.onRequest?.(method, params);
+      if (overrideResult !== undefined) {
+        return overrideResult;
+      }
       switch (method) {
         case "session.create":
           return createSnapshot("session-2");
@@ -665,6 +675,85 @@ describe("sdk_client", () => {
     expect(transport.closed).toBe(true);
   });
 
+  it("reuses create and observe snapshots for the first sdk snapshot call", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    const client = await createTauSdkClientFromTransport(transport);
+
+    const createdSession = await client.sessions.create(localCreateInput);
+    await expect(createdSession.snapshot()).resolves.toEqual(createSnapshot("session-2"));
+
+    const observedSession = await client.sessions.observe("session-1");
+    await expect(observedSession.snapshot()).resolves.toEqual(createSnapshot("session-1"));
+
+    expect(transport.requests).toEqual([
+      { method: "session.create", params: localCreateInput },
+      { method: "session.observe", params: { sessionId: "session-1" } },
+    ]);
+
+    await client.close();
+  });
+
+  it("fetches a fresh sdk snapshot when buffered deltas make the initial snapshot stale", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.observe("session-1");
+    const bufferedDelta = createNoticeDelta("session-1", 1, "arrived before first snapshot");
+    transport.emitDelta(bufferedDelta);
+
+    transport.onRequest = (method, params) => {
+      if (method === "session.snapshot") {
+        return {
+          ...createSnapshot(params.sessionId),
+          revision: bufferedDelta.toRevision,
+        };
+      }
+      return undefined;
+    };
+
+    await expect(session.snapshot()).resolves.toMatchObject({
+      sessionId: "session-1",
+      revision: bufferedDelta.toRevision,
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.snapshot",
+      params: { sessionId: "session-1" },
+    });
+
+    await client.close();
+  });
+
+  it("invalidates the initial sdk snapshot when delivered deltas advance the revision", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.create(localCreateInput);
+    const deliveredDeltas = [];
+    session.onDelta((delta) => deliveredDeltas.push(delta));
+    const deliveredDelta = createNoticeDelta("session-2", 1, "delivered before first snapshot");
+    transport.emitDelta(deliveredDelta);
+
+    transport.onRequest = (method, params) => {
+      if (method === "session.snapshot") {
+        return {
+          ...createSnapshot(params.sessionId),
+          revision: deliveredDelta.toRevision,
+        };
+      }
+      return undefined;
+    };
+
+    await expect(session.snapshot()).resolves.toMatchObject({
+      sessionId: "session-2",
+      revision: deliveredDelta.toRevision,
+    });
+    expect(deliveredDeltas).toEqual([deliveredDelta]);
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.snapshot",
+      params: { sessionId: "session-2" },
+    });
+
+    await client.close();
+  });
+
   it("closes transport when transport-backed sdk initialization fails", async () => {
     const transport = new FakeSessionProtocolTransport();
     const error = new TauTransportError("connect failed");
@@ -705,6 +794,23 @@ describe("sdk_client", () => {
     expect(child.requests.filter((request) => request.method === "initialize")).toHaveLength(1);
 
     await transport.close();
+  });
+
+  it("parses stdio protocol lines split across many small chunks", async () => {
+    const child = new FakeChildProcess();
+    const { client } = await createConnectedClient(child);
+    const session = await client.sessions.observe("session-1");
+
+    child.on("request", (request) => {
+      if (request.method === "session.snapshot") {
+        child.sendChunked(createSuccessResponse(request.id, createSnapshot("session-1")), 1);
+      }
+    });
+
+    await expect(session.snapshot()).resolves.toEqual(createSnapshot("session-1"));
+    await expect(session.snapshot()).resolves.toEqual(createSnapshot("session-1"));
+
+    await client.close();
   });
 
   it("correlates stdio transport responses by request id and streams events", async () => {
@@ -959,6 +1065,7 @@ describe("sdk_client", () => {
     const child = new FakeChildProcess();
     const { client } = await createConnectedClient(child);
     const session = await client.sessions.observe("session-1");
+    await expect(session.snapshot()).resolves.toEqual(createSnapshot("session-1"));
 
     child.on("request", (request) => {
       if (request.method === "session.snapshot") {
@@ -987,6 +1094,7 @@ describe("sdk_client", () => {
     const child = new FakeChildProcess();
     const { client } = await createConnectedClient(child);
     const session = await client.sessions.observe("session-1");
+    await expect(session.snapshot()).resolves.toEqual(createSnapshot("session-1"));
 
     child.sendRaw("[]");
 
@@ -1069,6 +1177,7 @@ describe("sdk_client", () => {
     const child = new FakeChildProcess();
     const { client } = await createConnectedClient(child);
     const session = await client.sessions.observe("session-1");
+    await expect(session.snapshot()).resolves.toEqual(createSnapshot("session-1"));
 
     const snapshotPromise = session.snapshot();
     await waitForRequest(child, (request) => request.method === "session.snapshot");

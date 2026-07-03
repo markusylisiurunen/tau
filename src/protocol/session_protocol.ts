@@ -2124,8 +2124,7 @@ export function serializeSessionProtocolMessage(message: SessionProtocolOutgoing
 }
 
 export function parseSessionProtocolRequestLine(line: string): SessionProtocolParseResult {
-  const trimmed = line.trim();
-  if (!trimmed) {
+  if (isBlankProtocolLine(line)) {
     return {
       ok: false,
       id: null,
@@ -2138,7 +2137,7 @@ export function parseSessionProtocolRequestLine(line: string): SessionProtocolPa
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(trimmed);
+    parsed = JSON.parse(line);
   } catch (error) {
     return {
       ok: false,
@@ -2324,9 +2323,18 @@ function requestEnvelope(id: SessionProtocolRequestId): {
   };
 }
 
+function isBlankProtocolLine(line: string): boolean {
+  for (let index = 0; index < line.length; index++) {
+    const code = line.charCodeAt(index);
+    if (code !== 9 && code !== 10 && code !== 13 && code !== 32) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function parseSessionProtocolOutgoingLine(line: string): SessionProtocolOutgoingParseResult {
-  const trimmed = line.trim();
-  if (!trimmed) {
+  if (isBlankProtocolLine(line)) {
     return outgoingParseFailure(
       null,
       null,
@@ -2339,7 +2347,7 @@ export function parseSessionProtocolOutgoingLine(line: string): SessionProtocolO
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(trimmed);
+    parsed = JSON.parse(line);
   } catch (error) {
     return outgoingParseFailure(
       null,

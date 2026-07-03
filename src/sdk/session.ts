@@ -328,6 +328,7 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
   async create(input: SessionProtocolCreateParams): Promise<TauSdkSession> {
     const snapshot = await this.client.createSession(input);
     const session = this.client.createObservedSession(snapshot.sessionId);
+    session.setInitialSnapshot(snapshot);
     session.discardBufferedDeltasThrough(snapshot.revision);
     return session;
   }
@@ -342,6 +343,7 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
     try {
       const snapshot = await this.client.observeSession(sessionId);
       session.assertSessionId(snapshot.sessionId);
+      session.setInitialSnapshot(snapshot);
       session.discardBufferedDeltasThrough(snapshot.revision);
       return session;
     } catch (error) {
@@ -358,6 +360,7 @@ class TauSdkSessionImpl implements TauSdkSession {
   private readonly bufferedDeltas: Parameters<TauSdkDeltaListener>[0][] = [];
   private readonly unsubscribeClientDeltas: () => void;
   private readonly unsubscribeClientEphemeral: () => void;
+  private initialSnapshot?: SessionProtocolResultByMethod["session.snapshot"];
 
   constructor(
     private readonly client: TauSdkClientImpl,
@@ -440,7 +443,16 @@ class TauSdkSessionImpl implements TauSdkSession {
   }
 
   async snapshot(): Promise<SessionProtocolResultByMethod["session.snapshot"]> {
-    const snapshot = await this.client.sendSnapshot(this.activeSessionId());
+    this.assertActive();
+    const initialSnapshot = this.initialSnapshot;
+    if (initialSnapshot) {
+      this.initialSnapshot = undefined;
+      if (this.bufferedDeltas.every((delta) => delta.toRevision <= initialSnapshot.revision)) {
+        return initialSnapshot;
+      }
+    }
+
+    const snapshot = await this.client.sendSnapshot(this.sessionId);
     this.discardBufferedDeltasThrough(snapshot.revision);
     return snapshot;
   }
@@ -554,6 +566,10 @@ class TauSdkSessionImpl implements TauSdkSession {
       return;
     }
 
+    if (this.initialSnapshot && delta.toRevision > this.initialSnapshot.revision) {
+      this.initialSnapshot = undefined;
+    }
+
     if (this.deltaListeners.size === 0) {
       this.bufferedDeltas.push(delta);
       return;
@@ -588,6 +604,10 @@ class TauSdkSessionImpl implements TauSdkSession {
         `observed session id '${sessionId}' did not match requested session id '${this.sessionId}'`,
       );
     }
+  }
+
+  setInitialSnapshot(snapshot: SessionProtocolResultByMethod["session.snapshot"]): void {
+    this.initialSnapshot = snapshot;
   }
 
   discardBufferedDeltasThrough(revision: number): void {

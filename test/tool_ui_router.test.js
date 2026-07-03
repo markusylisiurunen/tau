@@ -20,6 +20,13 @@ function createHarness() {
       replaced.push({ id, model });
       return true;
     },
+    updateMessage: (id, model) => {
+      if (!messageIds.has(id)) {
+        return false;
+      }
+      replaced.push({ id, model });
+      return true;
+    },
   };
 
   const router = new ToolUiRouter({

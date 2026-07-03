@@ -1415,9 +1415,7 @@ export class SessionChatController {
     if (this.submittedTurnInProgress) {
       return;
     }
-    void this.syncFromSessionSnapshot().finally(() => {
-      void this.drainQueuedMessages();
-    });
+    void this.drainQueuedMessages();
   }
 
   private stopVisibleSessionTurn(): boolean {

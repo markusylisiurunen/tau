@@ -314,7 +314,7 @@ type FlySpritePendingRequest = {
 class FlySpriteWorker {
   private command?: RunningSpriteCommand;
   private readyPromise?: Promise<void>;
-  private stdoutBuffer = "";
+  private readonly stdoutBuffer = new LineBuffer();
   private nextRequestId = 1;
   private pendingRequests = new Map<number, FlySpritePendingRequest>();
   private closed = false;
@@ -408,7 +408,7 @@ class FlySpriteWorker {
       cwd: this.cwd,
     });
     this.command = command;
-    this.stdoutBuffer = "";
+    this.stdoutBuffer.clear();
 
     return await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -458,14 +458,7 @@ class FlySpriteWorker {
   }
 
   private handleStdoutChunk(chunk: Buffer, onReady?: () => void): void {
-    this.stdoutBuffer += chunk.toString("utf-8");
-    while (true) {
-      const newlineIndex = this.stdoutBuffer.indexOf("\n");
-      if (newlineIndex === -1) {
-        break;
-      }
-      const line = this.stdoutBuffer.slice(0, newlineIndex);
-      this.stdoutBuffer = this.stdoutBuffer.slice(newlineIndex + 1);
+    for (const line of this.stdoutBuffer.push(chunk.toString("utf-8"))) {
       this.handleStdoutLine(line, onReady);
     }
   }
@@ -546,6 +539,42 @@ class FlySpriteWorker {
     if (request.signal && request.abort) {
       request.signal.removeEventListener("abort", request.abort);
     }
+  }
+}
+
+class LineBuffer {
+  private readonly chunks: string[] = [];
+
+  push(chunk: string): string[] {
+    const lines: string[] = [];
+    let start = 0;
+
+    while (true) {
+      const newlineIndex = chunk.indexOf("\n", start);
+      if (newlineIndex === -1) {
+        break;
+      }
+
+      this.chunks.push(chunk.slice(start, newlineIndex));
+      lines.push(this.flushLine());
+      start = newlineIndex + 1;
+    }
+
+    if (start < chunk.length) {
+      this.chunks.push(chunk.slice(start));
+    }
+
+    return lines;
+  }
+
+  clear(): void {
+    this.chunks.length = 0;
+  }
+
+  private flushLine(): string {
+    const line = this.chunks.length === 1 ? this.chunks[0]! : this.chunks.join("");
+    this.clear();
+    return line;
   }
 }
 

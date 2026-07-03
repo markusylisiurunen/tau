@@ -108,7 +108,7 @@ export type TelegramApi = {
       replyMarkup?: TelegramInlineKeyboardMarkup;
     },
   ): Promise<void>;
-  sendMessageDraft(chatId: number, draftId: number, text: string): Promise<void>;
+  sendRichMessageDraft(chatId: number, draftId: number, markdown: string): Promise<void>;
   sendChatAction(chatId: number, action: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
   setCommands(commands: TelegramBotCommand[]): Promise<void>;
@@ -208,7 +208,9 @@ type TelegramGroupPendingMessage = {
 
 type TelegramDraftState = {
   draftId: number;
+  markdown: string;
   preambleTimeout?: ReturnType<typeof setTimeout>;
+  refreshInterval?: ReturnType<typeof setInterval>;
 };
 
 type ResolvedTelegramAdapterOptions = TelegramAdapterOptions & {
@@ -239,7 +241,9 @@ const TELEGRAM_RICH_MESSAGE_SAFE_BYTES = Math.floor(
 );
 const TELEGRAM_MESSAGE_SPLIT_DELAY_MS = 1000;
 const TELEGRAM_DRAFT_MAX_CHARS = 4096;
-const TELEGRAM_DRAFT_PREAMBLE_VISIBLE_MS = 5000;
+const TELEGRAM_DRAFT_THINKING_MARKDOWN = "<tg-thinking>Thinking...</tg-thinking>";
+const TELEGRAM_DRAFT_PREAMBLE_VISIBLE_MS = 10_000;
+const TELEGRAM_DRAFT_REFRESH_MS = 20_000;
 const TELEGRAM_TYPING_REFRESH_MS = 4000;
 const ABORTED = Symbol("aborted");
 const CALLBACK_ACTION_PREFIX = "tau:action:";
@@ -853,13 +857,15 @@ function createTelegramApi(botToken: string): TelegramApi {
         z.unknown(),
       );
     },
-    async sendMessageDraft(chatId, draftId, text) {
+    async sendRichMessageDraft(chatId, draftId, markdown) {
       await callTelegramMethod(
-        "sendMessageDraft",
+        "sendRichMessageDraft",
         {
           chat_id: chatId,
           draft_id: draftId,
-          text,
+          rich_message: {
+            markdown,
+          },
         },
         TelegramAckResultSchema,
       );
@@ -2604,7 +2610,7 @@ class TelegramAdapterImpl {
         continue;
       }
 
-      void this.updateMessageDraft(sessionId, chatId, "");
+      void this.updateMessageDraft(sessionId, chatId, TELEGRAM_DRAFT_THINKING_MARKDOWN);
     }
   }
 
@@ -2629,7 +2635,7 @@ class TelegramAdapterImpl {
       const timeout = setTimeout(() => {
         const currentState = this.draftStatesBySessionChat.get(key);
         if (currentState === state) {
-          void this.updateMessageDraft(sessionId, chatId, "");
+          void this.updateMessageDraft(sessionId, chatId, TELEGRAM_DRAFT_THINKING_MARKDOWN);
         }
       }, TELEGRAM_DRAFT_PREAMBLE_VISIBLE_MS);
       timeout.unref?.();
@@ -2637,12 +2643,46 @@ class TelegramAdapterImpl {
     }
   }
 
-  private async updateMessageDraft(sessionId: string, chatId: number, text: string): Promise<void> {
+  private async updateMessageDraft(
+    sessionId: string,
+    chatId: number,
+    markdown: string,
+  ): Promise<void> {
     const key = this.getSessionChatKey(sessionId, chatId);
     const state = this.getDraftState(key);
+    state.markdown = markdown;
+    this.startMessageDraftRefresh(sessionId, chatId, state);
 
+    await this.sendMessageDraft(chatId, state);
+  }
+
+  private startMessageDraftRefresh(
+    sessionId: string,
+    chatId: number,
+    state: TelegramDraftState,
+  ): void {
+    if (state.refreshInterval) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const currentState = this.draftStatesBySessionChat.get(
+        this.getSessionChatKey(sessionId, chatId),
+      );
+      if (currentState !== state) {
+        clearInterval(interval);
+        return;
+      }
+
+      void this.sendMessageDraft(chatId, currentState);
+    }, TELEGRAM_DRAFT_REFRESH_MS);
+    interval.unref?.();
+    state.refreshInterval = interval;
+  }
+
+  private async sendMessageDraft(chatId: number, state: TelegramDraftState): Promise<void> {
     try {
-      await this.api.sendMessageDraft(chatId, state.draftId, text);
+      await this.api.sendRichMessageDraft(chatId, state.draftId, state.markdown);
     } catch (error) {
       this.log("warn", "failed to update telegram message draft", {
         chatId,
@@ -2663,6 +2703,9 @@ class TelegramAdapterImpl {
       if (state?.preambleTimeout) {
         clearTimeout(state.preambleTimeout);
       }
+      if (state?.refreshInterval) {
+        clearInterval(state.refreshInterval);
+      }
       this.draftStatesBySessionChat.delete(key);
     }
   }
@@ -2673,7 +2716,7 @@ class TelegramAdapterImpl {
       return existing;
     }
 
-    const state = { draftId: this.createDraftId() };
+    const state = { draftId: this.createDraftId(), markdown: TELEGRAM_DRAFT_THINKING_MARKDOWN };
     this.draftStatesBySessionChat.set(key, state);
     return state;
   }

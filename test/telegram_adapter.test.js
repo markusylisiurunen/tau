@@ -43,7 +43,7 @@ function createApiHarness(updateBatches, options = {}) {
   const queue = [...updateBatches];
   const sendMessages = [];
   const sendRichMessages = [];
-  const messageDrafts = [];
+  const richMessageDrafts = [];
   const chatActions = [];
   const downloadFileCalls = [];
   const setCommandsCalls = [];
@@ -65,8 +65,8 @@ function createApiHarness(updateBatches, options = {}) {
     sendRichMessage: vi.fn(async (chatId, markdown, options) => {
       sendRichMessages.push({ chatId, markdown, options, sentAt: Date.now() });
     }),
-    sendMessageDraft: vi.fn(async (chatId, draftId, text) => {
-      messageDrafts.push({ chatId, draftId, text, sentAt: Date.now() });
+    sendRichMessageDraft: vi.fn(async (chatId, draftId, markdown) => {
+      richMessageDrafts.push({ chatId, draftId, markdown, sentAt: Date.now() });
     }),
     sendChatAction: vi.fn(async (chatId, action) => {
       chatActions.push({ chatId, action, sentAt: Date.now() });
@@ -90,7 +90,7 @@ function createApiHarness(updateBatches, options = {}) {
     api,
     sendMessages,
     sendRichMessages,
-    messageDrafts,
+    richMessageDrafts,
     chatActions,
     downloadFileCalls,
     setCommandsCalls,
@@ -1087,10 +1087,13 @@ describe("telegram adapter", () => {
       expect(apiHarness.chatActions).toContainEqual(
         expect.objectContaining({ chatId: 470, action: "typing" }),
       );
-      expect(apiHarness.messageDrafts).toEqual([
-        expect.objectContaining({ chatId: 470, text: "" }),
-        expect.objectContaining({ chatId: 470, text: "intermediate" }),
-        expect.objectContaining({ chatId: 470, text: "final answer" }),
+      expect(apiHarness.richMessageDrafts).toEqual([
+        expect.objectContaining({
+          chatId: 470,
+          markdown: "<tg-thinking>Thinking...</tg-thinking>",
+        }),
+        expect.objectContaining({ chatId: 470, markdown: "intermediate" }),
+        expect.objectContaining({ chatId: 470, markdown: "final answer" }),
       ]);
       expect(
         apiHarness.sendMessages.some((entry) => entry.text.includes("(s12) run started")),
@@ -1105,6 +1108,87 @@ describe("telegram adapter", () => {
         apiHarness.sendMessages.some((entry) => entry.text.includes("(s12) assistant message")),
       ).toBe(false);
     } finally {
+      await adapter.close();
+    }
+  });
+
+  it("refreshes rich message drafts before telegram preview expiry", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 471, type: "private" },
+            from: { id: 7 },
+            text: "start",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s13",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(471) },
+    );
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+
+      vi.useFakeTimers();
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s13",
+        projectId: "demo",
+        previousState: "waiting-input",
+        state: "running",
+        updatedAt: "2024-01-01T00:01:00.000Z",
+      });
+
+      expect(apiHarness.richMessageDrafts).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(apiHarness.richMessageDrafts).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(apiHarness.richMessageDrafts).toEqual([
+        expect.objectContaining({
+          chatId: 471,
+          markdown: "<tg-thinking>Thinking...</tg-thinking>",
+        }),
+        expect.objectContaining({
+          chatId: 471,
+          draftId: apiHarness.richMessageDrafts[0].draftId,
+          markdown: "<tg-thinking>Thinking...</tg-thinking>",
+        }),
+      ]);
+
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s13",
+        projectId: "demo",
+        previousState: "running",
+        state: "waiting-input",
+        updatedAt: "2024-01-01T00:02:00.000Z",
+      });
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(apiHarness.richMessageDrafts).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
       await adapter.close();
     }
   });

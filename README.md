@@ -152,7 +152,7 @@ The Telegram command surface is intentionally small:
 - `/status` returns a short natural-language status paragraph for the active session.
 - `/interrupt` interrupts the active run.
 
-The runner keeps persistent chat output quiet: Telegram receives command acknowledgements/errors and final assistant messages, not streamed tool/lifecycle progress. While work is active, it shows Telegram's typing indicator in DMs and groups, and DMs also get a native draft that shows “Thinking…” or brief assistant progress narration. Final assistant messages are sent as Telegram rich markdown.
+The runner keeps persistent chat output quiet: Telegram receives command acknowledgements/errors and final assistant messages, not streamed tool/lifecycle progress. While work is active, it shows Telegram's typing indicator in DMs and groups, and DMs also get a native rich message draft that shows “Thinking…” or brief assistant progress narration and refreshes every 20 seconds. Final assistant messages are sent as Telegram rich markdown.
 
 Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). allowed groups are opt-in via `allowedChatIds`; non-triggering group text/captions, attachments, audio transcripts, and processing errors are buffered as sender-attributed context and the most recent 50 messages since the previous bot-triggering turn are included when a bot mention triggers a turn. group commands accept explicit bot mentions on or around the command, such as `/status@botusername`, `/status @botusername`, or `@botusername /status`.
 

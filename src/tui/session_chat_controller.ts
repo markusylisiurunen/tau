@@ -1560,7 +1560,12 @@ export class SessionChatController {
     }
 
     try {
-      this.snapshot = await this.session.setReasoning(next);
+      const result = await this.session.setReasoning(next);
+      this.snapshot = {
+        ...this.snapshot,
+        revision: result.revision,
+        settings: result.settings,
+      };
       this.refreshStatus();
     } catch (error) {
       this.view.addSystemMessage(`reasoning change failed: ${(error as Error).message}`, "error");

@@ -22,6 +22,7 @@ import type {
   SessionProtocolRetryResult,
   SessionProtocolRewindResult,
   SessionProtocolSessionSummary,
+  SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
   SessionProtocolSteerResult,
   SessionProtocolSubmitResult,
@@ -46,7 +47,7 @@ export type TauSdkSessionInterruptResult = SessionProtocolInterruptResult;
 export type TauSdkSessionExecResult = SessionProtocolExecResult;
 export type TauSdkSessionSnapshotResult = SessionProtocolSnapshot;
 export type TauSdkSessionSetRiskResult = SessionProtocolSnapshot;
-export type TauSdkSessionSetReasoningResult = SessionProtocolSnapshot;
+export type TauSdkSessionSetReasoningResult = SessionProtocolSettingsUpdateResult;
 export type TauSdkSessionSetPersonaResult = SessionProtocolSnapshot;
 export type TauSdkSessionCompactResult = SessionProtocolCompactResult;
 export type TauSdkSessionPruneResult = SessionProtocolPruneResult;

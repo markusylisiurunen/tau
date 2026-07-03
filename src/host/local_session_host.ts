@@ -5,10 +5,7 @@ import type { CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_runtime.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
-import {
-  type RuntimePromptBootstrap,
-  resolvePersonaSkillsForPromptContext,
-} from "../core/runtime/runtime_bootstrap.js";
+import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { SessionPromptComposition } from "../core/runtime/session_prompt_composer.js";
 import type { CoreSession } from "../core/session/core_session.js";
 import type { SubagentUiEvent } from "../core/subagents/types.js";
@@ -56,6 +53,7 @@ import type {
   SessionProtocolResolvePromptResult,
   SessionProtocolRewindResult,
   SessionProtocolSessionSummary,
+  SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
   SessionProtocolSubagentSnapshot,
   SessionProtocolTerminateSubagentResult,
@@ -655,21 +653,29 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return snapshot;
   }
 
-  async setReasoning(reasoning: ReasoningEffort): Promise<SessionProtocolSnapshot> {
+  async setReasoning(reasoning: ReasoningEffort): Promise<SessionProtocolSettingsUpdateResult> {
     this.assertActive();
-    const persona = clonePersona(this.runtime.persona);
-    persona.settings.reasoning = reasoning;
-    const skillsContext = resolvePersonaSkillsForPromptContext({
-      persona,
-      discoveredSkills: this.bootstrap.discoveredSkills,
-    });
-    this.runtime.setPersona(persona, {
-      skillsBlock: skillsContext.skillsBlock,
-    });
-    this.bootstrap.persona = clonePersona(persona);
+    const fromRevision = this.committedSnapshot?.revision;
+    this.runtime.setReasoning(reasoning);
+    this.bootstrap.persona.settings.reasoning = reasoning;
     const snapshot = await this.commitSnapshot();
-    this.emitSnapshotReset("configuration", snapshot);
-    return snapshot;
+    if (fromRevision === undefined) {
+      this.emitSnapshotReset("configuration", snapshot);
+    } else if (snapshot.revision !== fromRevision) {
+      this.emitDelta(
+        createSessionProtocolDeltaMessage({
+          sessionId: snapshot.sessionId,
+          fromRevision,
+          toRevision: snapshot.revision,
+          reason: "configuration",
+          delta: {
+            type: "snapshot.patch",
+            changes: [{ type: "settings.set", settings: snapshot.settings }],
+          },
+        }),
+      );
+    }
+    return { revision: snapshot.revision, settings: snapshot.settings };
   }
 
   async setPersona(personaId: string): Promise<SessionProtocolSnapshot> {

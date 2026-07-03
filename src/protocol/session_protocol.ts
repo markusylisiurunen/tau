@@ -140,6 +140,10 @@ export type SessionProtocolSetReasoningParams = SessionProtocolSessionIdParams &
 export type SessionProtocolSetPersonaParams = SessionProtocolSessionIdParams & {
   personaId: string;
 };
+export type SessionProtocolSettingsUpdateResult = {
+  revision: number;
+  settings: SessionProtocolSettingsSnapshot;
+};
 export type SessionProtocolResolvePromptParams = SessionProtocolSessionIdParams & {
   promptId: string;
 };
@@ -582,7 +586,7 @@ export type SessionProtocolResultByMethod = {
   "session.interrupt": SessionProtocolInterruptResult;
   "session.snapshot": SessionProtocolSnapshot;
   "session.setRisk": SessionProtocolSnapshot;
-  "session.setReasoning": SessionProtocolSnapshot;
+  "session.setReasoning": SessionProtocolSettingsUpdateResult;
   "session.setPersona": SessionProtocolSnapshot;
   "session.resolvePrompt": SessionProtocolResolvePromptResult;
   "session.autocompletePaths": SessionProtocolAutocompletePathsResult;
@@ -657,6 +661,7 @@ export type SessionProtocolDeltaReason =
 
 export type SessionProtocolChange =
   | { type: "lifecycle.set"; lifecycle: SessionProtocolSessionLifecycle }
+  | { type: "settings.set"; settings: SessionProtocolSettingsSnapshot }
   | {
       type: "message.append";
       message: SessionProtocolMessage;
@@ -1427,6 +1432,12 @@ const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("settings.set"),
+      settings: sessionProtocolSettingsSnapshotSchema,
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("message.append"),
       message: sessionProtocolMessageSchema,
       timelineItem: sessionProtocolTimelineItemSchema.optional(),
@@ -1895,6 +1906,9 @@ export function applySessionProtocolDelta(
     switch (change.type) {
       case "lifecycle.set":
         next.lifecycle = change.lifecycle;
+        break;
+      case "settings.set":
+        next.settings = structuredClone(change.settings);
         break;
       case "message.append":
         next.messages.push(structuredClone(change.message));

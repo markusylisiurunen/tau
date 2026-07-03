@@ -296,7 +296,7 @@ class FakeSession {
       revision: this.snapshotValue.revision + 1,
       settings: { ...this.snapshotValue.settings, reasoning },
     });
-    return this.snapshotValue;
+    return { revision: this.snapshotValue.revision, settings: this.snapshotValue.settings };
   });
   setPersona = vi.fn(async (personaId) => {
     this.snapshotValue = updateSnapshot(this.snapshotValue, {

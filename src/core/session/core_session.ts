@@ -3,7 +3,7 @@ import type { Config } from "../config/index.js";
 import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import type { Persona, RiskLevel } from "../types.js";
+import type { Persona, ReasoningEffort, RiskLevel } from "../types.js";
 import {
   type HistoryEntry,
   type ProcessTurnResult,
@@ -67,6 +67,10 @@ export class CoreSession {
     subagentPrompts: Record<string, string>,
   ): void {
     this.engine.setPersona(persona, systemPrompt, subagentPrompts);
+  }
+
+  setReasoning(reasoning: ReasoningEffort): void {
+    this.engine.setReasoning(reasoning);
   }
 
   setRiskLevel(level: RiskLevel): void {

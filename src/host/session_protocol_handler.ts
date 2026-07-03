@@ -901,9 +901,9 @@ export class SessionProtocolHandler {
     request: Extract<SessionProtocolRequestMessage, { method: "session.setReasoning" }>,
   ): Promise<void> {
     await this.withSessionMutation(request, "session reasoning changed", async (state) => {
-      const snapshot = await state.session.setReasoning(request.params.reasoning);
+      const result = await state.session.setReasoning(request.params.reasoning);
       this.sendMessage(
-        createSessionProtocolSuccessResponse(request.id, "session.setReasoning", snapshot),
+        createSessionProtocolSuccessResponse(request.id, "session.setReasoning", result),
       );
     });
   }

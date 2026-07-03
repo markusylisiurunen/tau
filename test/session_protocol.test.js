@@ -1467,6 +1467,36 @@ describe("session_protocol", () => {
       message: delta,
     });
 
+    const settingsDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 2,
+      toRevision: 3,
+      reason: "configuration",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "settings.set",
+            settings: { personaId: "default", riskLevel: "read-only", reasoning: "high" },
+          },
+        ],
+      },
+    });
+    const settingsPatchedSnapshot = applySessionProtocolDelta(
+      createProtocolSnapshot({
+        sessionId: "session-1",
+        revision: 2,
+        settings: { personaId: "default", riskLevel: "read-only", reasoning: "medium" },
+      }),
+      settingsDelta,
+    );
+    expect(settingsPatchedSnapshot.revision).toBe(3);
+    expect(settingsPatchedSnapshot.settings).toEqual({
+      personaId: "default",
+      riskLevel: "read-only",
+      reasoning: "high",
+    });
+
     const ephemeral = createSessionProtocolEphemeralMessage({
       sessionId: "session-1",
       event: {

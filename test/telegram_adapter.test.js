@@ -1112,7 +1112,7 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("refreshes rich message drafts before telegram preview expiry", async () => {
+  it("refreshes rich message drafts after thinking has been visible for 20 seconds", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -1162,12 +1162,54 @@ describe("telegram adapter", () => {
       });
 
       expect(apiHarness.richMessageDrafts).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(19_999);
+      await vi.advanceTimersByTimeAsync(9_999);
       expect(apiHarness.richMessageDrafts).toHaveLength(1);
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s13",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:01:10.000Z",
+        progress: {
+          type: "assistant-message",
+          text: "checking the logs",
+        },
+      });
+      expect(apiHarness.richMessageDrafts).toEqual([
+        expect.objectContaining({
+          chatId: 471,
+          markdown: "<tg-thinking>Thinking...</tg-thinking>",
+        }),
+        expect.objectContaining({ chatId: 471, markdown: "checking the logs" }),
+      ]);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(apiHarness.richMessageDrafts).toEqual([
+        expect.objectContaining({
+          chatId: 471,
+          markdown: "<tg-thinking>Thinking...</tg-thinking>",
+        }),
+        expect.objectContaining({ chatId: 471, markdown: "checking the logs" }),
+        expect.objectContaining({
+          chatId: 471,
+          draftId: apiHarness.richMessageDrafts[0].draftId,
+          markdown: "<tg-thinking>Thinking...</tg-thinking>",
+        }),
+      ]);
+
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(apiHarness.richMessageDrafts).toHaveLength(3);
       await vi.advanceTimersByTimeAsync(1);
       expect(apiHarness.richMessageDrafts).toEqual([
         expect.objectContaining({
           chatId: 471,
+          markdown: "<tg-thinking>Thinking...</tg-thinking>",
+        }),
+        expect.objectContaining({ chatId: 471, markdown: "checking the logs" }),
+        expect.objectContaining({
+          chatId: 471,
+          draftId: apiHarness.richMessageDrafts[0].draftId,
           markdown: "<tg-thinking>Thinking...</tg-thinking>",
         }),
         expect.objectContaining({
@@ -1186,7 +1228,7 @@ describe("telegram adapter", () => {
         updatedAt: "2024-01-01T00:02:00.000Z",
       });
       await vi.advanceTimersByTimeAsync(20_000);
-      expect(apiHarness.richMessageDrafts).toHaveLength(2);
+      expect(apiHarness.richMessageDrafts).toHaveLength(4);
     } finally {
       vi.useRealTimers();
       await adapter.close();

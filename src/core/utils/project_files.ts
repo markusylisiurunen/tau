@@ -58,6 +58,32 @@ function combineEntries(files: Iterable<string>, dirs: Iterable<string>): string
   return [...out].sort();
 }
 
+export async function loadProjectPathAutocompleteEntriesWithBackend(
+  backend: {
+    runBash(
+      command: string,
+      options?: { timeoutMs?: number; cwd?: string },
+    ): Promise<{ output: string; stdout: string; exitCode: number | null }>;
+  },
+  options: { cwd?: string } = {},
+): Promise<string[]> {
+  const res = await backend.runBash("rg --files --hidden --glob '!.git/'", {
+    ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+    timeoutMs: RIPGREP_TIMEOUT_MS,
+  });
+  if (res.exitCode !== 0 && !res.stdout) return [];
+
+  const files = listFilesFromOutput(res.stdout).slice(0, MAX_AUTOCOMPLETE_SCAN_ENTRIES);
+  return combineEntries(files, listDirectoriesFromFiles(files));
+}
+
+export function filterProjectPathAutocompleteEntries(
+  entries: string[],
+  options: { query: string; limit: number },
+): string[] {
+  return fuzzyFilter(entries, options.query, (path) => path).slice(0, options.limit);
+}
+
 export async function autocompleteProjectPathsWithBackend(
   backend: {
     runBash(
@@ -68,15 +94,8 @@ export async function autocompleteProjectPathsWithBackend(
   options: { query: string; limit: number; cwd?: string },
 ): Promise<string[]> {
   try {
-    const res = await backend.runBash("rg --files --hidden --glob '!.git/'", {
-      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-      timeoutMs: RIPGREP_TIMEOUT_MS,
-    });
-    if (res.exitCode !== 0 && !res.stdout) return [];
-
-    const files = listFilesFromOutput(res.stdout).slice(0, MAX_AUTOCOMPLETE_SCAN_ENTRIES);
-    const entries = combineEntries(files, listDirectoriesFromFiles(files));
-    return fuzzyFilter(entries, options.query, (path) => path).slice(0, options.limit);
+    const entries = await loadProjectPathAutocompleteEntriesWithBackend(backend, options);
+    return filterProjectPathAutocompleteEntries(entries, options);
   } catch {
     return [];
   }

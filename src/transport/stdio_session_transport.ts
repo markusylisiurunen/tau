@@ -46,7 +46,7 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
   private readonly exitDeferred = createDeferred<ProcessExitInfo>();
 
   private readyValue?: SessionProtocolReadyMessage;
-  private stdoutBuffer = "";
+  private readonly stdoutBuffer = new LineBuffer();
   private stderrBuffer = "";
   private connectPromise?: Promise<void>;
   private closePromise?: Promise<void>;
@@ -221,17 +221,7 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
   }
 
   private readonly handleStdoutData = (chunk: string | Buffer): void => {
-    this.stdoutBuffer += chunk.toString();
-
-    while (true) {
-      const nextLineIndex = this.stdoutBuffer.indexOf("\n");
-      if (nextLineIndex === -1) {
-        break;
-      }
-
-      const line = this.stdoutBuffer.slice(0, nextLineIndex).trim();
-      this.stdoutBuffer = this.stdoutBuffer.slice(nextLineIndex + 1);
-
+    for (const line of this.stdoutBuffer.push(chunk.toString())) {
       if (!line) {
         continue;
       }
@@ -359,4 +349,36 @@ async function waitForExitOrTimeout(
   timeoutMs: number,
 ): Promise<void> {
   await waitForPromiseOrTimeout(exitPromise, timeoutMs);
+}
+
+class LineBuffer {
+  private readonly chunks: string[] = [];
+
+  push(chunk: string): string[] {
+    const lines: string[] = [];
+    let start = 0;
+
+    while (true) {
+      const newlineIndex = chunk.indexOf("\n", start);
+      if (newlineIndex === -1) {
+        break;
+      }
+
+      this.chunks.push(chunk.slice(start, newlineIndex));
+      lines.push(this.flushLine());
+      start = newlineIndex + 1;
+    }
+
+    if (start < chunk.length) {
+      this.chunks.push(chunk.slice(start));
+    }
+
+    return lines;
+  }
+
+  private flushLine(): string {
+    const line = this.chunks.length === 1 ? this.chunks[0]! : this.chunks.join("");
+    this.chunks.length = 0;
+    return line.trim();
+  }
 }

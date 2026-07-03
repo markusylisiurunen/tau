@@ -1,9 +1,8 @@
 import type { Stats } from "node:fs";
 import { dirname } from "node:path";
-import type { ConfigDeps } from "../core/config/deps.js";
-import { loadRuntimeConfig, type RuntimeConfigResult } from "../core/config/index.js";
-import type { BashExecutionResult, ToolExecutionBackend } from "../core/tools/execution_backend.js";
-import { shellQuote } from "./sandbox_tool_helpers.js";
+import type { BashExecutionResult, ToolExecutionBackend } from "../tools/execution_backend.js";
+import type { ConfigDeps } from "./deps.js";
+import { loadRuntimeConfig, type RuntimeConfigResult } from "./runtime.js";
 
 type RuntimeConfigFileSnapshot = {
   path: string;
@@ -115,10 +114,9 @@ export async function loadRuntimeConfigFromToolBackend(options: {
   cwd: string;
   home: string;
 }): Promise<RuntimeConfigResult> {
-  const result = await options.backend.runBash(
-    `node -e ${shellQuote(COLLECT_RUNTIME_CONFIG_SCRIPT)} ${shellQuote(options.cwd)} ${shellQuote(
-      options.home,
-    )}`,
+  const result = await options.backend.runNodeScript(
+    COLLECT_RUNTIME_CONFIG_SCRIPT,
+    [options.cwd, options.home],
     { cwd: options.cwd, timeoutMs: 30_000 },
   );
   if (result.exitCode !== 0) {

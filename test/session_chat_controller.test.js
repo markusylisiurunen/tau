@@ -1208,6 +1208,7 @@ describe("SessionChatController", () => {
 
   it("tracks and syncs turns started by another observed client", async () => {
     const session = new FakeSession();
+    session.snapshot = vi.fn(async () => session.snapshotValue);
     const view = new FakeView();
     const controller = new SessionChatController({
       view,
@@ -1217,6 +1218,24 @@ describe("SessionChatController", () => {
     });
     controller.start();
 
+    const observedUser = {
+      id: "observed-user",
+      state: "committed",
+      modelVisible: true,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "started elsewhere" }],
+      },
+    };
+    const observedUserDelta = createMessageAppendDelta(
+      session.id,
+      session.snapshotValue.revision,
+      observedUser,
+    );
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, observedUserDelta);
+    for (const listener of session.listeners) {
+      listener(observedUserDelta);
+    }
     session.emit({
       type: "assistant_start",
       historyEntryId: "observed-assistant",
@@ -1226,21 +1245,6 @@ describe("SessionChatController", () => {
     expect(view.status.footer.commandHint).toBeUndefined();
 
     const assistantMessage = createAssistantMessage("observed reply");
-    session.snapshotValue = updateSnapshot(session.snapshotValue, {
-      historyEntries: [
-        {
-          id: "observed-user",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "started elsewhere" }],
-          },
-        },
-        {
-          id: "observed-assistant",
-          message: assistantMessage,
-        },
-      ],
-    });
     session.emit({
       type: "assistant_final",
       historyEntryId: "observed-assistant",
@@ -1261,6 +1265,7 @@ describe("SessionChatController", () => {
         }),
       ]),
     );
+    expect(session.snapshot).toHaveBeenCalledTimes(1);
   });
 
   it("stops visible running state on idle delta before a submitted turn response resolves", async () => {
@@ -1694,6 +1699,95 @@ describe("SessionChatController", () => {
         },
       }),
     );
+  });
+
+  it("preserves hidden thinking from assistant content append deltas", async () => {
+    const baseSnapshot = createSnapshot();
+    const snapshot = updateSnapshot(baseSnapshot, {
+      revision: 3,
+      lifecycle: "running",
+      messages: [
+        ...baseSnapshot.messages,
+        {
+          id: "assistant-thinking-streaming",
+          state: "draft",
+          modelVisible: false,
+          message: {
+            role: "assistant",
+            timestamp: 1,
+            content: [],
+          },
+        },
+      ],
+      timeline: [
+        ...baseSnapshot.timeline,
+        {
+          type: "message",
+          id: "timeline-assistant-thinking-streaming",
+          messageId: "assistant-thinking-streaming",
+        },
+      ],
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "local",
+      themeIds: ["gold"],
+    });
+
+    controller.start();
+    const appendDelta = {
+      version: 1,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 3,
+      toRevision: 4,
+      reason: "assistant-stream",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "message.content.append",
+            messageId: "assistant-thinking-streaming",
+            thinking: "checking context",
+            timestamp: 2,
+          },
+        ],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, appendDelta);
+
+    for (const listener of session.listeners) {
+      listener(appendDelta);
+    }
+
+    expect(view.messages.find((message) => message.id === "assistant-thinking-streaming")).toEqual(
+      expect.objectContaining({
+        model: {
+          type: "assistant_partial",
+          text: "",
+          thinking: "checking context",
+        },
+      }),
+    );
+    controller.getInputHandlers().onCtrlT();
+
+    expect(view.systems).toContainEqual(
+      expect.objectContaining({ kind: "success", text: "thoughts visible" }),
+    );
+    expect(
+      controller.snapshot.messages.find((entry) => entry.id === "assistant-thinking-streaming"),
+    ).toEqual(
+      expect.objectContaining({
+        message: expect.objectContaining({
+          content: [{ type: "thinking", thinking: "checking context" }],
+        }),
+      }),
+    );
+    await controller.dispose();
   });
 
   it("replays deltas delivered while revision-gap recovery is pending", async () => {

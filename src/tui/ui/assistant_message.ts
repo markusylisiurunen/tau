@@ -79,7 +79,12 @@ export class AssistantMessageComponent
     const trimmedThinking = thinking?.trim();
     const trimmedText = text.trim();
     if (this.thoughtsVisible && trimmedThinking) {
-      this.contentContainer.addChild(new Text(palette.thinkingText(trimmedThinking), 1, 0));
+      this.contentContainer.addChild(
+        new Markdown(trimmedThinking, 1, 0, this.theme.markdownTheme, {
+          color: (t: string) => palette.thinkingText(t),
+          italic: true,
+        }),
+      );
       this._hasVisibleText = true;
       if (trimmedText) {
         this.contentContainer.addChild(new Spacer(1));
@@ -87,7 +92,7 @@ export class AssistantMessageComponent
     }
 
     if (trimmedText) {
-      this.contentContainer.addChild(new Text(trimmedText, 1, 0));
+      this.contentContainer.addChild(new Markdown(trimmedText, 1, 0, this.theme.markdownTheme));
       this._hasVisibleText = true;
     }
   }

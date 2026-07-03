@@ -260,11 +260,11 @@ export class ToolUiRouter {
   }
 
   private replaceToolMessage(uiEvent: ToolUiEventWithToolCallId): boolean {
-    const replaced = this.chatContainer.replaceMessage(uiEvent.toolCallId, {
+    const updated = this.chatContainer.updateMessage(uiEvent.toolCallId, {
       type: "tool",
       event: uiEvent,
     });
-    if (!replaced) {
+    if (!updated) {
       this.latestToolEventsById.delete(uiEvent.toolCallId);
       return false;
     }

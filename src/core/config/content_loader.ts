@@ -701,7 +701,10 @@ function parsePersona(
   return { persona };
 }
 
-function parsePrompt(file: string, content: string): { prompt?: PromptTemplate; error?: string } {
+export function parsePrompt(
+  file: string,
+  content: string,
+): { prompt?: PromptTemplate; error?: string } {
   const markdownResult = parseMarkdownFrontMatter(content);
   if (!markdownResult.ok) {
     return { error: `${file}: ${markdownResult.message}. skipped.` };

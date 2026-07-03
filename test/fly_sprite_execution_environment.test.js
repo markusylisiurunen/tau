@@ -15,8 +15,9 @@ class FakeSpriteCommand extends EventEmitter {
   killed = false;
   input = "";
 
-  constructor(handler) {
+  constructor(handler, options = {}) {
     super();
+    this.chunkSize = options.chunkSize;
     this.stdin.on("data", (chunk) => {
       this.input += Buffer.from(chunk).toString("utf-8");
       this.drainInput(handler);
@@ -59,23 +60,25 @@ class FakeSpriteCommand extends EventEmitter {
       try {
         this.respond(request.id, handler(request));
       } catch (err) {
-        this.stdout.emit(
-          "data",
-          Buffer.from(
-            `${JSON.stringify({
-              id: request.id,
-              ok: false,
-              error: err instanceof Error ? err.message : String(err),
-            })}\n`,
-            "utf-8",
-          ),
-        );
+        this.writeMessage({
+          id: request.id,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }
 
   respond(id, result) {
-    this.stdout.emit("data", Buffer.from(`${JSON.stringify({ id, ok: true, result })}\n`, "utf-8"));
+    this.writeMessage({ id, ok: true, result });
+  }
+
+  writeMessage(message) {
+    const line = `${JSON.stringify(message)}\n`;
+    const chunkSize = this.chunkSize ?? line.length;
+    for (let index = 0; index < line.length; index += chunkSize) {
+      this.stdout.emit("data", Buffer.from(line.slice(index, index + chunkSize), "utf-8"));
+    }
   }
 }
 
@@ -90,13 +93,13 @@ class HangingSpriteCommand extends EventEmitter {
   }
 }
 
-function createFakeSprite(handler) {
+function createFakeSprite(handler, commandOptions = {}) {
   const calls = [];
   return {
     calls,
     spawn(command, args, options) {
       calls.push({ command, args, options });
-      return new FakeSpriteCommand(handler);
+      return new FakeSpriteCommand(handler, commandOptions);
     },
   };
 }
@@ -378,6 +381,27 @@ describe("Fly Sprite execution environment", () => {
       "writeFile",
       "listDir",
     ]);
+  });
+
+  it("parses worker responses split across many small stdout chunks", async () => {
+    const sprite = createFakeSprite(
+      (request) => {
+        if (request.method === "readFile") {
+          return { content: "hello from chunks" };
+        }
+        throw new Error(`unexpected ${request.method}`);
+      },
+      { chunkSize: 1 },
+    );
+    const backend = createFlySpriteToolExecutionBackend({
+      sprite,
+      cwd: "/home/sprite/repo",
+    });
+
+    await expect(backend.readFile("/home/sprite/repo/file.txt")).resolves.toEqual({
+      path: "/home/sprite/repo/file.txt",
+      content: "hello from chunks",
+    });
   });
 });
 

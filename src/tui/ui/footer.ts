@@ -57,7 +57,6 @@ export class FooterComponent implements Component {
 
   setStatus(status: FooterStatus) {
     this.status = status;
-    this.ui.requestRender();
   }
 
   showToast(text: string, kind: SystemMessageKind, durationMs: number = 3000) {

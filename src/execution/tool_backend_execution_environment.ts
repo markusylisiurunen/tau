@@ -1,4 +1,5 @@
 import type { RuntimeConfigResult } from "../core/config/index.js";
+import { loadRuntimeConfigFromToolBackend } from "../core/config/runtime_config_snapshot.js";
 import {
   type RuntimePromptBootstrap,
   resolveRuntimePromptBootstrapAsync,
@@ -15,7 +16,6 @@ import type {
   ExecutionRuntimeContext,
   ResolveExecutionRuntimeContextOptions,
 } from "./execution_environment.js";
-import { loadRuntimeConfigFromToolBackend } from "./runtime_config_snapshot.js";
 
 type BackendExecutionSnapshot = SessionProtocolExecutionEnvironmentSnapshot & {
   cwd: string;

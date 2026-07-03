@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
-import type { Config } from "../core/config/index.js";
+import { type Config, resolvePromptTemplateWithBackend } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_runtime.js";
@@ -15,7 +15,10 @@ import type { SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolUiEvent } from "../core/tools/registry.js";
 import { TOOL_NAME_DIFF_REVIEW } from "../core/tools/tool_names.js";
 import type { Persona, ReasoningEffort, RiskLevel, Skill } from "../core/types.js";
-import { autocompleteProjectPathsWithBackend } from "../core/utils/project_files.js";
+import {
+  filterProjectPathAutocompleteEntries,
+  loadProjectPathAutocompleteEntriesWithBackend,
+} from "../core/utils/project_files.js";
 import type {
   ExecutionEnvironment,
   ExecutionEnvironmentResolver,
@@ -68,6 +71,8 @@ import {
 import type { SessionStore } from "../store/session_store.js";
 import { HostedEphemeralAgentSession } from "./hosted_ephemeral_agent_session.js";
 import type { TauHostedSession, TauSessionHost } from "./session_host.js";
+
+const PATH_AUTOCOMPLETE_CACHE_TTL_MS = 5_000;
 
 export type LocalSessionHostSessionOptions = {
   persona: Persona;
@@ -345,11 +350,15 @@ export class LocalSessionHost implements TauSessionHost {
 
   async observeSession(sessionId: string): Promise<LocalHostedSession | undefined> {
     this.assertHostActive();
-    await this.refreshStore();
-
     const liveSession = this.findLiveSession(sessionId);
     if (liveSession) {
       return liveSession;
+    }
+
+    await this.refreshStore();
+    const refreshedLiveSession = this.findLiveSession(sessionId);
+    if (refreshedLiveSession) {
+      return refreshedLiveSession;
     }
 
     const existingRecovery = this.sessionRecoveryPromises.get(sessionId);
@@ -511,6 +520,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     (message: SessionProtocolEphemeralMessage) => void
   >();
   private readonly ephemeralAgentSessions = new Map<string, HostedEphemeralAgentSession>();
+  private pathAutocompleteCache?: {
+    expiresAt: number;
+    entries: string[];
+  };
+  private pathAutocompleteLoad?: Promise<string[]>;
   private readonly unsubscribeSubagentEvent: () => void;
   private runtimeEventQueue: Promise<void> = Promise.resolve();
   private snapshotQueue: Promise<unknown> = Promise.resolve();
@@ -660,7 +674,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async setPersona(personaId: string): Promise<SessionProtocolSnapshot> {
     this.assertActive();
-    const persona = this.bootstrap.personas.find(
+    const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig();
+    const personas = runtimeConfig.personas.map((persona) =>
+      this.normalizeReloadedPersona(persona),
+    );
+    const persona = personas.find(
       (persona) => persona.id.toLowerCase() === personaId.toLowerCase(),
     );
     if (!persona) {
@@ -668,14 +686,25 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
 
     const selectedPersona = clonePersona(persona);
-    const skillsContext = resolvePersonaSkillsForPromptContext({
+    const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
       persona: selectedPersona,
-      discoveredSkills: this.bootstrap.discoveredSkills,
+      discoveredSkills: runtimeConfig.skills,
+      includeAgentContext: this.includeAgentContext,
     });
+    this.runtime.setConfig(runtimeConfig.config);
+    this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
     this.runtime.setPersona(selectedPersona, {
-      skillsBlock: skillsContext.skillsBlock,
+      skillsBlock: runtimeContext.promptBootstrap.promptContext.skillsBlock,
     });
-    this.bootstrap.persona = clonePersona(selectedPersona);
+    this.bootstrap = {
+      persona: clonePersona(selectedPersona),
+      riskLevel: this.runtime.currentRiskLevel,
+      discoveredSkills: structuredClone(runtimeConfig.skills),
+      personas: personas.map(clonePersona),
+      prompts: structuredClone(runtimeConfig.prompts),
+      config: runtimeConfig.config,
+    };
+    this.catalog = createContentCatalogSnapshot(this.bootstrap);
     const snapshot = await this.commitSnapshot();
     this.emitSnapshotReset("configuration", snapshot);
     return snapshot;
@@ -757,10 +786,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     promptId: SessionProtocolResolvePromptParams["promptId"],
   ): Promise<SessionProtocolResolvePromptResult> {
     this.assertActive();
-    const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig();
-    const prompt = runtimeConfig.prompts.find(
-      (candidate) => candidate.id.toLowerCase() === promptId.toLowerCase(),
-    );
+    const executionSnapshot = this.executionEnvironment.snapshot();
+    const prompt = await resolvePromptTemplateWithBackend({
+      backend: this.executionEnvironment.getToolExecutionBackend(),
+      cwd: executionSnapshot.cwd,
+      home: executionSnapshot.home,
+      promptId,
+    });
     if (!prompt) {
       throw new Error(`unknown prompt '${promptId}'`);
     }
@@ -771,12 +803,34 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     options: Omit<SessionProtocolAutocompletePathsParams, "sessionId">,
   ): Promise<SessionProtocolAutocompletePathsResult> {
     this.assertActive();
+    const entries = await this.getPathAutocompleteEntries();
     return {
-      paths: await autocompleteProjectPathsWithBackend(
-        this.executionEnvironment.getToolExecutionBackend(),
-        options,
-      ),
+      paths: filterProjectPathAutocompleteEntries(entries, options),
     };
+  }
+
+  private async getPathAutocompleteEntries(): Promise<string[]> {
+    const now = Date.now();
+    if (this.pathAutocompleteCache && this.pathAutocompleteCache.expiresAt > now) {
+      return this.pathAutocompleteCache.entries;
+    }
+
+    this.pathAutocompleteLoad ??= loadProjectPathAutocompleteEntriesWithBackend(
+      this.executionEnvironment.getToolExecutionBackend(),
+    )
+      .then((entries) => {
+        this.pathAutocompleteCache = {
+          entries,
+          expiresAt: Date.now() + PATH_AUTOCOMPLETE_CACHE_TTL_MS,
+        };
+        return entries;
+      })
+      .catch(() => [])
+      .finally(() => {
+        this.pathAutocompleteLoad = undefined;
+      });
+
+    return await this.pathAutocompleteLoad;
   }
 
   async compact(
@@ -953,6 +1007,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ...draft,
       revision: this.nextSnapshotRevision(draft),
     };
+    if (
+      this.committedSnapshot &&
+      snapshot.revision === this.committedSnapshot.revision &&
+      this.persistedSnapshotRevision === snapshot.revision
+    ) {
+      return cloneSessionProtocolSnapshot(this.committedSnapshot);
+    }
+
     await this.store.commitSessionSnapshot(snapshot, {
       expectedRevision: this.persistedSnapshotRevision ?? 0,
     });

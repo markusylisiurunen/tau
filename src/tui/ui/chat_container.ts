@@ -22,6 +22,8 @@ export class ChatContainerComponent extends Container {
   private compactToolUi: boolean = false;
   private allMessages: ChatMessageRecord[] = [];
   private idToIndex: Map<string, number> = new Map();
+  private cachedRenderWidth?: number;
+  private cachedRenderLines?: string[];
 
   constructor(theme: Theme, toolUiRegistry: ToolUiRegistry, thoughtsVisible = false) {
     super();
@@ -57,6 +59,7 @@ export class ChatContainerComponent extends Container {
       this.chatContainer.addChild(rendered.component);
       record.rendered = true;
     }
+    this.invalidateRenderCache();
 
     return finalId;
   }
@@ -70,12 +73,12 @@ export class ChatContainerComponent extends Container {
     return true;
   }
 
-  updateMessage(id: string, model: ChatMessageModel): void {
+  updateMessage(id: string, model: ChatMessageModel): boolean {
     const index = this.idToIndex.get(id);
-    if (index === undefined) return;
+    if (index === undefined) return false;
 
     const record = this.allMessages[index];
-    if (!record) return;
+    if (!record) return false;
     record.model = model;
 
     const rendered = record.renderedMessage;
@@ -96,22 +99,25 @@ export class ChatContainerComponent extends Container {
           if (!wasVisible && isVisibleNow) {
             this.rebuild();
           }
-          return;
+          this.invalidateRenderCache();
+          return true;
         }
 
         if (!record.rendered && shouldShow) {
           this.rebuild();
-          return;
+          return true;
         }
 
         if (record.rendered && !shouldShow) {
           this.rebuild();
         }
-        return;
+        this.invalidateRenderCache();
+        return true;
       }
     }
 
     this.rebuild();
+    return true;
   }
 
   setThinkingVisibility(visible: boolean) {
@@ -130,6 +136,7 @@ export class ChatContainerComponent extends Container {
     this.allMessages = [];
     this.idToIndex.clear();
     this.chatContainer.clear();
+    this.invalidateRenderCache();
   }
 
   removeMessages(ids: readonly string[]): void {
@@ -168,6 +175,23 @@ export class ChatContainerComponent extends Container {
         record.rendered = true;
       }
     }
+    this.invalidateRenderCache();
+  }
+
+  override invalidate(): void {
+    this.invalidateRenderCache();
+    super.invalidate();
+  }
+
+  override render(width: number): string[] {
+    if (this.cachedRenderLines && this.cachedRenderWidth === width) {
+      return this.cachedRenderLines;
+    }
+
+    const lines = super.render(width);
+    this.cachedRenderWidth = width;
+    this.cachedRenderLines = lines;
+    return lines;
   }
 
   private renderMessage(record: ChatMessageRecord): RenderedMessage {
@@ -197,5 +221,10 @@ export class ChatContainerComponent extends Container {
 
   private generateId(): string {
     return Math.random().toString(36).slice(2, 11);
+  }
+
+  private invalidateRenderCache(): void {
+    this.cachedRenderWidth = undefined;
+    this.cachedRenderLines = undefined;
   }
 }

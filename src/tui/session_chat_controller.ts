@@ -1334,7 +1334,7 @@ export class SessionChatController {
 
     if (message.message.role === "assistant" && !isAssistantMessage(message.message)) {
       const partial = assistantPartialFromProtocolMessage(message);
-      if (!partial.text && !(this.showThinking && partial.thinking)) {
+      if (!partial.text && !partial.thinking) {
         return undefined;
       }
       return {
@@ -1409,9 +1409,7 @@ export class SessionChatController {
     if (this.submittedTurnInProgress) {
       return;
     }
-    void this.syncFromSessionSnapshot().finally(() => {
-      void this.drainQueuedMessages();
-    });
+    void this.drainQueuedMessages();
   }
 
   private stopVisibleSessionTurn(): boolean {

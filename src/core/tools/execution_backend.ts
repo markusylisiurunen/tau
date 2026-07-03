@@ -60,6 +60,11 @@ export interface ToolExecutionBackend {
     command: string,
     options?: { timeoutMs?: number; signal?: AbortSignal; cwd?: string },
   ): Promise<BashExecutionResult>;
+  runNodeScript(
+    script: string,
+    args?: string[],
+    options?: { timeoutMs?: number; signal?: AbortSignal; cwd?: string },
+  ): Promise<BashExecutionResult>;
   readFile(path: string): Promise<ReadFileResult>;
   readFileBinary(path: string, options?: { maxBytes?: number }): Promise<ReadFileBinaryResult>;
   writeFile(path: string, content: string): Promise<WriteFileResult>;
@@ -110,6 +115,55 @@ export function createLocalToolExecutionBackend(
           GIT_ASKPASS: "true",
           GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
         },
+        detached: true,
+        killProcessGroup: true,
+        cwd,
+        signal,
+        timeoutMs: effectiveTimeoutMs,
+        maxCaptureBytes: BASH_MAX_CAPTURE_BYTES,
+        maxCaptureMode: "ignore",
+        maxCaptureStrategy: "tail",
+        captureOutput: "combined-and-split",
+        killGraceMs: BASH_KILL_GRACE_MS,
+      });
+
+      let output = result.output ?? "";
+      const stdout = result.stdout;
+      let stderr = result.stderr;
+      const truncated = result.captureLimitExceeded;
+
+      let terminationNote: string | undefined;
+      if (result.timedOut && effectiveTimeoutMs !== undefined) {
+        terminationNote = `(tau) timed out after ${effectiveTimeoutMs}ms`;
+      } else if (result.aborted) {
+        terminationNote = "(tau) aborted";
+      } else if (result.closeSignal) {
+        terminationNote = `(tau) terminated by signal ${result.closeSignal}`;
+      }
+
+      const note = terminationNote?.trim();
+      if (note && !output.includes(note)) {
+        const noteText = `${output && !output.endsWith("\n") ? "\n" : ""}${note}\n`;
+        output += noteText;
+        stderr += noteText;
+      }
+
+      return { output, stdout, stderr, exitCode: result.exitCode, truncated };
+    },
+
+    async runNodeScript(script, args = [], options = {}) {
+      const timeoutMs = options.timeoutMs;
+      const signal = options.signal;
+      const cwd = resolveCwd(options.cwd);
+
+      const effectiveTimeoutMs =
+        typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+          ? timeoutMs
+          : undefined;
+
+      const result = await spawnCapture("node", ["-e", script, ...args], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: sanitizeEnvironment(envProvider()),
         detached: true,
         killProcessGroup: true,
         cwd,
@@ -259,6 +313,12 @@ export function scopeToolExecutionBackend(
     },
     runBash(command, options = {}) {
       return backend.runBash(command, {
+        ...options,
+        cwd: resolveCwd(options.cwd),
+      });
+    },
+    runNodeScript(script, args = [], options = {}) {
+      return backend.runNodeScript(script, args, {
         ...options,
         cwd: resolveCwd(options.cwd),
       });

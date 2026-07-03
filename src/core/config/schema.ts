@@ -190,7 +190,6 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS = new Set([
   "speechToText",
   "cloudflareSandbox",
   "flySprites",
-  "async",
 ]);
 
 const NonEmptyStringSchema = z.string().trim().min(1);

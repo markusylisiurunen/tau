@@ -2537,7 +2537,12 @@ class TelegramAdapterImpl {
     }
 
     for (const chatId of chatIds) {
-      void this.reply(chatId, text, { rich: options.rich });
+      void this.reply(chatId, text, { rich: options.rich }).catch((error) => {
+        this.log("warn", "failed to send telegram notification", {
+          chatId,
+          cause: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
   }
 

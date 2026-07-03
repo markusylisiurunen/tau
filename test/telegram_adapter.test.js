@@ -1109,6 +1109,57 @@ describe("async telegram adapter", () => {
     }
   });
 
+  it("logs notification send failures from session events", async () => {
+    const apiHarness = createApiHarness([
+      [{ update_id: 1, message: { chat: { id: 472, type: "private" }, text: "/new" } }],
+    ]);
+    apiHarness.api.sendRichMessage.mockRejectedValueOnce(new Error("telegram unavailable"));
+    const managerHarness = createSessionManagerHarness();
+    const logs = [];
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.createSession.mock.calls.length === 1);
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s1",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:04:00.000Z",
+        progress: { type: "assistant-message", text: "final answer" },
+      });
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s1",
+        projectId: "demo",
+        previousState: "running",
+        state: "waiting-input",
+        updatedAt: "2024-01-01T00:05:00.000Z",
+      });
+
+      await waitFor(() =>
+        logs.some(
+          (entry) =>
+            entry.level === "warn" &&
+            entry.message === "failed to send telegram notification" &&
+            entry.data?.cause === "telegram unavailable",
+        ),
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("splits oversized quiet-mode replies into multiple telegram messages", async () => {
     const apiHarness = createApiHarness([
       [

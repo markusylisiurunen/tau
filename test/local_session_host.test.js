@@ -927,6 +927,7 @@ describe("LocalSessionHost", () => {
     }));
     const executionEnvironment = {
       resolveRuntimeConfig,
+      resolvePromptTemplate: async () => undefined,
       resolveRuntimeContext: ({ persona, discoveredSkills, includeAgentContext }) => ({
         toolRegistry,
         promptBootstrap: {
@@ -1049,6 +1050,10 @@ describe("LocalSessionHost", () => {
     }));
     const executionEnvironment = {
       resolveRuntimeConfig,
+      resolvePromptTemplate: async (promptId) =>
+        promptId === "reload-prompt"
+          ? { id: "reload-prompt", template: "reload prompt" }
+          : undefined,
       resolveRuntimeContext: ({ persona, discoveredSkills, includeAgentContext }) => ({
         toolRegistry,
         promptBootstrap: {
@@ -1094,7 +1099,7 @@ describe("LocalSessionHost", () => {
       promptId: "reload-prompt",
       text: "reload prompt",
     });
-    expect(resolveRuntimeConfig).toHaveBeenCalledTimes(2);
+    expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
   });
 
   it("resolves prompt bodies from the execution environment each time", async () => {
@@ -1106,13 +1111,17 @@ describe("LocalSessionHost", () => {
       bootstrap: {},
       config: {},
       personas: [personas[0]],
-      prompts: [{ id: "live-prompt", template: promptText }],
+      prompts: [],
       skills: [],
       themes: [],
       warnings: [],
     }));
+    const resolvePromptTemplate = vi.fn(async (promptId) =>
+      promptId === "live-prompt" ? { id: "live-prompt", template: promptText } : undefined,
+    );
     const executionEnvironment = {
       resolveRuntimeConfig,
+      resolvePromptTemplate,
       resolveRuntimeContext: ({ persona, includeAgentContext }) => ({
         toolRegistry,
         promptBootstrap: {
@@ -1142,7 +1151,8 @@ describe("LocalSessionHost", () => {
       promptId: "live-prompt",
       text: "second body",
     });
-    expect(resolveRuntimeConfig).toHaveBeenCalledTimes(2);
+    expect(resolvePromptTemplate).toHaveBeenCalledTimes(2);
+    expect(resolveRuntimeConfig).not.toHaveBeenCalled();
   });
 
   it("reuses the hosted path autocomplete scan for nearby queries", async () => {

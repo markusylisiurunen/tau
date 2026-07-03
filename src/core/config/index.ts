@@ -5,7 +5,7 @@ export { createDefaultConfigDeps } from "./deps.js";
 export type { DiffToolConfig } from "./diff_tool.js";
 export { resolveConfigLevels } from "./paths.js";
 export type { RuntimeBootstrap, RuntimeConfigResult } from "./runtime.js";
-export { loadRuntimeBootstrap, loadRuntimeConfig } from "./runtime.js";
+export { loadPromptTemplate, loadRuntimeBootstrap, loadRuntimeConfig } from "./runtime.js";
 export type {
   CloudflareSandboxBridgeConfig,
   CloudflareSandboxConfig,

@@ -1,9 +1,9 @@
+import { join } from "node:path";
 import { type LoadedModelResolver, loadModelResolver } from "../models/catalog.js";
 import { parsePersonaReference } from "../persona_reference.js";
 import type { PromptTemplate } from "../prompts.js";
 import type { Persona, Skill } from "../types.js";
-import type { ThemeDefinition } from "./content_loader.js";
-import { loadAllContent } from "./content_loader.js";
+import { loadAllContent, parsePrompt, type ThemeDefinition } from "./content_loader.js";
 import type { ConfigDeps } from "./deps.js";
 import type { DiffToolConfig } from "./diff_tool.js";
 import type { ConfigLevel } from "./paths.js";
@@ -48,6 +48,50 @@ export function loadRuntimeBootstrap(cwd: string, deps: ConfigDeps): RuntimeBoot
     virtualBundle,
     warnings: configResult.errors,
   };
+}
+
+export function loadPromptTemplate(
+  cwd: string,
+  deps: ConfigDeps,
+  promptId: string,
+): PromptTemplate | undefined {
+  const levels = resolveConfigLevels(deps, { cwd });
+  let resolved: PromptTemplate | undefined;
+  const requested = promptId.toLowerCase();
+
+  for (const level of levels) {
+    const fileName = findPromptFileName(deps, level.promptsDir, requested);
+    if (!fileName) {
+      continue;
+    }
+
+    const filePath = join(level.promptsDir, fileName);
+    const result = parsePrompt(filePath, deps.fs.readFile(filePath));
+    if (result.prompt?.id.toLowerCase() === requested) {
+      resolved = result.prompt;
+    }
+  }
+
+  return resolved;
+}
+
+function findPromptFileName(
+  deps: ConfigDeps,
+  promptsDir: string,
+  requested: string,
+): string | undefined {
+  if (!deps.fs.exists(promptsDir)) {
+    return undefined;
+  }
+
+  let entries: string[];
+  try {
+    entries = deps.fs.listDir(promptsDir);
+  } catch {
+    return undefined;
+  }
+
+  return entries.find((entry) => entry.toLowerCase() === `${requested}.md`);
 }
 
 export async function loadRuntimeConfig(

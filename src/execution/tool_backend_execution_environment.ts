@@ -1,4 +1,5 @@
 import type { RuntimeConfigResult } from "../core/config/index.js";
+import type { PromptTemplate } from "../core/prompts.js";
 import {
   type RuntimePromptBootstrap,
   resolveRuntimePromptBootstrapAsync,
@@ -15,7 +16,10 @@ import type {
   ExecutionRuntimeContext,
   ResolveExecutionRuntimeContextOptions,
 } from "./execution_environment.js";
-import { loadRuntimeConfigFromToolBackend } from "./runtime_config_snapshot.js";
+import {
+  loadPromptTemplateFromToolBackend,
+  loadRuntimeConfigFromToolBackend,
+} from "./runtime_config_snapshot.js";
 
 type BackendExecutionSnapshot = SessionProtocolExecutionEnvironmentSnapshot & {
   cwd: string;
@@ -50,6 +54,15 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
       backend: this.backend,
       cwd: this.cwd,
       home: this.home,
+    });
+  }
+
+  async resolvePromptTemplate(promptId: string): Promise<PromptTemplate | undefined> {
+    return await loadPromptTemplateFromToolBackend({
+      backend: this.backend,
+      cwd: this.cwd,
+      home: this.home,
+      promptId,
     });
   }
 

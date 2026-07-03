@@ -786,10 +786,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     promptId: SessionProtocolResolvePromptParams["promptId"],
   ): Promise<SessionProtocolResolvePromptResult> {
     this.assertActive();
-    const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig();
-    const prompt = runtimeConfig.prompts.find(
-      (candidate) => candidate.id.toLowerCase() === promptId.toLowerCase(),
-    );
+    const prompt = await this.executionEnvironment.resolvePromptTemplate(promptId);
     if (!prompt) {
       throw new Error(`unknown prompt '${promptId}'`);
     }

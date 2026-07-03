@@ -101,6 +101,15 @@ export type TelegramApi = {
       replyMarkup?: TelegramInlineKeyboardMarkup;
     },
   ): Promise<void>;
+  sendRichMessage?(
+    chatId: number,
+    markdown: string,
+    options?: {
+      replyMarkup?: TelegramInlineKeyboardMarkup;
+    },
+  ): Promise<void>;
+  sendMessageDraft?(chatId: number, draftId: number, text: string): Promise<void>;
+  sendChatAction?(chatId: number, action: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
   setCommands?(commands: TelegramBotCommand[]): Promise<void>;
   setMessageReaction?(chatId: number, messageId: number): Promise<void>;
@@ -197,6 +206,11 @@ type TelegramGroupPendingMessage = {
   errors?: string[];
 };
 
+type TelegramDraftState = {
+  draftId: number;
+  preambleTimeout?: ReturnType<typeof setTimeout>;
+};
+
 type ResolvedTelegramAdapterOptions = TelegramAdapterOptions & {
   api: TelegramApi;
   botUsername: string;
@@ -220,6 +234,10 @@ const TELEGRAM_SAFE_MESSAGE_BYTES = Math.floor(
   TELEGRAM_MAX_MESSAGE_BYTES * TELEGRAM_MESSAGE_BYTE_BUFFER_RATIO,
 );
 const TELEGRAM_MESSAGE_SPLIT_DELAY_MS = 1000;
+const TELEGRAM_RICH_MESSAGE_SAFE_BYTES = 31 * 1024;
+const TELEGRAM_DRAFT_MAX_CHARS = 4096;
+const TELEGRAM_DRAFT_PREAMBLE_VISIBLE_MS = 5000;
+const TELEGRAM_TYPING_REFRESH_MS = 4000;
 const ABORTED = Symbol("aborted");
 const CALLBACK_ACTION_PREFIX = "tau:action:";
 const MAX_TELEGRAM_ATTACHMENTS_PER_TURN = 10;
@@ -442,8 +460,8 @@ function truncateText(text: string, maxChars: number): string {
   return `${trimmed.slice(0, maxChars - 1)}…`;
 }
 
-function splitTelegramMessage(text: string): string[] {
-  if (Buffer.byteLength(text, "utf8") <= TELEGRAM_SAFE_MESSAGE_BYTES) {
+function splitTelegramTextByBytes(text: string, maxBytes: number): string[] {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
     return [text];
   }
 
@@ -452,7 +470,7 @@ function splitTelegramMessage(text: string): string[] {
 
   for (const character of text) {
     const nextChunk = `${currentChunk}${character}`;
-    if (Buffer.byteLength(nextChunk, "utf8") <= TELEGRAM_SAFE_MESSAGE_BYTES) {
+    if (Buffer.byteLength(nextChunk, "utf8") <= maxBytes) {
       currentChunk = nextChunk;
       continue;
     }
@@ -471,6 +489,14 @@ function splitTelegramMessage(text: string): string[] {
   }
 
   return chunks;
+}
+
+function splitTelegramMessage(text: string): string[] {
+  return splitTelegramTextByBytes(text, TELEGRAM_SAFE_MESSAGE_BYTES);
+}
+
+function splitTelegramRichMessage(text: string): string[] {
+  return splitTelegramTextByBytes(text, TELEGRAM_RICH_MESSAGE_SAFE_BYTES);
 }
 
 function normalizeSizeBytes(value: number | undefined): number | undefined {
@@ -811,6 +837,40 @@ function createTelegramApi(botToken: string): TelegramApi {
         z.unknown(),
       );
     },
+    async sendRichMessage(chatId, markdown, options) {
+      await callTelegramMethod(
+        "sendRichMessage",
+        {
+          chat_id: chatId,
+          rich_message: {
+            markdown,
+          },
+          ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
+        },
+        z.unknown(),
+      );
+    },
+    async sendMessageDraft(chatId, draftId, text) {
+      await callTelegramMethod(
+        "sendMessageDraft",
+        {
+          chat_id: chatId,
+          draft_id: draftId,
+          text,
+        },
+        TelegramAckResultSchema,
+      );
+    },
+    async sendChatAction(chatId, action) {
+      await callTelegramMethod(
+        "sendChatAction",
+        {
+          chat_id: chatId,
+          action,
+        },
+        TelegramAckResultSchema,
+      );
+    },
     async downloadFile(fileId) {
       const parsed = await callTelegramMethod(
         "getFile",
@@ -893,6 +953,9 @@ class TelegramAdapterImpl {
   private readonly activeSessionsByChat = new Map<number, string>();
   private readonly sessionsByChat = new Map<number, Set<string>>();
   private readonly chatsBySession = new Map<string, Set<number>>();
+  private readonly chatTypesByChat = new Map<number, string>();
+  private readonly typingIntervalsBySessionChat = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly draftStatesBySessionChat = new Map<string, TelegramDraftState>();
   private readonly lastCommandBySession = new Map<string, string>();
   private readonly lastAssistantMessageBySession = new Map<string, string>();
   private readonly latestAssistantMessageByRun = new Map<string, string>();
@@ -974,6 +1037,11 @@ class TelegramAdapterImpl {
     try {
       await this.loopPromise;
       await this.waitForInFlightUpdateTasks();
+
+      for (const sessionId of Array.from(this.chatsBySession.keys())) {
+        this.stopTypingIndicators(sessionId);
+        this.clearSessionDrafts(sessionId);
+      }
 
       for (const sessionId of Array.from(this.attachmentTempDirsBySession.keys())) {
         await this.cleanupSessionAttachmentTempDirs(sessionId);
@@ -1192,6 +1260,8 @@ class TelegramAdapterImpl {
     if (!chat) {
       return;
     }
+
+    this.chatTypesByChat.set(chat.id, chat.type);
 
     if (chat.type === "private") {
       await this.handlePrivateMessage(chat.id, message);
@@ -2299,6 +2369,9 @@ class TelegramAdapterImpl {
   }
 
   private clearClosedSession(sessionId: string): void {
+    this.stopTypingIndicators(sessionId);
+    this.clearSessionDrafts(sessionId);
+
     for (const [chatId, activeSessionId] of this.activeSessionsByChat) {
       if (activeSessionId === sessionId) {
         this.activeSessionsByChat.delete(chatId);
@@ -2340,6 +2413,8 @@ class TelegramAdapterImpl {
 
     if (event.state === "running") {
       this.latestAssistantMessageByRun.delete(event.sessionId);
+      this.startTypingIndicators(event.sessionId);
+      this.showDraftThinking(event.sessionId);
       if (this.isVerboseSession(event.sessionId)) {
         this.notifyLifecycle(event.sessionId, event.projectId, "started");
       }
@@ -2348,6 +2423,8 @@ class TelegramAdapterImpl {
 
     if (event.state === "failed") {
       this.latestAssistantMessageByRun.delete(event.sessionId);
+      this.stopTypingIndicators(event.sessionId);
+      this.clearSessionDrafts(event.sessionId);
       this.notifyLifecycle(event.sessionId, event.projectId, "failed");
       return;
     }
@@ -2361,6 +2438,8 @@ class TelegramAdapterImpl {
     }
 
     if (event.state === "waiting-input" && event.previousState === "running") {
+      this.stopTypingIndicators(event.sessionId);
+      this.clearSessionDrafts(event.sessionId);
       if (this.isVerboseSession(event.sessionId)) {
         this.notifyLifecycle(event.sessionId, event.projectId, "finished");
         return;
@@ -2369,7 +2448,7 @@ class TelegramAdapterImpl {
       const message = this.latestAssistantMessageByRun.get(event.sessionId);
       this.latestAssistantMessageByRun.delete(event.sessionId);
       if (message) {
-        this.notifySession(event.sessionId, message);
+        this.notifySession(event.sessionId, message, { rich: true });
       }
     }
   }
@@ -2421,6 +2500,7 @@ class TelegramAdapterImpl {
 
     this.lastAssistantMessageBySession.set(event.sessionId, event.progress.text);
     this.latestAssistantMessageByRun.set(event.sessionId, event.progress.text);
+    this.showDraftPreamble(event.sessionId, event.progress.text);
 
     if (!isVerbose) {
       return;
@@ -2454,15 +2534,156 @@ class TelegramAdapterImpl {
     );
   }
 
-  private notifySession(sessionId: string, text: string): void {
+  private notifySession(sessionId: string, text: string, options: { rich?: boolean } = {}): void {
     const chatIds = this.chatsBySession.get(sessionId);
     if (!chatIds || chatIds.size === 0) {
       return;
     }
 
     for (const chatId of chatIds) {
-      void this.reply(chatId, text);
+      void this.reply(chatId, text, { rich: options.rich });
     }
+  }
+
+  private startTypingIndicators(sessionId: string): void {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (!chatIds || !this.api.sendChatAction) {
+      return;
+    }
+
+    for (const chatId of chatIds) {
+      const key = this.getSessionChatKey(sessionId, chatId);
+      if (this.typingIntervalsBySessionChat.has(key)) {
+        continue;
+      }
+
+      const sendTyping = () => {
+        void this.api.sendChatAction?.(chatId, "typing").catch((error) => {
+          this.log("warn", "failed to send telegram typing action", {
+            chatId,
+            cause: error instanceof Error ? error.message : String(error),
+          });
+        });
+      };
+
+      sendTyping();
+      const interval = setInterval(sendTyping, TELEGRAM_TYPING_REFRESH_MS);
+      interval.unref?.();
+      this.typingIntervalsBySessionChat.set(key, interval);
+    }
+  }
+
+  private stopTypingIndicators(sessionId: string): void {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (!chatIds) {
+      return;
+    }
+
+    for (const chatId of chatIds) {
+      const key = this.getSessionChatKey(sessionId, chatId);
+      const interval = this.typingIntervalsBySessionChat.get(key);
+      if (interval) {
+        clearInterval(interval);
+        this.typingIntervalsBySessionChat.delete(key);
+      }
+    }
+  }
+
+  private showDraftThinking(sessionId: string): void {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (!chatIds || !this.api.sendMessageDraft) {
+      return;
+    }
+
+    for (const chatId of chatIds) {
+      if (this.chatTypesByChat.get(chatId) !== "private") {
+        continue;
+      }
+
+      void this.updateMessageDraft(sessionId, chatId, "");
+    }
+  }
+
+  private showDraftPreamble(sessionId: string, text: string): void {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (!chatIds || !this.api.sendMessageDraft) {
+      return;
+    }
+
+    for (const chatId of chatIds) {
+      if (this.chatTypesByChat.get(chatId) !== "private") {
+        continue;
+      }
+
+      const key = this.getSessionChatKey(sessionId, chatId);
+      const state = this.getDraftState(key);
+      if (state.preambleTimeout) {
+        clearTimeout(state.preambleTimeout);
+      }
+
+      void this.updateMessageDraft(sessionId, chatId, truncateText(text, TELEGRAM_DRAFT_MAX_CHARS));
+      const timeout = setTimeout(() => {
+        const currentState = this.draftStatesBySessionChat.get(key);
+        if (currentState === state) {
+          void this.updateMessageDraft(sessionId, chatId, "");
+        }
+      }, TELEGRAM_DRAFT_PREAMBLE_VISIBLE_MS);
+      timeout.unref?.();
+      state.preambleTimeout = timeout;
+    }
+  }
+
+  private async updateMessageDraft(sessionId: string, chatId: number, text: string): Promise<void> {
+    if (!this.api.sendMessageDraft) {
+      return;
+    }
+
+    const key = this.getSessionChatKey(sessionId, chatId);
+    const state = this.getDraftState(key);
+
+    try {
+      await this.api.sendMessageDraft(chatId, state.draftId, text);
+    } catch (error) {
+      this.log("warn", "failed to update telegram message draft", {
+        chatId,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private clearSessionDrafts(sessionId: string): void {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (!chatIds) {
+      return;
+    }
+
+    for (const chatId of chatIds) {
+      const key = this.getSessionChatKey(sessionId, chatId);
+      const state = this.draftStatesBySessionChat.get(key);
+      if (state?.preambleTimeout) {
+        clearTimeout(state.preambleTimeout);
+      }
+      this.draftStatesBySessionChat.delete(key);
+    }
+  }
+
+  private getDraftState(key: string): TelegramDraftState {
+    const existing = this.draftStatesBySessionChat.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const state = { draftId: this.createDraftId() };
+    this.draftStatesBySessionChat.set(key, state);
+    return state;
+  }
+
+  private createDraftId(): number {
+    return Math.floor(Math.random() * 2_000_000_000) + 1;
+  }
+
+  private getSessionChatKey(sessionId: string, chatId: number): string {
+    return `${sessionId}:${chatId}`;
   }
 
   private async reactToQueuedMessage(chatId: number, messageId?: number): Promise<void> {
@@ -2531,14 +2752,63 @@ class TelegramAdapterImpl {
     text: string,
     options?: {
       replyMarkup?: TelegramInlineKeyboardMarkup;
+      rich?: boolean;
     },
+  ): Promise<void> {
+    if (options?.rich === true && this.api.sendRichMessage) {
+      const sentRichMessage = await this.replyWithRichMessage(chatId, text, options.replyMarkup);
+      if (sentRichMessage) {
+        return;
+      }
+    }
+
+    await this.replyWithPlainMessage(chatId, text, options?.replyMarkup);
+  }
+
+  private async replyWithRichMessage(
+    chatId: number,
+    text: string,
+    replyMarkup?: TelegramInlineKeyboardMarkup,
+  ): Promise<boolean> {
+    const sendRichMessage = this.api.sendRichMessage;
+    if (!sendRichMessage) {
+      return false;
+    }
+
+    const chunks = splitTelegramRichMessage(text);
+
+    for (const [index, chunk] of chunks.entries()) {
+      try {
+        await sendRichMessage(chatId, chunk, {
+          replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
+        });
+      } catch (error) {
+        this.log("warn", "failed to send telegram rich message", {
+          chatId,
+          cause: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
+
+      if (index < chunks.length - 1) {
+        await this.wait(TELEGRAM_MESSAGE_SPLIT_DELAY_MS);
+      }
+    }
+
+    return true;
+  }
+
+  private async replyWithPlainMessage(
+    chatId: number,
+    text: string,
+    replyMarkup?: TelegramInlineKeyboardMarkup,
   ): Promise<void> {
     const chunks = splitTelegramMessage(text);
 
     for (const [index, chunk] of chunks.entries()) {
       try {
         await this.api.sendMessage(chatId, chunk, {
-          replyMarkup: index === chunks.length - 1 ? options?.replyMarkup : undefined,
+          replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
         });
       } catch (error) {
         this.log("warn", "failed to send telegram message", {

@@ -42,6 +42,9 @@ function getRequestUrl(input) {
 function createApiHarness(updateBatches, options = {}) {
   const queue = [...updateBatches];
   const sendMessages = [];
+  const sendRichMessages = [];
+  const messageDrafts = [];
+  const chatActions = [];
   const downloadFileCalls = [];
   const setCommandsCalls = [];
   const setMessageReactions = [];
@@ -58,6 +61,15 @@ function createApiHarness(updateBatches, options = {}) {
     }),
     sendMessage: vi.fn(async (chatId, text, options) => {
       sendMessages.push({ chatId, text, options, sentAt: Date.now() });
+    }),
+    sendRichMessage: vi.fn(async (chatId, markdown, options) => {
+      sendRichMessages.push({ chatId, markdown, options, sentAt: Date.now() });
+    }),
+    sendMessageDraft: vi.fn(async (chatId, draftId, text) => {
+      messageDrafts.push({ chatId, draftId, text, sentAt: Date.now() });
+    }),
+    sendChatAction: vi.fn(async (chatId, action) => {
+      chatActions.push({ chatId, action, sentAt: Date.now() });
     }),
     downloadFile: vi.fn(async (fileId) => {
       downloadFileCalls.push(fileId);
@@ -77,6 +89,9 @@ function createApiHarness(updateBatches, options = {}) {
   return {
     api,
     sendMessages,
+    sendRichMessages,
+    messageDrafts,
+    chatActions,
     downloadFileCalls,
     setCommandsCalls,
     setMessageReactions,
@@ -1065,8 +1080,18 @@ describe("async telegram adapter", () => {
         updatedAt: "2024-01-01T00:05:00.000Z",
       });
 
-      await waitFor(() => apiHarness.sendMessages.some((entry) => entry.text === "final answer"));
+      await waitFor(() =>
+        apiHarness.sendRichMessages.some((entry) => entry.markdown === "final answer"),
+      );
 
+      expect(apiHarness.chatActions).toContainEqual(
+        expect.objectContaining({ chatId: 470, action: "typing" }),
+      );
+      expect(apiHarness.messageDrafts).toEqual([
+        expect.objectContaining({ chatId: 470, text: "" }),
+        expect.objectContaining({ chatId: 470, text: "intermediate" }),
+        expect.objectContaining({ chatId: 470, text: "final answer" }),
+      ]);
       expect(
         apiHarness.sendMessages.some((entry) => entry.text.includes("(s12) run started")),
       ).toBe(false);
@@ -1120,7 +1145,7 @@ describe("async telegram adapter", () => {
       requestTimeoutSeconds: 1,
     });
 
-    const finalAnswer = "🙂".repeat(1500);
+    const finalAnswer = "🙂".repeat(9000);
 
     try {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
@@ -1157,15 +1182,17 @@ describe("async telegram adapter", () => {
 
       await waitFor(
         () =>
-          apiHarness.sendMessages.filter((entry) => String(entry.text).startsWith("🙂")).length ===
-          2,
+          apiHarness.sendRichMessages.filter((entry) => String(entry.markdown).startsWith("🙂"))
+            .length === 2,
         4000,
       );
 
-      const chunks = apiHarness.sendMessages.filter((entry) => String(entry.text).startsWith("🙂"));
-      expect(chunks.map((entry) => entry.text).join("")).toBe(finalAnswer);
+      const chunks = apiHarness.sendRichMessages.filter((entry) =>
+        String(entry.markdown).startsWith("🙂"),
+      );
+      expect(chunks.map((entry) => entry.markdown).join("")).toBe(finalAnswer);
       for (const chunk of chunks) {
-        expect(Buffer.byteLength(chunk.text, "utf8")).toBeLessThanOrEqual(3891);
+        expect(Buffer.byteLength(chunk.markdown, "utf8")).toBeLessThanOrEqual(31 * 1024);
       }
       expect(chunks[1].sentAt - chunks[0].sentAt).toBeGreaterThanOrEqual(900);
     } finally {

@@ -101,15 +101,15 @@ export type TelegramApi = {
       replyMarkup?: TelegramInlineKeyboardMarkup;
     },
   ): Promise<void>;
-  sendRichMessage?(
+  sendRichMessage(
     chatId: number,
     markdown: string,
     options?: {
       replyMarkup?: TelegramInlineKeyboardMarkup;
     },
   ): Promise<void>;
-  sendMessageDraft?(chatId: number, draftId: number, text: string): Promise<void>;
-  sendChatAction?(chatId: number, action: string): Promise<void>;
+  sendMessageDraft(chatId: number, draftId: number, text: string): Promise<void>;
+  sendChatAction(chatId: number, action: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
   setCommands?(commands: TelegramBotCommand[]): Promise<void>;
   setMessageReaction?(chatId: number, messageId: number): Promise<void>;
@@ -2547,7 +2547,7 @@ class TelegramAdapterImpl {
 
   private startTypingIndicators(sessionId: string): void {
     const chatIds = this.chatsBySession.get(sessionId);
-    if (!chatIds || !this.api.sendChatAction) {
+    if (!chatIds) {
       return;
     }
 
@@ -2558,7 +2558,7 @@ class TelegramAdapterImpl {
       }
 
       const sendTyping = () => {
-        void this.api.sendChatAction?.(chatId, "typing").catch((error) => {
+        void this.api.sendChatAction(chatId, "typing").catch((error) => {
           this.log("warn", "failed to send telegram typing action", {
             chatId,
             cause: error instanceof Error ? error.message : String(error),
@@ -2591,7 +2591,7 @@ class TelegramAdapterImpl {
 
   private showDraftThinking(sessionId: string): void {
     const chatIds = this.chatsBySession.get(sessionId);
-    if (!chatIds || !this.api.sendMessageDraft) {
+    if (!chatIds) {
       return;
     }
 
@@ -2606,7 +2606,7 @@ class TelegramAdapterImpl {
 
   private showDraftPreamble(sessionId: string, text: string): void {
     const chatIds = this.chatsBySession.get(sessionId);
-    if (!chatIds || !this.api.sendMessageDraft) {
+    if (!chatIds) {
       return;
     }
 
@@ -2634,10 +2634,6 @@ class TelegramAdapterImpl {
   }
 
   private async updateMessageDraft(sessionId: string, chatId: number, text: string): Promise<void> {
-    if (!this.api.sendMessageDraft) {
-      return;
-    }
-
     const key = this.getSessionChatKey(sessionId, chatId);
     const state = this.getDraftState(key);
 
@@ -2755,11 +2751,9 @@ class TelegramAdapterImpl {
       rich?: boolean;
     },
   ): Promise<void> {
-    if (options?.rich === true && this.api.sendRichMessage) {
-      const sentRichMessage = await this.replyWithRichMessage(chatId, text, options.replyMarkup);
-      if (sentRichMessage) {
-        return;
-      }
+    if (options?.rich === true) {
+      await this.replyWithRichMessage(chatId, text, options.replyMarkup);
+      return;
     }
 
     await this.replyWithPlainMessage(chatId, text, options?.replyMarkup);
@@ -2769,33 +2763,18 @@ class TelegramAdapterImpl {
     chatId: number,
     text: string,
     replyMarkup?: TelegramInlineKeyboardMarkup,
-  ): Promise<boolean> {
-    const sendRichMessage = this.api.sendRichMessage;
-    if (!sendRichMessage) {
-      return false;
-    }
-
+  ): Promise<void> {
     const chunks = splitTelegramRichMessage(text);
 
     for (const [index, chunk] of chunks.entries()) {
-      try {
-        await sendRichMessage(chatId, chunk, {
-          replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
-        });
-      } catch (error) {
-        this.log("warn", "failed to send telegram rich message", {
-          chatId,
-          cause: error instanceof Error ? error.message : String(error),
-        });
-        return false;
-      }
+      await this.api.sendRichMessage(chatId, chunk, {
+        replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
+      });
 
       if (index < chunks.length - 1) {
         await this.wait(TELEGRAM_MESSAGE_SPLIT_DELAY_MS);
       }
     }
-
-    return true;
   }
 
   private async replyWithPlainMessage(

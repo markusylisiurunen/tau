@@ -901,6 +901,72 @@ describe("LocalSessionHost", () => {
     expect((await host.createSession(localCreateInput)).session.history).toEqual([]);
   });
 
+  it("switches personas using live execution environment config", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const livePersona = {
+      ...personas[1],
+      label: "live persona",
+      systemPrompt: "live persona system prompt",
+    };
+    const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
+    const resolveRuntimeConfig = vi.fn(async () => ({
+      bootstrap: {},
+      config: { defaultRisk: "read-only" },
+      personas: [livePersona],
+      prompts: [],
+      skills: [
+        {
+          name: "live-skill",
+          description: "live skill",
+          path: "/repo/.tau/skills/live-skill",
+        },
+      ],
+      themes: [],
+      warnings: [],
+    }));
+    const executionEnvironment = {
+      resolveRuntimeConfig,
+      resolveRuntimeContext: ({ persona, discoveredSkills, includeAgentContext }) => ({
+        toolRegistry,
+        promptBootstrap: {
+          promptContext: {
+            cwd: "/repo",
+            home: "/home/user",
+            includeAgentContext,
+            projectContextBlock: "<project-context>live context</project-context>",
+            skillsBlock: `<skills>${persona.id}:${discoveredSkills.length}</skills>`,
+          },
+          agentsFiles: [],
+          warnings: [],
+          unknownSkills: [],
+        },
+      }),
+      getToolExecutionBackend: () => createLocalToolExecutionBackend(),
+      snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
+      dispose: async () => {},
+    };
+    const session = host.createSessionNow(executionEnvironment);
+
+    const snapshot = await session.setPersona(livePersona.id);
+
+    expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
+    expect(session.runtime.persona.label).toBe("live persona");
+    expect(snapshot.settings.personaId).toBe(livePersona.id);
+    expect(snapshot.catalog.personas).toEqual([expect.objectContaining({ label: "live persona" })]);
+    expect(snapshot.catalog.skills).toEqual([
+      {
+        name: "live-skill",
+        description: "live skill",
+        path: "/repo/.tau/skills/live-skill",
+      },
+    ]);
+    expect(snapshot.messages[0].message.content).toContain("live persona system prompt");
+    expect(snapshot.messages[0].message.content).toContain(
+      "<project-context>live context</project-context>",
+    );
+  });
+
   it("creates new hosted sessions from resolved per-execution bootstrap", async () => {
     const store = new MemorySessionStore();
     const resolvedPersona = {
@@ -1028,7 +1094,55 @@ describe("LocalSessionHost", () => {
       promptId: "reload-prompt",
       text: "reload prompt",
     });
-    expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
+    expect(resolveRuntimeConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it("resolves prompt bodies from the execution environment each time", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
+    let promptText = "first body";
+    const resolveRuntimeConfig = vi.fn(async () => ({
+      bootstrap: {},
+      config: {},
+      personas: [personas[0]],
+      prompts: [{ id: "live-prompt", template: promptText }],
+      skills: [],
+      themes: [],
+      warnings: [],
+    }));
+    const executionEnvironment = {
+      resolveRuntimeConfig,
+      resolveRuntimeContext: ({ persona, includeAgentContext }) => ({
+        toolRegistry,
+        promptBootstrap: {
+          promptContext: {
+            cwd: "/repo",
+            home: "/home/user",
+            includeAgentContext,
+            skillsBlock: `<skills>${persona.id}</skills>`,
+          },
+          agentsFiles: [],
+          warnings: [],
+          unknownSkills: [],
+        },
+      }),
+      getToolExecutionBackend: () => createLocalToolExecutionBackend(),
+      snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
+      dispose: async () => {},
+    };
+    const session = host.createSessionNow(executionEnvironment);
+
+    await expect(session.resolvePrompt("live-prompt")).resolves.toEqual({
+      promptId: "live-prompt",
+      text: "first body",
+    });
+    promptText = "second body";
+    await expect(session.resolvePrompt("live-prompt")).resolves.toEqual({
+      promptId: "live-prompt",
+      text: "second body",
+    });
+    expect(resolveRuntimeConfig).toHaveBeenCalledTimes(2);
   });
 
   it("reuses the hosted path autocomplete scan for nearby queries", async () => {

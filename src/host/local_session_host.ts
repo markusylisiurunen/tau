@@ -674,7 +674,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async setPersona(personaId: string): Promise<SessionProtocolSnapshot> {
     this.assertActive();
-    const persona = this.bootstrap.personas.find(
+    const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig();
+    const personas = runtimeConfig.personas.map((persona) =>
+      this.normalizeReloadedPersona(persona),
+    );
+    const persona = personas.find(
       (persona) => persona.id.toLowerCase() === personaId.toLowerCase(),
     );
     if (!persona) {
@@ -682,14 +686,25 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
 
     const selectedPersona = clonePersona(persona);
-    const skillsContext = resolvePersonaSkillsForPromptContext({
+    const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
       persona: selectedPersona,
-      discoveredSkills: this.bootstrap.discoveredSkills,
+      discoveredSkills: runtimeConfig.skills,
+      includeAgentContext: this.includeAgentContext,
     });
+    this.runtime.setConfig(runtimeConfig.config);
+    this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
     this.runtime.setPersona(selectedPersona, {
-      skillsBlock: skillsContext.skillsBlock,
+      skillsBlock: runtimeContext.promptBootstrap.promptContext.skillsBlock,
     });
-    this.bootstrap.persona = clonePersona(selectedPersona);
+    this.bootstrap = {
+      persona: clonePersona(selectedPersona),
+      riskLevel: this.runtime.currentRiskLevel,
+      discoveredSkills: structuredClone(runtimeConfig.skills),
+      personas: personas.map(clonePersona),
+      prompts: structuredClone(runtimeConfig.prompts),
+      config: runtimeConfig.config,
+    };
+    this.catalog = createContentCatalogSnapshot(this.bootstrap);
     const snapshot = await this.commitSnapshot();
     this.emitSnapshotReset("configuration", snapshot);
     return snapshot;
@@ -771,7 +786,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     promptId: SessionProtocolResolvePromptParams["promptId"],
   ): Promise<SessionProtocolResolvePromptResult> {
     this.assertActive();
-    const prompt = this.bootstrap.prompts.find(
+    const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig();
+    const prompt = runtimeConfig.prompts.find(
       (candidate) => candidate.id.toLowerCase() === promptId.toLowerCase(),
     );
     if (!prompt) {

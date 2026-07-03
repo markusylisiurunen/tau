@@ -1168,6 +1168,10 @@ export class SessionChatController {
       return true;
     }
 
+    if (!this.showThinking && change.text === undefined) {
+      return true;
+    }
+
     const model = this.buildProtocolMessageModel(message);
     if (!model) {
       return true;
@@ -1333,7 +1337,9 @@ export class SessionChatController {
     }
 
     if (message.message.role === "assistant" && !isAssistantMessage(message.message)) {
-      const partial = assistantPartialFromProtocolMessage(message);
+      const partial = assistantPartialFromProtocolMessage(message, {
+        includeThinking: this.showThinking,
+      });
       if (!partial.text && !(this.showThinking && partial.thinking)) {
         return undefined;
       }
@@ -2384,7 +2390,10 @@ function hasToolUiFacetForToolCall(snapshot: SessionProtocolSnapshot, toolCallId
   );
 }
 
-function assistantPartialFromProtocolMessage(message: SessionProtocolMessage): {
+function assistantPartialFromProtocolMessage(
+  message: SessionProtocolMessage,
+  options: { includeThinking: boolean },
+): {
   text: string;
   thinking: string;
 } {
@@ -2398,7 +2407,7 @@ function assistantPartialFromProtocolMessage(message: SessionProtocolMessage): {
     if (content.type === "text") {
       text += content.text;
     }
-    if (content.type === "thinking") {
+    if (options.includeThinking && content.type === "thinking") {
       thinking.push(content.thinking);
     }
   }

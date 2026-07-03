@@ -443,29 +443,18 @@ async function parseExecSse(body: ReadableStream<Uint8Array>): Promise<BashExecu
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let output = "";
-  let stdout = "";
-  let stderr = "";
+  const output = new ExecCaptureBuffer();
+  const stdout = new ExecCaptureBuffer();
+  const stderr = new ExecCaptureBuffer();
   let exitCode: number | null = null;
   let truncated = false;
 
-  const trimToCaptureLimit = (value: string): string => {
-    let next = value;
-    if (Buffer.byteLength(next, "utf-8") > BASH_MAX_CAPTURE_BYTES) {
-      truncated = true;
-      while (Buffer.byteLength(next, "utf-8") > BASH_MAX_CAPTURE_BYTES) {
-        next = next.slice(Math.max(1, Math.floor(next.length / 10)));
-      }
-    }
-    return next;
-  };
-
   const appendOutput = (target: "stdout" | "stderr", chunk: string) => {
-    output = trimToCaptureLimit(output + chunk);
+    truncated = output.append(chunk) || truncated;
     if (target === "stdout") {
-      stdout = trimToCaptureLimit(stdout + chunk);
+      truncated = stdout.append(chunk) || truncated;
     } else {
-      stderr = trimToCaptureLimit(stderr + chunk);
+      truncated = stderr.append(chunk) || truncated;
     }
   };
 
@@ -514,7 +503,48 @@ async function parseExecSse(body: ReadableStream<Uint8Array>): Promise<BashExecu
     processEvent(buffer);
   }
 
-  return { output, stdout, stderr, exitCode, truncated };
+  return {
+    output: output.toString(),
+    stdout: stdout.toString(),
+    stderr: stderr.toString(),
+    exitCode,
+    truncated,
+  };
+}
+
+class ExecCaptureBuffer {
+  private chunks: Buffer[] = [];
+  private bytes = 0;
+
+  append(value: string): boolean {
+    let truncated = false;
+    let nextValue = value;
+    if (Buffer.byteLength(nextValue, "utf-8") > BASH_MAX_CAPTURE_BYTES) {
+      truncated = true;
+      while (Buffer.byteLength(nextValue, "utf-8") > BASH_MAX_CAPTURE_BYTES) {
+        nextValue = nextValue.slice(Math.max(1, Math.floor(nextValue.length / 10)));
+      }
+    }
+
+    let chunk = Buffer.from(nextValue, "utf-8");
+    if (chunk.byteLength > BASH_MAX_CAPTURE_BYTES) {
+      chunk = chunk.subarray(chunk.byteLength - BASH_MAX_CAPTURE_BYTES);
+      truncated = true;
+    }
+
+    this.chunks.push(chunk);
+    this.bytes += chunk.byteLength;
+    while (this.bytes > BASH_MAX_CAPTURE_BYTES && this.chunks.length > 0) {
+      const removed = this.chunks.shift()!;
+      this.bytes -= removed.byteLength;
+      truncated = true;
+    }
+    return truncated;
+  }
+
+  toString(): string {
+    return Buffer.concat(this.chunks, this.bytes).toString("utf-8");
+  }
 }
 
 function encodeBridgeFilePath(path: string): string {

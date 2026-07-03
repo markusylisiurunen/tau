@@ -448,6 +448,7 @@ class TauSdkSessionImpl implements TauSdkSession {
     if (initialSnapshot) {
       this.initialSnapshot = undefined;
       if (this.bufferedDeltas.every((delta) => delta.toRevision <= initialSnapshot.revision)) {
+        this.discardBufferedDeltasThrough(initialSnapshot.revision);
         return initialSnapshot;
       }
     }

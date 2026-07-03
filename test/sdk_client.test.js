@@ -693,6 +693,34 @@ describe("sdk_client", () => {
     await client.close();
   });
 
+  it("drops buffered deltas already covered by the cached sdk snapshot", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    transport.onRequest = (method, params) => {
+      if (method === "session.observe") {
+        return { ...createSnapshot(params.sessionId), revision: 3 };
+      }
+      return undefined;
+    };
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.observe("session-1");
+    const coveredDelta = createNoticeDelta("session-1", 2, "already in cached snapshot");
+    transport.emitDelta(coveredDelta);
+
+    await expect(session.snapshot()).resolves.toMatchObject({
+      sessionId: "session-1",
+      revision: 3,
+    });
+    const deltas = [];
+    session.onDelta((delta) => deltas.push(delta));
+
+    expect(deltas).toEqual([]);
+    expect(transport.requests).toEqual([
+      { method: "session.observe", params: { sessionId: "session-1" } },
+    ]);
+
+    await client.close();
+  });
+
   it("fetches a fresh sdk snapshot when buffered deltas make the initial snapshot stale", async () => {
     const transport = new FakeSessionProtocolTransport();
     const client = await createTauSdkClientFromTransport(transport);

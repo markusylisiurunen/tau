@@ -1585,7 +1585,7 @@ describe("SessionChatController", () => {
           model: {
             type: "assistant_partial",
             text: "partial reply",
-            thinking: "",
+            thinking: "checking context",
           },
         }),
       ]),
@@ -1699,6 +1699,95 @@ describe("SessionChatController", () => {
         },
       }),
     );
+  });
+
+  it("preserves hidden thinking from assistant content append deltas", async () => {
+    const baseSnapshot = createSnapshot();
+    const snapshot = updateSnapshot(baseSnapshot, {
+      revision: 3,
+      lifecycle: "running",
+      messages: [
+        ...baseSnapshot.messages,
+        {
+          id: "assistant-thinking-streaming",
+          state: "draft",
+          modelVisible: false,
+          message: {
+            role: "assistant",
+            timestamp: 1,
+            content: [],
+          },
+        },
+      ],
+      timeline: [
+        ...baseSnapshot.timeline,
+        {
+          type: "message",
+          id: "timeline-assistant-thinking-streaming",
+          messageId: "assistant-thinking-streaming",
+        },
+      ],
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "local",
+      themeIds: ["gold"],
+    });
+
+    controller.start();
+    const appendDelta = {
+      version: 1,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 3,
+      toRevision: 4,
+      reason: "assistant-stream",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "message.content.append",
+            messageId: "assistant-thinking-streaming",
+            thinking: "checking context",
+            timestamp: 2,
+          },
+        ],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, appendDelta);
+
+    for (const listener of session.listeners) {
+      listener(appendDelta);
+    }
+
+    expect(view.messages.find((message) => message.id === "assistant-thinking-streaming")).toEqual(
+      expect.objectContaining({
+        model: {
+          type: "assistant_partial",
+          text: "",
+          thinking: "checking context",
+        },
+      }),
+    );
+    controller.getInputHandlers().onCtrlT();
+
+    expect(view.systems).toContainEqual(
+      expect.objectContaining({ kind: "success", text: "thoughts visible" }),
+    );
+    expect(
+      controller.snapshot.messages.find((entry) => entry.id === "assistant-thinking-streaming"),
+    ).toEqual(
+      expect.objectContaining({
+        message: expect.objectContaining({
+          content: [{ type: "thinking", thinking: "checking context" }],
+        }),
+      }),
+    );
+    await controller.dispose();
   });
 
   it("replays deltas delivered while revision-gap recovery is pending", async () => {

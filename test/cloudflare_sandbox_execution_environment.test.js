@@ -167,6 +167,68 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(sessionRequests).toHaveLength(1);
   });
 
+  it("serializes node scripts with bash commands that share a command session", async () => {
+    const encoder = new TextEncoder();
+    const requests = [];
+    const execStreams = [];
+    const fetchMock = async (url, init = {}) => {
+      requests.push({ url: String(url), init });
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/session")) {
+        return jsonResponse({ id: "tau-session-1" });
+      }
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/exec")) {
+        const stream = {};
+        const body = new ReadableStream({
+          start(controller) {
+            stream.controller = controller;
+          },
+        });
+        execStreams.push(stream);
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      return jsonResponse({ error: "not found" }, { status: 404 });
+    };
+
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: fetchMock,
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    const bashRun = backend.runBash("one");
+    await waitFor(() => execStreams.length === 1);
+    const scriptRun = backend.runNodeScript("process.stdout.write(process.argv[1])", ["two"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(execStreams).toHaveLength(1);
+    execStreams[0].controller.enqueue(encoder.encode(execSse({ stdout: "one\n" }).join("")));
+    execStreams[0].controller.close();
+    await expect(bashRun).resolves.toMatchObject({ output: "one\n" });
+
+    await waitFor(() => execStreams.length === 2);
+    execStreams[1].controller.enqueue(encoder.encode(execSse({ stdout: "two" }).join("")));
+    execStreams[1].controller.close();
+    await expect(scriptRun).resolves.toMatchObject({ output: "two" });
+
+    const execRequests = requests.filter((request) => request.url.endsWith("/exec"));
+    expect(execRequests.map((request) => JSON.parse(request.init.body).argv)).toEqual([
+      ["sh", "-lc", "one"],
+      ["node", "-e", "process.stdout.write(process.argv[1])", "two"],
+    ]);
+    expect(execRequests.map((request) => request.init.headers["Session-Id"])).toEqual([
+      "tau-session-1",
+      "tau-session-1",
+    ]);
+  });
+
   it("uses separate command sessions for separate cwd values", async () => {
     const requests = [];
     let nextSession = 1;

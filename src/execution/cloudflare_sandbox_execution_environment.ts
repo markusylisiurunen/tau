@@ -246,23 +246,25 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
 
     async runNodeScript(script, args = [], runOptions = {}) {
       const cwd = runOptions.cwd ?? options.cwd;
-      const sessionId = await ensureCommandSession(cwd);
+      return await runQueued(cwd, async () => {
+        const sessionId = await ensureCommandSession(cwd);
 
-      try {
-        return await client.exec(sandboxId, {
-          argv: ["node", "-e", script, ...args],
-          cwd,
-          timeoutMs: runOptions.timeoutMs,
-          signal: runOptions.signal,
-          sessionId,
-          onAbort: () => resetCommandSession(cwd),
-        });
-      } catch (err) {
-        if (isAbortError(err)) {
-          await resetCommandSession(cwd);
+        try {
+          return await client.exec(sandboxId, {
+            argv: ["node", "-e", script, ...args],
+            cwd,
+            timeoutMs: runOptions.timeoutMs,
+            signal: runOptions.signal,
+            sessionId,
+            onAbort: () => resetCommandSession(cwd),
+          });
+        } catch (err) {
+          if (isAbortError(err)) {
+            await resetCommandSession(cwd);
+          }
+          throw err;
         }
-        throw err;
-      }
+      });
     },
 
     async readFile(path) {

@@ -138,43 +138,25 @@ tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/t
 
 Session attach renders the authoritative session snapshot, streams live `session.delta` updates, submits normal user input, supports steering/interruption, runs `!`/`!!` shell commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, changes the session risk level with `/risk:<level>` or `Ctrl+R`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, and creates a new session with `/new`.
 
-## async daemon (HTTP + Telegram)
+## Telegram runner
 
-tau also supports an async daemon for queued/background sessions:
-
-```sh
-tau async daemon --config-file <path>
-```
-
-client command surface:
+tau can run a Telegram bot adapter over local in-process SDK sessions:
 
 ```sh
-tau async --project <id> <prompt...>
-tau async <prompt...>
-tau async -- <prompt...>
-tau async list
-tau async status <id>
-tau async logs <id>
-tau async send <id> <text...>
-tau async interrupt <id>
-tau async cron list
-tau async cron runs [jobId]
-tau async cron run <jobId>
+tau telegram --config-file <path>
 ```
 
-project id for `tau async <prompt...>` resolves from `--project <id>` first, then `async.client.defaultProjectId` from config.
+The Telegram command surface is intentionally small:
 
-use `tau async -- <prompt...>` when prompt text starts with a reserved command word (for example, `list`).
+- `/new` creates a new session for the chat, replacing the previous active session if one exists.
+- `/status` returns a short natural-language status paragraph for the active session.
+- `/interrupt` interrupts the active run.
 
-The HTTP API accepts `POST /v1/sessions` with `projectId` and optional `prompt`. `POST /v1/sessions/:sessionId/messages` accepts `text`, optional `mode` (`submit` or `steer`), and optional `additionalSystemMessage`; normal submit returns a busy error while the session is running, while steering is accepted during active work and runs at the next safe boundary.
+The runner always operates in quiet mode: Telegram receives command acknowledgements/errors and final assistant messages, not streamed tool/lifecycle progress.
 
-for daemon/API/Telegram details, see [docs/async.md](docs/async.md).
+Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). allowed groups are opt-in via `allowedChatIds`; non-triggering group text/captions, attachments, audio transcripts, and processing errors are buffered as sender-attributed context and the most recent 50 messages since the previous bot-triggering turn are included when a bot mention triggers a turn. group commands accept explicit bot mentions on or around the command, such as `/status@botusername`, `/status @botusername`, or `@botusername /status`.
 
-daemon config uses a bot-id map (`telegram.<botId>.botToken`), with optional per-bot `allowedProjectIds` scoping. Telegram sessions are chat-scoped per bot (no cross-chat or cross-bot session sharing); allowed group chats share one group session namespace and trigger only on explicit `@botusername` mentions.
-
-Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). Telegram-originated text and transcribed audio use explicit steering mode: idle sessions behave like normal user turns, while messages sent during active work are accepted, batched, and run at the next safe boundary after model output or completed tool results. allowed groups are opt-in via `allowedChatIds`; non-triggering group text/captions, attachments, audio transcripts, and processing errors are buffered as sender-attributed context and the most recent 50 messages since the previous bot-triggering turn are included when a bot mention triggers a turn. group context attachment/audio processing runs eagerly, but processing errors are reported to Telegram only after a later bot-triggering message is accepted. group commands accept explicit bot mentions on or around the command, such as `/sessions@botusername`, `/sessions @botusername`, or `@botusername /sessions`. attachment-only messages do not trigger turns, attachments are downloaded to local temp files immediately, queued attachments are prepended to the next text/voice turn as local temp file metadata, and oversized Telegram replies are split into 95%-of-limit chunks sent 1 second apart.
-
-daemon config also supports `systemMessage`, `cron.jobsDir`, and `cron.systemMessage` for scheduled runs, plus per-project `workingDirectory` (for monorepos), `description` (used by Telegram `/projects`), `bootstrapCommands` (blocking), and `backgroundBootstrapCommands` (non-blocking). repositories use automatic persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`, while individual session workspaces are still ephemeral. on startup, the daemon wipes existing entries under configured async workspace roots but leaves repository caches intact. on Telegram adapter startup, tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Telegram `/close` deletes session workspaces from disk when closing sessions.
+Telegram config defines `bots`, `projects`, `workspaceRoot`, optional `systemMessage`, and optional `maxSessions`. projects keep the same workspace preparation behavior as before: repositories use persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`, session workspaces are ephemeral, `bootstrapCommands` block readiness, and `backgroundBootstrapCommands` run after readiness. for config details, see [docs/telegram.md](docs/telegram.md).
 
 ## built-in tool commands
 
@@ -582,37 +564,13 @@ the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. pro
 
 if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinThemes` is set to `true`, tau will not load built-in themes. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 
-the `async` field in normal tau config is client-side only:
-
-- `async.client.defaultTarget` + `async.client.targets`: client-side URL/token target definitions for `tau async ...` commands.
-- `async.client.defaultProjectId`: default project id used by `tau async <prompt...>` when `--project` is omitted.
-
-example (`~/.config/tau/config.json` or `.tau/config.json`):
-
-```json
-{
-  "async": {
-    "client": {
-      "defaultTarget": "local",
-      "defaultProjectId": "tau",
-      "targets": {
-        "local": {
-          "url": "http://127.0.0.1:7788",
-          "token": "replace-me"
-        }
-      }
-    }
-  }
-}
-```
-
-daemon-side async settings are in a separate config file passed to:
+Telegram runner settings are in a separate config file passed to:
 
 ```sh
-tau async daemon --config-file <path>
+tau telegram --config-file <path>
 ```
 
-see [docs/async.md](docs/async.md) for daemon config schema (`host`, `port`, `authToken`, `telegram` (map keyed by bot id), `cron` (including `cron.jobsDir`), `projects`, `workspaceRoot`, `projects.<id>.ref`, `projects.<id>.workingDirectory`, `projects.<id>.description`, `projects.<id>.bootstrapCommands`, `projects.<id>.backgroundBootstrapCommands`) and GitHub repo requirements (`owner/repo`, cached via `gh repo clone -- --bare`).
+see [docs/telegram.md](docs/telegram.md) for the config schema (`bots`, `projects`, `workspaceRoot`, optional `systemMessage`, optional `maxSessions`) and GitHub repo requirements (`owner/repo`, cached via `gh repo clone -- --bare`).
 
 ### diff review tool
 

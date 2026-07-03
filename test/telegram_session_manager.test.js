@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  AsyncSessionManagerError,
-  createAsyncSessionManager,
-  createScopedAsyncSessionManager,
-} from "../dist/core/async/session_manager.js";
+  createScopedTelegramSessionManager,
+  createTelegramSessionManager,
+  TelegramSessionManagerError,
+} from "../dist/core/telegram/session_manager.js";
 import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
 
 function deferred() {
@@ -115,7 +115,7 @@ describe("async session manager", () => {
     const workspaceDeferred = deferred();
     const clientHarness = createClientHarness();
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -148,7 +148,7 @@ describe("async session manager", () => {
     const clientHarness = createClientHarness();
     const createClient = vi.fn(async () => clientHarness.client);
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -178,7 +178,7 @@ describe("async session manager", () => {
       await backgroundDeferred.promise;
     });
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -214,7 +214,7 @@ describe("async session manager", () => {
       throw new Error("background boom");
     });
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -248,7 +248,7 @@ describe("async session manager", () => {
       sessionCwd: `/tmp/ws/${sessionId}`,
     }));
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -271,7 +271,7 @@ describe("async session manager", () => {
 
   it("prepends configured system message to submitted user text", async () => {
     const clientHarness = createClientHarness();
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -303,7 +303,7 @@ describe("async session manager", () => {
 
   it("appends additional system message for per-submit context", async () => {
     const clientHarness = createClientHarness();
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -342,7 +342,7 @@ describe("async session manager", () => {
     const submitDeferreds = [firstSubmit, steeringSubmit];
     clientHarness.session.submit = vi.fn(async () => await submitDeferreds.shift().promise);
     clientHarness.session.steer = vi.fn(async () => await submitDeferreds.shift().promise);
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -375,7 +375,7 @@ describe("async session manager", () => {
 
   it("applies additional system message to initial prompt submissions", async () => {
     const clientHarness = createClientHarness();
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -409,7 +409,7 @@ describe("async session manager", () => {
 
   it("returns from sendMessage immediately and rejects concurrent submits", async () => {
     const clientHarness = createClientHarness();
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -449,7 +449,7 @@ describe("async session manager", () => {
       throw new Error("submit boom");
     });
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -493,7 +493,7 @@ describe("async session manager", () => {
       throw new Error("submit boom");
     });
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -527,7 +527,7 @@ describe("async session manager", () => {
       return { interrupted: true, isTurnRunning: true };
     });
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -563,7 +563,7 @@ describe("async session manager", () => {
   it("returns a no-op interrupt result when no run is active", async () => {
     const clientHarness = createClientHarness();
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -597,7 +597,7 @@ describe("async session manager", () => {
       throw new Error("submit boom");
     });
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -634,7 +634,7 @@ describe("async session manager", () => {
       return { interrupted: true, isTurnRunning: true };
     });
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -669,7 +669,7 @@ describe("async session manager", () => {
     const clientHarness = createClientHarness();
     const cleanupWorkspacePath = vi.fn(async () => {});
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -704,7 +704,7 @@ describe("async session manager", () => {
     const clientHarness = createClientHarness();
     const cleanupWorkspacePath = vi.fn(async () => {});
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -736,7 +736,7 @@ describe("async session manager", () => {
   it("does not close queued or preparing sessions in bulk", async () => {
     const workspaceDeferred = deferred();
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -770,7 +770,7 @@ describe("async session manager", () => {
       runningClientHarness.client,
     ];
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -833,7 +833,7 @@ describe("async session manager", () => {
     });
     const cleanupWorkspacePath = vi.fn(async () => {});
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -880,7 +880,7 @@ describe("async session manager", () => {
     });
     const cleanupWorkspacePath = vi.fn(async () => {});
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -916,7 +916,7 @@ describe("async session manager", () => {
 
   it("emits progress events for bash/edit/write and assistant output", async () => {
     const clientHarness = createClientHarness();
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -956,8 +956,8 @@ describe("async session manager", () => {
         createToolUiFacetChange("2", {
           type: "edit_success",
           toolCallId: "2",
-          path: "src/core/async/telegram.ts",
-          headerTarget: "src/core/async/telegram.ts",
+          path: "src/core/telegram/adapter.ts",
+          headerTarget: "src/core/telegram/adapter.ts",
           oldLength: 1,
           newLength: 2,
           oldText: "a",
@@ -1034,7 +1034,7 @@ describe("async session manager", () => {
           event.type === "session-progress" &&
           event.sessionId === created.id &&
           event.progress.type === "edited-file" &&
-          event.progress.path === "src/core/async/telegram.ts",
+          event.progress.path === "src/core/telegram/adapter.ts",
       ),
     ).toBe(true);
 
@@ -1061,7 +1061,7 @@ describe("async session manager", () => {
 
   it("does not replay already consumed tool facet progress events", async () => {
     const clientHarness = createClientHarness();
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -1134,7 +1134,7 @@ describe("async session manager", () => {
       turn: { aborted: false },
     });
 
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -1178,7 +1178,7 @@ describe("async session manager", () => {
   });
 
   it("throws invalid_project for unknown projects", async () => {
-    const manager = createAsyncSessionManager({
+    const manager = createTelegramSessionManager({
       projects: {},
       createClient: vi.fn(async () => createClientHarness().client),
     });
@@ -1190,7 +1190,7 @@ describe("async session manager", () => {
     );
 
     await expect(manager.sendMessage("missing", "hi")).rejects.toBeInstanceOf(
-      AsyncSessionManagerError,
+      TelegramSessionManagerError,
     );
   });
 
@@ -1252,7 +1252,7 @@ describe("async session manager", () => {
       onEvent: vi.fn(() => () => {}),
     };
 
-    const scopedManager = createScopedAsyncSessionManager({
+    const scopedManager = createScopedTelegramSessionManager({
       sessionManager: manager,
       ownerId,
       allowedProjectIds: ["demo"],
@@ -1330,7 +1330,7 @@ describe("async session manager", () => {
       onEvent: vi.fn(() => () => {}),
     };
 
-    const scopedManager = createScopedAsyncSessionManager({
+    const scopedManager = createScopedTelegramSessionManager({
       sessionManager: manager,
       ownerId,
       allowedProjectIds: ["demo"],

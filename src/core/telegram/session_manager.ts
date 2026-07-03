@@ -10,7 +10,7 @@ import type {
   SessionProtocolSubmitResult,
   SessionProtocolUnobserveResult,
 } from "../../protocol/session_protocol.js";
-import type { AsyncProjectConfig } from "../config/schema.js";
+import type { TelegramProjectConfig } from "../config/schema.js";
 import type { RiskLevel } from "../types.js";
 import { extractAssistantText } from "../utils/messages.js";
 import {
@@ -22,23 +22,23 @@ import {
   runBootstrapCommands,
 } from "./workspace.js";
 
-export type AsyncSessionState =
+export type TelegramSessionState =
   | "queued"
   | "preparing-workspace"
   | "running"
   | "waiting-input"
   | "failed";
 
-export type AsyncSessionLogLevel = "info" | "warn" | "error";
+export type TelegramSessionLogLevel = "info" | "warn" | "error";
 
-export type AsyncSessionLogEntry = {
+export type TelegramSessionLogEntry = {
   timestamp: string;
-  level: AsyncSessionLogLevel;
+  level: TelegramSessionLogLevel;
   message: string;
   data?: unknown;
 };
 
-export type AsyncSessionProgress =
+export type TelegramSessionProgress =
   | {
       type: "bash-command";
       command: string;
@@ -56,11 +56,11 @@ export type AsyncSessionProgress =
       text: string;
     };
 
-export type AsyncSessionRecord = {
+export type TelegramSessionRecord = {
   id: string;
   projectId: string;
   ownerId?: string;
-  state: AsyncSessionState;
+  state: TelegramSessionState;
   createdAt: string;
   updatedAt: string;
   workspacePath?: string;
@@ -72,7 +72,7 @@ const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvw
 const PUBLIC_SESSION_ID_LENGTH = 8;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
 
-const ACTIVE_STATES: Set<AsyncSessionState> = new Set([
+const ACTIVE_STATES: Set<TelegramSessionState> = new Set([
   "queued",
   "preparing-workspace",
   "running",
@@ -83,7 +83,7 @@ function elapsedMs(startTime: bigint): number {
   return Number((process.hrtime.bigint() - startTime) / NANOSECONDS_PER_MILLISECOND);
 }
 
-export class AsyncSessionManagerError extends Error {
+export class TelegramSessionManagerError extends Error {
   code: "not_found" | "busy" | "invalid_project" | "not_ready" | "invalid_state" | "max_sessions";
 
   constructor(
@@ -91,19 +91,19 @@ export class AsyncSessionManagerError extends Error {
     message: string,
   ) {
     super(message);
-    this.name = "AsyncSessionManagerError";
+    this.name = "TelegramSessionManagerError";
     this.code = code;
   }
 }
 
 type SessionEntry = {
-  record: AsyncSessionRecord;
-  logs: AsyncSessionLogEntry[];
-  project: AsyncProjectConfig;
+  record: TelegramSessionRecord;
+  logs: TelegramSessionLogEntry[];
+  project: TelegramProjectConfig;
   abortController: AbortController;
   cancelRequested: boolean;
-  client?: AsyncSessionClient;
-  tauSession?: AsyncTauSession;
+  client?: TelegramSessionClient;
+  tauSession?: TelegramTauSession;
   unsubscribeClientEvents?: () => void;
   clientClosePromise?: Promise<void>;
   activeSubmit?: Promise<void>;
@@ -113,100 +113,100 @@ type SessionEntry = {
   consumedFacetEventCounts: Map<string, number>;
 };
 
-export type AsyncSessionManagerEvent =
+export type TelegramSessionManagerEvent =
   | {
       type: "session-created";
-      session: AsyncSessionRecord;
+      session: TelegramSessionRecord;
     }
   | {
       type: "session-state-changed";
       sessionId: string;
       projectId: string;
-      previousState: AsyncSessionState;
-      state: AsyncSessionState;
+      previousState: TelegramSessionState;
+      state: TelegramSessionState;
       updatedAt: string;
     }
   | {
       type: "session-log";
       sessionId: string;
       projectId: string;
-      state: AsyncSessionState;
-      log: AsyncSessionLogEntry;
+      state: TelegramSessionState;
+      log: TelegramSessionLogEntry;
     }
   | {
       type: "session-progress";
       sessionId: string;
       projectId: string;
-      state: AsyncSessionState;
+      state: TelegramSessionState;
       timestamp: string;
-      progress: AsyncSessionProgress;
+      progress: TelegramSessionProgress;
     };
 
-export type AsyncSessionSubmitOptions = {
+export type TelegramSessionSubmitOptions = {
   additionalSystemMessage?: string;
   mode?: "submit" | "steer";
 };
 
-export type AsyncSessionClientOptions = {
+export type TelegramSessionClientOptions = {
   cwd: string;
   persona?: string;
   riskLevel?: RiskLevel;
   noAgentContextFiles?: boolean;
 };
 
-export type AsyncSessionClientEvent = SessionProtocolDeltaMessage;
+export type TelegramSessionClientEvent = SessionProtocolDeltaMessage;
 
-export type AsyncTauSession = {
+export type TelegramTauSession = {
   readonly id: string;
-  onDelta(listener: (event: AsyncSessionClientEvent) => void): () => void;
+  onDelta(listener: (event: TelegramSessionClientEvent) => void): () => void;
   submit(text: string): Promise<SessionProtocolSubmitResult>;
   steer(text: string): Promise<SessionProtocolSteerResult>;
   interrupt(): Promise<SessionProtocolInterruptResult>;
   unobserve(): Promise<SessionProtocolUnobserveResult>;
 };
 
-export type AsyncSessionClient = {
+export type TelegramSessionClient = {
   sessions: {
-    create(input: SessionProtocolCreateParams): Promise<AsyncTauSession>;
+    create(input: SessionProtocolCreateParams): Promise<TelegramTauSession>;
   };
   close(): Promise<void>;
 };
 
-export type AsyncSessionInterruptResult = {
-  session: AsyncSessionRecord;
+export type TelegramSessionInterruptResult = {
+  session: TelegramSessionRecord;
   interrupted: boolean;
   isTurnRunning: boolean;
 };
 
-export type AsyncSessionManager = {
+export type TelegramSessionManager = {
   createSession(input: {
     projectId: string;
     ownerId?: string;
     prompt?: string;
     additionalSystemMessage?: string;
-  }): Promise<AsyncSessionRecord>;
-  listSessions(): AsyncSessionRecord[];
-  getSession(sessionId: string): AsyncSessionRecord | undefined;
-  getLogs(sessionId: string): AsyncSessionLogEntry[] | undefined;
+  }): Promise<TelegramSessionRecord>;
+  listSessions(): TelegramSessionRecord[];
+  getSession(sessionId: string): TelegramSessionRecord | undefined;
+  getLogs(sessionId: string): TelegramSessionLogEntry[] | undefined;
   sendMessage(
     sessionId: string,
     text: string,
-    options?: AsyncSessionSubmitOptions,
-  ): Promise<AsyncSessionRecord>;
-  interruptSession(sessionId: string): Promise<AsyncSessionInterruptResult>;
-  closeSession(sessionId: string): Promise<AsyncSessionRecord>;
-  closeInactiveSessions(): Promise<AsyncSessionRecord[]>;
+    options?: TelegramSessionSubmitOptions,
+  ): Promise<TelegramSessionRecord>;
+  interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult>;
+  closeSession(sessionId: string): Promise<TelegramSessionRecord>;
+  closeInactiveSessions(): Promise<TelegramSessionRecord[]>;
   close(): Promise<void>;
-  onEvent(listener: (event: AsyncSessionManagerEvent) => void): () => void;
+  onEvent(listener: (event: TelegramSessionManagerEvent) => void): () => void;
 };
 
-export type AsyncSessionManagerOptions = {
-  projects: Record<string, AsyncProjectConfig>;
+export type TelegramSessionManagerOptions = {
+  projects: Record<string, TelegramProjectConfig>;
   workspaceRoot?: string;
   maxSessions?: number;
   systemMessage?: string;
   now?: () => Date;
-  createClient: (options: AsyncSessionClientOptions) => Promise<AsyncSessionClient>;
+  createClient: (options: TelegramSessionClientOptions) => Promise<TelegramSessionClient>;
   prepareWorkspace?: (options: PrepareWorkspaceOptions) => Promise<{
     workspacePath: string;
     sessionCwd: string;
@@ -215,17 +215,17 @@ export type AsyncSessionManagerOptions = {
   cleanupWorkspacePath?: (workspacePath: string) => Promise<void>;
 };
 
-class AsyncSessionManagerImpl implements AsyncSessionManager {
+class TelegramSessionManagerImpl implements TelegramSessionManager {
   private readonly sessions = new Map<string, SessionEntry>();
-  private readonly listeners = new Set<(event: AsyncSessionManagerEvent) => void>();
-  private readonly projects: Record<string, AsyncProjectConfig>;
+  private readonly listeners = new Set<(event: TelegramSessionManagerEvent) => void>();
+  private readonly projects: Record<string, TelegramProjectConfig>;
   private readonly workspaceRoot: string;
   private readonly maxSessions?: number;
   private readonly systemMessage?: string;
   private readonly now: () => Date;
   private readonly createClient: (
-    options: AsyncSessionClientOptions,
-  ) => Promise<AsyncSessionClient>;
+    options: TelegramSessionClientOptions,
+  ) => Promise<TelegramSessionClient>;
   private readonly prepareWorkspace: (
     options: PrepareWorkspaceOptions,
   ) => Promise<{ workspacePath: string; sessionCwd: string }>;
@@ -233,16 +233,16 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   private readonly cleanupWorkspacePath: (workspacePath: string) => Promise<void>;
   private closePromise?: Promise<void>;
 
-  constructor(options: AsyncSessionManagerOptions) {
+  constructor(options: TelegramSessionManagerOptions) {
     this.projects = options.projects;
     this.workspaceRoot = resolve(
-      options.workspaceRoot ?? resolve(process.cwd(), ".tau/async-workspaces"),
+      options.workspaceRoot ?? resolve(process.cwd(), ".tau/telegram-workspaces"),
     );
     this.maxSessions = options.maxSessions;
     this.systemMessage = options.systemMessage?.trim() || undefined;
     this.now = options.now ?? (() => new Date());
     if (!options.createClient) {
-      throw new Error("missing async session client factory");
+      throw new Error("missing telegram session client factory");
     }
     this.createClient = options.createClient;
     this.prepareWorkspace = options.prepareWorkspace ?? prepareWorkspace;
@@ -255,17 +255,17 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     ownerId?: string;
     prompt?: string;
     additionalSystemMessage?: string;
-  }): Promise<AsyncSessionRecord> {
+  }): Promise<TelegramSessionRecord> {
     const project = this.projects[input.projectId];
     if (!project) {
-      throw new AsyncSessionManagerError(
+      throw new TelegramSessionManagerError(
         "invalid_project",
-        `unknown async project '${input.projectId}'`,
+        `unknown telegram project '${input.projectId}'`,
       );
     }
 
     if (this.maxSessions !== undefined && this.countActiveSessions() >= this.maxSessions) {
-      throw new AsyncSessionManagerError("max_sessions", "maximum session count reached");
+      throw new TelegramSessionManagerError("max_sessions", "maximum session count reached");
     }
 
     const id = this.createSessionId();
@@ -308,16 +308,16 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     return this.toRecord(entry);
   }
 
-  listSessions(): AsyncSessionRecord[] {
+  listSessions(): TelegramSessionRecord[] {
     return Array.from(this.sessions.values()).map((entry) => this.toRecord(entry));
   }
 
-  getSession(sessionId: string): AsyncSessionRecord | undefined {
+  getSession(sessionId: string): TelegramSessionRecord | undefined {
     const entry = this.getEntryBySessionId(sessionId);
     return entry ? this.toRecord(entry) : undefined;
   }
 
-  getLogs(sessionId: string): AsyncSessionLogEntry[] | undefined {
+  getLogs(sessionId: string): TelegramSessionLogEntry[] | undefined {
     const entry = this.getEntryBySessionId(sessionId);
     if (!entry) {
       return undefined;
@@ -326,7 +326,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     return entry.logs.map((logEntry) => ({ ...logEntry }));
   }
 
-  onEvent(listener: (event: AsyncSessionManagerEvent) => void): () => void {
+  onEvent(listener: (event: TelegramSessionManagerEvent) => void): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
@@ -336,35 +336,35 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   async sendMessage(
     sessionId: string,
     text: string,
-    options?: AsyncSessionSubmitOptions,
-  ): Promise<AsyncSessionRecord> {
+    options?: TelegramSessionSubmitOptions,
+  ): Promise<TelegramSessionRecord> {
     const entry = this.requireSession(sessionId);
     const trimmed = text.trim();
     if (!trimmed) {
-      throw new AsyncSessionManagerError("invalid_state", "message text cannot be empty");
+      throw new TelegramSessionManagerError("invalid_state", "message text cannot be empty");
     }
 
     if (entry.record.state === "failed") {
-      throw new AsyncSessionManagerError(
+      throw new TelegramSessionManagerError(
         "invalid_state",
         `cannot submit messages when session is ${entry.record.state}`,
       );
     }
 
     if (!entry.tauSession) {
-      throw new AsyncSessionManagerError("not_ready", "session is still preparing");
+      throw new TelegramSessionManagerError("not_ready", "session is still preparing");
     }
 
     const mode = options?.mode ?? "submit";
     if (mode !== "steer" && (entry.record.state === "running" || entry.activeSubmit)) {
-      throw new AsyncSessionManagerError("busy", "session is running");
+      throw new TelegramSessionManagerError("busy", "session is running");
     }
 
     void this.submitText(entry, trimmed, "user-message", options?.additionalSystemMessage, mode);
     return this.toRecord(entry);
   }
 
-  async interruptSession(sessionId: string): Promise<AsyncSessionInterruptResult> {
+  async interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult> {
     const entry = this.requireSession(sessionId);
 
     if (entry.record.state !== "running" || !entry.activeSubmit) {
@@ -376,7 +376,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     }
 
     if (!entry.tauSession) {
-      throw new AsyncSessionManagerError("not_ready", "session is still preparing");
+      throw new TelegramSessionManagerError("not_ready", "session is still preparing");
     }
 
     const result = await entry.tauSession.interrupt();
@@ -392,17 +392,17 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     };
   }
 
-  async closeSession(sessionId: string): Promise<AsyncSessionRecord> {
+  async closeSession(sessionId: string): Promise<TelegramSessionRecord> {
     const entry = this.requireSession(sessionId);
     return await this.closeEntry(entry, "close requested");
   }
 
-  async closeInactiveSessions(): Promise<AsyncSessionRecord[]> {
+  async closeInactiveSessions(): Promise<TelegramSessionRecord[]> {
     const entries = Array.from(this.sessions.values()).filter((entry) =>
       this.isCloseableWithCloseAll(entry.record.state),
     );
 
-    const closed: AsyncSessionRecord[] = [];
+    const closed: TelegramSessionRecord[] = [];
     for (const entry of entries) {
       closed.push(await this.closeEntry(entry, "close requested"));
     }
@@ -568,11 +568,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     mode: "submit" | "steer" = "submit",
   ): Promise<void> {
     if (!entry.tauSession) {
-      throw new AsyncSessionManagerError("not_ready", "session is still preparing");
+      throw new TelegramSessionManagerError("not_ready", "session is still preparing");
     }
 
     if (entry.activeSubmit && mode !== "steer") {
-      throw new AsyncSessionManagerError("busy", "session is running");
+      throw new TelegramSessionManagerError("busy", "session is running");
     }
 
     this.setState(entry, "running");
@@ -634,8 +634,8 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     return submitPromise;
   }
 
-  private buildClientOptions(entry: SessionEntry, cwd: string): AsyncSessionClientOptions {
-    const options: AsyncSessionClientOptions = { cwd };
+  private buildClientOptions(entry: SessionEntry, cwd: string): TelegramSessionClientOptions {
+    const options: TelegramSessionClientOptions = { cwd };
     if (entry.project.persona) {
       options.persona = entry.project.persona;
     }
@@ -665,7 +665,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     );
   }
 
-  private async closeEntry(entry: SessionEntry, message: string): Promise<AsyncSessionRecord> {
+  private async closeEntry(entry: SessionEntry, message: string): Promise<TelegramSessionRecord> {
     if (this.isActiveState(entry.record.state)) {
       this.requestCancellation(entry, message);
     } else {
@@ -797,11 +797,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     await closePromise;
   }
 
-  private isActiveState(state: AsyncSessionState): boolean {
+  private isActiveState(state: TelegramSessionState): boolean {
     return ACTIVE_STATES.has(state);
   }
 
-  private isCloseableWithCloseAll(state: AsyncSessionState): boolean {
+  private isCloseableWithCloseAll(state: TelegramSessionState): boolean {
     return CLOSEABLE_STATES_WITH_CLOSE_ALL.has(state);
   }
 
@@ -816,7 +816,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
   private requireSession(sessionId: string): SessionEntry {
     const entry = this.getEntryBySessionId(sessionId);
     if (!entry) {
-      throw new AsyncSessionManagerError("not_found", `session '${sessionId}' not found`);
+      throw new TelegramSessionManagerError("not_found", `session '${sessionId}' not found`);
     }
     return entry;
   }
@@ -859,7 +859,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     return count;
   }
 
-  private setState(entry: SessionEntry, state: AsyncSessionState): void {
+  private setState(entry: SessionEntry, state: TelegramSessionState): void {
     const previousState = entry.record.state;
     if (previousState === state) {
       return;
@@ -883,11 +883,11 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
 
   private log(
     entry: SessionEntry,
-    level: AsyncSessionLogLevel,
+    level: TelegramSessionLogLevel,
     message: string,
     data?: unknown,
   ): void {
-    const logEntry: AsyncSessionLogEntry = {
+    const logEntry: TelegramSessionLogEntry = {
       timestamp: this.now().toISOString(),
       level,
       message,
@@ -904,7 +904,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     });
   }
 
-  private emit(event: AsyncSessionManagerEvent): void {
+  private emit(event: TelegramSessionManagerEvent): void {
     for (const listener of this.listeners) {
       try {
         listener(event);
@@ -914,7 +914,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     }
   }
 
-  private handleClientEvent(entry: SessionEntry, clientEvent: AsyncSessionClientEvent): void {
+  private handleClientEvent(entry: SessionEntry, clientEvent: TelegramSessionClientEvent): void {
     if (clientEvent.delta.type !== "snapshot.patch") {
       return;
     }
@@ -983,7 +983,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     }
   }
 
-  private emitProgress(entry: SessionEntry, progress: AsyncSessionProgress): void {
+  private emitProgress(entry: SessionEntry, progress: TelegramSessionProgress): void {
     this.emit({
       type: "session-progress",
       sessionId: entry.record.id,
@@ -994,7 +994,7 @@ class AsyncSessionManagerImpl implements AsyncSessionManager {
     });
   }
 
-  private toRecord(entry: SessionEntry): AsyncSessionRecord {
+  private toRecord(entry: SessionEntry): TelegramSessionRecord {
     return { ...entry.record };
   }
 }
@@ -1027,18 +1027,18 @@ function isToolUiEvent(value: unknown): value is {
 }
 
 type AsyncScopedSessionManagerOptions = {
-  sessionManager: AsyncSessionManager;
+  sessionManager: TelegramSessionManager;
   ownerId: string;
   allowedProjectIds: Set<string>;
 };
 
-const CLOSEABLE_STATES_WITH_CLOSE_ALL: Set<AsyncSessionState> = new Set([
+const CLOSEABLE_STATES_WITH_CLOSE_ALL: Set<TelegramSessionState> = new Set([
   "waiting-input",
   "failed",
 ]);
 
-class ScopedAsyncSessionManager implements AsyncSessionManager {
-  private readonly sessionManager: AsyncSessionManager;
+class ScopedTelegramSessionManager implements TelegramSessionManager {
+  private readonly sessionManager: TelegramSessionManager;
   private readonly ownerId: string;
   private readonly allowedProjectIds: Set<string>;
 
@@ -1053,11 +1053,11 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
     ownerId?: string;
     prompt?: string;
     additionalSystemMessage?: string;
-  }): Promise<AsyncSessionRecord> {
+  }): Promise<TelegramSessionRecord> {
     if (!this.allowedProjectIds.has(input.projectId)) {
-      throw new AsyncSessionManagerError(
+      throw new TelegramSessionManagerError(
         "invalid_project",
-        `unknown async project '${input.projectId}'`,
+        `unknown telegram project '${input.projectId}'`,
       );
     }
 
@@ -1071,11 +1071,11 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
     });
   }
 
-  listSessions(): AsyncSessionRecord[] {
+  listSessions(): TelegramSessionRecord[] {
     return this.sessionManager.listSessions().filter((session) => this.isVisibleSession(session));
   }
 
-  getSession(sessionId: string): AsyncSessionRecord | undefined {
+  getSession(sessionId: string): TelegramSessionRecord | undefined {
     const session = this.sessionManager.getSession(sessionId);
     if (!session || !this.isVisibleSession(session)) {
       return undefined;
@@ -1084,7 +1084,7 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
     return session;
   }
 
-  getLogs(sessionId: string): AsyncSessionLogEntry[] | undefined {
+  getLogs(sessionId: string): TelegramSessionLogEntry[] | undefined {
     const session = this.sessionManager.getSession(sessionId);
     if (!session || !this.isVisibleSession(session)) {
       return undefined;
@@ -1096,28 +1096,28 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
   async sendMessage(
     sessionId: string,
     text: string,
-    options?: AsyncSessionSubmitOptions,
-  ): Promise<AsyncSessionRecord> {
+    options?: TelegramSessionSubmitOptions,
+  ): Promise<TelegramSessionRecord> {
     this.requireSession(sessionId);
     return await this.sessionManager.sendMessage(sessionId, text, options);
   }
 
-  async interruptSession(sessionId: string): Promise<AsyncSessionInterruptResult> {
+  async interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult> {
     this.requireSession(sessionId);
     return await this.sessionManager.interruptSession(sessionId);
   }
 
-  async closeSession(sessionId: string): Promise<AsyncSessionRecord> {
+  async closeSession(sessionId: string): Promise<TelegramSessionRecord> {
     this.requireSession(sessionId);
     return await this.sessionManager.closeSession(sessionId);
   }
 
-  async closeInactiveSessions(): Promise<AsyncSessionRecord[]> {
+  async closeInactiveSessions(): Promise<TelegramSessionRecord[]> {
     const closeableSessions = this.listSessions().filter((session) =>
       CLOSEABLE_STATES_WITH_CLOSE_ALL.has(session.state),
     );
 
-    const closed: AsyncSessionRecord[] = [];
+    const closed: TelegramSessionRecord[] = [];
     for (const session of closeableSessions) {
       closed.push(await this.sessionManager.closeSession(session.id));
     }
@@ -1129,7 +1129,7 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
     return;
   }
 
-  onEvent(listener: (event: AsyncSessionManagerEvent) => void): () => void {
+  onEvent(listener: (event: TelegramSessionManagerEvent) => void): () => void {
     return this.sessionManager.onEvent((event) => {
       if (event.type === "session-created") {
         if (this.isVisibleSession(event.session)) {
@@ -1145,32 +1145,32 @@ class ScopedAsyncSessionManager implements AsyncSessionManager {
     });
   }
 
-  private requireSession(sessionId: string): AsyncSessionRecord {
+  private requireSession(sessionId: string): TelegramSessionRecord {
     const session = this.sessionManager.getSession(sessionId);
     if (!session || !this.isVisibleSession(session)) {
-      throw new AsyncSessionManagerError("not_found", `session '${sessionId}' not found`);
+      throw new TelegramSessionManagerError("not_found", `session '${sessionId}' not found`);
     }
 
     return session;
   }
 
-  private isVisibleSession(session: AsyncSessionRecord): boolean {
+  private isVisibleSession(session: TelegramSessionRecord): boolean {
     return this.allowedProjectIds.has(session.projectId) && session.ownerId === this.ownerId;
   }
 }
 
-export function createAsyncSessionManager(
-  options: AsyncSessionManagerOptions,
-): AsyncSessionManager {
-  return new AsyncSessionManagerImpl(options);
+export function createTelegramSessionManager(
+  options: TelegramSessionManagerOptions,
+): TelegramSessionManager {
+  return new TelegramSessionManagerImpl(options);
 }
 
-export function createScopedAsyncSessionManager(options: {
-  sessionManager: AsyncSessionManager;
+export function createScopedTelegramSessionManager(options: {
+  sessionManager: TelegramSessionManager;
   ownerId: string;
   allowedProjectIds: string[];
-}): AsyncSessionManager {
-  return new ScopedAsyncSessionManager({
+}): TelegramSessionManager {
+  return new ScopedTelegramSessionManager({
     sessionManager: options.sessionManager,
     ownerId: options.ownerId,
     allowedProjectIds: new Set(options.allowedProjectIds),

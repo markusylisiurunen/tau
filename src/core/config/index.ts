@@ -7,13 +7,6 @@ export { resolveConfigLevels } from "./paths.js";
 export type { RuntimeBootstrap, RuntimeConfigResult } from "./runtime.js";
 export { loadRuntimeBootstrap, loadRuntimeConfig } from "./runtime.js";
 export type {
-  AsyncClientConfig,
-  AsyncClientTargetConfig,
-  AsyncConfig,
-  AsyncProjectConfig,
-  AsyncServerConfig,
-  AsyncServerTelegramBotConfig,
-  AsyncServerTelegramConfig,
   CloudflareSandboxBridgeConfig,
   CloudflareSandboxConfig,
   Config,
@@ -22,6 +15,9 @@ export type {
   NormalizedAutoCompactConfig,
   SpeechToTextConfig,
   SpeechToTextProvider,
+  TelegramBotConfig,
+  TelegramBotConfigMap,
+  TelegramProjectConfig,
 } from "./schema.js";
 export {
   DEFAULT_AUTO_COMPACT_CONFIG,

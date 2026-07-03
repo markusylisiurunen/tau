@@ -1,4 +1,3 @@
-export { AsyncCliError, printAsyncHelp, runAsyncCommand } from "./async/index.js";
 export type { AuthLog, AuthLoginHandler, AuthPromptFn, OAuthProviderSpec } from "./auth/index.js";
 export {
   AuthManager,
@@ -13,13 +12,6 @@ export {
 export type { CliOptions } from "./cli.js";
 export { CliError, parseCliArgs, parsePersonaString, printDiffToolHelp, printHelp } from "./cli.js";
 export type {
-  AsyncClientConfig,
-  AsyncClientTargetConfig,
-  AsyncConfig,
-  AsyncProjectConfig,
-  AsyncServerConfig,
-  AsyncServerTelegramBotConfig,
-  AsyncServerTelegramConfig,
   CloudflareSandboxBridgeConfig,
   CloudflareSandboxConfig,
   Config,
@@ -28,6 +20,9 @@ export type {
   FlySpritesApiConfig,
   FlySpritesConfig,
   RuntimeBootstrap,
+  TelegramBotConfig,
+  TelegramBotConfigMap,
+  TelegramProjectConfig,
   ThemeAppearance,
   ThemeDefinition,
   ThemeVariantTokens,
@@ -96,6 +91,7 @@ export type {
   SessionPromptComposition,
 } from "./runtime/session_prompt_composer.js";
 export { composeSessionPrompts } from "./runtime/session_prompt_composer.js";
+export { printTelegramHelp, runTelegramCommand, TelegramCliError } from "./telegram/index.js";
 export type { RunToolCommandOptions } from "./tool/index.js";
 export {
   computePdfPatchRegions,

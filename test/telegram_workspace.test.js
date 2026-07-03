@@ -11,7 +11,10 @@ vi.mock("../dist/core/utils/spawn_capture.js", () => ({
   spawnWithCapture: spawnWithCaptureMock,
 }));
 
-import { cleanupWorkspaceRootsOnStartup, prepareWorkspace } from "../dist/core/async/workspace.js";
+import {
+  cleanupWorkspaceRootsOnStartup,
+  prepareWorkspace,
+} from "../dist/core/telegram/workspace.js";
 
 describe("async workspace", () => {
   const tempRoots = [];

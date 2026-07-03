@@ -110,7 +110,7 @@ function createToolUiFacetChange(toolCallId, eventOrEvents) {
   };
 }
 
-describe("async session manager", () => {
+describe("telegram session manager", () => {
   it("creates a session and transitions to waiting-input after workspace/client setup", async () => {
     const workspaceDeferred = deferred();
     const clientHarness = createClientHarness();
@@ -972,8 +972,8 @@ describe("async session manager", () => {
         createToolUiFacetChange("3", {
           type: "write_success",
           toolCallId: "3",
-          path: "docs/async.md",
-          headerTarget: "docs/async.md",
+          path: "docs/telegram.md",
+          headerTarget: "docs/telegram.md",
           bytes: 10,
           lines: 1,
           content: "hello",
@@ -1044,7 +1044,7 @@ describe("async session manager", () => {
           event.type === "session-progress" &&
           event.sessionId === created.id &&
           event.progress.type === "wrote-file" &&
-          event.progress.path === "docs/async.md",
+          event.progress.path === "docs/telegram.md",
       ),
     ).toBe(true);
 
@@ -1094,8 +1094,8 @@ describe("async session manager", () => {
     const writeSuccess = {
       type: "write_success",
       toolCallId: "1",
-      path: "docs/async.md",
-      headerTarget: "docs/async.md",
+      path: "docs/telegram.md",
+      headerTarget: "docs/telegram.md",
       bytes: 10,
       lines: 1,
       content: "hello",
@@ -1122,7 +1122,8 @@ describe("async session manager", () => {
     ).toHaveLength(1);
     expect(
       progressEvents.filter(
-        (event) => event.progress.type === "wrote-file" && event.progress.path === "docs/async.md",
+        (event) =>
+          event.progress.type === "wrote-file" && event.progress.path === "docs/telegram.md",
       ),
     ).toHaveLength(1);
   });

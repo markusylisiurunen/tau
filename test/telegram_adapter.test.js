@@ -202,7 +202,7 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
   };
 }
 
-describe("async telegram adapter", () => {
+describe("telegram adapter", () => {
   it("advertises telegram slash commands", async () => {
     const apiHarness = createApiHarness([]);
     const managerHarness = createSessionManagerHarness();
@@ -1243,7 +1243,9 @@ describe("async telegram adapter", () => {
       );
       expect(chunks.map((entry) => entry.markdown).join("")).toBe(finalAnswer);
       for (const chunk of chunks) {
-        expect(Buffer.byteLength(chunk.markdown, "utf8")).toBeLessThanOrEqual(31 * 1024);
+        expect(Buffer.byteLength(chunk.markdown, "utf8")).toBeLessThanOrEqual(
+          Math.floor(32 * 1024 * 0.95),
+        );
       }
       expect(chunks[1].sentAt - chunks[0].sentAt).toBeGreaterThanOrEqual(900);
     } finally {

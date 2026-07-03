@@ -66,5 +66,4 @@ describe("telegram cli", () => {
       },
     });
   });
-
 });

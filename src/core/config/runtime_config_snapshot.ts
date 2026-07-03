@@ -1,14 +1,8 @@
 import type { Stats } from "node:fs";
 import { dirname } from "node:path";
-import type { ConfigDeps } from "../core/config/deps.js";
-import {
-  loadPromptTemplate,
-  loadRuntimeConfig,
-  type RuntimeConfigResult,
-} from "../core/config/index.js";
-import type { PromptTemplate } from "../core/prompts.js";
-import type { BashExecutionResult, ToolExecutionBackend } from "../core/tools/execution_backend.js";
-import { shellQuote } from "./sandbox_tool_helpers.js";
+import type { BashExecutionResult, ToolExecutionBackend } from "../tools/execution_backend.js";
+import type { ConfigDeps } from "./deps.js";
+import { loadRuntimeConfig, type RuntimeConfigResult } from "./runtime.js";
 
 type RuntimeConfigFileSnapshot = {
   path: string;
@@ -115,82 +109,14 @@ process.stdout.write(JSON.stringify({
 }));
 `;
 
-const COLLECT_PROMPT_TEMPLATE_SCRIPT = `
-const fs = require("node:fs");
-const path = require("node:path");
-
-const cwd = path.resolve(process.argv[1]);
-const home = path.resolve(process.argv[2]);
-const promptId = String(process.argv[3] || "").toLowerCase();
-const files = new Map();
-
-function stat(pathname) {
-  try {
-    return fs.statSync(pathname);
-  } catch {
-    return undefined;
-  }
-}
-
-function isDirectory(pathname) {
-  return Boolean(stat(pathname)?.isDirectory());
-}
-
-function addPrompt(configDir) {
-  const promptsDir = path.join(configDir, "prompts");
-  if (!isDirectory(promptsDir)) return;
-  let entries = [];
-  try {
-    entries = fs.readdirSync(promptsDir);
-  } catch {
-    return;
-  }
-  const fileName = entries.find((entry) => entry.toLowerCase() === promptId + ".md");
-  if (!fileName) return;
-  const filePath = path.join(promptsDir, fileName);
-  const info = stat(filePath);
-  if (!info?.isFile()) return;
-  try {
-    files.set(path.resolve(filePath), fs.readFileSync(filePath, "utf8"));
-  } catch {}
-}
-
-const withinHome = cwd === home || cwd.startsWith(home + path.sep);
-if (withinHome) {
-  addPrompt(path.join(home, ".config", "tau"));
-}
-
-const stop = withinHome ? home : path.parse(cwd).root;
-const roots = [];
-let dir = cwd;
-while (true) {
-  if (isDirectory(path.join(dir, ".tau")) || isDirectory(path.join(dir, ".agents", "skills"))) {
-    roots.push(dir);
-  }
-  if (dir === stop) break;
-  const parent = path.dirname(dir);
-  if (parent === dir) break;
-  dir = parent;
-}
-roots.reverse();
-for (const root of roots) {
-  addPrompt(path.join(root, ".tau"));
-}
-
-process.stdout.write(JSON.stringify({
-  files: [...files.entries()].map(([filePath, content]) => ({ path: filePath, content }))
-}));
-`;
-
 export async function loadRuntimeConfigFromToolBackend(options: {
   backend: ToolExecutionBackend;
   cwd: string;
   home: string;
 }): Promise<RuntimeConfigResult> {
-  const result = await options.backend.runBash(
-    `node -e ${shellQuote(COLLECT_RUNTIME_CONFIG_SCRIPT)} ${shellQuote(options.cwd)} ${shellQuote(
-      options.home,
-    )}`,
+  const result = await options.backend.runNodeScript(
+    COLLECT_RUNTIME_CONFIG_SCRIPT,
+    [options.cwd, options.home],
     { cwd: options.cwd, timeoutMs: 30_000 },
   );
   if (result.exitCode !== 0) {
@@ -205,34 +131,6 @@ export async function loadRuntimeConfigFromToolBackend(options: {
       home: options.home,
       snapshot,
     }),
-  );
-}
-
-export async function loadPromptTemplateFromToolBackend(options: {
-  backend: ToolExecutionBackend;
-  cwd: string;
-  home: string;
-  promptId: string;
-}): Promise<PromptTemplate | undefined> {
-  const result = await options.backend.runBash(
-    `node -e ${shellQuote(COLLECT_PROMPT_TEMPLATE_SCRIPT)} ${shellQuote(options.cwd)} ${shellQuote(
-      options.home,
-    )} ${shellQuote(options.promptId)}`,
-    { cwd: options.cwd, timeoutMs: 10_000 },
-  );
-  if (result.exitCode !== 0) {
-    throw new Error(formatConfigSnapshotCommandFailure(result));
-  }
-
-  const snapshot = parseRuntimeConfigSnapshot(result.output);
-  return loadPromptTemplate(
-    options.cwd,
-    createRuntimeConfigSnapshotDeps({
-      cwd: options.cwd,
-      home: options.home,
-      snapshot,
-    }),
-    options.promptId,
   );
 }
 

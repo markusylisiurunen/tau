@@ -1,5 +1,4 @@
 import type { RuntimeConfigResult } from "../core/config/index.js";
-import type { PromptTemplate } from "../core/prompts.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
 import type { ToolRegistry } from "../core/tools/registry.js";
@@ -24,7 +23,6 @@ export type MaybePromise<T> = T | Promise<T>;
 
 export interface ExecutionEnvironment {
   resolveRuntimeConfig(): MaybePromise<RuntimeConfigResult>;
-  resolvePromptTemplate(promptId: string): MaybePromise<PromptTemplate | undefined>;
   resolveRuntimeContext(
     options: ResolveExecutionRuntimeContextOptions,
   ): MaybePromise<ExecutionRuntimeContext>;

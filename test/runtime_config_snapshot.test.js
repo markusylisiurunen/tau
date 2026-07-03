@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { loadRuntimeConfigFromToolBackend } from "../dist/core/config/runtime_config_snapshot.js";
 import { createLocalToolExecutionBackend } from "../dist/core/index.js";
-import { loadRuntimeConfigFromToolBackend } from "../dist/execution/runtime_config_snapshot.js";
 
 async function withTempHome(test) {
   const home = await mkdtemp(join(tmpdir(), "tau-runtime-config-"));

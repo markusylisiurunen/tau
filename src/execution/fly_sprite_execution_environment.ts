@@ -157,6 +157,19 @@ export function createFlySpriteToolExecutionBackend(options: {
       );
     },
 
+    async runNodeScript(script, args = [], runOptions = {}) {
+      return await worker.request(
+        "nodeScript",
+        {
+          script,
+          args,
+          cwd: runOptions.cwd ?? options.cwd,
+          timeoutMs: runOptions.timeoutMs,
+        },
+        { signal: runOptions.signal },
+      );
+    },
+
     async readFile(path) {
       const result = await worker.request("readFile", {
         path,
@@ -233,6 +246,12 @@ type FlySpriteWorkerRequestByMethod = {
     cwd: string;
     timeoutMs?: number;
   };
+  nodeScript: {
+    script: string;
+    args: string[];
+    cwd: string;
+    timeoutMs?: number;
+  };
   readFile: {
     path: string;
     timeoutMs: number;
@@ -265,6 +284,7 @@ type FlySpriteWorkerRequestByMethod = {
 
 type FlySpriteWorkerResultByMethod = {
   exec: BashExecutionResult;
+  nodeScript: BashExecutionResult;
   readFile: {
     content: string;
   };
@@ -621,6 +641,15 @@ async function handleLine(line) {
 
     if (request.method === "exec") {
       const result = await runCommand(request.id, "sh", ["-lc", request.command], {
+        cwd: request.cwd,
+        timeoutMs: request.timeoutMs,
+      });
+      respond(request.id, result);
+      return;
+    }
+
+    if (request.method === "nodeScript") {
+      const result = await runCommand(request.id, "node", ["-e", request.script, ...request.args], {
         cwd: request.cwd,
         timeoutMs: request.timeoutMs,
       });

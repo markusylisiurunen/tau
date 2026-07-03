@@ -927,7 +927,6 @@ describe("LocalSessionHost", () => {
     }));
     const executionEnvironment = {
       resolveRuntimeConfig,
-      resolvePromptTemplate: async () => undefined,
       resolveRuntimeContext: ({ persona, discoveredSkills, includeAgentContext }) => ({
         toolRegistry,
         promptBootstrap: {
@@ -1048,12 +1047,29 @@ describe("LocalSessionHost", () => {
       ],
       warnings: ["config warning"],
     }));
+    const runNodeScript = vi.fn(async () => ({
+      output: JSON.stringify({
+        files: [
+          {
+            path: "/repo/.tau/prompts/reload-prompt.md",
+            content: "---\nid: reload-prompt\n---\nreload prompt",
+          },
+        ],
+      }),
+      stdout: JSON.stringify({
+        files: [
+          {
+            path: "/repo/.tau/prompts/reload-prompt.md",
+            content: "---\nid: reload-prompt\n---\nreload prompt",
+          },
+        ],
+      }),
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
+    }));
     const executionEnvironment = {
       resolveRuntimeConfig,
-      resolvePromptTemplate: async (promptId) =>
-        promptId === "reload-prompt"
-          ? { id: "reload-prompt", template: "reload prompt" }
-          : undefined,
       resolveRuntimeContext: ({ persona, discoveredSkills, includeAgentContext }) => ({
         toolRegistry,
         promptBootstrap: {
@@ -1069,7 +1085,7 @@ describe("LocalSessionHost", () => {
           unknownSkills: ["missing-skill"],
         },
       }),
-      getToolExecutionBackend: () => createLocalToolExecutionBackend(),
+      getToolExecutionBackend: () => ({ runNodeScript }),
       snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
       dispose: async () => {},
     };
@@ -1116,12 +1132,29 @@ describe("LocalSessionHost", () => {
       themes: [],
       warnings: [],
     }));
-    const resolvePromptTemplate = vi.fn(async (promptId) =>
-      promptId === "live-prompt" ? { id: "live-prompt", template: promptText } : undefined,
-    );
+    const runNodeScript = vi.fn(async () => ({
+      output: JSON.stringify({
+        files: [
+          {
+            path: "/repo/.tau/prompts/live-prompt.md",
+            content: `---\nid: live-prompt\n---\n${promptText}`,
+          },
+        ],
+      }),
+      stdout: JSON.stringify({
+        files: [
+          {
+            path: "/repo/.tau/prompts/live-prompt.md",
+            content: `---\nid: live-prompt\n---\n${promptText}`,
+          },
+        ],
+      }),
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
+    }));
     const executionEnvironment = {
       resolveRuntimeConfig,
-      resolvePromptTemplate,
       resolveRuntimeContext: ({ persona, includeAgentContext }) => ({
         toolRegistry,
         promptBootstrap: {
@@ -1136,7 +1169,7 @@ describe("LocalSessionHost", () => {
           unknownSkills: [],
         },
       }),
-      getToolExecutionBackend: () => createLocalToolExecutionBackend(),
+      getToolExecutionBackend: () => ({ runNodeScript }),
       snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
       dispose: async () => {},
     };
@@ -1151,7 +1184,7 @@ describe("LocalSessionHost", () => {
       promptId: "live-prompt",
       text: "second body",
     });
-    expect(resolvePromptTemplate).toHaveBeenCalledTimes(2);
+    expect(runNodeScript).toHaveBeenCalledTimes(2);
     expect(resolveRuntimeConfig).not.toHaveBeenCalled();
   });
 

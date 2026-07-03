@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
-import type { Config } from "../core/config/index.js";
+import { type Config, resolvePromptTemplateWithBackend } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_runtime.js";
@@ -786,7 +786,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     promptId: SessionProtocolResolvePromptParams["promptId"],
   ): Promise<SessionProtocolResolvePromptResult> {
     this.assertActive();
-    const prompt = await this.executionEnvironment.resolvePromptTemplate(promptId);
+    const executionSnapshot = this.executionEnvironment.snapshot();
+    const prompt = await resolvePromptTemplateWithBackend({
+      backend: this.executionEnvironment.getToolExecutionBackend(),
+      cwd: executionSnapshot.cwd,
+      home: executionSnapshot.home,
+      promptId,
+    });
     if (!prompt) {
       throw new Error(`unknown prompt '${promptId}'`);
     }

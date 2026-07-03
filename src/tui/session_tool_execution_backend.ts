@@ -35,6 +35,11 @@ export function createSdkToolExecutionBackend(options: {
 
     runBash,
 
+    async runNodeScript(script, args = [], runOptions = {}) {
+      const command = ["node", "-e", script, ...args].map(shellQuote).join(" ");
+      return await runBash(command, runOptions);
+    },
+
     async readFile(path) {
       const result = await runNodeHelper(runBash, READ_FILE_SCRIPT, [path], {
         cwd,

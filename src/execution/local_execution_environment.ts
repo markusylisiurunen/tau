@@ -1,10 +1,8 @@
 import {
   createDefaultConfigDeps,
-  loadPromptTemplate,
   loadRuntimeConfig,
   type RuntimeConfigResult,
 } from "../core/config/index.js";
-import type { PromptTemplate } from "../core/prompts.js";
 import {
   type RuntimePromptBootstrap,
   resolveRuntimePromptBootstrap,
@@ -51,23 +49,15 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
   }
 
   async resolveRuntimeConfig(): Promise<RuntimeConfigResult> {
-    return await loadRuntimeConfig(this.cwd, this.createConfigDeps());
-  }
-
-  resolvePromptTemplate(promptId: string): PromptTemplate | undefined {
-    return loadPromptTemplate(this.cwd, this.createConfigDeps(), promptId);
-  }
-
-  private createConfigDeps() {
     const deps = createDefaultConfigDeps();
-    return {
+    return await loadRuntimeConfig(this.cwd, {
       ...deps,
       env: {
         ...deps.env,
         cwd: () => this.cwd,
         home: () => this.home,
       },
-    };
+    });
   }
 
   resolveRuntimeContext(options: ResolveExecutionRuntimeContextOptions): ExecutionRuntimeContext {

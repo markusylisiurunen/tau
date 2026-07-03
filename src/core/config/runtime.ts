@@ -1,7 +1,7 @@
-import { join } from "node:path";
 import { type LoadedModelResolver, loadModelResolver } from "../models/catalog.js";
 import { parsePersonaReference } from "../persona_reference.js";
 import type { PromptTemplate } from "../prompts.js";
+import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { Persona, Skill } from "../types.js";
 import { loadAllContent, parsePrompt, type ThemeDefinition } from "./content_loader.js";
 import type { ConfigDeps } from "./deps.js";
@@ -50,48 +50,142 @@ export function loadRuntimeBootstrap(cwd: string, deps: ConfigDeps): RuntimeBoot
   };
 }
 
-export function loadPromptTemplate(
-  cwd: string,
-  deps: ConfigDeps,
-  promptId: string,
-): PromptTemplate | undefined {
-  const levels = resolveConfigLevels(deps, { cwd });
-  let resolved: PromptTemplate | undefined;
-  const requested = promptId.toLowerCase();
+type PromptTemplateCandidate = {
+  path: string;
+  content: string;
+};
 
-  for (const level of levels) {
-    const fileName = findPromptFileName(deps, level.promptsDir, requested);
-    if (!fileName) {
-      continue;
-    }
+const COLLECT_PROMPT_TEMPLATE_CANDIDATES_SCRIPT = `
+const fs = require("node:fs");
+const path = require("node:path");
 
-    const filePath = join(level.promptsDir, fileName);
-    const result = parsePrompt(filePath, deps.fs.readFile(filePath));
-    if (result.prompt?.id.toLowerCase() === requested) {
-      resolved = result.prompt;
-    }
-  }
+const cwd = path.resolve(process.argv[1]);
+const home = path.resolve(process.argv[2]);
+const promptId = String(process.argv[3] || "").toLowerCase();
+const files = new Map();
 
-  return resolved;
-}
-
-function findPromptFileName(
-  deps: ConfigDeps,
-  promptsDir: string,
-  requested: string,
-): string | undefined {
-  if (!deps.fs.exists(promptsDir)) {
-    return undefined;
-  }
-
-  let entries: string[];
+function stat(pathname) {
   try {
-    entries = deps.fs.listDir(promptsDir);
+    return fs.statSync(pathname);
   } catch {
     return undefined;
   }
+}
 
-  return entries.find((entry) => entry.toLowerCase() === `${requested}.md`);
+function isDirectory(pathname) {
+  return Boolean(stat(pathname)?.isDirectory());
+}
+
+function addPrompt(configDir) {
+  const promptsDir = path.join(configDir, "prompts");
+  if (!isDirectory(promptsDir)) return;
+  let entries = [];
+  try {
+    entries = fs.readdirSync(promptsDir);
+  } catch {
+    return;
+  }
+  const fileName = entries.find((entry) => entry.toLowerCase() === promptId + ".md");
+  if (!fileName) return;
+  const filePath = path.join(promptsDir, fileName);
+  const info = stat(filePath);
+  if (!info?.isFile()) return;
+  try {
+    files.set(path.resolve(filePath), fs.readFileSync(filePath, "utf8"));
+  } catch {}
+}
+
+const withinHome = cwd === home || cwd.startsWith(home + path.sep);
+if (withinHome) {
+  addPrompt(path.join(home, ".config", "tau"));
+}
+
+const stop = withinHome ? home : path.parse(cwd).root;
+const roots = [];
+let dir = cwd;
+while (true) {
+  if (isDirectory(path.join(dir, ".tau")) || isDirectory(path.join(dir, ".agents", "skills"))) {
+    roots.push(dir);
+  }
+  if (dir === stop) break;
+  const parent = path.dirname(dir);
+  if (parent === dir) break;
+  dir = parent;
+}
+roots.reverse();
+for (const root of roots) {
+  addPrompt(path.join(root, ".tau"));
+}
+
+process.stdout.write(JSON.stringify({
+  files: [...files.entries()].map(([filePath, content]) => ({ path: filePath, content }))
+}));
+`;
+
+export async function resolvePromptTemplateWithBackend(options: {
+  backend: ToolExecutionBackend;
+  cwd: string;
+  home: string;
+  promptId: string;
+}): Promise<PromptTemplate | undefined> {
+  const result = await options.backend.runNodeScript(
+    COLLECT_PROMPT_TEMPLATE_CANDIDATES_SCRIPT,
+    [options.cwd, options.home, options.promptId],
+    { cwd: options.cwd, timeoutMs: 10_000 },
+  );
+  if (result.exitCode !== 0) {
+    const output = result.output.trim();
+    throw new Error(
+      output ? `failed to resolve prompt template: ${output}` : "failed to resolve prompt template",
+    );
+  }
+
+  const candidates = parsePromptTemplateCandidates(result.output);
+  let resolved: PromptTemplate | undefined;
+  const requested = options.promptId.toLowerCase();
+  for (const candidate of candidates) {
+    const parsed = parsePrompt(candidate.path, candidate.content);
+    if (parsed.prompt?.id.toLowerCase() === requested) {
+      resolved = parsed.prompt;
+    }
+  }
+  return resolved;
+}
+
+function parsePromptTemplateCandidates(output: string): PromptTemplateCandidate[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch (error) {
+    throw new Error("execution environment returned invalid prompt template JSON", {
+      cause: error,
+    });
+  }
+
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    !Array.isArray((parsed as { files?: unknown }).files)
+  ) {
+    throw new Error("execution environment returned invalid prompt template shape");
+  }
+
+  const files: PromptTemplateCandidate[] = [];
+  for (const file of (parsed as { files: unknown[] }).files) {
+    if (
+      !file ||
+      typeof file !== "object" ||
+      typeof (file as PromptTemplateCandidate).path !== "string" ||
+      typeof (file as PromptTemplateCandidate).content !== "string"
+    ) {
+      throw new Error("execution environment returned invalid prompt template file entry");
+    }
+    files.push({
+      path: (file as PromptTemplateCandidate).path,
+      content: (file as PromptTemplateCandidate).content,
+    });
+  }
+  return files;
 }
 
 export async function loadRuntimeConfig(

@@ -111,9 +111,9 @@ export type TelegramApi = {
   sendMessageDraft(chatId: number, draftId: number, text: string): Promise<void>;
   sendChatAction(chatId: number, action: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
-  setCommands?(commands: TelegramBotCommand[]): Promise<void>;
-  setMessageReaction?(chatId: number, messageId: number): Promise<void>;
-  answerCallbackQuery?(callbackQueryId: string, text?: string): Promise<void>;
+  setCommands(commands: TelegramBotCommand[]): Promise<void>;
+  setMessageReaction(chatId: number, messageId: number): Promise<void>;
+  answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
 };
 
 export type TelegramLogLevel = "info" | "warn" | "error";
@@ -1085,10 +1085,6 @@ class TelegramAdapterImpl {
   }
 
   private async syncCommands(): Promise<void> {
-    if (!this.api.setCommands) {
-      return;
-    }
-
     const commands: TelegramBotCommand[] = this.commandDefinitions.map((definition) => ({
       command: definition.command.slice(1),
       description: definition.description,
@@ -2683,10 +2679,6 @@ class TelegramAdapterImpl {
   }
 
   private async reactToQueuedMessage(chatId: number, messageId?: number): Promise<void> {
-    if (!this.api.setMessageReaction) {
-      return;
-    }
-
     if (typeof messageId !== "number" || !Number.isInteger(messageId) || messageId <= 0) {
       return;
     }
@@ -2708,10 +2700,6 @@ class TelegramAdapterImpl {
   }
 
   private async answerCallbackQuery(callbackQueryId?: string, text?: string): Promise<void> {
-    if (!this.api.answerCallbackQuery) {
-      return;
-    }
-
     const trimmedCallbackQueryId = callbackQueryId?.trim();
     if (!trimmedCallbackQueryId) {
       return;
@@ -2785,17 +2773,9 @@ class TelegramAdapterImpl {
     const chunks = splitTelegramMessage(text);
 
     for (const [index, chunk] of chunks.entries()) {
-      try {
-        await this.api.sendMessage(chatId, chunk, {
-          replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
-        });
-      } catch (error) {
-        this.log("warn", "failed to send telegram message", {
-          chatId,
-          cause: error instanceof Error ? error.message : String(error),
-        });
-        return;
-      }
+      await this.api.sendMessage(chatId, chunk, {
+        replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
+      });
 
       if (index < chunks.length - 1) {
         await this.wait(TELEGRAM_MESSAGE_SPLIT_DELAY_MS);

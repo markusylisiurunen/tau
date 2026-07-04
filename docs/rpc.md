@@ -661,7 +661,7 @@ params (required):
 { "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3", "reasoning": "high" }
 ```
 
-sets the session reasoning effort to `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, or `"xhigh"` and returns the authoritative updated session snapshot. The host applies the change through the session mutation queue so it does not race another mutating request or an active turn.
+sets the session reasoning effort to `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, or `"xhigh"` and returns `{ "revision": number, "settings": { ... } }` with the authoritative updated settings. Observed clients receive a `settings.set` snapshot patch for the same revision. The host applies the change through the session mutation queue so it does not race another mutating request or an active turn.
 
 #### session.setPersona
 

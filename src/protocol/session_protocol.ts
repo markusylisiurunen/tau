@@ -1677,6 +1677,13 @@ const sessionProtocolInterruptResultSchema = z
   })
   .strict();
 
+const sessionProtocolSettingsUpdateResultSchema = z
+  .object({
+    revision: z.number().int().positive(),
+    settings: sessionProtocolSettingsSnapshotSchema,
+  })
+  .strict();
+
 const sessionProtocolCompactResultSchema = z
   .object({
     snapshot: sessionProtocolSnapshotSchema,
@@ -2604,9 +2611,10 @@ export function validateSessionProtocolResult(
     case "session.observe":
     case "session.snapshot":
     case "session.setRisk":
-    case "session.setReasoning":
     case "session.setPersona":
       return validateResult(method, result, sessionProtocolSnapshotSchema);
+    case "session.setReasoning":
+      return validateResult(method, result, sessionProtocolSettingsUpdateResultSchema);
     case "session.resolvePrompt":
       return validateResult(method, result, sessionProtocolResolvePromptResultSchema);
     case "session.autocompletePaths":

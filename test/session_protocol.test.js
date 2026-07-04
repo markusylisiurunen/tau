@@ -1020,6 +1020,19 @@ describe("session_protocol", () => {
     });
 
     expect(
+      validateSessionProtocolResult("session.setReasoning", {
+        revision: 2,
+        settings: { personaId: "default", riskLevel: "read-only", reasoning: "high" },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        revision: 2,
+        settings: { personaId: "default", riskLevel: "read-only", reasoning: "high" },
+      },
+    });
+
+    expect(
       validateSessionProtocolResult(
         "session.snapshot",
         createProtocolSnapshot({ bootstrap, catalog }),

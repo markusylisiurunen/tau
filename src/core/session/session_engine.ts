@@ -205,6 +205,16 @@ export class SessionEngine {
     this.subagentPrompts = subagentPrompts;
   }
 
+  setReasoning(reasoning: ReasoningEffort): void {
+    this.persona = {
+      ...this.persona,
+      settings: {
+        ...this.persona.settings,
+        reasoning,
+      },
+    };
+  }
+
   setRiskLevel(level: RiskLevel): void {
     this.riskLevel = level;
   }

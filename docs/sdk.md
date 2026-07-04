@@ -254,7 +254,7 @@ options:
 - `setRiskLevel("read-only" | "read-write")`
   - sends `session.setRisk` with this session id and resolves with the updated session snapshot
 - `setReasoning("none" | "minimal" | "low" | "medium" | "high" | "xhigh")`
-  - sends `session.setReasoning` with this session id and resolves with the updated session snapshot
+  - sends `session.setReasoning` with this session id and resolves with `{ revision, settings }`
 - `setPersona(personaId)`
   - sends `session.setPersona` with this session id and resolves with the updated session snapshot
 - `resolvePrompt(promptId)`

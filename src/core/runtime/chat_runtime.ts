@@ -1,7 +1,7 @@
 import type { Config } from "../config/index.js";
 import { CoreSession } from "../session/core_session.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import type { Persona, RiskLevel } from "../types.js";
+import type { Persona, ReasoningEffort, RiskLevel } from "../types.js";
 import {
   type ConversationTurnResult,
   ConversationTurnRuntime,
@@ -144,6 +144,17 @@ export class ChatRuntime {
 
   setConfig(config: Config): void {
     this.sessionInstance.setConfig(config);
+  }
+
+  setReasoning(reasoning: ReasoningEffort): void {
+    this.currentPersona = {
+      ...this.currentPersona,
+      settings: {
+        ...this.currentPersona.settings,
+        reasoning,
+      },
+    };
+    this.sessionInstance.setReasoning(reasoning);
   }
 
   setRiskLevel(level: RiskLevel): void {

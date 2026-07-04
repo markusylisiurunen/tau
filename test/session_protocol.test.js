@@ -1020,6 +1020,19 @@ describe("session_protocol", () => {
     });
 
     expect(
+      validateSessionProtocolResult("session.setReasoning", {
+        revision: 2,
+        settings: { personaId: "default", riskLevel: "read-only", reasoning: "high" },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        revision: 2,
+        settings: { personaId: "default", riskLevel: "read-only", reasoning: "high" },
+      },
+    });
+
+    expect(
       validateSessionProtocolResult(
         "session.snapshot",
         createProtocolSnapshot({ bootstrap, catalog }),
@@ -1465,6 +1478,36 @@ describe("session_protocol", () => {
     expect(parseSessionProtocolOutgoingLine(JSON.stringify(delta))).toEqual({
       ok: true,
       message: delta,
+    });
+
+    const settingsDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 2,
+      toRevision: 3,
+      reason: "configuration",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "settings.set",
+            settings: { personaId: "default", riskLevel: "read-only", reasoning: "high" },
+          },
+        ],
+      },
+    });
+    const settingsPatchedSnapshot = applySessionProtocolDelta(
+      createProtocolSnapshot({
+        sessionId: "session-1",
+        revision: 2,
+        settings: { personaId: "default", riskLevel: "read-only", reasoning: "medium" },
+      }),
+      settingsDelta,
+    );
+    expect(settingsPatchedSnapshot.revision).toBe(3);
+    expect(settingsPatchedSnapshot.settings).toEqual({
+      personaId: "default",
+      riskLevel: "read-only",
+      reasoning: "high",
     });
 
     const ephemeral = createSessionProtocolEphemeralMessage({

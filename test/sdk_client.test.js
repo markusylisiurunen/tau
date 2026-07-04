@@ -171,16 +171,14 @@ class FakeSessionProtocolTransport {
             bootstrap: { ...bootstrap, riskLevel: params.riskLevel },
           });
         case "session.setReasoning":
-          return createProtocolSnapshot({
-            sessionId: params.sessionId,
-            bootstrap: {
-              ...bootstrap,
-              persona: {
-                ...bootstrap.persona,
-                settings: { ...bootstrap.persona.settings, reasoning: params.reasoning },
-              },
+          return {
+            revision: 2,
+            settings: {
+              personaId: bootstrap.persona.id,
+              riskLevel: "read-only",
+              reasoning: params.reasoning,
             },
-          });
+          };
         case "session.resolvePrompt":
           return { promptId: params.promptId, text: `prompt body for ${params.promptId}` };
         case "session.reload":

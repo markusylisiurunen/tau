@@ -313,6 +313,8 @@ RPC mode command surface is protocol-based (`initialize`, `session.create`, `ses
 
 **Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (terminate selected subagent), `Ctrl+Enter` (steer running assistant with editor input), `Alt+S` (steer running assistant with queued messages), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+C` (collapse queued messages into one), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work), `Ctrl+C` (press twice to exit)
 
+Reasoning changes are allowed while a turn is running. The active user-message turn keeps the reasoning captured when that turn started, including all tool-call subturns; the new reasoning applies to the next submitted, queued, or steering user-message turn when it actually starts.
+
 ## Development
 
 - `npm run check` - Apply repository formatting, then typecheck, including `src/diff_tool/app`

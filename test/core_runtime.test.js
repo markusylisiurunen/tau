@@ -342,6 +342,87 @@ describe("core session rewind APIs", () => {
     }
   });
 
+  it("keeps reasoning frozen across all subturns in an agent turn", async () => {
+    const requestedReasoning = [];
+    const toolContextReasoning = [];
+    let session;
+    const toolRegistry = new ToolRegistry([
+      {
+        schema: {
+          name: "fake_tool",
+          description: "test tool",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+        async dispatch(_toolCall, _riskLevel, _signal, context) {
+          toolContextReasoning.push(context.persona.settings.reasoning);
+          session.setReasoning("high");
+          return {
+            kind: "single",
+            toolResult: {
+              role: "toolResult",
+              toolCallId: "fake-call",
+              toolName: "fake_tool",
+              content: [{ type: "text", text: "ok" }],
+              isError: false,
+              timestamp: 2,
+            },
+          };
+        },
+      },
+    ]);
+    const persona = {
+      id: "frozen-reasoning",
+      label: "frozen reasoning",
+      model: personas[0].model,
+      systemPrompt: "system",
+      settings: { reasoning: "low" },
+      tools: ["fake_tool"],
+      skills: "*",
+      source: "builtin",
+    };
+    session = new CoreSession({
+      persona,
+      systemPrompt: "system",
+      subagentPrompts: {},
+      riskLevel: "read-only",
+      toolRegistry,
+    });
+    const responses = [
+      fauxAssistantMessage([fauxToolCall("fake_tool", {}, { id: "fake-call" })], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("done"),
+    ];
+    session.engine.modelRuntime.streamModel = (_model, _context, options) => {
+      requestedReasoning.push(options.reasoning);
+      const response = responses.shift();
+      return {
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    session.addUserText("use a tool");
+    for await (const _event of session.events(new AbortController().signal)) {
+    }
+
+    expect(requestedReasoning).toEqual(["low", "low"]);
+    expect(toolContextReasoning).toEqual(["low"]);
+
+    session.addUserText("next turn");
+    responses.push(fauxAssistantMessage("next done"));
+    for await (const _event of session.events(new AbortController().signal)) {
+    }
+
+    expect(requestedReasoning).toEqual(["low", "low", "high"]);
+  });
+
   it("keeps tool dispatch origin tied to the submitted user after auto-compaction", async () => {
     const faux = fauxProvider({
       provider: "faux-auto-origin",

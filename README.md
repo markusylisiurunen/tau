@@ -373,6 +373,8 @@ some models support extended thinking, where they reason through problems before
 tau --persona opus-4.8-chat:high
 ```
 
+reasoning changes made while the assistant is working apply to the next user-message turn. the active turn keeps the reasoning level it captured when that user message started, including any tool-call subturns.
+
 toggle visibility of the model's thinking with `ctrl+t`.
 
 ## working with files

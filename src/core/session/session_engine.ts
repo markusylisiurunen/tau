@@ -36,6 +36,7 @@ import {
   getAutoCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
+  stripTauUserDisplayText,
   stripTauUserMetadata,
   stripTauUserMetadataFromMessage,
 } from "../utils/user_metadata.js";
@@ -572,7 +573,7 @@ export class SessionEngine {
 
   private extractUserText(message: Message): string {
     if (typeof message.content === "string") {
-      return stripTauUserMetadata(message.content).trim();
+      return stripTauUserMetadata(message.content);
     }
 
     const parts: string[] = [];
@@ -584,25 +585,11 @@ export class SessionEngine {
       }
     }
 
-    return stripTauUserMetadata(parts.join("\n\n")).trim();
+    return stripTauUserMetadata(parts.join("\n\n"));
   }
 
   private extractRewindUserText(message: Message): string {
-    return this.stripLeadingSystemNotices(this.extractUserText(message));
-  }
-
-  private stripLeadingSystemNotices(text: string): string {
-    let remaining = text.trim();
-
-    while (remaining.startsWith("<system>")) {
-      const end = remaining.indexOf("</system>");
-      if (end < 0) {
-        break;
-      }
-      remaining = remaining.slice(end + "</system>".length).trimStart();
-    }
-
-    return remaining.trim();
+    return stripTauUserDisplayText(this.extractUserText(message));
   }
 
   private emitSubagentEvent(event: SubagentUiEvent): void {

@@ -251,6 +251,7 @@ options:
   - sends `session.interrupt` with this session id
 - `snapshot()`
   - sends `session.snapshot` with this session id
+  - returns raw recoverable session user text; renderers should use `getTauUserDisplayText()` or `projectTauUserText()` to hide Tau metadata and leading exact `<system>...</system>\n` blocks from user messages before showing them to users
 - `setRiskLevel("read-only" | "read-write")`
   - sends `session.setRisk` with this session id and resolves with the updated session snapshot
 - `setReasoning("none" | "minimal" | "low" | "medium" | "high" | "xhigh")`
@@ -337,4 +338,4 @@ all session client and transport errors extend `TauSessionClientError`.
 
 ## exported types
 
-The SDK entrypoint exports the public `TauSdk*` aliases for client/session interfaces, request and result shapes, streamed `TauSdkDelta` and `TauSdkEphemeral` messages, ephemeral agent tools, WebSocket options, and session protocol method/request ids. It also re-exports the transport interfaces and errors needed to build custom protocol transports.
+The SDK entrypoint exports the public `TauSdk*` aliases for client/session interfaces, request and result shapes, streamed `TauSdkDelta` and `TauSdkEphemeral` messages, ephemeral agent tools, WebSocket options, session protocol method/request ids, and user-message projection helpers (`projectTauUserText`, `getTauUserModelText`, `getTauUserDisplayText`). It also re-exports the transport interfaces and errors needed to build custom protocol transports.

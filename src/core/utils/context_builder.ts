@@ -1,5 +1,6 @@
 import type { RiskLevel, Skill } from "../types.js";
 import { findAgentsFilesInScope, findChildAgentsFiles } from "./agents_files.js";
+import { formatTauHiddenSystemBlock } from "./user_metadata.js";
 
 function escapeXml(value: string): string {
   return value
@@ -163,5 +164,7 @@ export function buildEnvironmentTag(args: {
 
 export function formatRiskLevelChangeNotice(change: { from: RiskLevel; to: RiskLevel }): string {
   const toDesc = describeRiskLevel(change.to);
-  return `<system>Risk level changed by user from '${change.from}' to '${change.to}'. ${toDesc} This overrides the initial risk level described in the system prompt.</system>`;
+  return formatTauHiddenSystemBlock(
+    `Risk level changed by user from '${change.from}' to '${change.to}'. ${toDesc} This overrides the initial risk level described in the system prompt.`,
+  );
 }

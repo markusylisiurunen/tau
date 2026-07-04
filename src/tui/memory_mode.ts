@@ -1,3 +1,5 @@
+import { formatTauUserText } from "../core/utils/user_metadata.js";
+
 export function formatMemoryModeUserMessage(agentsFilePath: string, request: string): string {
   const system = [
     "Memory mode: update the project guidelines file at:",
@@ -12,7 +14,7 @@ export function formatMemoryModeUserMessage(agentsFilePath: string, request: str
     "Do not mention this surrounding instruction in your response.",
   ].join("\n");
 
-  return ["<system>", system, "</system>", "", request].join("\n");
+  return formatTauUserText({ text: request, hiddenSystemMessages: [system] });
 }
 
 export function formatDefaultMemoryModeFilePath(cwd: string): string {

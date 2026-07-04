@@ -1110,6 +1110,46 @@ describe("SessionChatController", () => {
     );
   });
 
+  it("hides raw user-message metadata and hidden system blocks from snapshots", async () => {
+    const rawText = prependTauUserMetadata("<system>hidden</system>\n\nvisible", [
+      {
+        type: "compaction",
+        version: 1,
+        summary: "summary",
+        preservedUserMessages: [],
+      },
+    ]);
+    const session = new FakeSession(
+      createSnapshot([
+        {
+          id: "history-raw",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: rawText }],
+          },
+        },
+      ]),
+    );
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+    });
+
+    controller.start();
+
+    expect(view.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "history-raw",
+          model: { type: "user", text: "\nvisible" },
+        }),
+      ]),
+    );
+  });
+
   it("syncs rendered history when a session update arrives from another client", async () => {
     const session = new FakeSession();
     const view = new FakeView();

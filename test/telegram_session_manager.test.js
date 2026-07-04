@@ -290,7 +290,7 @@ describe("telegram session manager", () => {
 
     await manager.sendMessage(created.id, "write issue about X");
     expect(clientHarness.session.submit).toHaveBeenCalledWith(
-      "<system>\nfollow project conventions\n</system>\nwrite issue about X",
+      "<system>follow project conventions</system>\nwrite issue about X",
     );
 
     clientHarness.submitDeferred.resolve({
@@ -324,7 +324,7 @@ describe("telegram session manager", () => {
       additionalSystemMessage: "this message came from telegram",
     });
     expect(clientHarness.session.submit).toHaveBeenCalledWith(
-      "<system>\nfollow project conventions\nthis message came from telegram\n</system>\nwrite issue about X",
+      "<system>follow project conventions\nthis message came from telegram</system>\nwrite issue about X",
     );
 
     clientHarness.submitDeferred.resolve({
@@ -403,7 +403,7 @@ describe("telegram session manager", () => {
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
     expect(clientHarness.session.submit).toHaveBeenCalledWith(
-      "<system>\nfollow project conventions\nthis prompt came from cron\n</system>\ncheck docs drift",
+      "<system>follow project conventions\nthis prompt came from cron</system>\ncheck docs drift",
     );
   });
 

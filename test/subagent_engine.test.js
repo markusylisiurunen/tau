@@ -116,7 +116,7 @@ describe("subagent engine model notices", () => {
     });
 
     expect(result.finalText).toBe("done");
-    expect(capturedUserMessages).toEqual(["<system>subagent notice</system>\n\ncollect findings"]);
+    expect(capturedUserMessages).toEqual(["<system>subagent notice</system>\ncollect findings"]);
   });
 
   it("passes subagent workingDirectory as dispatch context cwd", async () => {

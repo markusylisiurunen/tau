@@ -64,3 +64,5 @@ export type {
   TauSdkTransportClientOptions,
   TauSdkWebSocketClientOptions,
 } from "./types.js";
+export type { TauSdkUserTextProjection } from "./user_text.js";
+export { getTauUserDisplayText, getTauUserModelText, projectTauUserText } from "./user_text.js";

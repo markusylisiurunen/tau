@@ -1,5 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
+import { prependTauHiddenSystemMessages } from "./user_metadata.js";
 
 export function normalizeModelNoticeKey(provider: string, modelId: string): string {
   return `${provider.trim().toLowerCase()}/${modelId.trim().toLowerCase()}`;
@@ -53,10 +54,5 @@ export function prependModelNotice(text: string, notice?: string): string {
     return text;
   }
 
-  const systemNotice = `<system>${trimmedNotice.replaceAll("</system>", "<\\/system>")}</system>`;
-  if (!text.trim()) {
-    return systemNotice;
-  }
-
-  return `${systemNotice}\n\n${text}`;
+  return prependTauHiddenSystemMessages(text, [trimmedNotice]);
 }

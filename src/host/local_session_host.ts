@@ -16,6 +16,7 @@ import {
   filterProjectPathAutocompleteEntries,
   loadProjectPathAutocompleteEntriesWithBackend,
 } from "../core/utils/project_files.js";
+import { hasAutoCompactionContinuationMetadata } from "../core/utils/user_metadata.js";
 import type {
   ExecutionEnvironment,
   ExecutionEnvironmentResolver,
@@ -1112,7 +1113,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         timestamp: 0,
       },
     };
-    const historyMessages = this.session.historyEntries.map(
+    const historyMessages = this.session.rawHistoryEntries.map(
       (entry): SessionProtocolMessage => ({
         id: entry.id,
         state: this.messageStates.get(entry.id) ?? "committed",
@@ -1131,7 +1132,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     messages: readonly SessionProtocolMessage[],
   ): SessionProtocolTimelineItem[] {
     const messageItems = messages
-      .filter((message) => this.shouldIncludeMessageInTimeline(message.id))
+      .filter((message) => this.shouldIncludeMessageInTimeline(message))
       .map(
         (message): SessionProtocolTimelineItem => ({
           type: "message",
@@ -1142,15 +1143,18 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return [...messageItems, ...structuredClone(this.timelineExtras)];
   }
 
-  private shouldIncludeMessageInTimeline(messageId: string): boolean {
-    if (messageId === "system") {
+  private shouldIncludeMessageInTimeline(message: SessionProtocolMessage): boolean {
+    if (message.id === "system") {
+      return false;
+    }
+    if (isCoreMessage(message.message) && hasAutoCompactionContinuationMetadata(message.message)) {
       return false;
     }
     if (!this.restoredTimelineMessageIds || !this.restoredMessageIds) {
       return true;
     }
     return (
-      this.restoredTimelineMessageIds.has(messageId) || !this.restoredMessageIds.has(messageId)
+      this.restoredTimelineMessageIds.has(message.id) || !this.restoredMessageIds.has(message.id)
     );
   }
 

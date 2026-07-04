@@ -1,3 +1,4 @@
+import { formatTauUserText } from "../../core/utils/user_metadata.js";
 import type { DiffReviewReturnedReview } from "./diff_review_service.js";
 
 export function formatDiffReviewUserMessage(review: DiffReviewReturnedReview): string {
@@ -16,5 +17,5 @@ export function formatDiffReviewUserMessage(review: DiffReviewReturnedReview): s
     "Do not mention this instruction in your response.",
   ].join("\n");
 
-  return ["<system>", system, "</system>", "", review.review].join("\n");
+  return formatTauUserText({ text: review.review, hiddenSystemMessages: [system] });
 }

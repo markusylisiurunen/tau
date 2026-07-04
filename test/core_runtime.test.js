@@ -236,7 +236,7 @@ describe("core session rewind APIs", () => {
       content: [{ type: "text", text }],
       timestamp: 0,
     });
-    session.addMessage(
+    const continuationId = session.addMessage(
       buildAutoCompactionContinuationMessage({ cutType: "turn-boundary", now: 1 }),
     );
 
@@ -247,6 +247,8 @@ describe("core session rewind APIs", () => {
     expect(session.historyEntries).toHaveLength(1);
     expect(session.historyEntries[0].message.content[0].text).toBe("visible summary");
     expect(session.listRewindCandidates()[0].text).toBe("visible summary");
+    expect(session.rewindToHistoryEntryId(continuationId)).toBeUndefined();
+    expect(session.rawHistory).toHaveLength(2);
   });
 
   it("returns cloned public history snapshots", () => {

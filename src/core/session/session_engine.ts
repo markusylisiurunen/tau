@@ -335,7 +335,7 @@ export class SessionEngine {
     if (!entry) {
       throw new Error(`history entry missing at index ${historyIndex}`);
     }
-    if (entry.message.role !== "user") {
+    if (entry.message.role !== "user" || hasAutoCompactionContinuationMetadata(entry.message)) {
       return undefined;
     }
 

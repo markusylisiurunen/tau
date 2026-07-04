@@ -29,7 +29,10 @@ import type { ToolUiEvent } from "../core/tools/registry.js";
 import { REASONING_LEVELS, type ReasoningEffort, type RiskLevel } from "../core/types.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
-import { getAutoCompactionMetadataFromMessage } from "../core/utils/user_metadata.js";
+import {
+  getAutoCompactionMetadataFromMessage,
+  hasAutoCompactionContinuationMetadata,
+} from "../core/utils/user_metadata.js";
 import { APP_VERSION } from "../core/version.js";
 import { shellQuote } from "../execution/sandbox_tool_helpers.js";
 import type {
@@ -2205,10 +2208,17 @@ export class SessionChatController {
     }
 
     const candidates = this.snapshot.messages.flatMap((entry) => {
-      if (!entry.modelVisible || entry.message.role !== "user") {
+      if (
+        !entry.modelVisible ||
+        entry.message.role !== "user" ||
+        hasAutoCompactionContinuationMetadata(entry.message)
+      ) {
         return [];
       }
       const text = extractHistoryUserText(entry.message);
+      if (!text.trim()) {
+        return [];
+      }
       return [
         {
           id: entry.id,

@@ -3,6 +3,7 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { buildAutoCompactionContinuationMessage } from "../dist/core/session/compaction.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
 import { applySessionProtocolDelta } from "../dist/protocol/session_protocol.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
@@ -3435,6 +3436,13 @@ describe("SessionChatController", () => {
             role: "user",
             content: [{ type: "text", text: "second message" }],
           },
+        },
+        {
+          id: "history-continuation",
+          message: buildAutoCompactionContinuationMessage({
+            cutType: "turn-boundary",
+            now: 1,
+          }),
         },
         {
           id: "history-3",

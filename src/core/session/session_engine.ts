@@ -117,6 +117,12 @@ export type RewindResult = {
   removedEntryIds: string[];
 };
 
+type SessionTurnSettings = {
+  persona: Persona;
+  streamOptions: TauStreamOptions;
+  reasoningEffort: ReasoningEffort | "none";
+};
+
 export class SessionEngine {
   private persona: Persona;
   private systemPrompt: string;
@@ -640,8 +646,20 @@ export class SessionEngine {
     return parseStreamingSettings(merged);
   }
 
-  private getEnabledToolSchemas() {
-    return this.toolRegistry.getEnabledToolSchemas(this.persona.tools);
+  private captureTurnSettings(): SessionTurnSettings {
+    const persona = {
+      ...this.persona,
+      settings: { ...this.persona.settings },
+    };
+    return {
+      persona,
+      streamOptions: this.getStreamingSettings(persona),
+      reasoningEffort: persona.settings.reasoning ?? "none",
+    };
+  }
+
+  private getEnabledToolSchemas(persona: Persona = this.persona) {
+    return this.toolRegistry.getEnabledToolSchemas(persona.tools);
   }
 
   private createDispatchModelResolver(): ModelResolver {
@@ -673,6 +691,7 @@ export class SessionEngine {
     let subturns = 0;
     let autoCompactionAttempted = false;
     const originHistoryEntryId = this.getCurrentTurnUserHistoryEntryId();
+    const turnSettings = this.captureTurnSettings();
 
     while (subturns < MAX_ASSISTANT_SUBTURNS && !signal.aborted) {
       if (!autoCompactionAttempted && this.shouldRunAutoCompaction()) {
@@ -684,7 +703,7 @@ export class SessionEngine {
       }
 
       subturns += 1;
-      const { finalMessage } = yield* this.runSingleSubturn(signal);
+      const { finalMessage } = yield* this.runSingleSubturn(signal, turnSettings);
 
       if (signal.aborted) {
         break;
@@ -699,10 +718,10 @@ export class SessionEngine {
         break;
       }
 
-      const enabledTools = this.getEnabledToolSchemas();
+      const enabledTools = this.getEnabledToolSchemas(turnSettings.persona);
       const dispatchContext: ToolDispatchContext = {
         scope: "main",
-        persona: this.persona,
+        persona: turnSettings.persona,
         config: this.config,
         originHistoryEntryId,
         cwd: this.cwd,
@@ -973,12 +992,13 @@ export class SessionEngine {
 
   private async *runSingleSubturn(
     signal: AbortSignal,
+    turnSettings: SessionTurnSettings,
   ): AsyncGenerator<CoreEvent, { finalMessage?: AssistantMessage }, void> {
     const historyEntryId = this.createHistoryEntryId();
     const startEvent: CoreEvent = { type: "assistant_start", historyEntryId };
     this.emitEvent(startEvent);
     yield startEvent;
-    const tools = this.getEnabledToolSchemas();
+    const tools = this.getEnabledToolSchemas(turnSettings.persona);
 
     const context: Context = {
       systemPrompt: this.systemPrompt,
@@ -987,12 +1007,12 @@ export class SessionEngine {
     };
 
     const baseOptions: TauStreamOptions = {
-      ...this.getStreamingSettings(this.persona),
+      ...turnSettings.streamOptions,
       signal,
       sessionId: this.sessionId,
     };
 
-    if (this.persona.model.provider === "openai-codex") {
+    if (turnSettings.persona.model.provider === "openai-codex") {
       baseOptions.headers = {
         ...baseOptions.headers,
         originator: CODEX_ORIGINATOR,
@@ -1002,7 +1022,7 @@ export class SessionEngine {
 
     try {
       const stream = runModelSubturn({
-        model: this.persona.model,
+        model: turnSettings.persona.model,
         modelRuntime: this.modelRuntime,
         context,
         streamOptions: baseOptions,
@@ -1051,11 +1071,11 @@ export class SessionEngine {
       appendUsageLogEntry({
         timestamp: finalMessage.timestamp,
         sessionId: this.sessionId,
-        personaId: this.persona.id,
+        personaId: turnSettings.persona.id,
         provider: finalMessage.provider,
         model: finalMessage.model,
         api: finalMessage.api,
-        reasoningEffort: this.persona.settings.reasoning ?? "none",
+        reasoningEffort: turnSettings.reasoningEffort,
         usage: getUsageTotals(finalMessage.usage),
         cost: { total: getUsageCostTotal(finalMessage.usage) },
         agent: { type: "main" },

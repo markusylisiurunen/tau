@@ -2761,7 +2761,7 @@ describe("SessionChatController", () => {
     expect(view.status.editor.reasoning).toBe("minimal");
   });
 
-  it("does not change session reasoning while a turn is running", async () => {
+  it("changes session reasoning while a turn is running", async () => {
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -2776,8 +2776,9 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onShiftTab();
     await flush();
 
-    expect(session.setReasoning).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual({
+    expect(session.setReasoning).toHaveBeenCalledWith("minimal");
+    expect(view.status.editor.reasoningLabel).toBe("minimal");
+    expect(view.systems).not.toContainEqual({
       text: "cannot change reasoning while a session turn is running",
       kind: "warn",
       options: undefined,

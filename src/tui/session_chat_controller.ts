@@ -1557,11 +1557,6 @@ export class SessionChatController {
     const index = allowed.indexOf(current);
     const next = allowed[(index + 1) % allowed.length] ?? allowed[0]!;
 
-    if (this.isSessionOperationActive()) {
-      this.view.addSystemMessage("cannot change reasoning while a session turn is running", "warn");
-      return;
-    }
-
     try {
       const result = await this.session.setReasoning(next);
       this.snapshot = {

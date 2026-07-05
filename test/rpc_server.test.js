@@ -120,6 +120,7 @@ function createHarness(options = {}) {
     let pendingTurnResult = { aborted: false };
     let pendingTurn = null;
     let riskLevel = bootstrap.riskLevel;
+    let reasoning = bootstrap.persona.settings.reasoning;
 
     const emitDelta = (delta) => {
       for (const handler of deltaHandlers) {
@@ -164,7 +165,14 @@ function createHarness(options = {}) {
           sessionId,
           revision: historyEntries.length + 1,
           lifecycle: running ? "running" : "idle",
-          bootstrap: { ...bootstrap, riskLevel },
+          bootstrap: {
+            ...bootstrap,
+            riskLevel,
+            persona: {
+              ...bootstrap.persona,
+              settings: { ...bootstrap.persona.settings, reasoning },
+            },
+          },
           executionEnvironment: { kind: "local", cwd: "/repo", home: "/home/user" },
           historyEntries: historyEntries.map((entry) => ({
             id: entry.id,
@@ -246,7 +254,14 @@ function createHarness(options = {}) {
           sessionId,
           revision: historyEntries.length + 2,
           lifecycle: running ? "running" : "idle",
-          bootstrap: { ...bootstrap, riskLevel },
+          bootstrap: {
+            ...bootstrap,
+            riskLevel,
+            persona: {
+              ...bootstrap.persona,
+              settings: { ...bootstrap.persona.settings, reasoning },
+            },
+          },
           executionEnvironment: { kind: "local", cwd: "/repo", home: "/home/user" },
           historyEntries: historyEntries.map((entry) => ({
             id: entry.id,
@@ -255,6 +270,24 @@ function createHarness(options = {}) {
         });
         emitDelta(createResetDelta(sessionId, historyEntries.length + 1, snapshot));
         return snapshot;
+      },
+      async setReasoning(nextReasoning) {
+        reasoning = nextReasoning;
+        const snapshot = await hostedSession.snapshot();
+        const fromRevision = Math.max(1, snapshot.revision - 1);
+        emitDelta({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "session.delta",
+          sessionId,
+          fromRevision,
+          toRevision: snapshot.revision,
+          reason: "configuration",
+          delta: {
+            type: "snapshot.patch",
+            changes: [{ type: "settings.set", settings: snapshot.settings }],
+          },
+        });
+        return { revision: snapshot.revision, settings: snapshot.settings };
       },
       async compact(compactOptions) {
         const compactionMessage = `compacted with ${compactOptions.mode}`;
@@ -976,6 +1009,71 @@ describe("rpc_server", () => {
     );
 
     expect(harness.lines).toHaveLength(lineCount);
+  });
+
+  it("changes reasoning during an active turn without interrupting or rejecting queued submits", async () => {
+    const harness = createHarness();
+
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
+    );
+    await waitFor(() => harness.seededSession.canReleaseTurn());
+
+    const queuedSubmit = harness.server.handleLine(
+      request("queue-1", "session.queue", {
+        sessionId: "session-1",
+        text: "queued turn",
+      }),
+    );
+    await harness.server.handleLine(
+      request("reasoning-1", "session.setReasoning", {
+        sessionId: "session-1",
+        reasoning: "high",
+      }),
+    );
+
+    const reasoningChanged = harness.lines.find(
+      (line) => line.type === "response" && line.id === "reasoning-1",
+    );
+    expect(reasoningChanged).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          settings: expect.objectContaining({ reasoning: "high" }),
+        }),
+      }),
+    );
+    expect(harness.seededSession.isTurnRunning).toBe(true);
+    expect(
+      harness.lines.find((line) => line.type === "response" && line.id === "queue-1"),
+    ).toBeUndefined();
+
+    harness.releaseTurn();
+    await firstSubmit;
+    await waitFor(
+      () => harness.lines.filter((line) => deltaHasNotice(line, "streaming")).length === 2,
+    );
+    harness.releaseTurn();
+    await waitFor(() =>
+      harness.lines.some((line) => line.type === "response" && line.id === "queue-1"),
+    );
+    await queuedSubmit;
+
+    const queuedResult = harness.lines.find(
+      (line) => line.type === "response" && line.id === "queue-1",
+    );
+    expect(queuedResult).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          userHistoryEntryId: expect.any(String),
+          turn: { aborted: false },
+        }),
+      }),
+    );
   });
 
   it("batches steering submits while a turn is running", async () => {

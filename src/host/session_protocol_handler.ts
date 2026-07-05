@@ -63,7 +63,6 @@ type SessionProtocolMutationRequest = Extract<
     method:
       | "session.record"
       | "session.setRisk"
-      | "session.setReasoning"
       | "session.setPersona"
       | "session.reload"
       | "session.compact"
@@ -900,7 +899,17 @@ export class SessionProtocolHandler {
   private async handleSetReasoning(
     request: Extract<SessionProtocolRequestMessage, { method: "session.setReasoning" }>,
   ): Promise<void> {
-    await this.withSessionMutation(request, "session reasoning changed", async (state) => {
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+
+    await this.runSessionMutation(state, async () => {
+      if (state.session.sessionId !== request.params.sessionId) {
+        this.sendSessionNotFound(request.id, request.params.sessionId);
+        return;
+      }
       const result = await state.session.setReasoning(request.params.reasoning);
       this.sendMessage(
         createSessionProtocolSuccessResponse(request.id, "session.setReasoning", result),

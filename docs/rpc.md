@@ -663,7 +663,7 @@ params (required):
 { "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3", "reasoning": "high" }
 ```
 
-sets the session reasoning effort to `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, or `"xhigh"` and returns `{ "revision": number, "settings": { ... } }` with the authoritative updated settings. Observed clients receive a `settings.set` snapshot patch for the same revision. The host applies the change through the session mutation queue so it does not race another mutating request or an active turn.
+sets the session reasoning effort to `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, or `"xhigh"` and returns `{ "revision": number, "settings": { ... } }` with the authoritative updated settings. Observed clients receive a `settings.set` snapshot patch for the same revision. The host applies the settings update through the session mutation queue, but it does not interrupt an active turn or reject queued/steering messages. If a turn is already running, the new reasoning applies to the next user-message turn.
 
 #### session.setPersona
 
@@ -964,6 +964,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 
 - multiple requests can be accepted before earlier ones complete
 - `session.record`, `session.setRisk`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, `session.terminateSubagent`, `session.ephemeral.create`, and `session.ephemeral.close` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
+- `session.setReasoning` updates settings immediately without interrupting an active turn; active turns keep their captured reasoning and the new setting applies to the next user-message turn
 - only one idle-only `session.submit`, `session.retry`, or `session.exec` can run at once (`busy` otherwise)
 - `session.queue` can be accepted during active work and runs after the active turn settles
 - `session.steer` can be accepted during an active turn and runs at the next safe boundary after requesting the active turn to stop

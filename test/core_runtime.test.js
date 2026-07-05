@@ -275,6 +275,44 @@ describe("core session rewind APIs", () => {
     expect(session.rawHistoryEntries[0].message.content[0].text).toBe("original");
   });
 
+  it("preserves the session id when compacting manually", async () => {
+    const faux = fauxProvider({
+      provider: "faux-manual-compact-session-id",
+      models: [{ id: "faux-manual-compact-session-id-model" }],
+    });
+    const unregisterFauxProvider = registerModelRuntimeProvider(faux.provider);
+
+    try {
+      faux.setResponses([fauxAssistantMessage(compactionSummary("## Goal\nContinue"))]);
+      const persona = {
+        id: "faux-manual-compact-session-id",
+        label: "faux manual compact session id",
+        model: faux.getModel(),
+        systemPrompt: "system",
+        settings: { reasoning: "none" },
+        skills: "*",
+        source: "builtin",
+      };
+      const session = new CoreSession({
+        persona,
+        systemPrompt: "system",
+        subagentPrompts: {},
+        riskLevel: "read-only",
+        toolRegistry: new ToolRegistry([]),
+      });
+
+      const sessionId = session.sessionId;
+      session.addUserText("remember this");
+      session.addMessage(fauxAssistantMessage("remembered"));
+
+      await session.compact({ mode: "only-summary" });
+
+      expect(session.sessionId).toBe(sessionId);
+    } finally {
+      unregisterFauxProvider();
+    }
+  });
+
   it("clamps auto-compaction retention to the threshold budget", async () => {
     const faux = fauxProvider({
       provider: "faux-auto-clamp",
@@ -320,11 +358,14 @@ describe("core session rewind APIs", () => {
       });
       session.addMessage(assistantMessageWithUsage("middle answer", 1000));
       session.addUserText("current request", { historyEntryId: "current-request" });
+      const sessionId = session.sessionId;
 
       const events = [];
       for await (const event of session.events(new AbortController().signal)) {
         events.push(event);
       }
+
+      expect(session.sessionId).toBe(sessionId);
 
       const compactionEnd = events.find(
         (event) => event.type === "compaction_end" && event.outcome === "compacted",

@@ -190,7 +190,6 @@ export class SessionEngine {
       id: entry.id,
       message: structuredClone(entry.message),
     }));
-    this.sessionId = randomUUID();
   }
 
   dispose(): void {

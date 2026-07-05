@@ -21,7 +21,7 @@ import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
-import type { ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
+import type { ToolDefinition, ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
 import type { Persona, ReasoningEffort, RiskLevel } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
@@ -71,6 +71,7 @@ export type SessionEngineOptions = {
   subagentPrompts: Record<string, string>;
   riskLevel: RiskLevel;
   toolRegistry: ToolRegistry;
+  clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
   config?: Config;
   deps?: CoreDeps;
   cwd?: string;
@@ -121,6 +122,7 @@ type SessionTurnSettings = {
   persona: Persona;
   streamOptions: TauStreamOptions;
   reasoningEffort: ReasoningEffort | "none";
+  clientToolDefinitions: ToolDefinition[];
 };
 
 export class SessionEngine {
@@ -129,6 +131,7 @@ export class SessionEngine {
   private subagentPrompts: Record<string, string>;
   private riskLevel: RiskLevel;
   private readonly toolRegistry: ToolRegistry;
+  private readonly clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
   private config: Config;
   private readonly deps: CoreDeps;
   private readonly authPath: string;
@@ -149,6 +152,7 @@ export class SessionEngine {
     this.subagentPrompts = options.subagentPrompts;
     this.riskLevel = options.riskLevel;
     this.toolRegistry = options.toolRegistry;
+    this.clientToolDefinitions = options.clientToolDefinitions;
     this.config = options.config ?? {};
     this.deps = options.deps ?? createDefaultCoreDeps();
     this.cwd = options.cwd ?? this.deps.env.cwd();
@@ -655,11 +659,29 @@ export class SessionEngine {
       persona,
       streamOptions: this.getStreamingSettings(persona),
       reasoningEffort: persona.settings.reasoning ?? "none",
+      clientToolDefinitions: this.clientToolDefinitions?.(this.sessionId) ?? [],
     };
   }
 
-  private getEnabledToolSchemas(persona: Persona = this.persona) {
-    return this.toolRegistry.getEnabledToolSchemas(persona.tools);
+  private getEnabledToolSchemas(
+    persona: Persona = this.persona,
+    clientToolDefinitions: ToolDefinition[] = [],
+  ) {
+    const schemas = this.toolRegistry.getEnabledToolSchemas(persona.tools);
+    if (clientToolDefinitions.length === 0) {
+      return schemas;
+    }
+
+    const existingNames = new Set(schemas.map((tool) => tool.name));
+    const clientSchemas = clientToolDefinitions.map((definition) => definition.schema);
+    for (const schema of clientSchemas) {
+      if (existingNames.has(schema.name)) {
+        throw new Error(`duplicate tool '${schema.name}'`);
+      }
+      existingNames.add(schema.name);
+    }
+
+    return [...schemas, ...clientSchemas];
   }
 
   private createDispatchModelResolver(): ModelResolver {
@@ -718,7 +740,10 @@ export class SessionEngine {
         break;
       }
 
-      const enabledTools = this.getEnabledToolSchemas(turnSettings.persona);
+      const enabledTools = this.getEnabledToolSchemas(
+        turnSettings.persona,
+        turnSettings.clientToolDefinitions,
+      );
       const dispatchContext: ToolDispatchContext = {
         scope: "main",
         persona: turnSettings.persona,
@@ -737,6 +762,7 @@ export class SessionEngine {
       for await (const event of runToolCalls({
         toolCalls,
         toolRegistry: this.toolRegistry,
+        extraToolDefinitions: turnSettings.clientToolDefinitions,
         enabledTools,
         riskLevel: this.riskLevel,
         signal,
@@ -998,7 +1024,10 @@ export class SessionEngine {
     const startEvent: CoreEvent = { type: "assistant_start", historyEntryId };
     this.emitEvent(startEvent);
     yield startEvent;
-    const tools = this.getEnabledToolSchemas(turnSettings.persona);
+    const tools = this.getEnabledToolSchemas(
+      turnSettings.persona,
+      turnSettings.clientToolDefinitions,
+    );
 
     const context: Context = {
       systemPrompt: this.systemPrompt,

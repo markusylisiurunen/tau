@@ -2,7 +2,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
 import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
 import type { CoreDeps } from "../runtime/deps.js";
-import type { ToolRegistry } from "../tools/registry.js";
+import type { ToolDefinition, ToolRegistry } from "../tools/registry.js";
 import type { Persona, ReasoningEffort, RiskLevel } from "../types.js";
 import {
   type HistoryEntry,
@@ -35,6 +35,7 @@ export type CoreSessionOptions = {
   subagentPrompts: Record<string, string>;
   riskLevel: RiskLevel;
   toolRegistry: ToolRegistry;
+  clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
   config?: Config;
   deps?: CoreDeps;
   cwd?: string;

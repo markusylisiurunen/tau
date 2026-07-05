@@ -104,6 +104,38 @@ sdk lifecycle notes:
 - `initialize?: { client: { name: string; version: string } }`
   - metadata sent with session protocol `initialize`
   - `client.name` and `client.version` must be non-empty strings
+- `clientTools?: TauSdkClientTool[]`
+  - optional client-provided tools advertised during `initialize`; each entry supplies a model-facing schema and an `execute(args, context)` handler
+  - client-tool availability is frozen per assistant turn and is independent of persona `tools`; if the client detaches or fails to acknowledge a delegated call, the host returns a normal tool error
+
+### client-provided tools
+
+SDK clients can advertise local tools with `clientTools`. These are model-facing tools executed by the client instead of the session host. The host freezes the advertised client-tool set at assistant-turn start, includes those tools independently of persona `tools`, delegates matching tool calls to the selected client, waits for a short ack, then waits for the client result or timeout. Final tool calls/results are stored in the session snapshot like any other tool; live client-tool connection state is not persisted.
+
+```ts
+const client = await createTauSdkClient({
+  clientTools: [
+    {
+      schema: {
+        name: "local_picker",
+        description: "Pick a local item for the user.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        executionTimeoutMs: 60_000,
+      },
+      execute: async (_args, context) => {
+        if (context.signal.aborted) throw new Error("aborted");
+        return "picked item";
+      },
+    },
+  ],
+});
+```
+
+Tool names must not duplicate host tools or another connected client's tools. The Tau TUI uses this mechanism to advertise `diff_review`; generic SDK clients can advertise their own tools, but `diff_review` itself is TUI-owned.
 
 ### `createTauSdkWebSocketClient(options)`
 

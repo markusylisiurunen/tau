@@ -30,6 +30,8 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.ephemeral.create",
   "session.ephemeral.submit",
   "session.ephemeral.close",
+  "session.clientTool.ack",
+  "session.clientTool.result",
 ] as const;
 
 const SESSION_PROTOCOL_METHOD_SET: ReadonlySet<string> = new Set(SESSION_PROTOCOL_METHODS);
@@ -70,10 +72,18 @@ const SESSION_PROTOCOL_ERROR_CODE_VALUES = [
 
 export type SessionProtocolRequestId = string;
 
+export type SessionProtocolClientToolDefinition = {
+  name: string;
+  description: string;
+  parameters: unknown;
+  executionTimeoutMs?: number;
+};
+
 export type SessionProtocolInitializeParams = {
   client: {
     name: string;
     version: string;
+    tools?: SessionProtocolClientToolDefinition[];
   };
 };
 
@@ -188,6 +198,21 @@ export type SessionProtocolEphemeralSubmitParams = SessionProtocolSessionIdParam
 export type SessionProtocolEphemeralCloseParams = SessionProtocolSessionIdParams & {
   contextId: string;
 };
+export type SessionProtocolClientToolAckParams = SessionProtocolSessionIdParams & {
+  callId: string;
+};
+export type SessionProtocolClientToolResultParams = SessionProtocolSessionIdParams & {
+  callId: string;
+} & (
+    | {
+        ok: true;
+        content: string;
+      }
+    | {
+        ok: false;
+        error: string;
+      }
+  );
 
 export type SessionProtocolParamsByMethod = {
   initialize: SessionProtocolInitializeParams;
@@ -216,6 +241,8 @@ export type SessionProtocolParamsByMethod = {
   "session.ephemeral.create": SessionProtocolEphemeralCreateParams;
   "session.ephemeral.submit": SessionProtocolEphemeralSubmitParams;
   "session.ephemeral.close": SessionProtocolEphemeralCloseParams;
+  "session.clientTool.ack": SessionProtocolClientToolAckParams;
+  "session.clientTool.result": SessionProtocolClientToolResultParams;
 };
 
 export type SessionProtocolInitializeResult = {
@@ -571,6 +598,14 @@ export type SessionProtocolEphemeralCloseResult = {
   closed: boolean;
 };
 
+export type SessionProtocolClientToolAckResult = {
+  accepted: boolean;
+};
+
+export type SessionProtocolClientToolResultResult = {
+  accepted: boolean;
+};
+
 export type SessionProtocolResultByMethod = {
   initialize: SessionProtocolInitializeResult;
   "session.create": SessionProtocolSnapshot;
@@ -598,6 +633,8 @@ export type SessionProtocolResultByMethod = {
   "session.ephemeral.create": SessionProtocolEphemeralCreateResult;
   "session.ephemeral.submit": SessionProtocolEphemeralSubmitResult;
   "session.ephemeral.close": SessionProtocolEphemeralCloseResult;
+  "session.clientTool.ack": SessionProtocolClientToolAckResult;
+  "session.clientTool.result": SessionProtocolClientToolResultResult;
 };
 
 export type SessionProtocolRequestMessage = {
@@ -711,6 +748,29 @@ export type SessionProtocolReadyMessage = {
   methods: SessionProtocolMethod[];
 };
 
+export type SessionProtocolClientToolCallMessage = {
+  version: typeof SESSION_PROTOCOL_VERSION;
+  type: "session.clientTool.call";
+  sessionId: string;
+  callId: string;
+  toolName: string;
+  arguments: unknown;
+  ackDeadlineMs: number;
+  executionDeadlineMs: number;
+};
+
+export type SessionProtocolClientToolCancelMessage = {
+  version: typeof SESSION_PROTOCOL_VERSION;
+  type: "session.clientTool.cancel";
+  sessionId: string;
+  callId: string;
+  reason: "aborted" | "timeout" | "client-detached";
+};
+
+export type SessionProtocolClientToolMessage =
+  | SessionProtocolClientToolCallMessage
+  | SessionProtocolClientToolCancelMessage;
+
 export type SessionProtocolEphemeralAgentThreadUpdateEvent = {
   type: "ephemeral-agent.thread-update";
   contextId: string;
@@ -742,12 +802,14 @@ export type SessionProtocolOutgoingMessage =
   | SessionProtocolResponseMessage
   | SessionProtocolDeltaMessage
   | SessionProtocolEphemeralMessage
+  | SessionProtocolClientToolMessage
   | SessionProtocolReadyMessage;
 
 export type SessionProtocolParsedOutgoingMessage =
   | SessionProtocolParsedResponseMessage
   | SessionProtocolDeltaMessage
   | SessionProtocolEphemeralMessage
+  | SessionProtocolClientToolMessage
   | SessionProtocolReadyMessage;
 
 export type SessionProtocolOutgoingParseFailureReason =
@@ -829,6 +891,34 @@ const sessionProtocolReadyMessageSchema = z
   })
   .strict();
 
+const sessionProtocolClientToolCallMessageSchema = z
+  .object({
+    version: z.literal(SESSION_PROTOCOL_VERSION),
+    type: z.literal("session.clientTool.call"),
+    sessionId: nonEmptyStringSchema,
+    callId: nonEmptyStringSchema,
+    toolName: nonEmptyStringSchema,
+    arguments: z.unknown(),
+    ackDeadlineMs: z.number().int().positive(),
+    executionDeadlineMs: z.number().int().positive(),
+  })
+  .strict();
+
+const sessionProtocolClientToolCancelMessageSchema = z
+  .object({
+    version: z.literal(SESSION_PROTOCOL_VERSION),
+    type: z.literal("session.clientTool.cancel"),
+    sessionId: nonEmptyStringSchema,
+    callId: nonEmptyStringSchema,
+    reason: z.enum(["aborted", "timeout", "client-detached"]),
+  })
+  .strict();
+
+const sessionProtocolClientToolMessageSchema = z.discriminatedUnion("type", [
+  sessionProtocolClientToolCallMessageSchema,
+  sessionProtocolClientToolCancelMessageSchema,
+]);
+
 const sessionProtocolRequestEnvelopeSchema = z
   .object({
     version: z.literal(SESSION_PROTOCOL_VERSION),
@@ -842,7 +932,14 @@ const sessionProtocolRequestEnvelopeSchema = z
 const sessionProtocolOutgoingRoutingSchema = z
   .object({
     version: z.literal(SESSION_PROTOCOL_VERSION),
-    type: z.enum(["ready", "session.delta", "session.ephemeral", "response"]),
+    type: z.enum([
+      "ready",
+      "session.delta",
+      "session.ephemeral",
+      "session.clientTool.call",
+      "session.clientTool.cancel",
+      "response",
+    ]),
   })
   .passthrough();
 
@@ -877,12 +974,22 @@ const sessionProtocolResponseErrorSchema = z
   })
   .strict();
 
+const sessionProtocolClientToolDefinitionSchema = z
+  .object({
+    name: nonEmptyStringSchema,
+    description: z.string(),
+    parameters: z.unknown(),
+    executionTimeoutMs: z.number().int().positive().optional(),
+  })
+  .strict();
+
 const sessionProtocolInitializeParamsSchema = z
   .object({
     client: z
       .object({
         name: nonEmptyStringSchema,
         version: nonEmptyStringSchema,
+        tools: z.array(sessionProtocolClientToolDefinitionSchema).optional(),
       })
       .strict(),
   })
@@ -1023,6 +1130,32 @@ const sessionProtocolEphemeralCloseParamsSchema = z
     contextId: nonEmptyStringSchema,
   })
   .strict();
+
+const sessionProtocolClientToolAckParamsSchema = z
+  .object({
+    sessionId: nonEmptyStringSchema,
+    callId: nonEmptyStringSchema,
+  })
+  .strict();
+
+const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
+  z
+    .object({
+      sessionId: nonEmptyStringSchema,
+      callId: nonEmptyStringSchema,
+      ok: z.literal(true),
+      content: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      sessionId: nonEmptyStringSchema,
+      callId: nonEmptyStringSchema,
+      ok: z.literal(false),
+      error: z.string(),
+    })
+    .strict(),
+]);
 
 const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
 
@@ -1771,6 +1904,18 @@ const sessionProtocolEphemeralCloseResultSchema = z
   })
   .strict();
 
+const sessionProtocolClientToolAckResultSchema = z
+  .object({
+    accepted: z.boolean(),
+  })
+  .strict();
+
+const sessionProtocolClientToolResultResultSchema = z
+  .object({
+    accepted: z.boolean(),
+  })
+  .strict();
+
 export function isSessionProtocolMethod(value: unknown): value is SessionProtocolMethod {
   return typeof value === "string" && SESSION_PROTOCOL_METHOD_SET.has(value);
 }
@@ -2430,6 +2575,13 @@ export function parseSessionProtocolOutgoingLine(line: string): SessionProtocolO
     return parseSessionProtocolEphemeralMessage(parsed);
   }
 
+  if (
+    routing.data.type === "session.clientTool.call" ||
+    routing.data.type === "session.clientTool.cancel"
+  ) {
+    return parseSessionProtocolClientToolMessage(parsed);
+  }
+
   return parseSessionProtocolResponseMessage(parsed);
 }
 
@@ -2538,6 +2690,14 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolEphemeralCloseParams>;
 export function validateSessionProtocolParams(
+  method: "session.clientTool.ack",
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolClientToolAckParams>;
+export function validateSessionProtocolParams(
+  method: "session.clientTool.result",
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolClientToolResultParams>;
+export function validateSessionProtocolParams(
   method: SessionProtocolMethod,
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolParamsByMethod[SessionProtocolMethod]>;
@@ -2593,6 +2753,10 @@ export function validateSessionProtocolParams(
       return validateEphemeralSubmitParams(params);
     case "session.ephemeral.close":
       return validateEphemeralCloseParams(params);
+    case "session.clientTool.ack":
+      return validateClientToolAckParams(params);
+    case "session.clientTool.result":
+      return validateClientToolResultParams(params);
   }
 }
 
@@ -2637,6 +2801,10 @@ export function validateSessionProtocolResult(
       return validateResult(method, result, sessionProtocolEphemeralSubmitResultSchema);
     case "session.ephemeral.close":
       return validateResult(method, result, sessionProtocolEphemeralCloseResultSchema);
+    case "session.clientTool.ack":
+      return validateResult(method, result, sessionProtocolClientToolAckResultSchema);
+    case "session.clientTool.result":
+      return validateResult(method, result, sessionProtocolClientToolResultResultSchema);
     case "session.list":
       return validateResult(method, result, sessionProtocolListResultSchema);
     case "session.submit":
@@ -3136,6 +3304,46 @@ function validateEphemeralCloseParams(
   return { ok: true, value: parsed.data };
 }
 
+function validateClientToolAckParams(
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolClientToolAckParams> {
+  const parsed = sessionProtocolClientToolAckParamsSchema.safeParse(params);
+  if (!parsed.success) {
+    const message = hasIssue(parsed.error, [], "invalid_type")
+      ? "session.clientTool.ack params must be an object"
+      : hasIssue(parsed.error, [], "unrecognized_keys")
+        ? "session.clientTool.ack params only support sessionId and callId"
+        : hasIssue(parsed.error, ["sessionId"])
+          ? "session.clientTool.ack params.sessionId must be a non-empty string"
+          : hasIssue(parsed.error, ["callId"])
+            ? "session.clientTool.ack params.callId must be a non-empty string"
+            : `session.clientTool.ack params are invalid: ${formatZodError(parsed.error)}`;
+    return invalidParams(message);
+  }
+
+  return { ok: true, value: parsed.data };
+}
+
+function validateClientToolResultParams(
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolClientToolResultParams> {
+  const parsed = sessionProtocolClientToolResultParamsSchema.safeParse(params);
+  if (!parsed.success) {
+    const message = hasIssue(parsed.error, [], "invalid_type")
+      ? "session.clientTool.result params must be an object"
+      : hasIssue(parsed.error, [], "unrecognized_keys")
+        ? "session.clientTool.result params only support sessionId, callId, ok, content, and error"
+        : hasIssue(parsed.error, ["sessionId"])
+          ? "session.clientTool.result params.sessionId must be a non-empty string"
+          : hasIssue(parsed.error, ["callId"])
+            ? "session.clientTool.result params.callId must be a non-empty string"
+            : `session.clientTool.result params are invalid: ${formatZodError(parsed.error)}`;
+    return invalidParams(message);
+  }
+
+  return { ok: true, value: parsed.data };
+}
+
 function validateCreateParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolCreateParams> {
@@ -3271,6 +3479,30 @@ function parseSessionProtocolDeltaMessage(payload: unknown): SessionProtocolOutg
       reason: deltaMessage.data.reason,
       delta: deltaMessage.data.delta,
     },
+  };
+}
+
+function parseSessionProtocolClientToolMessage(
+  payload: unknown,
+): SessionProtocolOutgoingParseResult {
+  const parsedTypeField = sessionProtocolTypeFieldSchema.safeParse(payload);
+  const messageType = parsedTypeField.success
+    ? (parsedTypeField.data.type as SessionProtocolOutgoingMessage["type"])
+    : null;
+  const fail = (message: string) =>
+    outgoingParseFailure(messageType, null, SESSION_PROTOCOL_ERROR_CODES.invalidRequest, message);
+
+  const message = sessionProtocolClientToolMessageSchema.safeParse(payload);
+  if (!message.success) {
+    if (hasIssue(message.error, [], "unrecognized_keys")) {
+      return fail(`${String(messageType)} message contains unsupported fields`);
+    }
+    return fail(`invalid ${String(messageType)} message: ${formatZodError(message.error)}`);
+  }
+
+  return {
+    ok: true,
+    message: message.data as SessionProtocolClientToolMessage,
   };
 }
 

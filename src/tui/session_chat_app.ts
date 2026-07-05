@@ -9,9 +9,10 @@ import type {
 } from "../core/config/index.js";
 import type { ModeAdapter } from "../core/modes/mode_adapter.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
+import { DIFF_REVIEW_TOOL } from "../core/tools/diff_review.js";
 import type { SessionProtocolCreateParams } from "../protocol/session_protocol.js";
 import { createTauSdkClientFromTransport } from "../sdk/session.js";
-import type { TauSdkClient, TauSdkSession } from "../sdk/types.js";
+import type { TauSdkClient, TauSdkClientTool, TauSdkSession } from "../sdk/types.js";
 import { StdioSessionProtocolTransport } from "../transport/stdio_session_transport.js";
 import { WebSocketSessionProtocolTransport } from "../transport/websocket_session_transport.js";
 import { TuiChatView } from "./chat_view.js";
@@ -46,6 +47,26 @@ export type SessionChatTransportOptions = Omit<SessionChatAppOptions, "client" |
         authToken?: string;
       }
   );
+
+export function createTuiClientTools(options: {
+  getController: () => SessionChatController | undefined;
+}): TauSdkClientTool[] {
+  return [
+    {
+      schema: {
+        ...DIFF_REVIEW_TOOL,
+        executionTimeoutMs: 30 * 60 * 1000,
+      },
+      execute: async (args, context) => {
+        const controller = options.getController();
+        if (!controller) {
+          throw new Error("TUI is not ready to run diff_review");
+        }
+        return await controller.runClientDiffReview(args, context.signal);
+      },
+    },
+  ];
+}
 
 export type SessionChatSelection =
   | {
@@ -91,15 +112,19 @@ export class SessionChatApp implements ModeAdapter {
             url: options.url,
             authToken: options.authToken,
           });
+    let controller: SessionChatController | undefined;
     const client = await createTauSdkClientFromTransport(transport, {
       initialize: { client: { name: "tau-tui", version: "1" } },
+      clientTools: createTuiClientTools({ getController: () => controller }),
     });
-    return await SessionChatApp.open({
+    const app = await SessionChatApp.open({
       ...options,
       client,
       targetLabel:
         options.transport === "stdio" ? [options.command, ...options.args].join(" ") : options.url,
     });
+    controller = app.controller;
+    return app;
   }
 
   static async open(options: SessionChatAppOptions): Promise<SessionChatApp> {
@@ -158,6 +183,10 @@ export class SessionChatApp implements ModeAdapter {
       await options.client.close();
       throw error;
     }
+  }
+
+  getController(): SessionChatController {
+    return this.controller;
   }
 
   async start(): Promise<void> {

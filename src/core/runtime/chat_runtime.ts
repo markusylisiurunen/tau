@@ -1,6 +1,6 @@
 import type { Config } from "../config/index.js";
 import { CoreSession } from "../session/core_session.js";
-import type { ToolRegistry } from "../tools/registry.js";
+import type { ToolDefinition, ToolRegistry } from "../tools/registry.js";
 import type { Persona, ReasoningEffort, RiskLevel } from "../types.js";
 import {
   type ConversationTurnResult,
@@ -36,6 +36,7 @@ export type CreateChatRuntimeOptions = {
   persona: Persona;
   riskLevel: RiskLevel;
   toolRegistry: ToolRegistry;
+  clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
   promptContext: ChatRuntimePromptContext;
   environment: ChatRuntimeEnvironment;
   initialPromptComposition?: SessionPromptComposition;
@@ -72,6 +73,7 @@ export class ChatRuntime {
       subagentPrompts: promptComposition.subagentPrompts,
       riskLevel: options.riskLevel,
       toolRegistry: options.toolRegistry,
+      clientToolDefinitions: options.clientToolDefinitions,
       config: options.config,
       deps: options.deps,
       cwd: options.promptContext.cwd,

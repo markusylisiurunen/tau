@@ -44,9 +44,9 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Mode/session-server wiring** (`src/core/modes/`): Local app mode interface plus stdio and WebSocket session-protocol server wiring
 - **SDK client** (`src/sdk/client.ts`, `src/sdk/session.ts`): Node SDK in-process/WebSocket/bootstrap helpers plus session facade for driving Tau through session protocol transports; the default SDK client owns an in-process local host and shuts it down on close after persisting live snapshots
 - **Telegram session runtime helpers** (`src/core/telegram/`, `src/core/telegram/session_manager.ts`, `src/core/telegram/adapter.ts`, `src/core/telegram/workspace.ts`): Telegram runner command/config/runtime plus SDK-backed session management, Telegram polling/media handling, and project workspace preparation
-- **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal tool registry
+- **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal host tool registry; client-provided tools are advertised by attached clients and frozen per assistant turn by the session engine
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Generic filesystem/process backend used for local and hosted execution targets, including bash execution, Node script execution, file IO, directory listing, and grep
-- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session (bash, write, edit, view_image, diff_review, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent) and sub-agent (configured allowed tools) registries
+- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session host tools (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent) and sub-agent (configured allowed tools) registries; `diff_review` is advertised as a TUI client-provided tool
 - **TUI**: Terminal rendering via `@earendil-works/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
@@ -102,7 +102,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `events/` - Core event protocol types and serialization
   - `session/` - Turn processing, streaming, tool dispatch, and manual/automatic compaction
   - `session/compaction.ts` - Core compaction preparation/prompt building, automatic cut-point selection, retained-tail handling, and synthetic summary message construction
-  - `tools/` - Tool definitions (bash, write, edit, diff_review, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent, emit_output, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
+  - `tools/` - Tool definitions (bash, write, edit, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent, emit_output, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
   - `tools/execution_backend.ts` - Generic local/hosted tool execution backend contract, local implementation, Node script execution, and cwd scoping helper
   - `subagents/` - Default subagent prompt and runner
   - `modes/` - Local app mode interface plus stdio session-protocol line server (`rpc_server.ts`) and WebSocket session server (`websocket_server.ts`)
@@ -200,7 +200,7 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `allowedReasoningLevels`: list of reasoning levels shown in the UI
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted on custom personas, defaults to `"*"`; set `skills: []` to disable skills completely.
 - `subagents`: optional map of subagent definitions. The built-in `default` subagent is implicitly enabled unless `default: false` is provided. Custom subagents must be defined as `{ systemPrompt, description?, provider+model?, reasoning?, serviceTier?, tools?, riskLevel?, launchModels? }` with lowercase-dash names (max 64 chars). `launchModels` values are allowlisted launch overrides in `<provider>/<model>:<effort>` format. Persona/subagent model ids may be unbundled as long as provider is known (Tau derives provider defaults when needed, and `models.json` can override fields). The `default` subagent cannot be overridden.
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `diff_review`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `diff_review` (and subagent tools when subagents are enabled). risk levels still apply.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled). risk levels still apply.
 
 On conflicts, the most specific level wins (built-ins are the base layer).
 
@@ -309,7 +309,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 Slash commands only trigger on single-line inputs. `/diff` launches the local diff tool and records returned review feedback without auto-running the assistant. Unknown slash-prefixed text is sent as a normal prompt.
 
-RPC mode command surface is protocol-based (`initialize`, `session.create`, `session.list`, `session.observe`, `session.unobserve`, `session.record`, `session.submit`, `session.queue`, `session.steer`, `session.retry`, `session.exec`, `session.interrupt`, `session.snapshot`, `session.setRisk`, `session.setReasoning`, `session.setPersona`, `session.resolvePrompt`, `session.autocompletePaths`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, `session.terminateSubagent`, `session.ephemeral.create`, `session.ephemeral.submit`, `session.ephemeral.close`) over NDJSON stdin/stdout.
+RPC mode command surface is protocol-based (`initialize`, `session.create`, `session.list`, `session.observe`, `session.unobserve`, `session.record`, `session.submit`, `session.queue`, `session.steer`, `session.retry`, `session.exec`, `session.interrupt`, `session.snapshot`, `session.setRisk`, `session.setReasoning`, `session.setPersona`, `session.resolvePrompt`, `session.autocompletePaths`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, `session.terminateSubagent`, `session.ephemeral.create`, `session.ephemeral.submit`, `session.ephemeral.close`, `session.clientTool.ack`, `session.clientTool.result`) over NDJSON stdin/stdout.
 
 **Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (terminate selected subagent), `Ctrl+Enter` (steer running assistant with editor input), `Alt+S` (steer running assistant with queued messages), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (pop queued message), `Alt+C` (collapse queued messages into one), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work), `Ctrl+C` (press twice to exit)
 

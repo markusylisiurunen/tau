@@ -2075,6 +2075,41 @@ export class SessionChatController {
     });
   }
 
+  async runClientDiffReview(rawArgs: unknown, signal: AbortSignal): Promise<string> {
+    if (this.diffReviewService.isActive()) {
+      throw new Error("diff review is already active");
+    }
+
+    const diffTool = this.resolveDiffToolConfig();
+    if (!diffTool) {
+      throw new Error("configure diffTool in config.json before using diff_review");
+    }
+
+    const source = parseClientDiffReviewSource(rawArgs);
+    const started = await this.startDiffReviewBridge({
+      source,
+      diffTool,
+      signal,
+    });
+    if (signal.aborted) {
+      await started.bridge.cancel("controller_cancelled").catch(() => undefined);
+      throw new Error("diff review aborted");
+    }
+
+    const result = await started.result;
+    if (result.status === "returned") {
+      return result.review;
+    }
+
+    if (result.reason === "tool_cancelled") {
+      throw new Error("diff review cancelled by the diff review tool");
+    }
+    if (result.reason === "tool_disconnected") {
+      throw new Error("diff review tool disconnected before returning a review");
+    }
+    throw new Error("diff review cancelled");
+  }
+
   private async startDiffReview(argsText: string): Promise<void> {
     if (this.diffReviewService.isActive()) {
       this.view.addSystemMessage("diff review is already active.", "warn");
@@ -2679,4 +2714,45 @@ function agentProgressChanged(
     previous.usage.contextWindowUsageTokens !== next.usage.contextWindowUsageTokens ||
     previous.usage.contextWindow !== next.usage.contextWindow
   );
+}
+
+function parseClientDiffReviewSource(rawArgs: unknown): DiffReviewSnapshotSource {
+  const args =
+    typeof rawArgs === "object" && rawArgs !== null ? (rawArgs as Record<string, unknown>) : {};
+  if (args.source === "patch_files") {
+    const patchFiles = Array.isArray(args.patchFiles)
+      ? args.patchFiles.filter(
+          (value): value is string => typeof value === "string" && value.trim().length > 0,
+        )
+      : [];
+    if (patchFiles.length === 0) {
+      throw new Error("diff_review patch_files source requires patchFiles");
+    }
+    return {
+      kind: "patch_files",
+      patchFiles,
+      scopeLabel: formatPatchFilesScope(patchFiles, args.label),
+    };
+  }
+
+  if (args.source !== undefined && args.source !== "git_diff") {
+    throw new Error("diff_review source must be git_diff or patch_files");
+  }
+
+  const diffArgs = Array.isArray(args.diffArgs)
+    ? args.diffArgs.filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+      )
+    : [];
+  return { kind: "git_diff", diffArgs };
+}
+
+function formatPatchFilesScope(patchFiles: string[], rawLabel: unknown): string {
+  if (typeof rawLabel === "string" && rawLabel.trim()) {
+    return rawLabel.trim();
+  }
+  if (patchFiles.length === 1) {
+    return `patch file ${patchFiles[0]}`;
+  }
+  return `${patchFiles.length} patch files`;
 }

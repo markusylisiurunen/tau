@@ -453,7 +453,7 @@ the prune commands drop bash tool results from the active context without summar
 
 `/rewind` opens a picker over prior user messages in the current context. it truncates history from the selected message onward (including the selected message) and prefills the editor with that message so you can retry from there.
 
-`/diff` starts a TUI-local diff review. The diff tool process runs where the TUI runs, connects back to the TUI over the diff-review protocol, and the TUI captures git snapshots through session execution while driving generic ephemeral review agents over the session protocol. Returned review text is recorded into the session as a review-styled user message without auto-running the assistant.
+`/diff` starts a TUI-local diff review. The diff tool process runs where the TUI runs, connects back to the TUI over the diff-review protocol, and the TUI captures git snapshots through session execution while driving generic ephemeral review agents over the session protocol. Returned review text is recorded into the session as a review-styled user message without auto-running the assistant. The TUI also advertises `diff_review` as a client-provided model tool, so the assistant can launch the same local diff-review flow when a capable TUI client is attached.
 
 ## keyboard shortcuts
 
@@ -654,7 +654,7 @@ optional frontmatter fields:
         - openai/gpt-5.4:high
         - anthropic/claude-haiku-4-5:medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `diff_review`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `diff_review` (and subagent tools when subagents are enabled). risk levels still apply.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled). risk levels still apply.
 
 the markdown body becomes the system prompt.
 

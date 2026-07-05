@@ -1,4 +1,5 @@
 import type {
+  SessionProtocolClientToolMessage,
   SessionProtocolDeltaMessage,
   SessionProtocolEphemeralMessage,
   SessionProtocolInitializeParams,
@@ -10,6 +11,7 @@ import type {
 
 export type SessionProtocolDeltaListener = (delta: SessionProtocolDeltaMessage) => void;
 export type SessionProtocolEphemeralListener = (message: SessionProtocolEphemeralMessage) => void;
+export type SessionProtocolClientToolListener = (message: SessionProtocolClientToolMessage) => void;
 
 export type SessionProtocolTransport = {
   readonly ready: SessionProtocolReadyMessage;
@@ -20,5 +22,6 @@ export type SessionProtocolTransport = {
   ): Promise<SessionProtocolResultByMethod[M]>;
   onDelta(listener: SessionProtocolDeltaListener): () => void;
   onEphemeral(listener: SessionProtocolEphemeralListener): () => void;
+  onClientTool(listener: SessionProtocolClientToolListener): () => void;
   close(): Promise<void>;
 };

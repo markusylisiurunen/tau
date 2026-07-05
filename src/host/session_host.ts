@@ -1,6 +1,9 @@
 import type {
   SessionProtocolAutocompletePathsParams,
   SessionProtocolAutocompletePathsResult,
+  SessionProtocolClientToolCallMessage,
+  SessionProtocolClientToolCancelMessage,
+  SessionProtocolClientToolDefinition,
   SessionProtocolCompactParams,
   SessionProtocolCompactResult,
   SessionProtocolCreateParams,
@@ -91,5 +94,16 @@ export type TauSessionHost = {
   createSession(input: SessionProtocolCreateParams): Promise<TauHostedSession>;
   observeSession(sessionId: string): Promise<TauHostedSession | undefined>;
   listSessions(): Promise<SessionProtocolSessionSummary[]>;
+  registerClientTools?(options: {
+    tools: SessionProtocolClientToolDefinition[];
+    sendCall: (message: SessionProtocolClientToolCallMessage) => void;
+    sendCancel: (message: SessionProtocolClientToolCancelMessage) => void;
+  }): { clientId: string; unregister: () => void };
+  acknowledgeClientToolCall?(sessionId: string, callId: string): boolean;
+  completeClientToolCall?(
+    sessionId: string,
+    callId: string,
+    result: { ok: true; content: string } | { ok: false; error: string },
+  ): boolean;
   shutdown(): Promise<void>;
 };

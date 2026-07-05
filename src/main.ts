@@ -51,7 +51,6 @@ import {
   UsageCliError,
 } from "./core/index.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
-import { TOOL_NAME_DIFF_REVIEW } from "./core/tools/tool_names.js";
 import {
   createBuiltInDiffToolConfig,
   DiffToolLaunchEnvironmentError,
@@ -68,7 +67,7 @@ import type {
 } from "./protocol/session_protocol.js";
 import { createTauSdkClient } from "./sdk/client.js";
 import { FileSessionStore, getDefaultSessionStoreDirectory } from "./store/file_session_store.js";
-import { SessionChatApp } from "./tui/index.js";
+import { createTuiClientTools, SessionChatApp } from "./tui/index.js";
 import { detectTerminalAppearance } from "./tui/terminal_appearance.js";
 
 const cwd = process.cwd();
@@ -489,13 +488,6 @@ function clonePersonaForSession(persona: Persona): Persona {
   };
 }
 
-function omitTuiOnlyTools(persona: Persona): Persona {
-  return {
-    ...persona,
-    tools: persona.tools?.filter((tool) => tool !== TOOL_NAME_DIFF_REVIEW),
-  };
-}
-
 async function resolveHostedSessionBootstrap(options: {
   cli: CliOptions;
   runtime: RuntimeConfigResult;
@@ -537,7 +529,7 @@ async function resolveHostedSessionBootstrap(options: {
     );
   }
 
-  const persona = omitTuiOnlyTools(clonePersonaForSession(personaBase));
+  const persona = clonePersonaForSession(personaBase);
   if (reasoningOverride !== undefined) {
     persona.settings.reasoning = reasoningOverride;
   }
@@ -546,7 +538,7 @@ async function resolveHostedSessionBootstrap(options: {
     persona,
     riskLevel: options.cli.riskLevel ?? runtime.config.defaultRisk ?? "read-only",
     discoveredSkills: runtime.skills,
-    personas: runtime.personas.map(omitTuiOnlyTools),
+    personas: runtime.personas.map(clonePersonaForSession),
     prompts: runtime.prompts,
     config: runtime.config,
   };
@@ -560,7 +552,7 @@ function createLocalSessionHost(options: {
   skills: Skill[];
 }): LocalSessionHost {
   const deps = createDefaultCoreDeps();
-  const persona = omitTuiOnlyTools(options.persona);
+  const persona = clonePersonaForSession(options.persona);
   const home = deps.env.home() || process.env.HOME || homedir();
   const toolBackend = createLocalToolExecutionBackend();
   const localExecutionEnvironmentResolver = new LocalExecutionEnvironmentResolver({
@@ -1153,6 +1145,7 @@ const defaultDiffTool = createBuiltInDiffToolConfig({
   codeTheme: config.builtInDiffTool?.codeTheme,
 });
 
+let sessionChatApp: SessionChatApp | undefined;
 const sessionClient = await createTauSdkClient({
   cwd,
   persona: initialPersonaId,
@@ -1160,6 +1153,7 @@ const sessionClient = await createTauSdkClient({
   riskLevel: effectiveRiskLevel,
   noAgentContextFiles: cli.noAgentContextFiles,
   initialize: { client: { name: "tau-tui", version: "1" } },
+  clientTools: createTuiClientTools({ getController: () => sessionChatApp?.getController() }),
 });
 const app = await SessionChatApp.open({
   client: sessionClient,
@@ -1181,6 +1175,7 @@ const app = await SessionChatApp.open({
   defaultDiffTool,
   caffeinated: cli.caffeinated,
 });
+sessionChatApp = app;
 
 let isShuttingDown = false;
 const shutdown = async (code = 0) => {

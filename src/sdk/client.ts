@@ -4,7 +4,6 @@ import { parsePersonaString } from "../core/cli.js";
 import { createDefaultConfigDeps, loadRuntimeConfig } from "../core/config/index.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { createLocalToolExecutionBackend } from "../core/tools/execution_backend.js";
-import { TOOL_NAME_DIFF_REVIEW } from "../core/tools/tool_names.js";
 import type { Persona } from "../core/types.js";
 import { CloudflareSandboxExecutionEnvironmentResolver } from "../execution/cloudflare_sandbox_execution_environment.js";
 import { CompositeExecutionEnvironmentResolver } from "../execution/execution_environment.js";
@@ -18,7 +17,7 @@ import { createTauSdkClientFromTransport, resolveTauSdkInitializeParams } from "
 import type { TauSdkClient, TauSdkClientOptions, TauSdkWebSocketClientOptions } from "./types.js";
 
 export async function createTauSdkClient(options: TauSdkClientOptions = {}): Promise<TauSdkClient> {
-  resolveTauSdkInitializeParams(options.initialize);
+  resolveTauSdkInitializeParams(options.initialize, options.clientTools);
   const host = await createInProcessSdkHost(options);
   const transport = new InProcessSessionProtocolTransport({ host, closeMode: "shutdown-host" });
   return createTauSdkClientFromTransport(transport, options);
@@ -27,7 +26,7 @@ export async function createTauSdkClient(options: TauSdkClientOptions = {}): Pro
 export async function createTauSdkWebSocketClient(
   options: TauSdkWebSocketClientOptions,
 ): Promise<TauSdkClient> {
-  resolveTauSdkInitializeParams(options.initialize);
+  resolveTauSdkInitializeParams(options.initialize, options.clientTools);
   const transport = new WebSocketSessionProtocolTransport(options);
   return createTauSdkClientFromTransport(transport, options);
 }
@@ -46,7 +45,7 @@ async function createInProcessSdkHost(options: TauSdkClientOptions): Promise<Loc
     requestedPersona: options.persona,
     defaultPersona: runtime.config.defaultPersona,
   });
-  const persona = omitTuiOnlyTools(clonePersonaForSession(selectedPersona.persona));
+  const persona = clonePersonaForSession(selectedPersona.persona);
   const selectedReasoning = options.reasoning ?? selectedPersona.reasoning;
   if (selectedReasoning !== undefined) {
     persona.settings.reasoning = selectedReasoning;
@@ -81,7 +80,7 @@ async function createInProcessSdkHost(options: TauSdkClientOptions): Promise<Loc
     persona,
     riskLevel: options.riskLevel ?? runtime.config.defaultRisk ?? "read-only",
     discoveredSkills: runtime.skills,
-    personas: runtime.personas.map(omitTuiOnlyTools),
+    personas: runtime.personas.map(clonePersonaForSession),
     prompts: runtime.prompts,
     config: runtime.config,
     executionEnvironmentResolver,
@@ -105,7 +104,7 @@ async function createInProcessSdkHost(options: TauSdkClientOptions): Promise<Loc
         requestedPersona: options.persona,
         defaultPersona: envRuntime.config.defaultPersona,
       });
-      const envPersona = omitTuiOnlyTools(clonePersonaForSession(envSelected.persona));
+      const envPersona = clonePersonaForSession(envSelected.persona);
       const envReasoning = options.reasoning ?? envSelected.reasoning;
       if (envReasoning !== undefined) {
         envPersona.settings.reasoning = envReasoning;
@@ -115,7 +114,7 @@ async function createInProcessSdkHost(options: TauSdkClientOptions): Promise<Loc
         persona: envPersona,
         riskLevel: options.riskLevel ?? envRuntime.config.defaultRisk ?? "read-only",
         discoveredSkills: envRuntime.skills,
-        personas: envRuntime.personas.map(omitTuiOnlyTools),
+        personas: envRuntime.personas.map(clonePersonaForSession),
         prompts: envRuntime.prompts,
         config: envRuntime.config,
       };
@@ -156,12 +155,5 @@ function clonePersonaForSession(persona: Persona): Persona {
     allowedReasoningLevels: persona.allowedReasoningLevels
       ? [...persona.allowedReasoningLevels]
       : undefined,
-  };
-}
-
-function omitTuiOnlyTools(persona: Persona): Persona {
-  return {
-    ...persona,
-    tools: persona.tools?.filter((tool) => tool !== TOOL_NAME_DIFF_REVIEW),
   };
 }

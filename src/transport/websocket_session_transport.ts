@@ -15,12 +15,14 @@ import {
   createDeferred,
   handleSessionProtocolTransportParseFailure,
   handleSessionProtocolTransportResponse,
+  notifySessionProtocolClientToolListeners,
   notifySessionProtocolDeltaListeners,
   notifySessionProtocolEphemeralListeners,
   waitForPromiseOrTimeout,
   withTimeout,
 } from "./session_protocol_transport_helpers.js";
 import type {
+  SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
   SessionProtocolTransport,
@@ -53,6 +55,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
   private readonly webSocketFactory?: (url: string) => WebSocketLike;
   private readonly deltaListeners = new Set<SessionProtocolDeltaListener>();
   private readonly ephemeralListeners = new Set<SessionProtocolEphemeralListener>();
+  private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
   private readonly readyDeferred = createDeferred<SessionProtocolReadyMessage>();
   private readonly openDeferred = createDeferred<void>();
@@ -194,6 +197,13 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     };
   }
 
+  onClientTool(listener: SessionProtocolClientToolListener): () => void {
+    this.clientToolListeners.add(listener);
+    return () => {
+      this.clientToolListeners.delete(listener);
+    };
+  }
+
   async close(): Promise<void> {
     if (this.closePromise) {
       return this.closePromise;
@@ -206,6 +216,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     this.rejectReadyIfPending(closeError);
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
+    this.clientToolListeners.clear();
 
     this.closePromise = (async () => {
       const socket = this.socket;
@@ -283,6 +294,16 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
 
     if (message.type === "session.ephemeral") {
       notifySessionProtocolEphemeralListeners(this.ephemeralListeners, message, {
+        ignoreListenerErrors: true,
+      });
+      return;
+    }
+
+    if (
+      message.type === "session.clientTool.call" ||
+      message.type === "session.clientTool.cancel"
+    ) {
+      notifySessionProtocolClientToolListeners(this.clientToolListeners, message, {
         ignoreListenerErrors: true,
       });
       return;

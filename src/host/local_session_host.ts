@@ -10,7 +10,6 @@ import type { SessionPromptComposition } from "../core/runtime/session_prompt_co
 import type { CoreSession } from "../core/session/core_session.js";
 import type { SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolUiEvent } from "../core/tools/registry.js";
-import { TOOL_NAME_DIFF_REVIEW } from "../core/tools/tool_names.js";
 import type { Persona, ReasoningEffort, RiskLevel, Skill } from "../core/types.js";
 import {
   filterProjectPathAutocompleteEntries,
@@ -68,6 +67,7 @@ import {
   createSessionProtocolEphemeralMessage,
 } from "../protocol/session_protocol.js";
 import type { SessionStore } from "../store/session_store.js";
+import { ClientToolBroker } from "./client_tool_broker.js";
 import { HostedEphemeralAgentSession } from "./hosted_ephemeral_agent_session.js";
 import type { TauHostedSession, TauSessionHost } from "./session_host.js";
 
@@ -117,6 +117,7 @@ export class LocalSessionHost implements TauSessionHost {
     Promise<LocalHostedSession | undefined>
   >();
   private readonly store: SessionStore;
+  private readonly clientToolBroker = new ClientToolBroker();
   private readonly sessionOptions: LocalSessionHostSessionOptions;
   private shutdownPromise?: Promise<void>;
   private shuttingDown = false;
@@ -125,6 +126,22 @@ export class LocalSessionHost implements TauSessionHost {
     const { store, ...sessionOptions } = options;
     this.store = store;
     this.sessionOptions = sessionOptions;
+  }
+
+  registerClientTools(options: Parameters<NonNullable<TauSessionHost["registerClientTools"]>>[0]) {
+    return this.clientToolBroker.registerClient(options);
+  }
+
+  acknowledgeClientToolCall(sessionId: string, callId: string): boolean {
+    return this.clientToolBroker.ack(sessionId, callId);
+  }
+
+  completeClientToolCall(
+    sessionId: string,
+    callId: string,
+    result: { ok: true; content: string } | { ok: false; error: string },
+  ): boolean {
+    return this.clientToolBroker.result(sessionId, callId, result);
   }
 
   async createSession(input: SessionProtocolCreateParams): Promise<LocalHostedSession> {
@@ -256,6 +273,7 @@ export class LocalSessionHost implements TauSessionHost {
       persona: bootstrap.persona,
       riskLevel: bootstrap.riskLevel,
       toolRegistry: runtimeContext.toolRegistry,
+      clientToolDefinitions: (sessionId) => this.clientToolBroker.getToolDefinitions(sessionId),
       promptContext: runtimeContext.promptBootstrap.promptContext,
       environment: this.sessionOptions.environment,
       initialPromptComposition: committedSnapshot
@@ -775,18 +793,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private normalizeReloadedPersona(persona: Persona): Persona {
-    const existing = this.catalog.personas.find(
-      (candidate) => candidate.id.toLowerCase() === persona.id.toLowerCase(),
-    );
-    if (existing?.tools?.includes(TOOL_NAME_DIFF_REVIEW) !== false) {
-      return clonePersona(persona);
-    }
-
-    const clone = clonePersona(persona);
-    if (clone.tools) {
-      clone.tools = clone.tools.filter((tool) => tool !== TOOL_NAME_DIFF_REVIEW);
-    }
-    return clone;
+    return clonePersona(persona);
   }
 
   async resolvePrompt(

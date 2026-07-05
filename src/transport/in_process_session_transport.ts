@@ -15,10 +15,12 @@ import {
 } from "./pending_session_protocol_requests.js";
 import {
   handleSessionProtocolTransportResponse,
+  notifySessionProtocolClientToolListeners,
   notifySessionProtocolDeltaListeners,
   notifySessionProtocolEphemeralListeners,
 } from "./session_protocol_transport_helpers.js";
 import type {
+  SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
   SessionProtocolTransport,
@@ -34,6 +36,7 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
   private readonly closeMode: "detach" | "shutdown-host";
   private readonly deltaListeners = new Set<SessionProtocolDeltaListener>();
   private readonly ephemeralListeners = new Set<SessionProtocolEphemeralListener>();
+  private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
 
   private readyValue?: SessionProtocolReadyMessage;
@@ -118,6 +121,13 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     };
   }
 
+  onClientTool(listener: SessionProtocolClientToolListener): () => void {
+    this.clientToolListeners.add(listener);
+    return () => {
+      this.clientToolListeners.delete(listener);
+    };
+  }
+
   async close(): Promise<void> {
     if (this.isClosed) {
       return;
@@ -128,6 +138,7 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     this.pendingRequests.rejectAll(closeError);
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
+    this.clientToolListeners.clear();
     await this.handler.close(this.closeMode);
   }
 
@@ -146,6 +157,16 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
 
     if (message.type === "session.ephemeral") {
       notifySessionProtocolEphemeralListeners(this.ephemeralListeners, message, {
+        ignoreListenerErrors: true,
+      });
+      return;
+    }
+
+    if (
+      message.type === "session.clientTool.call" ||
+      message.type === "session.clientTool.cancel"
+    ) {
+      notifySessionProtocolClientToolListeners(this.clientToolListeners, message, {
         ignoreListenerErrors: true,
       });
       return;

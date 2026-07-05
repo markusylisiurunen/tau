@@ -5,6 +5,7 @@ import { buildLineDiff, collapseLongUnchangedDiffRuns } from "../utils/line_diff
 import { extractAllFencedCodeBlocks } from "../utils/messages.js";
 import { bytesToTokens, formatTokenEstimate, tokensToBytes } from "../utils/token.js";
 import { truncateToBytesFromStart } from "../utils/truncate.js";
+import { stripTauUserMetadata } from "../utils/user_metadata.js";
 
 const DEFAULT_PRUNE_FRACTION = 0.25;
 const PRUNED_TOOL_RESULT_PREFIX = "[Tool result pruned]";
@@ -723,7 +724,7 @@ function formatPruneConversationHistory(history: readonly Message[]): string[] {
   for (const message of history) {
     if (message.role === "user") {
       lines.push("<user>");
-      appendPruneContentLines(lines, message.content);
+      appendPruneUserContentLines(lines, message.content);
       lines.push("</user>");
       lines.push("");
       continue;
@@ -764,9 +765,9 @@ function formatPruneConversationHistory(history: readonly Message[]): string[] {
   return lines;
 }
 
-function appendPruneContentLines(lines: string[], content: Message["content"]): void {
+function appendPruneUserContentLines(lines: string[], content: Message["content"]): void {
   if (typeof content === "string") {
-    appendPruneText(lines, content);
+    appendPruneText(lines, stripTauUserMetadata(content));
     return;
   }
 
@@ -776,7 +777,7 @@ function appendPruneContentLines(lines: string[], content: Message["content"]): 
 
   for (const block of content) {
     if (block.type === "text") {
-      appendPruneText(lines, block.text);
+      appendPruneText(lines, stripTauUserMetadata(block.text));
     }
   }
 }

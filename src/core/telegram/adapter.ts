@@ -4,6 +4,7 @@ import { basename, extname, join } from "node:path";
 import { z } from "zod";
 import type { SpeechToTextProvider, TelegramProjectConfig } from "../config/schema.js";
 import { transcribeAudio } from "../utils/speech_to_text.js";
+import { formatTauUserText, splitTauUserText } from "../utils/user_metadata.js";
 import { formatZodError } from "../utils/zod.js";
 import {
   createScopedTelegramSessionManager,
@@ -1625,16 +1626,13 @@ class TelegramAdapterImpl {
     }
 
     const attachmentBlock = this.formatAttachmentBlock(attachments);
-    const systemEndIndex = text.startsWith("<system>") ? text.indexOf("</system>") : -1;
-    if (systemEndIndex !== -1) {
-      const systemBlockEnd = systemEndIndex + "</system>".length;
-      return [
-        text.slice(0, systemBlockEnd),
-        attachmentBlock,
-        text.slice(systemBlockEnd).trimStart(),
-      ]
-        .filter(Boolean)
-        .join("\n\n");
+    const split = splitTauUserText(text);
+    if (split.hiddenSystemBlocks.length > 0 || split.metadata.length > 0) {
+      return formatTauUserText({
+        text: [attachmentBlock, split.displayText].filter(Boolean).join("\n\n"),
+        metadata: split.metadata,
+        hiddenSystemMessages: split.hiddenSystemBlocks.map((block) => block.text),
+      });
     }
 
     return [attachmentBlock, text].join("\n\n");
@@ -2037,14 +2035,11 @@ class TelegramAdapterImpl {
     triggerErrors: string[] = [],
   ): string {
     const pending = this.pendingGroupMessagesByChat.get(chatId) ?? [];
-    const lines: string[] = [
-      "<system>",
+    const system =
       pending.length > 0
         ? "This message came from a Telegram group chat. The <telegram-group-context> block contains recent non-triggering group messages, attachments, audio transcripts, and processing errors since the previous bot-triggering turn. Use it as background context only. The <telegram-trigger-message> block is the message that explicitly mentioned the bot and triggered this turn. Respond to the trigger message."
-        : "This message came from a Telegram group chat. The <telegram-trigger-message> block is the message that explicitly mentioned the bot and triggered this turn. Respond to the trigger message.",
-      "</system>",
-      "",
-    ];
+        : "This message came from a Telegram group chat. The <telegram-trigger-message> block is the message that explicitly mentioned the bot and triggered this turn. Respond to the trigger message.";
+    const lines: string[] = [];
 
     if (pending.length > 0) {
       lines.push("<telegram-group-context>");
@@ -2073,7 +2068,7 @@ class TelegramAdapterImpl {
     this.pushIndentedAttachmentLines(lines, triggerAttachments, "");
     lines.push("</telegram-trigger-message>");
 
-    return lines.join("\n");
+    return formatTauUserText({ text: lines.join("\n"), hiddenSystemMessages: [system] });
   }
 
   private pushIndentedErrorLines(

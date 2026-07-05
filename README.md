@@ -562,6 +562,8 @@ the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launc
 
 the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). when a message is sent to that model, tau prepends the notice as a `<system>...</system>` block before the user content. this applies to main-session user messages and sub-agent prompts, regardless of persona id.
 
+session snapshots store raw recoverable user message text. tau-internal metadata is persisted in that text but stripped before model calls and user display. leading exact `<system>...</system>\n` blocks in user messages are hidden from user-facing renderers but remain model-facing instructions.
+
 if `disableBuiltinPersonas` is set to `true`, tau will not load built-in personas. if `disableBuiltinThemes` is set to `true`, tau will not load built-in themes. only entries from `~/.config/tau/` and `.tau/` will be available for those categories. you can also set these flags in any `.tau/config.json`; the most specific value wins.
 
 Telegram runner settings are in a separate config file passed to:

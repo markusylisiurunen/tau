@@ -46,6 +46,20 @@ export type TauUserMetadataSplit = {
   visibleText: string;
 };
 
+export type TauHiddenSystemBlock = {
+  text: string;
+};
+
+export type TauUserTextSplit = {
+  metadata: TauUserMetadata[];
+  modelText: string;
+  displayText: string;
+  hiddenSystemBlocks: TauHiddenSystemBlock[];
+};
+
+const TAU_HIDDEN_SYSTEM_OPEN = "<system>";
+const TAU_HIDDEN_SYSTEM_CLOSE = "</system>";
+
 function encodeMetadata(metadata: readonly TauUserMetadata[]): string {
   const json = JSON.stringify(metadata);
   return Buffer.from(json, "utf8").toString("base64url");
@@ -233,6 +247,53 @@ export function stripTauUserMetadata(text: string): string {
   return splitTauUserMetadata(text).visibleText;
 }
 
+export function stripTauUserDisplayText(text: string): string {
+  return splitTauUserText(text).displayText;
+}
+
+export function splitTauUserText(text: string): TauUserTextSplit {
+  const metadataSplit = splitTauUserMetadata(text);
+  const displaySplit = splitTauHiddenSystemBlocks(metadataSplit.visibleText);
+  return {
+    metadata: metadataSplit.metadata,
+    modelText: metadataSplit.visibleText,
+    displayText: displaySplit.visibleText,
+    hiddenSystemBlocks: displaySplit.hiddenSystemBlocks,
+  };
+}
+
+export function formatTauHiddenSystemBlock(text: string): string {
+  return `${TAU_HIDDEN_SYSTEM_OPEN}${text.replaceAll(TAU_HIDDEN_SYSTEM_CLOSE, "<\\/system>")}${TAU_HIDDEN_SYSTEM_CLOSE}\n`;
+}
+
+export function formatTauUserText(args: {
+  text: string;
+  metadata?: readonly TauUserMetadata[];
+  hiddenSystemMessages?: readonly string[];
+}): string {
+  const hiddenSystemText = (args.hiddenSystemMessages ?? [])
+    .filter((message) => message.length > 0)
+    .map(formatTauHiddenSystemBlock)
+    .join("");
+  return prependTauUserMetadata(`${hiddenSystemText}${args.text}`, args.metadata ?? []);
+}
+
+export function prependTauHiddenSystemMessages(
+  text: string,
+  hiddenSystemMessages: readonly string[],
+): string {
+  if (hiddenSystemMessages.length === 0) {
+    return text;
+  }
+
+  const existing = splitTauUserMetadata(text);
+  return formatTauUserText({
+    text: existing.visibleText,
+    metadata: existing.metadata,
+    hiddenSystemMessages,
+  });
+}
+
 export function prependTauUserMetadata(
   visibleText: string,
   metadata: readonly TauUserMetadata[],
@@ -243,6 +304,34 @@ export function prependTauUserMetadata(
 
   const existing = splitTauUserMetadata(visibleText);
   return `${TAU_USER_METADATA_PREFIX}${encodeMetadata([...metadata, ...existing.metadata])}${TAU_USER_METADATA_SUFFIX}${existing.visibleText}`;
+}
+
+function splitTauHiddenSystemBlocks(text: string): {
+  hiddenSystemBlocks: TauHiddenSystemBlock[];
+  visibleText: string;
+} {
+  const hiddenSystemBlocks: TauHiddenSystemBlock[] = [];
+  let remaining = text;
+
+  while (remaining.startsWith(TAU_HIDDEN_SYSTEM_OPEN)) {
+    const end = remaining.indexOf(TAU_HIDDEN_SYSTEM_CLOSE, TAU_HIDDEN_SYSTEM_OPEN.length);
+    if (end < 0) {
+      break;
+    }
+
+    const contentEnd = end;
+    const blockEnd = end + TAU_HIDDEN_SYSTEM_CLOSE.length;
+    if (remaining[blockEnd] !== "\n") {
+      break;
+    }
+
+    hiddenSystemBlocks.push({
+      text: remaining.slice(TAU_HIDDEN_SYSTEM_OPEN.length, contentEnd),
+    });
+    remaining = remaining.slice(blockEnd + 1);
+  }
+
+  return { hiddenSystemBlocks, visibleText: remaining };
 }
 
 function splitMessageText(message: Message): TauUserMetadataSplit | undefined {
@@ -305,12 +394,20 @@ export function hasAutoCompactionContinuationMetadata(message: Message): boolean
 }
 
 export function stripTauUserMetadataFromMessage(message: Message): Message {
+  return mapUserMessageText(message, stripTauUserMetadata);
+}
+
+export function stripTauUserDisplayTextFromMessage(message: Message): Message {
+  return mapUserMessageText(message, stripTauUserDisplayText);
+}
+
+function mapUserMessageText(message: Message, mapText: (text: string) => string): Message {
   if (message.role !== "user") {
     return message;
   }
 
   if (typeof message.content === "string") {
-    const visibleText = stripTauUserMetadata(message.content);
+    const visibleText = mapText(message.content);
     if (visibleText === message.content) {
       return message;
     }
@@ -319,7 +416,7 @@ export function stripTauUserMetadataFromMessage(message: Message): Message {
 
   const firstBlock = message.content[0];
   if (typeof firstBlock === "string") {
-    const visibleText = stripTauUserMetadata(firstBlock);
+    const visibleText = mapText(firstBlock);
     if (visibleText === firstBlock) {
       return message;
     }
@@ -328,7 +425,7 @@ export function stripTauUserMetadataFromMessage(message: Message): Message {
     return { ...message, content } as Message;
   }
   if (firstBlock?.type === "text") {
-    const visibleText = stripTauUserMetadata(firstBlock.text ?? "");
+    const visibleText = mapText(firstBlock.text ?? "");
     if (visibleText === firstBlock.text) {
       return message;
     }

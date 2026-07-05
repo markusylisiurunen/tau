@@ -14,6 +14,7 @@ import type {
 import type { TelegramProjectConfig } from "../config/schema.js";
 import type { RiskLevel } from "../types.js";
 import { extractAssistantText } from "../utils/messages.js";
+import { formatTauUserText } from "../utils/user_metadata.js";
 import {
   cleanupWorkspacePath as cleanupWorkspacePathOnDisk,
   type PrepareWorkspaceOptions,
@@ -849,7 +850,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       return text;
     }
 
-    return [`<system>`, messages.join("\n"), `</system>`, text].join("\n");
+    return formatTauUserText({ text, hiddenSystemMessages: [messages.join("\n")] });
   }
 
   private countActiveSessions(): number {

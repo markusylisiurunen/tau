@@ -3,7 +3,12 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
+import { buildAutoCompactionContinuationMessage } from "../dist/core/session/compaction.js";
+import {
+  hasAutoCompactionContinuationMetadata,
+  prependTauUserMetadata,
+  stripTauUserDisplayText,
+} from "../dist/core/utils/user_metadata.js";
 import { applySessionProtocolDelta } from "../dist/protocol/session_protocol.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
@@ -376,10 +381,14 @@ class FakeSession {
   rewindToHistoryEntryId = vi.fn(async (historyEntryId) => {
     const historyEntries = historyEntriesFromSnapshot(this.snapshotValue);
     const historyIndex = historyEntries.findIndex((entry) => entry.id === historyEntryId);
-    if (historyIndex < 0 || historyEntries[historyIndex].message.role !== "user") {
+    const entry = historyEntries[historyIndex];
+    if (
+      historyIndex < 0 ||
+      entry.message.role !== "user" ||
+      hasAutoCompactionContinuationMetadata(entry.message)
+    ) {
       throw new Error("rewind failed");
     }
-    const entry = historyEntries[historyIndex];
     const removedEntryIds = historyEntries.slice(historyIndex).map((item) => item.id);
     this.snapshotValue = updateSnapshot(this.snapshotValue, {
       revision: this.snapshotValue.revision + 1,
@@ -387,11 +396,13 @@ class FakeSession {
     });
     const text =
       typeof entry.message.content === "string"
-        ? entry.message.content
-        : entry.message.content
-            .filter((block) => block.type === "text")
-            .map((block) => block.text)
-            .join("\n");
+        ? stripTauUserDisplayText(entry.message.content)
+        : stripTauUserDisplayText(
+            entry.message.content
+              .filter((block) => typeof block === "string" || block.type === "text")
+              .map((block) => (typeof block === "string" ? block : block.text))
+              .join("\n\n"),
+          );
     return {
       snapshot: this.snapshotValue,
       historyEntryId,
@@ -1105,6 +1116,46 @@ describe("SessionChatController", () => {
         expect.objectContaining({
           id: "assistant-1",
           model: expect.objectContaining({ type: "assistant" }),
+        }),
+      ]),
+    );
+  });
+
+  it("hides raw user-message metadata and hidden system blocks from snapshots", async () => {
+    const rawText = prependTauUserMetadata("<system>hidden</system>\n\nvisible", [
+      {
+        type: "compaction",
+        version: 1,
+        summary: "summary",
+        preservedUserMessages: [],
+      },
+    ]);
+    const session = new FakeSession(
+      createSnapshot([
+        {
+          id: "history-raw",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: rawText }],
+          },
+        },
+      ]),
+    );
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+    });
+
+    controller.start();
+
+    expect(view.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "history-raw",
+          model: { type: "user", text: "\nvisible" },
         }),
       ]),
     );
@@ -3395,6 +3446,13 @@ describe("SessionChatController", () => {
             role: "user",
             content: [{ type: "text", text: "second message" }],
           },
+        },
+        {
+          id: "history-continuation",
+          message: buildAutoCompactionContinuationMessage({
+            cutType: "turn-boundary",
+            now: 1,
+          }),
         },
         {
           id: "history-3",

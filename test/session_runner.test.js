@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { prepareSessionCompaction } from "../dist/core/session/compaction.js";
 import { runDirectBashCommand } from "../dist/core/session/direct_bash.js";
-import { pruneSessionHistory } from "../dist/core/session/pruning.js";
+import {
+  prepareSessionSmartPrunePrompt,
+  pruneSessionHistory,
+} from "../dist/core/session/pruning.js";
 import { runModelSubturn, runToolCalls } from "../dist/core/session/runner.js";
 import { BASH_DEFAULT_TIMEOUT_MS } from "../dist/core/tools/bash.js";
 import { scopeToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
@@ -656,6 +659,42 @@ describe("session pruning", () => {
     const bashText = entries[2].message.content[0].text;
     expect(bashText).toContain("[Tool result pruned] bash output removed");
     expect(result.prunedToolResults.map((item) => item.toolCallId)).toEqual(["edit-1", "bash-1"]);
+  });
+
+  it("strips tau metadata but keeps hidden system blocks in smart prune prompts", () => {
+    const rawUserText = prependTauUserMetadata(
+      "<system>hidden pruning context</system>\nvisible request",
+      [
+        {
+          type: "compaction",
+          version: 1,
+          summary: "old summary",
+          preservedUserMessages: [],
+        },
+      ],
+    );
+    const request = prepareSessionSmartPrunePrompt({
+      historyEntries: [
+        { id: "user", message: userMessage(rawUserText) },
+        {
+          id: "bash-result",
+          message: {
+            role: "toolResult",
+            toolCallId: "bash-1",
+            toolName: TOOL_NAME_BASH,
+            content: [{ type: "text", text: "x".repeat(12_000) }],
+            isError: false,
+            timestamp: 1,
+          },
+        },
+      ],
+      fraction: 1,
+    });
+
+    expect(request?.prompt).toContain("&lt;system&gt;hidden pruning context&lt;/system&gt;");
+    expect(request?.prompt).toContain("visible request");
+    expect(request?.prompt).not.toContain("TAU_METADATA_V1");
+    expect(request?.prompt).not.toContain("old summary");
   });
 
   it("fails fast when a selected prune replacement cannot be applied", () => {

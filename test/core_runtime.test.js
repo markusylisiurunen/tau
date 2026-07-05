@@ -38,10 +38,12 @@ import {
 } from "../dist/core/utils/context_builder.js";
 import { registerModelRuntimeProvider } from "../dist/core/utils/model_stream.js";
 import {
+  formatTauUserText,
   getAutoCompactionMetadataFromMessage,
   getCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
+  stripTauUserDisplayText,
   stripTauUserMetadata,
   stripTauUserMetadataFromMessage,
   TAU_USER_METADATA_PREFIX,
@@ -166,7 +168,7 @@ describe("core session rewind APIs", () => {
     });
 
     session.addUserText(
-      "<system>notice one</system>\n\n<system>notice two</system>\n\nfirst line\nsecond line",
+      "<system>notice one</system>\n<system>notice two</system>\nfirst line\nsecond line",
     );
     session.addMessage({
       role: "assistant",
@@ -234,7 +236,7 @@ describe("core session rewind APIs", () => {
       content: [{ type: "text", text }],
       timestamp: 0,
     });
-    session.addMessage(
+    const continuationId = session.addMessage(
       buildAutoCompactionContinuationMessage({ cutType: "turn-boundary", now: 1 }),
     );
 
@@ -245,6 +247,8 @@ describe("core session rewind APIs", () => {
     expect(session.historyEntries).toHaveLength(1);
     expect(session.historyEntries[0].message.content[0].text).toBe("visible summary");
     expect(session.listRewindCandidates()[0].text).toBe("visible summary");
+    expect(session.rewindToHistoryEntryId(continuationId)).toBeUndefined();
+    expect(session.rawHistory).toHaveLength(2);
   });
 
   it("returns cloned public history snapshots", () => {
@@ -466,7 +470,7 @@ describe("core session model notices", () => {
 
     session.addUserText("hello");
 
-    expect(getUserText(session, 0)).toBe("<system>always use tau tools</system>\n\nhello");
+    expect(getUserText(session, 0)).toBe("<system>always use tau tools</system>\nhello");
     expect(session.listRewindCandidates().map((candidate) => candidate.text)).toEqual(["hello"]);
   });
 
@@ -496,8 +500,8 @@ describe("core session model notices", () => {
     session.setPersona(anthropicPersona, "system two", {});
     session.addUserText("message two");
 
-    expect(getUserText(session, 0)).toBe("<system>openai notice</system>\n\nmessage one");
-    expect(getUserText(session, 1)).toBe("<system>anthropic notice</system>\n\nmessage two");
+    expect(getUserText(session, 0)).toBe("<system>openai notice</system>\nmessage one");
+    expect(getUserText(session, 1)).toBe("<system>anthropic notice</system>\nmessage two");
   });
 });
 
@@ -1027,6 +1031,7 @@ describe("compaction context message", () => {
 
     expect(text.startsWith(TAU_USER_METADATA_PREFIX)).toBe(true);
     expect(stripTauUserMetadata(text)).toBe(visibleText);
+    expect(stripTauUserDisplayText(text)).toBe(visibleText);
     expect(stripTauUserMetadataFromMessage(message).content[0].text).toBe(visibleText);
     expect(getCompactionMetadataFromMessage(message)).toEqual({
       type: "compaction",
@@ -1034,6 +1039,24 @@ describe("compaction context message", () => {
       summary: "## Goal\nShip feature",
       preservedUserMessages: [{ id: "history-one", text: "ship the feature" }],
     });
+  });
+
+  it("strips strict leading hidden system blocks only from display text", () => {
+    const text = formatTauUserText({
+      text: "\nvisible",
+      hiddenSystemMessages: ["notice one", "notice two"],
+    });
+
+    expect(stripTauUserMetadata(text)).toBe(
+      "<system>notice one</system>\n<system>notice two</system>\n\nvisible",
+    );
+    expect(stripTauUserDisplayText(text)).toBe("\nvisible");
+    expect(stripTauUserDisplayText("<system>notice</system>visible")).toBe(
+      "<system>notice</system>visible",
+    );
+    expect(stripTauUserDisplayText("prefix <system>notice</system>\nvisible")).toBe(
+      "prefix <system>notice</system>\nvisible",
+    );
   });
 
   it("fails fast for invalid tau user metadata", () => {

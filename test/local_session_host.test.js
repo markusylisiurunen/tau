@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createLocalToolExecutionBackend, ToolCatalog } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
+import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
 import {
   LocalExecutionEnvironment,
   LocalExecutionEnvironmentResolver,
@@ -1266,6 +1267,41 @@ describe("LocalSessionHost", () => {
       environmentTag: storedSnapshot.bootstrap.prompt.environmentTag,
       subagentPrompts: storedSnapshot.bootstrap.prompt.subagentPrompts,
     });
+  });
+
+  it("persists raw user message metadata and hidden system blocks in snapshots", async () => {
+    const store = new MemorySessionStore();
+    const originalHost = createHost(store);
+    const originalSession = await originalHost.createSession(localCreateInput);
+    const rawText = prependTauUserMetadata("<system>hidden</system>\nvisible", [
+      {
+        type: "compaction",
+        version: 1,
+        summary: "summary",
+        preservedUserMessages: [],
+      },
+    ]);
+    const historyEntryId = originalSession.session.addMessage(
+      {
+        role: "user",
+        content: [{ type: "text", text: rawText }],
+        timestamp: 1,
+      },
+      { historyEntryId: "history-raw" },
+    );
+
+    const storedSnapshot = await originalSession.snapshot();
+    const storedMessage = storedSnapshot.messages.find((entry) => entry.id === historyEntryId);
+    expect(storedMessage?.message.content[0].text).toBe(rawText);
+
+    const recoveredHost = createHost(store);
+    const recoveredSession = await recoveredHost.observeSession(storedSnapshot.sessionId);
+    expect(recoveredSession).toBeDefined();
+    if (!recoveredSession) {
+      throw new Error("expected stored session to recover");
+    }
+    expect(recoveredSession.session.rawHistoryEntries[0].message.content[0].text).toBe(rawText);
+    await expect(recoveredSession.snapshot()).resolves.toEqual(storedSnapshot);
   });
 
   it("recovers stored sessions with their persisted prompt composition", async () => {

@@ -2,13 +2,12 @@ import { Buffer } from "node:buffer";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { buildCompactionUserMessage, formatHistoryForCompaction } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
-import { prependModelNotice } from "../utils/model_notices.js";
 import { bytesToTokens } from "../utils/token.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import {
+  formatTauUserText,
   getSummaryCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
-  prependTauUserMetadata,
   stripTauUserMetadata,
 } from "../utils/user_metadata.js";
 
@@ -531,7 +530,6 @@ export function buildAutoCompactionContinuationMessage(args: {
   subagentStatus?: string;
 }): Message {
   const lines = [
-    "<system>",
     "The conversation context before this point has been compacted.",
     "Earlier context is summarized in the compaction message above. Recent messages are retained verbatim after that summary.",
     "Continue from the summary and retained context without asking the user to repeat information.",
@@ -548,16 +546,20 @@ export function buildAutoCompactionContinuationMessage(args: {
     lines.push("", "<active-subagents>", subagentStatus, "</active-subagents>");
   }
 
-  lines.push("</system>");
-
-  const text = prependModelNotice(lines.join("\n"), args.modelNotice);
+  const hiddenSystemMessages = [args.modelNotice?.trim() || undefined, lines.join("\n")].filter(
+    (message): message is string => message !== undefined,
+  );
 
   return {
     role: "user",
     content: [
       {
         type: "text",
-        text: prependTauUserMetadata(text, [{ type: "auto-compaction-continuation", version: 1 }]),
+        text: formatTauUserText({
+          text: "",
+          metadata: [{ type: "auto-compaction-continuation", version: 1 }],
+          hiddenSystemMessages,
+        }),
       },
     ],
     timestamp: args.now,

@@ -987,7 +987,7 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("only sends the final assistant message in quiet mode", async () => {
+  it("sends assistant progress messages in quiet mode", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -1087,14 +1087,11 @@ describe("telegram adapter", () => {
       expect(apiHarness.chatActions).toContainEqual(
         expect.objectContaining({ chatId: 470, action: "typing" }),
       );
-      expect(apiHarness.richMessageDrafts).toEqual([
-        expect.objectContaining({
-          chatId: 470,
-          markdown: "<tg-thinking>Thinking...</tg-thinking>",
-        }),
+      expect(apiHarness.sendRichMessages).toEqual([
         expect.objectContaining({ chatId: 470, markdown: "intermediate" }),
         expect.objectContaining({ chatId: 470, markdown: "final answer" }),
       ]);
+      expect(apiHarness.richMessageDrafts).toEqual([]);
       expect(
         apiHarness.sendMessages.some((entry) => entry.text.includes("(s12) run started")),
       ).toBe(false);
@@ -1112,7 +1109,7 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("refreshes rich message drafts after thinking has been visible for 20 seconds", async () => {
+  it("does not send rich message drafts while a run is active", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -1161,9 +1158,9 @@ describe("telegram adapter", () => {
         updatedAt: "2024-01-01T00:01:00.000Z",
       });
 
-      expect(apiHarness.richMessageDrafts).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(9_999);
-      expect(apiHarness.richMessageDrafts).toHaveLength(1);
+      expect(apiHarness.richMessageDrafts).toEqual([]);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(apiHarness.richMessageDrafts).toEqual([]);
 
       managerHarness.manager.emit({
         type: "session-progress",
@@ -1176,48 +1173,11 @@ describe("telegram adapter", () => {
           text: "checking the logs",
         },
       });
-      expect(apiHarness.richMessageDrafts).toEqual([
-        expect.objectContaining({
-          chatId: 471,
-          markdown: "<tg-thinking>Thinking...</tg-thinking>",
-        }),
-        expect.objectContaining({ chatId: 471, markdown: "checking the logs" }),
-      ]);
 
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(apiHarness.richMessageDrafts).toEqual([
-        expect.objectContaining({
-          chatId: 471,
-          markdown: "<tg-thinking>Thinking...</tg-thinking>",
-        }),
-        expect.objectContaining({ chatId: 471, markdown: "checking the logs" }),
-        expect.objectContaining({
-          chatId: 471,
-          draftId: apiHarness.richMessageDrafts[0].draftId,
-          markdown: "<tg-thinking>Thinking...</tg-thinking>",
-        }),
-      ]);
-
-      await vi.advanceTimersByTimeAsync(19_999);
-      expect(apiHarness.richMessageDrafts).toHaveLength(3);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(apiHarness.richMessageDrafts).toEqual([
-        expect.objectContaining({
-          chatId: 471,
-          markdown: "<tg-thinking>Thinking...</tg-thinking>",
-        }),
-        expect.objectContaining({ chatId: 471, markdown: "checking the logs" }),
-        expect.objectContaining({
-          chatId: 471,
-          draftId: apiHarness.richMessageDrafts[0].draftId,
-          markdown: "<tg-thinking>Thinking...</tg-thinking>",
-        }),
-        expect.objectContaining({
-          chatId: 471,
-          draftId: apiHarness.richMessageDrafts[0].draftId,
-          markdown: "<tg-thinking>Thinking...</tg-thinking>",
-        }),
-      ]);
+      await waitFor(() =>
+        apiHarness.sendRichMessages.some((entry) => entry.markdown === "checking the logs"),
+      );
+      expect(apiHarness.richMessageDrafts).toEqual([]);
 
       managerHarness.manager.emit({
         type: "session-state-changed",
@@ -1228,7 +1188,7 @@ describe("telegram adapter", () => {
         updatedAt: "2024-01-01T00:02:00.000Z",
       });
       await vi.advanceTimersByTimeAsync(20_000);
-      expect(apiHarness.richMessageDrafts).toHaveLength(4);
+      expect(apiHarness.richMessageDrafts).toEqual([]);
     } finally {
       vi.useRealTimers();
       await adapter.close();

@@ -75,7 +75,7 @@ Supported slash commands:
 - `/status` returns a short natural-language paragraph about the active session.
 - `/interrupt` interrupts the active run.
 
-The runner uses quiet mode for persistent chat output: it does not send tool or lifecycle progress messages to Telegram, and sends only command acknowledgements/errors plus the final assistant message for each run. While a run is active, it refreshes Telegram's typing indicator in DMs and groups. In DMs, it also uses native rich message drafts with `<tg-thinking>Thinking...</tg-thinking>` for Telegram's native thinking state, and short assistant progress narration temporarily replaces that draft for up to 10 seconds before returning to “Thinking…”. Rich message drafts are refreshed every 20 seconds while the run is active, and final assistant messages are sent as Telegram rich markdown.
+The runner uses quiet mode for tool and lifecycle progress: it does not send tool or lifecycle progress messages to Telegram. It does send assistant messages as they are committed, so one active run can send multiple assistant progress updates before it finishes. While a run is active, it refreshes Telegram's typing indicator in DMs and groups. Assistant messages are sent as Telegram rich markdown.
 
 DM and group behavior matches the previous Telegram adapter:
 

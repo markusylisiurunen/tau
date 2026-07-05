@@ -16,7 +16,6 @@ import {
   captureDiffReviewSnapshot,
   DiffReviewBridge,
   type DiffReviewToolLauncher,
-  parseDiffReviewToolArgs,
 } from "../core/diff_review/index.js";
 import { buildDiffReviewInstructions } from "../core/diff_review/review_thread.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
@@ -2077,42 +2076,7 @@ export class SessionChatController {
   }
 
   async runClientDiffReview(rawArgs: unknown, signal: AbortSignal): Promise<string> {
-    if (this.diffReviewService.isActive()) {
-      throw new Error("diff review is already active");
-    }
-
-    const diffTool = this.resolveDiffToolConfig();
-    if (!diffTool) {
-      throw new Error("configure diffTool in config.json before using diff_review");
-    }
-
-    const parsedArgs = parseDiffReviewToolArgs(rawArgs);
-    if (!parsedArgs.ok) {
-      throw new Error(`Invalid arguments: ${parsedArgs.error}`);
-    }
-
-    const started = await this.startDiffReviewBridge({
-      source: parsedArgs.data.source,
-      diffTool,
-      signal,
-    });
-    if (signal.aborted) {
-      await started.bridge.cancel("controller_cancelled").catch(() => undefined);
-      throw new Error("diff review aborted");
-    }
-
-    const result = await started.result;
-    if (result.status === "returned") {
-      return result.review;
-    }
-
-    if (result.reason === "tool_cancelled") {
-      throw new Error("diff review cancelled by the diff review tool");
-    }
-    if (result.reason === "tool_disconnected") {
-      throw new Error("diff review tool disconnected before returning a review");
-    }
-    throw new Error("diff review cancelled");
+    return await this.diffReviewService.runModelTool(rawArgs, signal);
   }
 
   private async startDiffReview(argsText: string): Promise<void> {

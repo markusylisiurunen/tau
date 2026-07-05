@@ -131,6 +131,7 @@ export class SessionChatController {
   private readonly snapshotRecoveryDeltas: SessionProtocolDeltaMessage[] = [];
   private isStreaming = false;
   private submittedTurnInProgress = false;
+  private manualCompactionInProgress = false;
   private isBashMode = false;
   private isBashIncognito = false;
   private isMemoryMode = false;
@@ -1439,7 +1440,7 @@ export class SessionChatController {
   }
 
   private isSessionOperationActive(): boolean {
-    return this.isStreaming || this.submittedTurnInProgress;
+    return this.isStreaming || this.submittedTurnInProgress || this.manualCompactionInProgress;
   }
 
   private async recoverFromRevisionGap(): Promise<void> {
@@ -1713,6 +1714,8 @@ export class SessionChatController {
     }
 
     const guidance = guidanceText?.trim() ?? "";
+    this.manualCompactionInProgress = true;
+    this.refreshStatus();
     this.view.addSystemMessage("summarizing session...", "success");
 
     try {
@@ -1720,7 +1723,6 @@ export class SessionChatController {
         ...(guidance ? { guidance } : {}),
       });
       this.renderCompactedSnapshot(result.snapshot);
-      this.refreshStatus();
       const message =
         mode === "summary-and-last" && result.includedLastAssistant
           ? "session compacted. previous context and last assistant message have been included."
@@ -1730,6 +1732,9 @@ export class SessionChatController {
       const message = (error as Error).message || "compaction failed";
       const kind = message === "no conversation to compact." ? "warn" : "error";
       this.view.addSystemMessage(kind === "warn" ? message : `compact failed: ${message}`, kind);
+    } finally {
+      this.manualCompactionInProgress = false;
+      this.refreshStatus();
     }
   }
 
@@ -1869,7 +1874,7 @@ export class SessionChatController {
         duration: this.getTurnDurationString(),
         riskLevel: this.snapshot.settings.riskLevel,
         commandHint: this.diffReviewService.getCommandHint(
-          this.getSnapshotOperationStatusHint() ?? this.speechStatusHint ?? this.commandHint,
+          this.getSessionOperationStatusHint() ?? this.speechStatusHint ?? this.commandHint,
         ),
       },
       editor: {
@@ -1894,7 +1899,10 @@ export class SessionChatController {
     return "normal";
   }
 
-  private getSnapshotOperationStatusHint(): string | undefined {
+  private getSessionOperationStatusHint(): string | undefined {
+    if (this.manualCompactionInProgress) {
+      return "compacting context...";
+    }
     const hasRunningAutoCompaction = this.hasRunningAutoCompactionOperation(this.snapshot);
     return hasRunningAutoCompaction ? "compacting context..." : undefined;
   }

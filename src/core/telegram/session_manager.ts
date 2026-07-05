@@ -6,6 +6,7 @@ import type {
   SessionProtocolDeltaMessage,
   SessionProtocolFacet,
   SessionProtocolInterruptResult,
+  SessionProtocolMessage,
   SessionProtocolSteerResult,
   SessionProtocolSubmitResult,
   SessionProtocolUnobserveResult,
@@ -111,6 +112,7 @@ type SessionEntry = {
   backgroundBootstrapPromise?: Promise<void>;
   workspaceCleanupPromise?: Promise<void>;
   consumedFacetEventCounts: Map<string, number>;
+  emittedAssistantMessageIds: Set<string>;
 };
 
 export type TelegramSessionManagerEvent =
@@ -284,6 +286,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       abortController: new AbortController(),
       cancelRequested: false,
       consumedFacetEventCounts: new Map(),
+      emittedAssistantMessageIds: new Set(),
     };
 
     this.sessions.set(id, entry);
@@ -915,7 +918,19 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   }
 
   private handleClientEvent(entry: SessionEntry, clientEvent: TelegramSessionClientEvent): void {
-    if (clientEvent.delta.type !== "snapshot.patch") {
+    if (clientEvent.delta.type === "snapshot.reset") {
+      if (clientEvent.reason !== "assistant-message") {
+        return;
+      }
+
+      const messages = clientEvent.delta.snapshot.messages;
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message?.state === "committed" && isAssistantMessage(message.message)) {
+          this.handleAssistantMessageProgress(entry, message);
+          break;
+        }
+      }
       return;
     }
 
@@ -924,20 +939,39 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         this.handleFacetProgress(entry, change.facet);
         continue;
       }
-      if (
-        change.type === "message.replace" &&
-        change.message.state === "committed" &&
-        isAssistantMessage(change.message.message)
-      ) {
-        const text = extractAssistantText(change.message.message);
-        if (text) {
-          this.emitProgress(entry, {
-            type: "assistant-message",
-            text,
-          });
-        }
+
+      if (clientEvent.reason !== "assistant-message") {
+        continue;
+      }
+
+      if (change.type === "message.append" || change.type === "message.replace") {
+        this.handleAssistantMessageProgress(entry, change.message);
       }
     }
+  }
+
+  private handleAssistantMessageProgress(
+    entry: SessionEntry,
+    message: SessionProtocolMessage,
+  ): void {
+    if (
+      message.state !== "committed" ||
+      !isAssistantMessage(message.message) ||
+      entry.emittedAssistantMessageIds.has(message.id)
+    ) {
+      return;
+    }
+
+    const text = extractAssistantText(message.message);
+    if (!text) {
+      return;
+    }
+
+    entry.emittedAssistantMessageIds.add(message.id);
+    this.emitProgress(entry, {
+      type: "assistant-message",
+      text,
+    });
   }
 
   private handleFacetProgress(entry: SessionEntry, facet: SessionProtocolFacet): void {

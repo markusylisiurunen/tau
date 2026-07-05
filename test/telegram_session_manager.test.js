@@ -84,14 +84,14 @@ function createClientHarness() {
   };
 }
 
-function createPatchDelta(changes, revision = 1) {
+function createPatchDelta(changes, revision = 1, reason = "tool-run") {
   return {
     version: 1,
     type: "session.delta",
     sessionId: "rpc-1",
     fromRevision: revision,
     toRevision: revision + 1,
-    reason: "tool-run",
+    reason,
     delta: { type: "snapshot.patch", changes },
   };
 }
@@ -108,6 +108,64 @@ function createToolUiFacetChange(toolCallId, eventOrEvents) {
       data: { events },
     },
   };
+}
+
+function createAssistantProtocolMessage(id, content, stopReason = "stop") {
+  return {
+    id,
+    state: "committed",
+    modelVisible: true,
+    message: {
+      role: "assistant",
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.5",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason,
+      content,
+      timestamp: 0,
+    },
+  };
+}
+
+function createDemoSessionManager(clientHarness) {
+  return createTelegramSessionManager({
+    projects: {
+      demo: {
+        repo: "git@example.com:demo.git",
+      },
+    },
+    prepareWorkspace: vi.fn(async () => ({
+      workspacePath: "/tmp/ws/demo",
+      sessionCwd: "/tmp/ws/demo",
+    })),
+    createClient: vi.fn(async () => clientHarness.client),
+  });
+}
+
+async function startRunningSession(manager) {
+  const created = await manager.createSession({ projectId: "demo" });
+  await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+  const sendPromise = manager.sendMessage(created.id, "run tasks");
+  await waitFor(() => manager.getSession(created.id)?.state === "running");
+
+  return { created, sendPromise };
+}
+
+function assistantProgressTexts(events) {
+  return events
+    .filter(
+      (event) => event.type === "session-progress" && event.progress.type === "assistant-message",
+    )
+    .map((event) => event.progress.text);
 }
 
 describe("telegram session manager", () => {
@@ -983,33 +1041,16 @@ describe("telegram session manager", () => {
     );
 
     clientHarness.emitDelta(
-      createPatchDelta([
-        {
-          type: "message.replace",
-          message: {
-            id: "h1",
-            state: "committed",
-            modelVisible: true,
-            message: {
-              role: "assistant",
-              api: "openai-responses",
-              provider: "openai",
-              model: "gpt-5.5",
-              usage: {
-                input: 0,
-                output: 0,
-                cacheRead: 0,
-                cacheWrite: 0,
-                totalTokens: 0,
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-              },
-              stopReason: "stop",
-              content: [{ type: "text", text: "done" }],
-              timestamp: 0,
-            },
+      createPatchDelta(
+        [
+          {
+            type: "message.replace",
+            message: createAssistantProtocolMessage("h1", [{ type: "text", text: "done" }]),
           },
-        },
-      ]),
+        ],
+        1,
+        "assistant-message",
+      ),
     );
 
     clientHarness.submitDeferred.resolve({
@@ -1057,6 +1098,134 @@ describe("telegram session manager", () => {
           event.progress.text === "done",
       ),
     ).toBe(true);
+  });
+
+  it("emits committed tool-use assistant preambles without streaming draft text", async () => {
+    const clientHarness = createClientHarness();
+    const manager = createDemoSessionManager(clientHarness);
+    const events = [];
+    manager.onEvent((event) => {
+      events.push(event);
+    });
+    const { sendPromise } = await startRunningSession(manager);
+
+    clientHarness.emitDelta(
+      createPatchDelta(
+        [
+          {
+            type: "message.append",
+            message: {
+              id: "draft-1",
+              state: "draft",
+              modelVisible: false,
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "streaming draft" }],
+                timestamp: 0,
+              },
+            },
+          },
+        ],
+        1,
+        "assistant-stream",
+      ),
+    );
+
+    clientHarness.emitDelta(
+      createPatchDelta(
+        [
+          {
+            type: "message.replace",
+            message: createAssistantProtocolMessage(
+              "assistant-1",
+              [
+                { type: "text", text: "I’ll inspect that now." },
+                {
+                  type: "toolCall",
+                  id: "tool-1",
+                  name: "bash",
+                  arguments: { command: "npm test" },
+                },
+              ],
+              "toolUse",
+            ),
+          },
+        ],
+        2,
+        "assistant-message",
+      ),
+    );
+
+    clientHarness.emitDelta(
+      createPatchDelta(
+        [
+          {
+            type: "message.replace",
+            message: createAssistantProtocolMessage("assistant-2", [
+              { type: "text", text: "final answer" },
+            ]),
+          },
+        ],
+        3,
+        "assistant-message",
+      ),
+    );
+
+    clientHarness.submitDeferred.resolve({
+      userHistoryEntryId: "history-progress",
+      turn: { aborted: false },
+    });
+    await sendPromise;
+
+    expect(assistantProgressTexts(events)).toEqual(["I’ll inspect that now.", "final answer"]);
+  });
+
+  it("emits committed assistant progress from assistant-message snapshot resets once", async () => {
+    const clientHarness = createClientHarness();
+    const manager = createDemoSessionManager(clientHarness);
+    const events = [];
+    manager.onEvent((event) => {
+      events.push(event);
+    });
+    const { sendPromise } = await startRunningSession(manager);
+
+    const assistantMessage = createAssistantProtocolMessage("assistant-reset", [
+      { type: "text", text: "reset preamble" },
+    ]);
+
+    const snapshot = createProtocolSnapshot({
+      sessionId: "rpc-1",
+      revision: 2,
+      messages: [assistantMessage],
+    });
+
+    clientHarness.emitDelta({
+      version: 1,
+      type: "session.delta",
+      sessionId: "rpc-1",
+      fromRevision: 1,
+      toRevision: 2,
+      reason: "assistant-message",
+      delta: { type: "snapshot.reset", snapshot },
+    });
+
+    clientHarness.emitDelta({
+      version: 1,
+      type: "session.delta",
+      sessionId: "rpc-1",
+      fromRevision: 2,
+      toRevision: 3,
+      reason: "assistant-message",
+      delta: { type: "snapshot.reset", snapshot: { ...snapshot, revision: 3 } },
+    });
+
+    clientHarness.submitDeferred.resolve({
+      userHistoryEntryId: "history-progress",
+      turn: { aborted: false },
+    });
+    await sendPromise;
+
+    expect(assistantProgressTexts(events)).toEqual(["reset preamble"]);
   });
 
   it("does not replay already consumed tool facet progress events", async () => {

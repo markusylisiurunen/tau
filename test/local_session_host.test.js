@@ -463,6 +463,55 @@ describe("LocalSessionHost", () => {
     );
   });
 
+  it("clears running auto-compaction operations on compaction end", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+
+    const deltas = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+
+    await hostedSession.enqueueRuntimeEvent({ type: "compaction_start", reason: "threshold" });
+    expect(deltas.at(-1).delta.changes).toEqual([
+      expect.objectContaining({
+        type: "timeline.append",
+        item: expect.objectContaining({
+          type: "operation",
+          operation: expect.objectContaining({
+            kind: "auto-compaction",
+            status: "running",
+          }),
+        }),
+      }),
+    ]);
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "compaction_end",
+      reason: "threshold",
+      outcome: "compacted",
+      result: {
+        summaryHistoryEntryId: "summary-entry",
+        continuationHistoryEntryId: "continuation-entry",
+        compactionMessage: "compacted summary",
+        cutType: "turn-boundary",
+        retainedMessageCount: 1,
+      },
+    });
+
+    const reset = deltas.at(-1);
+    expect(reset.delta.type).toBe("snapshot.reset");
+    expect(reset.delta.snapshot.timeline).not.toContainEqual(
+      expect.objectContaining({
+        type: "operation",
+        operation: expect.objectContaining({
+          kind: "auto-compaction",
+          status: "running",
+        }),
+      }),
+    );
+  });
+
   it("streams assistant partials as content appends without persisting every frame", async () => {
     const store = new MemorySessionStore();
     const originalCommit = store.commitSessionSnapshot.bind(store);

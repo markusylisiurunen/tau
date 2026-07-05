@@ -2648,6 +2648,52 @@ describe("SessionChatController", () => {
     );
   });
 
+  it("shows manual compaction status until the compact request finishes", async () => {
+    const session = new FakeSession();
+    const pendingCompact = deferred();
+    session.compact = vi.fn(async () => {
+      await pendingCompact.promise;
+      session.snapshotValue = updateSnapshot(session.snapshotValue, {
+        revision: session.snapshotValue.revision + 1,
+        historyEntries: [
+          {
+            id: "summary-entry",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "compacted summary" }],
+            },
+          },
+        ],
+      });
+      return {
+        snapshot: session.snapshotValue,
+        compactionMessage: "compacted summary",
+        includedLastAssistant: false,
+      };
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+    });
+    controller.start();
+
+    controller.getInputHandlers().onSubmit("/compact:summary-only");
+    await flush();
+
+    expect(view.status.footer.commandHint).toBe("compacting context...");
+    controller.getInputHandlers().onSubmit("/risk:read-write");
+    await flush();
+    expect(session.setRiskLevel).not.toHaveBeenCalled();
+
+    pendingCompact.resolve();
+    await flush();
+
+    expect(view.status.footer.commandHint).toBeUndefined();
+  });
+
   it("uses the shared slash command parser for session command dispatch", async () => {
     const session = new FakeSession();
     const view = new FakeView();

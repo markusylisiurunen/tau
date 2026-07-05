@@ -1158,6 +1158,19 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     );
   }
 
+  private clearRunningAutoCompactionOperations(): void {
+    this.timelineExtras.splice(
+      0,
+      this.timelineExtras.length,
+      ...this.timelineExtras.filter(
+        (item) =>
+          item.type !== "operation" ||
+          item.operation.kind !== "auto-compaction" ||
+          item.operation.status !== "running",
+      ),
+    );
+  }
+
   private restoreProtocolState(snapshot: SessionProtocolSnapshot | undefined): void {
     if (!snapshot) {
       return;
@@ -1370,6 +1383,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         return;
       }
       case "compaction_end":
+        this.clearRunningAutoCompactionOperations();
         await this.emitSnapshotReset("maintenance", await this.commitSnapshot());
         return;
       case "tool_ui":

@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildAutoCompactionContinuationMessage } from "../dist/core/session/compaction.js";
-import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
+import {
+  hasAutoCompactionContinuationMetadata,
+  prependTauUserMetadata,
+  stripTauUserDisplayText,
+} from "../dist/core/utils/user_metadata.js";
 import { applySessionProtocolDelta } from "../dist/protocol/session_protocol.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
@@ -377,10 +381,14 @@ class FakeSession {
   rewindToHistoryEntryId = vi.fn(async (historyEntryId) => {
     const historyEntries = historyEntriesFromSnapshot(this.snapshotValue);
     const historyIndex = historyEntries.findIndex((entry) => entry.id === historyEntryId);
-    if (historyIndex < 0 || historyEntries[historyIndex].message.role !== "user") {
+    const entry = historyEntries[historyIndex];
+    if (
+      historyIndex < 0 ||
+      entry.message.role !== "user" ||
+      hasAutoCompactionContinuationMetadata(entry.message)
+    ) {
       throw new Error("rewind failed");
     }
-    const entry = historyEntries[historyIndex];
     const removedEntryIds = historyEntries.slice(historyIndex).map((item) => item.id);
     this.snapshotValue = updateSnapshot(this.snapshotValue, {
       revision: this.snapshotValue.revision + 1,
@@ -388,11 +396,13 @@ class FakeSession {
     });
     const text =
       typeof entry.message.content === "string"
-        ? entry.message.content
-        : entry.message.content
-            .filter((block) => block.type === "text")
-            .map((block) => block.text)
-            .join("\n");
+        ? stripTauUserDisplayText(entry.message.content)
+        : stripTauUserDisplayText(
+            entry.message.content
+              .filter((block) => typeof block === "string" || block.type === "text")
+              .map((block) => (typeof block === "string" ? block : block.text))
+              .join("\n\n"),
+          );
     return {
       snapshot: this.snapshotValue,
       historyEntryId,

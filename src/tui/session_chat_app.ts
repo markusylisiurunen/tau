@@ -7,9 +7,9 @@ import type {
   ThemeAppearance,
   ThemeDefinition,
 } from "../core/config/index.js";
+import { DIFF_REVIEW_TOOL } from "../core/diff_review/index.js";
 import type { ModeAdapter } from "../core/modes/mode_adapter.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
-import { DIFF_REVIEW_TOOL } from "../core/tools/diff_review.js";
 import type { SessionProtocolCreateParams } from "../protocol/session_protocol.js";
 import { createTauSdkClientFromTransport } from "../sdk/session.js";
 import type { TauSdkClient, TauSdkClientTool, TauSdkSession } from "../sdk/types.js";

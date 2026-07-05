@@ -16,6 +16,7 @@ import {
   captureDiffReviewSnapshot,
   DiffReviewBridge,
   type DiffReviewToolLauncher,
+  parseDiffReviewToolArgs,
 } from "../core/diff_review/index.js";
 import { buildDiffReviewInstructions } from "../core/diff_review/review_thread.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
@@ -2085,9 +2086,13 @@ export class SessionChatController {
       throw new Error("configure diffTool in config.json before using diff_review");
     }
 
-    const source = parseClientDiffReviewSource(rawArgs);
+    const parsedArgs = parseDiffReviewToolArgs(rawArgs);
+    if (!parsedArgs.ok) {
+      throw new Error(`Invalid arguments: ${parsedArgs.error}`);
+    }
+
     const started = await this.startDiffReviewBridge({
-      source,
+      source: parsedArgs.data.source,
       diffTool,
       signal,
     });
@@ -2714,45 +2719,4 @@ function agentProgressChanged(
     previous.usage.contextWindowUsageTokens !== next.usage.contextWindowUsageTokens ||
     previous.usage.contextWindow !== next.usage.contextWindow
   );
-}
-
-function parseClientDiffReviewSource(rawArgs: unknown): DiffReviewSnapshotSource {
-  const args =
-    typeof rawArgs === "object" && rawArgs !== null ? (rawArgs as Record<string, unknown>) : {};
-  if (args.source === "patch_files") {
-    const patchFiles = Array.isArray(args.patchFiles)
-      ? args.patchFiles.filter(
-          (value): value is string => typeof value === "string" && value.trim().length > 0,
-        )
-      : [];
-    if (patchFiles.length === 0) {
-      throw new Error("diff_review patch_files source requires patchFiles");
-    }
-    return {
-      kind: "patch_files",
-      patchFiles,
-      scopeLabel: formatPatchFilesScope(patchFiles, args.label),
-    };
-  }
-
-  if (args.source !== undefined && args.source !== "git_diff") {
-    throw new Error("diff_review source must be git_diff or patch_files");
-  }
-
-  const diffArgs = Array.isArray(args.diffArgs)
-    ? args.diffArgs.filter(
-        (value): value is string => typeof value === "string" && value.trim().length > 0,
-      )
-    : [];
-  return { kind: "git_diff", diffArgs };
-}
-
-function formatPatchFilesScope(patchFiles: string[], rawLabel: unknown): string {
-  if (typeof rawLabel === "string" && rawLabel.trim()) {
-    return rawLabel.trim();
-  }
-  if (patchFiles.length === 1) {
-    return `patch file ${patchFiles[0]}`;
-  }
-  return `${patchFiles.length} patch files`;
 }

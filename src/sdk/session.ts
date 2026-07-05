@@ -62,14 +62,9 @@ class TauSdkClientImpl implements TauSdkClient {
     private readonly clientTools: TauSdkClientTool[],
   ) {
     this.sessions = new TauSdkSessionClientImpl(this);
-    const onClientTool = (this.transport as Partial<SessionProtocolTransport>).onClientTool?.bind(
-      this.transport,
+    this.unsubscribeClientTool = this.transport.onClientTool((message) =>
+      this.handleClientTool(message),
     );
-    if (!onClientTool && this.clientTools.length > 0) {
-      throw new TauTransportError("session protocol transport does not support client tools");
-    }
-    this.unsubscribeClientTool =
-      onClientTool?.((message) => this.handleClientTool(message)) ?? (() => undefined);
   }
 
   get ready() {
@@ -131,9 +126,11 @@ class TauSdkClientImpl implements TauSdkClient {
 
     const abortController = new AbortController();
     this.clientToolAbortControllers.set(message.callId, abortController);
-    void this.runClientTool(tool, message, abortController).finally(() => {
-      this.clientToolAbortControllers.delete(message.callId);
-    });
+    void this.runClientTool(tool, message, abortController)
+      .catch(() => undefined)
+      .finally(() => {
+        this.clientToolAbortControllers.delete(message.callId);
+      });
   }
 
   private async runClientTool(

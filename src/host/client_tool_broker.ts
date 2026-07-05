@@ -4,9 +4,14 @@ import type {
   ToolDefinition,
   ToolDispatchContext,
   ToolDispatchResult,
+  ToolUiEvent,
+  ToolUiText,
 } from "../core/tools/registry.js";
 import type { RiskLevel } from "../core/types.js";
 import { createToolError, createToolResult } from "../core/utils/messages.js";
+import { formatTokenEstimate } from "../core/utils/token.js";
+import { buildHeadTailPreviewLines } from "../core/utils/tool_preview.js";
+import { formatBytes } from "../core/utils/truncate.js";
 import type {
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
@@ -16,6 +21,9 @@ import { SESSION_PROTOCOL_VERSION } from "../protocol/session_protocol.js";
 
 const DEFAULT_ACK_TIMEOUT_MS = 5_000;
 const DEFAULT_EXECUTION_TIMEOUT_MS = 60_000;
+const CLIENT_TOOL_UI_HEAD_LINES = 3;
+const CLIENT_TOOL_UI_TAIL_LINES = 3;
+const CLIENT_TOOL_UI_MAX_LINE_CHARS = 160;
 const HOST_TOOL_NAMES = new Set([
   "bash",
   "write",
@@ -46,11 +54,10 @@ type PendingClientToolCall = {
   clientId: string;
   toolCall: ToolCall;
   ackTimer: NodeJS.Timeout;
-  executionTimer?: NodeJS.Timeout;
+  executionTimer: NodeJS.Timeout;
   signal: AbortSignal;
   abortListener: () => void;
   settled: boolean;
-  acknowledged: boolean;
   resolve: (message: ToolResultMessage) => void;
 };
 
@@ -105,7 +112,6 @@ export class ClientToolBroker {
       return false;
     }
 
-    pending.acknowledged = true;
     clearTimeout(pending.ackTimer);
     return true;
   }
@@ -147,6 +153,7 @@ export class ClientToolBroker {
 
     const callId = randomUUID();
     return new Promise((resolve) => {
+      const executionTimeoutMs = options.tool.executionTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
       const pending: PendingClientToolCall = {
         sessionId: options.sessionId,
         clientId: options.clientId,
@@ -154,15 +161,14 @@ export class ClientToolBroker {
         ackTimer: setTimeout(() => {
           this.fail(callId, "client tool unavailable: client did not acknowledge the tool call");
         }, DEFAULT_ACK_TIMEOUT_MS),
+        executionTimer: setTimeout(() => {
+          this.fail(callId, `client tool '${options.tool.name}' timed out`);
+        }, executionTimeoutMs),
         signal: options.signal,
         abortListener: () => this.abort(callId),
         settled: false,
-        acknowledged: false,
         resolve,
       };
-      pending.executionTimer = setTimeout(() => {
-        this.fail(callId, `client tool '${options.tool.name}' timed out`);
-      }, options.tool.executionTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS);
       options.signal.addEventListener("abort", pending.abortListener, { once: true });
       this.pendingCalls.set(callId, pending);
 
@@ -174,7 +180,7 @@ export class ClientToolBroker {
         toolName: options.tool.name,
         arguments: options.toolCall.arguments,
         ackDeadlineMs: DEFAULT_ACK_TIMEOUT_MS,
-        executionDeadlineMs: options.tool.executionTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS,
+        executionDeadlineMs: executionTimeoutMs,
       });
     });
   }
@@ -234,13 +240,64 @@ export class ClientToolBroker {
 
     pending.settled = true;
     clearTimeout(pending.ackTimer);
-    if (pending.executionTimer) {
-      clearTimeout(pending.executionTimer);
-    }
+    clearTimeout(pending.executionTimer);
     pending.signal.removeEventListener("abort", pending.abortListener);
     this.pendingCalls.delete(callId);
     pending.resolve(result);
   }
+}
+
+function createClientToolFinishedUiEvent(toolResult: ToolResultMessage): ToolUiEvent {
+  return {
+    type: "client_tool_finished",
+    toolCallId: toolResult.toolCallId,
+    toolName: toolResult.toolName,
+    headerTarget: toolResult.toolName,
+    status: toolResult.isError ? "error" : "success",
+    uiText: createClientToolUiText(extractToolResultText(toolResult), toolResult.isError),
+  };
+}
+
+function createClientToolUiText(content: string, isError: boolean): ToolUiText {
+  const trimmed = content.trimEnd();
+  const lineCount = trimmed ? trimmed.split("\n").length : 0;
+  const contentBytes = Buffer.byteLength(trimmed, "utf8");
+  const previewLines = buildHeadTailPreviewLines(trimmed || (isError ? "failed" : "ok"), {
+    headLines: CLIENT_TOOL_UI_HEAD_LINES,
+    tailLines: CLIENT_TOOL_UI_TAIL_LINES,
+    maxLineChars: CLIENT_TOOL_UI_MAX_LINE_CHARS,
+  }).map((text) => ({ text }));
+  const statusLine = [
+    isError ? "error" : "success",
+    formatLineCount(lineCount),
+    contentBytes > 0 ? formatTokenEstimate(contentBytes) : undefined,
+    contentBytes > 0 ? formatBytes(contentBytes) : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return {
+    previewLines,
+    statusLine,
+    fullLines: previewLines,
+  };
+}
+
+function extractToolResultText(toolResult: ToolResultMessage): string {
+  return toolResult.content
+    .filter(
+      (part): part is Extract<(typeof toolResult.content)[number], { type: "text" }> =>
+        part.type === "text",
+    )
+    .map((part) => part.text)
+    .join("\n");
+}
+
+function formatLineCount(lineCount: number): string | undefined {
+  if (lineCount <= 0) {
+    return undefined;
+  }
+  return `${lineCount} ${lineCount === 1 ? "line" : "lines"}`;
 }
 
 function createClientToolDefinition(
@@ -264,7 +321,7 @@ function createClientToolDefinition(
       _context: ToolDispatchContext,
     ): Promise<ToolDispatchResult> {
       const toolResult = await broker.dispatch({ sessionId, clientId, tool, toolCall, signal });
-      return { kind: "single", toolResult };
+      return { kind: "single", toolResult, uiEvent: createClientToolFinishedUiEvent(toolResult) };
     },
   };
 }

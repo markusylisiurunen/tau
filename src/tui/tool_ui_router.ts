@@ -11,10 +11,6 @@ type RunningBashComponent = {
   command: string;
 };
 
-type RunningDiffReviewTool = {
-  command: string;
-};
-
 type RunningSubagentTool =
   | {
       kind: typeof TOOL_NAME_SPAWN_AGENT;
@@ -42,7 +38,6 @@ type NonPrunedToolUiEvent = Exclude<ToolUiEventWithToolCallId, ToolPrunedEvent>;
 
 type ToolUiEventType = ToolUiEvent["type"];
 type BashTerminalEventType = "bash_execution" | "bash_aborted" | "bash_blocked";
-type DiffReviewTerminalEventType = "diff_review_finished" | "diff_review_blocked";
 type SubagentTerminalEventType =
   | "spawn_agent_finished"
   | "spawn_agent_blocked"
@@ -57,11 +52,6 @@ const BASH_TERMINAL_EVENT_TYPES = new Set<BashTerminalEventType>([
   "bash_execution",
   "bash_aborted",
   "bash_blocked",
-]);
-
-const DIFF_REVIEW_TERMINAL_EVENT_TYPES = new Set<DiffReviewTerminalEventType>([
-  "diff_review_finished",
-  "diff_review_blocked",
 ]);
 
 const SUBAGENT_TERMINAL_EVENT_TYPES = new Set<SubagentTerminalEventType>([
@@ -82,7 +72,6 @@ export class ToolUiRouter {
   private readonly requestRender: () => void;
 
   private runningBashComponents: Map<string, RunningBashComponent> = new Map();
-  private runningDiffReviewTools: Map<string, RunningDiffReviewTool> = new Map();
   private runningSubagentTools: Map<string, RunningSubagentTool> = new Map();
   private latestToolEventsById: Map<string, ToolUiEventWithToolCallId> = new Map();
 
@@ -93,14 +82,12 @@ export class ToolUiRouter {
 
   resetSession(): void {
     this.runningBashComponents.clear();
-    this.runningDiffReviewTools.clear();
     this.runningSubagentTools.clear();
     this.latestToolEventsById.clear();
   }
 
   clearTransientState(): void {
     this.runningBashComponents.clear();
-    this.runningDiffReviewTools.clear();
     this.runningSubagentTools.clear();
   }
 
@@ -113,20 +100,6 @@ export class ToolUiRouter {
         command: running.command,
         headerTarget,
         reason,
-      };
-      this.replaceToolMessage(event);
-    }
-
-    for (const [id, running] of this.runningDiffReviewTools.entries()) {
-      const event: ToolUiEventWithToolCallId = {
-        type: "diff_review_finished",
-        toolCallId: id,
-        command: running.command,
-        headerTarget: running.command,
-        status: "cancelled",
-        reviewedFiles: [],
-        reviewAgents: [],
-        message: reason === "aborted" ? "diff review aborted." : "diff review interrupted.",
       };
       this.replaceToolMessage(event);
     }
@@ -165,17 +138,6 @@ export class ToolUiRouter {
       return;
     }
 
-    const diffReviewTool = this.toRunningDiffReviewTool(uiEvent);
-    if (diffReviewTool) {
-      this.runningDiffReviewTools.set(uiEvent.toolCallId, diffReviewTool);
-      return;
-    }
-
-    if (this.isDiffReviewTerminalType(uiEvent.type)) {
-      this.runningDiffReviewTools.delete(uiEvent.toolCallId);
-      return;
-    }
-
     const subagentTool = this.toRunningSubagentTool(uiEvent);
     if (subagentTool) {
       this.runningSubagentTools.set(uiEvent.toolCallId, subagentTool);
@@ -189,14 +151,6 @@ export class ToolUiRouter {
 
   private toRunningBashComponent(uiEvent: NonPrunedToolUiEvent): RunningBashComponent | null {
     if (uiEvent.type !== "bash_started") {
-      return null;
-    }
-
-    return { command: uiEvent.command };
-  }
-
-  private toRunningDiffReviewTool(uiEvent: NonPrunedToolUiEvent): RunningDiffReviewTool | null {
-    if (uiEvent.type !== "diff_review_started" && uiEvent.type !== "diff_review_updated") {
       return null;
     }
 
@@ -240,10 +194,6 @@ export class ToolUiRouter {
 
   private isBashTerminalType(type: ToolUiEventType): type is BashTerminalEventType {
     return BASH_TERMINAL_EVENT_TYPES.has(type as BashTerminalEventType);
-  }
-
-  private isDiffReviewTerminalType(type: ToolUiEventType): type is DiffReviewTerminalEventType {
-    return DIFF_REVIEW_TERMINAL_EVENT_TYPES.has(type as DiffReviewTerminalEventType);
   }
 
   private isSubagentTerminalType(type: ToolUiEventType): type is SubagentTerminalEventType {

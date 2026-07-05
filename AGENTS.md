@@ -150,14 +150,13 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 | `write` | Create/overwrite files | `read-write` |
 | `edit` | Replace exact text in files | `read-write` |
 | `view_image` | View an image file | `read-only` |
-| `diff_review` | Diff-review tool definition; the session TUI launches local diff review through the session host protocol | `read-only` or `read-write` |
 | `spawn_agent` | Start a background subagent | `read-only` or `read-write` |
 | `send_input_to_agent` | Send input to an idle subagent | `read-only` or `read-write` |
 | `wait_for_agents` | Await completed subagent outputs, returning when at least one requested agent finishes | `read-only` or `read-write` |
 | `terminate_agent` | Stop a running subagent | `read-only` or `read-write` |
 | `emit_output` | Subagent-only output to main (currently disabled in subagent registries) | `read-only` or `read-write` |
 
-Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set.
+Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set. The TUI advertises `diff_review` as a client-provided tool; it is not a host tool registry entry.
 
 Risk levels (`read-only`, `read-write`) gate model tool calls. Subagents inherit the session risk level unless overridden in persona config. The model declares intent via `safetyLevel` on bash calls.
 

@@ -2862,7 +2862,7 @@ function validateInitializeParams(
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "initialize params must be an object with client metadata"
       : hasIssue(parsed.error, ["client"]) || hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "initialize.client must be an object with name/version strings"
+        ? "initialize.client must be an object with name/version strings and optional tools"
         : hasIssue(parsed.error, ["client", "name"])
           ? "initialize.client.name must be a non-empty string"
           : hasIssue(parsed.error, ["client", "version"])
@@ -2877,6 +2877,7 @@ function validateInitializeParams(
       client: {
         name: parsed.data.client.name,
         version: parsed.data.client.version,
+        ...(parsed.data.client.tools !== undefined ? { tools: parsed.data.client.tools } : {}),
       },
     },
   };

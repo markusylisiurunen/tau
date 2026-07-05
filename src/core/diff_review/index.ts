@@ -80,3 +80,5 @@ export {
   diffReviewSnapshotFromData,
   diffReviewSnapshotToData,
 } from "./snapshot.js";
+export type { ParsedDiffReviewToolArgs } from "./tool.js";
+export { DIFF_REVIEW_TOOL, parseDiffReviewToolArgs } from "./tool.js";

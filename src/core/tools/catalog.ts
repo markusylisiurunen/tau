@@ -25,10 +25,8 @@ import { createWriteToolDefinition } from "./write.js";
 
 const SUBAGENT_EMIT_OUTPUT_ENABLED = false;
 
-export type ToolCatalogOptions = Record<string, never>;
-
 export const ToolCatalog = {
-  createRegistry(backend: ToolExecutionBackend, _options?: ToolCatalogOptions): ToolRegistry {
+  createRegistry(backend: ToolExecutionBackend): ToolRegistry {
     return new ToolRegistry([
       createBashToolDefinition(backend),
       createWriteToolDefinition(backend),

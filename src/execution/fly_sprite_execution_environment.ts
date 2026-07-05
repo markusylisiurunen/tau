@@ -1,5 +1,4 @@
 import { type Sprite, SpritesClient } from "@fly/sprites";
-import type { ToolCatalogOptions } from "../core/tools/catalog.js";
 import type {
   BashExecutionResult,
   GrepExecutionResult,
@@ -38,7 +37,6 @@ export type FlySpriteExecutionEnvironmentResolverOptions = {
   apis: Record<string, FlySpritesApiConfig>;
   env?: Record<string, string | undefined>;
   createClient?: (token: string, options: { baseURL: string }) => SpritesClientLike;
-  toolCatalogOptions?: ToolCatalogOptions;
 };
 
 type SpritesClientLike = {
@@ -58,7 +56,6 @@ export class FlySpriteExecutionEnvironment extends ToolBackendExecutionEnvironme
     cwd: string;
     home: string;
     backend: ToolExecutionBackend;
-    toolCatalogOptions?: ToolCatalogOptions;
   }) {
     super({
       snapshot: {
@@ -69,7 +66,6 @@ export class FlySpriteExecutionEnvironment extends ToolBackendExecutionEnvironme
         home: options.home,
       },
       backend: options.backend,
-      toolCatalogOptions: options.toolCatalogOptions,
     });
   }
 }
@@ -78,14 +74,12 @@ export class FlySpriteExecutionEnvironmentResolver implements ExecutionEnvironme
   private readonly apis: Record<string, FlySpritesApiConfig>;
   private readonly env: Record<string, string | undefined>;
   private readonly createClient: (token: string, options: { baseURL: string }) => SpritesClientLike;
-  private readonly toolCatalogOptions?: ToolCatalogOptions;
 
   constructor(options: FlySpriteExecutionEnvironmentResolverOptions) {
     this.apis = options.apis;
     this.env = options.env ?? process.env;
     this.createClient =
       options.createClient ?? ((token, clientOptions) => new SpritesClient(token, clientOptions));
-    this.toolCatalogOptions = options.toolCatalogOptions;
   }
 
   async resolve(input: SessionProtocolExecutionEnvironmentInput) {
@@ -133,7 +127,6 @@ export class FlySpriteExecutionEnvironmentResolver implements ExecutionEnvironme
       cwd: input.cwd,
       home: "home" in input ? input.home : (api.home ?? DEFAULT_HOME),
       backend,
-      toolCatalogOptions: this.toolCatalogOptions,
     });
   }
 }

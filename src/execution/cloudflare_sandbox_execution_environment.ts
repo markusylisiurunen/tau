@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path/posix";
-import type { ToolCatalogOptions } from "../core/tools/catalog.js";
 import type {
   BashExecutionResult,
   GrepExecutionResult,
@@ -39,7 +38,6 @@ export type CloudflareSandboxExecutionEnvironmentResolverOptions = {
   bridges: Record<string, CloudflareSandboxBridgeConfig>;
   env?: Record<string, string | undefined>;
   fetch?: typeof fetch;
-  toolCatalogOptions?: ToolCatalogOptions;
 };
 
 type BridgeClientOptions = {
@@ -63,7 +61,6 @@ export class CloudflareSandboxExecutionEnvironment extends ToolBackendExecutionE
     cwd: string;
     home: string;
     backend: ToolExecutionBackend;
-    toolCatalogOptions?: ToolCatalogOptions;
   }) {
     super({
       snapshot: {
@@ -74,7 +71,6 @@ export class CloudflareSandboxExecutionEnvironment extends ToolBackendExecutionE
         home: options.home,
       },
       backend: options.backend,
-      toolCatalogOptions: options.toolCatalogOptions,
     });
   }
 }
@@ -83,13 +79,11 @@ export class CloudflareSandboxExecutionEnvironmentResolver implements ExecutionE
   private readonly bridges: Record<string, CloudflareSandboxBridgeConfig>;
   private readonly env: Record<string, string | undefined>;
   private readonly fetch: typeof fetch;
-  private readonly toolCatalogOptions?: ToolCatalogOptions;
 
   constructor(options: CloudflareSandboxExecutionEnvironmentResolverOptions) {
     this.bridges = options.bridges;
     this.env = options.env ?? process.env;
     this.fetch = options.fetch ?? fetch;
-    this.toolCatalogOptions = options.toolCatalogOptions;
   }
 
   async resolve(input: SessionProtocolExecutionEnvironmentInput) {
@@ -139,7 +133,6 @@ export class CloudflareSandboxExecutionEnvironmentResolver implements ExecutionE
       cwd: input.cwd,
       home: "home" in input ? input.home : (bridge.home ?? DEFAULT_HOME),
       backend,
-      toolCatalogOptions: this.toolCatalogOptions,
     });
   }
 }

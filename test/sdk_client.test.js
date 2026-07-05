@@ -271,6 +271,9 @@ class FakeSessionProtocolTransport {
           return { interrupted: true, isTurnRunning: false };
         case "session.unobserve":
           return { unobserved: true };
+        case "session.clientTool.ack":
+        case "session.clientTool.result":
+          return { accepted: true };
         default:
           throw new Error(`unexpected method ${method}`);
       }
@@ -282,6 +285,7 @@ class FakeSessionProtocolTransport {
 
   requests = [];
   listeners = new Set();
+  clientToolListeners = new Set();
   initializeParams;
   connectTimeoutMs;
   closed = false;
@@ -298,9 +302,22 @@ class FakeSessionProtocolTransport {
     return () => {};
   }
 
+  onClientTool(listener) {
+    this.clientToolListeners.add(listener);
+    return () => {
+      this.clientToolListeners.delete(listener);
+    };
+  }
+
   emitDelta(delta) {
     for (const listener of this.listeners) {
       listener(delta);
+    }
+  }
+
+  emitClientTool(message) {
+    for (const listener of this.clientToolListeners) {
+      listener(message);
     }
   }
 }
@@ -342,6 +359,18 @@ function waitForRequest(child, predicate) {
     };
     child.on("request", onRequest);
   });
+}
+
+async function waitForFakeRequest(transport, predicate, timeoutMs = 2000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const request = transport.requests.find(predicate);
+    if (request) {
+      return request;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("timed out waiting for fake transport request");
 }
 
 async function createConnectedClient(child, options = {}) {
@@ -671,6 +700,82 @@ describe("sdk_client", () => {
 
     await client.close();
     expect(transport.closed).toBe(true);
+  });
+
+  it("advertises and executes client-provided tools", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    const execute = vi.fn(async (args, context) => {
+      expect(args).toEqual({ choice: "a" });
+      expect(context).toMatchObject({ sessionId: "session-1", callId: "call-1" });
+      expect(context.signal.aborted).toBe(false);
+      return { content: "picked a" };
+    });
+    const client = await createTauSdkClientFromTransport(transport, {
+      clientTools: [
+        {
+          schema: {
+            name: "local_picker",
+            description: "Pick a local item.",
+            parameters: {
+              type: "object",
+              properties: {},
+              additionalProperties: false,
+            },
+            executionTimeoutMs: 60_000,
+          },
+          execute,
+        },
+      ],
+    });
+
+    expect(transport.initializeParams).toEqual({
+      client: {
+        name: "tau-sdk",
+        version: "1",
+        tools: [
+          {
+            name: "local_picker",
+            description: "Pick a local item.",
+            parameters: {
+              type: "object",
+              properties: {},
+              additionalProperties: false,
+            },
+            executionTimeoutMs: 60_000,
+          },
+        ],
+      },
+    });
+
+    transport.emitClientTool({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.clientTool.call",
+      sessionId: "session-1",
+      callId: "call-1",
+      toolName: "local_picker",
+      arguments: { choice: "a" },
+      ackDeadlineMs: 5000,
+      executionDeadlineMs: 60_000,
+    });
+
+    await waitForFakeRequest(
+      transport,
+      (request) =>
+        request.method === "session.clientTool.result" && request.params.callId === "call-1",
+    );
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(transport.requests).toEqual([
+      {
+        method: "session.clientTool.ack",
+        params: { sessionId: "session-1", callId: "call-1" },
+      },
+      {
+        method: "session.clientTool.result",
+        params: { sessionId: "session-1", callId: "call-1", ok: true, content: "picked a" },
+      },
+    ]);
+
+    await client.close();
   });
 
   it("reuses create and observe snapshots for the first sdk snapshot call", async () => {

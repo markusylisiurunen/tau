@@ -667,6 +667,39 @@ describe("session_protocol", () => {
       },
     });
 
+    expect(
+      validateSessionProtocolParams("initialize", {
+        client: {
+          name: "tau-sdk",
+          version: "1",
+          tools: [
+            {
+              name: "local_picker",
+              description: "Pick a local item.",
+              parameters: { type: "object", properties: {}, additionalProperties: false },
+              executionTimeoutMs: 60_000,
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        client: {
+          name: "tau-sdk",
+          version: "1",
+          tools: [
+            {
+              name: "local_picker",
+              description: "Pick a local item.",
+              parameters: { type: "object", properties: {}, additionalProperties: false },
+              executionTimeoutMs: 60_000,
+            },
+          ],
+        },
+      },
+    });
+
     const invalidInitialize = validateSessionProtocolParams("initialize", {});
     expect(invalidInitialize).toEqual({
       ok: false,

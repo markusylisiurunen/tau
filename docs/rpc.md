@@ -297,7 +297,7 @@ Tau does not create or provision Sprites during `session.create`; provider-speci
         "id": "gpt-5.5-coder",
         "label": "GPT-5.5 coder",
         "allowedReasoningLevels": ["medium", "high", "xhigh"],
-        "tools": ["bash", "write", "edit", "view_image", "diff_review"],
+        "tools": ["bash", "write", "edit", "view_image"],
         "skills": "*",
         "source": "builtin"
       }

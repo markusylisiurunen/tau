@@ -108,7 +108,6 @@ export type TelegramApi = {
       replyMarkup?: TelegramInlineKeyboardMarkup;
     },
   ): Promise<void>;
-  sendRichMessageDraft(chatId: number, draftId: number, markdown: string): Promise<void>;
   sendChatAction(chatId: number, action: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
   setCommands(commands: TelegramBotCommand[]): Promise<void>;
@@ -206,13 +205,6 @@ type TelegramGroupPendingMessage = {
   errors?: string[];
 };
 
-type TelegramDraftState = {
-  draftId: number;
-  markdown: string;
-  preambleTimeout?: ReturnType<typeof setTimeout>;
-  refreshInterval?: ReturnType<typeof setInterval>;
-};
-
 type ResolvedTelegramAdapterOptions = TelegramAdapterOptions & {
   api: TelegramApi;
   botUsername: string;
@@ -240,10 +232,6 @@ const TELEGRAM_RICH_MESSAGE_SAFE_BYTES = Math.floor(
   TELEGRAM_MAX_RICH_MESSAGE_BYTES * TELEGRAM_MESSAGE_BYTE_BUFFER_RATIO,
 );
 const TELEGRAM_MESSAGE_SPLIT_DELAY_MS = 1000;
-const TELEGRAM_DRAFT_MAX_CHARS = 4096;
-const TELEGRAM_DRAFT_THINKING_MARKDOWN = "<tg-thinking>Thinking...</tg-thinking>";
-const TELEGRAM_DRAFT_PREAMBLE_VISIBLE_MS = 10_000;
-const TELEGRAM_DRAFT_REFRESH_MS = 20_000;
 const TELEGRAM_TYPING_REFRESH_MS = 4000;
 const ABORTED = Symbol("aborted");
 const CALLBACK_ACTION_PREFIX = "tau:action:";
@@ -857,19 +845,6 @@ function createTelegramApi(botToken: string): TelegramApi {
         z.unknown(),
       );
     },
-    async sendRichMessageDraft(chatId, draftId, markdown) {
-      await callTelegramMethod(
-        "sendRichMessageDraft",
-        {
-          chat_id: chatId,
-          draft_id: draftId,
-          rich_message: {
-            markdown,
-          },
-        },
-        TelegramAckResultSchema,
-      );
-    },
     async sendChatAction(chatId, action) {
       await callTelegramMethod(
         "sendChatAction",
@@ -964,10 +939,7 @@ class TelegramAdapterImpl {
   private readonly chatsBySession = new Map<string, Set<number>>();
   private readonly chatTypesByChat = new Map<number, string>();
   private readonly typingIntervalsBySessionChat = new Map<string, ReturnType<typeof setInterval>>();
-  private readonly draftStatesBySessionChat = new Map<string, TelegramDraftState>();
   private readonly lastCommandBySession = new Map<string, string>();
-  private readonly lastAssistantMessageBySession = new Map<string, string>();
-  private readonly latestAssistantMessageByRun = new Map<string, string>();
   private readonly pendingAttachmentsBySession = new Map<string, TelegramPendingAttachment[]>();
   private readonly pendingGroupMessagesByChat = new Map<number, TelegramGroupPendingMessage[]>();
   private readonly pendingAttachmentTempDirBySession = new Map<string, string>();
@@ -1049,7 +1021,6 @@ class TelegramAdapterImpl {
 
       for (const sessionId of Array.from(this.chatsBySession.keys())) {
         this.stopTypingIndicators(sessionId);
-        this.clearSessionDrafts(sessionId);
       }
 
       for (const sessionId of Array.from(this.attachmentTempDirsBySession.keys())) {
@@ -2375,8 +2346,6 @@ class TelegramAdapterImpl {
 
   private clearClosedSession(sessionId: string): void {
     this.stopTypingIndicators(sessionId);
-    this.clearSessionDrafts(sessionId);
-
     for (const [chatId, activeSessionId] of this.activeSessionsByChat) {
       if (activeSessionId === sessionId) {
         this.activeSessionsByChat.delete(chatId);
@@ -2389,8 +2358,6 @@ class TelegramAdapterImpl {
     }
 
     this.lastCommandBySession.delete(sessionId);
-    this.lastAssistantMessageBySession.delete(sessionId);
-    this.latestAssistantMessageByRun.delete(sessionId);
     this.clearSessionAttachments(sessionId);
   }
 
@@ -2417,9 +2384,7 @@ class TelegramAdapterImpl {
     }
 
     if (event.state === "running") {
-      this.latestAssistantMessageByRun.delete(event.sessionId);
       this.startTypingIndicators(event.sessionId);
-      this.showDraftThinking(event.sessionId);
       if (this.isVerboseSession(event.sessionId)) {
         this.notifyLifecycle(event.sessionId, event.projectId, "started");
       }
@@ -2427,9 +2392,7 @@ class TelegramAdapterImpl {
     }
 
     if (event.state === "failed") {
-      this.latestAssistantMessageByRun.delete(event.sessionId);
       this.stopTypingIndicators(event.sessionId);
-      this.clearSessionDrafts(event.sessionId);
       this.notifyLifecycle(event.sessionId, event.projectId, "failed");
       return;
     }
@@ -2444,16 +2407,8 @@ class TelegramAdapterImpl {
 
     if (event.state === "waiting-input" && event.previousState === "running") {
       this.stopTypingIndicators(event.sessionId);
-      this.clearSessionDrafts(event.sessionId);
       if (this.isVerboseSession(event.sessionId)) {
         this.notifyLifecycle(event.sessionId, event.projectId, "finished");
-        return;
-      }
-
-      const message = this.latestAssistantMessageByRun.get(event.sessionId);
-      this.latestAssistantMessageByRun.delete(event.sessionId);
-      if (message) {
-        this.notifySession(event.sessionId, message, { rich: true });
       }
     }
   }
@@ -2503,17 +2458,14 @@ class TelegramAdapterImpl {
       return;
     }
 
-    this.lastAssistantMessageBySession.set(event.sessionId, event.progress.text);
-    this.latestAssistantMessageByRun.set(event.sessionId, event.progress.text);
-    this.showDraftPreamble(event.sessionId, event.progress.text);
-
-    if (!isVerbose) {
-      return;
-    }
-
     this.notifySession(
       event.sessionId,
-      [formatSessionHeadline(event.sessionId, "assistant message"), event.progress.text].join("\n"),
+      isVerbose
+        ? [formatSessionHeadline(event.sessionId, "assistant message"), event.progress.text].join(
+            "\n",
+          )
+        : event.progress.text,
+      { rich: true },
     );
   }
 
@@ -2597,149 +2549,6 @@ class TelegramAdapterImpl {
         this.typingIntervalsBySessionChat.delete(key);
       }
     }
-  }
-
-  private showDraftThinking(sessionId: string): void {
-    const chatIds = this.chatsBySession.get(sessionId);
-    if (!chatIds) {
-      return;
-    }
-
-    for (const chatId of chatIds) {
-      if (this.chatTypesByChat.get(chatId) !== "private") {
-        continue;
-      }
-
-      void this.updateMessageDraft(sessionId, chatId, TELEGRAM_DRAFT_THINKING_MARKDOWN);
-    }
-  }
-
-  private showDraftPreamble(sessionId: string, text: string): void {
-    const chatIds = this.chatsBySession.get(sessionId);
-    if (!chatIds) {
-      return;
-    }
-
-    for (const chatId of chatIds) {
-      if (this.chatTypesByChat.get(chatId) !== "private") {
-        continue;
-      }
-
-      const key = this.getSessionChatKey(sessionId, chatId);
-      const state = this.getDraftState(key);
-      if (state.preambleTimeout) {
-        clearTimeout(state.preambleTimeout);
-      }
-
-      void this.updateMessageDraft(sessionId, chatId, truncateText(text, TELEGRAM_DRAFT_MAX_CHARS));
-      const timeout = setTimeout(() => {
-        const currentState = this.draftStatesBySessionChat.get(key);
-        if (currentState === state) {
-          void this.updateMessageDraft(sessionId, chatId, TELEGRAM_DRAFT_THINKING_MARKDOWN);
-        }
-      }, TELEGRAM_DRAFT_PREAMBLE_VISIBLE_MS);
-      timeout.unref?.();
-      state.preambleTimeout = timeout;
-    }
-  }
-
-  private async updateMessageDraft(
-    sessionId: string,
-    chatId: number,
-    markdown: string,
-  ): Promise<void> {
-    const key = this.getSessionChatKey(sessionId, chatId);
-    const state = this.getDraftState(key);
-    state.markdown = markdown;
-    this.updateMessageDraftRefresh(sessionId, chatId, state);
-
-    await this.sendMessageDraft(chatId, state);
-  }
-
-  private updateMessageDraftRefresh(
-    sessionId: string,
-    chatId: number,
-    state: TelegramDraftState,
-  ): void {
-    if (state.markdown !== TELEGRAM_DRAFT_THINKING_MARKDOWN) {
-      this.stopMessageDraftRefresh(state);
-      return;
-    }
-
-    if (state.refreshInterval) {
-      return;
-    }
-
-    const interval = setInterval(() => {
-      const currentState = this.draftStatesBySessionChat.get(
-        this.getSessionChatKey(sessionId, chatId),
-      );
-      if (currentState !== state || currentState.markdown !== TELEGRAM_DRAFT_THINKING_MARKDOWN) {
-        clearInterval(interval);
-        if (currentState === state) {
-          currentState.refreshInterval = undefined;
-        }
-        return;
-      }
-
-      void this.sendMessageDraft(chatId, currentState);
-    }, TELEGRAM_DRAFT_REFRESH_MS);
-    interval.unref?.();
-    state.refreshInterval = interval;
-  }
-
-  private stopMessageDraftRefresh(state: TelegramDraftState): void {
-    if (!state.refreshInterval) {
-      return;
-    }
-
-    clearInterval(state.refreshInterval);
-    state.refreshInterval = undefined;
-  }
-
-  private async sendMessageDraft(chatId: number, state: TelegramDraftState): Promise<void> {
-    try {
-      await this.api.sendRichMessageDraft(chatId, state.draftId, state.markdown);
-    } catch (error) {
-      this.log("warn", "failed to update telegram message draft", {
-        chatId,
-        cause: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  private clearSessionDrafts(sessionId: string): void {
-    const chatIds = this.chatsBySession.get(sessionId);
-    if (!chatIds) {
-      return;
-    }
-
-    for (const chatId of chatIds) {
-      const key = this.getSessionChatKey(sessionId, chatId);
-      const state = this.draftStatesBySessionChat.get(key);
-      if (state?.preambleTimeout) {
-        clearTimeout(state.preambleTimeout);
-      }
-      if (state) {
-        this.stopMessageDraftRefresh(state);
-      }
-      this.draftStatesBySessionChat.delete(key);
-    }
-  }
-
-  private getDraftState(key: string): TelegramDraftState {
-    const existing = this.draftStatesBySessionChat.get(key);
-    if (existing) {
-      return existing;
-    }
-
-    const state = { draftId: this.createDraftId(), markdown: TELEGRAM_DRAFT_THINKING_MARKDOWN };
-    this.draftStatesBySessionChat.set(key, state);
-    return state;
-  }
-
-  private createDraftId(): number {
-    return Math.floor(Math.random() * 2_000_000_000) + 1;
   }
 
   private getSessionChatKey(sessionId: string, chatId: number): string {

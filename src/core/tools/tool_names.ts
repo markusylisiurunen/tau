@@ -13,6 +13,7 @@ export const TOOL_NAME_WEB_FETCH = "web_fetch";
 export const TOOL_NAME_READ = "read";
 export const TOOL_NAME_LIST = "list";
 export const TOOL_NAME_GREP = "grep";
+export const TOOL_NAME_NOOK = "nook";
 
 export const TOOL_NAMES = [
   TOOL_NAME_BASH,
@@ -29,6 +30,7 @@ export const TOOL_NAMES = [
   TOOL_NAME_READ,
   TOOL_NAME_LIST,
   TOOL_NAME_GREP,
+  TOOL_NAME_NOOK,
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];

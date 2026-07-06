@@ -44,6 +44,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Mode/session-server wiring** (`src/core/modes/`): Local app mode interface plus stdio and WebSocket session-protocol server wiring
 - **SDK client** (`src/sdk/client.ts`, `src/sdk/session.ts`): Node SDK in-process/WebSocket/bootstrap helpers plus session facade for driving Tau through session protocol transports; the default SDK client owns an in-process local host and shuts it down on close after persisting live snapshots
 - **Telegram session runtime helpers** (`src/core/telegram/`, `src/core/telegram/session_manager.ts`, `src/core/telegram/adapter.ts`, `src/core/telegram/workspace.ts`): Telegram runner command/config/runtime plus SDK-backed session management, Telegram polling/media handling, and project workspace preparation
+- **Nook** (`src/core/nook/`, `src/core/tools/nook.ts`, `src/nook/worker/`): Tau-integrated Cloudflare static mini-app platform with `tau nook` CLI, one configured `nook` model tool, bundled Worker/R2/Durable Object implementation, and injected browser JSON KV SDK. Follow `src/nook/AGENTS.md` for Nook-specific V0 constraints.
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal host tool registry; client-provided tools are advertised by attached clients and frozen per assistant turn by the session engine
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Generic filesystem/process backend used for local and hosted execution targets, including bash execution, Node script execution, file IO, directory listing, and grep
 - **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session host tools (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent) and sub-agent (configured allowed tools) registries; `diff_review` is advertised as a TUI client-provided tool
@@ -127,6 +128,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `utils/messages.ts` - Message helpers
 
 - `src/diff_tool/` - Built-in browser diff review demo tool (`tau diff-tool`) and reference implementation for the diff-review tool protocol
+- `src/nook/` - Bundled Nook Cloudflare Worker, Nook docs, and Nook-specific implementation guidance
 - `src/tui/`
   - `session_chat_app.ts` - Canonical TUI wiring for local and remote session-protocol clients
   - `session_chat_controller.ts` - Session snapshot/delta controller for TUI behavior, commands, and protocol mutations
@@ -155,8 +157,9 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 | `wait_for_agents` | Await completed subagent outputs, returning when at least one requested agent finishes | `read-only` or `read-write` |
 | `terminate_agent` | Stop a running subagent | `read-only` or `read-write` |
 | `emit_output` | Subagent-only output to main (currently disabled in subagent registries) | `read-only` or `read-write` |
+| `nook` | Operate the configured Nook static mini-app platform | `read-write` |
 
-Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set. The TUI advertises `diff_review` as a client-provided tool; it is not a host tool registry entry.
+Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set. The TUI advertises `diff_review` as a client-provided tool; it is not a host tool registry entry. The `nook` host tool is automatically exposed only when effective Tau config contains `nook`, and all operations require read-write risk.
 
 Risk levels (`read-only`, `read-write`) gate model tool calls. Subagents inherit the session risk level unless overridden in persona config. The model declares intent via `safetyLevel` on bash calls.
 
@@ -223,6 +226,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
   - `speechToText` (optional): Speech-to-text config for `/listen` and Telegram audio transcription. `provider` is required when present and accepts `mistral` (default, Voxtral) or `gemini` (Gemini 3.5 Flash with minimal thinking).
   - `cloudflareSandbox.bridges` (optional): Host-owned Cloudflare Sandbox bridge targets for hosted execution environments. Each bridge has `url`, optional `apiKey`, optional `apiKeyEnv`, and optional `home`. `session.create` references bridges by id plus an already-provisioned `sandboxId` and real sandbox `cwd`; Tau does not create or provision Cloudflare sandboxes during session creation. Tau resolves config/content from the sandbox `cwd`, while bridge credentials are resolved by the host and are not persisted in session snapshots.
   - `flySprites.apis` (optional): Host-owned Fly Sprites API targets for hosted execution environments. Each API has optional `baseURL`, optional `token`, optional `tokenEnv`, and optional `home`. `session.create` references APIs by id plus an already-provisioned `spriteName` and real Sprite `cwd`; Tau does not create or provision Sprites during session creation. Tau resolves config/content from the Sprite `cwd`, while API tokens are resolved by the host and are not persisted in session snapshots.
+  - `nook` (optional): Single effective Nook target for an already deployed Cloudflare Nook instance. Fields: required `domain`, optional `accessClientId`, optional `accessClientSecret`, optional `accessClientSecretEnv`. When `accessClientSecretEnv` resolves to a value, it wins over `accessClientSecret`. Setup/destroy do not use this config; they take infrastructure inputs through `tau nook setup|destroy` flags/env.
   - Telegram runner settings are loaded from a separate JSON file passed via `tau telegram --config-file <path>` (`bots` map keyed by bot id, optional `maxSessions`, `projects`, `workspaceRoot`, `systemMessage`, and project fields like `workingDirectory`, `description`, `bootstrapCommands`, and `backgroundBootstrapCommands`). Telegram sessions are chat-scoped within each bot, allowed groups share one group session namespace, and group turns trigger only on explicit bot mentions. Telegram repositories use automatic persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`, refreshed with pruned fetches and reinitialized if the configured repo changes; session workspaces are cloned from those caches and remain ephemeral. On runner startup, Tau removes existing entries under configured workspace roots (`workspaceRoot` plus any per-project overrides) before adapters start, leaves repository caches intact, and the Telegram adapter prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Assume zero or one Telegram runner process per host; concurrent runners are unsupported.
 
 - **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `autoCompact`, `modelSystemNotices`, `cloudflareSandbox.bridges`, and `flySprites.apis` merge per field; `diffTool` is selected from the most specific level, and its relative `command` is resolved from that level root; `builtInDiffTool` is selected from the most specific level and applies to the built-in `tau diff-tool` demo; `agentContextFiles` are additive.
@@ -289,6 +293,8 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau usage` - Summarize usage logs from `~/.config/tau/logs/`
 - `tau install [--global] [--force] [--prompt <id> | --skill <name>]` - Install starter prompts and skills (or one selected item)
 - `tau tool pdf-unpack <file.pdf>` - OCR a PDF with Mistral, render local page patches with `pdftoppm`, and print the artifact paths.
+- `tau nook setup --domain <domain>` / `tau nook destroy --domain <domain> --yes` - Deploy or remove the bundled Nook Cloudflare Worker stack with Wrangler
+- `tau nook deploy <dir> --site <slug> [--public]`, `tau nook list`, `tau nook delete <site>`, `tau nook skill`, and `tau nook kv ...` - Operate a configured Nook target
 - `tau telegram --config-file <path>` - Run the Telegram bot adapter over local in-process Tau SDK sessions
 - `tau diff-tool [--help]` - Built-in browser diff review demo tool and reference implementation for the diff-review protocol
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover

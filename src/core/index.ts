@@ -62,6 +62,11 @@ export {
 } from "./events/index.js";
 export { InstallCliError, printInstallHelp, runInstallCommand } from "./install/cli.js";
 export * from "./modes/index.js";
+export {
+  NookCliError,
+  printNookHelp,
+  runNookCommand,
+} from "./nook/index.js";
 export { personas } from "./personas.js";
 export type { PromptTemplate } from "./prompts.js";
 export type {
@@ -108,6 +113,7 @@ export { createEmitOutputToolDefinition } from "./tools/emit_output.js";
 export { createLocalToolExecutionBackend } from "./tools/execution_backend.js";
 export { createGrepToolDefinition } from "./tools/grep.js";
 export { createListToolDefinition } from "./tools/list.js";
+export { createNookToolDefinition } from "./tools/nook.js";
 export { createReadToolDefinition } from "./tools/read.js";
 export { ToolRegistry } from "./tools/registry.js";
 export { createSendInputToAgentToolDefinition } from "./tools/send_input_to_agent.js";

@@ -28,18 +28,21 @@ import {
   loadConfig,
   loadRuntimeBootstrap,
   loadRuntimeConfig,
+  NookCliError,
   parseCliArgs,
   parsePersonaString,
   printDebugInfo,
   printDiffToolHelp,
   printHelp,
   printInstallHelp,
+  printNookHelp,
   printTelegramHelp,
   printUsageHelp,
   runInstallCommand,
   runListCommand,
   runLoginCommand,
   runLogoutCommand,
+  runNookCommand,
   runRpcServer,
   runTelegramCommand,
   runToolCommand,
@@ -730,6 +733,28 @@ if (argv[0] === "install") {
       // eslint-disable-next-line no-console
       console.error("");
       printInstallHelp();
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+if (argv[0] === "nook") {
+  try {
+    const nookConfig = loadConfig(cwd, configDeps);
+    await runNookCommand(argv.slice(1), {
+      cwd,
+      env: process.env,
+      config: nookConfig,
+    });
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof NookCliError) {
+      // eslint-disable-next-line no-console
+      console.error(err.message);
+      // eslint-disable-next-line no-console
+      console.error("");
+      printNookHelp();
       process.exit(1);
     }
     throw err;

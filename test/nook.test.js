@@ -10,7 +10,11 @@ import {
   validateNookManifest,
   validateNookSiteSlug,
 } from "../dist/core/nook/index.js";
-import { parseNookDestroyInputs, parseNookSetupInputs } from "../dist/core/nook/setup.js";
+import {
+  parseNookDestroyInputs,
+  parseNookInfrastructureDomain,
+  parseNookSetupInputs,
+} from "../dist/core/nook/setup.js";
 import { createNookToolDefinition } from "../dist/core/tools/nook.js";
 
 describe("nook validation", () => {
@@ -130,6 +134,14 @@ describe("nook setup cli parsing", () => {
       yes: true,
       remaining: [],
     });
+  });
+
+  it("rejects infrastructure domains with paths", () => {
+    expect(() =>
+      parseNookInfrastructureDomain({
+        argv: ["--domain", "https://nook.example.com/path"],
+      }),
+    ).toThrow(/without a path/);
   });
 });
 

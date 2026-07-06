@@ -2,6 +2,9 @@ import { posix } from "node:path";
 
 export const NOOK_RESERVED_PATH_PREFIX = "/__nook";
 
+const NOOK_DOMAIN_PATTERN =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
 const RESERVED_SITE_SLUGS = new Set([
   "admin",
   "api",
@@ -35,6 +38,47 @@ export type NookManifestFile = {
   contentType: string;
   sha256: string;
 };
+
+export function normalizeNookDomain(rawDomain: string): string {
+  const value = rawDomain.trim();
+  if (!value) {
+    throw new Error("Nook domain must be a DNS hostname without a path.");
+  }
+
+  let hostname = value;
+  if (/^https?:\/\//i.test(value)) {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error("Nook domain must be a DNS hostname without a path.");
+    }
+    if (
+      url.username ||
+      url.password ||
+      url.port ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    ) {
+      throw new Error("Nook domain must be a DNS hostname without a path.");
+    }
+    hostname = url.hostname;
+  } else if (
+    value.includes("/") ||
+    value.includes("?") ||
+    value.includes("#") ||
+    value.includes("@")
+  ) {
+    throw new Error("Nook domain must be a DNS hostname without a path.");
+  }
+
+  const domain = hostname.toLowerCase();
+  if (!NOOK_DOMAIN_PATTERN.test(domain)) {
+    throw new Error("Nook domain must be a DNS hostname without a path.");
+  }
+  return domain;
+}
 
 export function validateNookSiteSlug(slug: string): NookValidationResult {
   if (!/^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(slug)) {

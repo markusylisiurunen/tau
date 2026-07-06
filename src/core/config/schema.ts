@@ -6,6 +6,7 @@ import {
   loadModelResolver,
   type ModelResolver,
 } from "../models/catalog.js";
+import { normalizeNookDomain } from "../nook/validation.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS, type RiskLevel, RiskLevelSchema } from "../types.js";
@@ -654,16 +655,15 @@ function parseNookConfig(
     };
   }
 
-  const domain = parsed.data.domain
-    .replace(/^https?:\/\//, "")
-    .replace(/\/+$/, "")
-    .toLowerCase();
-  if (
-    !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
-      domain,
-    )
-  ) {
-    return { errors: [`${sourceLabel}: nook.domain must be a DNS hostname without a path.`] };
+  let domain: string;
+  try {
+    domain = normalizeNookDomain(parsed.data.domain);
+  } catch (error) {
+    return {
+      errors: [
+        `${sourceLabel}: ${error instanceof Error ? error.message : "nook.domain must be a DNS hostname without a path."}`,
+      ],
+    };
   }
 
   return {

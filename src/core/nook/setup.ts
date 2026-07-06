@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
+import { normalizeNookDomain } from "./validation.js";
 
 const WORKER_NAME = "tau-nook";
 const R2_BUCKET = "tau-nook-assets";
@@ -230,10 +231,7 @@ export function parseNookInfrastructureDomain(args: { argv: string[]; env?: Node
   }
 
   return {
-    domain: domain
-      .replace(/^https?:\/\//i, "")
-      .replace(/\/+$/, "")
-      .toLowerCase(),
+    domain: normalizeNookDomain(domain),
     remaining,
   };
 }

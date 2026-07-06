@@ -13,6 +13,7 @@ export {
   NOOK_DEPLOY_LIMITS,
   NOOK_RESERVED_PATH_PREFIX,
   normalizeNookAssetPath,
+  normalizeNookDomain,
   validateNookManifest,
   validateNookSiteSlug,
 } from "./validation.js";

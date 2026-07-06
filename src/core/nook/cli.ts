@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { Config } from "../config/index.js";
 import { createNookClientFromConfig } from "./client.js";
 import { buildNookDeployManifest } from "./deploy.js";
@@ -154,7 +155,7 @@ export async function runNookCommand(
       if (positional.length !== 1 || !site) {
         throw new Error("usage: tau nook deploy <dir> --site <slug> [--public]");
       }
-      const files = buildNookDeployManifest(positional[0]!);
+      const files = buildNookDeployManifest(resolve(options.cwd ?? process.cwd(), positional[0]!));
       const result = await client.deploySite({
         site,
         files,

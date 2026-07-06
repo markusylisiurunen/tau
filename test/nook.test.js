@@ -7,6 +7,7 @@ import { getNookAccessClientSecret } from "../dist/core/config/index.js";
 import {
   buildNookDeployManifest,
   normalizeNookAssetPath,
+  validateNookManifest,
   validateNookSiteSlug,
 } from "../dist/core/nook/index.js";
 import { parseNookDestroyInputs, parseNookSetupInputs } from "../dist/core/nook/setup.js";
@@ -45,6 +46,35 @@ describe("nook validation", () => {
     writeFileSync(join(root, ".env"), "secret");
 
     expect(() => buildNookDeployManifest(root)).toThrow(/hidden deploy path/);
+  });
+
+  it("requires visible hashed manifest entries", () => {
+    const validHash = "a".repeat(64);
+    expect(() =>
+      validateNookManifest([
+        {
+          path: "/index.html",
+          sizeBytes: 1,
+          contentType: "text/html; charset=utf-8",
+          sha256: validHash,
+        },
+        {
+          path: "/assets/.secret",
+          sizeBytes: 1,
+          contentType: "text/plain; charset=utf-8",
+          sha256: validHash,
+        },
+      ]),
+    ).toThrow(/hidden deploy path/);
+    expect(() =>
+      validateNookManifest([
+        {
+          path: "/index.html",
+          sizeBytes: 1,
+          contentType: "text/html; charset=utf-8",
+        },
+      ]),
+    ).toThrow(/invalid sha256/);
   });
 });
 

@@ -33,6 +33,7 @@ export type NookManifestFile = {
   path: string;
   sizeBytes: number;
   contentType: string;
+  sha256: string;
 };
 
 export function validateNookSiteSlug(slug: string): NookValidationResult {
@@ -119,6 +120,12 @@ export function validateNookManifest(files: NookManifestFile[]): void {
     }
     if (paths.has(path)) {
       throw new Error(`duplicate deploy path '${path}'`);
+    }
+    if (path.split("/").some((segment) => segment.startsWith("."))) {
+      throw new Error(`hidden deploy path '${path}' is not allowed`);
+    }
+    if (typeof file.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(file.sha256)) {
+      throw new Error(`asset path '${path}' has invalid sha256`);
     }
     paths.add(path);
     if (path === "/index.html") {

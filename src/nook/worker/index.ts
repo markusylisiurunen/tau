@@ -86,7 +86,7 @@ type ManifestFile = {
   path: string;
   sizeBytes: number;
   contentType: string;
-  sha256?: string;
+  sha256: string;
 };
 
 type DeploymentRecord = {
@@ -400,6 +400,12 @@ function validateManifest(files: ManifestFile[]): string | undefined {
     const normalized = normalizeAssetPath(file.path);
     if (!normalized || normalized !== file.path) return `invalid asset path ${file.path}`;
     if (paths.has(file.path)) return `duplicate asset path ${file.path}`;
+    if (file.path.split("/").some((segment) => segment.startsWith("."))) {
+      return `hidden deploy path ${file.path} is not allowed`;
+    }
+    if (typeof file.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(file.sha256)) {
+      return `invalid sha256 for ${file.path}`;
+    }
     paths.add(file.path);
     if (file.path === "/index.html") hasIndex = true;
     if (!Number.isInteger(file.sizeBytes) || file.sizeBytes < 0)
@@ -560,7 +566,7 @@ async function handleBaseApi(
     if (bytes.byteLength !== payload.file.sizeBytes) {
       return error("invalid_upload", "Uploaded file size does not match manifest", 400);
     }
-    if (payload.file.sha256 && (await sha256Hex(bytes)) !== payload.file.sha256) {
+    if ((await sha256Hex(bytes)) !== payload.file.sha256) {
       return error("invalid_upload", "Uploaded file hash does not match manifest", 400);
     }
     await env.ASSETS.put(assetKey(site, deploymentId, payload.file.path), bytes, {

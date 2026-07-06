@@ -11,12 +11,10 @@ import {
 
 export type NookDeployFile = NookManifestFile & {
   absolutePath: string;
-  sha256: string;
 };
 
 export type NookBackendDeployFile = NookManifestFile & {
   backendPath: string;
-  sha256: string;
   readContent: () => Promise<Buffer>;
 };
 

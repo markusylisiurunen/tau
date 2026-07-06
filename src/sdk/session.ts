@@ -1,4 +1,6 @@
 import type {
+  SessionProtocolClientToolCallMessage,
+  SessionProtocolClientToolCancelMessage,
   SessionProtocolCreateParams,
   SessionProtocolEphemeralAgentTool,
   SessionProtocolInitializeParams,
@@ -12,6 +14,7 @@ import {
 } from "../transport/index.js";
 import type {
   TauSdkClient,
+  TauSdkClientTool,
   TauSdkDeltaListener,
   TauSdkEphemeralListener,
   TauSdkInitializeParams,
@@ -33,8 +36,8 @@ export async function createTauSdkClientFromTransport(
   transport: SessionProtocolTransport,
   options: TauSdkTransportClientOptions = {},
 ): Promise<TauSdkClient> {
-  const initializeParams = resolveTauSdkInitializeParams(options.initialize);
-  const client = new TauSdkClientImpl(transport);
+  const initializeParams = resolveTauSdkInitializeParams(options.initialize, options.clientTools);
+  const client = new TauSdkClientImpl(transport, options.clientTools ?? []);
 
   try {
     await transport.connect(
@@ -51,8 +54,17 @@ export async function createTauSdkClientFromTransport(
 class TauSdkClientImpl implements TauSdkClient {
   readonly sessions: TauSdkSessionClient;
 
-  constructor(private readonly transport: SessionProtocolTransport) {
+  private readonly clientToolAbortControllers = new Map<string, AbortController>();
+  private readonly unsubscribeClientTool: () => void;
+
+  constructor(
+    private readonly transport: SessionProtocolTransport,
+    private readonly clientTools: TauSdkClientTool[],
+  ) {
     this.sessions = new TauSdkSessionClientImpl(this);
+    this.unsubscribeClientTool = this.transport.onClientTool((message) =>
+      this.handleClientTool(message),
+    );
   }
 
   get ready() {
@@ -90,7 +102,77 @@ class TauSdkClientImpl implements TauSdkClient {
   }
 
   async close(): Promise<void> {
+    this.unsubscribeClientTool();
+    for (const controller of this.clientToolAbortControllers.values()) {
+      controller.abort();
+    }
+    this.clientToolAbortControllers.clear();
     await this.transport.close();
+  }
+
+  private handleClientTool(
+    message: SessionProtocolClientToolCallMessage | SessionProtocolClientToolCancelMessage,
+  ): void {
+    if (message.type === "session.clientTool.cancel") {
+      this.clientToolAbortControllers.get(message.callId)?.abort();
+      this.clientToolAbortControllers.delete(message.callId);
+      return;
+    }
+
+    const tool = this.clientTools.find((candidate) => candidate.schema.name === message.toolName);
+    if (!tool) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    this.clientToolAbortControllers.set(message.callId, abortController);
+    void this.runClientTool(tool, message, abortController)
+      .catch(() => undefined)
+      .finally(() => {
+        this.clientToolAbortControllers.delete(message.callId);
+      });
+  }
+
+  private async runClientTool(
+    tool: TauSdkClientTool,
+    message: SessionProtocolClientToolCallMessage,
+    abortController: AbortController,
+  ): Promise<void> {
+    const ack = await this.transport.request("session.clientTool.ack", {
+      sessionId: message.sessionId,
+      callId: message.callId,
+    });
+    if (!ack.accepted || abortController.signal.aborted) {
+      return;
+    }
+
+    try {
+      const result = await tool.execute(message.arguments, {
+        sessionId: message.sessionId,
+        callId: message.callId,
+        signal: abortController.signal,
+      });
+      if (abortController.signal.aborted) {
+        return;
+      }
+      const content = typeof result === "string" ? result : result.content;
+      await this.transport.request("session.clientTool.result", {
+        sessionId: message.sessionId,
+        callId: message.callId,
+        ok: true,
+        content,
+      });
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        return;
+      }
+      await this.transport.request("session.clientTool.result", {
+        sessionId: message.sessionId,
+        callId: message.callId,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   sendSubmit(
@@ -312,8 +394,16 @@ class TauSdkClientImpl implements TauSdkClient {
 
 export function resolveTauSdkInitializeParams(
   params: TauSdkInitializeParams | undefined,
+  clientTools: TauSdkClientTool[] = [],
 ): SessionProtocolInitializeParams {
-  const candidate = params ?? DEFAULT_INITIALIZE_PARAMS;
+  const base = params ?? DEFAULT_INITIALIZE_PARAMS;
+  const candidate: SessionProtocolInitializeParams = {
+    client: {
+      name: base.client.name,
+      version: base.client.version,
+      ...(clientTools.length > 0 ? { tools: clientTools.map((tool) => tool.schema) } : {}),
+    },
+  };
   const validated = validateSessionProtocolParams("initialize", candidate);
   if (!validated.ok) {
     throw new TauTransportError(validated.error.message);

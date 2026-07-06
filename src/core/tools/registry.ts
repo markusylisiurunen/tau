@@ -1,6 +1,5 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
-import type { DiffReviewAgentActivity } from "../diff_review/index.js";
 import type { ModelResolver } from "../models/catalog.js";
 import type { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentName, SubagentStatus } from "../subagents/types.js";
@@ -39,34 +38,11 @@ type ToolUiEventWithHeaderTarget = {
     }
   | { type: "bash_blocked"; toolCallId: string; command: string; reason: string }
   | {
-      type: "diff_review_started";
+      type: "client_tool_finished";
       toolCallId: string;
-      command: string;
-    }
-  | {
-      type: "diff_review_updated";
-      toolCallId: string;
-      command: string;
-      reviewedFiles: string[];
-      diffToolUiText?: string;
-      reviewAgents: DiffReviewAgentActivity[];
-    }
-  | {
-      type: "diff_review_finished";
-      toolCallId: string;
-      command: string;
-      status: "success" | "cancelled" | "error";
-      reviewedFiles: string[];
-      diffToolUiText?: string;
-      reviewAgents: DiffReviewAgentActivity[];
-      message?: string;
-      uiText?: ToolUiText;
-    }
-  | {
-      type: "diff_review_blocked";
-      toolCallId: string;
-      command: string;
-      reason: string;
+      toolName: string;
+      status: "success" | "error";
+      uiText: ToolUiText;
     }
   | {
       type: "spawn_agent_started";

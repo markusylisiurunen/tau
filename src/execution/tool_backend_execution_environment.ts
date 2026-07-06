@@ -4,7 +4,7 @@ import {
   type RuntimePromptBootstrap,
   resolveRuntimePromptBootstrapAsync,
 } from "../core/runtime/runtime_bootstrap.js";
-import { ToolCatalog, type ToolCatalogOptions } from "../core/tools/catalog.js";
+import { ToolCatalog } from "../core/tools/catalog.js";
 import {
   scopeToolExecutionBackend,
   type ToolExecutionBackend,
@@ -35,14 +35,13 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
   constructor(options: {
     snapshot: TSnapshot;
     backend: ToolExecutionBackend;
-    toolCatalogOptions?: ToolCatalogOptions;
   }) {
     this.environmentSnapshot = options.snapshot;
     this.cwd = options.snapshot.cwd;
     this.home = options.snapshot.home;
     this.backend = options.backend;
     this.scopedBackend = scopeToolExecutionBackend(options.backend, this.cwd);
-    this.toolRegistry = ToolCatalog.createRegistry(this.scopedBackend, options.toolCatalogOptions);
+    this.toolRegistry = ToolCatalog.createRegistry(this.scopedBackend);
   }
 
   async resolveRuntimeConfig(): Promise<RuntimeConfigResult> {

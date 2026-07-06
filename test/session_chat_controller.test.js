@@ -658,12 +658,12 @@ async function waitUntil(predicate, timeoutMs = 2000) {
   }
 }
 
-async function launchInlineDiffTool({ env }) {
+async function launchInlineDiffTool({ env, uiText = "http://127.0.0.1:4321", returnDelayMs = 0 }) {
   await new Promise((resolve, reject) => {
     const socket = createConnection(env.TAU_DIFF_SOCKET);
     let nextId = 1;
     let buffer = "";
-    let initialized = false;
+    let stage = "initialize";
     let submitted = false;
     let connected = false;
 
@@ -706,16 +706,28 @@ async function launchInlineDiffTool({ env }) {
         }
 
         if (message.type !== "response" || !message.ok) continue;
-        if (!initialized) {
-          initialized = true;
+        if (stage === "initialize") {
+          if (uiText) {
+            stage = "set-ui";
+            request("session.set_ui_text", { text: uiText });
+          } else {
+            stage = "submit";
+            request("thread.submit_message", { message: "explain this diff" });
+          }
+          continue;
+        }
+        if (stage === "set-ui") {
+          stage = "submit";
           request("thread.submit_message", { message: "explain this diff" });
           continue;
         }
         if (!submitted) {
           submitted = true;
-          request("session.return_review", {
-            review: "returned review from local diff tool",
-          });
+          setTimeout(() => {
+            request("session.return_review", {
+              review: "returned review from local diff tool",
+            });
+          }, returnDelayMs);
         }
       }
     });
@@ -3104,6 +3116,46 @@ describe("SessionChatController", () => {
         text: "diff review added to the conversation. tau did not run yet.",
       }),
     );
+  });
+
+  it("shows the diff review card while a model-launched diff_review tool is active", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+      defaultDiffTool: { command: "inline-diff-tool" },
+      diffToolLauncher: (args) => launchInlineDiffTool({ ...args, returnDelayMs: 100 }),
+    });
+    controller.start();
+
+    const result = controller.runClientDiffReview(
+      { source: "git_diff", diffArgs: ["--", "src/main.ts"] },
+      new AbortController().signal,
+    );
+
+    await waitUntil(() =>
+      view.messages.some(
+        (message) =>
+          message.model.type === "diff_review" &&
+          message.model.status === "active" &&
+          message.model.uiText === "http://127.0.0.1:4321",
+      ),
+    );
+
+    await expect(result).resolves.toContain("Diff review completed.");
+    await expect(result).resolves.toContain("Reviewed scope: git diff -- src/main.ts");
+    await expect(result).resolves.toContain("returned review from local diff tool");
+    const diffReviewMessage = view.messages.find((message) => message.model.type === "diff_review");
+    expect(diffReviewMessage.model).toMatchObject({
+      type: "diff_review",
+      status: "returned",
+      command: "git diff -- src/main.ts",
+    });
+    expect(session.record).not.toHaveBeenCalled();
+    expect(session.closeEphemeralContext).toHaveBeenCalledWith("ephemeral-1");
   });
 
   it("routes /listen as a client-side command in session attach", async () => {

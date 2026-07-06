@@ -2083,6 +2083,10 @@ export class SessionChatController {
     });
   }
 
+  async runClientDiffReview(rawArgs: unknown, signal: AbortSignal): Promise<string> {
+    return await this.diffReviewService.runModelTool(rawArgs, signal);
+  }
+
   private async startDiffReview(argsText: string): Promise<void> {
     if (this.diffReviewService.isActive()) {
       this.view.addSystemMessage("diff review is already active.", "warn");

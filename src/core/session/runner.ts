@@ -180,6 +180,7 @@ export async function* runModelSubturn(
 export type RunToolCallsOptions = {
   toolCalls: ToolCall[];
   toolRegistry: ToolRegistry;
+  extraToolDefinitions?: ToolDefinition[];
   enabledTools: Tool[];
   riskLevel: RiskLevel;
   signal: AbortSignal;
@@ -279,6 +280,7 @@ export async function* runToolCalls(
     toolCalls,
     toolRegistry,
     enabledTools,
+    extraToolDefinitions = [],
     riskLevel,
     signal,
     dispatchContext,
@@ -305,7 +307,9 @@ export async function* runToolCalls(
       continue;
     }
 
-    const def = toolRegistry.get(toolCall.name);
+    const def =
+      toolRegistry.get(toolCall.name) ??
+      extraToolDefinitions.find((definition) => definition.schema.name === toolCall.name);
     if (!def) {
       const msg =
         toolErrorMessages?.unsupported?.(toolCall) ??

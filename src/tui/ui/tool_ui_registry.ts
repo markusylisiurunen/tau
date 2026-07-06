@@ -1,7 +1,4 @@
-import type { DiffReviewAgentActivity } from "../../core/diff_review/index.js";
 import type { ToolUiEvent, ToolUiText } from "../../core/tools/registry.js";
-import { formatUsageSnapshot, formatUsdCost } from "../../core/utils/format.js";
-import { formatToolActivityText } from "./agent_activity_format.js";
 import {
   buildBashAbortedView,
   buildBashBlockedView,
@@ -78,6 +75,49 @@ function buildToolQueuedView(theme: Theme, toolName: string): ToolOutputViewMode
   };
 }
 
+function buildClientToolFinishedView(args: {
+  theme: Theme;
+  toolName: string;
+  status: "success" | "error";
+  uiText: ToolUiText;
+}): ToolOutputViewModel {
+  const { theme, toolName, status, uiText } = args;
+  const { palette, text } = theme;
+  const isSuccess = status === "success";
+  const borderColor = isSuccess
+    ? (s: string) => palette.actionSuccess(s)
+    : (s: string) => palette.actionError(s);
+  const header = buildToolHeaderLine({
+    bulletStyle: borderColor,
+    bullet: isSuccess ? "✓" : "✗",
+    label: isSuccess ? "completed" : "failed",
+    labelStyle: palette.textMuted,
+    accent: inlineText(toolName),
+    accentStyle: palette.brandAccent,
+  });
+  const compactText = renderToolUiCompactText({
+    uiText,
+    theme,
+    previewStyle: isSuccess ? palette.textDim : palette.actionError,
+    statusStyle: palette.textMuted,
+  });
+  const fullText = renderToolUiTextLines({
+    uiText,
+    kind: "full",
+    theme,
+    baseStyle: isSuccess ? palette.actionOutput : palette.actionError,
+  });
+
+  return {
+    borderColor,
+    expanded: {
+      title: borderColor(text.bold(`${isSuccess ? "completed" : "failed"} ${toolName}`)),
+      sections: fullText ? [fullText] : [],
+    },
+    compact: { header, extraText: compactText },
+  };
+}
+
 function buildSimpleToolFinishedView(args: {
   theme: Theme;
   label: string;
@@ -118,159 +158,6 @@ function buildSimpleToolFinishedView(args: {
       header,
       extraText: messageLine ? `    ${messageLine}` : undefined,
     },
-  };
-}
-
-function formatDiffReviewTitle(command: string | undefined): string {
-  const trimmed = command?.trim() ?? "";
-  return trimmed || "current working tree";
-}
-
-function splitDiffToolUiText(text: string | undefined): string[] {
-  const trimmed = text?.trim();
-  return trimmed ? trimmed.split(/\r?\n/).map((line) => line.trimEnd()) : [];
-}
-
-function buildDiffReviewAgentLines(reviewAgents: DiffReviewAgentActivity[]): string[] {
-  const lines: string[] = [];
-  reviewAgents.forEach((agent, index) => {
-    lines.push(`${agent.threadId} (${agent.status})`);
-
-    const activityText = formatToolActivityText(agent.lastActivityText ?? "");
-    if (activityText) {
-      lines.push(activityText);
-    }
-
-    lines.push(`${formatUsageSnapshot(agent.usage)} · ${formatUsdCost(agent.costTotal)}`);
-
-    if (index < reviewAgents.length - 1) {
-      lines.push("");
-    }
-  });
-  return lines;
-}
-
-function buildDiffReviewUiText(args: {
-  diffToolUiText?: string;
-  reviewAgents: DiffReviewAgentActivity[];
-  reviewedFiles: string[];
-  message?: string;
-  status: string;
-}): ToolUiText {
-  const diffToolLines = splitDiffToolUiText(args.diffToolUiText);
-  const agentLines = buildDiffReviewAgentLines(args.reviewAgents);
-  const separator = diffToolLines.length > 0 && agentLines.length > 0 ? [""] : [];
-  const lines = [...diffToolLines, ...separator, ...agentLines];
-  const fallbackLines = args.message ? [args.message] : [];
-  const contentLines = lines.length > 0 ? lines : fallbackLines;
-  const fileCount = args.reviewedFiles.length;
-  const fileLabel = `${fileCount} reviewed file${fileCount === 1 ? "" : "s"}`;
-  const statusLine = [args.status, fileLabel].filter(Boolean).join(" · ");
-
-  return {
-    previewLines: contentLines.map((text) => ({ text })),
-    statusLine,
-    fullLines: contentLines.map((text) => ({ text })),
-  };
-}
-
-function buildDiffReviewRunningView(args: {
-  theme: Theme;
-  command: string;
-  uiText?: ToolUiText;
-}): ToolOutputViewModel {
-  const { theme, command, uiText } = args;
-  const { palette, text } = theme;
-  const runningColor = (s: string) => palette.actionRunning(s);
-  const title = formatDiffReviewTitle(command);
-
-  const header = buildToolHeaderLine({
-    bulletStyle: runningColor,
-    bullet: "⏵",
-    label: "diff review",
-    labelStyle: palette.textMuted,
-    accent: inlineText(title),
-    accentStyle: palette.brandAccent,
-  });
-
-  const compactText = uiText
-    ? renderToolUiCompactText({
-        uiText,
-        theme,
-        previewStyle: palette.textDim,
-        statusStyle: palette.textMuted,
-      })
-    : undefined;
-  const fullText = uiText
-    ? renderToolUiTextLines({
-        uiText,
-        kind: "full",
-        theme,
-        baseStyle: palette.actionOutput,
-      })
-    : undefined;
-
-  return {
-    borderColor: runningColor,
-    expanded: {
-      title: runningColor(text.bold(`diff review ${title}`)),
-      sections: fullText ? [fullText] : [],
-    },
-    compact: { header, extraText: compactText },
-  };
-}
-
-function buildDiffReviewFinishedView(args: {
-  theme: Theme;
-  command: string;
-  status: "success" | "cancelled" | "error";
-  uiText: ToolUiText;
-}): ToolOutputViewModel {
-  const { theme, command, status, uiText } = args;
-  const { palette, text } = theme;
-  const isSuccess = status === "success";
-  const isCancelled = status === "cancelled";
-  const borderColor = isSuccess
-    ? (s: string) => palette.actionSuccess(s)
-    : isCancelled
-      ? (s: string) => palette.statusWarn(s)
-      : (s: string) => palette.actionError(s);
-  const title = formatDiffReviewTitle(command);
-  const label = isSuccess
-    ? "diff reviewed"
-    : isCancelled
-      ? "diff review cancelled"
-      : "diff review failed";
-
-  const header = buildToolHeaderLine({
-    bulletStyle: borderColor,
-    bullet: isSuccess ? "✓" : "✗",
-    label,
-    labelStyle: palette.textMuted,
-    accent: inlineText(title),
-    accentStyle: palette.brandAccent,
-  });
-
-  const compactText = renderToolUiCompactText({
-    uiText,
-    theme,
-    previewStyle: palette.textDim,
-    statusStyle: palette.textMuted,
-  });
-  const fullText = renderToolUiTextLines({
-    uiText,
-    kind: "full",
-    theme,
-    baseStyle: palette.actionOutput,
-  });
-
-  return {
-    borderColor,
-    expanded: {
-      title: borderColor(text.bold(`diff review ${title}`)),
-      sections: fullText ? [fullText] : [],
-    },
-    compact: { header, extraText: compactText },
   };
 }
 
@@ -408,6 +295,16 @@ export function createToolUiRegistry(): ToolUiRegistry {
     return buildToolQueuedView(context.theme, uiEvent.toolName);
   });
 
+  registry.register("client_tool_finished", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "client_tool_finished" }>;
+    return buildClientToolFinishedView({
+      theme: context.theme,
+      toolName: uiEvent.toolName,
+      status: uiEvent.status,
+      uiText: uiEvent.uiText,
+    });
+  });
+
   registry.register("bash_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "bash_started" }>;
     return buildBashRunningView(context.theme, uiEvent.command, uiEvent.headerTarget);
@@ -443,57 +340,6 @@ export function createToolUiRegistry(): ToolUiRegistry {
       uiEvent.reason,
       uiEvent.headerTarget,
     );
-  });
-
-  registry.register("diff_review_started", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "diff_review_started" }>;
-    return buildDiffReviewRunningView({
-      theme: context.theme,
-      command: uiEvent.command,
-    });
-  });
-
-  registry.register("diff_review_updated", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "diff_review_updated" }>;
-    return buildDiffReviewRunningView({
-      theme: context.theme,
-      command: uiEvent.command,
-      uiText: buildDiffReviewUiText({
-        diffToolUiText: uiEvent.diffToolUiText,
-        reviewAgents: uiEvent.reviewAgents,
-        reviewedFiles: uiEvent.reviewedFiles,
-        status: "active",
-      }),
-    });
-  });
-
-  registry.register("diff_review_finished", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "diff_review_finished" }>;
-    return buildDiffReviewFinishedView({
-      theme: context.theme,
-      command: uiEvent.command,
-      status: uiEvent.status,
-      uiText:
-        uiEvent.uiText ??
-        buildDiffReviewUiText({
-          diffToolUiText: uiEvent.diffToolUiText,
-          reviewAgents: uiEvent.reviewAgents,
-          reviewedFiles: uiEvent.reviewedFiles,
-          message: uiEvent.message,
-          status: uiEvent.status,
-        }),
-    });
-  });
-
-  registry.register("diff_review_blocked", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "diff_review_blocked" }>;
-    return buildSimpleToolFinishedView({
-      theme: context.theme,
-      label: "diff review",
-      target: uiEvent.headerTarget,
-      status: "error",
-      message: uiEvent.reason,
-    });
   });
 
   registry.register("spawn_agent_started", (event, context) => {

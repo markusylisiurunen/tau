@@ -112,7 +112,9 @@ when the rpc server starts, it immediately emits a `ready` line:
     "session.terminateSubagent",
     "session.ephemeral.create",
     "session.ephemeral.submit",
-    "session.ephemeral.close"
+    "session.ephemeral.close",
+    "session.clientTool.ack",
+    "session.clientTool.result"
   ]
 }
 ```
@@ -171,7 +173,7 @@ params (required):
 { "client": { "name": "my-client", "version": "0.1.0" } }
 ```
 
-`initialize` returns protocol metadata and whether initialization already happened:
+`initialize` returns protocol metadata and whether initialization already happened. Clients may include `client.tools` to advertise client-provided tools. The host freezes eligible client tools per assistant turn and delegates calls back to the advertising client with `session.clientTool.call` messages; clients answer with `session.clientTool.ack` and `session.clientTool.result`.
 
 ```json
 {
@@ -295,7 +297,7 @@ Tau does not create or provision Sprites during `session.create`; provider-speci
         "id": "gpt-5.5-coder",
         "label": "GPT-5.5 coder",
         "allowedReasoningLevels": ["medium", "high", "xhigh"],
-        "tools": ["bash", "write", "edit", "view_image", "diff_review"],
+        "tools": ["bash", "write", "edit", "view_image"],
         "skills": "*",
         "source": "builtin"
       }

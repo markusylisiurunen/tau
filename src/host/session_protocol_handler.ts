@@ -6,6 +6,7 @@ import {
   SESSION_PROTOCOL_ERROR_CODES,
   SESSION_PROTOCOL_METHODS,
   SESSION_PROTOCOL_VERSION,
+  type SessionProtocolClientToolDefinition,
   type SessionProtocolDeltaMessage,
   type SessionProtocolOutgoingMessage,
   type SessionProtocolRequestId,
@@ -79,6 +80,11 @@ export class SessionProtocolHandler {
   private readonly send: (message: SessionProtocolOutgoingMessage) => void;
   private readonly sessionStates = new Map<string, SessionProtocolHandlerSessionState>();
   private initialized = false;
+  private clientToolRegistration?: {
+    attachSession: (sessionId: string) => void;
+    detachSession: (sessionId: string) => void;
+    unregister: () => void;
+  };
   private closed = false;
 
   constructor(options: SessionProtocolHandlerOptions) {
@@ -172,6 +178,12 @@ export class SessionProtocolHandler {
         case "session.ephemeral.close":
           await this.handleEphemeralClose(request);
           return;
+        case "session.clientTool.ack":
+          this.handleClientToolAck(request);
+          return;
+        case "session.clientTool.result":
+          this.handleClientToolResult(request);
+          return;
       }
     } catch (error) {
       this.sendMessage(
@@ -219,6 +231,8 @@ export class SessionProtocolHandler {
     }
 
     this.sessionStates.clear();
+    this.clientToolRegistration?.unregister();
+    this.clientToolRegistration = undefined;
 
     if (shutdownHost) {
       await this.host.shutdown();
@@ -238,8 +252,49 @@ export class SessionProtocolHandler {
       alreadyInitialized: this.initialized,
     };
 
+    if (!this.initialized && request.params.client.tools?.length) {
+      this.registerClientTools(request.params.client.tools);
+    }
+
     this.initialized = true;
     this.sendMessage(createSessionProtocolSuccessResponse(request.id, "initialize", result));
+  }
+
+  private registerClientTools(tools: SessionProtocolClientToolDefinition[]): void {
+    if (!this.host.registerClientTools) {
+      throw new Error("session host does not support client tools");
+    }
+
+    this.clientToolRegistration = this.host.registerClientTools({
+      tools,
+      sendCall: (message) => this.sendMessage(message),
+      sendCancel: (message) => this.sendMessage(message),
+    });
+  }
+
+  private handleClientToolAck(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.clientTool.ack" }>,
+  ): void {
+    const accepted =
+      this.host.acknowledgeClientToolCall?.(request.params.sessionId, request.params.callId) ??
+      false;
+    this.sendMessage(
+      createSessionProtocolSuccessResponse(request.id, "session.clientTool.ack", { accepted }),
+    );
+  }
+
+  private handleClientToolResult(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.clientTool.result" }>,
+  ): void {
+    const result = request.params.ok
+      ? { ok: true as const, content: request.params.content }
+      : { ok: false as const, error: request.params.error };
+    const accepted =
+      this.host.completeClientToolCall?.(request.params.sessionId, request.params.callId, result) ??
+      false;
+    this.sendMessage(
+      createSessionProtocolSuccessResponse(request.id, "session.clientTool.result", { accepted }),
+    );
   }
 
   private async handleSubmit(
@@ -1154,6 +1209,13 @@ export class SessionProtocolHandler {
     });
 
     this.sessionStates.set(session.sessionId, state);
+    try {
+      this.clientToolRegistration?.attachSession(session.sessionId);
+    } catch (error) {
+      this.unsubscribeSessionListeners(state);
+      this.sessionStates.delete(session.sessionId);
+      throw error;
+    }
     return state;
   }
 
@@ -1282,6 +1344,8 @@ export class SessionProtocolHandler {
   }
 
   private unsubscribeSessionListeners(state: SessionProtocolHandlerSessionState): void {
+    this.clientToolRegistration?.detachSession(state.session.sessionId);
+
     if (!state.unsubscribeDelta) {
       // continue to ephemeral cleanup below
     } else {

@@ -1,4 +1,5 @@
 import type {
+  SessionProtocolClientToolMessage,
   SessionProtocolDeltaMessage,
   SessionProtocolEphemeralMessage,
   SessionProtocolOutgoingParseFailure,
@@ -7,6 +8,7 @@ import type {
 import { TauTransportError } from "./errors.js";
 import type { PendingSessionProtocolRequests } from "./pending_session_protocol_requests.js";
 import type {
+  SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
 } from "./session_transport.js";
@@ -74,6 +76,22 @@ export function notifySessionProtocolDeltaListeners(
       listener(message);
     } catch {
       // listener failures must not break transport processing
+    }
+  }
+}
+
+export function notifySessionProtocolClientToolListeners(
+  listeners: Set<SessionProtocolClientToolListener>,
+  message: SessionProtocolClientToolMessage,
+  options: { ignoreListenerErrors?: boolean } = {},
+): void {
+  for (const listener of listeners) {
+    try {
+      listener(message);
+    } catch (error) {
+      if (!options.ignoreListenerErrors) {
+        throw error;
+      }
     }
   }
 }

@@ -6,6 +6,10 @@ import type {
   StartedDiffReviewBridge,
 } from "../../core/diff_review/index.js";
 import {
+  formatDiffReviewReturnedReviewToolResult,
+  parseDiffReviewToolArgs,
+} from "../../core/diff_review/index.js";
+import {
   type DiffReviewSnapshotSource,
   formatDiffReviewScope,
 } from "../../core/diff_review/snapshot.js";
@@ -40,7 +44,7 @@ type DiffReviewState = {
   messageId: string;
   diffCommand: string;
   reviewedFiles: string[];
-  abortController: AbortController;
+  abortController?: AbortController;
   bridge?: DiffReviewBridge;
   cancelRequested: boolean;
   diffToolUiText?: string;
@@ -109,12 +113,13 @@ export class DiffReviewService {
       return;
     }
 
+    const abortController = new AbortController();
     const state: DiffReviewState = {
       phase: "preparing",
       messageId: "",
       diffCommand: formatDiffReviewCommand(diffArgs),
       reviewedFiles: [],
-      abortController: new AbortController(),
+      abortController,
       cancelRequested: false,
       reviewAgents: [],
       messageFinalized: false,
@@ -132,10 +137,10 @@ export class DiffReviewService {
         }
 
         if (state.phase === "preparing") {
-          if (state.abortController.signal.aborted) {
+          if (abortController.signal.aborted) {
             return false;
           }
-          state.abortController.abort();
+          abortController.abort();
           return true;
         }
 
@@ -154,30 +159,20 @@ export class DiffReviewService {
       const started = await this.startSession({
         source: { kind: "git_diff", diffArgs },
         diffTool,
-        signal: state.abortController.signal,
+        signal: abortController.signal,
       });
-      if (state.abortController.signal.aborted) {
+      if (abortController.signal.aborted) {
         await started.bridge.cancel("controller_cancelled");
         finalizeDiffReviewMessage(state, this.view, "cancelled");
         return;
       }
 
-      state.phase = "active";
-      state.bridge = started.bridge;
-      state.reviewedFiles = started.bridge.snapshot?.files.map((file) => file.path) ?? [];
-      updateDiffReviewUiState(state, started.bridge.getUiState(), this.view);
-      state.removeUiStateListener = started.bridge.onUiStateChange((uiState) => {
-        if (this.state !== state) {
-          return;
-        }
-        updateDiffReviewUiState(state, uiState, this.view);
-      });
-      this.refreshStatus();
+      this.attachStartedSession(state, started);
 
       const result = await started.result;
       this.handleResult(state, result);
     } catch (error) {
-      if (state.abortController.signal.aborted) {
+      if (abortController.signal.aborted) {
         finalizeDiffReviewMessage(state, this.view, "cancelled");
       } else {
         const message = (error as Error).message;
@@ -185,7 +180,7 @@ export class DiffReviewService {
         this.view.addSystemMessage(`diff review failed: ${message}`, "error");
       }
     } finally {
-      if (!state.messageFinalized && state.abortController.signal.aborted) {
+      if (!state.messageFinalized && abortController.signal.aborted) {
         finalizeDiffReviewMessage(state, this.view, "cancelled");
       }
       state.removeUiStateListener?.();
@@ -200,19 +195,121 @@ export class DiffReviewService {
     }
   }
 
+  async runModelTool(rawArgs: unknown, signal: AbortSignal): Promise<string> {
+    if (this.state) {
+      throw new Error("diff review is already active");
+    }
+
+    const diffTool = this.getDiffToolConfig();
+    if (!diffTool) {
+      throw new Error(
+        "diff_review is unavailable because diffTool is not configured in config.json",
+      );
+    }
+
+    const parsedArgs = parseDiffReviewToolArgs(rawArgs);
+    if (!parsedArgs.ok) {
+      throw new Error(`Invalid arguments: ${parsedArgs.error}`);
+    }
+
+    const state: DiffReviewState = {
+      phase: "preparing",
+      messageId: "",
+      diffCommand: parsedArgs.data.command,
+      reviewedFiles: [],
+      cancelRequested: false,
+      reviewAgents: [],
+      messageFinalized: false,
+    };
+    state.messageId = this.view.addMessage(buildDiffReviewMessage(state));
+    this.state = state;
+    this.refreshStatus();
+
+    const cancelOnAbort = () => {
+      if (!state.bridge || state.cancelRequested) {
+        return;
+      }
+      state.cancelRequested = true;
+      void state.bridge.cancel("controller_cancelled");
+    };
+    signal.addEventListener("abort", cancelOnAbort, { once: true });
+
+    try {
+      const started = await this.startSession({
+        source: parsedArgs.data.source,
+        diffTool,
+        signal,
+      });
+      if (signal.aborted) {
+        await started.bridge.cancel("controller_cancelled").catch(() => undefined);
+        finalizeDiffReviewMessage(state, this.view, "cancelled");
+        throw new Error("Diff review cancelled because the assistant turn was interrupted.");
+      }
+
+      this.attachStartedSession(state, started);
+
+      const result = await started.result;
+      if (result.status === "returned") {
+        finalizeDiffReviewMessage(state, this.view, "returned");
+        return formatDiffReviewReturnedReviewToolResult({
+          command: state.diffCommand,
+          reviewedFiles: state.reviewedFiles,
+          review: result.review,
+        });
+      }
+
+      finalizeDiffReviewMessage(state, this.view, "cancelled");
+      throw new Error(formatCancelledDiffReviewResult(result));
+    } catch (error) {
+      if (!state.messageFinalized) {
+        if (signal.aborted) {
+          finalizeDiffReviewMessage(state, this.view, "cancelled");
+        } else {
+          finalizeDiffReviewMessage(state, this.view, "failed", (error as Error).message);
+        }
+      }
+      if (signal.aborted) {
+        throw new Error("Diff review cancelled because the assistant turn was interrupted.");
+      }
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", cancelOnAbort);
+      state.removeUiStateListener?.();
+      state.removeUiStateListener = undefined;
+      if (this.state === state) {
+        this.state = undefined;
+      }
+      this.refreshStatus();
+    }
+  }
+
   async cancel(): Promise<void> {
     const state = this.state;
     if (!state) {
       return;
     }
 
-    if (!state.abortController.signal.aborted) {
+    if (state.abortController && !state.abortController.signal.aborted) {
       state.abortController.abort();
     }
 
     if (state.bridge) {
       await state.bridge.cancel("controller_cancelled");
     }
+  }
+
+  private attachStartedSession(state: DiffReviewState, started: StartedDiffReviewBridge): void {
+    state.phase = "active";
+    state.bridge = started.bridge;
+    state.reviewedFiles = started.bridge.snapshot?.files.map((file) => file.path) ?? [];
+    updateDiffReviewUiState(state, started.bridge.getUiState(), this.view);
+    state.removeUiStateListener = started.bridge.onUiStateChange((uiState) => {
+      if (this.state !== state) {
+        return;
+      }
+      updateDiffReviewUiState(state, uiState, this.view);
+    });
+    this.refreshStatus();
   }
 
   private handleResult(state: DiffReviewState, result: DiffReviewResult): void {
@@ -257,6 +354,21 @@ export class DiffReviewService {
 
 function formatDiffReviewCommand(diffArgs: string[]): string {
   return formatDiffReviewScope(diffArgs);
+}
+
+function formatCancelledDiffReviewResult(
+  result: Extract<DiffReviewResult, { status: "cancelled" }>,
+): string {
+  switch (result.reason) {
+    case "tool_cancelled":
+      return "Diff review cancelled by the diff review tool.";
+    case "tool_disconnected":
+      return "Diff review cancelled because the diff review tool disconnected before returning a review.";
+    case "controller_cancelled":
+      return "Diff review cancelled.";
+    case "launch_failed":
+      return "Diff review cancelled because the diff review tool failed to launch.";
+  }
 }
 
 function buildDiffReviewMessage(

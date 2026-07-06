@@ -1,5 +1,6 @@
 import type {
   SessionProtocolAutocompletePathsResult,
+  SessionProtocolClientToolDefinition,
   SessionProtocolCompactResult,
   SessionProtocolCreateParams,
   SessionProtocolDeltaMessage,
@@ -63,9 +64,26 @@ export type TauSdkEphemeralCreateResult = SessionProtocolEphemeralCreateResult;
 export type TauSdkEphemeralSubmitResult = SessionProtocolEphemeralSubmitResult;
 export type TauSdkEphemeralCloseResult = SessionProtocolEphemeralCloseResult;
 
+export type TauSdkClientToolContext = {
+  sessionId: string;
+  callId: string;
+  signal: AbortSignal;
+};
+
+export type TauSdkClientToolResult = string | { content: string };
+
+export type TauSdkClientTool = {
+  schema: SessionProtocolClientToolDefinition;
+  execute: (
+    args: unknown,
+    context: TauSdkClientToolContext,
+  ) => Promise<TauSdkClientToolResult> | TauSdkClientToolResult;
+};
+
 export type TauSdkTransportClientOptions = {
   connectTimeoutMs?: number;
   initialize?: TauSdkInitializeParams;
+  clientTools?: TauSdkClientTool[];
 };
 
 export type TauSdkClientOptions = TauSdkTransportClientOptions & {

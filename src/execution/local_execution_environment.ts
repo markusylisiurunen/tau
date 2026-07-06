@@ -7,7 +7,7 @@ import {
   type RuntimePromptBootstrap,
   resolveRuntimePromptBootstrap,
 } from "../core/runtime/runtime_bootstrap.js";
-import { ToolCatalog, type ToolCatalogOptions } from "../core/tools/catalog.js";
+import { ToolCatalog } from "../core/tools/catalog.js";
 import {
   scopeToolExecutionBackend,
   type ToolExecutionBackend,
@@ -95,20 +95,17 @@ export type LocalExecutionEnvironmentResolverOptions = {
   home: string;
   readFile: (path: string) => string;
   toolBackend: ToolExecutionBackend;
-  toolCatalogOptions?: ToolCatalogOptions;
 };
 
 export class LocalExecutionEnvironmentResolver implements ExecutionEnvironmentResolver {
   private readonly home: string;
   private readonly readFile: (path: string) => string;
   private readonly toolBackend: ToolExecutionBackend;
-  private readonly toolCatalogOptions?: ToolCatalogOptions;
 
   constructor(options: LocalExecutionEnvironmentResolverOptions) {
     this.home = options.home;
     this.readFile = options.readFile;
     this.toolBackend = options.toolBackend;
-    this.toolCatalogOptions = options.toolCatalogOptions;
   }
 
   async resolve(input: SessionProtocolExecutionEnvironmentInput) {
@@ -136,7 +133,7 @@ export class LocalExecutionEnvironmentResolver implements ExecutionEnvironmentRe
       home,
       readFile: this.readFile,
       toolBackend: scopedBackend,
-      toolRegistry: ToolCatalog.createRegistry(scopedBackend, this.toolCatalogOptions),
+      toolRegistry: ToolCatalog.createRegistry(scopedBackend),
     });
   }
 }

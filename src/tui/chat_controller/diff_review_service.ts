@@ -202,7 +202,9 @@ export class DiffReviewService {
 
     const diffTool = this.getDiffToolConfig();
     if (!diffTool) {
-      throw new Error("configure diffTool in config.json before using diff_review");
+      throw new Error(
+        "diff_review is unavailable because diffTool is not configured in config.json",
+      );
     }
 
     const parsedArgs = parseDiffReviewToolArgs(rawArgs);
@@ -241,7 +243,7 @@ export class DiffReviewService {
       if (signal.aborted) {
         await started.bridge.cancel("controller_cancelled").catch(() => undefined);
         finalizeDiffReviewMessage(state, this.view, "cancelled");
-        throw new Error("diff review aborted");
+        throw new Error("Diff review cancelled because the assistant turn was interrupted.");
       }
 
       this.attachStartedSession(state, started);
@@ -267,7 +269,7 @@ export class DiffReviewService {
         }
       }
       if (signal.aborted) {
-        throw new Error("diff review aborted");
+        throw new Error("Diff review cancelled because the assistant turn was interrupted.");
       }
       throw error;
     } finally {
@@ -359,13 +361,13 @@ function formatCancelledDiffReviewResult(
 ): string {
   switch (result.reason) {
     case "tool_cancelled":
-      return "diff review cancelled by the diff review tool";
+      return "Diff review cancelled by the diff review tool.";
     case "tool_disconnected":
-      return "diff review tool disconnected before returning a review";
+      return "Diff review cancelled because the diff review tool disconnected before returning a review.";
     case "controller_cancelled":
-      return "diff review cancelled";
+      return "Diff review cancelled.";
     case "launch_failed":
-      return "diff review failed to launch";
+      return "Diff review cancelled because the diff review tool failed to launch.";
   }
 }
 

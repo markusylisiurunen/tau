@@ -54,21 +54,23 @@ export const DIFF_REVIEW_TOOL: Tool = {
   ),
 };
 
-const diffReviewArgsSchema = z.discriminatedUnion("source", [
-  z
-    .object({
-      source: z.literal("git_diff"),
-      diffArgs: z.array(z.string().trim().min(1)).optional().default([]),
-    })
-    .strict(),
-  z
-    .object({
-      source: z.literal("patch_files"),
-      patchFiles: z.array(z.string().trim().min(1)).min(1),
-      label: z.string().trim().min(1).optional(),
-    })
-    .strict(),
-]);
+const diffReviewArgsSchema = z
+  .object({
+    source: z.enum(["git_diff", "patch_files"]),
+    diffArgs: z.array(z.string().trim().min(1)).optional(),
+    patchFiles: z.array(z.string().trim().min(1)).optional(),
+    label: z.string().trim().min(1).optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.source === "patch_files" && (!value.patchFiles || value.patchFiles.length === 0)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["patchFiles"],
+        message: "patchFiles must contain at least one file when source is 'patch_files'",
+      });
+    }
+  });
 
 export type ParsedDiffReviewToolArgs = {
   source: DiffReviewSnapshotSource;
@@ -103,22 +105,24 @@ export function parseDiffReviewToolArgs(
   }
 
   if (parsed.data.source === "git_diff") {
+    const diffArgs = parsed.data.diffArgs ?? [];
     return {
       ok: true,
       data: {
-        source: { kind: "git_diff", diffArgs: parsed.data.diffArgs },
-        command: formatDiffReviewScope(parsed.data.diffArgs),
+        source: { kind: "git_diff", diffArgs },
+        command: formatDiffReviewScope(diffArgs),
       },
     };
   }
 
-  const scopeLabel = formatPatchFilesScope(parsed.data.patchFiles, parsed.data.label);
+  const patchFiles = parsed.data.patchFiles ?? [];
+  const scopeLabel = formatPatchFilesScope(patchFiles, parsed.data.label);
   return {
     ok: true,
     data: {
       source: {
         kind: "patch_files",
-        patchFiles: parsed.data.patchFiles,
+        patchFiles,
         scopeLabel,
       },
       command: scopeLabel,

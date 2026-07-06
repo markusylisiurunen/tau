@@ -65,6 +65,76 @@ describe("ClientToolBroker", () => {
     expect(sendCancel).not.toHaveBeenCalled();
   });
 
+  it("returns clear errors when client tools become unavailable", async () => {
+    const broker = new ClientToolBroker();
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: vi.fn(),
+      sendCancel: vi.fn(),
+    });
+    registration.attachSession("session-1");
+    const definition = broker.getToolDefinitions("session-1")[0];
+    registration.detachSession("session-1");
+
+    const result = await definition.dispatch(
+      createToolCall({ choice: "a" }),
+      "read-only",
+      new AbortController().signal,
+      {},
+    );
+
+    expect(result.kind).toBe("single");
+    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.content[0].text).toBe(
+      "Client tool 'local_picker' is unavailable because its owning client detached.",
+    );
+  });
+
+  it("reports client tool acknowledgement timeouts with the tool name", async () => {
+    vi.useFakeTimers();
+    try {
+      const broker = new ClientToolBroker();
+      const sendCancel = vi.fn();
+      const registration = broker.registerClient({
+        tools: [
+          {
+            name: "local_picker",
+            description: "Pick a local item.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+        ],
+        sendCall: vi.fn(),
+        sendCancel,
+      });
+      registration.attachSession("session-1");
+      const definition = broker.getToolDefinitions("session-1")[0];
+
+      const dispatched = definition.dispatch(
+        createToolCall({ choice: "a" }),
+        "read-only",
+        new AbortController().signal,
+        {},
+      );
+      await vi.advanceTimersByTimeAsync(5000);
+      const result = await dispatched;
+
+      expect(result.kind).toBe("single");
+      expect(result.toolResult.isError).toBe(true);
+      expect(result.toolResult.content[0].text).toBe(
+        "Client tool 'local_picker' is unavailable because its owning client did not acknowledge the tool call within 5000ms.",
+      );
+      expect(sendCancel).toHaveBeenCalledWith(expect.objectContaining({ reason: "timeout" }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("scopes client tools to attached sessions", () => {
     const broker = new ClientToolBroker();
     const first = broker.registerClient({

@@ -60,7 +60,7 @@ export function createTuiClientTools(options: {
       execute: async (args, context) => {
         const controller = options.getController();
         if (!controller) {
-          throw new Error("TUI is not ready to run diff_review");
+          throw new Error("diff_review is unavailable because the TUI is not ready");
         }
         return await controller.runClientDiffReview(args, context.signal);
       },

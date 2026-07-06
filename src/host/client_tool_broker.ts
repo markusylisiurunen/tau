@@ -150,7 +150,7 @@ export class ClientToolBroker {
       return Promise.resolve(
         createToolError(
           options.toolCall,
-          `client tool '${options.tool.name}' is unavailable because the owning client detached`,
+          `Client tool '${options.tool.name}' is unavailable because its owning client detached.`,
         ),
       );
     }
@@ -163,10 +163,16 @@ export class ClientToolBroker {
         clientId: options.clientId,
         toolCall: options.toolCall,
         ackTimer: setTimeout(() => {
-          this.fail(callId, "client tool unavailable: client did not acknowledge the tool call");
+          this.fail(
+            callId,
+            `Client tool '${options.tool.name}' is unavailable because its owning client did not acknowledge the tool call within ${DEFAULT_ACK_TIMEOUT_MS}ms.`,
+          );
         }, DEFAULT_ACK_TIMEOUT_MS),
         executionTimer: setTimeout(() => {
-          this.fail(callId, `client tool '${options.tool.name}' timed out`);
+          this.fail(
+            callId,
+            `Client tool '${options.tool.name}' timed out after ${executionTimeoutMs}ms.`,
+          );
         }, executionTimeoutMs),
         signal: options.signal,
         abortListener: () => this.abort(callId),
@@ -217,7 +223,11 @@ export class ClientToolBroker {
 
     for (const [callId, pending] of [...this.pendingCalls]) {
       if (pending.clientId === clientId && pending.sessionId === sessionId) {
-        this.fail(callId, "client tool unavailable: the owning client detached", "client-detached");
+        this.fail(
+          callId,
+          `Client tool '${pending.toolCall.name}' stopped because its owning client detached.`,
+          "client-detached",
+        );
       }
     }
   }
@@ -229,13 +239,23 @@ export class ClientToolBroker {
 
     for (const [callId, pending] of [...this.pendingCalls]) {
       if (pending.clientId === clientId) {
-        this.fail(callId, "client tool unavailable: the owning client detached", "client-detached");
+        this.fail(
+          callId,
+          `Client tool '${pending.toolCall.name}' stopped because its owning client detached.`,
+          "client-detached",
+        );
       }
     }
   }
 
   private abort(callId: string): void {
-    this.fail(callId, "client tool call was aborted", "aborted");
+    const pending = this.pendingCalls.get(callId);
+    const toolName = pending?.toolCall.name ?? "unknown";
+    this.fail(
+      callId,
+      `Client tool '${toolName}' was cancelled because the assistant turn was interrupted.`,
+      "aborted",
+    );
   }
 
   private fail(

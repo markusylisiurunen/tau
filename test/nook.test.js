@@ -9,6 +9,7 @@ import {
   normalizeNookAssetPath,
   validateNookSiteSlug,
 } from "../dist/core/nook/index.js";
+import { parseNookDestroyInputs, parseNookSetupInputs } from "../dist/core/nook/setup.js";
 import { createNookToolDefinition } from "../dist/core/tools/nook.js";
 
 describe("nook validation", () => {
@@ -59,6 +60,46 @@ describe("nook config", () => {
         { NOOK_SECRET: "from-env" },
       ),
     ).toBe("from-env");
+  });
+});
+
+describe("nook setup cli parsing", () => {
+  it("requires and normalizes Access validation inputs for setup", () => {
+    expect(
+      parseNookSetupInputs({
+        argv: [
+          "--domain",
+          "HTTPS://NOOK.EXAMPLE.COM/",
+          "--access-team-domain",
+          "https://team.cloudflareaccess.com/",
+          "--access-aud",
+          "aud",
+        ],
+      }),
+    ).toEqual({
+      domain: "nook.example.com",
+      accessTeamDomain: "https://team.cloudflareaccess.com",
+      accessAud: "aud",
+      remaining: [],
+    });
+  });
+
+  it("requires Access service-token inputs for destroy", () => {
+    expect(
+      parseNookDestroyInputs({
+        argv: ["--domain", "nook.example.com", "--yes"],
+        env: {
+          NOOK_ACCESS_CLIENT_ID: "client-id",
+          NOOK_ACCESS_CLIENT_SECRET: "client-secret",
+        },
+      }),
+    ).toEqual({
+      domain: "nook.example.com",
+      accessClientId: "client-id",
+      accessClientSecret: "client-secret",
+      yes: true,
+      remaining: [],
+    });
   });
 });
 

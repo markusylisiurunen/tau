@@ -1,8 +1,12 @@
+import type { webcrypto } from "node:crypto";
+
 type Env = {
   ASSETS: R2Bucket;
   REGISTRY_DO: DurableObjectNamespace;
   SITE_DO: DurableObjectNamespace;
   NOOK_DOMAIN: string;
+  NOOK_ACCESS_TEAM_DOMAIN: string;
+  NOOK_ACCESS_AUD: string;
 };
 
 type R2Bucket = {
@@ -53,7 +57,29 @@ type DurableObjectStorage = {
 
 type Identity = {
   actor: string;
-  authenticated: boolean;
+};
+
+type AccessJwtHeader = {
+  alg?: string;
+  kid?: string;
+};
+
+type AccessJwtPayload = {
+  iss?: string;
+  aud?: string | string[];
+  exp?: number;
+  nbf?: number;
+  email?: string;
+  sub?: string;
+  common_name?: string;
+};
+
+type AccessJwk = webcrypto.JsonWebKey & {
+  kid?: string;
+};
+
+type JsonWebKeySet = {
+  keys: AccessJwk[];
 };
 
 type ManifestFile = {
@@ -100,6 +126,7 @@ type KvRecord = {
 
 const RESERVED_PREFIX = "/__nook";
 const DEPLOY_SESSION_MS = 15 * 60 * 1000;
+const MAX_PENDING_DEPLOYMENTS = 3;
 const MAX_FILES = 1_000;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
@@ -108,6 +135,8 @@ const MAX_KV_KEY_LENGTH = 256;
 const MAX_KV_VALUE_BYTES = 64 * 1024;
 const MAX_KV_KEYS = 1_000;
 const MAX_KV_TOTAL_BYTES = 5 * 1024 * 1024;
+
+const jwksCache = new Map<string, Promise<JsonWebKeySet>>();
 
 const SKILL_MARKDOWN = `# Nook
 
@@ -194,18 +223,136 @@ function randomId(prefix: string): string {
   return `${prefix}_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function actorFromRequest(request: Request): Identity {
-  const email = request.headers.get("Cf-Access-Authenticated-User-Email");
-  if (email) return { actor: email, authenticated: true };
-  if (request.headers.get("Cf-Access-Jwt-Assertion"))
-    return { actor: "access-user", authenticated: true };
-  if (
-    request.headers.get("CF-Access-Client-Id") &&
-    request.headers.get("CF-Access-Client-Secret")
-  ) {
-    return { actor: "access-service-token", authenticated: true };
+function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
+  const padded = `${value}${"=".repeat((4 - (value.length % 4)) % 4)}`;
+  const binary = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function decodeJwtPart<T>(value: string): T {
+  return JSON.parse(new TextDecoder().decode(base64UrlToBytes(value))) as T;
+}
+
+function accessTokenFromRequest(request: Request): string | undefined {
+  const headerToken = request.headers.get("Cf-Access-Jwt-Assertion");
+  if (headerToken?.trim()) return headerToken.trim();
+  const cookie = request.headers.get("Cookie") ?? "";
+  for (const segment of cookie.split(";")) {
+    const [name, ...rest] = segment.trim().split("=");
+    if (name === "CF_Authorization") return rest.join("=");
   }
-  return { actor: "anonymous", authenticated: false };
+  return undefined;
+}
+
+async function accessJwks(teamDomain: string, refresh = false): Promise<JsonWebKeySet> {
+  const cached = jwksCache.get(teamDomain);
+  if (cached && !refresh) return await cached;
+  const promise = fetch(`${teamDomain}/cdn-cgi/access/certs`)
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`failed to load Access JWKS: ${response.status}`);
+      return (await response.json()) as JsonWebKeySet;
+    })
+    .catch((err) => {
+      jwksCache.delete(teamDomain);
+      throw err;
+    });
+  jwksCache.set(teamDomain, promise);
+  return await promise;
+}
+
+function accessAudienceMatches(actual: string | string[] | undefined, expected: string): boolean {
+  if (Array.isArray(actual)) return actual.includes(expected);
+  return actual === expected;
+}
+
+function accessActor(payload: AccessJwtPayload): string {
+  return payload.email ?? payload.common_name ?? payload.sub ?? "access-user";
+}
+
+async function verifyAccessJwt(token: string, env: Env): Promise<Identity> {
+  const teamDomain = env.NOOK_ACCESS_TEAM_DOMAIN?.replace(/\/+$/, "");
+  const audience = env.NOOK_ACCESS_AUD?.trim();
+  if (!teamDomain || !audience) {
+    throw new ErrorResponse("access_not_configured", "Cloudflare Access is not configured", 500);
+  }
+
+  const parts = token.split(".");
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
+    throw new ErrorResponse("unauthorized", "Invalid Cloudflare Access JWT", 401);
+  }
+
+  let header: AccessJwtHeader;
+  let payload: AccessJwtPayload;
+  try {
+    header = decodeJwtPart<AccessJwtHeader>(parts[0]);
+    payload = decodeJwtPart<AccessJwtPayload>(parts[1]);
+  } catch {
+    throw new ErrorResponse("unauthorized", "Invalid Cloudflare Access JWT", 401);
+  }
+
+  if (header.alg !== "RS256" || !header.kid) {
+    throw new ErrorResponse("unauthorized", "Unsupported Cloudflare Access JWT", 401);
+  }
+  if (payload.iss !== teamDomain || !accessAudienceMatches(payload.aud, audience)) {
+    throw new ErrorResponse("unauthorized", "Cloudflare Access JWT has invalid claims", 401);
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (!payload.exp || payload.exp <= nowSeconds || (payload.nbf && payload.nbf > nowSeconds)) {
+    throw new ErrorResponse("unauthorized", "Cloudflare Access JWT is expired", 401);
+  }
+
+  let jwks: JsonWebKeySet;
+  try {
+    jwks = await accessJwks(teamDomain);
+  } catch (err) {
+    throw new ErrorResponse(
+      "access_unavailable",
+      err instanceof Error ? err.message : "Cloudflare Access JWKS unavailable",
+      503,
+    );
+  }
+  let jwk = jwks.keys.find((key) => key.kid === header.kid);
+  if (!jwk) {
+    jwks = await accessJwks(teamDomain, true);
+    jwk = jwks.keys.find((key) => key.kid === header.kid);
+  }
+  if (!jwk) throw new ErrorResponse("unauthorized", "Unknown Cloudflare Access JWT key", 401);
+
+  const key = await crypto.subtle.importKey(
+    "jwk",
+    jwk,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  const verified = await crypto.subtle.verify(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    base64UrlToBytes(parts[2]),
+    new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
+  );
+  if (!verified) throw new ErrorResponse("unauthorized", "Invalid Cloudflare Access JWT", 401);
+
+  return { actor: accessActor(payload) };
+}
+
+async function requireAccessIdentity(request: Request, env: Env): Promise<Identity> {
+  const token = accessTokenFromRequest(request);
+  if (!token) throw new ErrorResponse("unauthorized", "Authentication required", 401);
+  return await verifyAccessJwt(token, env);
+}
+
+async function optionalAccessIdentity(request: Request, env: Env): Promise<Identity> {
+  const token = accessTokenFromRequest(request);
+  if (!token) return { actor: "anonymous" };
+  try {
+    return await verifyAccessJwt(token, env);
+  } catch {
+    return { actor: "anonymous" };
+  }
 }
 
 function validateSlug(slug: string): string | undefined {
@@ -310,16 +457,24 @@ function assetKey(site: string, deploymentId: string, path: string): string {
   return `sites/${site}/deployments/${deploymentId}${path}`;
 }
 
-async function deleteR2Prefix(bucket: R2Bucket, prefix: string): Promise<void> {
+async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function deleteR2Prefix(bucket: R2Bucket, prefix: string): Promise<number> {
   let cursor: string | undefined;
+  let deleted = 0;
   do {
     const listed = await bucket.list({ prefix, cursor, limit: 1000 });
     if (listed.objects.length > 0) {
       await bucket.delete(listed.objects.map((object) => object.key));
+      deleted += listed.objects.length;
     }
     cursor = listed.cursor;
     if (!listed.truncated) break;
   } while (cursor);
+  return deleted;
 }
 
 async function handleBaseApi(
@@ -328,7 +483,27 @@ async function handleBaseApi(
   url: URL,
   identity: Identity,
 ): Promise<Response> {
-  if (!identity.authenticated) return error("unauthorized", "Authentication required", 401);
+  if (request.method === "POST" && url.pathname === "/__nook/api/destroy") {
+    const sitesResponse = await registryFetch(
+      env,
+      `/sites?domain=${encodeURIComponent(env.NOOK_DOMAIN)}`,
+    );
+    if (!sitesResponse.ok) return sitesResponse;
+    const payload = (await sitesResponse.json()) as { sites: SiteSummary[] };
+    for (const site of payload.sites) {
+      await deleteR2Prefix(env.ASSETS, `sites/${site.slug}/`);
+      await siteFetch(env, site.slug, "/delete", { method: "POST" });
+    }
+    await registryFetch(env, "/delete-all", { method: "POST" });
+    const objectsDeleted = await deleteR2Prefix(env.ASSETS, "");
+    return json({
+      deleted: true,
+      sitesDeleted: payload.sites.length,
+      objectsDeleted,
+      actor: identity.actor,
+    });
+  }
+
   const match = url.pathname.match(
     /^\/__nook\/api\/sites(?:\/([^/]+))?(?:\/deploy\/([^/]+)\/(file|finish)|\/deploy\/start)?$/,
   );
@@ -381,7 +556,14 @@ async function handleBaseApi(
     });
     if (!verify.ok) return verify;
     const payload = (await verify.json()) as { file: ManifestFile };
-    await env.ASSETS.put(assetKey(site, deploymentId, payload.file.path), request.body ?? "", {
+    const bytes = await request.arrayBuffer();
+    if (bytes.byteLength !== payload.file.sizeBytes) {
+      return error("invalid_upload", "Uploaded file size does not match manifest", 400);
+    }
+    if (payload.file.sha256 && (await sha256Hex(bytes)) !== payload.file.sha256) {
+      return error("invalid_upload", "Uploaded file hash does not match manifest", 400);
+    }
+    await env.ASSETS.put(assetKey(site, deploymentId, payload.file.path), bytes, {
       httpMetadata: { contentType: payload.file.contentType },
     });
     return await siteFetch(env, site, "/deploy/mark-uploaded", {
@@ -429,10 +611,7 @@ async function handleKv(
   env: Env,
   site: string,
   identity: Identity,
-  publicSite: boolean,
 ): Promise<Response> {
-  if (!publicSite && !identity.authenticated)
-    return error("unauthorized", "Authentication required", 401);
   return await siteFetch(
     env,
     site,
@@ -450,13 +629,7 @@ function shouldSpaFallback(pathname: string): boolean {
   return !segment.includes(".");
 }
 
-async function serveAsset(
-  request: Request,
-  env: Env,
-  site: string,
-  url: URL,
-  identity: Identity,
-): Promise<Response> {
+async function serveAsset(request: Request, env: Env, site: string, url: URL): Promise<Response> {
   const activeResponse = await siteFetch(env, site, "/active");
   if (!activeResponse.ok) return error("site_not_found", "Site has no active deployment", 404);
   const active = (await activeResponse.json()) as {
@@ -464,9 +637,9 @@ async function serveAsset(
     public: boolean;
     files: ManifestFile[];
   };
-  if (!active.public && !identity.authenticated) {
-    return error("unauthorized", "Authentication required", 401);
-  }
+  const identity = active.public
+    ? await optionalAccessIdentity(request, env)
+    : await requireAccessIdentity(request, env);
 
   if (url.pathname === "/__nook/client.js") {
     return new Response(CLIENT_JS, {
@@ -474,7 +647,7 @@ async function serveAsset(
     });
   }
   if (url.pathname === "/__nook/kv" || url.pathname.startsWith("/__nook/kv/")) {
-    return await handleKv(request, env, site, identity, active.public);
+    return await handleKv(request, env, site, identity);
   }
   if (url.pathname === RESERVED_PREFIX || url.pathname.startsWith(`${RESERVED_PREFIX}/`)) {
     return error("not_found", "Unknown Nook route", 404);
@@ -525,15 +698,15 @@ export default {
         });
       }
 
-      const identity = actorFromRequest(request);
       if (parsedHost.kind === "base") {
         if (url.pathname.startsWith("/__nook/api/")) {
+          const identity = await requireAccessIdentity(request, env);
           return await handleBaseApi(request, env, url, identity);
         }
         return error("not_found", "Nook base domain only serves platform APIs", 404);
       }
 
-      return await serveAsset(request, env, parsedHost.slug, url, identity);
+      return await serveAsset(request, env, parsedHost.slug, url);
     } catch (err) {
       if (err instanceof ErrorResponse) return err.toResponse();
       return error("internal_error", err instanceof Error ? err.message : String(err), 500);
@@ -550,6 +723,11 @@ export class RegistryDO {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/delete-all") {
+      await this.state.storage.deleteAll();
+      return json({ deleted: true });
+    }
+
     if (request.method === "GET" && url.pathname === "/sites") {
       const domain = url.searchParams.get("domain") ?? "";
       const records = await this.state.storage.list<SiteSummary>({ prefix: "site:" });
@@ -643,6 +821,24 @@ export class SiteDO {
         actor: string;
       };
       const timestamp = now();
+      const nowMs = Date.now();
+      const deployments = await this.state.storage.list<DeploymentRecord>({
+        prefix: "deployment:",
+      });
+      let pendingDeployments = 0;
+      const expiredPendingKeys: string[] = [];
+      for (const [key, deployment] of deployments.entries()) {
+        if (deployment.status !== "pending") continue;
+        if (Date.parse(deployment.expiresAt) < nowMs) {
+          expiredPendingKeys.push(key);
+        } else {
+          pendingDeployments += 1;
+        }
+      }
+      if (expiredPendingKeys.length > 0) await this.state.storage.delete(expiredPendingKeys);
+      if (pendingDeployments >= MAX_PENDING_DEPLOYMENTS) {
+        return error("quota_exceeded", "Too many pending deployments for this site", 429);
+      }
       const deployment: DeploymentRecord = {
         deploymentId: randomId("dep"),
         status: "pending",

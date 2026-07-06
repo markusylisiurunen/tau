@@ -1,7 +1,12 @@
 import type { Config } from "../config/index.js";
 import { createNookClientFromConfig } from "./client.js";
 import { buildNookDeployManifest } from "./deploy.js";
-import { parseNookInfrastructureDomain, runNookDestroy, runNookSetup } from "./setup.js";
+import {
+  parseNookDestroyInputs,
+  parseNookSetupInputs,
+  runNookDestroy,
+  runNookSetup,
+} from "./setup.js";
 
 export class NookCliError extends Error {
   constructor(message: string) {
@@ -40,8 +45,8 @@ export function printNookHelp(log: (line: string) => void = console.log): void {
   log(
     [
       "usage:",
-      "  tau nook setup --domain <domain>",
-      "  tau nook destroy --domain <domain> --yes",
+      "  tau nook setup --domain <domain> --access-team-domain <url> --access-aud <aud>",
+      "  tau nook destroy --domain <domain> --access-client-id <id> --access-client-secret <secret> --yes",
       "  tau nook skill",
       "  tau nook deploy <dir> --site <slug> [--public]",
       "  tau nook list",
@@ -67,18 +72,30 @@ export async function runNookCommand(
 
   try {
     if (subcommand === "setup") {
-      const parsed = parseNookInfrastructureDomain({ argv: args, env: options.env });
+      const parsed = parseNookSetupInputs({ argv: args, env: options.env });
       if (parsed.remaining.length > 0) throw new Error(`unknown option: ${parsed.remaining[0]}`);
-      await runNookSetup({ domain: parsed.domain, env: options.env, stdout });
+      await runNookSetup({
+        domain: parsed.domain,
+        accessTeamDomain: parsed.accessTeamDomain,
+        accessAud: parsed.accessAud,
+        env: options.env,
+        stdout,
+      });
       return;
     }
 
     if (subcommand === "destroy") {
-      const parsed = parseNookInfrastructureDomain({ argv: args, env: options.env });
-      const yes = parsed.remaining.includes("--yes");
-      const unknown = parsed.remaining.find((arg) => arg !== "--yes");
-      if (unknown) throw new Error(`unknown option: ${unknown}`);
-      await runNookDestroy({ domain: parsed.domain, yes, env: options.env, stdout });
+      const parsed = parseNookDestroyInputs({ argv: args, env: options.env });
+      if (parsed.remaining.length > 0) throw new Error(`unknown option: ${parsed.remaining[0]}`);
+      await runNookDestroy({
+        domain: parsed.domain,
+        accessClientId: parsed.accessClientId,
+        accessClientSecret: parsed.accessClientSecret,
+        yes: parsed.yes,
+        env: options.env,
+        stdout,
+        fetchImpl: options.fetchImpl,
+      });
       return;
     }
 

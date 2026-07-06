@@ -9,12 +9,20 @@ const R2_BUCKET = "tau-nook-assets";
 
 export type NookSetupArgs = {
   domain: string;
+  accessTeamDomain: string;
+  accessAud: string;
   env?: NodeJS.ProcessEnv;
   stdout?: (line: string) => void;
 };
 
-export type NookDestroyArgs = NookSetupArgs & {
+export type NookDestroyArgs = {
+  domain: string;
   yes: boolean;
+  accessClientId: string;
+  accessClientSecret: string;
+  env?: NodeJS.ProcessEnv;
+  stdout?: (line: string) => void;
+  fetchImpl?: typeof fetch;
 };
 
 async function runWrangler(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv }) {
@@ -39,19 +47,41 @@ function requireWranglerAuth(env: NodeJS.ProcessEnv): void {
   }
 }
 
+function normalizeAccessTeamDomain(value: string): string {
+  const normalized = value.trim().replace(/\/+$/, "");
+  let url: URL;
+  try {
+    url = new URL(normalized);
+  } catch {
+    throw new Error("Cloudflare Access team domain must be an HTTPS URL.");
+  }
+  if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("Cloudflare Access team domain must be an HTTPS origin URL.");
+  }
+  return url.origin;
+}
+
 function bundledWorkerPath(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "../../nook/worker/index.js");
 }
 
-function writeWranglerProject(tempDir: string, domain: string): void {
+function writeWranglerProject(args: {
+  tempDir: string;
+  domain: string;
+  accessTeamDomain: string;
+  accessAud: string;
+}): void {
   const workerPath = bundledWorkerPath();
-  const relativeWorker = relative(tempDir, workerPath).split("\\").join("/");
+  const relativeWorker = relative(args.tempDir, workerPath).split("\\").join("/");
   const wranglerConfig = {
     name: WORKER_NAME,
     main: relativeWorker,
     compatibility_date: "2026-07-06",
+    workers_dev: false,
     vars: {
-      NOOK_DOMAIN: domain,
+      NOOK_DOMAIN: args.domain,
+      NOOK_ACCESS_TEAM_DOMAIN: args.accessTeamDomain,
+      NOOK_ACCESS_AUD: args.accessAud,
     },
     r2_buckets: [
       {
@@ -72,7 +102,11 @@ function writeWranglerProject(tempDir: string, domain: string): void {
       },
     ],
   };
-  writeFileSync(join(tempDir, "wrangler.json"), JSON.stringify(wranglerConfig, null, 2), "utf-8");
+  writeFileSync(
+    join(args.tempDir, "wrangler.json"),
+    JSON.stringify(wranglerConfig, null, 2),
+    "utf-8",
+  );
 }
 
 export async function runNookSetup(args: NookSetupArgs): Promise<void> {
@@ -82,7 +116,12 @@ export async function runNookSetup(args: NookSetupArgs): Promise<void> {
 
   const tempDir = mkdtempSync(join(tmpdir(), "tau-nook-"));
   try {
-    writeWranglerProject(tempDir, args.domain);
+    writeWranglerProject({
+      tempDir,
+      domain: args.domain,
+      accessTeamDomain: args.accessTeamDomain,
+      accessAud: args.accessAud,
+    });
     try {
       await runWrangler(["r2", "bucket", "create", R2_BUCKET], { env });
       stdout(`created R2 bucket ${R2_BUCKET}`);
@@ -98,6 +137,9 @@ export async function runNookSetup(args: NookSetupArgs): Promise<void> {
     stdout("Configure DNS/routes for:");
     stdout(`  ${args.domain}`);
     stdout(`  *.${args.domain}`);
+    stdout("");
+    stdout("Configure Cloudflare Access for both hostnames with application audience:");
+    stdout(`  ${args.accessAud}`);
     stdout("");
     stdout("Add this to Tau config after creating a Cloudflare Access service token:");
     stdout(
@@ -125,7 +167,28 @@ export async function runNookDestroy(args: NookDestroyArgs): Promise<void> {
 
   const env = args.env ?? process.env;
   const stdout = args.stdout ?? console.log;
+  const fetchImpl = args.fetchImpl ?? fetch;
   requireWranglerAuth(env);
+
+  try {
+    const cleanupResponse = await fetchImpl(`https://${args.domain}/__nook/api/destroy`, {
+      method: "POST",
+      headers: {
+        "CF-Access-Client-Id": args.accessClientId,
+        "CF-Access-Client-Secret": args.accessClientSecret,
+      },
+    });
+    if (!cleanupResponse.ok) {
+      throw new Error(await cleanupResponse.text());
+    }
+    stdout(`deleted Nook R2 objects and Durable Object data for ${args.domain}`);
+  } catch (error) {
+    throw new Error(
+      `failed to clean up Nook data through https://${args.domain}/__nook/api/destroy: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 
   try {
     await runWrangler(["delete", WORKER_NAME, "--force"], { env });
@@ -135,7 +198,7 @@ export async function runNookDestroy(args: NookDestroyArgs): Promise<void> {
   }
 
   try {
-    await runWrangler(["r2", "bucket", "delete", R2_BUCKET, "--force"], { env });
+    await runWrangler(["r2", "bucket", "delete", R2_BUCKET], { env });
     stdout(`deleted R2 bucket ${R2_BUCKET}`);
   } catch (error) {
     stdout(`R2 bucket ${R2_BUCKET} was not deleted: ${(error as Error).message}`);
@@ -168,9 +231,118 @@ export function parseNookInfrastructureDomain(args: { argv: string[]; env?: Node
 
   return {
     domain: domain
-      .replace(/^https?:\/\//, "")
+      .replace(/^https?:\/\//i, "")
       .replace(/\/+$/, "")
       .toLowerCase(),
+    remaining,
+  };
+}
+
+export function parseNookSetupInputs(args: { argv: string[]; env?: NodeJS.ProcessEnv }): {
+  domain: string;
+  accessTeamDomain: string;
+  accessAud: string;
+  remaining: string[];
+} {
+  const parsedDomain = parseNookInfrastructureDomain({ argv: args.argv, env: args.env });
+  const remaining: string[] = [];
+  let accessTeamDomain = args.env?.NOOK_ACCESS_TEAM_DOMAIN;
+  let accessAud = args.env?.NOOK_ACCESS_AUD;
+
+  for (let i = 0; i < parsedDomain.remaining.length; i += 1) {
+    const arg = parsedDomain.remaining[i]!;
+    if (arg === "--access-team-domain" || arg.startsWith("--access-team-domain=")) {
+      const value = arg.includes("=")
+        ? arg.slice("--access-team-domain=".length)
+        : parsedDomain.remaining[++i];
+      if (!value) throw new Error("missing value for --access-team-domain");
+      accessTeamDomain = value;
+      continue;
+    }
+    if (arg === "--access-aud" || arg.startsWith("--access-aud=")) {
+      const value = arg.includes("=")
+        ? arg.slice("--access-aud=".length)
+        : parsedDomain.remaining[++i];
+      if (!value) throw new Error("missing value for --access-aud");
+      accessAud = value;
+      continue;
+    }
+    remaining.push(arg);
+  }
+
+  if (!accessTeamDomain?.trim()) {
+    throw new Error(
+      "missing Cloudflare Access team domain. pass --access-team-domain <url> or set NOOK_ACCESS_TEAM_DOMAIN.",
+    );
+  }
+  if (!accessAud?.trim()) {
+    throw new Error(
+      "missing Cloudflare Access application audience. pass --access-aud <aud> or set NOOK_ACCESS_AUD.",
+    );
+  }
+
+  return {
+    domain: parsedDomain.domain,
+    accessTeamDomain: normalizeAccessTeamDomain(accessTeamDomain),
+    accessAud: accessAud.trim(),
+    remaining,
+  };
+}
+
+export function parseNookDestroyInputs(args: { argv: string[]; env?: NodeJS.ProcessEnv }): {
+  domain: string;
+  accessClientId: string;
+  accessClientSecret: string;
+  yes: boolean;
+  remaining: string[];
+} {
+  const parsedDomain = parseNookInfrastructureDomain({ argv: args.argv, env: args.env });
+  const remaining: string[] = [];
+  let accessClientId = args.env?.NOOK_ACCESS_CLIENT_ID;
+  let accessClientSecret = args.env?.NOOK_ACCESS_CLIENT_SECRET;
+  let yes = false;
+
+  for (let i = 0; i < parsedDomain.remaining.length; i += 1) {
+    const arg = parsedDomain.remaining[i]!;
+    if (arg === "--yes") {
+      yes = true;
+      continue;
+    }
+    if (arg === "--access-client-id" || arg.startsWith("--access-client-id=")) {
+      const value = arg.includes("=")
+        ? arg.slice("--access-client-id=".length)
+        : parsedDomain.remaining[++i];
+      if (!value) throw new Error("missing value for --access-client-id");
+      accessClientId = value;
+      continue;
+    }
+    if (arg === "--access-client-secret" || arg.startsWith("--access-client-secret=")) {
+      const value = arg.includes("=")
+        ? arg.slice("--access-client-secret=".length)
+        : parsedDomain.remaining[++i];
+      if (!value) throw new Error("missing value for --access-client-secret");
+      accessClientSecret = value;
+      continue;
+    }
+    remaining.push(arg);
+  }
+
+  if (!accessClientId?.trim()) {
+    throw new Error(
+      "missing Cloudflare Access client id. pass --access-client-id <id> or set NOOK_ACCESS_CLIENT_ID.",
+    );
+  }
+  if (!accessClientSecret?.trim()) {
+    throw new Error(
+      "missing Cloudflare Access client secret. pass --access-client-secret <secret> or set NOOK_ACCESS_CLIENT_SECRET.",
+    );
+  }
+
+  return {
+    domain: parsedDomain.domain,
+    accessClientId: accessClientId.trim(),
+    accessClientSecret: accessClientSecret.trim(),
+    yes,
     remaining,
   };
 }

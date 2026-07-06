@@ -149,7 +149,7 @@ tau telegram --config-file <path>
 The Telegram command surface is intentionally small:
 
 - `/new` creates a new session for the chat, replacing the previous active session if one exists.
-- `/status` returns a short natural-language status paragraph for the active session.
+- `/status` returns a short natural-language status paragraph for the active session, including model, reasoning effort, context usage, and cumulative cost when session details are available.
 - `/interrupt` interrupts the active run.
 
 The runner keeps tool and lifecycle progress quiet: Telegram receives command acknowledgements/errors and assistant messages, including multiple assistant progress updates from a single active run. While work is active, it shows Telegram's typing indicator in DMs and groups. Assistant messages are sent as Telegram rich markdown.

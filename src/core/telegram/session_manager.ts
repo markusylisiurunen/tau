@@ -7,6 +7,7 @@ import type {
   SessionProtocolFacet,
   SessionProtocolInterruptResult,
   SessionProtocolMessage,
+  SessionProtocolSnapshot,
   SessionProtocolSteerResult,
   SessionProtocolSubmitResult,
   SessionProtocolUnobserveResult,
@@ -165,6 +166,7 @@ export type TelegramTauSession = {
   submit(text: string): Promise<SessionProtocolSubmitResult>;
   steer(text: string): Promise<SessionProtocolSteerResult>;
   interrupt(): Promise<SessionProtocolInterruptResult>;
+  snapshot(): Promise<SessionProtocolSnapshot>;
   unobserve(): Promise<SessionProtocolUnobserveResult>;
 };
 
@@ -191,6 +193,7 @@ export type TelegramSessionManager = {
   listSessions(): TelegramSessionRecord[];
   getSession(sessionId: string): TelegramSessionRecord | undefined;
   getLogs(sessionId: string): TelegramSessionLogEntry[] | undefined;
+  getSessionSnapshot(sessionId: string): Promise<SessionProtocolSnapshot | undefined>;
   sendMessage(
     sessionId: string,
     text: string,
@@ -328,6 +331,15 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     }
 
     return entry.logs.map((logEntry) => ({ ...logEntry }));
+  }
+
+  async getSessionSnapshot(sessionId: string): Promise<SessionProtocolSnapshot | undefined> {
+    const entry = this.getEntryBySessionId(sessionId);
+    if (!entry?.tauSession) {
+      return undefined;
+    }
+
+    return await entry.tauSession.snapshot();
   }
 
   onEvent(listener: (event: TelegramSessionManagerEvent) => void): () => void {
@@ -1126,6 +1138,11 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
     }
 
     return this.sessionManager.getLogs(sessionId);
+  }
+
+  async getSessionSnapshot(sessionId: string): Promise<SessionProtocolSnapshot | undefined> {
+    this.requireSession(sessionId);
+    return await this.sessionManager.getSessionSnapshot(sessionId);
   }
 
   async sendMessage(

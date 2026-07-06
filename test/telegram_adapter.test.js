@@ -103,6 +103,60 @@ function ownerIdForChat(chatId, botId = "bot-default") {
   return `telegram:${botId}:chat:${chatId}`;
 }
 
+function createStatusSnapshot(overrides = {}) {
+  return {
+    sessionId: "tau-session",
+    revision: 1,
+    lifecycle: "idle",
+    settings: {
+      personaId: "default",
+      reasoning: "medium",
+      riskLevel: "read-write",
+    },
+    bootstrap: {
+      model: {
+        id: "claude-opus-4-6",
+        name: "Claude Opus 4.6",
+        api: "messages",
+        provider: "anthropic",
+        baseUrl: "https://api.anthropic.com",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 200000,
+        maxTokens: 32000,
+      },
+    },
+    catalog: { personas: {}, prompts: {}, themes: {}, skills: {}, subagents: {} },
+    executionEnvironment: { kind: "local", cwd: "/tmp/project", home: "/tmp" },
+    messages: [
+      {
+        id: "m1",
+        state: "committed",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: {
+            input: 1000,
+            output: 500,
+            cacheRead: 250,
+            cacheWrite: 250,
+            contextWindowUsageTokens: 12000,
+            contextWindow: 200000,
+            cost: { total: 0.12345 },
+          },
+        },
+      },
+    ],
+    timeline: [],
+    tools: {},
+    agents: {},
+    facets: {},
+    ...overrides,
+  };
+}
+
 function createSessionManagerHarness(initialSessions = [], options = {}) {
   const sessions = new Map(
     initialSessions.map((session) => [
@@ -131,6 +185,9 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
         state: "waiting-input",
         createdAt: now,
         updatedAt: now,
+        ...(options.createSnapshot
+          ? { snapshot: options.createSnapshot(sessionId, projectId) }
+          : {}),
       };
       sessions.set(sessionId, session);
       return { ...session };
@@ -141,6 +198,10 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
       return session ? { ...session } : undefined;
     }),
     getLogs: vi.fn(() => []),
+    getSessionSnapshot: vi.fn(async (sessionId) => {
+      const session = sessions.get(sessionId);
+      return session?.snapshot;
+    }),
     sendMessage: vi.fn(async (sessionId) => {
       const session = sessions.get(sessionId);
       if (!session) {
@@ -223,6 +284,53 @@ describe("telegram adapter", () => {
         { command: "status", description: "show active session status" },
         { command: "interrupt", description: "interrupt active run" },
       ]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("reports active session status with model, reasoning, context, and cost", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 12, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 12, type: "private" },
+            from: { id: 7 },
+            text: "/status",
+          },
+        },
+      ],
+    ]);
+
+    const managerHarness = createSessionManagerHarness([], {
+      createSnapshot: () => createStatusSnapshot(),
+    });
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() =>
+        apiHarness.sendMessages.some((entry) => String(entry.text).includes("context usage")),
+      );
+      expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
+        "your demo session s1 is waiting-input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
+      );
     } finally {
       await adapter.close();
     }

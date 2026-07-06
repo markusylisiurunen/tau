@@ -1,8 +1,11 @@
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
+import type { SessionProtocolSnapshot } from "../../protocol/session_protocol.js";
 import type { SpeechToTextProvider, TelegramProjectConfig } from "../config/schema.js";
+import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
 import { transcribeAudio } from "../utils/speech_to_text.js";
 import { formatTauUserText, splitTauUserText } from "../utils/user_metadata.js";
 import { formatZodError } from "../utils/zod.js";
@@ -241,7 +244,7 @@ const MAX_TELEGRAM_ATTACHMENT_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
 const MAX_TELEGRAM_GROUP_PENDING_MESSAGES = 50;
 const TELEGRAM_ATTACHMENT_TEMP_DIR_PREFIX = "tau-telegram-attachments-";
-const NO_ACTIVE_SESSION_MESSAGE = "no active session. use /new";
+const NO_ACTIVE_SESSION_MESSAGE = "no active session. use /new.";
 
 const SUPPORTED_TEXT_ATTACHMENT_EXTENSIONS = new Set([
   ".txt",
@@ -663,13 +666,115 @@ function formatTelegramSessionName(
   return `${session.projectId} session ${session.id}`;
 }
 
-function formatSessionStatus(session: TelegramSessionRecord): string {
+function formatSessionStatus(
+  session: TelegramSessionRecord,
+  snapshot?: SessionProtocolSnapshot,
+): string {
   const sessionName = formatTelegramSessionName(session);
   if (session.state === "failed" && session.error) {
-    return `your ${sessionName} failed. ${session.error}`;
+    return `your ${sessionName} failed. ${ensureTerminalPunctuation(session.error)}`;
   }
 
-  return `your ${sessionName} is ${session.state}.`;
+  const status = `your ${sessionName} is ${session.state}.`;
+  if (!snapshot) {
+    return status;
+  }
+
+  const model = snapshot.bootstrap.model.name || snapshot.bootstrap.model.id;
+  const reasoning = snapshot.settings.reasoning ?? "none";
+  const context = formatTelegramContextUsage(snapshot);
+  const cost = formatTelegramSessionCost(getTelegramSessionCostTotal(snapshot));
+  return `${status} it is using ${model} with ${reasoning} reasoning. context usage is ${context}. cumulative cost is ${cost}.`;
+}
+
+function ensureTerminalPunctuation(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return ".";
+  }
+
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function formatTelegramContextUsage(snapshot: SessionProtocolSnapshot): string {
+  const lastAssistantMessage = getLastAssistantMessage(snapshot);
+  const usageTokens = getAssistantContextWindowUsage(lastAssistantMessage);
+  const windowTokens =
+    getAssistantContextWindow(lastAssistantMessage) || snapshot.bootstrap.model.contextWindow;
+  const percent = windowTokens > 0 ? (usageTokens / windowTokens) * 100 : 0;
+  return `${formatAdaptiveNumber(percent, 1, 3)}% of ${formatTokenWindow(windowTokens)} tokens`;
+}
+
+function getTelegramSessionCostTotal(snapshot: SessionProtocolSnapshot): number {
+  let total = 0;
+  for (const entry of snapshot.messages) {
+    if (isAssistantMessage(entry.message)) {
+      total += entry.message.usage?.cost?.total ?? 0;
+    }
+  }
+  for (const agent of Object.values(snapshot.agents)) {
+    total += agent.costTotal;
+  }
+  return total;
+}
+
+function formatTelegramSessionCost(total: number): string {
+  return `$${formatAdaptiveNumber(total, 2, 5)}`;
+}
+
+function getLastAssistantMessage(snapshot: SessionProtocolSnapshot): AssistantMessage | undefined {
+  for (let index = snapshot.messages.length - 1; index >= 0; index -= 1) {
+    const message = snapshot.messages[index];
+    if (message?.state === "committed" && isAssistantMessage(message.message)) {
+      return message.message;
+    }
+  }
+  return undefined;
+}
+
+function getAssistantContextWindowUsage(message: AssistantMessage | undefined): number {
+  if (!message?.usage) {
+    return 0;
+  }
+
+  const usage = message.usage as AssistantMessage["usage"] & {
+    contextWindowUsageTokens?: unknown;
+  };
+  if (
+    typeof usage.contextWindowUsageTokens === "number" &&
+    Number.isFinite(usage.contextWindowUsageTokens)
+  ) {
+    return usage.contextWindowUsageTokens;
+  }
+
+  return (
+    (message.usage.input ?? 0) +
+    (message.usage.cacheRead ?? 0) +
+    (message.usage.cacheWrite ?? 0) +
+    (message.usage.output ?? 0)
+  );
+}
+
+function getAssistantContextWindow(message: AssistantMessage | undefined): number {
+  const usage = message?.usage as
+    | (AssistantMessage["usage"] & {
+        contextWindow?: unknown;
+      })
+    | undefined;
+  return typeof usage?.contextWindow === "number" && Number.isFinite(usage.contextWindow)
+    ? usage.contextWindow
+    : 0;
+}
+
+function isAssistantMessage(message: unknown): message is AssistantMessage {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    "role" in message &&
+    message.role === "assistant" &&
+    "usage" in message &&
+    "stopReason" in message
+  );
 }
 
 function formatSessionHeadline(sessionId: string, label: string): string {
@@ -1893,7 +1998,15 @@ class TelegramAdapterImpl {
       return;
     }
 
-    await this.reply(chatId, formatSessionStatus(session));
+    const sessionManager = this.getSessionManagerForChat(chatId);
+    let snapshot: SessionProtocolSnapshot | undefined;
+    try {
+      snapshot = await sessionManager.getSessionSnapshot(session.id);
+    } catch {
+      snapshot = undefined;
+    }
+
+    await this.reply(chatId, formatSessionStatus(session, snapshot));
   }
 
   private async handleInterrupt(chatId: number): Promise<void> {

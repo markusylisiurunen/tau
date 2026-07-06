@@ -72,7 +72,7 @@ Notes:
 Supported slash commands:
 
 - `/new` creates a new session for the chat. If the chat already has an active session, the old session is closed and its workspace is cleaned up. `/new` uses `bots.<botId>.defaultProjectId` when set, otherwise it auto-selects when exactly one project is available to that bot.
-- `/status` returns a short natural-language paragraph about the active session.
+- `/status` returns a short natural-language paragraph about the active session, including model, reasoning effort, context usage, and cumulative cost when session details are available.
 - `/interrupt` interrupts the active run.
 
 The runner uses quiet mode for tool and lifecycle progress: it does not send tool or lifecycle progress messages to Telegram. It does send assistant messages as they are committed, so one active run can send multiple assistant progress updates before it finishes. While a run is active, it refreshes Telegram's typing indicator in DMs and groups. Assistant messages are sent as Telegram rich markdown.

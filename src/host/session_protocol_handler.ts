@@ -80,7 +80,11 @@ export class SessionProtocolHandler {
   private readonly send: (message: SessionProtocolOutgoingMessage) => void;
   private readonly sessionStates = new Map<string, SessionProtocolHandlerSessionState>();
   private initialized = false;
-  private clientToolRegistration?: { unregister: () => void };
+  private clientToolRegistration?: {
+    attachSession: (sessionId: string) => void;
+    detachSession: (sessionId: string) => void;
+    unregister: () => void;
+  };
   private closed = false;
 
   constructor(options: SessionProtocolHandlerOptions) {
@@ -1205,6 +1209,13 @@ export class SessionProtocolHandler {
     });
 
     this.sessionStates.set(session.sessionId, state);
+    try {
+      this.clientToolRegistration?.attachSession(session.sessionId);
+    } catch (error) {
+      this.unsubscribeSessionListeners(state);
+      this.sessionStates.delete(session.sessionId);
+      throw error;
+    }
     return state;
   }
 
@@ -1333,6 +1344,8 @@ export class SessionProtocolHandler {
   }
 
   private unsubscribeSessionListeners(state: SessionProtocolHandlerSessionState): void {
+    this.clientToolRegistration?.detachSession(state.session.sessionId);
+
     if (!state.unsubscribeDelta) {
       // continue to ephemeral cleanup below
     } else {

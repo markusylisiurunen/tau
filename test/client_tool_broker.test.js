@@ -16,7 +16,7 @@ describe("ClientToolBroker", () => {
     const longLine = "x".repeat(200);
     const content = ["one", longLine, "three", "four", "five", "six", "seven", "eight"].join("\n");
     const sendCancel = vi.fn();
-    broker.registerClient({
+    const registration = broker.registerClient({
       tools: [
         {
           name: "local_picker",
@@ -30,6 +30,7 @@ describe("ClientToolBroker", () => {
       },
       sendCancel,
     });
+    registration.attachSession("session-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
     const result = await definition.dispatch(
@@ -62,5 +63,44 @@ describe("ClientToolBroker", () => {
     ]);
     expect(result.uiEvent.uiText.fullLines).toEqual(result.uiEvent.uiText.previewLines);
     expect(sendCancel).not.toHaveBeenCalled();
+  });
+
+  it("scopes client tools to attached sessions", () => {
+    const broker = new ClientToolBroker();
+    const first = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: vi.fn(),
+      sendCancel: vi.fn(),
+    });
+    const second = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: vi.fn(),
+      sendCancel: vi.fn(),
+    });
+
+    first.attachSession("session-1");
+    second.attachSession("session-2");
+
+    expect(broker.getToolDefinitions("session-1")).toHaveLength(1);
+    expect(broker.getToolDefinitions("session-2")).toHaveLength(1);
+    expect(broker.getToolDefinitions("session-3")).toHaveLength(0);
+    expect(() => second.attachSession("session-1")).toThrow(
+      "client tool 'local_picker' is already advertised for this session",
+    );
+
+    first.detachSession("session-1");
+    expect(broker.getToolDefinitions("session-1")).toHaveLength(0);
   });
 });

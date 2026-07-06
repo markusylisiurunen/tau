@@ -3099,7 +3099,9 @@ describe("SessionChatController", () => {
       ),
     );
 
-    await expect(result).resolves.toBe("returned review from local diff tool");
+    await expect(result).resolves.toContain("Diff review completed.");
+    await expect(result).resolves.toContain("Reviewed scope: git diff -- src/main.ts");
+    await expect(result).resolves.toContain("returned review from local diff tool");
     const diffReviewMessage = view.messages.find((message) => message.model.type === "diff_review");
     expect(diffReviewMessage.model).toMatchObject({
       type: "diff_review",

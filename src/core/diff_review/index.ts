@@ -66,6 +66,12 @@ export {
   serializeDiffReviewMessage,
   validateDiffReviewParams,
 } from "./protocol.js";
+export type { DiffReviewReturnedReviewSummary } from "./result_text.js";
+export {
+  formatDiffReviewReturnedReviewToolResult,
+  formatDiffReviewReturnedReviewUserSystemMessage,
+  formatDiffReviewReviewedFiles,
+} from "./result_text.js";
 export type { DiffReviewAgentUsageSnapshot, DiffReviewThreadUpdate } from "./review_thread.js";
 export type {
   CaptureDiffReviewSnapshotOptions,

@@ -98,7 +98,12 @@ export type TauSessionHost = {
     tools: SessionProtocolClientToolDefinition[];
     sendCall: (message: SessionProtocolClientToolCallMessage) => void;
     sendCancel: (message: SessionProtocolClientToolCancelMessage) => void;
-  }): { clientId: string; unregister: () => void };
+  }): {
+    clientId: string;
+    attachSession: (sessionId: string) => void;
+    detachSession: (sessionId: string) => void;
+    unregister: () => void;
+  };
   acknowledgeClientToolCall?(sessionId: string, callId: string): boolean;
   completeClientToolCall?(
     sessionId: string,

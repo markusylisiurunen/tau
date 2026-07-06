@@ -5,7 +5,10 @@ import type {
   DiffReviewResult,
   StartedDiffReviewBridge,
 } from "../../core/diff_review/index.js";
-import { parseDiffReviewToolArgs } from "../../core/diff_review/index.js";
+import {
+  formatDiffReviewReturnedReviewToolResult,
+  parseDiffReviewToolArgs,
+} from "../../core/diff_review/index.js";
 import {
   type DiffReviewSnapshotSource,
   formatDiffReviewScope,
@@ -246,7 +249,11 @@ export class DiffReviewService {
       const result = await started.result;
       if (result.status === "returned") {
         finalizeDiffReviewMessage(state, this.view, "returned");
-        return result.review;
+        return formatDiffReviewReturnedReviewToolResult({
+          command: state.diffCommand,
+          reviewedFiles: state.reviewedFiles,
+          review: result.review,
+        });
       }
 
       finalizeDiffReviewMessage(state, this.view, "cancelled");

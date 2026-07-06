@@ -38,13 +38,10 @@ const HOST_TOOL_NAMES = new Set([
 export type ClientToolDispatch = (message: SessionProtocolClientToolCallMessage) => void;
 export type ClientToolCancelDispatch = (message: SessionProtocolClientToolCancelMessage) => void;
 
-export type RegisteredClientTool = SessionProtocolClientToolDefinition & {
-  clientId: string;
-};
-
 type ClientToolClient = {
   id: string;
   tools: Map<string, SessionProtocolClientToolDefinition>;
+  sessionIds: Set<string>;
   sendCall: ClientToolDispatch;
   sendCancel: ClientToolCancelDispatch;
 };
@@ -69,7 +66,12 @@ export class ClientToolBroker {
     tools: SessionProtocolClientToolDefinition[];
     sendCall: ClientToolDispatch;
     sendCancel: ClientToolCancelDispatch;
-  }): { clientId: string; unregister: () => void } {
+  }): {
+    clientId: string;
+    attachSession: (sessionId: string) => void;
+    detachSession: (sessionId: string) => void;
+    unregister: () => void;
+  } {
     const names = new Set<string>();
     for (const tool of options.tools) {
       if (names.has(tool.name)) {
@@ -78,9 +80,6 @@ export class ClientToolBroker {
       if (HOST_TOOL_NAMES.has(tool.name)) {
         throw new Error(`client tool '${tool.name}' duplicates a host tool`);
       }
-      if (this.findTool(tool.name)) {
-        throw new Error(`client tool '${tool.name}' is already advertised by another client`);
-      }
       names.add(tool.name);
     }
 
@@ -88,21 +87,26 @@ export class ClientToolBroker {
     const client: ClientToolClient = {
       id: clientId,
       tools: new Map(options.tools.map((tool) => [tool.name, tool])),
+      sessionIds: new Set(),
       sendCall: options.sendCall,
       sendCancel: options.sendCancel,
     };
     this.clients.set(clientId, client);
     return {
       clientId,
+      attachSession: (sessionId) => this.attachClientToSession(clientId, sessionId),
+      detachSession: (sessionId) => this.detachClientFromSession(clientId, sessionId),
       unregister: () => this.unregisterClient(clientId),
     };
   }
 
   getToolDefinitions(sessionId: string): ToolDefinition[] {
     return [...this.clients.values()].flatMap((client) =>
-      [...client.tools.values()].map((tool) =>
-        createClientToolDefinition(sessionId, client.id, tool, this),
-      ),
+      client.sessionIds.has(sessionId)
+        ? [...client.tools.values()].map((tool) =>
+            createClientToolDefinition(sessionId, client.id, tool, this),
+          )
+        : [],
     );
   }
 
@@ -142,7 +146,7 @@ export class ClientToolBroker {
     signal: AbortSignal;
   }): Promise<ToolResultMessage> {
     const client = this.clients.get(options.clientId);
-    if (!client?.tools.has(options.tool.name)) {
+    if (!client?.tools.has(options.tool.name) || !client.sessionIds.has(options.sessionId)) {
       return Promise.resolve(
         createToolError(
           options.toolCall,
@@ -185,6 +189,39 @@ export class ClientToolBroker {
     });
   }
 
+  private attachClientToSession(clientId: string, sessionId: string): void {
+    const client = this.clients.get(clientId);
+    if (!client) {
+      return;
+    }
+
+    for (const existing of this.clients.values()) {
+      if (existing.id === clientId || !existing.sessionIds.has(sessionId)) {
+        continue;
+      }
+      for (const toolName of client.tools.keys()) {
+        if (existing.tools.has(toolName)) {
+          throw new Error(`client tool '${toolName}' is already advertised for this session`);
+        }
+      }
+    }
+
+    client.sessionIds.add(sessionId);
+  }
+
+  private detachClientFromSession(clientId: string, sessionId: string): void {
+    const client = this.clients.get(clientId);
+    if (!client?.sessionIds.delete(sessionId)) {
+      return;
+    }
+
+    for (const [callId, pending] of [...this.pendingCalls]) {
+      if (pending.clientId === clientId && pending.sessionId === sessionId) {
+        this.fail(callId, "client tool unavailable: the owning client detached", "client-detached");
+      }
+    }
+  }
+
   private unregisterClient(clientId: string): void {
     if (!this.clients.delete(clientId)) {
       return;
@@ -195,16 +232,6 @@ export class ClientToolBroker {
         this.fail(callId, "client tool unavailable: the owning client detached", "client-detached");
       }
     }
-  }
-
-  private findTool(name: string): RegisteredClientTool | undefined {
-    for (const client of this.clients.values()) {
-      const tool = client.tools.get(name);
-      if (tool) {
-        return { ...tool, clientId: client.id };
-      }
-    }
-    return undefined;
   }
 
   private abort(callId: string): void {

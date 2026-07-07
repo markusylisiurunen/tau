@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,7 @@ import {
   parseNookDestroyInputs,
   parseNookInfrastructureDomain,
   parseNookSetupInputs,
+  runNookSetup,
 } from "../dist/core/nook/setup.js";
 import { createNookToolDefinition } from "../dist/core/tools/nook.js";
 import worker, { cacheControlForDeployedAsset } from "../dist/nook/worker/index.js";
@@ -201,6 +202,57 @@ describe("nook setup cli parsing", () => {
         argv: ["--domain", "https://nook.example.com/path"],
       }),
     ).toThrow(/without a path/);
+  });
+
+  it("deploys from a self-contained temporary wrangler project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tau-nook-wrangler-test-"));
+    const binDir = join(root, "bin");
+    mkdirSync(binDir);
+    const npmPath = join(binDir, "npm");
+    writeFileSync(
+      npmPath,
+      [
+        "#!/usr/bin/env node",
+        'import { mkdirSync, readFileSync, writeFileSync } from "node:fs";',
+        'import { join } from "node:path";',
+        'const packageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf-8"));',
+        "if (!packageJson.private) process.exit(21);",
+        'if (packageJson.type !== "module") process.exit(22);',
+        "if (!packageJson.dependencies?.jose) process.exit(23);",
+        'mkdirSync(join(process.cwd(), "node_modules", "jose"), { recursive: true });',
+        'writeFileSync(join(process.cwd(), "node_modules", "jose", "package.json"), "{}");',
+      ].join("\n"),
+    );
+    chmodSync(npmPath, 0o755);
+    const wranglerPath = join(binDir, "wrangler");
+    writeFileSync(
+      wranglerPath,
+      [
+        "#!/usr/bin/env node",
+        'import { existsSync, readFileSync } from "node:fs";',
+        'import { join } from "node:path";',
+        "const args = process.argv.slice(2);",
+        'if (args[0] === "deploy") {',
+        '  const config = JSON.parse(readFileSync(join(process.cwd(), "wrangler.json"), "utf-8"));',
+        '  if (config.main !== "worker/index.js") process.exit(31);',
+        '  if (!existsSync(join(process.cwd(), "worker", "index.js"))) process.exit(32);',
+        '  if (!existsSync(join(process.cwd(), "node_modules", "jose", "package.json"))) process.exit(33);',
+        "}",
+      ].join("\n"),
+    );
+    chmodSync(wranglerPath, 0o755);
+
+    await runNookSetup({
+      domain: "nook.example.com",
+      accessTeamDomain: "https://team.cloudflareaccess.com",
+      accessAud: "aud",
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        CLOUDFLARE_API_TOKEN: "test-token",
+      },
+      stdout: () => {},
+    });
   });
 });
 

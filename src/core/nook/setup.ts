@@ -1,6 +1,14 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
 import { normalizeNookDomain } from "./validation.js";
@@ -42,6 +50,25 @@ async function runWrangler(args: string[], options: { cwd?: string; env?: NodeJS
   return (result.output ?? "").trim();
 }
 
+async function runNpmInstall(options: { cwd: string; env?: NodeJS.ProcessEnv }) {
+  const result = await spawnWithCapture(
+    "npm",
+    ["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
+    {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      captureOutput: "combined-and-split",
+      maxCaptureBytes: 1024 * 1024,
+      maxCaptureMode: "ignore",
+      maxCaptureStrategy: "tail",
+    },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(`npm install failed while preparing bundled Nook Worker:\n${result.output}`);
+  }
+}
+
 function requireWranglerAuth(env: NodeJS.ProcessEnv): void {
   if (!env.CLOUDFLARE_API_TOKEN?.trim()) {
     throw new Error("CLOUDFLARE_API_TOKEN is required for non-interactive wrangler auth.");
@@ -66,17 +93,58 @@ function bundledWorkerPath(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "../../nook/worker/index.js");
 }
 
+function packageRootPath(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "../../..");
+}
+
+function nookWorkerDependencies(): Record<string, string> {
+  const packageJson = JSON.parse(
+    readFileSync(join(packageRootPath(), "package.json"), "utf-8"),
+  ) as { dependencies?: Record<string, string> };
+  const jose = packageJson.dependencies?.jose;
+  if (!jose) {
+    throw new Error("Tau package is missing required Nook Worker dependency 'jose'.");
+  }
+  return { jose };
+}
+
+function writeBundledWorkerProject(tempDir: string): void {
+  const workerPath = bundledWorkerPath();
+  if (!existsSync(workerPath)) {
+    throw new Error(
+      `bundled Nook Worker is missing at ${workerPath}. Rebuild or reinstall Tau before running tau nook setup.`,
+    );
+  }
+
+  const workerDir = join(tempDir, "worker");
+  mkdirSync(workerDir, { recursive: true });
+  copyFileSync(workerPath, join(workerDir, "index.js"));
+
+  writeFileSync(
+    join(tempDir, "package.json"),
+    JSON.stringify(
+      {
+        private: true,
+        type: "module",
+        dependencies: nookWorkerDependencies(),
+      },
+      null,
+      2,
+    ),
+    "utf-8",
+  );
+}
+
 function writeWranglerProject(args: {
   tempDir: string;
   domain: string;
   accessTeamDomain: string;
   accessAud: string;
 }): void {
-  const workerPath = bundledWorkerPath();
-  const relativeWorker = relative(args.tempDir, workerPath).split("\\").join("/");
+  writeBundledWorkerProject(args.tempDir);
   const wranglerConfig = {
     name: WORKER_NAME,
-    main: relativeWorker,
+    main: "worker/index.js",
     compatibility_date: "2026-07-06",
     workers_dev: false,
     vars: {
@@ -123,6 +191,7 @@ export async function runNookSetup(args: NookSetupArgs): Promise<void> {
       accessTeamDomain: args.accessTeamDomain,
       accessAud: args.accessAud,
     });
+    await runNpmInstall({ cwd: tempDir, env });
     try {
       await runWrangler(["r2", "bucket", "create", R2_BUCKET], { env });
       stdout(`created R2 bucket ${R2_BUCKET}`);

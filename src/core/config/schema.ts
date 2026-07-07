@@ -6,6 +6,7 @@ import {
   loadModelResolver,
   type ModelResolver,
 } from "../models/catalog.js";
+import { normalizeNookDomain } from "../nook/validation.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS, type RiskLevel, RiskLevelSchema } from "../types.js";
@@ -35,6 +36,7 @@ export interface Config {
   speechToText?: SpeechToTextConfig;
   cloudflareSandbox?: CloudflareSandboxConfig;
   flySprites?: FlySpritesConfig;
+  nook?: NookConfig;
 }
 
 export type BuiltInDiffToolConfig = {
@@ -67,6 +69,13 @@ export type FlySpritesApiConfig = {
 
 export type FlySpritesConfig = {
   apis?: Record<string, FlySpritesApiConfig>;
+};
+
+export type NookConfig = {
+  domain: string;
+  accessClientId?: string;
+  accessClientSecret?: string;
+  accessClientSecretEnv?: string;
 };
 
 export type AutoCompactConfig = {
@@ -190,6 +199,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS = new Set([
   "speechToText",
   "cloudflareSandbox",
   "flySprites",
+  "nook",
 ]);
 
 const NonEmptyStringSchema = z.string().trim().min(1);
@@ -226,6 +236,14 @@ const FlySpritesApiSchema = z
 const FlySpritesConfigSchema = z
   .object({
     apis: z.record(NonEmptyStringSchema, FlySpritesApiSchema).optional(),
+  })
+  .strict();
+const NookConfigSchema = z
+  .object({
+    domain: NonEmptyStringSchema,
+    accessClientId: NonEmptyStringSchema.optional(),
+    accessClientSecret: NonEmptyStringSchema.optional(),
+    accessClientSecretEnv: NonEmptyStringSchema.optional(),
   })
   .strict();
 const SubagentsConfigSchema = z
@@ -503,6 +521,9 @@ function validateConfigData(
     flySpritesResult.errors,
   );
 
+  const nookResult = parseNookConfig(data.nook, sourceLabel);
+  assignParsedConfigValue(config, errors, "nook", nookResult.config, nookResult.errors);
+
   return { config, errors };
 }
 
@@ -613,6 +634,51 @@ function parseFlySpritesConfig(
   const apis = parsed.data.apis;
   return {
     config: apis && Object.keys(apis).length > 0 ? { apis } : undefined,
+    errors: [],
+  };
+}
+
+function parseNookConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: NookConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  const parsed = NookConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      errors: [
+        `${sourceLabel}: 'nook' must be an object with domain and optional Access service token credentials.`,
+      ],
+    };
+  }
+
+  let domain: string;
+  try {
+    domain = normalizeNookDomain(parsed.data.domain);
+  } catch (error) {
+    return {
+      errors: [
+        `${sourceLabel}: ${error instanceof Error ? error.message : "nook.domain must be a DNS hostname without a path."}`,
+      ],
+    };
+  }
+
+  return {
+    config: {
+      domain,
+      ...(parsed.data.accessClientId !== undefined
+        ? { accessClientId: parsed.data.accessClientId }
+        : {}),
+      ...(parsed.data.accessClientSecret !== undefined
+        ? { accessClientSecret: parsed.data.accessClientSecret }
+        : {}),
+      ...(parsed.data.accessClientSecretEnv !== undefined
+        ? { accessClientSecretEnv: parsed.data.accessClientSecretEnv }
+        : {}),
+    },
     errors: [],
   };
 }
@@ -898,6 +964,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let speechToText: SpeechToTextConfig | undefined;
   let cloudflareSandbox: CloudflareSandboxConfig | undefined;
   let flySprites: FlySpritesConfig | undefined;
+  let nook: NookConfig | undefined;
   const agentContextFiles: string[] = [];
 
   for (let i = 0; i < levels.length; i += 1) {
@@ -921,6 +988,9 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     }
     cloudflareSandbox = mergeCloudflareSandboxConfig(cloudflareSandbox, config.cloudflareSandbox);
     flySprites = mergeFlySpritesConfig(flySprites, config.flySprites);
+    if (config.nook !== undefined) {
+      nook = { ...config.nook };
+    }
 
     if (config.defaultPersona !== undefined) {
       merged.defaultPersona = config.defaultPersona;
@@ -977,6 +1047,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (flySprites) {
     merged.flySprites = flySprites;
+  }
+
+  if (nook) {
+    merged.nook = nook;
   }
 
   if (agentContextFiles.length > 0) {
@@ -1071,4 +1145,19 @@ export function getMistralApiKey(config: Config, env?: NodeJS.ProcessEnv): strin
 
   const configKey = config.apiKeys?.mistral?.trim();
   return configKey || undefined;
+}
+
+export function getNookAccessClientSecret(
+  config: NookConfig,
+  env?: NodeJS.ProcessEnv,
+): string | undefined {
+  const envName = config.accessClientSecretEnv?.trim();
+  if (envName) {
+    const envSecret = getTrimmedEnvValue(envName, env);
+    if (envSecret) {
+      return envSecret;
+    }
+  }
+
+  return config.accessClientSecret?.trim() || undefined;
 }

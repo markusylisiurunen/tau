@@ -4,6 +4,7 @@ import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
 import { createEmitOutputToolDefinition } from "./emit_output.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
+import { createNookToolDefinition } from "./nook.js";
 import type { ToolDefinition } from "./registry.js";
 import { ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
@@ -36,6 +37,7 @@ export const ToolCatalog = {
       createSendInputToAgentToolDefinition(backend),
       createWaitForAgentsToolDefinition(),
       createTerminateAgentToolDefinition(),
+      createNookToolDefinition(backend),
     ]);
   },
 

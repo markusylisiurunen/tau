@@ -22,6 +22,7 @@ import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
 import type { ToolDefinition, ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
+import { TOOL_NAME_NOOK } from "../tools/tool_names.js";
 import type { Persona, ReasoningEffort, RiskLevel } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
@@ -667,12 +668,16 @@ export class SessionEngine {
     clientToolDefinitions: ToolDefinition[] = [],
   ) {
     const schemas = this.toolRegistry.getEnabledToolSchemas(persona.tools);
-    if (clientToolDefinitions.length === 0) {
+    const existingNames = new Set(schemas.map((tool) => tool.name));
+    const configuredToolDefinitions = this.getConfiguredToolDefinitions().filter(
+      (definition) => !existingNames.has(definition.schema.name),
+    );
+    const extraDefinitions = [...configuredToolDefinitions, ...clientToolDefinitions];
+    if (extraDefinitions.length === 0) {
       return schemas;
     }
 
-    const existingNames = new Set(schemas.map((tool) => tool.name));
-    const clientSchemas = clientToolDefinitions.map((definition) => definition.schema);
+    const clientSchemas = extraDefinitions.map((definition) => definition.schema);
     for (const schema of clientSchemas) {
       if (existingNames.has(schema.name)) {
         throw new Error(`duplicate tool '${schema.name}'`);
@@ -681,6 +686,18 @@ export class SessionEngine {
     }
 
     return [...schemas, ...clientSchemas];
+  }
+
+  private getConfiguredToolDefinitions(): ToolDefinition[] {
+    if (!this.config.nook) {
+      return [];
+    }
+
+    const nook = this.toolRegistry.get(TOOL_NAME_NOOK);
+    if (!nook) {
+      throw new Error("nook tool is not registered");
+    }
+    return [nook];
   }
 
   private createDispatchModelResolver(): ModelResolver {
@@ -761,7 +778,10 @@ export class SessionEngine {
       for await (const event of runToolCalls({
         toolCalls,
         toolRegistry: this.toolRegistry,
-        extraToolDefinitions: turnSettings.clientToolDefinitions,
+        extraToolDefinitions: [
+          ...this.getConfiguredToolDefinitions(),
+          ...turnSettings.clientToolDefinitions,
+        ],
         enabledTools,
         riskLevel: this.riskLevel,
         signal,

@@ -168,6 +168,34 @@ tau tool pdf-unpack ./docs/spec.pdf
 
 `tau tool pdf-unpack` sends the original PDF to Mistral for OCR/Markdown, renders page image patches locally with `pdftoppm`, writes a persistent temp directory with `document.md`, `pages/`, and `images/`, and prints the output paths as plain text for follow-up model use.
 
+## Nook static mini-apps
+
+Nook is Tau's bundled Cloudflare-backed static mini-app platform. It deploys static directories to wildcard subdomains and gives each site same-origin JSON KV through an injected `window.nook` browser SDK.
+
+```sh
+tau nook setup \
+  --domain nook.example.com \
+  --access-team-domain https://team.cloudflareaccess.com \
+  --access-aud <access-application-audience>
+tau nook deploy ./dist --site demo
+tau nook deploy ./dist --site demo --public
+tau nook kv put demo settings '{"theme":"dark"}'
+```
+
+Add a single configured target to Tau config after deploying the Worker and creating Cloudflare Access service-token credentials:
+
+```json
+{
+  "nook": {
+    "domain": "nook.example.com",
+    "accessClientId": "...",
+    "accessClientSecretEnv": "NOOK_ACCESS_CLIENT_SECRET"
+  }
+}
+```
+
+The Worker validates Cloudflare Access JWTs against the Access JWKS with the configured issuer and audience. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker does not treat those raw headers as authentication. When `nook` is configured, Tau automatically exposes a read-write model tool named `nook`. Detailed setup, deploy, Worker, browser SDK, and V0 scope notes live in [src/nook/README.md](src/nook/README.md).
+
 ## SDK usage (Node)
 
 tau also ships a Node SDK at `@markusylisiurunen/tau/sdk` that uses the same session protocol. By default it runs against an in-process Tau host; `tau serve` provides the same protocol over WebSocket.
@@ -534,6 +562,11 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
       }
     }
   },
+  "nook": {
+    "domain": "nook.example.com",
+    "accessClientId": "...",
+    "accessClientSecretEnv": "NOOK_ACCESS_CLIENT_SECRET"
+  },
   "modelSystemNotices": {
     "openai-codex/gpt-5.5": "avoid apply_patch heredocs, use tau tools directly"
   }
@@ -553,6 +586,8 @@ the `defaultTheme` field sets the theme id to load at startup. it must be non-em
 `cloudflareSandbox.bridges` configures host-owned Cloudflare Sandbox bridge targets for hosted sessions. session requests refer to a bridge by id and a pre-existing sandbox id; Tau does not create sandboxes, clone repos, install dependencies, inject secrets, or run readiness checks during `session.create`. paths such as `cwd` are real paths inside the sandbox execution environment. Tau resolves session config/content from that execution environment cwd when creating the session and on `/reload`; bridge credentials stay on the host through either `apiKey` or `apiKeyEnv` and are not stored in session snapshots.
 
 `flySprites.apis` configures host-owned Fly Sprites API targets for hosted sessions. session requests refer to an API by id and a pre-existing Sprite name; Tau does not create Sprites, clone repos, install dependencies, inject secrets, or run readiness checks during `session.create`. paths such as `cwd` are real paths inside the Sprite. Tau resolves session config/content from that execution environment cwd when creating the session and on `/reload`; API tokens stay on the host through either `token` or `tokenEnv` and are not stored in session snapshots.
+
+`nook` configures one effective Nook target. `domain` is required. `accessClientId`, `accessClientSecret`, and `accessClientSecretEnv` are optional Cloudflare Access service-token fields; when the env var resolves, it wins over the inline secret. `tau nook setup` takes infrastructure Access validation inputs through `--access-team-domain` and `--access-aud` or the `NOOK_ACCESS_TEAM_DOMAIN` and `NOOK_ACCESS_AUD` env vars. `tau nook destroy` is an infrastructure flow that takes service-token cleanup credentials through flags or `NOOK_ACCESS_CLIENT_ID` and `NOOK_ACCESS_CLIENT_SECRET`.
 
 tau ships a built-in browser diff review tool as `tau diff-tool`. `/diff` launches the configured diff tool locally from the TUI process. `diffTool` overrides the built-in fallback; `command` is required when `diffTool` is present, `args` and `env` are optional, and relative `command` paths resolve from the config level root (directory containing `.tau`, or home for the global config). set `builtInDiffTool.codeTheme` to choose the built-in diff tool's initial code theme, for example `{ "builtInDiffTool": { "codeTheme": "github-dark-dimmed" } }`. the default is `github-dark-dimmed`.
 
@@ -637,6 +672,7 @@ optional frontmatter fields:
 - `serviceTier`: `priority` or `flex` for providers that support service tiers (currently `openai` and `openai-codex`)
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.
+- `tools`: optional list of persona-selected host tools. Nook is not selected here; when effective config contains `nook`, Tau exposes the `nook` tool automatically and gates every operation on read-write risk.
 - `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `serviceTier`, `tools`, `riskLevel`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
   ```yaml
   subagents:

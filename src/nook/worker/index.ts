@@ -1,4 +1,4 @@
-import type { webcrypto } from "node:crypto";
+import { createRemoteJWKSet, type JWTPayload, jwtVerify } from "jose";
 
 type Env = {
   ASSETS: R2Bucket;
@@ -59,29 +59,6 @@ type Identity = {
   actor: string;
 };
 
-type AccessJwtHeader = {
-  alg?: string;
-  kid?: string;
-};
-
-type AccessJwtPayload = {
-  iss?: string;
-  aud?: string | string[];
-  exp?: number;
-  nbf?: number;
-  email?: string;
-  sub?: string;
-  common_name?: string;
-};
-
-type AccessJwk = webcrypto.JsonWebKey & {
-  kid?: string;
-};
-
-type JsonWebKeySet = {
-  keys: AccessJwk[];
-};
-
 type ManifestFile = {
   path: string;
   sizeBytes: number;
@@ -124,6 +101,37 @@ type KvRecord = {
   updatedBy: string;
 };
 
+type HtmlRewriterContentOptions = {
+  html?: boolean;
+};
+
+type HtmlRewriterEndTag = {
+  before(content: string, options?: HtmlRewriterContentOptions): void;
+};
+
+type HtmlRewriterElement = {
+  onEndTag(handler: (endTag: HtmlRewriterEndTag) => void): void;
+};
+
+type HtmlRewriterDocumentEnd = {
+  append(content: string, options?: HtmlRewriterContentOptions): void;
+};
+
+type HtmlRewriterHandler = {
+  element?(element: HtmlRewriterElement): void;
+  end?(end: HtmlRewriterDocumentEnd): void;
+};
+
+type HtmlRewriterRuntime = {
+  on(selector: string, handler: HtmlRewriterHandler): HtmlRewriterRuntime;
+  onDocument(handler: HtmlRewriterHandler): HtmlRewriterRuntime;
+  transform(response: Response): Response;
+};
+
+declare const HTMLRewriter: {
+  new (): HtmlRewriterRuntime;
+};
+
 const RESERVED_PREFIX = "/__nook";
 const DEPLOY_SESSION_MS = 15 * 60 * 1000;
 const MAX_PENDING_DEPLOYMENTS = 3;
@@ -135,8 +143,10 @@ const MAX_KV_KEY_LENGTH = 256;
 const MAX_KV_VALUE_BYTES = 64 * 1024;
 const MAX_KV_KEYS = 1_000;
 const MAX_KV_TOTAL_BYTES = 5 * 1024 * 1024;
+const NOOK_CLIENT_SCRIPT = '<script src="/__nook/client.js"></script>';
+const DEPLOYED_ASSET_CACHE_CONTROL = "public, no-cache, must-revalidate";
 
-const jwksCache = new Map<string, Promise<JsonWebKeySet>>();
+const accessJwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 const SKILL_MARKDOWN = `# Nook
 
@@ -223,18 +233,6 @@ function randomId(prefix: string): string {
   return `${prefix}_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
-  const padded = `${value}${"=".repeat((4 - (value.length % 4)) % 4)}`;
-  const binary = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-function decodeJwtPart<T>(value: string): T {
-  return JSON.parse(new TextDecoder().decode(base64UrlToBytes(value))) as T;
-}
-
 function accessTokenFromRequest(request: Request): string | undefined {
   const headerToken = request.headers.get("Cf-Access-Jwt-Assertion");
   if (headerToken?.trim()) return headerToken.trim();
@@ -246,29 +244,27 @@ function accessTokenFromRequest(request: Request): string | undefined {
   return undefined;
 }
 
-async function accessJwks(teamDomain: string, refresh = false): Promise<JsonWebKeySet> {
-  const cached = jwksCache.get(teamDomain);
-  if (cached && !refresh) return await cached;
-  const promise = fetch(`${teamDomain}/cdn-cgi/access/certs`)
-    .then(async (response) => {
-      if (!response.ok) throw new Error(`failed to load Access JWKS: ${response.status}`);
-      return (await response.json()) as JsonWebKeySet;
-    })
-    .catch((err) => {
-      jwksCache.delete(teamDomain);
-      throw err;
-    });
-  jwksCache.set(teamDomain, promise);
-  return await promise;
+function accessJwks(teamDomain: string): ReturnType<typeof createRemoteJWKSet> {
+  let jwks = accessJwksCache.get(teamDomain);
+  if (!jwks) {
+    jwks = createRemoteJWKSet(new URL(`${teamDomain}/cdn-cgi/access/certs`));
+    accessJwksCache.set(teamDomain, jwks);
+  }
+  return jwks;
 }
 
-function accessAudienceMatches(actual: string | string[] | undefined, expected: string): boolean {
-  if (Array.isArray(actual)) return actual.includes(expected);
-  return actual === expected;
+function stringClaim(payload: JWTPayload, claim: string): string | undefined {
+  const value = payload[claim];
+  return typeof value === "string" && value ? value : undefined;
 }
 
-function accessActor(payload: AccessJwtPayload): string {
-  return payload.email ?? payload.common_name ?? payload.sub ?? "access-user";
+function accessActor(payload: JWTPayload): string {
+  return (
+    stringClaim(payload, "email") ??
+    stringClaim(payload, "common_name") ??
+    payload.sub ??
+    "access-user"
+  );
 }
 
 async function verifyAccessJwt(token: string, env: Env): Promise<Identity> {
@@ -278,65 +274,20 @@ async function verifyAccessJwt(token: string, env: Env): Promise<Identity> {
     throw new ErrorResponse("access_not_configured", "Cloudflare Access is not configured", 500);
   }
 
-  const parts = token.split(".");
-  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
-    throw new ErrorResponse("unauthorized", "Invalid Cloudflare Access JWT", 401);
-  }
-
-  let header: AccessJwtHeader;
-  let payload: AccessJwtPayload;
   try {
-    header = decodeJwtPart<AccessJwtHeader>(parts[0]);
-    payload = decodeJwtPart<AccessJwtPayload>(parts[1]);
-  } catch {
-    throw new ErrorResponse("unauthorized", "Invalid Cloudflare Access JWT", 401);
-  }
-
-  if (header.alg !== "RS256" || !header.kid) {
-    throw new ErrorResponse("unauthorized", "Unsupported Cloudflare Access JWT", 401);
-  }
-  if (payload.iss !== teamDomain || !accessAudienceMatches(payload.aud, audience)) {
-    throw new ErrorResponse("unauthorized", "Cloudflare Access JWT has invalid claims", 401);
-  }
-
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  if (!payload.exp || payload.exp <= nowSeconds || (payload.nbf && payload.nbf > nowSeconds)) {
-    throw new ErrorResponse("unauthorized", "Cloudflare Access JWT is expired", 401);
-  }
-
-  let jwks: JsonWebKeySet;
-  try {
-    jwks = await accessJwks(teamDomain);
+    const { payload } = await jwtVerify(token, accessJwks(teamDomain), {
+      issuer: teamDomain,
+      audience,
+      algorithms: ["RS256"],
+    });
+    if (!payload.exp) {
+      throw new ErrorResponse("unauthorized", "Cloudflare Access JWT has invalid claims", 401);
+    }
+    return { actor: accessActor(payload) };
   } catch (err) {
-    throw new ErrorResponse(
-      "access_unavailable",
-      err instanceof Error ? err.message : "Cloudflare Access JWKS unavailable",
-      503,
-    );
+    if (err instanceof ErrorResponse) throw err;
+    throw new ErrorResponse("unauthorized", "Invalid Cloudflare Access JWT", 401);
   }
-  let jwk = jwks.keys.find((key) => key.kid === header.kid);
-  if (!jwk) {
-    jwks = await accessJwks(teamDomain, true);
-    jwk = jwks.keys.find((key) => key.kid === header.kid);
-  }
-  if (!jwk) throw new ErrorResponse("unauthorized", "Unknown Cloudflare Access JWT key", 401);
-
-  const key = await crypto.subtle.importKey(
-    "jwk",
-    jwk,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["verify"],
-  );
-  const verified = await crypto.subtle.verify(
-    "RSASSA-PKCS1-v1_5",
-    key,
-    base64UrlToBytes(parts[2]),
-    new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
-  );
-  if (!verified) throw new ErrorResponse("unauthorized", "Invalid Cloudflare Access JWT", 401);
-
-  return { actor: accessActor(payload) };
 }
 
 async function requireAccessIdentity(request: Request, env: Env): Promise<Identity> {
@@ -635,6 +586,24 @@ function shouldSpaFallback(pathname: string): boolean {
   return !segment.includes(".");
 }
 
+export function cacheControlForDeployedAsset(): string {
+  return DEPLOYED_ASSET_CACHE_CONTROL;
+}
+
+function injectNookClientScript(response: Response): Response {
+  const injector: HtmlRewriterHandler = {
+    element(element) {
+      element.onEndTag((endTag) => endTag.before(NOOK_CLIENT_SCRIPT, { html: true }));
+      delete injector.end;
+    },
+    end(end) {
+      end.append(NOOK_CLIENT_SCRIPT, { html: true });
+    },
+  };
+
+  return new HTMLRewriter().on("body", injector).onDocument(injector).transform(response);
+}
+
 async function serveAsset(request: Request, env: Env, site: string, url: URL): Promise<Response> {
   const activeResponse = await siteFetch(env, site, "/active");
   if (!activeResponse.ok) return error("site_not_found", "Site has no active deployment", 404);
@@ -675,17 +644,11 @@ async function serveAsset(request: Request, env: Env, site: string, url: URL): P
     object.httpMetadata?.contentType ?? file?.contentType ?? "application/octet-stream";
   const headers = new Headers({
     "content-type": contentType,
-    "cache-control":
-      servedPath === "/index.html" ? "no-cache" : "public, max-age=31536000, immutable",
+    "cache-control": cacheControlForDeployedAsset(),
   });
 
   if (contentType.startsWith("text/html")) {
-    const html = await object.text();
-    const script = '<script src="/__nook/client.js"></script>';
-    const injected = html.includes("</body>")
-      ? html.replace("</body>", `${script}</body>`)
-      : `${html}${script}`;
-    return new Response(injected, { headers });
+    return injectNookClientScript(new Response(object.body ?? "", { headers }));
   }
 
   return new Response(object.body, { headers });

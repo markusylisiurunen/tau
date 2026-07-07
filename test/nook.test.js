@@ -2,7 +2,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getNookAccessClientSecret } from "../dist/core/config/index.js";
 import {
   buildNookDeployManifest,
@@ -16,6 +17,11 @@ import {
   parseNookSetupInputs,
 } from "../dist/core/nook/setup.js";
 import { createNookToolDefinition } from "../dist/core/tools/nook.js";
+import worker, { cacheControlForDeployedAsset } from "../dist/nook/worker/index.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("nook validation", () => {
   it("accepts subdomain-safe slugs and rejects reserved or malformed slugs", () => {
@@ -94,6 +100,59 @@ describe("nook config", () => {
         { NOOK_SECRET: "from-env" },
       ),
     ).toBe("from-env");
+  });
+});
+
+describe("nook worker", () => {
+  it("requires revalidation for deployed asset URLs that remain stable across deploys", () => {
+    expect(cacheControlForDeployedAsset()).toBe("public, no-cache, must-revalidate");
+  });
+
+  it("accepts Cloudflare Access JWTs verified with jose remote JWKS", async () => {
+    const teamDomain = "https://team.cloudflareaccess.com";
+    const audience = "aud";
+    const { publicKey, privateKey } = await generateKeyPair("RS256");
+    const jwk = await exportJWK(publicKey);
+    const token = await new SignJWT({ email: "user@example.com" })
+      .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+      .setIssuer(teamDomain)
+      .setAudience(audience)
+      .setExpirationTime("5m")
+      .sign(privateKey);
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (String(url) === `${teamDomain}/cdn-cgi/access/certs`) {
+        return Response.json({ keys: [{ ...jwk, kid: "test-key", alg: "RS256", use: "sig" }] });
+      }
+      throw new Error(`unexpected fetch ${String(url)}`);
+    });
+
+    const registryFetch = vi.fn(async () => Response.json({ sites: [] }));
+    const env = {
+      ASSETS: {},
+      REGISTRY_DO: {
+        idFromName: (name) => name,
+        get: () => ({ fetch: registryFetch }),
+      },
+      SITE_DO: {
+        idFromName: (name) => name,
+        get: () => ({ fetch: vi.fn() }),
+      },
+      NOOK_DOMAIN: "nook.example.com",
+      NOOK_ACCESS_TEAM_DOMAIN: teamDomain,
+      NOOK_ACCESS_AUD: audience,
+    };
+
+    const response = await worker.fetch(
+      new Request("https://nook.example.com/__nook/api/sites", {
+        headers: { "Cf-Access-Jwt-Assertion": token },
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ sites: [] });
+    expect(registryFetch).toHaveBeenCalledOnce();
   });
 });
 

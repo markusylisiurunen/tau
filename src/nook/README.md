@@ -66,6 +66,7 @@ Deploy requirements:
 - Successful deploys exactly replace the active static asset set. KV data survives.
 - Uploads are checked against the manifest byte size and SHA-256 digest.
 - Each site can have at most three non-expired pending deploy sessions.
+- Deployed asset URLs remain stable across deploys, so responses require cache revalidation.
 
 ## browser SDK
 

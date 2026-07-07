@@ -16,9 +16,11 @@ import type {
 import { TOOL_NAME_NOOK } from "./tool_names.js";
 
 const NOOK_DESCRIPTION = [
-  "Operate the configured Nook static mini-app platform.",
+  "Operate the configured Nook platform: Tau's Cloudflare-backed static mini-app host for publishing built front-end artifacts to https://<site>.<nook-domain>/ with optional per-site same-origin JSON KV.",
+  "Do not use this tool autonomously; use it only when the user asks to manage Nook, deploy/publish/host an app or artifact, inspect Nook state, or manage Nook KV.",
+  "If the user asks to deploy a static artifact or mini-app, this is usually the right deployment target.",
   "All operations require read-write risk.",
-  "Use read_skill to learn deployed platform constraints, deploy_site to publish a static directory, and KV operations for per-site JSON state.",
+  "Input keys by operation: read_skill and list_sites need only operation; deploy_site needs site and directory, with public optional; delete_site needs site; get_kv and delete_kv need site and key; put_kv needs site, key, and value; list_kv needs site, with prefix optional.",
 ].join(" ");
 
 export const NOOK_TOOL: Tool = {
@@ -27,6 +29,8 @@ export const NOOK_TOOL: Tool = {
   parameters: Type.Object(
     {
       operation: Type.String({
+        description:
+          "Operation to run. Required keys: read_skill/list_sites only operation; deploy_site site+directory; delete_site site; get_kv/delete_kv site+key; put_kv site+key+value; list_kv site.",
         enum: [
           "read_skill",
           "deploy_site",
@@ -38,16 +42,32 @@ export const NOOK_TOOL: Tool = {
           "list_kv",
         ],
       }),
-      site: Type.Optional(Type.String({ description: "Nook site slug." })),
+      site: Type.Optional(
+        Type.String({
+          description:
+            "Nook site slug. Required for deploy_site, delete_site, get_kv, put_kv, delete_kv, and list_kv.",
+        }),
+      ),
       directory: Type.Optional(
-        Type.String({ description: "Static directory to deploy from the session workspace." }),
+        Type.String({
+          description:
+            "Static directory to deploy from the session workspace. Required for deploy_site.",
+        }),
       ),
       public: Type.Optional(
-        Type.Boolean({ description: "Whether the deployed site should be public." }),
+        Type.Boolean({
+          description: "Whether deploy_site should make the active deployment public.",
+        }),
       ),
-      key: Type.Optional(Type.String({ description: "KV key." })),
-      value: Type.Optional(Type.Unknown({ description: "JSON-serializable KV value." })),
-      prefix: Type.Optional(Type.String({ description: "KV key prefix filter." })),
+      key: Type.Optional(
+        Type.String({ description: "KV key. Required for get_kv, put_kv, and delete_kv." }),
+      ),
+      value: Type.Optional(
+        Type.Unknown({ description: "JSON-serializable KV value. Required for put_kv." }),
+      ),
+      prefix: Type.Optional(
+        Type.String({ description: "Optional KV key prefix filter for list_kv." }),
+      ),
     },
     { additionalProperties: false },
   ),
@@ -82,6 +102,13 @@ function requireArg(args: NookToolArgs, key: "site" | "directory" | "key"): stri
     throw new Error(`${args.operation} requires ${key}`);
   }
   return value;
+}
+
+function requireValue(args: NookToolArgs): unknown {
+  if (args.value === undefined) {
+    throw new Error(`${args.operation} requires value`);
+  }
+  return args.value;
 }
 
 function stringifyResult(value: unknown): string {
@@ -170,7 +197,7 @@ export function createNookToolDefinition(backend: ToolExecutionBackend): ToolDef
             result = await client.putKv(
               requireArg(args, "site"),
               requireArg(args, "key"),
-              args.value,
+              requireValue(args),
             );
             break;
           case "delete_kv":

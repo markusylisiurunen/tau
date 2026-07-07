@@ -8,6 +8,5 @@ const targetDir = join(__dirname, "../dist/nook");
 
 mkdirSync(targetDir, { recursive: true });
 copyFileSync(join(sourceDir, "README.md"), join(targetDir, "README.md"));
-copyFileSync(join(sourceDir, "AGENTS.md"), join(targetDir, "AGENTS.md"));
 
 console.log("copied nook assets to dist/nook");

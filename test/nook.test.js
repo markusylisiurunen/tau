@@ -174,4 +174,23 @@ describe("nook tool", () => {
     expect(result.toolResult.isError).toBe(true);
     expect(result.toolResult.content[0].text).toContain("not configured");
   });
+
+  it("requires a value for put_kv", async () => {
+    const tool = createNookToolDefinition({});
+    const result = await tool.dispatch(
+      {
+        type: "toolCall",
+        id: "call_1",
+        name: "nook",
+        arguments: { operation: "put_kv", site: "demo", key: "settings" },
+      },
+      "read-write",
+      new AbortController().signal,
+      { config: { nook: { domain: "nook.example.com" } } },
+    );
+
+    expect(result.kind).toBe("single");
+    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.content[0].text).toContain("requires value");
+  });
 });

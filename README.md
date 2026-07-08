@@ -170,7 +170,7 @@ tau tool pdf-unpack ./docs/spec.pdf
 
 ## Nook static mini-apps
 
-Nook is Tau's bundled Cloudflare-backed static mini-app platform. It deploys static directories to wildcard subdomains and gives each site same-origin JSON KV through an injected `window.nook` browser SDK.
+Nook is Tau's bundled Cloudflare-backed static mini-app platform. It deploys static directories to path-based site URLs and gives each site same-origin JSON KV through an injected `window.nook` browser SDK.
 
 ```sh
 tau nook setup \

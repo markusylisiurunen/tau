@@ -1,12 +1,12 @@
 # Nook
 
-Nook is Tau's bundled Cloudflare-backed static mini-app platform. It deploys static directories to wildcard subdomains and gives each site a small same-origin JSON KV API exposed through `window.nook`.
+Nook is Tau's bundled Cloudflare-backed static mini-app platform. It deploys static directories to path-based site URLs and gives each site a small same-origin JSON KV API exposed through `window.nook`.
 
 V0 scope is intentionally narrow:
 
 - Cloudflare only: one Worker, R2 assets, a global Registry Durable Object, and one Site Durable Object per site.
 - Static assets only. Build locally first, then deploy the output directory.
-- Sites live at `https://<site>.<nook-domain>/`; there are no path-based app URLs or `workers.dev` fallback.
+- Sites live at `https://<nook-domain>/<site>/`; there are no wildcard subdomain app URLs or `workers.dev` fallback.
 - Deploys are private by default. `--public` makes the active deployment public; omitting it on the next deploy makes the active deployment private again.
 - Browser KV is per-site JSON state. It survives redeploys and is public-writable when the active deployment is public.
 
@@ -34,7 +34,7 @@ Setup deploys the bundled Worker as `tau-nook`, creates the `tau-nook-assets` R2
 }
 ```
 
-DNS and Cloudflare Access applications/policies are external V0 setup steps. Setup configures Worker routes for both `nook.example.com` and `*.nook.example.com` in the supplied Cloudflare zone. Configure DNS and Access according to your organization policy and service-token needs.
+DNS and Cloudflare Access applications/policies are external V0 setup steps. Setup configures a Worker route for `nook.example.com` in the supplied Cloudflare zone. Configure DNS and Access according to your organization policy and service-token needs.
 
 The setup command writes the Access team domain and application audience into the Worker environment. The Worker validates Cloudflare Access JWTs by loading the Access JWKS from that team domain and checking the token issuer, audience, expiry, and signature. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker never treats raw service-token headers as authentication.
 
@@ -63,7 +63,8 @@ Deploy requirements:
 - Hidden files and directories are rejected, including `.env`, `.git`, and `.DS_Store`.
 - Symlinks are rejected.
 - `/__nook/*` is reserved and cannot be deployed.
-- Site slugs are lowercase subdomain labels with letters, numbers, and hyphens.
+- Site slugs are lowercase path labels with letters, numbers, and hyphens.
+- Apps should use relative asset URLs or be built with a base path of `/<site>/`.
 - Successful deploys exactly replace the active static asset set. KV data survives.
 - Uploads are checked against the manifest byte size and SHA-256 digest.
 - Each site can have at most three non-expired pending deploy sessions.
@@ -71,7 +72,7 @@ Deploy requirements:
 
 ## browser SDK
 
-The Worker injects `/__nook/client.js` into served HTML. App code can use:
+The Worker injects `/<site>/__nook/client.js` into served HTML. App code can use:
 
 ```js
 await window.nook.kv.put("settings", { theme: "dark" });

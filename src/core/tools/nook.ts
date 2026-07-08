@@ -16,7 +16,7 @@ import type {
 import { TOOL_NAME_NOOK } from "./tool_names.js";
 
 const NOOK_DESCRIPTION = [
-  "Operate the configured Nook platform: Tau's Cloudflare-backed static mini-app host for publishing built front-end artifacts to https://<site>.<nook-domain>/ with optional per-site same-origin JSON KV.",
+  "Operate the configured Nook platform: Tau's Cloudflare-backed static mini-app host for publishing built front-end artifacts to https://<nook-domain>/<site>/ with optional per-site same-origin JSON KV.",
   "Do not use this tool autonomously; use it only when the user asks to manage Nook, deploy/publish/host an app or artifact, inspect Nook state, or manage Nook KV.",
   "If the user asks to deploy a static artifact or mini-app, this is usually the right deployment target.",
   "All operations require read-write risk.",

@@ -149,10 +149,7 @@ function writeWranglerProject(args: {
     main: "worker/index.js",
     compatibility_date: "2026-07-06",
     workers_dev: false,
-    routes: [
-      { pattern: `${args.domain}/*`, zone_name: args.zoneName },
-      { pattern: `*.${args.domain}/*`, zone_name: args.zoneName },
-    ],
+    routes: [{ pattern: `${args.domain}/*`, zone_name: args.zoneName }],
     vars: {
       NOOK_DOMAIN: args.domain,
       NOOK_ACCESS_TEAM_DOMAIN: args.accessTeamDomain,
@@ -213,9 +210,8 @@ export async function runNookSetup(args: NookSetupArgs): Promise<void> {
     stdout("");
     stdout("Configure DNS for:");
     stdout(`  ${args.domain}`);
-    stdout(`  *.${args.domain}`);
     stdout("");
-    stdout("Configure Cloudflare Access for both hostnames with application audience:");
+    stdout("Configure Cloudflare Access for this hostname with application audience:");
     stdout(`  ${args.accessAud}`);
     stdout("");
     stdout("Add this to Tau config after creating a Cloudflare Access service token:");

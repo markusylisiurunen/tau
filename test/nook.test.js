@@ -164,6 +164,8 @@ describe("nook setup cli parsing", () => {
         argv: [
           "--domain",
           "HTTPS://NOOK.EXAMPLE.COM/",
+          "--zone-name",
+          "EXAMPLE.COM",
           "--access-team-domain",
           "https://team.cloudflareaccess.com/",
           "--access-aud",
@@ -172,6 +174,7 @@ describe("nook setup cli parsing", () => {
       }),
     ).toEqual({
       domain: "nook.example.com",
+      zoneName: "example.com",
       accessTeamDomain: "https://team.cloudflareaccess.com",
       accessAud: "aud",
       remaining: [],
@@ -235,6 +238,7 @@ describe("nook setup cli parsing", () => {
         'if (args[0] === "deploy") {',
         '  const config = JSON.parse(readFileSync(join(process.cwd(), "wrangler.json"), "utf-8"));',
         '  if (config.main !== "worker/index.js") process.exit(31);',
+        '  if (JSON.stringify(config.routes) !== JSON.stringify([{ pattern: "nook.example.com/*", zone_name: "example.com" }, { pattern: "*.nook.example.com/*", zone_name: "example.com" }])) process.exit(34);',
         '  if (!existsSync(join(process.cwd(), "worker", "index.js"))) process.exit(32);',
         '  if (!existsSync(join(process.cwd(), "node_modules", "jose", "package.json"))) process.exit(33);',
         "}",
@@ -244,6 +248,7 @@ describe("nook setup cli parsing", () => {
 
     await runNookSetup({
       domain: "nook.example.com",
+      zoneName: "example.com",
       accessTeamDomain: "https://team.cloudflareaccess.com",
       accessAud: "aud",
       env: {

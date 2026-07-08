@@ -18,6 +18,7 @@ const R2_BUCKET = "tau-nook-assets";
 
 export type NookSetupArgs = {
   domain: string;
+  zoneName: string;
   accessTeamDomain: string;
   accessAud: string;
   env?: NodeJS.ProcessEnv;
@@ -138,6 +139,7 @@ function writeBundledWorkerProject(tempDir: string): void {
 function writeWranglerProject(args: {
   tempDir: string;
   domain: string;
+  zoneName: string;
   accessTeamDomain: string;
   accessAud: string;
 }): void {
@@ -147,6 +149,10 @@ function writeWranglerProject(args: {
     main: "worker/index.js",
     compatibility_date: "2026-07-06",
     workers_dev: false,
+    routes: [
+      { pattern: `${args.domain}/*`, zone_name: args.zoneName },
+      { pattern: `*.${args.domain}/*`, zone_name: args.zoneName },
+    ],
     vars: {
       NOOK_DOMAIN: args.domain,
       NOOK_ACCESS_TEAM_DOMAIN: args.accessTeamDomain,
@@ -188,6 +194,7 @@ export async function runNookSetup(args: NookSetupArgs): Promise<void> {
     writeWranglerProject({
       tempDir,
       domain: args.domain,
+      zoneName: args.zoneName,
       accessTeamDomain: args.accessTeamDomain,
       accessAud: args.accessAud,
     });
@@ -204,7 +211,7 @@ export async function runNookSetup(args: NookSetupArgs): Promise<void> {
     await runWrangler(["deploy"], { cwd: tempDir, env });
     stdout(`deployed Worker ${WORKER_NAME}`);
     stdout("");
-    stdout("Configure DNS/routes for:");
+    stdout("Configure DNS for:");
     stdout(`  ${args.domain}`);
     stdout(`  *.${args.domain}`);
     stdout("");
@@ -307,17 +314,27 @@ export function parseNookInfrastructureDomain(args: { argv: string[]; env?: Node
 
 export function parseNookSetupInputs(args: { argv: string[]; env?: NodeJS.ProcessEnv }): {
   domain: string;
+  zoneName: string;
   accessTeamDomain: string;
   accessAud: string;
   remaining: string[];
 } {
   const parsedDomain = parseNookInfrastructureDomain({ argv: args.argv, env: args.env });
   const remaining: string[] = [];
+  let zoneName = args.env?.NOOK_ZONE_NAME;
   let accessTeamDomain = args.env?.NOOK_ACCESS_TEAM_DOMAIN;
   let accessAud = args.env?.NOOK_ACCESS_AUD;
 
   for (let i = 0; i < parsedDomain.remaining.length; i += 1) {
     const arg = parsedDomain.remaining[i]!;
+    if (arg === "--zone-name" || arg.startsWith("--zone-name=")) {
+      const value = arg.includes("=")
+        ? arg.slice("--zone-name=".length)
+        : parsedDomain.remaining[++i];
+      if (!value) throw new Error("missing value for --zone-name");
+      zoneName = value;
+      continue;
+    }
     if (arg === "--access-team-domain" || arg.startsWith("--access-team-domain=")) {
       const value = arg.includes("=")
         ? arg.slice("--access-team-domain=".length)
@@ -337,6 +354,9 @@ export function parseNookSetupInputs(args: { argv: string[]; env?: NodeJS.Proces
     remaining.push(arg);
   }
 
+  if (!zoneName?.trim()) {
+    throw new Error("missing Cloudflare zone name. pass --zone-name <zone> or set NOOK_ZONE_NAME.");
+  }
   if (!accessTeamDomain?.trim()) {
     throw new Error(
       "missing Cloudflare Access team domain. pass --access-team-domain <url> or set NOOK_ACCESS_TEAM_DOMAIN.",
@@ -350,6 +370,7 @@ export function parseNookSetupInputs(args: { argv: string[]; env?: NodeJS.Proces
 
   return {
     domain: parsedDomain.domain,
+    zoneName: normalizeNookDomain(zoneName),
     accessTeamDomain: normalizeAccessTeamDomain(accessTeamDomain),
     accessAud: accessAud.trim(),
     remaining,

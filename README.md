@@ -175,6 +175,7 @@ Nook is Tau's bundled Cloudflare-backed static mini-app platform. It deploys sta
 ```sh
 tau nook setup \
   --domain nook.example.com \
+  --zone-name example.com \
   --access-team-domain https://team.cloudflareaccess.com \
   --access-aud <access-application-audience>
 tau nook deploy ./dist --site demo
@@ -587,7 +588,7 @@ the `defaultTheme` field sets the theme id to load at startup. it must be non-em
 
 `flySprites.apis` configures host-owned Fly Sprites API targets for hosted sessions. session requests refer to an API by id and a pre-existing Sprite name; Tau does not create Sprites, clone repos, install dependencies, inject secrets, or run readiness checks during `session.create`. paths such as `cwd` are real paths inside the Sprite. Tau resolves session config/content from that execution environment cwd when creating the session and on `/reload`; API tokens stay on the host through either `token` or `tokenEnv` and are not stored in session snapshots.
 
-`nook` configures one effective Nook target. `domain` is required. `accessClientId`, `accessClientSecret`, and `accessClientSecretEnv` are optional Cloudflare Access service-token fields; when the env var resolves, it wins over the inline secret. `tau nook setup` takes infrastructure Access validation inputs through `--access-team-domain` and `--access-aud` or the `NOOK_ACCESS_TEAM_DOMAIN` and `NOOK_ACCESS_AUD` env vars. `tau nook destroy` is an infrastructure flow that takes service-token cleanup credentials through flags or `NOOK_ACCESS_CLIENT_ID` and `NOOK_ACCESS_CLIENT_SECRET`.
+`nook` configures one effective Nook target. `domain` is required. `accessClientId`, `accessClientSecret`, and `accessClientSecretEnv` are optional Cloudflare Access service-token fields; when the env var resolves, it wins over the inline secret. `tau nook setup` takes infrastructure route and Access validation inputs through `--zone-name`, `--access-team-domain`, and `--access-aud` or the `NOOK_ZONE_NAME`, `NOOK_ACCESS_TEAM_DOMAIN`, and `NOOK_ACCESS_AUD` env vars. `tau nook destroy` is an infrastructure flow that takes service-token cleanup credentials through flags or `NOOK_ACCESS_CLIENT_ID` and `NOOK_ACCESS_CLIENT_SECRET`.
 
 tau ships a built-in browser diff review tool as `tau diff-tool`. `/diff` launches the configured diff tool locally from the TUI process. `diffTool` overrides the built-in fallback; `command` is required when `diffTool` is present, `args` and `env` are optional, and relative `command` paths resolve from the config level root (directory containing `.tau`, or home for the global config). set `builtInDiffTool.codeTheme` to choose the built-in diff tool's initial code theme, for example `{ "builtInDiffTool": { "codeTheme": "github-dark-dimmed" } }`. the default is `github-dark-dimmed`.
 

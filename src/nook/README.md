@@ -17,6 +17,7 @@ Install Wrangler yourself and authenticate it non-interactively with `CLOUDFLARE
 ```sh
 tau nook setup \
   --domain nook.example.com \
+  --zone-name example.com \
   --access-team-domain https://team.cloudflareaccess.com \
   --access-aud <access-application-audience>
 ```
@@ -33,7 +34,7 @@ Setup deploys the bundled Worker as `tau-nook`, creates the `tau-nook-assets` R2
 }
 ```
 
-DNS and Cloudflare Access applications/policies are external V0 setup steps. Configure routes for both `nook.example.com` and `*.nook.example.com`. Configure Access according to your organization policy and service-token needs.
+DNS and Cloudflare Access applications/policies are external V0 setup steps. Setup configures Worker routes for both `nook.example.com` and `*.nook.example.com` in the supplied Cloudflare zone. Configure DNS and Access according to your organization policy and service-token needs.
 
 The setup command writes the Access team domain and application audience into the Worker environment. The Worker validates Cloudflare Access JWTs by loading the Access JWKS from that team domain and checking the token issuer, audience, expiry, and signature. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker never treats raw service-token headers as authentication.
 

@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 describe("nook validation", () => {
-  it("accepts subdomain-safe slugs and rejects reserved or malformed slugs", () => {
+  it("accepts path-safe slugs and rejects reserved or malformed slugs", () => {
     expect(validateNookSiteSlug("demo-app").ok).toBe(true);
     expect(validateNookSiteSlug("Demo").ok).toBe(false);
     expect(validateNookSiteSlug("api").ok).toBe(false);
@@ -155,6 +155,70 @@ describe("nook worker", () => {
     expect(await response.json()).toEqual({ sites: [] });
     expect(registryFetch).toHaveBeenCalledOnce();
   });
+
+  it("serves sites from the first path segment", async () => {
+    const response = await worker.fetch(
+      new Request("https://nook.example.com/demo", { redirect: "manual" }),
+      {
+        ASSETS: {},
+        REGISTRY_DO: {
+          idFromName: (name) => name,
+          get: () => ({ fetch: vi.fn() }),
+        },
+        SITE_DO: {
+          idFromName: (name) => name,
+          get: () => ({ fetch: vi.fn() }),
+        },
+        NOOK_DOMAIN: "nook.example.com",
+        NOOK_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
+        NOOK_ACCESS_AUD: "aud",
+      },
+    );
+
+    expect(response.status).toBe(308);
+    expect(response.headers.get("location")).toBe("https://nook.example.com/demo/");
+  });
+
+  it("routes browser KV through the path-scoped site Durable Object", async () => {
+    const siteFetch = vi.fn(async (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/active") {
+        return Response.json({
+          deploymentId: "dep_1",
+          public: true,
+          files: [{ path: "/index.html", contentType: "text/html; charset=utf-8" }],
+        });
+      }
+      if (url.pathname === "/kv/settings") {
+        return Response.json({ value: { theme: "dark" } });
+      }
+      return Response.json({ error: { message: "unexpected" } }, { status: 404 });
+    });
+
+    const response = await worker.fetch(
+      new Request("https://nook.example.com/demo/__nook/kv/settings"),
+      {
+        ASSETS: {},
+        REGISTRY_DO: {
+          idFromName: (name) => name,
+          get: () => ({ fetch: vi.fn() }),
+        },
+        SITE_DO: {
+          idFromName: (name) => name,
+          get: () => ({ fetch: siteFetch }),
+        },
+        NOOK_DOMAIN: "nook.example.com",
+        NOOK_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
+        NOOK_ACCESS_AUD: "aud",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ value: { theme: "dark" } });
+    expect(siteFetch).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "https://site.local/kv/settings" }),
+    );
+  });
 });
 
 describe("nook setup cli parsing", () => {
@@ -238,7 +302,7 @@ describe("nook setup cli parsing", () => {
         'if (args[0] === "deploy") {',
         '  const config = JSON.parse(readFileSync(join(process.cwd(), "wrangler.json"), "utf-8"));',
         '  if (config.main !== "worker/index.js") process.exit(31);',
-        '  if (JSON.stringify(config.routes) !== JSON.stringify([{ pattern: "nook.example.com/*", zone_name: "example.com" }, { pattern: "*.nook.example.com/*", zone_name: "example.com" }])) process.exit(34);',
+        '  if (JSON.stringify(config.routes) !== JSON.stringify([{ pattern: "nook.example.com/*", zone_name: "example.com" }])) process.exit(34);',
         '  if (!existsSync(join(process.cwd(), "worker", "index.js"))) process.exit(32);',
         '  if (!existsSync(join(process.cwd(), "node_modules", "jose", "package.json"))) process.exit(33);',
         "}",

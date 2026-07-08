@@ -143,20 +143,19 @@ const MAX_KV_KEY_LENGTH = 256;
 const MAX_KV_VALUE_BYTES = 64 * 1024;
 const MAX_KV_KEYS = 1_000;
 const MAX_KV_TOTAL_BYTES = 5 * 1024 * 1024;
-const NOOK_CLIENT_SCRIPT = '<script src="/__nook/client.js"></script>';
 const DEPLOYED_ASSET_CACHE_CONTROL = "public, no-cache, must-revalidate";
 
 const accessJwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 const SKILL_MARKDOWN = `# Nook
 
-Nook deploys static mini-apps to wildcard subdomains and gives each site same-origin JSON KV through window.nook.
+Nook deploys static mini-apps to path-based site URLs and gives each site same-origin JSON KV through window.nook.
 
 Deploy a finished static directory only. The directory must contain /index.html, must not contain hidden files or symlinks, and must not contain files under /__nook/.
 
-Sites are served at https://<site>.<nook-domain>/. App URLs are subdomains only.
+Sites are served at https://<nook-domain>/<site>/.
 
-The Worker injects /__nook/client.js into HTML. Browser code can use:
+The Worker injects /<site>/__nook/client.js into HTML. Browser code can use:
 
 \`\`\`js
 await window.nook.kv.put("settings", { theme: "dark" });
@@ -169,6 +168,14 @@ KV is per-site, JSON-only, and survives redeploys. Public deployments expose pub
 `;
 
 const CLIENT_JS = `(() => {
+  const script = document.currentScript;
+  const scriptUrl = script && script.src
+    ? new URL(script.src)
+    : new URL("/__nook/client.js", window.location.origin);
+  const basePath = scriptUrl.pathname.replace(/\\/__nook\\/client\\.js$/, "");
+  function apiPath(path) {
+    return basePath + path;
+  }
   async function request(path, options = {}) {
     const response = await fetch(path, {
       ...options,
@@ -191,20 +198,20 @@ const CLIENT_JS = `(() => {
   window.nook = {
     kv: {
       async get(key) {
-        const payload = await request("/__nook/kv/" + encodeURIComponent(key));
+        const payload = await request(apiPath("/__nook/kv/" + encodeURIComponent(key)));
         return payload.value;
       },
       async put(key, value) {
-        await request("/__nook/kv/" + encodeURIComponent(key), {
+        await request(apiPath("/__nook/kv/" + encodeURIComponent(key)), {
           method: "PUT",
           body: JSON.stringify(value)
         });
       },
       async delete(key) {
-        await request("/__nook/kv/" + encodeURIComponent(key), { method: "DELETE" });
+        await request(apiPath("/__nook/kv/" + encodeURIComponent(key)), { method: "DELETE" });
       },
       async list(options = {}) {
-        const url = new URL("/__nook/kv", window.location.origin);
+        const url = new URL(apiPath("/__nook/kv"), window.location.origin);
         if (options.prefix) url.searchParams.set("prefix", options.prefix);
         const payload = await request(url.pathname + url.search);
         return payload.keys;
@@ -371,18 +378,38 @@ function validateManifest(files: ManifestFile[]): string | undefined {
   return undefined;
 }
 
-function parseHost(
-  url: URL,
-  env: Env,
-): { kind: "base" } | { kind: "site"; slug: string } | undefined {
+function parseHost(url: URL, env: Env): { kind: "base" } | undefined {
   const domain = env.NOOK_DOMAIN.toLowerCase();
   const host = url.hostname.toLowerCase();
   if (host === domain) return { kind: "base" };
-  if (host.endsWith(`.${domain}`)) {
-    const slug = host.slice(0, -(domain.length + 1));
-    if (!slug.includes(".") && !validateSlug(slug)) return { kind: "site", slug };
-  }
   return undefined;
+}
+
+type SitePath = {
+  slug: string;
+  sitePath: string;
+  needsSlashRedirect: boolean;
+};
+
+function parseSitePath(pathname: string): SitePath | undefined {
+  const match = pathname.match(/^\/([^/]+)(\/.*)?$/);
+  if (!match) return undefined;
+
+  let slug: string;
+  try {
+    slug = decodeURIComponent(match[1]!);
+  } catch {
+    return undefined;
+  }
+  const slugError = validateSlug(slug);
+  if (slugError) return undefined;
+
+  const rest = match[2];
+  return {
+    slug,
+    sitePath: rest && rest !== "/" ? rest : "/index.html",
+    needsSlashRedirect: rest === undefined,
+  };
 }
 
 async function readJson(request: Request): Promise<unknown> {
@@ -412,6 +439,10 @@ async function siteFetch(
 
 function assetKey(site: string, deploymentId: string, path: string): string {
   return `sites/${site}/deployments/${deploymentId}${path}`;
+}
+
+function siteUrl(domain: string, site: string): string {
+  return `https://${domain}/${site}/`;
 }
 
 async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
@@ -545,7 +576,7 @@ async function handleBaseApi(
     const result = {
       ...rawResult,
       site,
-      url: `https://${site}.${env.NOOK_DOMAIN}`,
+      url: siteUrl(env.NOOK_DOMAIN, site),
     };
     await registryFetch(env, `/sites/${encodeURIComponent(site)}/deploy`, {
       method: "POST",
@@ -568,11 +599,12 @@ async function handleKv(
   env: Env,
   site: string,
   identity: Identity,
+  sitePath: string,
 ): Promise<Response> {
   return await siteFetch(
     env,
     site,
-    `/kv${new URL(request.url).pathname.slice("/__nook/kv".length)}${new URL(request.url).search}`,
+    `/kv${sitePath.slice("/__nook/kv".length)}${new URL(request.url).search}`,
     {
       method: request.method,
       headers: { "x-nook-actor": identity.actor },
@@ -590,21 +622,31 @@ export function cacheControlForDeployedAsset(): string {
   return DEPLOYED_ASSET_CACHE_CONTROL;
 }
 
-function injectNookClientScript(response: Response): Response {
+function nookClientScriptTag(site: string): string {
+  return `<script src="/${site}/__nook/client.js"></script>`;
+}
+
+function injectNookClientScript(response: Response, site: string): Response {
+  const scriptTag = nookClientScriptTag(site);
   const injector: HtmlRewriterHandler = {
     element(element) {
-      element.onEndTag((endTag) => endTag.before(NOOK_CLIENT_SCRIPT, { html: true }));
+      element.onEndTag((endTag) => endTag.before(scriptTag, { html: true }));
       delete injector.end;
     },
     end(end) {
-      end.append(NOOK_CLIENT_SCRIPT, { html: true });
+      end.append(scriptTag, { html: true });
     },
   };
 
   return new HTMLRewriter().on("body", injector).onDocument(injector).transform(response);
 }
 
-async function serveAsset(request: Request, env: Env, site: string, url: URL): Promise<Response> {
+async function serveAsset(
+  request: Request,
+  env: Env,
+  site: string,
+  sitePath: string,
+): Promise<Response> {
   const activeResponse = await siteFetch(env, site, "/active");
   if (!activeResponse.ok) return error("site_not_found", "Site has no active deployment", 404);
   const active = (await activeResponse.json()) as {
@@ -616,19 +658,19 @@ async function serveAsset(request: Request, env: Env, site: string, url: URL): P
     ? await optionalAccessIdentity(request, env)
     : await requireAccessIdentity(request, env);
 
-  if (url.pathname === "/__nook/client.js") {
+  if (sitePath === "/__nook/client.js") {
     return new Response(CLIENT_JS, {
       headers: { "content-type": "application/javascript; charset=utf-8" },
     });
   }
-  if (url.pathname === "/__nook/kv" || url.pathname.startsWith("/__nook/kv/")) {
-    return await handleKv(request, env, site, identity);
+  if (sitePath === "/__nook/kv" || sitePath.startsWith("/__nook/kv/")) {
+    return await handleKv(request, env, site, identity, sitePath);
   }
-  if (url.pathname === RESERVED_PREFIX || url.pathname.startsWith(`${RESERVED_PREFIX}/`)) {
+  if (sitePath === RESERVED_PREFIX || sitePath.startsWith(`${RESERVED_PREFIX}/`)) {
     return error("not_found", "Unknown Nook route", 404);
   }
 
-  const normalized = normalizeAssetPath(url.pathname === "/" ? "/index.html" : url.pathname);
+  const normalized = normalizeAssetPath(sitePath);
   if (!normalized) return error("invalid_path", "Invalid path", 400);
 
   let object = await env.ASSETS.get(assetKey(site, active.deploymentId, normalized));
@@ -648,7 +690,7 @@ async function serveAsset(request: Request, env: Env, site: string, url: URL): P
   });
 
   if (contentType.startsWith("text/html")) {
-    return injectNookClientScript(new Response(object.body ?? "", { headers }));
+    return injectNookClientScript(new Response(object.body ?? "", { headers }), site);
   }
 
   return new Response(object.body, { headers });
@@ -667,15 +709,19 @@ export default {
         });
       }
 
-      if (parsedHost.kind === "base") {
-        if (url.pathname.startsWith("/__nook/api/")) {
-          const identity = await requireAccessIdentity(request, env);
-          return await handleBaseApi(request, env, url, identity);
-        }
-        return error("not_found", "Nook base domain only serves platform APIs", 404);
+      if (url.pathname.startsWith("/__nook/api/")) {
+        const identity = await requireAccessIdentity(request, env);
+        return await handleBaseApi(request, env, url, identity);
       }
 
-      return await serveAsset(request, env, parsedHost.slug, url);
+      const sitePath = parseSitePath(url.pathname);
+      if (!sitePath) return error("not_found", "Unknown Nook route", 404);
+      if (sitePath.needsSlashRedirect) {
+        const redirectUrl = new URL(request.url);
+        redirectUrl.pathname = `${redirectUrl.pathname}/`;
+        return Response.redirect(redirectUrl.toString(), 308);
+      }
+      return await serveAsset(request, env, sitePath.slug, sitePath.sitePath);
     } catch (err) {
       if (err instanceof ErrorResponse) return err.toResponse();
       return error("internal_error", err instanceof Error ? err.message : String(err), 500);
@@ -703,7 +749,7 @@ export class RegistryDO {
       return json({
         sites: [...records.values()].map((site) => ({
           ...site,
-          url: `https://${site.slug}.${domain}`,
+          url: siteUrl(domain, site.slug),
         })),
       });
     }
@@ -716,7 +762,7 @@ export class RegistryDO {
       const timestamp = now();
       const site: SiteSummary = {
         slug: body.slug,
-        url: `https://${body.slug}.${body.domain}`,
+        url: siteUrl(body.domain, body.slug),
         createdAt: timestamp,
         updatedAt: timestamp,
       };

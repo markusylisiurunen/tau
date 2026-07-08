@@ -76,7 +76,7 @@ export class NookClient {
     if (!validation.ok) {
       throw new Error(validation.message);
     }
-    return `https://${site}.${this.config.domain}`;
+    return `https://${this.config.domain}/${site}`;
   }
 
   private authHeaders(): Record<string, string> {

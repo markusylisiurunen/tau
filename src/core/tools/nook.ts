@@ -5,6 +5,7 @@ import { createNookClientFromConfig } from "../nook/client.js";
 import { buildNookDeployManifestFromBackend } from "../nook/deploy.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
+import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
@@ -12,6 +13,8 @@ import type {
   ToolDispatchContext,
   ToolDispatchResult,
   ToolUiEvent,
+  ToolUiLine,
+  ToolUiText,
 } from "./registry.js";
 import { TOOL_NAME_NOOK } from "./tool_names.js";
 
@@ -97,6 +100,9 @@ const nookArgsSchema = z
 
 type NookToolArgs = z.infer<typeof nookArgsSchema>;
 
+const NOOK_UI_PREVIEW_HEAD_LINES = 3;
+const NOOK_UI_PREVIEW_TAIL_LINES = 3;
+
 function requireArg(args: NookToolArgs, key: "site" | "directory" | "key"): string {
   const value = args[key];
   if (!value) {
@@ -116,6 +122,18 @@ function stringifyResult(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function buildNookUiText(message: string): ToolUiText {
+  const trimmed = message.trimEnd();
+  const fallback = trimmed || "nook completed";
+  const previewLines = buildHeadTailPreviewLines(fallback, {
+    headLines: NOOK_UI_PREVIEW_HEAD_LINES,
+    tailLines: NOOK_UI_PREVIEW_TAIL_LINES,
+  }).map((text): ToolUiLine => ({ text }));
+  const fullLines = fallback.split("\n").map((text): ToolUiLine => ({ text }));
+
+  return { previewLines, fullLines };
+}
+
 function buildUiEvent(
   toolCall: ToolCall,
   status: "success" | "error",
@@ -127,10 +145,7 @@ function buildUiEvent(
     toolName: TOOL_NAME_NOOK,
     headerTarget: TOOL_NAME_NOOK,
     status,
-    uiText: {
-      previewLines: [{ text: message }],
-      fullLines: [{ text: message }],
-    },
+    uiText: buildNookUiText(message),
   };
 }
 
@@ -213,7 +228,7 @@ export function createNookToolDefinition(backend: ToolExecutionBackend): ToolDef
         return {
           kind: "single",
           toolResult: createToolSuccess(toolCall, text),
-          uiEvent: buildUiEvent(toolCall, "success", text.split("\n")[0] ?? "nook completed"),
+          uiEvent: buildUiEvent(toolCall, "success", text),
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

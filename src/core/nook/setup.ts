@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -9,8 +10,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
+import { truncateToBytesFromEnd } from "../utils/truncate.js";
 import { normalizeNookDomain } from "./validation.js";
 
 const WORKER_NAME = "tau-nook";
@@ -35,20 +38,127 @@ export type NookDestroyArgs = {
   fetchImpl?: typeof fetch;
 };
 
-async function runWrangler(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv }) {
+const COMMAND_OUTPUT_CAPTURE_BYTES = 1024 * 1024;
+
+type RunWranglerOptions = {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+type StreamWranglerOptions = RunWranglerOptions & {
+  stdout: (line: string) => void;
+};
+
+type RunWranglerResult = {
+  output: string;
+  exitCode: number | null;
+};
+
+type StreamWranglerState = {
+  pendingLine: string;
+  output: string;
+};
+
+function appendWranglerOutput(state: StreamWranglerState, text: string): void {
+  if (!text) return;
+
+  state.output += text;
+  if (Buffer.byteLength(state.output, "utf-8") > COMMAND_OUTPUT_CAPTURE_BYTES) {
+    state.output = truncateToBytesFromEnd(state.output, COMMAND_OUTPUT_CAPTURE_BYTES);
+  }
+}
+
+function streamWranglerText(
+  text: string,
+  state: StreamWranglerState,
+  stdout: (line: string) => void,
+): void {
+  if (!text) return;
+
+  appendWranglerOutput(state, text);
+  state.pendingLine += text;
+  const parts = state.pendingLine.split(/\r\n|\n|\r/);
+  state.pendingLine = parts.pop() ?? "";
+  for (const part of parts) {
+    stdout(part);
+  }
+}
+
+async function runWranglerCaptured(
+  args: string[],
+  options: RunWranglerOptions = {},
+): Promise<RunWranglerResult> {
   const result = await spawnWithCapture("wrangler", args, {
     cwd: options.cwd,
     env: options.env,
     stdio: ["ignore", "pipe", "pipe"],
-    captureOutput: "combined-and-split",
-    maxCaptureBytes: 1024 * 1024,
+    captureOutput: "combined",
+    maxCaptureBytes: COMMAND_OUTPUT_CAPTURE_BYTES,
     maxCaptureMode: "ignore",
     maxCaptureStrategy: "tail",
   });
+  return { output: (result.output ?? "").trim(), exitCode: result.exitCode };
+}
+
+function streamWrangler(
+  args: string[],
+  options: StreamWranglerOptions,
+): Promise<RunWranglerResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("wrangler", args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
+    const streamState: StreamWranglerState = { pendingLine: "", output: "" };
+    let settled = false;
+
+    child.stdout?.on("data", (chunk) =>
+      streamWranglerText(stdoutDecoder.write(chunk as Buffer), streamState, options.stdout),
+    );
+    child.stderr?.on("data", (chunk) =>
+      streamWranglerText(stderrDecoder.write(chunk as Buffer), streamState, options.stdout),
+    );
+
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error instanceof Error ? error : new Error(String(error)));
+    });
+
+    child.on("close", (exitCode) => {
+      if (settled) return;
+      settled = true;
+      streamWranglerText(stdoutDecoder.end(), streamState, options.stdout);
+      streamWranglerText(stderrDecoder.end(), streamState, options.stdout);
+      if (streamState.pendingLine) {
+        options.stdout(streamState.pendingLine);
+      }
+      resolve({ output: streamState.output.trim(), exitCode });
+    });
+  });
+}
+
+async function runWrangler(args: string[], options: RunWranglerOptions = {}): Promise<string> {
+  const result = await runWranglerCaptured(args, options);
   if (result.exitCode !== 0) {
     throw new Error(`wrangler ${args.join(" ")} failed:\n${result.output}`);
   }
-  return (result.output ?? "").trim();
+  return result.output;
+}
+
+async function runWranglerStreaming(
+  args: string[],
+  options: StreamWranglerOptions,
+): Promise<string> {
+  const result = await streamWrangler(args, options);
+  if (result.exitCode !== 0) {
+    throw new Error(`wrangler ${args.join(" ")} failed:\n${result.output}`);
+  }
+  return result.output;
 }
 
 async function runNpmInstall(options: { cwd: string; env?: NodeJS.ProcessEnv }) {
@@ -59,8 +169,8 @@ async function runNpmInstall(options: { cwd: string; env?: NodeJS.ProcessEnv }) 
       cwd: options.cwd,
       env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
-      captureOutput: "combined-and-split",
-      maxCaptureBytes: 1024 * 1024,
+      captureOutput: "combined",
+      maxCaptureBytes: COMMAND_OUTPUT_CAPTURE_BYTES,
       maxCaptureMode: "ignore",
       maxCaptureStrategy: "tail",
     },
@@ -68,6 +178,68 @@ async function runNpmInstall(options: { cwd: string; env?: NodeJS.ProcessEnv }) 
   if (result.exitCode !== 0) {
     throw new Error(`npm install failed while preparing bundled Nook Worker:\n${result.output}`);
   }
+}
+
+type WranglerR2BucketInfo = {
+  name: string;
+};
+
+function parseWranglerR2BucketInfo(output: string): WranglerR2BucketInfo {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new Error(`wrangler r2 bucket info returned invalid JSON:\n${output}`);
+  }
+
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    typeof (parsed as { name?: unknown }).name !== "string"
+  ) {
+    throw new Error(`wrangler r2 bucket info returned unexpected JSON:\n${output}`);
+  }
+
+  return parsed as WranglerR2BucketInfo;
+}
+
+function isMissingR2BucketOutput(output: string): boolean {
+  return (
+    output.includes("10007") ||
+    /bucket.*(?:does not exist|not found)|(?:does not exist|not found).*bucket/i.test(output)
+  );
+}
+
+async function readExistingR2BucketInfo(
+  env?: NodeJS.ProcessEnv,
+): Promise<WranglerR2BucketInfo | undefined> {
+  const result = await runWranglerCaptured(["r2", "bucket", "info", R2_BUCKET, "--json"], { env });
+  if (result.exitCode !== 0) {
+    if (isMissingR2BucketOutput(result.output)) return undefined;
+    throw new Error(`wrangler r2 bucket info ${R2_BUCKET} failed:\n${result.output}`);
+  }
+
+  const info = parseWranglerR2BucketInfo(result.output);
+  if (info.name !== R2_BUCKET) {
+    throw new Error(
+      `wrangler r2 bucket info returned bucket '${info.name}' while checking '${R2_BUCKET}'.`,
+    );
+  }
+  return info;
+}
+
+async function ensureR2Bucket(args: {
+  env?: NodeJS.ProcessEnv;
+  stdout: (line: string) => void;
+}): Promise<void> {
+  const existing = await readExistingR2BucketInfo(args.env);
+  if (existing) {
+    args.stdout(`R2 bucket ${existing.name} already exists`);
+    return;
+  }
+
+  await runWrangler(["r2", "bucket", "create", R2_BUCKET], { env: args.env });
+  args.stdout(`created R2 bucket ${R2_BUCKET}`);
 }
 
 function requireWranglerAuth(env: NodeJS.ProcessEnv): void {
@@ -196,16 +368,10 @@ export async function runNookSetup(args: NookSetupArgs): Promise<void> {
       accessAud: args.accessAud,
     });
     await runNpmInstall({ cwd: tempDir, env });
-    try {
-      await runWrangler(["r2", "bucket", "create", R2_BUCKET], { env });
-      stdout(`created R2 bucket ${R2_BUCKET}`);
-    } catch (error) {
-      stdout(
-        `R2 bucket ${R2_BUCKET} already exists or could not be created: ${(error as Error).message}`,
-      );
-    }
+    await ensureR2Bucket({ env, stdout });
 
-    await runWrangler(["deploy"], { cwd: tempDir, env });
+    stdout(`deploying Worker ${WORKER_NAME} with Wrangler...`);
+    await runWranglerStreaming(["deploy"], { cwd: tempDir, env, stdout });
     stdout(`deployed Worker ${WORKER_NAME}`);
     stdout("");
     stdout("Configure DNS for:");

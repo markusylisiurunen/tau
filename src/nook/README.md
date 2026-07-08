@@ -72,13 +72,15 @@ Deploy requirements:
 
 ## browser SDK
 
-The Worker injects `/<site>/__nook/client.js` into served HTML. App code can use:
+The Worker injects `/<site>/__nook/client.js` near the end of the served HTML body. If your code runs from the document head or from early inline scripts, wait for `DOMContentLoaded` (or otherwise run after the page has loaded) before using `window.nook`:
 
 ```js
-await window.nook.kv.put("settings", { theme: "dark" });
-const settings = await window.nook.kv.get("settings");
-await window.nook.kv.delete("settings");
-const keys = await window.nook.kv.list({ prefix: "todos/" });
+window.addEventListener("DOMContentLoaded", async () => {
+  await window.nook.kv.put("settings", { theme: "dark" });
+  const settings = await window.nook.kv.get("settings");
+  await window.nook.kv.delete("settings");
+  const keys = await window.nook.kv.list({ prefix: "todos/" });
+});
 ```
 
 KV values must be JSON-serializable. Keys and total site KV storage have fixed guardrails in the Worker.

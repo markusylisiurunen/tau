@@ -155,13 +155,15 @@ Deploy a finished static directory only. The directory must contain /index.html,
 
 Sites are served at https://<nook-domain>/<site>/.
 
-The Worker injects /<site>/__nook/client.js into HTML. Browser code can use:
+The Worker injects /<site>/__nook/client.js near the end of the served HTML body. Code that runs from the document head or from early inline scripts should wait until DOMContentLoaded, or otherwise run after the page has loaded, before using window.nook:
 
 \`\`\`js
-await window.nook.kv.put("settings", { theme: "dark" });
-const settings = await window.nook.kv.get("settings");
-await window.nook.kv.delete("settings");
-const keys = await window.nook.kv.list({ prefix: "todos/" });
+window.addEventListener("DOMContentLoaded", async () => {
+  await window.nook.kv.put("settings", { theme: "dark" });
+  const settings = await window.nook.kv.get("settings");
+  await window.nook.kv.delete("settings");
+  const keys = await window.nook.kv.list({ prefix: "todos/" });
+});
 \`\`\`
 
 KV is per-site, JSON-only, and survives redeploys. Public deployments expose public writable per-site KV. Private deployments require Cloudflare Access identity.

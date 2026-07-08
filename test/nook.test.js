@@ -271,7 +271,7 @@ describe("nook setup cli parsing", () => {
     ).toThrow(/without a path/);
   });
 
-  it("deploys from a self-contained temporary wrangler project", async () => {
+  it("deploys from a self-contained wrangler project with an explicit R2 bucket", async () => {
     const root = await mkdtemp(join(tmpdir(), "tau-nook-wrangler-test-"));
     const binDir = join(root, "bin");
     mkdirSync(binDir);
@@ -299,17 +299,35 @@ describe("nook setup cli parsing", () => {
         'import { existsSync, readFileSync } from "node:fs";',
         'import { join } from "node:path";',
         "const args = process.argv.slice(2);",
+        'if (JSON.stringify(args) === JSON.stringify(["r2", "bucket", "info", "tau-nook-assets", "--json"])) {',
+        '  if (process.env.NOOK_FAKE_BUCKET_ERROR === "1") {',
+        '    console.error("authentication failed");',
+        "    process.exit(1);",
+        "  }",
+        '  if (process.env.NOOK_FAKE_BUCKET_EXISTS === "1") {',
+        '    console.log(JSON.stringify({ name: "tau-nook-assets", created: "2026-07-07T11:52:15.437Z", location: "EEUR", default_storage_class: "Standard", object_count: "1", bucket_size: "428 B" }));',
+        "    process.exit(0);",
+        "  }",
+        '  console.error("The specified bucket does not exist. [code: 10007]");',
+        "  process.exit(1);",
+        "}",
+        'if (JSON.stringify(args) === JSON.stringify(["r2", "bucket", "create", "tau-nook-assets"])) {',
+        '  console.log("created tau-nook-assets remotely");',
+        "  process.exit(0);",
+        "}",
         'if (args[0] === "deploy") {',
         '  const config = JSON.parse(readFileSync(join(process.cwd(), "wrangler.json"), "utf-8"));',
         '  if (config.main !== "worker/index.js") process.exit(31);',
         '  if (JSON.stringify(config.routes) !== JSON.stringify([{ pattern: "nook.example.com/*", zone_name: "example.com" }])) process.exit(34);',
         '  if (!existsSync(join(process.cwd(), "worker", "index.js"))) process.exit(32);',
         '  if (!existsSync(join(process.cwd(), "node_modules", "jose", "package.json"))) process.exit(33);',
+        '  console.log("wrangler deploy streamed output");',
         "}",
       ].join("\n"),
     );
     chmodSync(wranglerPath, 0o755);
 
+    const outputLines = [];
     await runNookSetup({
       domain: "nook.example.com",
       zoneName: "example.com",
@@ -320,8 +338,49 @@ describe("nook setup cli parsing", () => {
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         CLOUDFLARE_API_TOKEN: "test-token",
       },
-      stdout: () => {},
+      stdout: (line) => outputLines.push(line),
     });
+
+    expect(outputLines).toContain("created R2 bucket tau-nook-assets");
+    expect(outputLines).toContain("wrangler deploy streamed output");
+
+    const existingOutputLines = [];
+    await runNookSetup({
+      domain: "nook.example.com",
+      zoneName: "example.com",
+      accessTeamDomain: "https://team.cloudflareaccess.com",
+      accessAud: "aud",
+      env: {
+        ...process.env,
+        NOOK_FAKE_BUCKET_EXISTS: "1",
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        CLOUDFLARE_API_TOKEN: "test-token",
+      },
+      stdout: (line) => existingOutputLines.push(line),
+    });
+
+    expect(existingOutputLines).toContain("R2 bucket tau-nook-assets already exists");
+    expect(existingOutputLines).not.toContain("created R2 bucket tau-nook-assets");
+    expect(existingOutputLines).toContain("wrangler deploy streamed output");
+
+    const failingOutputLines = [];
+    await expect(
+      runNookSetup({
+        domain: "nook.example.com",
+        zoneName: "example.com",
+        accessTeamDomain: "https://team.cloudflareaccess.com",
+        accessAud: "aud",
+        env: {
+          ...process.env,
+          NOOK_FAKE_BUCKET_ERROR: "1",
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          CLOUDFLARE_API_TOKEN: "test-token",
+        },
+        stdout: (line) => failingOutputLines.push(line),
+      }),
+    ).rejects.toThrow(/wrangler r2 bucket info tau-nook-assets failed/);
+    expect(failingOutputLines).not.toContain("created R2 bucket tau-nook-assets");
+    expect(failingOutputLines).not.toContain("wrangler deploy streamed output");
   });
 });
 

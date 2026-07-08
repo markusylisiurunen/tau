@@ -72,7 +72,7 @@ Deploy requirements:
 
 ## browser SDK
 
-The Worker injects `/<site>/__nook/client.js` near the end of the served HTML body. If your code runs from the document head or from early inline scripts, wait for `DOMContentLoaded` (or otherwise run after the page has loaded) before using `window.nook`:
+The Worker injects `/<site>/__nook/client.js` just after the opening HTML body tag. If your code runs from the document head, wait for `DOMContentLoaded` (or otherwise run after the page has loaded) before using `window.nook`:
 
 ```js
 window.addEventListener("DOMContentLoaded", async () => {

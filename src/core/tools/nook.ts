@@ -19,6 +19,7 @@ const NOOK_DESCRIPTION = [
   "Operate the configured Nook platform: Tau's Cloudflare-backed static mini-app host for publishing built front-end artifacts to https://<nook-domain>/<site>/ with optional per-site same-origin JSON KV.",
   "Do not use this tool autonomously; use it only when the user asks to manage Nook, deploy/publish/host an app or artifact, inspect Nook state, or manage Nook KV.",
   "If the user asks to deploy a static artifact or mini-app, this is usually the right deployment target.",
+  "When preparing site files for deployment, write the complete site directory under a fresh mktemp directory and deploy that directory; do not scatter generated site files into the project tree.",
   "All operations require read-write risk.",
   "Input keys by operation: read_skill and list_sites need only operation; deploy_site needs site and directory, with public optional; delete_site needs site; get_kv and delete_kv need site and key; put_kv needs site, key, and value; list_kv needs site, with prefix optional.",
 ].join(" ");

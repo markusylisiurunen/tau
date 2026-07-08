@@ -110,6 +110,7 @@ type HtmlRewriterEndTag = {
 };
 
 type HtmlRewriterElement = {
+  prepend(content: string, options?: HtmlRewriterContentOptions): void;
   onEndTag(handler: (endTag: HtmlRewriterEndTag) => void): void;
 };
 
@@ -155,7 +156,9 @@ Deploy a finished static directory only. The directory must contain /index.html,
 
 Sites are served at https://<nook-domain>/<site>/.
 
-The Worker injects /<site>/__nook/client.js near the end of the served HTML body. Code that runs from the document head or from early inline scripts should wait until DOMContentLoaded, or otherwise run after the page has loaded, before using window.nook:
+The Worker injects /<site>/__nook/client.js just after the opening HTML body tag.
+
+Code that runs from the document head should wait until DOMContentLoaded, or otherwise run after the page has loaded, before using window.nook:
 
 \`\`\`js
 window.addEventListener("DOMContentLoaded", async () => {
@@ -632,7 +635,7 @@ function injectNookClientScript(response: Response, site: string): Response {
   const scriptTag = nookClientScriptTag(site);
   const injector: HtmlRewriterHandler = {
     element(element) {
-      element.onEndTag((endTag) => endTag.before(scriptTag, { html: true }));
+      element.prepend(scriptTag, { html: true });
       delete injector.end;
     },
     end(end) {

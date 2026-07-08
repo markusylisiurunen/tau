@@ -46,7 +46,7 @@ export function printNookHelp(log: (line: string) => void = console.log): void {
   log(
     [
       "usage:",
-      "  tau nook setup --domain <domain> --access-team-domain <url> --access-aud <aud>",
+      "  tau nook setup --domain <domain> --zone-name <zone> --access-team-domain <url> --access-aud <aud>",
       "  tau nook destroy --domain <domain> --access-client-id <id> --access-client-secret <secret> --yes",
       "  tau nook skill",
       "  tau nook deploy <dir> --site <slug> [--public]",
@@ -77,6 +77,7 @@ export async function runNookCommand(
       if (parsed.remaining.length > 0) throw new Error(`unknown option: ${parsed.remaining[0]}`);
       await runNookSetup({
         domain: parsed.domain,
+        zoneName: parsed.zoneName,
         accessTeamDomain: parsed.accessTeamDomain,
         accessAud: parsed.accessAud,
         env: options.env,

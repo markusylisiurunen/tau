@@ -81,7 +81,7 @@ export type StartedDiffReviewBridge = {
   result: Promise<DiffReviewResult>;
 };
 
-export type DiffReviewAgentStatus = "running" | "idle";
+export type DiffReviewAgentStatus = "running" | "idle" | "failed";
 
 export type DiffReviewAgentActivity = {
   threadId: string;
@@ -517,6 +517,7 @@ export class DiffReviewBridge {
           forkFromThreadId?: string;
         }
       | undefined;
+    let failed = false;
     try {
       acquired = this.acquireThreadForSubmit(request.params);
       const result = await this.submitThreadMessage({
@@ -532,6 +533,11 @@ export class DiffReviewBridge {
         response: result.response,
       });
     } catch (error) {
+      const message = formatThreadSubmitError(error);
+      if (acquired) {
+        failed = true;
+        this.markReviewAgentFailed(acquired.threadId, message);
+      }
       if (this.completedResult || connection.socket.destroyed) {
         return;
       }
@@ -539,14 +545,9 @@ export class DiffReviewBridge {
         await this.sendError(connection, request.id, error.code, error.message);
         return;
       }
-      await this.sendError(
-        connection,
-        request.id,
-        "internalError",
-        error instanceof Error ? error.message : String(error),
-      );
+      await this.sendError(connection, request.id, "internalError", message);
     } finally {
-      if (acquired) {
+      if (acquired && !failed) {
         this.markReviewAgentIdle(acquired.threadId);
       }
     }
@@ -640,6 +641,14 @@ export class DiffReviewBridge {
       record.status = "idle";
       this.syncReviewAgents();
     }
+  }
+
+  private markReviewAgentFailed(threadId: string, message: string): void {
+    const record = this.ensureReviewAgentRecord(threadId);
+    record.activeRequestCount = 0;
+    record.status = "failed";
+    record.lastActivityText = `agent failed: ${message}`;
+    this.syncReviewAgents();
   }
 
   applyThreadUpdate(threadId: string, update: DiffReviewThreadUpdate): void {
@@ -948,6 +957,25 @@ export class DiffReviewBridge {
       }
     }
   }
+}
+
+function formatThreadSubmitError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const data =
+    typeof error === "object" && error !== null ? (error as { data?: unknown }).data : undefined;
+  const cause =
+    typeof data === "object" &&
+    data !== null &&
+    "cause" in data &&
+    typeof data.cause === "string" &&
+    data.cause.trim()
+      ? data.cause.trim()
+      : undefined;
+
+  if (!cause || cause === message) {
+    return message;
+  }
+  return `${message}: ${cause}`;
 }
 
 function createEmptyReviewAgentUsage(contextWindow: number): DiffReviewAgentUsageSnapshot {

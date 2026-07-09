@@ -126,6 +126,18 @@ function createHostedSession(sessionId, sessions, options = {}) {
         output: "/repo\n",
       });
     },
+    async createEphemeralContext() {
+      return { contextId: "ephemeral-1" };
+    },
+    async submitEphemeralThread() {
+      if (options.ephemeralSubmitError) {
+        throw options.ephemeralSubmitError;
+      }
+      return { threadId: "thread-1", response: "ephemeral response" };
+    },
+    async closeEphemeralContext() {
+      return { closed: true };
+    },
     setRiskLevel(nextRiskLevel) {
       riskLevel = nextRiskLevel;
     },
@@ -331,6 +343,29 @@ describe("InProcessSessionProtocolTransport", () => {
     await reconnectedSession.unobserve();
     await reconnectedClient.close();
     expect(sessions.size).toBe(1);
+  });
+
+  it("returns ephemeral submit failures without handler-level wrapping", async () => {
+    const { createSession, host } = createHost();
+    const hostedSession = createSession({
+      ephemeralSubmitError: new Error("model provider rejected the request"),
+    });
+    const transport = new InProcessSessionProtocolTransport({ host });
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.observe(hostedSession.sessionId);
+
+    await expect(
+      session.submitEphemeralThread({
+        contextId: "ephemeral-1",
+        threadId: "thread-1",
+        message: "review this",
+      }),
+    ).rejects.toMatchObject({
+      code: "internal_error",
+      message: "model provider rejected the request",
+    });
+
+    await client.close();
   });
 
   it("can shut down an owned host on close", async () => {

@@ -76,6 +76,11 @@ export function formatAgentActivityText(text: string): string | undefined {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
 
+  if (trimmed.startsWith("agent failed: ")) {
+    const line = trimmed.slice("agent failed: ".length).trim();
+    return line ? `agent failed: ${line}` : "agent failed";
+  }
+
   if (trimmed.startsWith("agent: ")) {
     const line = trimmed.slice("agent: ".length).trim();
     return line ? `> ${line}` : undefined;

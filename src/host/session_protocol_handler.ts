@@ -1133,17 +1133,27 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const result = await state.session.submitEphemeralThread({
-      contextId: request.params.contextId,
-      threadId: request.params.threadId,
-      ...(request.params.forkFromThreadId !== undefined
-        ? { forkFromThreadId: request.params.forkFromThreadId }
-        : {}),
-      message: request.params.message,
-    });
-    this.sendMessage(
-      createSessionProtocolSuccessResponse(request.id, "session.ephemeral.submit", result),
-    );
+    try {
+      const result = await state.session.submitEphemeralThread({
+        contextId: request.params.contextId,
+        threadId: request.params.threadId,
+        ...(request.params.forkFromThreadId !== undefined
+          ? { forkFromThreadId: request.params.forkFromThreadId }
+          : {}),
+        message: request.params.message,
+      });
+      this.sendMessage(
+        createSessionProtocolSuccessResponse(request.id, "session.ephemeral.submit", result),
+      );
+    } catch (error) {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.internalError,
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    }
   }
 
   private async handleEphemeralClose(

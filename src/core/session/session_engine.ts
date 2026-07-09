@@ -694,10 +694,7 @@ export class SessionEngine {
     }
 
     const nook = this.toolRegistry.get(TOOL_NAME_NOOK);
-    if (!nook) {
-      throw new Error("nook tool is not registered");
-    }
-    return [nook];
+    return nook ? [nook] : [];
   }
 
   private createDispatchModelResolver(): ModelResolver {

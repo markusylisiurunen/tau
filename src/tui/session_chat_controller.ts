@@ -29,6 +29,7 @@ import type { ToolUiEvent } from "../core/tools/registry.js";
 import { REASONING_LEVELS, type ReasoningEffort, type RiskLevel } from "../core/types.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
+import { collectSpeechToTextContext } from "../core/utils/speech_to_text_context.js";
 import {
   getAutoCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
@@ -933,6 +934,7 @@ export class SessionChatController {
         config: this.config,
         deps: this.deps,
         audio,
+        context: collectSpeechToTextContext(this.snapshot),
       });
       const text = transcript.trim();
       if (!text) {

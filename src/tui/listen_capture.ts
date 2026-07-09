@@ -8,6 +8,7 @@ import {
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 import { transcribeAudio } from "../core/utils/speech_to_text.js";
+import type { SpeechToTextContext } from "../core/utils/speech_to_text_context.js";
 
 export const LISTEN_TEMP_FILE_TEMPLATE = "/tmp/tau-listen.XXXXXX";
 export const LISTEN_RECORDING_MIN_BYTES = 1024;
@@ -105,6 +106,7 @@ export async function transcribeListenAudio(args: {
   config: Config;
   deps: CoreDeps;
   audio: Buffer;
+  context?: SpeechToTextContext;
 }): Promise<string> {
   const provider = getSpeechToTextProvider(args.config);
   const apiKey = getSpeechToTextApiKey(args.config, args.deps);
@@ -119,5 +121,6 @@ export async function transcribeListenAudio(args: {
     mimeType: "audio/wav",
     fileName: "speech.wav",
     language: "en",
+    context: args.context,
   });
 }

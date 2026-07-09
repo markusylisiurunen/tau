@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { formatSpeechToTextContext, type SpeechToTextContext } from "./speech_to_text_context.js";
 
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.5-flash";
@@ -44,6 +45,7 @@ export type GeminiTranscriptionOptions = {
   audio: Buffer;
   model?: string;
   mimeType?: string;
+  context?: SpeechToTextContext;
   fetchImpl?: typeof fetch;
 };
 
@@ -75,7 +77,7 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
           {
             parts: [
               {
-                text: buildTranscriptionPrompt(),
+                text: buildTranscriptionPrompt(options.context),
               },
               {
                 inlineData: {
@@ -128,11 +130,24 @@ function buildTranscriptionSystemInstruction(): string {
   ].join("\n");
 }
 
-function buildTranscriptionPrompt(): string {
+function buildTranscriptionPrompt(context: SpeechToTextContext | undefined): string {
+  const formattedContext = formatSpeechToTextContext(context);
   return [
     "Transcribe the attached audio into the transcription field.",
     "Return only the lightly cleaned transcript text, with no timestamps or commentary.",
-  ].join("\n");
+    formattedContext
+      ? [
+          "Use the recent conversation context below only to resolve likely words, names, acronyms, terminology, and references in the audio.",
+          "Do not transcribe the context itself, and do not add words from the context that were not spoken.",
+          "If the audio is ambiguous, prefer the transcription that best fits this context.",
+          "",
+          "Recent conversation context:",
+          formattedContext,
+        ].join("\n")
+      : undefined,
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
 }
 
 function extractGeminiText(payload: unknown): string {

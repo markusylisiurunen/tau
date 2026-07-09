@@ -1,5 +1,5 @@
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
-import { stripTauUserDisplayText } from "../../core/utils/user_metadata.js";
+import { extractUserText } from "../../core/utils/messages.js";
 import type { ChatMessageModel } from "../ui/chat_message_model.js";
 
 export function buildHistoryMessageModel(message: Message): ChatMessageModel | undefined {
@@ -24,17 +24,7 @@ export function buildHistoryMessageModel(message: Message): ChatMessageModel | u
 }
 
 export function extractHistoryUserText(message: Message): string {
-  if (typeof message.content === "string") {
-    return stripTauUserDisplayText(message.content);
-  }
-
-  const parts: string[] = [];
-  for (const block of message.content) {
-    if (block.type === "text") {
-      parts.push(block.text);
-    }
-  }
-  return stripTauUserDisplayText(parts.join("\n"));
+  return extractUserText(message);
 }
 
 function formatToolResultNotice(toolResult: ToolResultMessage): string {

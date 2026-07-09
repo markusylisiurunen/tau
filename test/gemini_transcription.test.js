@@ -30,6 +30,12 @@ describe("gemini transcription", () => {
       audio: Buffer.from("audio payload"),
       mimeType: "audio/ogg",
       fetchImpl: fetchMock,
+      context: {
+        messages: [
+          { role: "user", text: "Can we support OAuth for Acme SSO?" },
+          { role: "assistant", text: "Yes, the Acme SSO flow can reuse the callback handler." },
+        ],
+      },
     });
 
     expect(transcript).toBe("ship the fix");
@@ -56,6 +62,20 @@ describe("gemini transcription", () => {
     expect(request.contents[0].parts[0].text).toContain(
       "Transcribe the attached audio into the transcription field.",
     );
+    expect(request.contents[0].parts[0].text).toContain(
+      "Use the recent conversation context below only to resolve likely words, names, acronyms, terminology, and references in the audio.",
+    );
+    expect(request.contents[0].parts[0].text).toContain(
+      "Do not transcribe the context itself, and do not add words from the context that were not spoken.",
+    );
+    expect(request.contents[0].parts[0].text).toContain("<speech-to-text-context>");
+    expect(request.contents[0].parts[0].text).toContain(
+      '<message index="1" role="user">\nCan we support OAuth',
+    );
+    expect(request.contents[0].parts[0].text).toContain(
+      '<message index="2" role="assistant">\nYes, the Acme SSO flow',
+    );
+    expect(request.contents[0].parts[0].text).toContain("</speech-to-text-context>");
     expect(request.contents[0].parts[1].inlineData.mimeType).toBe("audio/ogg");
     expect(request.contents[0].parts[1].inlineData.data).toBe(
       Buffer.from("audio payload").toString("base64"),

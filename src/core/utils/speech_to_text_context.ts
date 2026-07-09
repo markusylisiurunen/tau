@@ -1,9 +1,10 @@
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { SessionProtocolSnapshot } from "../../protocol/session_protocol.js";
 import { extractAssistantText, extractUserText } from "./messages.js";
+import { truncateForTokens } from "./truncate.js";
 
-const MAX_SPEECH_TO_TEXT_CONTEXT_MESSAGES_PER_ROLE = 2;
-const MAX_SPEECH_TO_TEXT_CONTEXT_MESSAGE_CHARS = 2_000;
+const MAX_SPEECH_TO_TEXT_CONTEXT_TURNS = 2;
+const MAX_SPEECH_TO_TEXT_CONTEXT_MESSAGE_TOKENS = 4_096;
 
 export type SpeechToTextContextMessage = {
   role: "user" | "assistant";
@@ -15,11 +16,13 @@ export type SpeechToTextContext = {
 };
 
 export function collectSpeechToTextContext(snapshot: SessionProtocolSnapshot): SpeechToTextContext {
-  const selected: SpeechToTextContextMessage[] = [];
-  let userMessages = 0;
-  let assistantMessages = 0;
+  const startIndex = findContextStartIndex(snapshot);
+  if (startIndex === undefined) {
+    return { messages: [] };
+  }
 
-  for (let index = snapshot.messages.length - 1; index >= 0; index -= 1) {
+  const messages: SpeechToTextContextMessage[] = [];
+  for (let index = startIndex; index < snapshot.messages.length; index += 1) {
     const entry = snapshot.messages[index];
     if (entry?.state !== "committed") {
       continue;
@@ -27,33 +30,22 @@ export function collectSpeechToTextContext(snapshot: SessionProtocolSnapshot): S
 
     const message = entry.message;
     if (message.role === "user") {
-      if (userMessages >= MAX_SPEECH_TO_TEXT_CONTEXT_MESSAGES_PER_ROLE) {
-        continue;
-      }
       const text = truncateContextMessage(extractUserText(message as Message));
-      if (!text) {
-        continue;
+      if (text) {
+        messages.push({ role: "user", text });
       }
-      selected.push({ role: "user", text });
-      userMessages += 1;
       continue;
     }
 
-    if (message.role === "assistant") {
-      if (assistantMessages >= MAX_SPEECH_TO_TEXT_CONTEXT_MESSAGES_PER_ROLE) {
-        continue;
-      }
+    if (message.role === "assistant" && isAssistantFinalResponse(message as AssistantMessage)) {
       const text = truncateContextMessage(extractAssistantText(message as AssistantMessage));
-      if (!text) {
-        continue;
+      if (text) {
+        messages.push({ role: "assistant", text });
       }
-      selected.push({ role: "assistant", text });
-      assistantMessages += 1;
     }
   }
 
-  selected.reverse();
-  return { messages: selected };
+  return { messages };
 }
 
 export function formatSpeechToTextContext(context: SpeechToTextContext | undefined): string {
@@ -70,10 +62,35 @@ export function formatSpeechToTextContext(context: SpeechToTextContext | undefin
     .join("\n\n");
 }
 
-function truncateContextMessage(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= MAX_SPEECH_TO_TEXT_CONTEXT_MESSAGE_CHARS) {
-    return trimmed;
+function findContextStartIndex(snapshot: SessionProtocolSnapshot): number | undefined {
+  let turns = 0;
+
+  for (let index = snapshot.messages.length - 1; index >= 0; index -= 1) {
+    const entry = snapshot.messages[index];
+    if (entry?.state !== "committed" || entry.message.role !== "user") {
+      continue;
+    }
+
+    turns += 1;
+    if (turns >= MAX_SPEECH_TO_TEXT_CONTEXT_TURNS) {
+      return index;
+    }
   }
-  return `${trimmed.slice(0, MAX_SPEECH_TO_TEXT_CONTEXT_MESSAGE_CHARS).trimEnd()}…`;
+
+  return turns > 0
+    ? snapshot.messages.findIndex(
+        (entry) => entry.state === "committed" && entry.message.role === "user",
+      )
+    : undefined;
+}
+
+function isAssistantFinalResponse(message: AssistantMessage): boolean {
+  return message.content.every((part) => part.type !== "toolCall");
+}
+
+function truncateContextMessage(text: string): string {
+  return truncateForTokens(text.trim(), {
+    maxTokens: MAX_SPEECH_TO_TEXT_CONTEXT_MESSAGE_TOKENS,
+    strategy: "middle",
+  }).content.trim();
 }

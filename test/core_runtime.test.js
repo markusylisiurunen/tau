@@ -275,6 +275,45 @@ describe("core session rewind APIs", () => {
     expect(session.rawHistoryEntries[0].message.content[0].text).toBe("original");
   });
 
+  it("does not require nook in restricted registries when nook is configured", async () => {
+    const faux = fauxProvider({
+      provider: "faux-restricted-nook",
+      models: [{ id: "faux-restricted-nook-model" }],
+    });
+    const unregisterFauxProvider = registerModelRuntimeProvider(faux.provider);
+
+    try {
+      faux.setResponses([fauxAssistantMessage("done")]);
+      const persona = {
+        id: "faux-restricted-nook",
+        label: "faux restricted nook",
+        model: faux.getModel(),
+        systemPrompt: "system",
+        settings: { reasoning: "none" },
+        skills: "*",
+        source: "builtin",
+      };
+      const session = new CoreSession({
+        persona,
+        systemPrompt: "system",
+        subagentPrompts: {},
+        riskLevel: "read-only",
+        toolRegistry: new ToolRegistry([]),
+        config: { nook: { domain: "nook.example.com" } },
+      });
+
+      session.addUserText("hello");
+      const events = [];
+      for await (const event of session.events(new AbortController().signal)) {
+        events.push(event);
+      }
+
+      expect(events).toContainEqual(expect.objectContaining({ type: "assistant_final" }));
+    } finally {
+      unregisterFauxProvider();
+    }
+  });
+
   it("preserves the session id when compacting manually", async () => {
     const faux = fauxProvider({
       provider: "faux-manual-compact-session-id",

@@ -171,7 +171,7 @@ test("renderChatMessage renders diff review status with review styling", () => {
   expect(plainText).toContain("$0.12");
   expect(plainText).toContain("$ git diff --staged");
   expect(plainText).toContain("$ (error): permission denied");
-  expect(plainText).not.toContain("reviewer brief ready");
+  expect(plainText).toContain("> reviewer brief ready");
 });
 
 test("AssistantMessageComponent toggles thinking visibility", () => {

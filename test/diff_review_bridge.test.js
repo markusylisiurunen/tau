@@ -738,6 +738,59 @@ describe("diff review bridge", () => {
     }
   });
 
+  it("keeps failed review agents visible after wrapped thread submit errors", async () => {
+    const bridge = createDiffReviewBridge({
+      snapshot: createSnapshot(),
+      persona: personas[0],
+      config: {},
+      createThread: () =>
+        createThreadSession({
+          async submitMessage() {
+            throw Object.assign(new Error("session protocol request failed"), {
+              data: { cause: "model provider rejected the request" },
+            });
+          },
+        }),
+    });
+
+    await bridge.start();
+    const client = await connectClient(bridge);
+
+    try {
+      await client.send("init", "initialize", {
+        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
+      });
+
+      const result = await client.send("thread", "thread.submit_message", {
+        message: "What changed?",
+      });
+      expect(result).toEqual({
+        version: DIFF_REVIEW_PROTOCOL_VERSION,
+        type: "response",
+        id: "thread",
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: "session protocol request failed: model provider rejected the request",
+        },
+      });
+      expect(bridge.getUiState().reviewAgents).toEqual([
+        {
+          threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+          status: "failed",
+          costTotal: 0,
+          usage: createEmptyUsage(personas[0].model.contextWindow),
+          lastActivityText:
+            "agent failed: session protocol request failed: model provider rejected the request",
+        },
+      ]);
+    } finally {
+      client.rl.close();
+      client.socket.destroy();
+      await bridge.close();
+    }
+  });
+
   it("preserves exact file paths when serving per-file diffs", async () => {
     const exactPath = " src/\todd name .ts ";
     const patch = [

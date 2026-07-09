@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { collectSpeechToTextContext } from "../dist/core/utils/speech_to_text_context.js";
+import {
+  collectSpeechToTextContext,
+  formatSpeechToTextContext,
+} from "../dist/core/utils/speech_to_text_context.js";
 
 function userMessage(id, text) {
   return {
@@ -62,5 +65,27 @@ describe("speech-to-text context", () => {
       expect(message.text).toContain("z".repeat(100));
       expect(message.text).not.toContain(" middle ");
     }
+  });
+
+  it("formats context with xml-like message boundaries", () => {
+    const formatted = formatSpeechToTextContext({
+      messages: [
+        { role: "user", text: "Can we support <Acme> & partners?" },
+        { role: "assistant", text: "Yes, use OAuth." },
+      ],
+    });
+
+    expect(formatted).toBe(
+      [
+        "<speech-to-text-context>",
+        '  <message index="1" role="user">',
+        "Can we support &lt;Acme&gt; &amp; partners?",
+        "  </message>",
+        '  <message index="2" role="assistant">',
+        "Yes, use OAuth.",
+        "  </message>",
+        "</speech-to-text-context>",
+      ].join("\n"),
+    );
   });
 });

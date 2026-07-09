@@ -54,12 +54,19 @@ export function formatSpeechToTextContext(context: SpeechToTextContext | undefin
     return "";
   }
 
-  return messages
-    .map((message, index) => {
-      const label = message.role === "user" ? "User" : "Assistant";
-      return `${index + 1}. ${label}: ${message.text.trim()}`;
-    })
-    .join("\n\n");
+  return [
+    "<speech-to-text-context>",
+    ...messages.flatMap((message, index) => [
+      `  <message index="${index + 1}" role="${message.role}">`,
+      escapeXml(message.text.trim()),
+      "  </message>",
+    ]),
+    "</speech-to-text-context>",
+  ].join("\n");
+}
+
+function escapeXml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function findContextStartIndex(snapshot: SessionProtocolSnapshot): number | undefined {

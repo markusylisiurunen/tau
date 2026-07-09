@@ -68,8 +68,14 @@ describe("gemini transcription", () => {
     expect(request.contents[0].parts[0].text).toContain(
       "Do not transcribe the context itself, and do not add words from the context that were not spoken.",
     );
-    expect(request.contents[0].parts[0].text).toContain("1. User: Can we support OAuth");
-    expect(request.contents[0].parts[0].text).toContain("2. Assistant: Yes, the Acme SSO flow");
+    expect(request.contents[0].parts[0].text).toContain("<speech-to-text-context>");
+    expect(request.contents[0].parts[0].text).toContain(
+      '<message index="1" role="user">\nCan we support OAuth',
+    );
+    expect(request.contents[0].parts[0].text).toContain(
+      '<message index="2" role="assistant">\nYes, the Acme SSO flow',
+    );
+    expect(request.contents[0].parts[0].text).toContain("</speech-to-text-context>");
     expect(request.contents[0].parts[1].inlineData.mimeType).toBe("audio/ogg");
     expect(request.contents[0].parts[1].inlineData.data).toBe(
       Buffer.from("audio payload").toString("base64"),

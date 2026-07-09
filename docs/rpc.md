@@ -17,7 +17,7 @@ tau attach --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787
 start it like this:
 
 ```sh
-tau rpc --persona gpt-5.4-coder --risk read-only
+tau rpc --persona gpt-5.5-coder --risk read-only
 ```
 
 The terminal UI can attach to any command that exposes this protocol over stdio:

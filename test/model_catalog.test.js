@@ -18,6 +18,7 @@ import {
   loadModelResolver,
   resolveModel,
 } from "../dist/core/models/catalog.js";
+import { mergeTauProviderExtensionModels } from "../dist/core/models/tau_extensions.js";
 
 describe("model catalog", () => {
   it("loads pi-ai providers and models", () => {
@@ -32,6 +33,60 @@ describe("model catalog", () => {
     expect(model).toBeTruthy();
     expect(model.provider).toBe("openai");
     expect(model.id).toBe("gpt-5.4");
+  });
+
+  it("merges Tau model extensions without replacing pi-ai models", () => {
+    const piModel = {
+      id: "future-model",
+      name: "Pi Future Model",
+      api: "openai-responses",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 99, output: 99, cacheRead: 99, cacheWrite: 99 },
+      contextWindow: 999,
+      maxTokens: 999,
+    };
+    const tauModel = {
+      id: "tau-only-model",
+      name: "Tau Only Model",
+      api: "openai-responses",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0 },
+      contextWindow: 123000,
+      maxTokens: 4000,
+    };
+    const staleTauModel = { ...tauModel, id: "future-model", name: "Stale Tau Future Model" };
+
+    const merged = mergeTauProviderExtensionModels(
+      "openai",
+      [piModel],
+      [{ id: "openai", models: [staleTauModel, tauModel] }],
+    );
+
+    expect(merged.find((model) => model.id === "future-model")).toBe(piModel);
+    expect(merged.find((model) => model.id === "tau-only-model")).toBe(tauModel);
+  });
+
+  it("loads GPT-5.6 models from pi-ai", () => {
+    const sol = resolveModel("openai", "gpt-5.6-sol");
+    expect(sol).toBeTruthy();
+    expect(sol.provider).toBe("openai");
+    expect(sol.api).toBe("openai-responses");
+    expect(sol.cost).toEqual({ input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 });
+    expect(sol.contextWindow).toBe(1050000);
+    expect(sol.maxTokens).toBe(128000);
+
+    const terra = resolveModel("openai-codex", "gpt-5.6-terra");
+    expect(terra).toBeTruthy();
+    expect(terra.provider).toBe("openai-codex");
+    expect(terra.api).toBe("openai-codex-responses");
+    expect(terra.cost).toEqual({ input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 0 });
+    expect(terra.contextWindow).toBe(272000);
   });
 
   it("returns no models for unknown providers", () => {

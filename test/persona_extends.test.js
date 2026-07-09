@@ -68,7 +68,7 @@ describe("custom personas", () => {
         [
           "---",
           "id: haiku-clone-of-gpt-coder",
-          "extends: gpt-5.4-coder",
+          "extends: gpt-5.5-coder",
           "provider: anthropic",
           "model: claude-haiku-4-5",
           "---",
@@ -80,7 +80,7 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
-      const base = personas.find((p) => p.id === "gpt-5.4-coder");
+      const base = personas.find((p) => p.id === "gpt-5.5-coder");
       const clone = personas.find((p) => p.id === "haiku-clone-of-gpt-coder");
 
       expect(base).toBeTruthy();
@@ -141,7 +141,7 @@ describe("custom personas", () => {
     }
   });
 
-  it("loads built-in fast codex personas with priority service tier", async () => {
+  it("loads only current built-in GPT personas", async () => {
     const fx = setupFixture();
 
     try {
@@ -149,26 +149,13 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
-      expect(personas.find((persona) => persona.id === "gpt-5.3-codex-chat")?.model.provider).toBe(
-        "openai",
-      );
-      expect(personas.find((persona) => persona.id === "gpt-5.3-codex-coder")?.model.provider).toBe(
-        "openai",
-      );
-      expect(personas.find((persona) => persona.id === "gpt-5.3-codex-chatgpt")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.3-codex-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.4-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-chat")).toBeUndefined();
       expect(
-        personas.find((persona) => persona.id === "gpt-5.3-codex-fast-chatgpt"),
+        personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-chat"),
       ).toBeUndefined();
-      expect(
-        personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-chat")?.settings
-          .serviceTier,
-      ).toBe("priority");
-      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-chat")).toBeTruthy();
-      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-coder")).toBeTruthy();
-      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-chat")).toBeTruthy();
-      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-coder")).toBeTruthy();
-      expect(personas.find((persona) => persona.id === "gpt-5.4-fast-chatgpt")).toBeUndefined();
+
       expect(personas.find((persona) => persona.id === "gpt-5.5-chat")?.model.id).toBe("gpt-5.5");
       expect(personas.find((persona) => persona.id === "gpt-5.5-coder")?.model.id).toBe("gpt-5.5");
       expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-chat")?.model.id).toBe(
@@ -182,11 +169,17 @@ describe("custom personas", () => {
         personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-chat")?.settings
           .serviceTier,
       ).toBe("priority");
+
+      expect(personas.find((persona) => persona.id === "gpt-5.6-sol-chat")?.model.id).toBe(
+        "gpt-5.6-sol",
+      );
+      expect(personas.find((persona) => persona.id === "gpt-5.6-terra-chat")?.model.id).toBe(
+        "gpt-5.6-terra",
+      );
       expect(
-        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-coder")?.settings
+        personas.find((persona) => persona.id === "gpt-5.6-sol-chatgpt-fast-chat")?.settings
           .serviceTier,
       ).toBe("priority");
-      expect(personas.find((persona) => persona.id === "gpt-5.5-fast-chatgpt")).toBeUndefined();
     } finally {
       fx.cleanup();
     }
@@ -260,10 +253,10 @@ describe("custom personas", () => {
     try {
       mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
       writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "gpt-5.4-chat.md"),
+        join(fx.home, ".config", "tau", "personas", "gpt-5.5-chat.md"),
         [
           "---",
-          "id: gpt-5.4-chat",
+          "id: gpt-5.5-chat",
           "provider: anthropic",
           "model: claude-haiku-4-5",
           "---",
@@ -279,7 +272,7 @@ describe("custom personas", () => {
       );
       expect(errors).toEqual([]);
 
-      expect(personas.map((p) => p.id)).toEqual(["gpt-5.4-chat"]);
+      expect(personas.map((p) => p.id)).toEqual(["gpt-5.5-chat"]);
       expect(personas[0].source).toBe("user");
       expect(personas[0].skills).toBe("*");
     } finally {
@@ -469,8 +462,8 @@ describe("custom personas", () => {
           "  analyst:",
           "    systemPrompt: analyze repository state",
           "    launchModels:",
-          "      - openai/gpt-5.4:high",
-          "      - openai/gpt-5.4:high",
+          "      - openai/gpt-5.5:high",
+          "      - openai/gpt-5.5:high",
           "---",
           "persona with launch models",
           "",
@@ -481,7 +474,7 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver(
         {
           subagents: {
-            defaultLaunchModels: ["openai/gpt-5.4:low"],
+            defaultLaunchModels: ["openai/gpt-5.5:low"],
           },
         },
         { deps, cwd: fx.cwd },
@@ -490,8 +483,8 @@ describe("custom personas", () => {
 
       const customPersona = personas.find((persona) => persona.id === "launch-models");
       expect(customPersona).toBeTruthy();
-      expect(customPersona.subagents.analyst.launchModels).toEqual(["openai/gpt-5.4:high"]);
-      expect(customPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.4:low"]);
+      expect(customPersona.subagents.analyst.launchModels).toEqual(["openai/gpt-5.5:high"]);
+      expect(customPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.5:low"]);
     } finally {
       fx.cleanup();
     }
@@ -505,20 +498,20 @@ describe("custom personas", () => {
       const withOverrides = await loadAllContentWithModelResolver(
         {
           subagents: {
-            defaultLaunchModels: ["openai/gpt-5.4:low"],
+            defaultLaunchModels: ["openai/gpt-5.5:low"],
           },
         },
         { deps, cwd: fx.cwd },
       );
 
       const withOverridesPersona = withOverrides.personas.find(
-        (persona) => persona.id === "gpt-5.4-chat",
+        (persona) => persona.id === "gpt-5.5-chat",
       );
-      expect(withOverridesPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.4:low"]);
+      expect(withOverridesPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.5:low"]);
 
       const withoutOverrides = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       const withoutOverridesPersona = withoutOverrides.personas.find(
-        (persona) => persona.id === "gpt-5.4-chat",
+        (persona) => persona.id === "gpt-5.5-chat",
       );
       expect(withoutOverridesPersona.subagents.default.launchModels).toBeUndefined();
     } finally {

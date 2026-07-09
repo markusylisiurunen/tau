@@ -1,5 +1,6 @@
 import type {
   SessionProtocolAutocompletePathsResult,
+  SessionProtocolCancelPendingMessagesResult,
   SessionProtocolClientToolDefinition,
   SessionProtocolCompactResult,
   SessionProtocolCreateParams,
@@ -12,6 +13,8 @@ import type {
   SessionProtocolExecResult,
   SessionProtocolInitializeParams,
   SessionProtocolInterruptResult,
+  SessionProtocolLiveState,
+  SessionProtocolLiveStateMessage,
   SessionProtocolMethod,
   SessionProtocolPruneResult,
   SessionProtocolQueueResult,
@@ -37,12 +40,15 @@ export type TauSdkSessionProtocolMethod = SessionProtocolMethod;
 export type TauSdkInitializeParams = SessionProtocolInitializeParams;
 export type TauSdkDelta = SessionProtocolDeltaMessage;
 export type TauSdkEphemeral = SessionProtocolEphemeralMessage;
+export type TauSdkLiveState = SessionProtocolLiveState;
+export type TauSdkLiveStateMessage = SessionProtocolLiveStateMessage;
 export type TauSdkReadyMessage = SessionProtocolReadyMessage;
 export type TauSdkCreateSessionInput = SessionProtocolCreateParams;
 export type TauSdkSessionSummary = SessionProtocolSessionSummary;
 export type TauSdkSessionSubmitResult = SessionProtocolSubmitResult;
 export type TauSdkSessionQueueResult = SessionProtocolQueueResult;
 export type TauSdkSessionSteerResult = SessionProtocolSteerResult;
+export type TauSdkSessionCancelPendingMessagesResult = SessionProtocolCancelPendingMessagesResult;
 export type TauSdkSessionRecordResult = SessionProtocolRecordResult;
 export type TauSdkSessionInterruptResult = SessionProtocolInterruptResult;
 export type TauSdkSessionExecResult = SessionProtocolExecResult;
@@ -103,11 +109,14 @@ export type TauSdkSessionUserMessageOptions = {
 
 export type TauSdkDeltaListener = (delta: TauSdkDelta) => void;
 export type TauSdkEphemeralListener = (message: TauSdkEphemeral) => void;
+export type TauSdkLiveStateListener = (message: TauSdkLiveStateMessage) => void;
 
 export type TauSdkSession = {
   readonly id: string;
+  liveState(): TauSdkLiveState;
   onDelta(listener: TauSdkDeltaListener): () => void;
   onEphemeral(listener: TauSdkEphemeralListener): () => void;
+  onLiveState(listener: TauSdkLiveStateListener): () => void;
   record(
     text: string,
     options?: TauSdkSessionUserMessageOptions,
@@ -118,6 +127,7 @@ export type TauSdkSession = {
   ): Promise<TauSdkSessionSubmitResult>;
   queue(text: string, options?: TauSdkSessionUserMessageOptions): Promise<TauSdkSessionQueueResult>;
   steer(text: string, options?: TauSdkSessionUserMessageOptions): Promise<TauSdkSessionSteerResult>;
+  cancelPendingMessages(): Promise<TauSdkSessionCancelPendingMessagesResult>;
   retry(): Promise<TauSdkSessionRetryResult>;
   exec(
     command: string,
@@ -172,5 +182,6 @@ export type TauSdkClient = {
   readonly sessions: TauSdkSessionClient;
   subscribe(listener: TauSdkDeltaListener): () => void;
   subscribeEphemeral(listener: TauSdkEphemeralListener): () => void;
+  subscribeLiveState(listener: TauSdkLiveStateListener): () => void;
   close(): Promise<void>;
 };

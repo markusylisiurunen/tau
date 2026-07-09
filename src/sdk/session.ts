@@ -6,7 +6,10 @@ import type {
   SessionProtocolInitializeParams,
   SessionProtocolResultByMethod,
 } from "../protocol/session_protocol.js";
-import { validateSessionProtocolParams } from "../protocol/session_protocol.js";
+import {
+  SESSION_PROTOCOL_VERSION,
+  validateSessionProtocolParams,
+} from "../protocol/session_protocol.js";
 import {
   type SessionProtocolTransport,
   TauSessionClientError,
@@ -18,6 +21,7 @@ import type {
   TauSdkDeltaListener,
   TauSdkEphemeralListener,
   TauSdkInitializeParams,
+  TauSdkLiveStateListener,
   TauSdkSession,
   TauSdkSessionClient,
   TauSdkSessionUserMessageOptions,
@@ -77,6 +81,10 @@ class TauSdkClientImpl implements TauSdkClient {
 
   subscribeEphemeral(listener: TauSdkEphemeralListener): () => void {
     return this.transport.onEphemeral(listener);
+  }
+
+  subscribeLiveState(listener: TauSdkLiveStateListener): () => void {
+    return this.transport.onLiveState(listener);
   }
 
   createObservedSession(sessionId: string): TauSdkSessionImpl {
@@ -209,6 +217,12 @@ class TauSdkClientImpl implements TauSdkClient {
       text,
       ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
     });
+  }
+
+  sendCancelPendingMessages(
+    sessionId: string,
+  ): Promise<SessionProtocolResultByMethod["session.cancelPendingMessages"]> {
+    return this.transport.request("session.cancelPendingMessages", { sessionId });
   }
 
   sendRecord(
@@ -419,6 +433,7 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
     const snapshot = await this.client.createSession(input);
     const session = this.client.createObservedSession(snapshot.sessionId);
     session.setInitialSnapshot(snapshot);
+    session.setInitialLiveState({ revision: 1, pendingUserMessages: [] });
     session.discardBufferedDeltasThrough(snapshot.revision);
     return session;
   }
@@ -435,6 +450,7 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
       session.assertSessionId(snapshot.sessionId);
       session.setInitialSnapshot(snapshot);
       session.discardBufferedDeltasThrough(snapshot.revision);
+      await session.waitForInitialLiveState();
       return session;
     } catch (error) {
       session.disposeLocal();
@@ -447,23 +463,42 @@ class TauSdkSessionImpl implements TauSdkSession {
   private isUnobserved = false;
   private readonly deltaListeners = new Set<TauSdkDeltaListener>();
   private readonly ephemeralListeners = new Set<TauSdkEphemeralListener>();
+  private readonly liveStateListeners = new Set<TauSdkLiveStateListener>();
   private readonly bufferedDeltas: Parameters<TauSdkDeltaListener>[0][] = [];
   private readonly unsubscribeClientDeltas: () => void;
   private readonly unsubscribeClientEphemeral: () => void;
+  private readonly unsubscribeClientLiveState: () => void;
+  private readonly initialLiveStatePromise: Promise<void>;
+  private resolveInitialLiveState!: () => void;
   private initialSnapshot?: SessionProtocolResultByMethod["session.snapshot"];
+  private liveStateValue?: Parameters<TauSdkLiveStateListener>[0]["state"];
 
   constructor(
     private readonly client: TauSdkClientImpl,
     private sessionId: string,
   ) {
+    this.initialLiveStatePromise = new Promise((resolve) => {
+      this.resolveInitialLiveState = resolve;
+    });
     this.unsubscribeClientDeltas = this.client.subscribe((delta) => this.handleDelta(delta));
     this.unsubscribeClientEphemeral = this.client.subscribeEphemeral((message) =>
       this.handleEphemeral(message),
+    );
+    this.unsubscribeClientLiveState = this.client.subscribeLiveState((message) =>
+      this.handleLiveState(message),
     );
   }
 
   get id(): string {
     return this.sessionId;
+  }
+
+  liveState(): Parameters<TauSdkLiveStateListener>[0]["state"] {
+    this.assertActive();
+    if (!this.liveStateValue) {
+      throw new TauSessionClientError("tau sdk session live state is not initialized");
+    }
+    return structuredClone(this.liveStateValue);
   }
 
   onDelta(listener: TauSdkDeltaListener): () => void {
@@ -486,6 +521,26 @@ class TauSdkSessionImpl implements TauSdkSession {
     this.ephemeralListeners.add(listener);
     return () => {
       this.ephemeralListeners.delete(listener);
+    };
+  }
+
+  onLiveState(listener: TauSdkLiveStateListener): () => void {
+    this.assertActive();
+    this.liveStateListeners.add(listener);
+    if (this.liveStateValue) {
+      try {
+        listener({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "session.live",
+          sessionId: this.sessionId,
+          state: structuredClone(this.liveStateValue),
+        });
+      } catch {
+        // SDK live state listeners must not break session event delivery.
+      }
+    }
+    return () => {
+      this.liveStateListeners.delete(listener);
     };
   }
 
@@ -515,6 +570,10 @@ class TauSdkSessionImpl implements TauSdkSession {
     options: TauSdkSessionUserMessageOptions = {},
   ): Promise<SessionProtocolResultByMethod["session.steer"]> {
     return this.client.sendSteer(this.activeSessionId(), text, options);
+  }
+
+  cancelPendingMessages(): Promise<SessionProtocolResultByMethod["session.cancelPendingMessages"]> {
+    return this.client.sendCancelPendingMessages(this.activeSessionId());
   }
 
   async retry(): Promise<SessionProtocolResultByMethod["session.retry"]> {
@@ -689,6 +748,26 @@ class TauSdkSessionImpl implements TauSdkSession {
     }
   }
 
+  private handleLiveState(message: Parameters<TauSdkLiveStateListener>[0]): void {
+    if (
+      this.isUnobserved ||
+      message.sessionId !== this.sessionId ||
+      (this.liveStateValue && message.state.revision <= this.liveStateValue.revision)
+    ) {
+      return;
+    }
+
+    this.liveStateValue = structuredClone(message.state);
+    this.resolveInitialLiveState();
+    for (const listener of [...this.liveStateListeners]) {
+      try {
+        listener(message);
+      } catch {
+        // SDK live state listeners must not break event delivery.
+      }
+    }
+  }
+
   assertSessionId(sessionId: string): void {
     if (sessionId !== this.sessionId) {
       throw new TauSessionClientError(
@@ -699,6 +778,15 @@ class TauSdkSessionImpl implements TauSdkSession {
 
   setInitialSnapshot(snapshot: SessionProtocolResultByMethod["session.snapshot"]): void {
     this.initialSnapshot = snapshot;
+  }
+
+  setInitialLiveState(state: Parameters<TauSdkLiveStateListener>[0]["state"]): void {
+    this.liveStateValue = structuredClone(state);
+    this.resolveInitialLiveState();
+  }
+
+  async waitForInitialLiveState(): Promise<void> {
+    await this.initialLiveStatePromise;
   }
 
   discardBufferedDeltasThrough(revision: number): void {
@@ -713,8 +801,10 @@ class TauSdkSessionImpl implements TauSdkSession {
     this.isUnobserved = true;
     this.unsubscribeClientDeltas();
     this.unsubscribeClientEphemeral();
+    this.unsubscribeClientLiveState();
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
+    this.liveStateListeners.clear();
     this.bufferedDeltas.splice(0);
   }
 

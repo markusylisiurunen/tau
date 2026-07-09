@@ -173,6 +173,40 @@ describe("ConversationTurnRuntime", () => {
     expect(runtime.isRunning).toBe(false);
   });
 
+  it("cancels a pending turn-boundary stop before the boundary is reached", async () => {
+    let boundaryReached;
+    let releaseBoundary;
+    const atBoundary = new Promise((resolve) => {
+      boundaryReached = resolve;
+    });
+    const boundaryReleased = new Promise((resolve) => {
+      releaseBoundary = resolve;
+    });
+    const emitted = [];
+    const session = {
+      async *events(_signal, options) {
+        yield { type: "notice", severity: "info", text: "before boundary" };
+        boundaryReached();
+        await boundaryReleased;
+        if (options.shouldStopAtBoundary()) {
+          return { aborted: false };
+        }
+        yield { type: "notice", severity: "info", text: "after boundary" };
+      },
+    };
+    const runtime = new ConversationTurnRuntime(session);
+    const run = runtime.run({ onEvent: (event) => emitted.push(event.text) });
+
+    await atBoundary;
+    expect(runtime.requestStopAtBoundary()).toBe(true);
+    expect(runtime.cancelStopAtBoundary()).toBe(true);
+    expect(runtime.cancelStopAtBoundary()).toBe(false);
+    releaseBoundary();
+
+    await expect(run).resolves.toEqual(expect.objectContaining({ aborted: false }));
+    expect(emitted).toEqual(["before boundary", "after boundary"]);
+  });
+
   it("interrupts the active run and reports aborted status", async () => {
     let runtime;
     let seen = 0;

@@ -155,6 +155,9 @@ class FakeSessionProtocolTransport {
     });
     this.request = vi.fn(async (method, params) => {
       this.requests.push({ method, params });
+      if (method === "session.observe") {
+        this.emitLiveState(createLiveStateMessage(params.sessionId));
+      }
       const overrideResult = await this.onRequest?.(method, params);
       if (overrideResult !== undefined) {
         return overrideResult;
@@ -163,6 +166,7 @@ class FakeSessionProtocolTransport {
         case "session.create":
           return createSnapshot("session-2");
         case "session.observe":
+          return createSnapshot(params.sessionId);
         case "session.snapshot":
           return createSnapshot(params.sessionId);
         case "session.setRisk":
@@ -243,6 +247,8 @@ class FakeSessionProtocolTransport {
             userHistoryEntryId: params.historyEntryId ?? "entry-1",
             turn: { aborted: false },
           };
+        case "session.cancelPendingMessages":
+          return { cancelled: [] };
         case "session.retry":
           return { turn: { aborted: false } };
         case "session.exec":
@@ -285,6 +291,7 @@ class FakeSessionProtocolTransport {
 
   requests = [];
   listeners = new Set();
+  liveStateListeners = new Set();
   clientToolListeners = new Set();
   initializeParams;
   connectTimeoutMs;
@@ -302,6 +309,13 @@ class FakeSessionProtocolTransport {
     return () => {};
   }
 
+  onLiveState(listener) {
+    this.liveStateListeners.add(listener);
+    return () => {
+      this.liveStateListeners.delete(listener);
+    };
+  }
+
   onClientTool(listener) {
     this.clientToolListeners.add(listener);
     return () => {
@@ -312,6 +326,12 @@ class FakeSessionProtocolTransport {
   emitDelta(delta) {
     for (const listener of this.listeners) {
       listener(delta);
+    }
+  }
+
+  emitLiveState(message) {
+    for (const listener of this.liveStateListeners) {
+      listener(message);
     }
   }
 
@@ -339,6 +359,15 @@ function createErrorResponse(id, error) {
     id,
     ok: false,
     error,
+  };
+}
+
+function createLiveStateMessage(sessionId, pendingUserMessages = [], revision = 1) {
+  return {
+    version: SESSION_PROTOCOL_VERSION,
+    type: "session.live",
+    sessionId,
+    state: { revision, pendingUserMessages },
   };
 }
 
@@ -386,6 +415,7 @@ async function createConnectedClient(child, options = {}) {
     }
     if (request.method === "session.observe") {
       child.send(createSuccessResponse(request.id, createSnapshot(request.params.sessionId)));
+      child.send(createLiveStateMessage(request.params.sessionId));
     }
   });
 
@@ -458,6 +488,18 @@ describe("sdk_client", () => {
     expect(transport.connectTimeoutMs).toBe(42);
 
     const readySession = await client.sessions.observe("session-1");
+    expect(readySession.liveState()).toEqual({ revision: 1, pendingUserMessages: [] });
+    const liveStates = [];
+    readySession.onLiveState((message) => liveStates.push(message.state));
+    transport.emitLiveState(
+      createLiveStateMessage("session-1", [{ id: "queue-1", mode: "queue", text: "queued" }], 2),
+    );
+    expect(readySession.liveState()).toEqual({
+      revision: 2,
+      pendingUserMessages: [{ id: "queue-1", mode: "queue", text: "queued" }],
+    });
+    expect(liveStates.at(-1)).toEqual(readySession.liveState());
+
     await expect(readySession.submit("hello", { historyEntryId: "entry-custom" })).resolves.toEqual(
       {
         userHistoryEntryId: "entry-custom",
@@ -489,6 +531,12 @@ describe("sdk_client", () => {
     expect(transport.requests.at(-1)).toEqual({
       method: "session.steer",
       params: { sessionId: "session-1", text: "steer" },
+    });
+
+    await expect(readySession.cancelPendingMessages()).resolves.toEqual({ cancelled: [] });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.cancelPendingMessages",
+      params: { sessionId: "session-1" },
     });
 
     await expect(readySession.retry()).resolves.toEqual({
@@ -979,6 +1027,7 @@ describe("sdk_client", () => {
 
       if (request.method === "session.observe") {
         child.send(createSuccessResponse(request.id, createSnapshot(request.params.sessionId)));
+        child.send(createLiveStateMessage(request.params.sessionId));
         return;
       }
 

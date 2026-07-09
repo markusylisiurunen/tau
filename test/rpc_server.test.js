@@ -240,6 +240,7 @@ function createHarness(options = {}) {
         }
       },
       requestTurnBoundaryStop: vi.fn(() => running),
+      cancelTurnBoundaryStop: vi.fn(() => running),
       async exec(runOptions) {
         if (options.exec) {
           return await options.exec(runOptions);
@@ -1139,6 +1140,90 @@ describe("rpc_server", () => {
         }),
       );
     }
+  });
+
+  it("publishes and cancels pending queue and steering live state", async () => {
+    const harness = createHarness();
+    const observerLines = [];
+    const observer = new RpcServer({
+      host: harness.host,
+      send: (line) => observerLines.push(JSON.parse(line)),
+    });
+    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
+
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
+    );
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
+
+    const queued = harness.server.handleLine(
+      request("queue-1", "session.queue", {
+        sessionId: "session-1",
+        text: "run tests",
+      }),
+    );
+    const steered = harness.server.handleLine(
+      request("steer-1", "session.steer", {
+        sessionId: "session-1",
+        text: "change direction",
+      }),
+    );
+
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.live" && line.state.pendingUserMessages.length === 2,
+      ),
+    );
+    const pending = harness.lines.findLast(
+      (line) => line.type === "session.live" && line.state.pendingUserMessages.length === 2,
+    );
+    expect(pending.state.pendingUserMessages).toEqual([
+      expect.objectContaining({ mode: "steer", text: "change direction" }),
+      expect.objectContaining({ mode: "queue", text: "run tests" }),
+    ]);
+    await waitFor(() =>
+      observerLines.some(
+        (line) => line.type === "session.live" && line.state.pendingUserMessages.length === 2,
+      ),
+    );
+
+    await harness.server.handleLine(
+      request("cancel-1", "session.cancelPendingMessages", { sessionId: "session-1" }),
+    );
+    await Promise.all([queued, steered]);
+
+    expect(
+      harness.lines.find((line) => line.id === "cancel-1" && line.type === "response"),
+    ).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          cancelled: [
+            expect.objectContaining({ mode: "steer", text: "change direction" }),
+            expect.objectContaining({ mode: "queue", text: "run tests" }),
+          ],
+        },
+      }),
+    );
+    for (const id of ["queue-1", "steer-1"]) {
+      expect(harness.lines.find((line) => line.id === id && line.type === "response")).toEqual(
+        expect.objectContaining({
+          ok: false,
+          error: expect.objectContaining({ code: SESSION_PROTOCOL_ERROR_CODES.cancelled }),
+        }),
+      );
+    }
+    expect(
+      harness.lines.findLast((line) => line.type === "session.live").state.pendingUserMessages,
+    ).toEqual([]);
+    expect(harness.seededSession.cancelTurnBoundaryStop).toHaveBeenCalled();
+
+    harness.releaseTurn();
+    await firstSubmit;
+    await observer.close();
   });
 
   it("drops pending steering submits when a turn is interrupted", async () => {

@@ -2,6 +2,7 @@ import type {
   SessionProtocolClientToolMessage,
   SessionProtocolDeltaMessage,
   SessionProtocolEphemeralMessage,
+  SessionProtocolLiveStateMessage,
   SessionProtocolOutgoingParseFailure,
   SessionProtocolParsedResponseMessage,
 } from "../protocol/session_protocol.js";
@@ -11,6 +12,7 @@ import type {
   SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
+  SessionProtocolLiveStateListener,
 } from "./session_transport.js";
 
 type Deferred<T> = {
@@ -99,6 +101,25 @@ export function notifySessionProtocolClientToolListeners(
 export function notifySessionProtocolEphemeralListeners(
   listeners: ReadonlySet<SessionProtocolEphemeralListener>,
   message: SessionProtocolEphemeralMessage,
+  options: { ignoreListenerErrors?: boolean } = {},
+): void {
+  for (const listener of [...listeners]) {
+    if (!options.ignoreListenerErrors) {
+      listener(message);
+      continue;
+    }
+
+    try {
+      listener(message);
+    } catch {
+      // listener failures must not break transport processing
+    }
+  }
+}
+
+export function notifySessionProtocolLiveStateListeners(
+  listeners: ReadonlySet<SessionProtocolLiveStateListener>,
+  message: SessionProtocolLiveStateMessage,
   options: { ignoreListenerErrors?: boolean } = {},
 ): void {
   for (const listener of [...listeners]) {

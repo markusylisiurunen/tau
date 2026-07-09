@@ -112,6 +112,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
       }
     },
     requestTurnBoundaryStop: vi.fn(() => running),
+    cancelTurnBoundaryStop: vi.fn(() => running),
     interruptTurn: vi.fn(() => {
       if (!running || !releaseTurn) {
         return false;

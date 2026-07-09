@@ -39,6 +39,7 @@ import { shellQuote } from "../execution/sandbox_tool_helpers.js";
 import type {
   SessionProtocolCreateParams,
   SessionProtocolDeltaMessage,
+  SessionProtocolLiveStateMessage,
   SessionProtocolMessage,
   SessionProtocolSnapshot,
 } from "../protocol/session_protocol.js";
@@ -48,6 +49,7 @@ import type {
   TauSdkSessionRetryResult,
   TauSdkSessionSubmitResult,
 } from "../sdk/types.js";
+import { TauSessionProtocolResponseError } from "../transport/errors.js";
 import {
   copyAssistantCodeToClipboard,
   copyAssistantTextToClipboard,
@@ -64,7 +66,7 @@ import {
   extractHistoryUserText,
 } from "./chat_controller/history_message_model.js";
 import { InterruptLifecycle } from "./chat_controller/interrupt_lifecycle.js";
-import { QueuedUserMessages } from "./chat_controller/queued_user_messages.js";
+import { joinQueuedUserMessages } from "./chat_controller/queued_user_messages.js";
 import { formatDurationMs, formatSessionCost } from "./chat_controller/status_format.js";
 import type { ChatInputMode, ChatView, ChatViewInputHandlers } from "./chat_view.js";
 import { copyTextToClipboard } from "./clipboard.js";
@@ -103,7 +105,6 @@ export type SessionChatControllerOptions = {
   defaultDiffTool?: DiffToolConfig;
   diffToolLauncher?: DiffReviewToolLauncher;
   deps?: CoreDeps;
-  queuedUserMessages?: string[];
   caffeinated?: boolean;
   themeIds?: string[];
   onExit?: () => void;
@@ -129,6 +130,7 @@ export class SessionChatController {
   private readonly clientRenderedUserMessages = new Map<string, ChatMessageModel>();
   private observedSessionRevision: number;
   private eventUnsubscribe?: () => void;
+  private liveStateUnsubscribe?: () => void;
   private snapshotRecovery?: Promise<void>;
   private readonly snapshotRecoveryDeltas: SessionProtocolDeltaMessage[] = [];
   private isStreaming = false;
@@ -144,7 +146,6 @@ export class SessionChatController {
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
   private lastEmptySubmitAt?: number;
-  private readonly queuedMessageBuffer: QueuedUserMessages;
   private assistantMessages: AssistantMessage[] = [];
   private listenRecording?: ListenRecording;
   private listenTransition?: Promise<void>;
@@ -171,7 +172,6 @@ export class SessionChatController {
     this.themeIds = options.themeIds ?? [];
     this.caffeinated = options.caffeinated ?? false;
     this.observedSessionRevision = options.snapshot.revision;
-    this.queuedMessageBuffer = new QueuedUserMessages(options.queuedUserMessages ?? []);
     this.commandRegistry = createCommandRegistry();
     this.commandHandlers = {
       help: () => this.showHelp(),
@@ -218,11 +218,13 @@ export class SessionChatController {
     this.renderSnapshot(this.snapshot);
     this.hydrateRunningSnapshotState();
     this.eventUnsubscribe = this.session.onDelta((delta) => this.onSdkDelta(delta));
+    this.liveStateUnsubscribe = this.session.onLiveState((message) => this.onSdkLiveState(message));
     this.refreshStatus();
   }
 
   async dispose(): Promise<void> {
     this.eventUnsubscribe?.();
+    this.liveStateUnsubscribe?.();
     if (this.listenTransition) {
       await this.listenTransition;
     }
@@ -258,10 +260,8 @@ export class SessionChatController {
       onChange: (text) => this.handleEditorChange(text),
       onSubmit: (text) => void this.handleSubmit(text),
       onSteerSubmit: (text) => void this.submitSteeringMessage(text),
-      onFlushQueueAsSteer: () => void this.flushQueuedMessagesAsSteering(),
-      onAltUp: () => this.popQueuedMessageIntoEditor(),
+      onAltUp: () => void this.cancelPendingMessagesIntoEditor(),
       onAltDown: () => this.cycleSubagentSelection(),
-      onAltC: () => this.collapseQueuedMessages(),
     };
   }
 
@@ -327,10 +327,7 @@ export class SessionChatController {
       if (trimmed.startsWith("!")) {
         return;
       }
-      this.queuedMessageBuffer.enqueue(trimmed, () => this.view.requestRender());
-      this.view.addSystemMessage("message queued", "success", {
-        persist: false,
-      });
+      this.submitQueuedText(trimmed);
       return;
     }
 
@@ -613,7 +610,6 @@ export class SessionChatController {
       this.stopTurnTimer();
       this.refreshStatus();
       this.view.requestRender();
-      await this.drainQueuedMessages();
     }
   }
 
@@ -631,54 +627,51 @@ export class SessionChatController {
     this.submitSteeringText(trimmed);
   }
 
-  private async flushQueuedMessagesAsSteering(): Promise<void> {
-    if (this.queuedMessageBuffer.length === 0) {
-      this.view.addSystemMessage("no queued messages to steer", "warn");
-      return;
-    }
-
-    const messages = this.queuedMessageBuffer.flush();
-    const text = messages.join("\n\n");
-    this.view.requestRender();
-    this.submitSteeringText(text, {
-      onFailure: () => {
-        this.queuedMessageBuffer.requeueFront(messages, () => this.view.requestRender());
-      },
-    });
+  private submitQueuedText(text: string): void {
+    void this.session
+      .queue(text, { historyEntryId: `session-queue-${randomUUID()}` })
+      .catch((error) => {
+        if (!this.isPendingMessageCancellation(error)) {
+          this.view.addSystemMessage(`queueing failed: ${(error as Error).message}`, "error");
+        }
+      });
   }
 
-  private submitSteeringText(text: string, options: { onFailure?: () => void } = {}): void {
+  private submitSteeringText(text: string): void {
     void this.session
       .steer(text, { historyEntryId: `session-steer-${randomUUID()}` })
       .catch((error) => {
-        options.onFailure?.();
-        this.view.addSystemMessage(`steering failed: ${(error as Error).message}`, "error");
+        if (!this.isPendingMessageCancellation(error)) {
+          this.view.addSystemMessage(`steering failed: ${(error as Error).message}`, "error");
+        }
       });
   }
 
-  private popQueuedMessageIntoEditor(): void {
-    this.queuedMessageBuffer.popIntoEditor({
-      getEditorText: () => this.view.getEditorText(),
-      setEditorText: (text) => this.view.setEditorText(text),
-    });
-    this.view.requestRender();
-  }
+  private async cancelPendingMessagesIntoEditor(): Promise<void> {
+    try {
+      const { cancelled } = await this.session.cancelPendingMessages();
+      if (cancelled.length === 0) {
+        return;
+      }
 
-  private dequeueQueuedMessagesIntoEditor(): void {
-    this.queuedMessageBuffer.dequeueIntoEditor({
-      getEditorText: () => this.view.getEditorText(),
-      setEditorText: (text) => this.view.setEditorText(text),
-    });
-    this.view.requestRender();
-  }
-
-  private collapseQueuedMessages(): void {
-    if (this.queuedMessageBuffer.collapse()) {
-      this.view.addSystemMessage("queued messages collapsed", "success", {
-        persist: false,
-      });
+      const editorText = this.view.getEditorText();
+      this.view.setEditorText(
+        joinQueuedUserMessages([
+          ...(editorText ? [editorText] : []),
+          ...cancelled.map((message) => message.text),
+        ]),
+      );
       this.view.requestRender();
+    } catch (error) {
+      this.view.addSystemMessage(
+        `pending message cancellation failed: ${(error as Error).message}`,
+        "error",
+      );
     }
+  }
+
+  private isPendingMessageCancellation(error: unknown): boolean {
+    return error instanceof TauSessionProtocolResponseError && error.code === "cancelled";
   }
 
   private cycleSubagentSelection(): void {
@@ -759,18 +752,7 @@ export class SessionChatController {
       this.stopVisibleSessionTurn();
       await this.stopTurnCaffeinate();
       this.refreshStatus();
-      await this.drainQueuedMessages();
     }
-  }
-
-  private async drainQueuedMessages(): Promise<void> {
-    await this.queuedMessageBuffer.drain({
-      isStreaming: () => this.isStreaming,
-      onUserInput: (text) => this.submitUserText(text),
-      requestRender: () => this.view.requestRender(),
-      sendTerminalNotification: (title) => this.view.sendTerminalNotification(title),
-      buildIdleNotificationTitle: () => "tau is idle",
-    });
   }
 
   private async interrupt(): Promise<void> {
@@ -1027,6 +1009,7 @@ export class SessionChatController {
 
     try {
       const previousUnsubscribe = this.eventUnsubscribe;
+      const previousLiveStateUnsubscribe = this.liveStateUnsubscribe;
       const previousSession = this.session;
       const nextSession = await this.createSession({
         executionEnvironment: this.createExecutionEnvironmentInputFromSnapshot(),
@@ -1037,7 +1020,9 @@ export class SessionChatController {
           : {}),
       });
       this.eventUnsubscribe = undefined;
+      this.liveStateUnsubscribe = undefined;
       previousUnsubscribe?.();
+      previousLiveStateUnsubscribe?.();
       try {
         await previousSession.unobserve();
       } catch (detachError) {
@@ -1050,6 +1035,9 @@ export class SessionChatController {
       this.snapshot = await this.session.snapshot();
       this.observedSessionRevision = this.snapshot.revision;
       this.eventUnsubscribe = this.session.onDelta((delta) => this.onSdkDelta(delta));
+      this.liveStateUnsubscribe = this.session.onLiveState((message) =>
+        this.onSdkLiveState(message),
+      );
       this.view.resetToolUiSession();
       this.assistantMessages = [];
       this.startLocalUiSession();
@@ -1081,6 +1069,10 @@ export class SessionChatController {
           cwd: snapshot.cwd,
         };
     }
+  }
+
+  private onSdkLiveState(message: SessionProtocolLiveStateMessage): void {
+    this.view.setPendingUserMessages(message.state.pendingUserMessages);
   }
 
   private onSdkDelta(delta: SessionProtocolDeltaMessage): void {
@@ -1396,10 +1388,6 @@ export class SessionChatController {
     }
 
     void this.stopTurnCaffeinate();
-    if (this.submittedTurnInProgress) {
-      return;
-    }
-    void this.drainQueuedMessages();
   }
 
   private stopVisibleSessionTurn(): boolean {
@@ -1818,7 +1806,6 @@ export class SessionChatController {
       }
       this.view.addSystemMessage(`speech synthesis failed: ${(err as Error).message}`, "error");
     } finally {
-      const wasAborted = abortController.signal.aborted;
       if (this.speakTask === task) {
         this.speakTask = undefined;
       }
@@ -1827,11 +1814,6 @@ export class SessionChatController {
       this.isStreaming = false;
       this.refreshStatus();
       this.view.requestRender();
-      if (wasAborted) {
-        this.dequeueQueuedMessagesIntoEditor();
-      } else {
-        void this.drainQueuedMessages();
-      }
     }
   }
 

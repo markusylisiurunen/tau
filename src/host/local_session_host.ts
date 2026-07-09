@@ -650,6 +650,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return this.runtime.requestTurnBoundaryStop();
   }
 
+  cancelTurnBoundaryStop(): boolean {
+    this.assertActive();
+    return this.runtime.cancelTurnBoundaryStop();
+  }
+
   async exec(
     options: Omit<SessionProtocolExecParams, "sessionId"> & {
       signal?: AbortSignal;

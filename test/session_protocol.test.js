@@ -4,6 +4,7 @@ import {
   createSessionProtocolDeltaMessage,
   createSessionProtocolEphemeralMessage,
   createSessionProtocolErrorResponse,
+  createSessionProtocolLiveStateMessage,
   createSessionProtocolReadyMessage,
   createSessionProtocolRequest,
   createSessionProtocolSuccessResponse,
@@ -1473,6 +1474,45 @@ describe("session_protocol", () => {
         message: expect.stringContaining("session.snapshot result is invalid"),
       }),
     });
+  });
+
+  it("parses and constructs live session state messages", () => {
+    const message = createSessionProtocolLiveStateMessage({
+      sessionId: "session-1",
+      state: {
+        revision: 2,
+        pendingUserMessages: [
+          { id: "steer-1", mode: "steer", text: "change direction" },
+          { id: "queue-1", mode: "queue", text: "run tests" },
+        ],
+      },
+    });
+
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(message))).toEqual({
+      ok: true,
+      message,
+    });
+    expect(
+      parseSessionProtocolOutgoingLine(
+        JSON.stringify({
+          ...message,
+          state: {
+            ...message.state,
+            pendingUserMessages: [
+              message.state.pendingUserMessages[0],
+              message.state.pendingUserMessages[0],
+            ],
+          },
+        }),
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          message: expect.stringContaining("duplicate pending user message id 'steer-1'"),
+        }),
+      }),
+    );
   });
 
   it("builds ready/delta/error messages with versioned envelopes", () => {

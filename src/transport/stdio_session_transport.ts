@@ -20,6 +20,7 @@ import {
   notifySessionProtocolClientToolListeners,
   notifySessionProtocolDeltaListeners,
   notifySessionProtocolEphemeralListeners,
+  notifySessionProtocolLiveStateListeners,
   waitForPromiseOrTimeout,
   withTimeout,
 } from "./session_protocol_transport_helpers.js";
@@ -27,6 +28,7 @@ import type {
   SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
+  SessionProtocolLiveStateListener,
   SessionProtocolTransport,
 } from "./session_transport.js";
 
@@ -43,6 +45,7 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
   private readonly process;
   private readonly deltaListeners = new Set<SessionProtocolDeltaListener>();
   private readonly ephemeralListeners = new Set<SessionProtocolEphemeralListener>();
+  private readonly liveStateListeners = new Set<SessionProtocolLiveStateListener>();
   private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
   private readonly readyDeferred = createDeferred<SessionProtocolReadyMessage>();
@@ -130,6 +133,13 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
     };
   }
 
+  onLiveState(listener: SessionProtocolLiveStateListener): () => void {
+    this.liveStateListeners.add(listener);
+    return () => {
+      this.liveStateListeners.delete(listener);
+    };
+  }
+
   onClientTool(listener: SessionProtocolClientToolListener): () => void {
     this.clientToolListeners.add(listener);
     return () => {
@@ -191,6 +201,7 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
     this.rejectReadyIfPending(closeError);
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
+    this.liveStateListeners.clear();
     this.clientToolListeners.clear();
 
     this.process.stdout.off("data", this.handleStdoutData);
@@ -326,6 +337,13 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
 
     if (message.type === "session.ephemeral") {
       notifySessionProtocolEphemeralListeners(this.ephemeralListeners, message, {
+        ignoreListenerErrors: true,
+      });
+      return;
+    }
+
+    if (message.type === "session.live") {
+      notifySessionProtocolLiveStateListeners(this.liveStateListeners, message, {
         ignoreListenerErrors: true,
       });
       return;

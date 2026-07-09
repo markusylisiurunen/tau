@@ -72,6 +72,7 @@ server-to-client messages are:
 - `ready`
 - `response`
 - `session.delta`
+- `session.live`
 - `session.ephemeral`
 
 client-to-server messages are:
@@ -96,6 +97,7 @@ when the rpc server starts, it immediately emits a `ready` line:
     "session.submit",
     "session.queue",
     "session.steer",
+    "session.cancelPendingMessages",
     "session.retry",
     "session.exec",
     "session.interrupt",
@@ -136,7 +138,7 @@ state transitions:
 
 `initialize` is a handshake signal, not a gate for other methods. clients may call other rpc methods before `initialize`, though most clients should still initialize immediately after `ready`.
 
-`tau rpc` and `tau serve` store session snapshots under `~/.config/tau/sessions` for the current host user. Starting a server does not create a session. `session.create` creates one in an explicitly selected, already-provisioned execution environment, and closing the transport or server persists hosted sessions. Stored sessions recover from persisted snapshot state, including current settings, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, agents, and facets; host-only config is resolved by the host and is not serialized into the snapshot.
+`tau rpc` and `tau serve` store session snapshots under `~/.config/tau/sessions` for the current host user. Starting a server does not create a session. `session.create` creates one in an explicitly selected, already-provisioned execution environment, and closing the transport or server persists hosted sessions. Stored sessions recover from persisted snapshot state, including current settings, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, agents, and facets; host-only config is resolved by the host and is not serialized into the snapshot. Pending queued and steering messages are live state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
 
 ## requests
 
@@ -193,6 +195,7 @@ params (required):
       "session.submit",
       "session.queue",
       "session.steer",
+      "session.cancelPendingMessages",
       "session.retry",
       "session.exec",
       "session.interrupt",
@@ -414,7 +417,7 @@ returns the authoritative current session snapshot for that session id:
 }
 ```
 
-for each `session.observe` response, any deltas produced while the server is preparing the snapshot are sent only after the response. deltas whose `toRevision` is already included in the returned snapshot are not replayed.
+After each successful `session.observe` response, the server sends the current `session.live` state for initial hydration. Any snapshot deltas or live-state updates produced while the server is preparing the response are sent afterward. Snapshot deltas whose `toRevision` is already included in the returned snapshot and live states whose revision is already included in the hydration message are not replayed.
 
 if the session id is not hosted, returns `not_found`.
 
@@ -526,6 +529,7 @@ behavior:
 
 - if the session is idle, behaves like `session.submit`
 - if an assistant turn or direct bash command is active, accepts the request and starts the queued user-message turn after active work settles
+- publishes the pending message through `session.live` until its turn begins
 - does not ask the active turn to stop early
 - returns the same success shape as `session.submit`
 
@@ -545,7 +549,29 @@ behavior:
 
 - if the session is idle, behaves like `session.submit`
 - if an assistant turn is active, accepts the request, asks the active turn to stop at the next safe boundary, batches any additional steering messages in arrival order, and then starts one new turn with a short `<system>` steering instruction plus the batched user messages
+- publishes pending steering messages through `session.live` until the steering turn begins
 - returns the same success shape as `session.submit`
+
+#### session.cancelPendingMessages
+
+params (required):
+
+```json
+{ "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
+```
+
+Atomically cancels every pending queued and steering message without interrupting the active turn. The result returns the cancelled messages in effective processing order, steering first and queued messages second:
+
+```json
+{
+  "cancelled": [
+    { "id": "pending-1", "mode": "steer", "text": "change direction" },
+    { "id": "pending-2", "mode": "queue", "text": "run tests afterward" }
+  ]
+}
+```
+
+Each cancelled `session.queue` or `session.steer` request receives a `cancelled` error. Cancelling steering also withdraws the requested turn-boundary stop when the active turn has not reached that boundary yet. A turn already stopping at the boundary cannot be resumed.
 
 #### session.retry
 
@@ -899,6 +925,29 @@ notes:
 - notices and maintenance operations are stored as timeline items, so late-attaching clients can reconstruct them from `session.snapshot`.
 - tool progress, tool UI payloads, and subagent progress are stored in `tools`, `agents`, and `facets` instead of live-only side-channel events.
 
+## live session state
+
+`session.live` carries the current non-persisted state of an in-memory hosted session:
+
+```json
+{
+  "version": 1,
+  "type": "session.live",
+  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
+  "state": {
+    "revision": 3,
+    "pendingUserMessages": [
+      { "id": "pending-1", "mode": "steer", "text": "change direction" },
+      { "id": "pending-2", "mode": "queue", "text": "run tests afterward" }
+    ]
+  }
+}
+```
+
+Live-state revisions are independent from snapshot revisions. Every message replaces the previous live state in full. Clients receive initial live state immediately after successful `session.create` and `session.observe` responses, then receive updates while they observe that session. Pending steering messages are ordered before queued messages because steering has processing priority.
+
+Live state is shared across attached clients and survives client detach while the hosted session remains in memory. It is not written to the session store and starts empty when a session is recovered from disk. It must not be folded into `session.snapshot` or applied with `applySessionProtocolDelta`.
+
 ## ephemeral events
 
 `session.ephemeral` messages carry non-recoverable observed-session activity that is intentionally not stored in `SessionSnapshot`. The current use is live ephemeral-agent progress:
@@ -956,6 +1005,7 @@ error codes:
 - `invalid_params`: params failed method validation
 - `not_found`: requested session does not exist on this host
 - `busy`: overlapping idle-only `session.submit`/`session.retry`/`session.exec` or activity rejected while a mutating request is in progress
+- `cancelled`: a pending queued or steering request was explicitly cancelled
 - `internal_error`: unexpected runtime failure
 
 for lines that cannot produce a valid request id (for example malformed json), `id` is `null`.
@@ -970,6 +1020,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 - only one idle-only `session.submit`, `session.retry`, or `session.exec` can run at once (`busy` otherwise)
 - `session.queue` can be accepted during active work and runs after the active turn settles
 - `session.steer` can be accepted during an active turn and runs at the next safe boundary after requesting the active turn to stop
+- `session.cancelPendingMessages` atomically removes pending queue and steering requests without interrupting active work
 - `session.submit`, `session.retry`, and `session.exec` are rejected with `busy` while a queued/running compact or prune mutation exists
 - responses and deltas may still interleave
 

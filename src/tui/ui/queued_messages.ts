@@ -1,4 +1,5 @@
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { SessionProtocolPendingUserMessage } from "../../protocol/session_protocol.js";
 import type { Theme } from "./theme/index.js";
 
 function firstLine(text: string): string {
@@ -10,11 +11,15 @@ function firstLine(text: string): string {
 export class QueuedMessagesComponent implements Component {
   constructor(
     private theme: Theme,
-    private messages: string[],
+    private messages: SessionProtocolPendingUserMessage[] = [],
   ) {}
 
   setTheme(theme: Theme): void {
     this.theme = theme;
+  }
+
+  setMessages(messages: SessionProtocolPendingUserMessage[]): void {
+    this.messages = messages;
   }
 
   invalidate() {}
@@ -24,17 +29,18 @@ export class QueuedMessagesComponent implements Component {
 
     const { palette, markdownTheme } = this.theme;
     const lines: string[] = [];
-    const headerRaw = `queued (${this.messages.length}) — alt+up edit · alt+c collapse · alt+s steer all`;
+    const headerRaw = `pending (${this.messages.length}) · alt+up edit all`;
     const headerPad = " ";
     const headerWidth = Math.max(0, width - visibleWidth(headerPad));
     lines.push(palette.textDim(`${headerPad}${truncateToWidth(headerRaw, headerWidth, "…")}`));
 
-    for (const [index, message] of this.messages.entries()) {
-      const prefixRawArrow = `  ${index + 1}› `;
-      const prefix = palette.textDim(prefixRawArrow);
-      const prefixWidth = visibleWidth(prefixRawArrow);
+    let queueIndex = 0;
+    for (const message of this.messages) {
+      const prefixRaw = message.mode === "steer" ? "  ↳ " : `  ${++queueIndex}› `;
+      const prefix = palette.textDim(prefixRaw);
+      const prefixWidth = visibleWidth(prefixRaw);
 
-      const line = firstLine(message);
+      const line = firstLine(message.text);
       const available = Math.max(0, width - prefixWidth);
       const truncated = truncateToWidth(line, available, "…");
       const styled = markdownTheme.italic(palette.textMuted(truncated));

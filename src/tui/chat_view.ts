@@ -9,6 +9,7 @@ import type { SubagentUiEvent } from "../core/subagents/types.js";
 import type { BashTruncationInfo } from "../core/tools/bash.js";
 import type { ToolUiEvent, ToolUiText } from "../core/tools/registry.js";
 import type { ReasoningEffort, RiskLevel } from "../core/types.js";
+import type { SessionProtocolPendingUserMessage } from "../protocol/session_protocol.js";
 import { createAppTerminal } from "./terminal.js";
 import { ToolUiRouter } from "./tool_ui_router.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
@@ -54,13 +55,11 @@ export type ChatViewInputHandlers = {
   onEscape?: () => void;
   onAltUp?: () => void;
   onAltDown?: () => void;
-  onAltC?: () => void;
   onCtrlG?: () => void;
   beforeSubmit?: (text: string) => boolean;
   onChange?: (text: string) => void;
   onSubmit?: (text: string) => void;
   onSteerSubmit?: (text: string) => void;
-  onFlushQueueAsSteer?: () => void;
 };
 
 export type RewindPickerOptions = {
@@ -99,6 +98,7 @@ export interface ChatView {
   cycleSubagentSelection(direction: 1 | -1): string | undefined;
   getSelectedSubagentId(): string | undefined;
   sendTerminalNotification(title: string): void;
+  setPendingUserMessages(messages: SessionProtocolPendingUserMessage[]): void;
   getEditorText(): string;
   getExpandedEditorText(): string;
   setEditorText(text: string): void;
@@ -141,7 +141,6 @@ export class TuiChatView implements ChatView {
   private recordingIndicatorTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: {
-    queuedUserMessages: string[];
     compactToolUi: boolean;
     showThinking: boolean;
     terminalAppearance?: ThemeAppearance;
@@ -164,7 +163,7 @@ export class TuiChatView implements ChatView {
     );
     this.chatContainer.setCompactToolUi(options.compactToolUi);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
-    this.queuedMessages = new QueuedMessagesComponent(this.uiTheme, options.queuedUserMessages);
+    this.queuedMessages = new QueuedMessagesComponent(this.uiTheme);
     this.subagentPanel = new SubagentPanelComponent(this.uiTheme);
     this.editor = new CustomEditor(this.uiTheme);
     this.editor.onUiChange = () => this.ui.requestRender();
@@ -334,6 +333,11 @@ export class TuiChatView implements ChatView {
     this.ui.terminal.write(`\x1b]9;${safeTitle}\x1b\\`);
   }
 
+  setPendingUserMessages(messages: SessionProtocolPendingUserMessage[]): void {
+    this.queuedMessages.setMessages(messages);
+    this.ui.requestRender();
+  }
+
   getEditorText(): string {
     return this.editor.getText();
   }
@@ -399,13 +403,11 @@ export class TuiChatView implements ChatView {
     this.editor.onEscape = handlers.onEscape;
     this.editor.onAltUp = handlers.onAltUp;
     this.editor.onAltDown = handlers.onAltDown;
-    this.editor.onAltC = handlers.onAltC;
     this.editor.onCtrlG = handlers.onCtrlG;
     this.editor.beforeSubmit = handlers.beforeSubmit;
     this.editor.onChange = handlers.onChange;
     this.editor.onSubmit = handlers.onSubmit;
     this.editor.onSteerSubmit = handlers.onSteerSubmit;
-    this.editor.onFlushQueueAsSteer = handlers.onFlushQueueAsSteer;
   }
 
   setAutocompleteProvider(provider: AutocompleteProvider): void {

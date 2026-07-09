@@ -272,17 +272,24 @@ test("renderChatMessage fails fast when a tool renderer is missing", () => {
   ).toThrow("missing tool ui renderer for event type 'list_success'.");
 });
 
-test("QueuedMessagesComponent renders numbered, italicized previews", () => {
+test("QueuedMessagesComponent distinguishes steering and queued previews", () => {
   const theme = createTagTheme();
-  const component = new QueuedMessagesComponent(theme, ["first line\nsecond", "third"]);
+  const component = new QueuedMessagesComponent(theme, [
+    { id: "steer-1", mode: "steer", text: "change direction\nsecond" },
+    { id: "queue-1", mode: "queue", text: "first queued" },
+    { id: "queue-2", mode: "queue", text: "second queued" },
+  ]);
   const lines = renderLines(component, 80);
-  expect(lines[0]).toBe(
-    "<textDim> queued (2) — alt+up edit · alt+c collapse · alt+s steer all</textDim>",
-  );
+  expect(lines[0]).toBe("<textDim> pending (3) · alt+up edit all</textDim>");
   expect(lines[1]).toBe(
-    "<textDim>  1› </textDim><italic><textMuted>first line</textMuted></italic>",
+    "<textDim>  ↳ </textDim><italic><textMuted>change direction</textMuted></italic>",
   );
-  expect(lines[2]).toBe("<textDim>  2› </textDim><italic><textMuted>third</textMuted></italic>");
+  expect(lines[2]).toBe(
+    "<textDim>  1› </textDim><italic><textMuted>first queued</textMuted></italic>",
+  );
+  expect(lines[3]).toBe(
+    "<textDim>  2› </textDim><italic><textMuted>second queued</textMuted></italic>",
+  );
 });
 
 test("FooterComponent renders risk label with styling", () => {

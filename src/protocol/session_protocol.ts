@@ -13,6 +13,7 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.submit",
   "session.queue",
   "session.steer",
+  "session.cancelPendingMessages",
   "session.retry",
   "session.exec",
   "session.interrupt",
@@ -54,6 +55,7 @@ export const SESSION_PROTOCOL_ERROR_CODES = {
   invalidParams: "invalid_params",
   notFound: "not_found",
   busy: "busy",
+  cancelled: "cancelled",
   internalError: "internal_error",
 } as const;
 
@@ -67,6 +69,7 @@ const SESSION_PROTOCOL_ERROR_CODE_VALUES = [
   SESSION_PROTOCOL_ERROR_CODES.invalidParams,
   SESSION_PROTOCOL_ERROR_CODES.notFound,
   SESSION_PROTOCOL_ERROR_CODES.busy,
+  SESSION_PROTOCOL_ERROR_CODES.cancelled,
   SESSION_PROTOCOL_ERROR_CODES.internalError,
 ] as const;
 
@@ -130,6 +133,7 @@ export type SessionProtocolUserMessageParams = {
 export type SessionProtocolSubmitParams = SessionProtocolUserMessageParams;
 export type SessionProtocolQueueParams = SessionProtocolUserMessageParams;
 export type SessionProtocolSteerParams = SessionProtocolUserMessageParams;
+export type SessionProtocolCancelPendingMessagesParams = SessionProtocolSessionIdParams;
 export type SessionProtocolRecordParams = SessionProtocolSessionIdParams & {
   text: string;
   historyEntryId?: string;
@@ -224,6 +228,7 @@ export type SessionProtocolParamsByMethod = {
   "session.submit": SessionProtocolSubmitParams;
   "session.queue": SessionProtocolQueueParams;
   "session.steer": SessionProtocolSteerParams;
+  "session.cancelPendingMessages": SessionProtocolCancelPendingMessagesParams;
   "session.retry": SessionProtocolRetryParams;
   "session.exec": SessionProtocolExecParams;
   "session.interrupt": SessionProtocolSessionIdParams;
@@ -267,6 +272,21 @@ export type SessionProtocolUserMessageTurnResult = SessionProtocolTurnResult & {
 export type SessionProtocolSubmitResult = SessionProtocolUserMessageTurnResult;
 export type SessionProtocolQueueResult = SessionProtocolUserMessageTurnResult;
 export type SessionProtocolSteerResult = SessionProtocolUserMessageTurnResult;
+
+export type SessionProtocolPendingUserMessage = {
+  id: string;
+  mode: "queue" | "steer";
+  text: string;
+};
+
+export type SessionProtocolLiveState = {
+  revision: number;
+  pendingUserMessages: SessionProtocolPendingUserMessage[];
+};
+
+export type SessionProtocolCancelPendingMessagesResult = {
+  cancelled: SessionProtocolPendingUserMessage[];
+};
 
 export type SessionProtocolRecordResult = {
   snapshot: SessionProtocolSnapshot;
@@ -616,6 +636,7 @@ export type SessionProtocolResultByMethod = {
   "session.submit": SessionProtocolSubmitResult;
   "session.queue": SessionProtocolQueueResult;
   "session.steer": SessionProtocolSteerResult;
+  "session.cancelPendingMessages": SessionProtocolCancelPendingMessagesResult;
   "session.retry": SessionProtocolRetryResult;
   "session.exec": SessionProtocolExecResult;
   "session.interrupt": SessionProtocolInterruptResult;
@@ -798,10 +819,18 @@ export type SessionProtocolEphemeralMessage = {
   event: SessionProtocolEphemeralEvent;
 };
 
+export type SessionProtocolLiveStateMessage = {
+  version: typeof SESSION_PROTOCOL_VERSION;
+  type: "session.live";
+  sessionId: string;
+  state: SessionProtocolLiveState;
+};
+
 export type SessionProtocolOutgoingMessage =
   | SessionProtocolResponseMessage
   | SessionProtocolDeltaMessage
   | SessionProtocolEphemeralMessage
+  | SessionProtocolLiveStateMessage
   | SessionProtocolClientToolMessage
   | SessionProtocolReadyMessage;
 
@@ -809,6 +838,7 @@ export type SessionProtocolParsedOutgoingMessage =
   | SessionProtocolParsedResponseMessage
   | SessionProtocolDeltaMessage
   | SessionProtocolEphemeralMessage
+  | SessionProtocolLiveStateMessage
   | SessionProtocolClientToolMessage
   | SessionProtocolReadyMessage;
 
@@ -936,6 +966,7 @@ const sessionProtocolOutgoingRoutingSchema = z
       "ready",
       "session.delta",
       "session.ephemeral",
+      "session.live",
       "session.clientTool.call",
       "session.clientTool.cancel",
       "response",
@@ -1745,6 +1776,43 @@ const sessionProtocolEphemeralMessageSchema = z
   })
   .strict();
 
+const sessionProtocolPendingUserMessageSchema = z
+  .object({
+    id: nonEmptyStringSchema,
+    mode: z.enum(["queue", "steer"]),
+    text: nonEmptyStringSchema,
+  })
+  .strict();
+
+const sessionProtocolLiveStateSchema = z
+  .object({
+    revision: z.number().int().positive(),
+    pendingUserMessages: z.array(sessionProtocolPendingUserMessageSchema),
+  })
+  .strict()
+  .superRefine((state, ctx) => {
+    const ids = new Set<string>();
+    for (const message of state.pendingUserMessages) {
+      if (ids.has(message.id)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["pendingUserMessages"],
+          message: `duplicate pending user message id '${message.id}'`,
+        });
+      }
+      ids.add(message.id);
+    }
+  }) as z.ZodType<SessionProtocolLiveState>;
+
+const sessionProtocolLiveStateMessageSchema = z
+  .object({
+    version: z.literal(SESSION_PROTOCOL_VERSION),
+    type: z.literal("session.live"),
+    sessionId: nonEmptyStringSchema,
+    state: sessionProtocolLiveStateSchema,
+  })
+  .strict();
+
 const sessionProtocolInitializeResultSchema = z
   .object({
     protocolVersion: z.literal(SESSION_PROTOCOL_VERSION),
@@ -1783,6 +1851,12 @@ const sessionProtocolRetryResultSchema = sessionProtocolTurnResultSchema;
 const sessionProtocolSubmitWithUserResultSchema = sessionProtocolTurnResultSchema
   .extend({
     userHistoryEntryId: nonEmptyStringSchema,
+  })
+  .strict();
+
+const sessionProtocolCancelPendingMessagesResultSchema = z
+  .object({
+    cancelled: z.array(sessionProtocolPendingUserMessageSchema),
   })
   .strict();
 
@@ -2020,6 +2094,26 @@ export function createSessionProtocolEphemeralMessage(options: {
   }
 
   return parsedMessage.data as SessionProtocolEphemeralMessage;
+}
+
+export function createSessionProtocolLiveStateMessage(options: {
+  sessionId: string;
+  state: SessionProtocolLiveState;
+}): SessionProtocolLiveStateMessage {
+  const message = {
+    version: SESSION_PROTOCOL_VERSION,
+    type: "session.live",
+    sessionId: options.sessionId,
+    state: options.state,
+  };
+  const parsedMessage = sessionProtocolLiveStateMessageSchema.safeParse(message);
+  if (!parsedMessage.success) {
+    throw new Error(
+      `session protocol live state message is invalid: ${formatZodError(parsedMessage.error)}`,
+    );
+  }
+
+  return parsedMessage.data as SessionProtocolLiveStateMessage;
 }
 
 export function applySessionProtocolDelta(
@@ -2575,6 +2669,10 @@ export function parseSessionProtocolOutgoingLine(line: string): SessionProtocolO
     return parseSessionProtocolEphemeralMessage(parsed);
   }
 
+  if (routing.data.type === "session.live") {
+    return parseSessionProtocolLiveStateMessage(parsed);
+  }
+
   if (
     routing.data.type === "session.clientTool.call" ||
     routing.data.type === "session.clientTool.cancel"
@@ -2621,6 +2719,10 @@ export function validateSessionProtocolParams(
   method: "session.steer",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolSteerParams>;
+export function validateSessionProtocolParams(
+  method: "session.cancelPendingMessages",
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolCancelPendingMessagesParams>;
 export function validateSessionProtocolParams(
   method: "session.retry",
   params: unknown,
@@ -2724,6 +2826,7 @@ export function validateSessionProtocolParams(
       return validateExecParams(params);
     case "session.list":
       return validateNoParams(method, params);
+    case "session.cancelPendingMessages":
     case "session.retry":
     case "session.interrupt":
     case "session.snapshot":
@@ -2811,6 +2914,8 @@ export function validateSessionProtocolResult(
     case "session.queue":
     case "session.steer":
       return validateResult(method, result, sessionProtocolSubmitWithUserResultSchema);
+    case "session.cancelPendingMessages":
+      return validateResult(method, result, sessionProtocolCancelPendingMessagesResultSchema);
     case "session.record":
       return validateResult(method, result, sessionProtocolRecordResultSchema);
     case "session.retry":
@@ -2826,6 +2931,7 @@ function validateSessionIdParams<
   T extends
     | "session.observe"
     | "session.unobserve"
+    | "session.cancelPendingMessages"
     | "session.retry"
     | "session.interrupt"
     | "session.snapshot"
@@ -3535,6 +3641,37 @@ function parseSessionProtocolEphemeralMessage(
   return {
     ok: true,
     message: ephemeralMessage.data as SessionProtocolEphemeralMessage,
+  };
+}
+
+function parseSessionProtocolLiveStateMessage(
+  payload: unknown,
+): SessionProtocolOutgoingParseResult {
+  const fail = (message: string) =>
+    outgoingParseFailure(
+      "session.live",
+      null,
+      SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      message,
+    );
+
+  const liveMessage = sessionProtocolLiveStateMessageSchema.safeParse(payload);
+  if (!liveMessage.success) {
+    if (hasIssue(liveMessage.error, [], "unrecognized_keys")) {
+      return fail("session.live message contains unsupported fields");
+    }
+    if (hasIssue(liveMessage.error, ["sessionId"])) {
+      return fail("session.live.sessionId must be a non-empty string");
+    }
+    if (hasIssue(liveMessage.error, ["state"])) {
+      return fail("session.live.state is invalid");
+    }
+    return fail(`invalid session.live message: ${formatZodError(liveMessage.error)}`);
+  }
+
+  return {
+    ok: true,
+    message: liveMessage.data as SessionProtocolLiveStateMessage,
   };
 }
 

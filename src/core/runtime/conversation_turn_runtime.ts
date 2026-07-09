@@ -86,6 +86,14 @@ export class ConversationTurnRuntime {
     return true;
   }
 
+  cancelStopAtBoundary(): boolean {
+    if (!this.abortController || !this.stopAtBoundaryRequested) {
+      return false;
+    }
+    this.stopAtBoundaryRequested = false;
+    return true;
+  }
+
   interrupt(): boolean {
     const abortController = this.abortController;
     if (!abortController || abortController.signal.aborted) {

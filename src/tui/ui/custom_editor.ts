@@ -36,10 +36,8 @@ export class CustomEditor extends Editor {
   public onCtrlG?: () => void;
   public onAltUp?: () => void;
   public onAltDown?: () => void;
-  public onAltC?: () => void;
   public beforeSubmit?: (text: string) => boolean;
   public onSteerSubmit?: (text: string) => void;
-  public onFlushQueueAsSteer?: () => void;
 
   constructor(theme: Theme) {
     super(theme.editorTheme);
@@ -127,8 +125,6 @@ export class CustomEditor extends Editor {
     const isEscape = matchesKey(data, Key.escape);
     const isAltUp = matchesKey(data, Key.alt("up")) || data === "\x1b[1;3A";
     const isAltDown = matchesKey(data, Key.alt("down")) || data === "\x1b[1;3B";
-    const isAltC = matchesKey(data, Key.alt("c")) || data === "\x1bc";
-    const isAltS = matchesKey(data, Key.alt("s")) || data === "\x1bs";
 
     if (!isEscape) {
       this.lastEscapeAt = undefined;
@@ -188,16 +184,6 @@ export class CustomEditor extends Editor {
 
     if (isAltDown && this.onAltDown && !this.isShowingAutocomplete()) {
       this.onAltDown();
-      return;
-    }
-
-    if (isAltC && this.onAltC && !this.isShowingAutocomplete()) {
-      this.onAltC();
-      return;
-    }
-
-    if (isAltS && this.onFlushQueueAsSteer && !this.isShowingAutocomplete() && this.inputEnabled) {
-      this.onFlushQueueAsSteer();
       return;
     }
 

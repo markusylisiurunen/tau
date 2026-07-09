@@ -140,6 +140,10 @@ export class ChatRuntime {
     return this.turnRuntime.requestStopAtBoundary();
   }
 
+  cancelTurnBoundaryStop(): boolean {
+    return this.turnRuntime.cancelStopAtBoundary();
+  }
+
   interruptTurn(): boolean {
     return this.turnRuntime.interrupt();
   }

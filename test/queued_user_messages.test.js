@@ -1,91 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { QueuedUserMessages } from "../dist/tui/chat_controller/queued_user_messages.js";
+import { joinQueuedUserMessages } from "../dist/tui/chat_controller/queued_user_messages.js";
 
-describe("QueuedUserMessages", () => {
-  it("drains queued messages in order", async () => {
-    const queue = ["first", "second"];
-    const manager = new QueuedUserMessages(queue);
-    const seen = [];
-
-    await manager.drain({
-      isStreaming: () => false,
-      onUserInput: async (text) => {
-        seen.push(text);
-      },
-      requestRender: () => {},
-      sendTerminalNotification: () => {},
-      buildIdleNotificationTitle: () => "idle",
-    });
-
-    expect(seen).toEqual(["first", "second"]);
-    expect(queue).toEqual([]);
-  });
-
-  it("moves queued messages into the editor on dequeue", () => {
-    const queue = ["one", "two"];
-    const manager = new QueuedUserMessages(queue);
-    let editorText = "existing";
-
-    manager.dequeueIntoEditor({
-      getEditorText: () => editorText,
-      setEditorText: (text) => {
-        editorText = text;
-      },
-    });
-
-    expect(editorText).toBe("existing\n\n---\n\none\n\n---\n\ntwo");
-    expect(queue).toEqual([]);
-  });
-
-  it("requeues messages before existing queued messages", () => {
-    const queue = ["third"];
-    const manager = new QueuedUserMessages(queue);
-    let renderCount = 0;
-
-    manager.requeueFront(["first", "second"], () => {
-      renderCount += 1;
-    });
-
-    expect(queue).toEqual(["first", "second", "third"]);
-    expect(renderCount).toBe(1);
-  });
-
-  it("collapses queued messages into one message", () => {
-    const queue = ["one", "two", "three"];
-    const manager = new QueuedUserMessages(queue);
-
-    expect(manager.collapse()).toBe(true);
-
-    expect(queue).toEqual(["one\n\n---\n\ntwo\n\n---\n\nthree"]);
-  });
-
-  it("fires pending idle notification once after draining", async () => {
-    const queue = [];
-    const manager = new QueuedUserMessages(queue);
-    const notifications = [];
-
-    manager.markPendingIdleNotification();
-
-    await manager.drain({
-      isStreaming: () => false,
-      onUserInput: async () => {},
-      requestRender: () => {},
-      sendTerminalNotification: (title) => {
-        notifications.push(title);
-      },
-      buildIdleNotificationTitle: () => "ready",
-    });
-
-    await manager.drain({
-      isStreaming: () => false,
-      onUserInput: async () => {},
-      requestRender: () => {},
-      sendTerminalNotification: (title) => {
-        notifications.push(title);
-      },
-      buildIdleNotificationTitle: () => "ready",
-    });
-
-    expect(notifications).toEqual(["ready"]);
+describe("joinQueuedUserMessages", () => {
+  it("joins restored pending messages with editor separators", () => {
+    expect(joinQueuedUserMessages(["existing", "steer", "queued"])).toBe(
+      "existing\n\n---\n\nsteer\n\n---\n\nqueued",
+    );
   });
 });

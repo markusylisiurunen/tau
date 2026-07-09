@@ -1,11 +1,15 @@
 export type {
   SessionProtocolDelta,
+  SessionProtocolLiveState,
+  SessionProtocolLiveStateMessage,
+  SessionProtocolPendingUserMessage,
   SessionProtocolSnapshot,
 } from "../protocol/index.js";
 export { applySessionProtocolDelta } from "../protocol/index.js";
 export type {
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
+  SessionProtocolLiveStateListener,
   SessionProtocolSpawnedProcess,
   SessionProtocolTransport,
   TauSessionProtocolError,
@@ -36,10 +40,14 @@ export type {
   TauSdkEphemeralListener,
   TauSdkEphemeralSubmitResult,
   TauSdkInitializeParams,
+  TauSdkLiveState,
+  TauSdkLiveStateListener,
+  TauSdkLiveStateMessage,
   TauSdkReadyMessage,
   TauSdkRequestId,
   TauSdkResolvePromptResult,
   TauSdkSession,
+  TauSdkSessionCancelPendingMessagesResult,
   TauSdkSessionClient,
   TauSdkSessionCompactResult,
   TauSdkSessionExecResult,

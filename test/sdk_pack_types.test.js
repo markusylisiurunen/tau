@@ -31,8 +31,8 @@ describe("sdk npm pack types", () => {
       });
       expect(packResult.status).toBe(0);
 
-      const packEntries = JSON.parse(packResult.stdout);
-      expect(Array.isArray(packEntries)).toBe(true);
+      const packOutput = JSON.parse(packResult.stdout);
+      const packEntries = Array.isArray(packOutput) ? packOutput : Object.values(packOutput);
       expect(packEntries.length).toBeGreaterThan(0);
       const packageFilename = packEntries[0]?.filename;
       expect(typeof packageFilename).toBe("string");

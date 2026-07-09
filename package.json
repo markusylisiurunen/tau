@@ -27,27 +27,27 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.80.2",
-    "@earendil-works/pi-tui": "^0.80.2",
+    "@earendil-works/pi-ai": "^0.80.3",
+    "@earendil-works/pi-tui": "^0.80.3",
     "@fly/sprites": "^0.0.1",
     "chalk": "^5.6.2",
     "file-type": "^21.3.4",
     "jose": "^6.2.3",
-    "sharp": "^0.35.2",
+    "sharp": "^0.35.3",
     "strip-ansi": "^7.2.0",
-    "typebox": "^1.3.1",
+    "typebox": "^1.3.6",
     "ws": "^8.21.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.1",
-    "@types/node": "^25.9.4",
+    "@biomejs/biome": "2.5.3",
+    "@types/node": "^25.9.5",
     "@types/ws": "^8.18.1",
     "colorjs.io": "^0.6.1",
-    "prettier": "^3.8.5",
+    "prettier": "^3.9.4",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -55,7 +55,7 @@
   "allowScripts": {
     "@google/genai@1.52.0": true,
     "fsevents@2.3.3": true,
-    "protobufjs@7.5.8": true,
+    "protobufjs@7.6.5": true,
     "sharp@0.34.5": true
   }
 }

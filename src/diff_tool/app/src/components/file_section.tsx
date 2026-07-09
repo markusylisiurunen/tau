@@ -84,8 +84,7 @@ export const FileSection = memo(function FileSection({
 }: FileSectionProps) {
   const options = useMemo(() => {
     const resolvedDiffStyle = (diffStyle === "split" ? "split" : "unified") as
-      | "split"
-      | "unified";
+      "split" | "unified";
 
     return {
       ...baseDiffOptions,

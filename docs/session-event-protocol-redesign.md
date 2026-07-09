@@ -246,12 +246,7 @@ type SessionToolRun = {
     contentIndex: number;
   };
   status:
-    | "queued"
-    | "running"
-    | "succeeded"
-    | "failed"
-    | "blocked"
-    | "cancelled";
+    "queued" | "running" | "succeeded" | "failed" | "blocked" | "cancelled";
   startedAt?: number;
   finishedAt?: number;
   resultMessageId?: string;

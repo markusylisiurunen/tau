@@ -61,8 +61,7 @@ import type {
 const emptyAnnotations: LineAnnotation[] = [];
 
 type DetachedThreadDialogState =
-  | { mode: "new" }
-  | { mode: "thread"; threadId: string };
+  { mode: "new" } | { mode: "thread"; threadId: string };
 
 const LocalAgentation = import.meta.env.DEV
   ? lazy(async () => {

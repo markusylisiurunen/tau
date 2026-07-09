@@ -1,4 +1,5 @@
-import type { AssistantMessage, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
+import { stripTauUserDisplayText } from "./user_metadata.js";
 
 export function extractAssistantText(message: AssistantMessage): string {
   return message.content
@@ -6,6 +7,23 @@ export function extractAssistantText(message: AssistantMessage): string {
     .map((c) => c.text)
     .join("\n")
     .trim();
+}
+
+export function extractUserText(message: Message): string {
+  if (message.role !== "user") {
+    return "";
+  }
+
+  if (typeof message.content === "string") {
+    return stripTauUserDisplayText(message.content);
+  }
+
+  return stripTauUserDisplayText(
+    message.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n"),
+  );
 }
 
 export function createToolResult(

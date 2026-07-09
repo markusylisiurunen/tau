@@ -7,6 +7,10 @@ import type { SessionProtocolSnapshot } from "../../protocol/session_protocol.js
 import type { SpeechToTextProvider, TelegramProjectConfig } from "../config/schema.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
 import { transcribeAudio } from "../utils/speech_to_text.js";
+import {
+  collectSpeechToTextContext,
+  type SpeechToTextContext,
+} from "../utils/speech_to_text_context.js";
 import { formatTauUserText, splitTauUserText } from "../utils/user_metadata.js";
 import { formatZodError } from "../utils/zod.js";
 import {
@@ -2219,6 +2223,22 @@ class TelegramAdapterImpl {
     }
   }
 
+  private async resolveSpeechToTextContext(
+    chatId: number,
+  ): Promise<SpeechToTextContext | undefined> {
+    const session = this.getActiveSession(chatId);
+    if (!session) {
+      return undefined;
+    }
+
+    try {
+      const snapshot = await this.getSessionManagerForChat(chatId).getSessionSnapshot(session.id);
+      return snapshot ? collectSpeechToTextContext(snapshot) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private getSpeechToTextApiKey(): string | undefined {
     return this.speechToTextProvider === "gemini" ? this.geminiApiKey : this.mistralApiKey;
   }
@@ -2253,6 +2273,7 @@ class TelegramAdapterImpl {
           audio,
           fileName: message.fileName,
           mimeType: message.mimeType,
+          context: await this.resolveSpeechToTextContext(chatId),
           fetchImpl: this.fetchImpl,
         })
       ).trim();

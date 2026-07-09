@@ -140,6 +140,7 @@ export class SessionChatApp implements ModeAdapter {
         themeId: options.themeId,
         themes: options.themes ?? [],
       });
+      let app: SessionChatApp;
       const controller = new SessionChatController({
         view,
         session,
@@ -152,6 +153,7 @@ export class SessionChatApp implements ModeAdapter {
         queuedUserMessages,
         caffeinated: options.caffeinated,
         themeIds: (options.themes ?? []).map((theme) => theme.id),
+        onExit: () => app.exit(),
       });
       const sources = controller.getAutocompleteSources();
       view.setAutocompleteProvider(
@@ -170,7 +172,7 @@ export class SessionChatApp implements ModeAdapter {
         ),
       );
       const handlers = controller.getInputHandlers();
-      const app = new SessionChatApp({
+      app = new SessionChatApp({
         view,
         controller,
         client: options.client,
@@ -221,7 +223,7 @@ export class SessionChatApp implements ModeAdapter {
     const now = Date.now();
     if (this.lastCtrlCAt !== undefined && now - this.lastCtrlCAt <= EXIT_DOUBLE_PRESS_WINDOW_MS) {
       this.lastCtrlCAt = undefined;
-      void this.stop().finally(() => process.exit(0));
+      this.exit();
       return;
     }
 
@@ -229,6 +231,10 @@ export class SessionChatApp implements ModeAdapter {
     this.view.addSystemMessage("press ctrl+c again to quit", "warn", {
       toastDurationMs: EXIT_TOAST_DURATION_MS,
     });
+  }
+
+  private exit(): void {
+    void this.stop().finally(() => process.exit(0));
   }
 }
 

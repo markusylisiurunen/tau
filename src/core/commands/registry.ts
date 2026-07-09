@@ -6,6 +6,7 @@ export type Command = (
   | { type: "help" }
   | { type: "copyText" }
   | { type: "copyCode" }
+  | { type: "exit" }
   | { type: "new" }
   | { type: "rewind" }
   | { type: "diff"; argsText: string }
@@ -48,6 +49,7 @@ export interface CommandDispatchContext {
   help: () => void;
   copyText: () => Promise<void>;
   copyCode: () => Promise<void>;
+  exit: () => void;
   newSession: () => Promise<void>;
   rewind: () => void;
   diff: (argsText: string) => Promise<void> | void;
@@ -241,6 +243,22 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "help", extra };
     },
     run: (ctx) => ctx.help(),
+  });
+
+  registry.register({
+    id: "exit",
+    usage: "/exit",
+    description: "exit tau",
+    autocompleteDescription: "exit tau",
+    argument: "none",
+    section: "base",
+    allowDuringStreaming: true,
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/exit") return null;
+      return { type: "exit", extra };
+    },
+    run: (ctx) => ctx.exit(),
   });
 
   registry.register({

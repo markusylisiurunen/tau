@@ -106,6 +106,7 @@ export type SessionChatControllerOptions = {
   queuedUserMessages?: string[];
   caffeinated?: boolean;
   themeIds?: string[];
+  onExit?: () => void;
 };
 
 export class SessionChatController {
@@ -176,6 +177,7 @@ export class SessionChatController {
       help: () => this.showHelp(),
       copyText: () => this.copyLastAssistantText(),
       copyCode: () => this.copyLastAssistantCode(),
+      exit: () => options.onExit?.(),
       newSession: () => this.createNewSession(),
       rewind: () => this.startRewindFlow(),
       diff: (argsText) => this.startDiffReview(argsText),

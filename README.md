@@ -136,7 +136,7 @@ For stdio attach, use `--session <id>` before `--`:
 tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/to/repo && tau rpc --risk read-only'
 ```
 
-Session attach renders the authoritative session snapshot, streams live `session.delta` updates, submits normal user input, supports steering/interruption, runs `!`/`!!` shell commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, changes the session risk level with `/risk:<level>` or `Ctrl+R`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, and creates a new session with `/new`.
+Session attach renders the authoritative session snapshot, streams live `session.delta` updates, submits normal user input, supports steering/interruption, runs `!`/`!!` shell commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, changes the session risk level with `/risk:<level>` or `Ctrl+R`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
 
 ## Telegram runner
 
@@ -450,6 +450,7 @@ tau supports slash commands for common actions:
 | --- | --- |
 | `/help` | show available commands |
 | `/new` | clear the session and start fresh |
+| `/exit` | exit the TUI |
 | `/rewind` | open a picker to rewind context from a selected user message |
 | `/copy:text` | copy the last assistant message |
 | `/copy:code` | copy just the code blocks |

@@ -620,31 +620,12 @@ export class SessionChatController {
       return;
     }
 
-    if (!this.isStreaming) {
-      if (this.submittedTurnInProgress) {
-        this.queuedMessageBuffer.enqueue(trimmed, () => this.view.requestRender());
-        this.view.addSystemMessage("message queued", "success", {
-          persist: false,
-        });
-        return;
-      }
-
+    if (!this.isSessionOperationActive()) {
       await this.submitUserText(trimmed);
       return;
     }
 
-    if (!this.submittedTurnInProgress) {
-      this.queuedMessageBuffer.enqueue(trimmed, () => this.view.requestRender());
-      this.view.addSystemMessage("current task cannot be steered; message queued", "warn");
-      return;
-    }
-
-    this.view.addSystemMessage("steering queued for next turn boundary", "success");
-    void this.session
-      .steer(trimmed, { historyEntryId: `session-steer-${randomUUID()}` })
-      .catch((error) => {
-        this.view.addSystemMessage(`steering failed: ${(error as Error).message}`, "error");
-      });
+    this.submitSteeringText(trimmed);
   }
 
   private async flushQueuedMessagesAsSteering(): Promise<void> {
@@ -653,20 +634,21 @@ export class SessionChatController {
       return;
     }
 
-    if (!this.isStreaming || !this.submittedTurnInProgress) {
-      this.view.addSystemMessage(
-        "current task cannot be steered; queued messages unchanged",
-        "warn",
-      );
-      return;
-    }
-
-    const text = this.queuedMessageBuffer.flush().join("\n\n");
-    this.view.addSystemMessage("queued messages will steer at the next turn boundary", "success");
+    const messages = this.queuedMessageBuffer.flush();
+    const text = messages.join("\n\n");
     this.view.requestRender();
+    this.submitSteeringText(text, {
+      onFailure: () => {
+        this.queuedMessageBuffer.requeueFront(messages, () => this.view.requestRender());
+      },
+    });
+  }
+
+  private submitSteeringText(text: string, options: { onFailure?: () => void } = {}): void {
     void this.session
       .steer(text, { historyEntryId: `session-steer-${randomUUID()}` })
       .catch((error) => {
+        options.onFailure?.();
         this.view.addSystemMessage(`steering failed: ${(error as Error).message}`, "error");
       });
   }

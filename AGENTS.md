@@ -304,7 +304,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 
 ## Commands
 
-- `/help`, `/new`, `/rewind`, `/diff [git diff args...]` (opens the TUI-local diff review tool), `/copy:text`, `/copy:code`, `/reload`, `/listen` (macOS only; can record while assistant works; warns on Linux), `/speak` (macOS only; speaks the last assistant message)
+- `/help`, `/new`, `/exit`, `/rewind`, `/diff [git diff args...]` (opens the TUI-local diff review tool), `/copy:text`, `/copy:code`, `/reload`, `/listen` (macOS only; can record while assistant works; warns on Linux), `/speak` (macOS only; speaks the last assistant message)
 - `/compact:summary-only`, `/compact:summary-and-last` - Manually compact history into a single synthetic user summary message with compaction-model-selected original user messages copied verbatim inside the summary (optionally includes last assistant message verbatim when available); automatic compaction is separate and keeps a retained recent tail
 - `/prune:earliest`, `/prune:largest`, `/prune:smart` - Prune tool results and compact edit call payloads/results
 - `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`

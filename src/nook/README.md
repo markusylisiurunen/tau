@@ -6,6 +6,7 @@ V0 scope is intentionally narrow:
 
 - Cloudflare only: one Worker, R2 assets, a global Registry Durable Object, and one Site Durable Object per site.
 - Static assets only. Build locally first, then deploy the output directory.
+- Templates are Nook-hosted editable directories. Copy them locally, modify/build normally, then deploy explicitly.
 - Sites live at `https://<nook-domain>/<site>/`; there are no wildcard subdomain app URLs or `workers.dev` fallback.
 - Deploys are private by default. `--public` makes the active deployment public; omitting it on the next deploy makes the active deployment private again.
 - Browser KV is per-site JSON state. It survives redeploys and is public-writable when the active deployment is public.
@@ -70,6 +71,21 @@ Deploy requirements:
 - Each site can have at most three non-expired pending deploy sessions.
 - Deployed asset URLs remain stable across deploys, so responses require cache revalidation.
 
+## templates
+
+Templates are reusable directory snapshots stored in the configured Nook backend. They are not deployed directly and do not perform variable substitution or builds.
+
+```sh
+tau nook template list
+tau nook template save starter ./app
+tau nook template copy starter ./next-app
+tau nook template delete starter
+```
+
+`save` creates or replaces the named template from a local directory. `copy` requires the destination directory to already exist and be empty, then writes the template there so you can edit it locally, install dependencies, build, and deploy the resulting static output with `tau nook deploy`.
+
+Template files use the same safety rules as deploy artifacts: hidden files/directories, symlinks, reserved `/__nook/*` paths, and invalid paths are rejected. Unlike deploys, templates do not need a root `index.html`.
+
 ## browser SDK
 
 The Worker injects `/<site>/__nook/client.js` just after the opening HTML body tag. If your code runs from the document head, wait for `DOMContentLoaded` (or otherwise run after the page has loaded) before using `window.nook`:
@@ -91,6 +107,10 @@ KV values must be JSON-serializable. Keys and total site KV storage have fixed g
 tau nook skill
 tau nook list
 tau nook delete demo
+tau nook template list
+tau nook template copy starter ./app
+tau nook template save starter ./app
+tau nook template delete starter
 tau nook kv get demo settings
 tau nook kv put demo settings '{"theme":"dark"}'
 tau nook kv delete demo settings

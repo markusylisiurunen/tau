@@ -3,11 +3,14 @@ export type {
   NookDeployResult,
   NookKvListResult,
   NookSiteSummary,
+  NookTemplateCopyResult,
+  NookTemplateManifestResult,
+  NookTemplateSummary,
   NookVisibility,
 } from "./client.js";
 export { createNookClientFromConfig, NookClient } from "./client.js";
 export type { NookDeployFile } from "./deploy.js";
-export { buildNookDeployManifest } from "./deploy.js";
+export { buildNookDeployManifest, buildNookTemplateManifest } from "./deploy.js";
 export type { NookManifestFile, NookValidationResult } from "./validation.js";
 export {
   NOOK_DEPLOY_LIMITS,
@@ -16,4 +19,6 @@ export {
   normalizeNookDomain,
   validateNookManifest,
   validateNookSiteSlug,
+  validateNookTemplateManifest,
+  validateNookTemplateName,
 } from "./validation.js";

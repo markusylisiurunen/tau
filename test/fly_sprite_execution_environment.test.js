@@ -369,6 +369,12 @@ describe("Fly Sprite execution environment", () => {
       bytes: 11,
       lines: 2,
     });
+    await expect(
+      backend.writeFileBinary("/home/sprite/repo/image.bin", Buffer.from([0, 255])),
+    ).resolves.toEqual({
+      path: "/home/sprite/repo/image.bin",
+      bytes: 2,
+    });
     await expect(backend.listDir("/home/sprite/repo")).resolves.toEqual({
       path: "/home/sprite/repo",
       entries: [{ name: "file.txt", isDirectory: false, isSymlink: false }],
@@ -379,8 +385,10 @@ describe("Fly Sprite execution environment", () => {
       "readFile",
       "readFileBinary",
       "writeFile",
+      "writeFile",
       "listDir",
     ]);
+    expect(requests[3].contentBase64).toBe(Buffer.from([0, 255]).toString("base64"));
   });
 
   it("parses worker responses split across many small stdout chunks", async () => {

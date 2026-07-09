@@ -281,6 +281,15 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       return buildWriteFileResult(path, content);
     },
 
+    async writeFileBinary(path, content) {
+      const dir = dirname(path);
+      if (dir && dir !== ".") {
+        await exec(`mkdir -p ${shellQuote(dir)}`);
+      }
+      await client.writeFile(sandboxId, path, content);
+      return { path, bytes: content.byteLength };
+    },
+
     async listDir(path) {
       const result = await exec(`node -e ${shellQuote(NODE_LIST_DIR_SCRIPT)} ${shellQuote(path)}`);
       if (result.exitCode !== 0) {

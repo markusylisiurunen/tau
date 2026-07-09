@@ -4,7 +4,7 @@ Tau's Nook subtree contains the bundled Cloudflare-only static mini-app platform
 
 ## Scope
 
-- Supported: static asset hosting, per-site JSON KV, private/public active deployments, CLI setup/destroy/deploy/list/delete/KV operations, and the configured `nook` model tool.
+- Supported: static asset hosting, Nook-hosted editable templates, per-site JSON KV, private/public active deployments, CLI setup/destroy/deploy/list/delete/template/KV operations, and the configured `nook` model tool.
 - Unsupported in V0: provider abstraction, dashboards, wildcard subdomain app URLs, rollback/history, per-site server code, realtime, AI proxy APIs, ownership/roles, audit logs, `.gitignore`/`.nookignore`, and automatic DNS or Cloudflare Access setup.
 - Build app artifacts outside Nook, then deploy the output directory. Do not add bundler-specific behavior to the Worker.
 

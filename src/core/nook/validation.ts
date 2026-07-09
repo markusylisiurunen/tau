@@ -80,25 +80,32 @@ export function normalizeNookDomain(rawDomain: string): string {
   return domain;
 }
 
-export function validateNookSiteSlug(slug: string): NookValidationResult {
-  if (!/^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(slug)) {
+function validateNookPathLabel(value: string, label: string, code: string): NookValidationResult {
+  if (!/^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(value)) {
     return {
       ok: false,
-      code: "invalid_slug",
-      message:
-        "Site slug must be 2-63 lowercase letters, numbers, or hyphens, and must start and end with a letter or number.",
+      code,
+      message: `${label} must be 2-63 lowercase letters, numbers, or hyphens, and must start and end with a letter or number.`,
     };
   }
+  return { ok: true };
+}
 
-  if (RESERVED_SITE_SLUGS.has(slug) || slug.startsWith("__")) {
+export function validateNookSiteSlug(slug: string): NookValidationResult {
+  const result = validateNookPathLabel(slug, "Site slug", "invalid_slug");
+  if (!result.ok) return result;
+  if (RESERVED_SITE_SLUGS.has(slug)) {
     return {
       ok: false,
       code: "reserved_slug",
       message: `Site slug '${slug}' is reserved.`,
     };
   }
-
   return { ok: true };
+}
+
+export function validateNookTemplateName(name: string): NookValidationResult {
+  return validateNookPathLabel(name, "Template name", "invalid_template_name");
 }
 
 export function normalizeNookAssetPath(rawPath: string): string {
@@ -145,12 +152,17 @@ export function assertVisibleNookRelativePath(relativePath: string): void {
   }
 }
 
-export function validateNookManifest(files: NookManifestFile[]): void {
+function validateNookFileManifest(
+  files: NookManifestFile[],
+  options: { artifactLabel: string; requireIndex: boolean },
+): void {
   if (files.length === 0) {
-    throw new Error("deploy directory has no files");
+    throw new Error(`${options.artifactLabel} directory has no files`);
   }
   if (files.length > NOOK_DEPLOY_LIMITS.maxFiles) {
-    throw new Error(`deployment exceeds maximum file count ${NOOK_DEPLOY_LIMITS.maxFiles}`);
+    throw new Error(
+      `${options.artifactLabel} exceeds maximum file count ${NOOK_DEPLOY_LIMITS.maxFiles}`,
+    );
   }
 
   let totalBytes = 0;
@@ -186,11 +198,21 @@ export function validateNookManifest(files: NookManifestFile[]): void {
     totalBytes += file.sizeBytes;
   }
 
-  if (!hasIndex) {
+  if (options.requireIndex && !hasIndex) {
     throw new Error("deploy directory must contain root index.html");
   }
 
   if (totalBytes > NOOK_DEPLOY_LIMITS.maxTotalBytes) {
-    throw new Error(`deployment exceeds maximum total size ${NOOK_DEPLOY_LIMITS.maxTotalBytes}`);
+    throw new Error(
+      `${options.artifactLabel} exceeds maximum total size ${NOOK_DEPLOY_LIMITS.maxTotalBytes}`,
+    );
   }
+}
+
+export function validateNookManifest(files: NookManifestFile[]): void {
+  validateNookFileManifest(files, { artifactLabel: "deployment", requireIndex: true });
+}
+
+export function validateNookTemplateManifest(files: NookManifestFile[]): void {
+  validateNookFileManifest(files, { artifactLabel: "template", requireIndex: false });
 }

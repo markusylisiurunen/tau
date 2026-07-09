@@ -47,6 +47,10 @@ type DurableObjectState = {
   storage: DurableObjectStorage;
 };
 
+type WorkerExecutionContext = {
+  waitUntil(promise: Promise<unknown>): void;
+};
+
 type DurableObjectStorage = {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
@@ -85,6 +89,24 @@ type SiteSummary = {
   updatedAt: string;
   latestDeploymentId?: string;
   visibility?: "public" | "private";
+};
+
+type TemplateSummary = {
+  name: string;
+  revisionId: string;
+  createdAt: string;
+  updatedAt: string;
+  fileCount: number;
+  byteCount: number;
+};
+
+type TemplateSaveRecord = {
+  saveId: string;
+  token: string;
+  createdAt: string;
+  expiresAt: string;
+  files: ManifestFile[];
+  uploaded: string[];
 };
 
 type SiteState = {
@@ -135,7 +157,9 @@ declare const HTMLRewriter: {
 
 const RESERVED_PREFIX = "/__nook";
 const DEPLOY_SESSION_MS = 15 * 60 * 1000;
+const TEMPLATE_SAVE_SESSION_MS = 15 * 60 * 1000;
 const MAX_PENDING_DEPLOYMENTS = 3;
+const MAX_PENDING_TEMPLATE_SAVES = 3;
 const MAX_FILES = 1_000;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
@@ -145,14 +169,25 @@ const MAX_KV_VALUE_BYTES = 64 * 1024;
 const MAX_KV_KEYS = 1_000;
 const MAX_KV_TOTAL_BYTES = 5 * 1024 * 1024;
 const DEPLOYED_ASSET_CACHE_CONTROL = "public, no-cache, must-revalidate";
+const RESERVED_SITE_SLUGS = new Set([
+  "admin",
+  "api",
+  "assets",
+  "login",
+  "logout",
+  "nook",
+  "quick",
+  "static",
+  "www",
+]);
 
 const accessJwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 const SKILL_MARKDOWN = `# Nook
 
-Nook deploys static mini-apps to path-based site URLs and gives each site same-origin JSON KV through window.nook.
+Nook deploys static mini-apps to path-based site URLs and gives each site same-origin JSON KV through window.nook. It also stores editable templates that can be copied to a working directory, modified, built, and deployed separately.
 
-Deploy a finished static directory only. The directory must contain /index.html, must not contain hidden files or symlinks, and must not contain files under /__nook/.
+Deploy a finished static directory only. The directory must contain /index.html, must not contain hidden files or symlinks, and must not contain files under /__nook/. Templates follow the same file safety rules but do not require /index.html. Copying a template requires an existing empty destination directory.
 
 Sites are served at https://<nook-domain>/<site>/.
 
@@ -318,16 +353,19 @@ async function optionalAccessIdentity(request: Request, env: Env): Promise<Ident
   }
 }
 
-function validateSlug(slug: string): string | undefined {
-  if (!/^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(slug)) return "invalid slug";
-  if (
-    new Set(["admin", "api", "assets", "login", "logout", "nook", "quick", "static", "www"]).has(
-      slug,
-    )
-  ) {
-    return "reserved slug";
-  }
+function validatePathLabel(value: string, label: string): string | undefined {
+  if (!/^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(value)) return `invalid ${label}`;
   return undefined;
+}
+
+function validateSlug(slug: string): string | undefined {
+  return (
+    validatePathLabel(slug, "slug") ?? (RESERVED_SITE_SLUGS.has(slug) ? "reserved slug" : undefined)
+  );
+}
+
+function validateTemplateName(name: string): string | undefined {
+  return validatePathLabel(name, "template name");
 }
 
 function normalizeAssetPath(pathname: string): string | undefined {
@@ -353,9 +391,13 @@ function normalizeAssetPath(pathname: string): string | undefined {
   return normalized;
 }
 
-function validateManifest(files: ManifestFile[]): string | undefined {
+function validateManifest(
+  files: ManifestFile[],
+  options: { requireIndex: boolean; artifactLabel: string },
+): string | undefined {
+  const label = options.artifactLabel;
   if (!Array.isArray(files) || files.length === 0) return "manifest must include files";
-  if (files.length > MAX_FILES) return `deployment exceeds ${MAX_FILES} files`;
+  if (files.length > MAX_FILES) return `${label} exceeds ${MAX_FILES} files`;
   const paths = new Set<string>();
   let total = 0;
   let hasIndex = false;
@@ -378,8 +420,8 @@ function validateManifest(files: ManifestFile[]): string | undefined {
     if (typeof file.contentType !== "string" || !file.contentType)
       return `invalid content type for ${file.path}`;
   }
-  if (!hasIndex) return "root index.html is required";
-  if (total > MAX_TOTAL_BYTES) return `deployment exceeds max total size`;
+  if (options.requireIndex && !hasIndex) return "root index.html is required";
+  if (total > MAX_TOTAL_BYTES) return `${label} exceeds max total size`;
   return undefined;
 }
 
@@ -446,6 +488,14 @@ function assetKey(site: string, deploymentId: string, path: string): string {
   return `sites/${site}/deployments/${deploymentId}${path}`;
 }
 
+function templateRevisionPrefix(name: string, revisionId: string): string {
+  return `templates/${name}/revisions/${revisionId}/`;
+}
+
+function templateFileKey(name: string, revisionId: string, path: string): string {
+  return `${templateRevisionPrefix(name, revisionId)}${path.replace(/^\/+/, "")}`;
+}
+
 function siteUrl(domain: string, site: string): string {
   return `https://${domain}/${site}/`;
 }
@@ -470,12 +520,157 @@ async function deleteR2Prefix(bucket: R2Bucket, prefix: string): Promise<number>
   return deleted;
 }
 
+async function handleTemplateApi(
+  request: Request,
+  env: Env,
+  url: URL,
+  ctx: WorkerExecutionContext,
+): Promise<Response> {
+  const match = url.pathname.match(
+    /^\/__nook\/api\/templates(?:\/([^/]+))?(?:\/save\/([^/]+)\/(file|finish)|\/save\/start|\/file)?$/,
+  );
+  if (!match) return error("not_found", "Unknown Nook API route", 404);
+
+  const name = match[1] ? decodeURIComponent(match[1]) : undefined;
+  const saveId = match[2] ? decodeURIComponent(match[2]) : undefined;
+  const saveAction = match[3];
+
+  if (url.pathname === "/__nook/api/templates" && request.method === "GET") {
+    return await registryFetch(env, "/templates");
+  }
+
+  if (!name) return error("template_not_found", "Template is required", 404);
+  const nameError = validateTemplateName(name);
+  if (nameError) return error("invalid_template", nameError, 400);
+
+  if (request.method === "GET" && url.pathname === `/__nook/api/templates/${name}`) {
+    return await registryFetch(env, `/templates/${encodeURIComponent(name)}/manifest`);
+  }
+
+  if (request.method === "GET" && url.pathname === `/__nook/api/templates/${name}/file`) {
+    const revisionId = url.searchParams.get("revision");
+    if (!revisionId || !/^tpl_[a-f0-9]{24}$/.test(revisionId)) {
+      return error("invalid_revision", "Invalid template revision", 400);
+    }
+    const path = url.searchParams.get("path");
+    const normalized = path ? normalizeAssetPath(path) : undefined;
+    if (!normalized || normalized !== path)
+      return error("invalid_path", "Invalid template file path", 400);
+    const object = await env.ASSETS.get(templateFileKey(name, revisionId, normalized));
+    if (!object) return error("not_found", "Template file not found", 404);
+    return new Response(object.body, {
+      headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream" },
+    });
+  }
+
+  if (request.method === "DELETE" && url.pathname === `/__nook/api/templates/${name}`) {
+    await deleteR2Prefix(env.ASSETS, `templates/${name}/`);
+    await registryFetch(env, `/templates/${encodeURIComponent(name)}`, { method: "DELETE" });
+    return json({ template: name, deleted: true });
+  }
+
+  if (request.method === "POST" && url.pathname.endsWith("/save/start")) {
+    const body = (await readJson(request)) as { files?: ManifestFile[] };
+    const files = body.files ?? [];
+    const validationError = validateManifest(files, {
+      requireIndex: false,
+      artifactLabel: "template",
+    });
+    if (validationError) return error("invalid_manifest", validationError, 400);
+    const start = await registryFetch(env, `/templates/${encodeURIComponent(name)}/save/start`, {
+      method: "POST",
+      body: JSON.stringify({ files }),
+    });
+    if (!start.ok) return start;
+    const result = (await start.json()) as {
+      saveId: string;
+      upload: string[];
+      token: string;
+      expiredSaveIds: string[];
+    };
+    for (const expiredSaveId of result.expiredSaveIds) {
+      ctx.waitUntil(deleteR2Prefix(env.ASSETS, templateRevisionPrefix(name, expiredSaveId)));
+    }
+    const { expiredSaveIds: _expiredSaveIds, ...response } = result;
+    return json(response);
+  }
+
+  if (!saveId) return error("save_not_found", "Template save is required", 404);
+  const token = request.headers.get("x-nook-template-token");
+  if (!token) return error("unauthorized", "Missing template save token", 401);
+
+  if (request.method === "PUT" && saveAction === "file") {
+    const path = url.searchParams.get("path");
+    if (!path) return error("invalid_path", "Missing upload path", 400);
+    const verify = await registryFetch(
+      env,
+      `/templates/${encodeURIComponent(name)}/save/${encodeURIComponent(saveId)}/verify-upload`,
+      {
+        method: "POST",
+        body: JSON.stringify({ token, path }),
+      },
+    );
+    if (!verify.ok) return verify;
+    const payload = (await verify.json()) as { file: ManifestFile };
+    const bytes = await request.arrayBuffer();
+    if (bytes.byteLength !== payload.file.sizeBytes) {
+      return error("invalid_upload", "Uploaded file size does not match manifest", 400);
+    }
+    if ((await sha256Hex(bytes)) !== payload.file.sha256) {
+      return error("invalid_upload", "Uploaded file hash does not match manifest", 400);
+    }
+    await env.ASSETS.put(templateFileKey(name, saveId, payload.file.path), bytes, {
+      httpMetadata: { contentType: payload.file.contentType },
+    });
+    return await registryFetch(
+      env,
+      `/templates/${encodeURIComponent(name)}/save/${encodeURIComponent(saveId)}/mark-uploaded`,
+      {
+        method: "POST",
+        body: JSON.stringify({ token, path }),
+      },
+    );
+  }
+
+  if (request.method === "POST" && saveAction === "finish") {
+    const finish = await registryFetch(
+      env,
+      `/templates/${encodeURIComponent(name)}/save/${encodeURIComponent(saveId)}/finish`,
+      {
+        method: "POST",
+        body: JSON.stringify({ token }),
+      },
+    );
+    if (!finish.ok) return finish;
+    const result = (await finish.json()) as TemplateSummary & {
+      previousRevisionId?: string;
+    };
+    if (result.previousRevisionId) {
+      ctx.waitUntil(
+        deleteR2Prefix(env.ASSETS, templateRevisionPrefix(name, result.previousRevisionId)),
+      );
+    }
+    const { previousRevisionId: _previousRevisionId, ...summary } = result;
+    return json(summary);
+  }
+
+  return error("not_found", "Unknown Nook API route", 404);
+}
+
 async function handleBaseApi(
   request: Request,
   env: Env,
   url: URL,
   identity: Identity,
+  ctx: WorkerExecutionContext,
 ): Promise<Response> {
+  if (
+    url.pathname === "/__nook/api/templates" ||
+    url.pathname.startsWith("/__nook/api/templates/")
+  ) {
+    return await handleTemplateApi(request, env, url, ctx);
+  }
+
   if (request.method === "POST" && url.pathname === "/__nook/api/destroy") {
     const sitesResponse = await registryFetch(
       env,
@@ -524,7 +719,10 @@ async function handleBaseApi(
   if (request.method === "POST" && url.pathname.endsWith("/deploy/start")) {
     const body = (await readJson(request)) as { files?: ManifestFile[]; public?: boolean };
     const files = body.files ?? [];
-    const validationError = validateManifest(files);
+    const validationError = validateManifest(files, {
+      requireIndex: true,
+      artifactLabel: "deployment",
+    });
     if (validationError) return error("invalid_manifest", validationError, 400);
     await registryFetch(env, "/sites", {
       method: "POST",
@@ -591,7 +789,9 @@ async function handleBaseApi(
       }),
     });
     if (result.previousDeploymentId) {
-      await deleteR2Prefix(env.ASSETS, `sites/${site}/deployments/${result.previousDeploymentId}/`);
+      ctx.waitUntil(
+        deleteR2Prefix(env.ASSETS, `sites/${site}/deployments/${result.previousDeploymentId}/`),
+      );
     }
     return json(result);
   }
@@ -702,7 +902,7 @@ async function serveAsset(
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: WorkerExecutionContext): Promise<Response> {
     try {
       const url = new URL(request.url);
       const parsedHost = parseHost(url, env);
@@ -716,7 +916,7 @@ export default {
 
       if (url.pathname.startsWith("/__nook/api/")) {
         const identity = await requireAccessIdentity(request, env);
-        return await handleBaseApi(request, env, url, identity);
+        return await handleBaseApi(request, env, url, identity, ctx);
       }
 
       const sitePath = parseSitePath(url.pathname);
@@ -745,6 +945,121 @@ export class RegistryDO {
     const url = new URL(request.url);
     if (request.method === "POST" && url.pathname === "/delete-all") {
       await this.state.storage.deleteAll();
+      return json({ deleted: true });
+    }
+
+    if (request.method === "GET" && url.pathname === "/templates") {
+      const records = await this.state.storage.list<TemplateSummary>({ prefix: "template:" });
+      return json({ templates: [...records.values()] });
+    }
+
+    const templateManifestMatch = url.pathname.match(/^\/templates\/([^/]+)\/manifest$/);
+    if (request.method === "GET" && templateManifestMatch) {
+      const name = decodeURIComponent(templateManifestMatch[1]!);
+      const template = await this.state.storage.get<TemplateSummary>(`template:${name}`);
+      if (!template) return error("template_not_found", "Template not found", 404);
+      const files = await this.state.storage.get<ManifestFile[]>(`template-files:${name}`);
+      return json({ template, files: files ?? [] });
+    }
+
+    const templateSaveStartMatch = url.pathname.match(/^\/templates\/([^/]+)\/save\/start$/);
+    if (request.method === "POST" && templateSaveStartMatch) {
+      const name = decodeURIComponent(templateSaveStartMatch[1]!);
+      const body = (await readJson(request)) as { files: ManifestFile[] };
+      const timestamp = now();
+      const nowMs = Date.now();
+      const saves = await this.state.storage.list<TemplateSaveRecord>({
+        prefix: `template-save:${name}:`,
+      });
+      const expiredSaveIds: string[] = [];
+      const expiredSaveKeys: string[] = [];
+      let pendingSaves = 0;
+      for (const [key, save] of saves.entries()) {
+        if (Date.parse(save.expiresAt) < nowMs) {
+          expiredSaveIds.push(save.saveId);
+          expiredSaveKeys.push(key);
+        } else {
+          pendingSaves += 1;
+        }
+      }
+      if (expiredSaveKeys.length > 0) await this.state.storage.delete(expiredSaveKeys);
+      if (pendingSaves >= MAX_PENDING_TEMPLATE_SAVES) {
+        return error("quota_exceeded", "Too many pending saves for this template", 429);
+      }
+
+      const save: TemplateSaveRecord = {
+        saveId: randomId("tpl"),
+        token: randomId("tok"),
+        createdAt: timestamp,
+        expiresAt: new Date(Date.now() + TEMPLATE_SAVE_SESSION_MS).toISOString(),
+        files: body.files,
+        uploaded: [],
+      };
+      await this.state.storage.put(`template-save:${name}:${save.saveId}`, save);
+      return json({
+        saveId: save.saveId,
+        upload: save.files.map((file) => file.path),
+        token: save.token,
+        expiredSaveIds,
+      });
+    }
+
+    const templateSaveActionMatch = url.pathname.match(
+      /^\/templates\/([^/]+)\/save\/([^/]+)\/(verify-upload|mark-uploaded|finish)$/,
+    );
+    if (request.method === "POST" && templateSaveActionMatch) {
+      const name = decodeURIComponent(templateSaveActionMatch[1]!);
+      const saveId = decodeURIComponent(templateSaveActionMatch[2]!);
+      const action = templateSaveActionMatch[3]!;
+      const body = (await readJson(request)) as { token: string; path?: string };
+      const save = await this.requireTemplateSave(name, saveId, body.token);
+      if (save instanceof Response) return save;
+
+      if (action === "verify-upload") {
+        const file = save.files.find((entry) => entry.path === body.path);
+        if (!file) return error("invalid_path", "Path is not in template manifest", 400);
+        return json({ file });
+      }
+
+      if (action === "mark-uploaded") {
+        if (!body.path) return error("invalid_path", "Missing upload path", 400);
+        if (!save.uploaded.includes(body.path)) save.uploaded.push(body.path);
+        await this.state.storage.put(`template-save:${name}:${saveId}`, save);
+        return json({ uploaded: true });
+      }
+
+      const uploaded = new Set(save.uploaded);
+      const missing = save.files.filter((file) => !uploaded.has(file.path));
+      if (missing.length > 0) {
+        return error("template_incomplete", "Template save has missing files", 409);
+      }
+      const existing = await this.state.storage.get<TemplateSummary>(`template:${name}`);
+      const timestamp = now();
+      const summary: TemplateSummary = {
+        name,
+        revisionId: save.saveId,
+        createdAt: existing?.createdAt ?? save.createdAt,
+        updatedAt: timestamp,
+        fileCount: save.files.length,
+        byteCount: save.files.reduce((total, file) => total + file.sizeBytes, 0),
+      };
+      await this.state.storage.put(`template:${name}`, summary);
+      await this.state.storage.put(`template-files:${name}`, save.files);
+      await this.state.storage.delete(`template-save:${name}:${saveId}`);
+      return json({ ...summary, previousRevisionId: existing?.revisionId });
+    }
+
+    const templateDeleteMatch = url.pathname.match(/^\/templates\/([^/]+)$/);
+    if (request.method === "DELETE" && templateDeleteMatch) {
+      const name = decodeURIComponent(templateDeleteMatch[1]!);
+      const saves = await this.state.storage.list<TemplateSaveRecord>({
+        prefix: `template-save:${name}:`,
+      });
+      await this.state.storage.delete([
+        `template:${name}`,
+        `template-files:${name}`,
+        ...saves.keys(),
+      ]);
       return json({ deleted: true });
     }
 
@@ -802,6 +1117,22 @@ export class RegistryDO {
     }
 
     return error("not_found", "Unknown registry route", 404);
+  }
+
+  private async requireTemplateSave(
+    name: string,
+    saveId: string,
+    token: string,
+  ): Promise<TemplateSaveRecord | Response> {
+    const save = await this.state.storage.get<TemplateSaveRecord>(
+      `template-save:${name}:${saveId}`,
+    );
+    if (!save) return error("save_not_found", "Template save not found", 404);
+    if (save.token !== token) return error("unauthorized", "Invalid template save token", 401);
+    if (Date.parse(save.expiresAt) < Date.now()) {
+      return error("save_expired", "Template save session expired", 410);
+    }
+    return save;
   }
 }
 

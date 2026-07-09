@@ -74,6 +74,17 @@ export function createSdkToolExecutionBackend(options: {
       return parsed;
     },
 
+    async writeFileBinary(path, content) {
+      const result = await runNodeHelper(
+        runBash,
+        WRITE_FILE_SCRIPT,
+        [path, content.toString("base64")],
+        { cwd, timeoutMs: HELPER_TIMEOUT_MS },
+      );
+      const parsed = JSON.parse(result) as { path: string; bytes: number };
+      return { path: parsed.path, bytes: parsed.bytes };
+    },
+
     async listDir(path) {
       const result = await runNodeHelper(runBash, LIST_DIR_SCRIPT, [path], {
         cwd,
@@ -205,13 +216,13 @@ const WRITE_FILE_SCRIPT = `
 const fs = require("fs");
 const path = require("path");
 const file = process.argv[1];
-const content = Buffer.from(process.argv[2], "base64").toString("utf8");
+const content = Buffer.from(process.argv[2], "base64");
 fs.mkdirSync(path.dirname(file), { recursive: true });
-fs.writeFileSync(file, content, "utf8");
+fs.writeFileSync(file, content);
 process.stdout.write(JSON.stringify({
   path: file,
-  bytes: Buffer.byteLength(content, "utf8"),
-  lines: content.split("\\n").length,
+  bytes: content.byteLength,
+  lines: content.toString("utf8").split("\\n").length,
 }));
 `.trim();
 

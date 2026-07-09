@@ -112,6 +112,44 @@ describe("Cloudflare Sandbox execution environment", () => {
     });
   });
 
+  it("writes binary files without text conversion", async () => {
+    const requests = [];
+    const content = Buffer.from([0, 255, 1]);
+    const fetchMock = async (url, init = {}) => {
+      requests.push({ url: String(url), init });
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/session")) {
+        return jsonResponse({ id: "tau-session-1" });
+      }
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/exec")) {
+        return sseResponse(execSse({ exitCode: 0 }));
+      }
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/file/workspace/repo/assets/image.bin")) {
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse({ error: "not found" }, { status: 404 });
+    };
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: fetchMock,
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(
+      backend.writeFileBinary("/workspace/repo/assets/image.bin", content),
+    ).resolves.toEqual({
+      path: "/workspace/repo/assets/image.bin",
+      bytes: 3,
+    });
+
+    expect(requests[2].init.method).toBe("PUT");
+    expect(Buffer.from(requests[2].init.body)).toEqual(content);
+  });
+
   it("serializes bridge exec calls that share a command session", async () => {
     const encoder = new TextEncoder();
     const requests = [];

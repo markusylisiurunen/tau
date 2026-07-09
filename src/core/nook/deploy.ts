@@ -7,6 +7,7 @@ import {
   type NookManifestFile,
   normalizeNookAssetPath,
   validateNookManifest,
+  validateNookTemplateManifest,
 } from "./validation.js";
 
 export type NookDeployFile = NookManifestFile & {
@@ -61,32 +62,43 @@ function walkDirectory(dir: string, output: string[]): void {
   }
 }
 
-export function buildNookDeployManifest(directory: string): NookDeployFile[] {
+function buildLocalNookManifest(directory: string, artifactLabel: string): NookDeployFile[] {
   const root = resolve(directory);
   const stats = statSync(root);
   if (!stats.isDirectory()) {
-    throw new Error(`deploy path is not a directory: ${directory}`);
+    throw new Error(`${artifactLabel} path is not a directory: ${directory}`);
   }
 
   const absoluteFiles: string[] = [];
   walkDirectory(root, absoluteFiles);
 
-  const files = absoluteFiles.map((absolutePath): NookDeployFile => {
-    const relativePath = relative(root, absolutePath);
-    assertVisibleNookRelativePath(relativePath);
-    const assetPath = normalizeNookAssetPath(`/${relativePath.split(sep).join("/")}`);
-    const content = readFileSync(absolutePath);
-    return {
-      path: assetPath,
-      absolutePath,
-      sizeBytes: content.length,
-      sha256: createHash("sha256").update(content).digest("hex"),
-      contentType: contentTypeForPath(assetPath),
-    };
-  });
+  return absoluteFiles
+    .map((absolutePath): NookDeployFile => {
+      const relativePath = relative(root, absolutePath);
+      assertVisibleNookRelativePath(relativePath);
+      const assetPath = normalizeNookAssetPath(`/${relativePath.split(sep).join("/")}`);
+      const content = readFileSync(absolutePath);
+      return {
+        path: assetPath,
+        absolutePath,
+        sizeBytes: content.length,
+        sha256: createHash("sha256").update(content).digest("hex"),
+        contentType: contentTypeForPath(assetPath),
+      };
+    })
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
 
+export function buildNookDeployManifest(directory: string): NookDeployFile[] {
+  const files = buildLocalNookManifest(directory, "deploy");
   validateNookManifest(files);
-  return files.sort((a, b) => a.path.localeCompare(b.path));
+  return files;
+}
+
+export function buildNookTemplateManifest(directory: string): NookDeployFile[] {
+  const files = buildLocalNookManifest(directory, "template");
+  validateNookTemplateManifest(files);
+  return files;
 }
 
 function joinBackendPath(dir: string, name: string): string {
@@ -124,7 +136,7 @@ async function walkBackendDirectory(args: {
   }
 }
 
-export async function buildNookDeployManifestFromBackend(
+async function buildBackendNookManifest(
   backend: ToolExecutionBackend,
   directory: string,
 ): Promise<NookBackendDeployFile[]> {
@@ -147,6 +159,23 @@ export async function buildNookDeployManifestFromBackend(
     });
   }
 
-  validateNookManifest(manifest);
   return manifest.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export async function buildNookDeployManifestFromBackend(
+  backend: ToolExecutionBackend,
+  directory: string,
+): Promise<NookBackendDeployFile[]> {
+  const files = await buildBackendNookManifest(backend, directory);
+  validateNookManifest(files);
+  return files;
+}
+
+export async function buildNookTemplateManifestFromBackend(
+  backend: ToolExecutionBackend,
+  directory: string,
+): Promise<NookBackendDeployFile[]> {
+  const files = await buildBackendNookManifest(backend, directory);
+  validateNookTemplateManifest(files);
+  return files;
 }

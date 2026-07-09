@@ -180,6 +180,8 @@ tau nook setup \
   --access-aud <access-application-audience>
 tau nook deploy ./dist --site demo
 tau nook deploy ./dist --site demo --public
+tau nook template save starter ./app
+tau nook template copy starter ./next-app
 tau nook kv put demo settings '{"theme":"dark"}'
 ```
 
@@ -195,7 +197,7 @@ Add a single configured target to Tau config after deploying the Worker and crea
 }
 ```
 
-The Worker validates Cloudflare Access JWTs against the Access JWKS with the configured issuer and audience. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker does not treat those raw headers as authentication. When `nook` is configured, Tau automatically exposes a read-write model tool named `nook`. Detailed setup, deploy, Worker, browser SDK, and V0 scope notes live in [src/nook/README.md](src/nook/README.md).
+Template copies require a destination directory that already exists and is empty. The Worker validates Cloudflare Access JWTs against the Access JWKS with the configured issuer and audience. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker does not treat those raw headers as authentication. When `nook` is configured, Tau automatically exposes a read-write model tool named `nook`. Detailed setup, deploy, template, Worker, browser SDK, and V0 scope notes live in [src/nook/README.md](src/nook/README.md).
 
 ## SDK usage (Node)
 

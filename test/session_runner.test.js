@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { prepareSessionCompaction } from "../dist/core/session/compaction.js";
 import { runDirectBashCommand } from "../dist/core/session/direct_bash.js";
@@ -13,6 +17,7 @@ import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../dist/core/tools/tool_names.js
 import { buildCompactionUserMessage } from "../dist/core/utils/compact.js";
 import { autocompleteProjectPathsWithBackend } from "../dist/core/utils/project_files.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
+import { createSdkToolExecutionBackend } from "../dist/tui/session_tool_execution_backend.js";
 
 function createToolResult(toolCall, text) {
   return {
@@ -759,6 +764,37 @@ describe("session compaction preparation", () => {
 });
 
 describe("session execution backend plumbing", () => {
+  it("writes binary files through the SDK execution backend without text conversion", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-backend-test-"));
+    const session = {
+      async exec(command, options) {
+        const output = execFileSync("/bin/sh", ["-c", command], {
+          cwd: options.cwd,
+          encoding: "utf8",
+        });
+        return {
+          output,
+          stdout: output,
+          stderr: "",
+          exitCode: 0,
+          truncated: false,
+        };
+      },
+    };
+    const backend = createSdkToolExecutionBackend({ session, cwd });
+    const content = Buffer.from([0, 255, 1]);
+
+    try {
+      await expect(backend.writeFileBinary("assets/image.bin", content)).resolves.toEqual({
+        path: "assets/image.bin",
+        bytes: content.byteLength,
+      });
+      expect(readFileSync(join(cwd, "assets/image.bin"))).toEqual(content);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("scopes backend cwd and filesystem paths to the execution environment", async () => {
     const calls = [];
     const backend = {
@@ -785,6 +821,10 @@ describe("session execution backend plumbing", () => {
         calls.push(["writeFile", path, content]);
         return { path, bytes: Buffer.byteLength(content), lines: 1 };
       },
+      async writeFileBinary(path, content) {
+        calls.push(["writeFileBinary", path, content]);
+        return { path, bytes: content.byteLength };
+      },
       async listDir(path) {
         calls.push(["listDir", path]);
         return { path, entries: [] };
@@ -807,6 +847,7 @@ describe("session execution backend plumbing", () => {
     await scoped.readFile("src/a.ts");
     await scoped.readFileBinary("asset.bin");
     await scoped.writeFile("out.txt", "ok");
+    await scoped.writeFileBinary("asset.bin", Buffer.from([1, 2]));
     await scoped.listDir(".");
     await scoped.grep({
       baseArgs: [],
@@ -821,6 +862,7 @@ describe("session execution backend plumbing", () => {
       ["readFile", "/remote/work/src/a.ts"],
       ["readFileBinary", "/remote/work/asset.bin"],
       ["writeFile", "/remote/work/out.txt", "ok"],
+      ["writeFileBinary", "/remote/work/asset.bin", Buffer.from([1, 2])],
       ["listDir", "/remote/work"],
       ["grep", ["/remote/work/src", "/tmp/file.ts"]],
     ]);

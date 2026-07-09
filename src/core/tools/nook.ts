@@ -2,7 +2,10 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import { createNookClientFromConfig } from "../nook/client.js";
-import { buildNookDeployManifestFromBackend } from "../nook/deploy.js";
+import {
+  buildNookDeployManifestFromBackend,
+  buildNookTemplateManifestFromBackend,
+} from "../nook/deploy.js";
 import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
@@ -23,8 +26,9 @@ const NOOK_DESCRIPTION = [
   "Do not use this tool autonomously; use it only when the user asks to manage Nook, deploy/publish/host an app or artifact, inspect Nook state, or manage Nook KV.",
   "If the user asks to deploy a static artifact or mini-app, this is usually the right deployment target.",
   "When preparing site files for deployment, write the complete site directory under a fresh mktemp directory and deploy that directory; do not scatter generated site files into the project tree.",
+  "Templates are Nook-hosted editable directory snapshots. Copy requires an existing empty destination directory; edit/build it normally, then deploy a built static directory separately.",
   "All operations require read-write risk.",
-  "Input keys by operation: read_skill and list_sites need only operation; deploy_site needs site and directory, with public optional; delete_site needs site; get_kv and delete_kv need site and key; put_kv needs site, key, and value; list_kv needs site, with prefix optional.",
+  "Input keys by operation: read_skill, list_sites, and list_templates need only operation; deploy_site needs site and directory, with public optional; delete_site needs site; template copy/save/delete operations need template, and copy/save also need directory; get_kv and delete_kv need site and key; put_kv needs site, key, and value; list_kv needs site, with prefix optional.",
 ].join(" ");
 
 export const NOOK_TOOL: Tool = {
@@ -34,12 +38,16 @@ export const NOOK_TOOL: Tool = {
     {
       operation: Type.String({
         description:
-          "Operation to run. Required keys: read_skill/list_sites only operation; deploy_site site+directory; delete_site site; get_kv/delete_kv site+key; put_kv site+key+value; list_kv site.",
+          "Operation to run. Required keys: read_skill/list_sites/list_templates only operation; deploy_site site+directory; delete_site site; copy_template/save_template template+directory; delete_template template; get_kv/delete_kv site+key; put_kv site+key+value; list_kv site.",
         enum: [
           "read_skill",
           "deploy_site",
           "list_sites",
           "delete_site",
+          "list_templates",
+          "copy_template",
+          "save_template",
+          "delete_template",
           "get_kv",
           "put_kv",
           "delete_kv",
@@ -55,12 +63,18 @@ export const NOOK_TOOL: Tool = {
       directory: Type.Optional(
         Type.String({
           description:
-            "Static directory to deploy from the session workspace. Required for deploy_site.",
+            "Directory in the session workspace. Required for deploy_site, copy_template, and save_template. copy_template requires the directory to exist and be empty.",
         }),
       ),
       public: Type.Optional(
         Type.Boolean({
           description: "Whether deploy_site should make the active deployment public.",
+        }),
+      ),
+      template: Type.Optional(
+        Type.String({
+          description:
+            "Template name. Required for copy_template, save_template, and delete_template.",
         }),
       ),
       key: Type.Optional(
@@ -84,12 +98,17 @@ const nookArgsSchema = z
       "deploy_site",
       "list_sites",
       "delete_site",
+      "list_templates",
+      "copy_template",
+      "save_template",
+      "delete_template",
       "get_kv",
       "put_kv",
       "delete_kv",
       "list_kv",
     ]),
     site: z.string().trim().min(1).optional(),
+    template: z.string().trim().min(1).optional(),
     directory: z.string().trim().min(1).optional(),
     public: z.boolean().optional(),
     key: z.string().trim().min(1).optional(),
@@ -103,7 +122,7 @@ type NookToolArgs = z.infer<typeof nookArgsSchema>;
 const NOOK_UI_PREVIEW_HEAD_LINES = 3;
 const NOOK_UI_PREVIEW_TAIL_LINES = 3;
 
-function requireArg(args: NookToolArgs, key: "site" | "directory" | "key"): string {
+function requireArg(args: NookToolArgs, key: "site" | "template" | "directory" | "key"): string {
   const value = args[key];
   if (!value) {
     throw new Error(`${args.operation} requires ${key}`);
@@ -120,6 +139,12 @@ function requireValue(args: NookToolArgs): unknown {
 
 function stringifyResult(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function joinBackendPath(dir: string, relativePath: string): string {
+  const trimmedDir = dir.replace(/\/+$/, "");
+  const trimmedPath = relativePath.replace(/^\/+/, "");
+  return trimmedDir ? `${trimmedDir}/${trimmedPath}` : trimmedPath;
 }
 
 function buildNookUiText(message: string): ToolUiText {
@@ -191,6 +216,43 @@ export function createNookToolDefinition(backend: ToolExecutionBackend): ToolDef
             break;
           case "delete_site":
             result = await client.deleteSite(requireArg(args, "site"));
+            break;
+          case "list_templates":
+            result = { templates: await client.listTemplates() };
+            break;
+          case "copy_template": {
+            const template = requireArg(args, "template");
+            const directory = requireArg(args, "directory");
+            const destination = await backend.listDir(directory);
+            if (destination.entries.length > 0) {
+              throw new Error(`template copy destination is not empty: ${directory}`);
+            }
+            const manifest = await client.getTemplateManifest(template);
+            const files = await client.downloadTemplateFiles(template, manifest);
+            for (const file of files) {
+              await backend.writeFileBinary(joinBackendPath(directory, file.path), file.content);
+            }
+            result = {
+              template,
+              directory,
+              fileCount: files.length,
+              byteCount: files.reduce((total, file) => total + file.sizeBytes, 0),
+            };
+            break;
+          }
+          case "save_template": {
+            const files = await buildNookTemplateManifestFromBackend(
+              backend,
+              requireArg(args, "directory"),
+            );
+            result = await client.saveTemplate({
+              name: requireArg(args, "template"),
+              files,
+            });
+            break;
+          }
+          case "delete_template":
+            result = await client.deleteTemplate(requireArg(args, "template"));
             break;
           case "deploy_site": {
             const directory = requireArg(args, "directory");

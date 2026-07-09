@@ -190,6 +190,15 @@ export function createFlySpriteToolExecutionBackend(options: {
       });
     },
 
+    async writeFileBinary(path, content) {
+      const result = await worker.request("writeFile", {
+        path,
+        contentBase64: content.toString("base64"),
+        timeoutMs: HELPER_COMMAND_TIMEOUT_MS,
+      });
+      return { path: result.path, bytes: result.bytes };
+    },
+
     async listDir(path) {
       const result = await worker.request("listDir", {
         path,

@@ -36,6 +36,11 @@ export type WriteFileResult = {
   lines: number;
 };
 
+export type WriteFileBinaryResult = {
+  path: string;
+  bytes: number;
+};
+
 export type ListDirEntry = {
   name: string;
   isDirectory: boolean;
@@ -68,6 +73,7 @@ export interface ToolExecutionBackend {
   readFile(path: string): Promise<ReadFileResult>;
   readFileBinary(path: string, options?: { maxBytes?: number }): Promise<ReadFileBinaryResult>;
   writeFile(path: string, content: string): Promise<WriteFileResult>;
+  writeFileBinary(path: string, content: Buffer): Promise<WriteFileBinaryResult>;
   listDir(path: string): Promise<ListDirResult>;
   grep(options: {
     baseArgs: string[];
@@ -237,6 +243,16 @@ export function createLocalToolExecutionBackend(
       return { path: resolvedPath, bytes, lines };
     },
 
+    async writeFileBinary(path, content) {
+      const resolvedPath = resolvePath(path);
+      const dir = dirname(resolvedPath);
+      if (dir && dir !== ".") {
+        mkdirSync(dir, { recursive: true });
+      }
+      writeFileSync(resolvedPath, content);
+      return { path: resolvedPath, bytes: content.byteLength };
+    },
+
     async listDir(path) {
       const resolvedPath = resolvePath(path);
       const dirents = readdirSync(resolvedPath, { withFileTypes: true });
@@ -331,6 +347,9 @@ export function scopeToolExecutionBackend(
     },
     writeFile(path, content) {
       return backend.writeFile(resolvePath(path), content);
+    },
+    writeFileBinary(path, content) {
+      return backend.writeFileBinary(resolvePath(path), content);
     },
     listDir(path) {
       return backend.listDir(resolvePath(path));

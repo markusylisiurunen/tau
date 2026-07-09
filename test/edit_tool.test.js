@@ -35,9 +35,18 @@ describe("edit tool", () => {
       expect(written.path).toBe(join(fx.dir, "output.txt"));
       expect(readFileSync(join(fx.dir, "output.txt"), "utf-8")).toBe("world\n");
 
+      const binary = Buffer.from([0, 255, 1]);
+      const binaryWritten = await backend.writeFileBinary("assets/output.bin", binary);
+      expect(binaryWritten).toEqual({ path: join(fx.dir, "assets", "output.bin"), bytes: 3 });
+      expect(readFileSync(join(fx.dir, "assets", "output.bin"))).toEqual(binary);
+
       const listed = await backend.listDir(".");
       expect(listed.path).toBe(fx.dir);
-      expect(listed.entries.map((entry) => entry.name).sort()).toEqual(["input.txt", "output.txt"]);
+      expect(listed.entries.map((entry) => entry.name).sort()).toEqual([
+        "assets",
+        "input.txt",
+        "output.txt",
+      ]);
     } finally {
       fx.cleanup();
     }

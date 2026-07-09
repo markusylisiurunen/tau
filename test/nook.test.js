@@ -1,4 +1,5 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,9 +8,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getNookAccessClientSecret } from "../dist/core/config/index.js";
 import {
   buildNookDeployManifest,
+  buildNookTemplateManifest,
+  NookClient,
   normalizeNookAssetPath,
   validateNookManifest,
   validateNookSiteSlug,
+  validateNookTemplateName,
 } from "../dist/core/nook/index.js";
 import {
   parseNookDestroyInputs,
@@ -18,11 +22,55 @@ import {
   runNookSetup,
 } from "../dist/core/nook/setup.js";
 import { createNookToolDefinition } from "../dist/core/tools/nook.js";
-import worker, { cacheControlForDeployedAsset } from "../dist/nook/worker/index.js";
+import worker, { cacheControlForDeployedAsset, RegistryDO } from "../dist/nook/worker/index.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+function createDurableStorage() {
+  const records = new Map();
+  return {
+    records,
+    async get(key) {
+      return records.get(key);
+    },
+    async put(key, value) {
+      records.set(key, value);
+    },
+    async delete(keys) {
+      for (const key of Array.isArray(keys) ? keys : [keys]) records.delete(key);
+      return true;
+    },
+    async list(options = {}) {
+      return new Map(
+        [...records.entries()].filter(([key]) => !options.prefix || key.startsWith(options.prefix)),
+      );
+    },
+    async deleteAll() {
+      records.clear();
+    },
+  };
+}
+
+const templateManifest = [
+  {
+    path: "/package.json",
+    sizeBytes: 2,
+    contentType: "application/json",
+    sha256: "a".repeat(64),
+  },
+];
+
+async function startTemplateSave(registry, name = "starter") {
+  const response = await registry.fetch(
+    new Request(`https://registry.local/templates/${name}/save/start`, {
+      method: "POST",
+      body: JSON.stringify({ files: templateManifest }),
+    }),
+  );
+  return { response, body: await response.json() };
+}
 
 describe("nook validation", () => {
   it("accepts path-safe slugs and rejects reserved or malformed slugs", () => {
@@ -49,6 +97,16 @@ describe("nook validation", () => {
     const files = buildNookDeployManifest(root);
     expect(files.map((file) => file.path)).toEqual(["/assets/app.js", "/index.html"]);
     expect(files[0]?.sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("builds templates without requiring index.html and validates template names", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tau-nook-template-test-"));
+    writeFileSync(join(root, "package.json"), '{"name":"starter"}');
+
+    expect(buildNookTemplateManifest(root).map((file) => file.path)).toEqual(["/package.json"]);
+    expect(validateNookTemplateName("demo-starter").ok).toBe(true);
+    expect(validateNookTemplateName("api").ok).toBe(true);
+    expect(validateNookTemplateName("Demo").ok).toBe(false);
   });
 
   it("rejects hidden deploy files", async () => {
@@ -104,9 +162,181 @@ describe("nook config", () => {
   });
 });
 
+describe("nook templates", () => {
+  it("copies verified binary files into an existing empty directory", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "tau-nook-copy-test-"));
+    const content = Buffer.from([0, 1, 2, 255]);
+    const sha256 = createHash("sha256").update(content).digest("hex");
+    const fetchImpl = vi.fn(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/__nook/api/templates/starter") {
+        return Response.json({
+          template: {
+            name: "starter",
+            revisionId: "tpl_aaaaaaaaaaaaaaaaaaaaaaaa",
+            createdAt: "2026-07-09T00:00:00.000Z",
+            updatedAt: "2026-07-09T00:00:00.000Z",
+            fileCount: 1,
+            byteCount: content.byteLength,
+          },
+          files: [
+            {
+              path: "/assets/image.bin",
+              sizeBytes: content.byteLength,
+              contentType: "application/octet-stream",
+              sha256,
+            },
+          ],
+        });
+      }
+      if (url.pathname === "/__nook/api/templates/starter/file") {
+        expect(url.searchParams.get("revision")).toBe("tpl_aaaaaaaaaaaaaaaaaaaaaaaa");
+        return new Response(content);
+      }
+      throw new Error(`unexpected request ${url}`);
+    });
+    const client = new NookClient({ config: { domain: "nook.example.com" }, fetchImpl });
+
+    await client.copyTemplateToDirectory("starter", directory);
+
+    expect(readFileSync(join(directory, "assets", "image.bin"))).toEqual(content);
+  });
+
+  it("requires an existing empty copy destination before downloading", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "tau-nook-copy-test-"));
+    writeFileSync(join(directory, "existing.txt"), "keep");
+    const fetchImpl = vi.fn();
+    const client = new NookClient({ config: { domain: "nook.example.com" }, fetchImpl });
+
+    await expect(client.copyTemplateToDirectory("starter", directory)).rejects.toThrow(/not empty/);
+    await expect(
+      client.copyTemplateToDirectory("starter", join(directory, "missing")),
+    ).rejects.toThrow(/does not exist/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not write files when a download fails manifest verification", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "tau-nook-copy-test-"));
+    const expected = Buffer.from("expected");
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          template: {
+            name: "starter",
+            revisionId: "tpl_aaaaaaaaaaaaaaaaaaaaaaaa",
+            createdAt: "2026-07-09T00:00:00.000Z",
+            updatedAt: "2026-07-09T00:00:00.000Z",
+            fileCount: 1,
+            byteCount: expected.byteLength,
+          },
+          files: [
+            {
+              path: "/file.txt",
+              sizeBytes: expected.byteLength,
+              contentType: "text/plain",
+              sha256: createHash("sha256").update(expected).digest("hex"),
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(new Response("corrupt!"));
+    const client = new NookClient({ config: { domain: "nook.example.com" }, fetchImpl });
+
+    await expect(client.copyTemplateToDirectory("starter", directory)).rejects.toThrow(/hash/);
+    expect(readdirSync(directory)).toEqual([]);
+  });
+});
+
 describe("nook worker", () => {
   it("requires revalidation for deployed asset URLs that remain stable across deploys", () => {
     expect(cacheControlForDeployedAsset()).toBe("public, no-cache, must-revalidate");
+  });
+
+  it("atomically switches template revisions and preserves creation time", async () => {
+    const storage = createDurableStorage();
+    const registry = new RegistryDO({ storage });
+    const first = await startTemplateSave(registry);
+    expect(first.response.status).toBe(200);
+    await registry.fetch(
+      new Request(
+        `https://registry.local/templates/starter/save/${first.body.saveId}/mark-uploaded`,
+        {
+          method: "POST",
+          body: JSON.stringify({ token: first.body.token, path: "/package.json" }),
+        },
+      ),
+    );
+    const firstFinish = await registry.fetch(
+      new Request(`https://registry.local/templates/starter/save/${first.body.saveId}/finish`, {
+        method: "POST",
+        body: JSON.stringify({ token: first.body.token }),
+      }),
+    );
+    const firstResult = await firstFinish.json();
+    expect(firstResult.revisionId).toBe(first.body.saveId);
+    expect(firstResult.previousRevisionId).toBeUndefined();
+
+    const second = await startTemplateSave(registry);
+    await registry.fetch(
+      new Request(
+        `https://registry.local/templates/starter/save/${second.body.saveId}/mark-uploaded`,
+        {
+          method: "POST",
+          body: JSON.stringify({ token: second.body.token, path: "/package.json" }),
+        },
+      ),
+    );
+    const secondFinish = await registry.fetch(
+      new Request(`https://registry.local/templates/starter/save/${second.body.saveId}/finish`, {
+        method: "POST",
+        body: JSON.stringify({ token: second.body.token }),
+      }),
+    );
+    const secondResult = await secondFinish.json();
+
+    expect(secondResult.revisionId).toBe(second.body.saveId);
+    expect(secondResult.previousRevisionId).toBe(first.body.saveId);
+    expect(secondResult.createdAt).toBe(firstResult.createdAt);
+    expect(storage.records.get("template:starter").revisionId).toBe(second.body.saveId);
+  });
+
+  it("keeps expired saves available for R2 cleanup", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(0);
+    const storage = createDurableStorage();
+    const registry = new RegistryDO({ storage });
+    const expired = await startTemplateSave(registry);
+    now.mockReturnValue(15 * 60 * 1000 + 1);
+
+    const finish = await registry.fetch(
+      new Request(`https://registry.local/templates/starter/save/${expired.body.saveId}/finish`, {
+        method: "POST",
+        body: JSON.stringify({ token: expired.body.token }),
+      }),
+    );
+    expect(finish.status).toBe(410);
+    expect(storage.records.has(`template-save:starter:${expired.body.saveId}`)).toBe(true);
+
+    const next = await startTemplateSave(registry);
+    expect(next.body.expiredSaveIds).toEqual([expired.body.saveId]);
+    expect(storage.records.has(`template-save:starter:${expired.body.saveId}`)).toBe(false);
+  });
+
+  it("limits pending template saves and removes them on delete", async () => {
+    const storage = createDurableStorage();
+    const registry = new RegistryDO({ storage });
+    await startTemplateSave(registry);
+    await startTemplateSave(registry);
+    await startTemplateSave(registry);
+
+    const fourth = await startTemplateSave(registry);
+    expect(fourth.response.status).toBe(429);
+
+    const deleted = await registry.fetch(
+      new Request("https://registry.local/templates/starter", { method: "DELETE" }),
+    );
+    expect(deleted.status).toBe(200);
+    expect([...storage.records.keys()].filter((key) => key.includes("starter"))).toEqual([]);
   });
 
   it("accepts Cloudflare Access JWTs verified with jose remote JWKS", async () => {
@@ -412,6 +642,37 @@ describe("nook tool", () => {
     expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
     expect(result.toolResult.content[0].text).toContain("not configured");
+  });
+
+  it("rejects a non-empty template copy destination before downloading", async () => {
+    const backend = {
+      listDir: vi.fn(async () => ({
+        path: "/workspace/app",
+        entries: [{ name: "existing.txt", isDirectory: false, isSymlink: false }],
+      })),
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const tool = createNookToolDefinition(backend);
+    const result = await tool.dispatch(
+      {
+        type: "toolCall",
+        id: "call_1",
+        name: "nook",
+        arguments: {
+          operation: "copy_template",
+          template: "starter",
+          directory: "/workspace/app",
+        },
+      },
+      "read-write",
+      new AbortController().signal,
+      { config: { nook: { domain: "nook.example.com" } } },
+    );
+
+    expect(result.kind).toBe("single");
+    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.content[0].text).toContain("not empty");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("requires a value for put_kv", async () => {

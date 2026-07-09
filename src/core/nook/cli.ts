@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { Config } from "../config/index.js";
 import { createNookClientFromConfig } from "./client.js";
-import { buildNookDeployManifest } from "./deploy.js";
+import { buildNookDeployManifest, buildNookTemplateManifest } from "./deploy.js";
 import {
   parseNookDestroyInputs,
   parseNookSetupInputs,
@@ -52,6 +52,10 @@ export function printNookHelp(log: (line: string) => void = console.log): void {
       "  tau nook deploy <dir> --site <slug> [--public]",
       "  tau nook list",
       "  tau nook delete <site>",
+      "  tau nook template list",
+      "  tau nook template copy <name> <dir>",
+      "  tau nook template save <name> <dir>",
+      "  tau nook template delete <name>",
       "  tau nook kv get <site> <key>",
       "  tau nook kv put <site> <key> <json>",
       "  tau nook kv delete <site> <key>",
@@ -166,6 +170,11 @@ export async function runNookCommand(
       return;
     }
 
+    if (subcommand === "template") {
+      await runTemplateCommand(args, client, stdout, options.cwd ?? process.cwd());
+      return;
+    }
+
     if (subcommand === "kv") {
       await runKvCommand(args, client, stdout);
       return;
@@ -175,6 +184,59 @@ export async function runNookCommand(
   } catch (error) {
     throw new NookCliError(error instanceof Error ? error.message : String(error));
   }
+}
+
+async function runTemplateCommand(
+  args: string[],
+  client: ReturnType<typeof createNookClientFromConfig>,
+  stdout: (line: string) => void,
+  cwd: string,
+): Promise<void> {
+  const [operation, name, directory] = args;
+  if (!operation) throw new Error("missing template operation");
+
+  if (operation === "list") {
+    if (args.length !== 1) throw new Error("usage: tau nook template list");
+    const templates = await client.listTemplates();
+    if (templates.length === 0) {
+      stdout("no nook templates");
+      return;
+    }
+    for (const template of templates) {
+      stdout(
+        `${template.name} ${template.fileCount} files ${template.byteCount}B ${template.updatedAt}`,
+      );
+    }
+    return;
+  }
+
+  if (operation === "copy") {
+    if (!name || !directory || args.length !== 3) {
+      throw new Error("usage: tau nook template copy <name> <dir>");
+    }
+    const result = await client.copyTemplateToDirectory(name, resolve(cwd, directory));
+    stdout(`copied template ${result.name} to ${directory}`);
+    return;
+  }
+
+  if (operation === "save") {
+    if (!name || !directory || args.length !== 3) {
+      throw new Error("usage: tau nook template save <name> <dir>");
+    }
+    const files = buildNookTemplateManifest(resolve(cwd, directory));
+    const result = await client.saveTemplate({ name, files });
+    stdout(`saved template ${result.name} (${result.fileCount} files)`);
+    return;
+  }
+
+  if (operation === "delete") {
+    if (!name || args.length !== 2) throw new Error("usage: tau nook template delete <name>");
+    await client.deleteTemplate(name);
+    stdout(`deleted template ${name}`);
+    return;
+  }
+
+  throw new Error(`unknown template operation '${operation}'`);
 }
 
 async function runKvCommand(

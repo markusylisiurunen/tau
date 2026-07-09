@@ -111,6 +111,20 @@ describe("model stream option resolution", () => {
     });
   });
 
+  test("resolves GPT-5.6 models through the pi-ai models runtime", () => {
+    const runtime = new ModelRuntime();
+
+    const openaiModel = runtime.resolveModel("openai", "gpt-5.6-luna");
+    expect(openaiModel).toBeDefined();
+    expect(openaiModel.api).toBe("openai-responses");
+    expect(openaiModel.cost).toEqual({ input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 });
+
+    const codexModel = runtime.resolveModel("openai-codex", "gpt-5.6-sol");
+    expect(codexModel).toBeDefined();
+    expect(codexModel.api).toBe("openai-codex-responses");
+    expect(codexModel.contextWindow).toBe(272000);
+  });
+
   test("resolves configured api keys through the pi-ai models runtime", async () => {
     const fx = createTempAuthPath();
     try {

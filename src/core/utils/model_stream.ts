@@ -23,6 +23,7 @@ import { formatCodexAuthError } from "../auth/auth_messages.js";
 import type { AuthStorage } from "../auth/auth_storage.js";
 import { TauCredentialStore } from "../auth/credential_store.js";
 import type { Config } from "../config/schema.js";
+import { mergeTauProviderExtensionModels } from "../models/tau_extensions.js";
 import type { ReasoningEffort, ServiceTier } from "../types.js";
 import type { TauStreamOptions } from "./streaming_settings.js";
 
@@ -45,6 +46,15 @@ type ModelRuntimeOptions = {
 };
 
 const registeredRuntimeProviders = new Map<string, Provider>();
+
+function mergeTauExtensionModels(models: MutableModels): void {
+  for (const provider of models.getProviders()) {
+    models.setProvider({
+      ...provider,
+      getModels: () => mergeTauProviderExtensionModels(provider.id, provider.getModels()),
+    });
+  }
+}
 
 function createModelAuthContext(env: NodeJS.ProcessEnv): AuthContext {
   const base = defaultProviderAuthContext();
@@ -87,6 +97,7 @@ export class ModelRuntime {
       ...(this.credentialStore ? { credentials: this.credentialStore } : {}),
       ...(options.env ? { authContext: createModelAuthContext(options.env) } : {}),
     });
+    mergeTauExtensionModels(this.models);
 
     for (const provider of registeredRuntimeProviders.values()) {
       this.models.setProvider(provider);

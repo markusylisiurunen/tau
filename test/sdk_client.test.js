@@ -1025,7 +1025,7 @@ describe("sdk_client", () => {
 
     const transport = new StdioSessionProtocolTransport(child);
     const clientPromise = createTauSdkClientFromTransport(transport, {
-      persona: "gpt-5.4-coder",
+      persona: "gpt-5.5-coder",
       riskLevel: "read-only",
       noAgentContextFiles: true,
       connectTimeoutMs: 500,

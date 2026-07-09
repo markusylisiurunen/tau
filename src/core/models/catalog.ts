@@ -3,7 +3,11 @@ import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/pro
 import { z } from "zod";
 import type { ConfigDeps } from "../config/deps.js";
 import type { ConfigLevel } from "../config/paths.js";
-import { TAU_PROVIDER_EXTENSIONS, type TauProviderApiKeyResolverArgs } from "./tau_extensions.js";
+import {
+  TAU_PROVIDER_EXTENSIONS,
+  type TauProviderApiKeyResolverArgs,
+  validateTauProviderExtensionModel,
+} from "./tau_extensions.js";
 
 type ApiKeyResolver = (args: TauProviderApiKeyResolverArgs) => string | undefined;
 
@@ -116,10 +120,15 @@ function registerModel(args: {
   provider: string;
   model: Model<Api>;
   source: string;
+  onDuplicate?: "error" | "skip";
 }): void {
   const providerModels = ensureProviderModels(args.providers, args.provider);
   const existing = providerModels.get(args.model.id);
   if (existing) {
+    if (args.onDuplicate === "skip") {
+      return;
+    }
+
     throw new Error(
       `duplicate model registration for '${args.provider}:${args.model.id}' from ${args.source}`,
     );
@@ -149,17 +158,15 @@ function createCatalogState(): CatalogState {
       apiKeyResolvers.set(extension.id, extension.resolveApiKey);
     }
 
+    validateTauProviderExtensionModel(extension);
+
     for (const model of extension.models) {
-      if (model.provider !== extension.id) {
-        throw new Error(
-          `invalid model registration for provider '${extension.id}': model '${model.id}' declares provider '${model.provider}'`,
-        );
-      }
       registerModel({
         providers,
         provider: extension.id,
         model,
         source: `tau extension '${extension.id}'`,
+        onDuplicate: "skip",
       });
     }
   }

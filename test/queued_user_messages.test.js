@@ -37,6 +37,19 @@ describe("QueuedUserMessages", () => {
     expect(queue).toEqual([]);
   });
 
+  it("requeues messages before existing queued messages", () => {
+    const queue = ["third"];
+    const manager = new QueuedUserMessages(queue);
+    let renderCount = 0;
+
+    manager.requeueFront(["first", "second"], () => {
+      renderCount += 1;
+    });
+
+    expect(queue).toEqual(["first", "second", "third"]);
+    expect(renderCount).toBe(1);
+  });
+
   it("collapses queued messages into one message", () => {
     const queue = ["one", "two", "three"];
     const manager = new QueuedUserMessages(queue);

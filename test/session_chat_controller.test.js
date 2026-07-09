@@ -1438,6 +1438,56 @@ describe("SessionChatController", () => {
     expect(view.systems).toEqual([]);
   });
 
+  it("restores queued messages when flushing them as steering fails", async () => {
+    const queuedUserMessages = ["first queued", "second queued"];
+    const session = new FakeSession();
+    session.steer = vi.fn(async () => {
+      throw new Error("session busy");
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+      queuedUserMessages,
+    });
+    controller.start();
+
+    controller.getInputHandlers().onFlushQueueAsSteer?.();
+    await flush();
+
+    expect(queuedUserMessages).toEqual(["first queued", "second queued"]);
+    expect(view.systems).toContainEqual({
+      text: "steering failed: session busy",
+      kind: "error",
+      options: undefined,
+    });
+  });
+
+  it("submits steering text as a normal turn while idle", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    controller.getInputHandlers().onSteerSubmit?.("start a turn");
+    await flush();
+
+    expect(session.submit).toHaveBeenCalledWith(
+      "start a turn",
+      expect.objectContaining({
+        historyEntryId: expect.stringMatching(/^session-user-/),
+      }),
+    );
+    expect(session.steer).not.toHaveBeenCalled();
+  });
+
   it("routes steering through the session protocol while a submitted turn is active", async () => {
     const queuedUserMessages = ["first queued", "second queued"];
     const session = new FakeSession();

@@ -620,6 +620,11 @@ export class SessionChatController {
       return;
     }
 
+    if (!this.isSessionOperationActive()) {
+      await this.submitUserText(trimmed);
+      return;
+    }
+
     this.submitSteeringText(trimmed);
   }
 
@@ -629,15 +634,21 @@ export class SessionChatController {
       return;
     }
 
-    const text = this.queuedMessageBuffer.flush().join("\n\n");
+    const messages = this.queuedMessageBuffer.flush();
+    const text = messages.join("\n\n");
     this.view.requestRender();
-    this.submitSteeringText(text);
+    this.submitSteeringText(text, {
+      onFailure: () => {
+        this.queuedMessageBuffer.requeueFront(messages, () => this.view.requestRender());
+      },
+    });
   }
 
-  private submitSteeringText(text: string): void {
+  private submitSteeringText(text: string, options: { onFailure?: () => void } = {}): void {
     void this.session
       .steer(text, { historyEntryId: `session-steer-${randomUUID()}` })
       .catch((error) => {
+        options.onFailure?.();
         this.view.addSystemMessage(`steering failed: ${(error as Error).message}`, "error");
       });
   }

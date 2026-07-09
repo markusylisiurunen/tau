@@ -33,6 +33,13 @@ export class QueuedUserMessages {
     requestRender();
   }
 
+  requeueFront(messages: string[], requestRender: () => void): void {
+    if (messages.length === 0) return;
+
+    this.messages.unshift(...messages);
+    requestRender();
+  }
+
   flush(): string[] {
     return this.messages.splice(0);
   }

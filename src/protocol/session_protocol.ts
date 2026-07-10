@@ -279,9 +279,18 @@ export type SessionProtocolPendingUserMessage = {
   text: string;
 };
 
-export type SessionProtocolLiveState = {
+export type SessionProtocolPendingUserMessagesState = {
   revision: number;
-  pendingUserMessages: SessionProtocolPendingUserMessage[];
+  messages: SessionProtocolPendingUserMessage[];
+};
+
+export type SessionProtocolCreateResult = {
+  sessionId: string;
+};
+
+export type SessionProtocolObserveResult = {
+  snapshot: SessionProtocolSnapshot;
+  pendingUserMessages: SessionProtocolPendingUserMessagesState;
 };
 
 export type SessionProtocolCancelPendingMessagesResult = {
@@ -628,9 +637,9 @@ export type SessionProtocolClientToolResultResult = {
 
 export type SessionProtocolResultByMethod = {
   initialize: SessionProtocolInitializeResult;
-  "session.create": SessionProtocolSnapshot;
+  "session.create": SessionProtocolCreateResult;
   "session.list": SessionProtocolListResult;
-  "session.observe": SessionProtocolSnapshot;
+  "session.observe": SessionProtocolObserveResult;
   "session.unobserve": SessionProtocolUnobserveResult;
   "session.record": SessionProtocolRecordResult;
   "session.submit": SessionProtocolSubmitResult;
@@ -819,18 +828,18 @@ export type SessionProtocolEphemeralMessage = {
   event: SessionProtocolEphemeralEvent;
 };
 
-export type SessionProtocolLiveStateMessage = {
+export type SessionProtocolPendingUserMessagesMessage = {
   version: typeof SESSION_PROTOCOL_VERSION;
-  type: "session.live";
+  type: "session.pendingUserMessages";
   sessionId: string;
-  state: SessionProtocolLiveState;
+  state: SessionProtocolPendingUserMessagesState;
 };
 
 export type SessionProtocolOutgoingMessage =
   | SessionProtocolResponseMessage
   | SessionProtocolDeltaMessage
   | SessionProtocolEphemeralMessage
-  | SessionProtocolLiveStateMessage
+  | SessionProtocolPendingUserMessagesMessage
   | SessionProtocolClientToolMessage
   | SessionProtocolReadyMessage;
 
@@ -838,7 +847,7 @@ export type SessionProtocolParsedOutgoingMessage =
   | SessionProtocolParsedResponseMessage
   | SessionProtocolDeltaMessage
   | SessionProtocolEphemeralMessage
-  | SessionProtocolLiveStateMessage
+  | SessionProtocolPendingUserMessagesMessage
   | SessionProtocolClientToolMessage
   | SessionProtocolReadyMessage;
 
@@ -966,7 +975,7 @@ const sessionProtocolOutgoingRoutingSchema = z
       "ready",
       "session.delta",
       "session.ephemeral",
-      "session.live",
+      "session.pendingUserMessages",
       "session.clientTool.call",
       "session.clientTool.cancel",
       "response",
@@ -1784,32 +1793,32 @@ const sessionProtocolPendingUserMessageSchema = z
   })
   .strict();
 
-const sessionProtocolLiveStateSchema = z
+const sessionProtocolPendingUserMessagesStateSchema = z
   .object({
     revision: z.number().int().positive(),
-    pendingUserMessages: z.array(sessionProtocolPendingUserMessageSchema),
+    messages: z.array(sessionProtocolPendingUserMessageSchema),
   })
   .strict()
   .superRefine((state, ctx) => {
     const ids = new Set<string>();
-    for (const message of state.pendingUserMessages) {
+    for (const message of state.messages) {
       if (ids.has(message.id)) {
         ctx.addIssue({
           code: "custom",
-          path: ["pendingUserMessages"],
+          path: ["messages"],
           message: `duplicate pending user message id '${message.id}'`,
         });
       }
       ids.add(message.id);
     }
-  }) as z.ZodType<SessionProtocolLiveState>;
+  }) as z.ZodType<SessionProtocolPendingUserMessagesState>;
 
-const sessionProtocolLiveStateMessageSchema = z
+const sessionProtocolPendingUserMessagesMessageSchema = z
   .object({
     version: z.literal(SESSION_PROTOCOL_VERSION),
-    type: z.literal("session.live"),
+    type: z.literal("session.pendingUserMessages"),
     sessionId: nonEmptyStringSchema,
-    state: sessionProtocolLiveStateSchema,
+    state: sessionProtocolPendingUserMessagesStateSchema,
   })
   .strict();
 
@@ -1818,6 +1827,19 @@ const sessionProtocolInitializeResultSchema = z
     protocolVersion: z.literal(SESSION_PROTOCOL_VERSION),
     methods: sessionProtocolMethodListSchema,
     alreadyInitialized: z.boolean(),
+  })
+  .strict();
+
+const sessionProtocolCreateResultSchema = z
+  .object({
+    sessionId: nonEmptyStringSchema,
+  })
+  .strict();
+
+const sessionProtocolObserveResultSchema = z
+  .object({
+    snapshot: sessionProtocolSnapshotSchema,
+    pendingUserMessages: sessionProtocolPendingUserMessagesStateSchema,
   })
   .strict();
 
@@ -2096,24 +2118,24 @@ export function createSessionProtocolEphemeralMessage(options: {
   return parsedMessage.data as SessionProtocolEphemeralMessage;
 }
 
-export function createSessionProtocolLiveStateMessage(options: {
+export function createSessionProtocolPendingUserMessagesMessage(options: {
   sessionId: string;
-  state: SessionProtocolLiveState;
-}): SessionProtocolLiveStateMessage {
+  state: SessionProtocolPendingUserMessagesState;
+}): SessionProtocolPendingUserMessagesMessage {
   const message = {
     version: SESSION_PROTOCOL_VERSION,
-    type: "session.live",
+    type: "session.pendingUserMessages",
     sessionId: options.sessionId,
     state: options.state,
   };
-  const parsedMessage = sessionProtocolLiveStateMessageSchema.safeParse(message);
+  const parsedMessage = sessionProtocolPendingUserMessagesMessageSchema.safeParse(message);
   if (!parsedMessage.success) {
     throw new Error(
-      `session protocol live state message is invalid: ${formatZodError(parsedMessage.error)}`,
+      `session protocol pending user messages message is invalid: ${formatZodError(parsedMessage.error)}`,
     );
   }
 
-  return parsedMessage.data as SessionProtocolLiveStateMessage;
+  return parsedMessage.data as SessionProtocolPendingUserMessagesMessage;
 }
 
 export function applySessionProtocolDelta(
@@ -2669,8 +2691,8 @@ export function parseSessionProtocolOutgoingLine(line: string): SessionProtocolO
     return parseSessionProtocolEphemeralMessage(parsed);
   }
 
-  if (routing.data.type === "session.live") {
-    return parseSessionProtocolLiveStateMessage(parsed);
+  if (routing.data.type === "session.pendingUserMessages") {
+    return parseSessionProtocolPendingUserMessagesMessage(parsed);
   }
 
   if (
@@ -2875,7 +2897,9 @@ export function validateSessionProtocolResult(
     case "initialize":
       return validateResult(method, result, sessionProtocolInitializeResultSchema);
     case "session.create":
+      return validateResult(method, result, sessionProtocolCreateResultSchema);
     case "session.observe":
+      return validateResult(method, result, sessionProtocolObserveResultSchema);
     case "session.snapshot":
     case "session.setRisk":
     case "session.setPersona":
@@ -3644,34 +3668,34 @@ function parseSessionProtocolEphemeralMessage(
   };
 }
 
-function parseSessionProtocolLiveStateMessage(
+function parseSessionProtocolPendingUserMessagesMessage(
   payload: unknown,
 ): SessionProtocolOutgoingParseResult {
   const fail = (message: string) =>
     outgoingParseFailure(
-      "session.live",
+      "session.pendingUserMessages",
       null,
       SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
       message,
     );
 
-  const liveMessage = sessionProtocolLiveStateMessageSchema.safeParse(payload);
-  if (!liveMessage.success) {
-    if (hasIssue(liveMessage.error, [], "unrecognized_keys")) {
-      return fail("session.live message contains unsupported fields");
+  const message = sessionProtocolPendingUserMessagesMessageSchema.safeParse(payload);
+  if (!message.success) {
+    if (hasIssue(message.error, [], "unrecognized_keys")) {
+      return fail("session.pendingUserMessages message contains unsupported fields");
     }
-    if (hasIssue(liveMessage.error, ["sessionId"])) {
-      return fail("session.live.sessionId must be a non-empty string");
+    if (hasIssue(message.error, ["sessionId"])) {
+      return fail("session.pendingUserMessages.sessionId must be a non-empty string");
     }
-    if (hasIssue(liveMessage.error, ["state"])) {
-      return fail("session.live.state is invalid");
+    if (hasIssue(message.error, ["state"])) {
+      return fail("session.pendingUserMessages.state is invalid");
     }
-    return fail(`invalid session.live message: ${formatZodError(liveMessage.error)}`);
+    return fail(`invalid session.pendingUserMessages message: ${formatZodError(message.error)}`);
   }
 
   return {
     ok: true,
-    message: liveMessage.data as SessionProtocolLiveStateMessage,
+    message: message.data as SessionProtocolPendingUserMessagesMessage,
   };
 }
 

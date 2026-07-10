@@ -18,13 +18,13 @@ import {
   notifySessionProtocolClientToolListeners,
   notifySessionProtocolDeltaListeners,
   notifySessionProtocolEphemeralListeners,
-  notifySessionProtocolLiveStateListeners,
+  notifySessionProtocolPendingUserMessagesListeners,
 } from "./session_protocol_transport_helpers.js";
 import type {
   SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
-  SessionProtocolLiveStateListener,
+  SessionProtocolPendingUserMessagesListener,
   SessionProtocolTransport,
 } from "./session_transport.js";
 
@@ -38,7 +38,8 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
   private readonly closeMode: "detach" | "shutdown-host";
   private readonly deltaListeners = new Set<SessionProtocolDeltaListener>();
   private readonly ephemeralListeners = new Set<SessionProtocolEphemeralListener>();
-  private readonly liveStateListeners = new Set<SessionProtocolLiveStateListener>();
+  private readonly pendingUserMessagesListeners =
+    new Set<SessionProtocolPendingUserMessagesListener>();
   private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
 
@@ -124,10 +125,10 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     };
   }
 
-  onLiveState(listener: SessionProtocolLiveStateListener): () => void {
-    this.liveStateListeners.add(listener);
+  onPendingUserMessages(listener: SessionProtocolPendingUserMessagesListener): () => void {
+    this.pendingUserMessagesListeners.add(listener);
     return () => {
-      this.liveStateListeners.delete(listener);
+      this.pendingUserMessagesListeners.delete(listener);
     };
   }
 
@@ -148,7 +149,7 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     this.pendingRequests.rejectAll(closeError);
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
-    this.liveStateListeners.clear();
+    this.pendingUserMessagesListeners.clear();
     this.clientToolListeners.clear();
     await this.handler.close(this.closeMode);
   }
@@ -173,10 +174,14 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
       return;
     }
 
-    if (message.type === "session.live") {
-      notifySessionProtocolLiveStateListeners(this.liveStateListeners, message, {
-        ignoreListenerErrors: true,
-      });
+    if (message.type === "session.pendingUserMessages") {
+      notifySessionProtocolPendingUserMessagesListeners(
+        this.pendingUserMessagesListeners,
+        message,
+        {
+          ignoreListenerErrors: true,
+        },
+      );
       return;
     }
 

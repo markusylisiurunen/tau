@@ -39,8 +39,8 @@ import { shellQuote } from "../execution/sandbox_tool_helpers.js";
 import type {
   SessionProtocolCreateParams,
   SessionProtocolDeltaMessage,
-  SessionProtocolLiveStateMessage,
   SessionProtocolMessage,
+  SessionProtocolPendingUserMessagesMessage,
   SessionProtocolSnapshot,
 } from "../protocol/session_protocol.js";
 import { applySessionProtocolDelta } from "../protocol/session_protocol.js";
@@ -130,7 +130,7 @@ export class SessionChatController {
   private readonly clientRenderedUserMessages = new Map<string, ChatMessageModel>();
   private observedSessionRevision: number;
   private eventUnsubscribe?: () => void;
-  private liveStateUnsubscribe?: () => void;
+  private pendingUserMessagesUnsubscribe?: () => void;
   private snapshotRecovery?: Promise<void>;
   private readonly snapshotRecoveryDeltas: SessionProtocolDeltaMessage[] = [];
   private isStreaming = false;
@@ -218,13 +218,15 @@ export class SessionChatController {
     this.renderSnapshot(this.snapshot);
     this.hydrateRunningSnapshotState();
     this.eventUnsubscribe = this.session.onDelta((delta) => this.onSdkDelta(delta));
-    this.liveStateUnsubscribe = this.session.onLiveState((message) => this.onSdkLiveState(message));
+    this.pendingUserMessagesUnsubscribe = this.session.onPendingUserMessages((message) =>
+      this.onSdkPendingUserMessages(message),
+    );
     this.refreshStatus();
   }
 
   async dispose(): Promise<void> {
     this.eventUnsubscribe?.();
-    this.liveStateUnsubscribe?.();
+    this.pendingUserMessagesUnsubscribe?.();
     if (this.listenTransition) {
       await this.listenTransition;
     }
@@ -268,6 +270,10 @@ export class SessionChatController {
   private beforeSubmit(text: string): boolean {
     if (!this.isSessionOperationActive()) {
       return true;
+    }
+
+    if (this.manualCompactionInProgress) {
+      return false;
     }
 
     const trimmed = text.trimStart();
@@ -1009,7 +1015,7 @@ export class SessionChatController {
 
     try {
       const previousUnsubscribe = this.eventUnsubscribe;
-      const previousLiveStateUnsubscribe = this.liveStateUnsubscribe;
+      const previousPendingUserMessagesUnsubscribe = this.pendingUserMessagesUnsubscribe;
       const previousSession = this.session;
       const nextSession = await this.createSession({
         executionEnvironment: this.createExecutionEnvironmentInputFromSnapshot(),
@@ -1020,9 +1026,9 @@ export class SessionChatController {
           : {}),
       });
       this.eventUnsubscribe = undefined;
-      this.liveStateUnsubscribe = undefined;
+      this.pendingUserMessagesUnsubscribe = undefined;
       previousUnsubscribe?.();
-      previousLiveStateUnsubscribe?.();
+      previousPendingUserMessagesUnsubscribe?.();
       try {
         await previousSession.unobserve();
       } catch (detachError) {
@@ -1035,8 +1041,8 @@ export class SessionChatController {
       this.snapshot = await this.session.snapshot();
       this.observedSessionRevision = this.snapshot.revision;
       this.eventUnsubscribe = this.session.onDelta((delta) => this.onSdkDelta(delta));
-      this.liveStateUnsubscribe = this.session.onLiveState((message) =>
-        this.onSdkLiveState(message),
+      this.pendingUserMessagesUnsubscribe = this.session.onPendingUserMessages((message) =>
+        this.onSdkPendingUserMessages(message),
       );
       this.view.resetToolUiSession();
       this.assistantMessages = [];
@@ -1071,8 +1077,8 @@ export class SessionChatController {
     }
   }
 
-  private onSdkLiveState(message: SessionProtocolLiveStateMessage): void {
-    this.view.setPendingUserMessages(message.state.pendingUserMessages);
+  private onSdkPendingUserMessages(message: SessionProtocolPendingUserMessagesMessage): void {
+    this.view.setPendingUserMessages(message.state.messages);
   }
 
   private onSdkDelta(delta: SessionProtocolDeltaMessage): void {
@@ -1784,7 +1790,6 @@ export class SessionChatController {
       return;
     }
 
-    this.isStreaming = true;
     this.speechStatusHint = "rewriting for speech...";
     this.refreshStatus();
     this.view.startWorkingIcon();
@@ -1811,7 +1816,6 @@ export class SessionChatController {
       }
       this.speechStatusHint = undefined;
       this.view.stopWorkingIcon();
-      this.isStreaming = false;
       this.refreshStatus();
       this.view.requestRender();
     }

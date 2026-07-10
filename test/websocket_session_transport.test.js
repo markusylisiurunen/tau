@@ -177,7 +177,7 @@ function createHost(options = {}) {
 }
 
 async function withServer(options, run) {
-  const { host } = createHost();
+  const { host } = createHost({ sessionOptions: options?.sessionOptions });
   const abortController = new AbortController();
   let serverPromise;
   const listening = new Promise((resolve) => {
@@ -321,6 +321,31 @@ describe("WebSocketSessionProtocolTransport", () => {
       expect(deltas).toEqual([createNoticeDelta("session-1", 2, "running session-1")]);
 
       unsubscribe();
+      await client.close();
+    });
+  });
+
+  it("delivers pending user messages over websocket", async () => {
+    await withServer({ sessionOptions: { holdTurns: true } }, async (url) => {
+      const transport = new WebSocketSessionProtocolTransport({ url });
+      const client = await createTauSdkClientFromTransport(transport);
+      const session = await client.sessions.create(localCreateInput);
+      const submit = session.submit("start");
+
+      await waitFor(() => session.pendingUserMessages().revision === 1);
+      const queued = session.queue("run tests");
+      await waitFor(() => session.pendingUserMessages().messages.length === 1);
+
+      expect(session.pendingUserMessages().messages).toEqual([
+        expect.objectContaining({ mode: "queue", text: "run tests" }),
+      ]);
+      await expect(session.cancelPendingMessages()).resolves.toEqual({
+        cancelled: [expect.objectContaining({ mode: "queue", text: "run tests" })],
+      });
+      await expect(queued).rejects.toMatchObject({ code: "cancelled" });
+
+      await session.interrupt();
+      await submit;
       await client.close();
     });
   });

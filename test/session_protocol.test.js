@@ -4,7 +4,7 @@ import {
   createSessionProtocolDeltaMessage,
   createSessionProtocolEphemeralMessage,
   createSessionProtocolErrorResponse,
-  createSessionProtocolLiveStateMessage,
+  createSessionProtocolPendingUserMessagesMessage,
   createSessionProtocolReadyMessage,
   createSessionProtocolRequest,
   createSessionProtocolSuccessResponse,
@@ -1017,6 +1017,30 @@ describe("session_protocol", () => {
       }),
     });
 
+    const snapshot = createProtocolSnapshot({ sessionId: "session-1", bootstrap });
+    expect(validateSessionProtocolResult("session.create", { sessionId: "session-1" })).toEqual({
+      ok: true,
+      value: { sessionId: "session-1" },
+    });
+    expect(
+      validateSessionProtocolResult("session.observe", {
+        snapshot,
+        pendingUserMessages: { revision: 1, messages: [] },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        snapshot,
+        pendingUserMessages: { revision: 1, messages: [] },
+      },
+    });
+    expect(validateSessionProtocolResult("session.observe", snapshot)).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      }),
+    });
+
     expect(
       validateSessionProtocolResult("session.retry", {
         turn: { aborted: false },
@@ -1476,12 +1500,12 @@ describe("session_protocol", () => {
     });
   });
 
-  it("parses and constructs live session state messages", () => {
-    const message = createSessionProtocolLiveStateMessage({
+  it("parses and constructs pending user message state", () => {
+    const message = createSessionProtocolPendingUserMessagesMessage({
       sessionId: "session-1",
       state: {
         revision: 2,
-        pendingUserMessages: [
+        messages: [
           { id: "steer-1", mode: "steer", text: "change direction" },
           { id: "queue-1", mode: "queue", text: "run tests" },
         ],
@@ -1498,10 +1522,7 @@ describe("session_protocol", () => {
           ...message,
           state: {
             ...message.state,
-            pendingUserMessages: [
-              message.state.pendingUserMessages[0],
-              message.state.pendingUserMessages[0],
-            ],
+            messages: [message.state.messages[0], message.state.messages[0]],
           },
         }),
       ),

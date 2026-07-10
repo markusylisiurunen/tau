@@ -281,7 +281,7 @@ describe("InProcessSessionProtocolTransport", () => {
     expect(sessions.size).toBe(1);
   });
 
-  it("shares pending live state and cancels pending messages through the sdk", async () => {
+  it("shares pending state and cancels pending messages through the sdk", async () => {
     const { host, createSession } = createHost();
     const hostedSession = createSession({ holdTurns: true });
     const transport = new InProcessSessionProtocolTransport({ host });
@@ -292,8 +292,8 @@ describe("InProcessSessionProtocolTransport", () => {
 
     const queued = session.queue("run tests");
     const steered = session.steer("change direction");
-    await waitFor(() => session.liveState().pendingUserMessages.length === 2);
-    expect(session.liveState().pendingUserMessages).toEqual([
+    await waitFor(() => session.pendingUserMessages().messages.length === 2);
+    expect(session.pendingUserMessages().messages).toEqual([
       expect.objectContaining({ mode: "steer", text: "change direction" }),
       expect.objectContaining({ mode: "queue", text: "run tests" }),
     ]);
@@ -306,7 +306,7 @@ describe("InProcessSessionProtocolTransport", () => {
     });
     await expect(queued).rejects.toMatchObject({ code: "cancelled" });
     await expect(steered).rejects.toMatchObject({ code: "cancelled" });
-    expect(session.liveState().pendingUserMessages).toEqual([]);
+    expect(session.pendingUserMessages().messages).toEqual([]);
 
     hostedSession.interruptTurn();
     await submit;

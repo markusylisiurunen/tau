@@ -13,9 +13,9 @@ import type {
   SessionProtocolExecResult,
   SessionProtocolInitializeParams,
   SessionProtocolInterruptResult,
-  SessionProtocolLiveState,
-  SessionProtocolLiveStateMessage,
   SessionProtocolMethod,
+  SessionProtocolPendingUserMessagesMessage,
+  SessionProtocolPendingUserMessagesState,
   SessionProtocolPruneResult,
   SessionProtocolQueueResult,
   SessionProtocolReadyMessage,
@@ -40,8 +40,8 @@ export type TauSdkSessionProtocolMethod = SessionProtocolMethod;
 export type TauSdkInitializeParams = SessionProtocolInitializeParams;
 export type TauSdkDelta = SessionProtocolDeltaMessage;
 export type TauSdkEphemeral = SessionProtocolEphemeralMessage;
-export type TauSdkLiveState = SessionProtocolLiveState;
-export type TauSdkLiveStateMessage = SessionProtocolLiveStateMessage;
+export type TauSdkPendingUserMessagesState = SessionProtocolPendingUserMessagesState;
+export type TauSdkPendingUserMessagesMessage = SessionProtocolPendingUserMessagesMessage;
 export type TauSdkReadyMessage = SessionProtocolReadyMessage;
 export type TauSdkCreateSessionInput = SessionProtocolCreateParams;
 export type TauSdkSessionSummary = SessionProtocolSessionSummary;
@@ -109,14 +109,14 @@ export type TauSdkSessionUserMessageOptions = {
 
 export type TauSdkDeltaListener = (delta: TauSdkDelta) => void;
 export type TauSdkEphemeralListener = (message: TauSdkEphemeral) => void;
-export type TauSdkLiveStateListener = (message: TauSdkLiveStateMessage) => void;
+export type TauSdkPendingUserMessagesListener = (message: TauSdkPendingUserMessagesMessage) => void;
 
 export type TauSdkSession = {
   readonly id: string;
-  liveState(): TauSdkLiveState;
+  pendingUserMessages(): TauSdkPendingUserMessagesState;
   onDelta(listener: TauSdkDeltaListener): () => void;
   onEphemeral(listener: TauSdkEphemeralListener): () => void;
-  onLiveState(listener: TauSdkLiveStateListener): () => void;
+  onPendingUserMessages(listener: TauSdkPendingUserMessagesListener): () => void;
   record(
     text: string,
     options?: TauSdkSessionUserMessageOptions,
@@ -182,6 +182,6 @@ export type TauSdkClient = {
   readonly sessions: TauSdkSessionClient;
   subscribe(listener: TauSdkDeltaListener): () => void;
   subscribeEphemeral(listener: TauSdkEphemeralListener): () => void;
-  subscribeLiveState(listener: TauSdkLiveStateListener): () => void;
+  subscribePendingUserMessages(listener: TauSdkPendingUserMessagesListener): () => void;
   close(): Promise<void>;
 };

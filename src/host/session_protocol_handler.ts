@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { formatSteeringUserMessage } from "../core/runtime/steering.js";
 import {
   createSessionProtocolErrorResponse,
-  createSessionProtocolLiveStateMessage,
+  createSessionProtocolPendingUserMessagesMessage,
   createSessionProtocolReadyMessage,
   createSessionProtocolSuccessResponse,
   SESSION_PROTOCOL_ERROR_CODES,
@@ -10,10 +10,10 @@ import {
   SESSION_PROTOCOL_VERSION,
   type SessionProtocolClientToolDefinition,
   type SessionProtocolDeltaMessage,
-  type SessionProtocolLiveState,
-  type SessionProtocolLiveStateMessage,
   type SessionProtocolOutgoingMessage,
   type SessionProtocolPendingUserMessage,
+  type SessionProtocolPendingUserMessagesMessage,
+  type SessionProtocolPendingUserMessagesState,
   type SessionProtocolRequestId,
   type SessionProtocolRequestMessage,
   type SessionProtocolResultByMethod,
@@ -54,7 +54,7 @@ type SessionProtocolLiveSessionState = {
   revision: number;
   pendingSteeringSubmits: Array<SessionProtocolPendingRequest<"session.steer">>;
   pendingQueuedSubmits: Array<SessionProtocolPendingRequest<"session.queue">>;
-  listeners: Set<(message: SessionProtocolLiveStateMessage) => void>;
+  listeners: Set<(message: SessionProtocolPendingUserMessagesMessage) => void>;
 };
 
 type SessionProtocolHandlerSessionState = {
@@ -62,9 +62,9 @@ type SessionProtocolHandlerSessionState = {
   live: SessionProtocolLiveSessionState;
   unsubscribeDelta?: () => void;
   unsubscribeEphemeral?: () => void;
-  unsubscribeLive?: () => void;
+  unsubscribePendingUserMessages?: () => void;
   bufferedDeltas?: SessionProtocolDeltaMessage[];
-  bufferedLiveStates?: SessionProtocolLiveStateMessage[];
+  bufferedPendingUserMessages?: SessionProtocolPendingUserMessagesMessage[];
 };
 
 type SessionMutationQueueState = {
@@ -89,10 +89,12 @@ function getSessionLiveState(session: TauHostedSession): SessionProtocolLiveSess
   return state;
 }
 
-function buildLiveState(state: SessionProtocolLiveSessionState): SessionProtocolLiveState {
+function buildPendingUserMessagesState(
+  state: SessionProtocolLiveSessionState,
+): SessionProtocolPendingUserMessagesState {
   return {
     revision: state.revision,
-    pendingUserMessages: [
+    messages: [
       ...state.pendingSteeringSubmits.map(
         (pending): SessionProtocolPendingUserMessage => ({
           id: pending.id,
@@ -111,19 +113,22 @@ function buildLiveState(state: SessionProtocolLiveSessionState): SessionProtocol
   };
 }
 
-function currentLiveStateMessage(
+function currentPendingUserMessagesMessage(
   session: TauHostedSession,
   state: SessionProtocolLiveSessionState,
-): SessionProtocolLiveStateMessage {
-  return createSessionProtocolLiveStateMessage({
+): SessionProtocolPendingUserMessagesMessage {
+  return createSessionProtocolPendingUserMessagesMessage({
     sessionId: session.sessionId,
-    state: buildLiveState(state),
+    state: buildPendingUserMessagesState(state),
   });
 }
 
-function publishLiveState(session: TauHostedSession, state: SessionProtocolLiveSessionState): void {
+function publishPendingUserMessages(
+  session: TauHostedSession,
+  state: SessionProtocolLiveSessionState,
+): void {
   state.revision += 1;
-  const message = currentLiveStateMessage(session, state);
+  const message = currentPendingUserMessagesMessage(session, state);
   for (const listener of [...state.listeners]) {
     listener(message);
   }
@@ -433,7 +438,7 @@ export class SessionProtocolHandler {
     const startedSubmit = await this.enqueueMutation(state, () => {
       if (state.live.activeSubmit || state.session.isTurnRunning || state.live.activeBash) {
         state.live.pendingQueuedSubmits.push({ id: randomUUID(), handler: this, request });
-        publishLiveState(state.session, state.live);
+        publishPendingUserMessages(state.session, state.live);
         return undefined;
       }
       return this.startUserMessageTurn(state, request);
@@ -476,7 +481,7 @@ export class SessionProtocolHandler {
         state.live.activeSubmit || state.session.isTurnRunning || state.live.activeBash;
       if (state.live.pendingSteeringSubmits.length > 0 || hasActiveSessionWork) {
         state.live.pendingSteeringSubmits.push({ id: randomUUID(), handler: this, request });
-        publishLiveState(state.session, state.live);
+        publishPendingUserMessages(state.session, state.live);
         if (hasActiveSessionWork) {
           state.session.requestTurnBoundaryStop();
         }
@@ -522,7 +527,7 @@ export class SessionProtocolHandler {
       }
 
       state.session.cancelTurnBoundaryStop();
-      publishLiveState(state.session, state.live);
+      publishPendingUserMessages(state.session, state.live);
       for (const item of pending) {
         item.handler.sendMessage(
           createSessionProtocolErrorResponse(
@@ -626,11 +631,11 @@ export class SessionProtocolHandler {
       await session.dispose();
       return;
     }
-    const state = this.registerSession(session);
     this.sendMessage(
-      createSessionProtocolSuccessResponse(request.id, "session.create", await session.snapshot()),
+      createSessionProtocolSuccessResponse(request.id, "session.create", {
+        sessionId: session.sessionId,
+      }),
     );
-    this.sendMessage(currentLiveStateMessage(state.session, state.live));
   }
 
   private async handleList(
@@ -648,7 +653,7 @@ export class SessionProtocolHandler {
   ): Promise<void> {
     const wasObserved = this.sessionStates.has(request.params.sessionId);
     const state = await this.getSessionState(request.params.sessionId, {
-      bufferInitialDeltas: !wasObserved,
+      bufferInitialDeltas: true,
     });
     if (!state) {
       this.sendMessage(
@@ -661,28 +666,29 @@ export class SessionProtocolHandler {
       );
       return;
     }
-    if (!wasObserved && !state.bufferedDeltas) {
-      state.bufferedDeltas = [];
-    }
+    state.bufferedDeltas ??= [];
+    state.bufferedPendingUserMessages ??= [];
 
     let observed = false;
     try {
       const snapshot = await state.session.snapshot();
+      const pendingUserMessages = buildPendingUserMessagesState(state.live);
       this.sendMessage(
-        createSessionProtocolSuccessResponse(request.id, "session.observe", snapshot),
+        createSessionProtocolSuccessResponse(request.id, "session.observe", {
+          snapshot,
+          pendingUserMessages,
+        }),
       );
-      const liveState = currentLiveStateMessage(state.session, state.live);
-      this.sendMessage(liveState);
       observed = true;
       this.flushBufferedDeltasAfterSnapshot(state, snapshot.revision);
-      this.flushBufferedLiveStatesAfter(state, liveState.state.revision);
+      this.flushBufferedPendingUserMessagesAfter(state, pendingUserMessages.revision);
     } finally {
       if (!observed && !wasObserved) {
         this.unsubscribeDeltaListener(state);
         this.sessionStates.delete(request.params.sessionId);
       } else if (!observed) {
         this.flushBufferedDeltasAfterSnapshot(state, 0);
-        this.flushBufferedLiveStatesAfter(state, 0);
+        this.flushBufferedPendingUserMessagesAfter(state, 0);
       }
     }
   }
@@ -820,7 +826,7 @@ export class SessionProtocolHandler {
       }
 
       const requests = state.live.pendingSteeringSubmits.splice(0);
-      publishLiveState(state.session, state.live);
+      publishPendingUserMessages(state.session, state.live);
       const primaryRequest = requests[0]!;
       const preferredHistoryEntryId =
         requests.length === 1 ? primaryRequest.request.params.historyEntryId : undefined;
@@ -879,7 +885,7 @@ export class SessionProtocolHandler {
       }
 
       const pending = state.live.pendingQueuedSubmits.shift()!;
-      publishLiveState(state.session, state.live);
+      publishPendingUserMessages(state.session, state.live);
       try {
         return await pending.handler.startUserMessageTurn(state, pending.request);
       } catch (error) {
@@ -914,7 +920,7 @@ export class SessionProtocolHandler {
         ? state.live.pendingSteeringSubmits.splice(0)
         : state.live.pendingQueuedSubmits.splice(0);
     if (pending.length > 0) {
-      publishLiveState(state.session, state.live);
+      publishPendingUserMessages(state.session, state.live);
     }
     this.sendUserMessageDrainFailure(pending, error);
   }
@@ -1312,7 +1318,7 @@ export class SessionProtocolHandler {
     const requests = state.live.pendingSteeringSubmits.splice(0);
     if (requests.length > 0) {
       state.session.cancelTurnBoundaryStop();
-      publishLiveState(state.session, state.live);
+      publishPendingUserMessages(state.session, state.live);
     }
     for (const { handler, request } of requests) {
       handler.sendMessage(
@@ -1331,7 +1337,7 @@ export class SessionProtocolHandler {
   ): void {
     const requests = state.live.pendingQueuedSubmits.splice(0);
     if (requests.length > 0) {
-      publishLiveState(state.session, state.live);
+      publishPendingUserMessages(state.session, state.live);
     }
     for (const { handler, request } of requests) {
       handler.sendMessage(
@@ -1356,7 +1362,9 @@ export class SessionProtocolHandler {
     const state: SessionProtocolHandlerSessionState = {
       session,
       live: getSessionLiveState(session),
-      ...(options.bufferInitialDeltas ? { bufferedDeltas: [], bufferedLiveStates: [] } : {}),
+      ...(options.bufferInitialDeltas
+        ? { bufferedDeltas: [], bufferedPendingUserMessages: [] }
+        : {}),
     };
 
     state.unsubscribeDelta = session.onDelta((delta) => {
@@ -1377,18 +1385,21 @@ export class SessionProtocolHandler {
       this.sendMessage(message);
     });
 
-    const liveListener = (message: SessionProtocolLiveStateMessage): void => {
+    const pendingUserMessagesListener = (
+      message: SessionProtocolPendingUserMessagesMessage,
+    ): void => {
       if (this.closed || !this.sessionStates.has(session.sessionId)) {
         return;
       }
-      if (state.bufferedLiveStates) {
-        state.bufferedLiveStates.push(message);
+      if (state.bufferedPendingUserMessages) {
+        state.bufferedPendingUserMessages.push(message);
         return;
       }
       this.sendMessage(message);
     };
-    state.live.listeners.add(liveListener);
-    state.unsubscribeLive = () => state.live.listeners.delete(liveListener);
+    state.live.listeners.add(pendingUserMessagesListener);
+    state.unsubscribePendingUserMessages = () =>
+      state.live.listeners.delete(pendingUserMessagesListener);
 
     this.sessionStates.set(session.sessionId, state);
     try {
@@ -1436,18 +1447,18 @@ export class SessionProtocolHandler {
     }
   }
 
-  private flushBufferedLiveStatesAfter(
+  private flushBufferedPendingUserMessagesAfter(
     state: SessionProtocolHandlerSessionState,
-    liveRevision: number,
+    pendingRevision: number,
   ): void {
-    const bufferedLiveStates = state.bufferedLiveStates;
-    if (!bufferedLiveStates) {
+    const bufferedPendingUserMessages = state.bufferedPendingUserMessages;
+    if (!bufferedPendingUserMessages) {
       return;
     }
 
-    state.bufferedLiveStates = undefined;
-    for (const message of bufferedLiveStates) {
-      if (message.state.revision > liveRevision) {
+    state.bufferedPendingUserMessages = undefined;
+    for (const message of bufferedPendingUserMessages) {
+      if (message.state.revision > pendingRevision) {
         this.sendMessage(message);
       }
     }
@@ -1557,9 +1568,9 @@ export class SessionProtocolHandler {
       state.unsubscribeEphemeral = undefined;
     }
 
-    if (state.unsubscribeLive) {
-      state.unsubscribeLive();
-      state.unsubscribeLive = undefined;
+    if (state.unsubscribePendingUserMessages) {
+      state.unsubscribePendingUserMessages();
+      state.unsubscribePendingUserMessages = undefined;
     }
   }
 

@@ -18,7 +18,7 @@ import {
   notifySessionProtocolClientToolListeners,
   notifySessionProtocolDeltaListeners,
   notifySessionProtocolEphemeralListeners,
-  notifySessionProtocolLiveStateListeners,
+  notifySessionProtocolPendingUserMessagesListeners,
   waitForPromiseOrTimeout,
   withTimeout,
 } from "./session_protocol_transport_helpers.js";
@@ -26,7 +26,7 @@ import type {
   SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
-  SessionProtocolLiveStateListener,
+  SessionProtocolPendingUserMessagesListener,
   SessionProtocolTransport,
 } from "./session_transport.js";
 
@@ -57,7 +57,8 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
   private readonly webSocketFactory?: (url: string) => WebSocketLike;
   private readonly deltaListeners = new Set<SessionProtocolDeltaListener>();
   private readonly ephemeralListeners = new Set<SessionProtocolEphemeralListener>();
-  private readonly liveStateListeners = new Set<SessionProtocolLiveStateListener>();
+  private readonly pendingUserMessagesListeners =
+    new Set<SessionProtocolPendingUserMessagesListener>();
   private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
   private readonly readyDeferred = createDeferred<SessionProtocolReadyMessage>();
@@ -200,10 +201,10 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     };
   }
 
-  onLiveState(listener: SessionProtocolLiveStateListener): () => void {
-    this.liveStateListeners.add(listener);
+  onPendingUserMessages(listener: SessionProtocolPendingUserMessagesListener): () => void {
+    this.pendingUserMessagesListeners.add(listener);
     return () => {
-      this.liveStateListeners.delete(listener);
+      this.pendingUserMessagesListeners.delete(listener);
     };
   }
 
@@ -226,7 +227,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     this.rejectReadyIfPending(closeError);
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
-    this.liveStateListeners.clear();
+    this.pendingUserMessagesListeners.clear();
     this.clientToolListeners.clear();
 
     this.closePromise = (async () => {
@@ -310,10 +311,14 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
       return;
     }
 
-    if (message.type === "session.live") {
-      notifySessionProtocolLiveStateListeners(this.liveStateListeners, message, {
-        ignoreListenerErrors: true,
-      });
+    if (message.type === "session.pendingUserMessages") {
+      notifySessionProtocolPendingUserMessagesListeners(
+        this.pendingUserMessagesListeners,
+        message,
+        {
+          ignoreListenerErrors: true,
+        },
+      );
       return;
     }
 

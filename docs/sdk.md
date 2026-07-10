@@ -232,8 +232,8 @@ options:
 - `subscribeEphemeral(listener)`
   - subscribes to all live-only `session.ephemeral` messages on this client connection
   - returns an unsubscribe function
-- `subscribeLiveState(listener)`
-  - subscribes to all `session.live` state messages on this client connection
+- `subscribePendingUserMessages(listener)`
+  - subscribes to all `session.pendingUserMessages` state messages on this client connection
   - returns an unsubscribe function
 - `close()`
   - closes the transport
@@ -243,8 +243,8 @@ options:
 ### `client.sessions`
 
 - `create()`
-  - sends `session.create`
-  - resolves with a new `TauSdkSession`
+  - sends `session.create`, constructs the session facade, then sends `session.observe`
+  - resolves with a fully bootstrapped `TauSdkSession`
 - `list()`
   - sends `session.list`
   - resolves with the hosted session summary array
@@ -256,10 +256,10 @@ options:
 
 - `id`
   - current session id for this facade
-- `liveState()`
-  - returns the latest non-persisted live state, including pending queued and steering messages
-- `onLiveState(listener)`
-  - subscribes to full `session.live` state replacements for this session id
+- `pendingUserMessages()`
+  - returns the latest independently revisioned pending-message state
+- `onPendingUserMessages(listener)`
+  - subscribes to replacements of only the pending-message state for this session id
   - immediately receives the current state
 - `onDelta(listener)`
   - subscribes to streamed `session.delta` messages for this session id only
@@ -354,21 +354,23 @@ options:
 
 Clients can apply deltas to a `session.snapshot()` result with `applySessionProtocolDelta` from `@markusylisiurunen/tau/sdk`. If a revision gap is detected, refresh with `session.snapshot()`. For payload semantics, see [docs/rpc.md](./rpc.md).
 
-## live session state
+## pending user messages
 
-`liveState()` and `onLiveState()` expose non-persisted state shared by clients attached to the same in-memory hosted session:
+`pendingUserMessages()` and `onPendingUserMessages()` expose non-persisted pending input shared by clients attached to the same in-memory hosted session:
 
 ```ts
-console.log(session.liveState().pendingUserMessages);
+console.log(session.pendingUserMessages().messages);
 
-const unsubscribeLiveState = session.onLiveState((message) => {
-  for (const pending of message.state.pendingUserMessages) {
-    console.log(pending.mode, pending.text);
-  }
-});
+const unsubscribePendingUserMessages = session.onPendingUserMessages(
+  (message) => {
+    for (const pending of message.state.messages) {
+      console.log(pending.mode, pending.text);
+    }
+  },
+);
 ```
 
-The SDK waits for initial live-state hydration before `client.sessions.observe()` resolves. Live-state revisions are independent from snapshot revisions, and each update replaces the previous live state in full. Pending messages survive client detach but are discarded when the host restarts or the session is recovered from disk.
+`session.observe` returns the initial snapshot and pending-message baseline together before the SDK session resolves. Pending-message revisions are independent from snapshot revisions, and each later event replaces only the pending-message list. Pending messages survive client detach but are discarded when the host restarts or the session is recovered from disk.
 
 ## ephemeral events
 

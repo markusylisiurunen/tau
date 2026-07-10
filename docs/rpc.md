@@ -72,7 +72,7 @@ server-to-client messages are:
 - `ready`
 - `response`
 - `session.delta`
-- `session.live`
+- `session.pendingUserMessages`
 - `session.ephemeral`
 
 client-to-server messages are:
@@ -234,7 +234,7 @@ params (required):
 }
 ```
 
-creates a new hosted session in the selected execution environment and returns its authoritative snapshot. Tau resolves config/content from the selected execution environment cwd before creating the runtime, then stores current settings, bootstrap metadata, lightweight catalog metadata, and prompt composition metadata in the snapshot. Prompt bodies and other large execution-environment content are loaded lazily when used. `session.reload` resolves config/content again and replaces the authoritative snapshot. For local execution environments the `cwd` is resolved on the host, not on the client:
+creates a new hosted session in the selected execution environment and returns its identity. Clients call `session.observe` to establish observation and receive the authoritative initial state. Tau resolves config/content from the selected execution environment cwd before creating the runtime, then stores current settings, bootstrap metadata, lightweight catalog metadata, and prompt composition metadata in the snapshot. Prompt bodies and other large execution-environment content are loaded lazily when used. `session.reload` resolves config/content again and replaces the authoritative snapshot. For local execution environments the `cwd` is resolved on the host, not on the client:
 
 Cloudflare Sandbox execution environments use host-configured bridge ids and already-provisioned sandbox ids. The `cwd` is a real path inside that sandbox:
 
@@ -267,72 +267,10 @@ Fly Sprites execution environments use host-configured API ids and already-provi
 Tau does not create or provision Sprites during `session.create`; provider-specific SDK behavior, command-backed config/content collection, command streaming, and path validation stay inside the Fly Sprite execution adapter.
 
 ```json
-{
-  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
-  "revision": 1,
-  "lifecycle": "idle",
-  "settings": {
-    "personaId": "gpt-5.5-coder",
-    "riskLevel": "read-only",
-    "reasoning": "medium"
-  },
-  "bootstrap": {
-    "model": {
-      "id": "gpt-5.5",
-      "name": "GPT-5.5",
-      "api": "openai-codex-responses",
-      "provider": "openai-codex",
-      "baseUrl": "",
-      "reasoning": true,
-      "input": ["text", "image"],
-      "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-      "contextWindow": 400000,
-      "maxTokens": 128000
-    },
-    "prompt": {
-      "environmentTag": "<environment>...</environment>",
-      "subagentPrompts": {}
-    }
-  },
-  "catalog": {
-    "personas": [
-      {
-        "id": "gpt-5.5-coder",
-        "label": "GPT-5.5 coder",
-        "allowedReasoningLevels": ["medium", "high", "xhigh"],
-        "tools": ["bash", "write", "edit", "view_image"],
-        "skills": "*",
-        "source": "builtin"
-      }
-    ],
-    "prompts": [{ "id": "fix", "label": "fix issue" }],
-    "skills": []
-  },
-  "executionEnvironment": {
-    "kind": "local",
-    "cwd": "/repo",
-    "home": "/home/user"
-  },
-  "messages": [
-    {
-      "id": "system",
-      "state": "committed",
-      "modelVisible": true,
-      "message": {
-        "role": "system",
-        "content": "You are Tau...",
-        "timestamp": 1782850000000
-      }
-    }
-  ],
-  "timeline": [],
-  "tools": {},
-  "agents": {},
-  "facets": {}
-}
+{ "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
 ```
 
-The snapshot stores current session settings explicitly and does not include a broad `runtimeConfig` blob. If a value is needed by clients, it is promoted to a typed snapshot field. Host-only values stay host-side. Theme files and theme selection are TUI-local presentation state and are not part of the session snapshot.
+The snapshot returned by `session.observe` stores current session settings explicitly and does not include a broad `runtimeConfig` blob. If a value is needed by clients, it is promoted to a typed snapshot field. Host-only values stay host-side. Theme files and theme selection are TUI-local presentation state and are not part of the session snapshot.
 
 #### session.list
 
@@ -358,68 +296,42 @@ params (required):
 { "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
 ```
 
-returns the authoritative current session snapshot for that session id:
+Establishes observation for that session on this connection and returns the authoritative bootstrap state:
 
 ```json
 {
-  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
-  "revision": 1,
-  "lifecycle": "idle",
-  "settings": {
-    "personaId": "gpt-5.5-coder",
-    "riskLevel": "read-only",
-    "reasoning": "medium"
-  },
-  "bootstrap": {
-    "model": {
-      "id": "gpt-5.5",
-      "name": "GPT-5.5",
-      "api": "openai-codex-responses",
-      "provider": "openai-codex",
-      "baseUrl": "",
-      "reasoning": true,
-      "input": ["text", "image"],
-      "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-      "contextWindow": 400000,
-      "maxTokens": 128000
+  "snapshot": {
+    "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
+    "revision": 1,
+    "lifecycle": "idle",
+    "settings": {
+      "personaId": "gpt-5.5-coder",
+      "riskLevel": "read-only",
+      "reasoning": "medium"
     },
-    "prompt": {
-      "environmentTag": "<environment>...</environment>",
-      "subagentPrompts": {}
-    }
+    "bootstrap": { "...": "model and prompt bootstrap metadata" },
+    "catalog": { "personas": [], "prompts": [], "skills": [] },
+    "executionEnvironment": {
+      "kind": "local",
+      "cwd": "/repo",
+      "home": "/home/user"
+    },
+    "messages": [],
+    "timeline": [],
+    "tools": {},
+    "agents": {},
+    "facets": {}
   },
-  "catalog": {
-    "personas": [],
-    "prompts": [],
-    "skills": []
-  },
-  "executionEnvironment": {
-    "kind": "local",
-    "cwd": "/repo",
-    "home": "/home/user"
-  },
-  "messages": [
-    {
-      "id": "system",
-      "state": "committed",
-      "modelVisible": true,
-      "message": {
-        "role": "system",
-        "content": "You are Tau...",
-        "timestamp": 1782850000000
-      }
-    }
-  ],
-  "timeline": [],
-  "tools": {},
-  "agents": {},
-  "facets": {}
+  "pendingUserMessages": {
+    "revision": 1,
+    "messages": []
+  }
 }
 ```
 
-After each successful `session.observe` response, the server sends the current `session.live` state for initial hydration. Any snapshot deltas or live-state updates produced while the server is preparing the response are sent afterward. Snapshot deltas whose `toRevision` is already included in the returned snapshot and live states whose revision is already included in the hydration message are not replayed.
+The host buffers snapshot deltas and pending-message replacements while preparing this response. After the response, it sends only updates newer than the returned snapshot and pending-message revisions. Clients therefore install both baselines from the response before applying subsequent events; no separate hydration event is required.
 
-if the session id is not hosted, returns `not_found`.
+If the session id is not hosted, returns `not_found`.
 
 #### session.unobserve
 
@@ -529,7 +441,7 @@ behavior:
 
 - if the session is idle, behaves like `session.submit`
 - if an assistant turn or direct bash command is active, accepts the request and starts the queued user-message turn after active work settles
-- publishes the pending message through `session.live` until its turn begins
+- publishes the pending message through `session.pendingUserMessages` until its turn begins
 - does not ask the active turn to stop early
 - returns the same success shape as `session.submit`
 
@@ -549,7 +461,7 @@ behavior:
 
 - if the session is idle, behaves like `session.submit`
 - if an assistant turn is active, accepts the request, asks the active turn to stop at the next safe boundary, batches any additional steering messages in arrival order, and then starts one new turn with a short `<system>` steering instruction plus the batched user messages
-- publishes pending steering messages through `session.live` until the steering turn begins
+- publishes pending steering messages through `session.pendingUserMessages` until the steering turn begins
 - returns the same success shape as `session.submit`
 
 #### session.cancelPendingMessages
@@ -925,18 +837,18 @@ notes:
 - notices and maintenance operations are stored as timeline items, so late-attaching clients can reconstruct them from `session.snapshot`.
 - tool progress, tool UI payloads, and subagent progress are stored in `tools`, `agents`, and `facets` instead of live-only side-channel events.
 
-## live session state
+## pending user messages
 
-`session.live` carries the current non-persisted state of an in-memory hosted session:
+`session.pendingUserMessages` replaces the current non-persisted pending-message facet for an observed in-memory session:
 
 ```json
 {
   "version": 1,
-  "type": "session.live",
+  "type": "session.pendingUserMessages",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "state": {
     "revision": 3,
-    "pendingUserMessages": [
+    "messages": [
       { "id": "pending-1", "mode": "steer", "text": "change direction" },
       { "id": "pending-2", "mode": "queue", "text": "run tests afterward" }
     ]
@@ -944,9 +856,9 @@ notes:
 }
 ```
 
-Live-state revisions are independent from snapshot revisions. Every message replaces the previous live state in full. Clients receive initial live state immediately after successful `session.create` and `session.observe` responses, then receive updates while they observe that session. Pending steering messages are ordered before queued messages because steering has processing priority.
+Pending-message revisions are independent from snapshot revisions. Each event replaces only the pending-message list. The initial baseline is included in the `session.observe` result, and later replacements are sent while the connection observes that session. Pending steering messages are ordered before queued messages because steering has processing priority.
 
-Live state is shared across attached clients and survives client detach while the hosted session remains in memory. It is not written to the session store and starts empty when a session is recovered from disk. It must not be folded into `session.snapshot` or applied with `applySessionProtocolDelta`.
+Pending messages are shared across attached clients and survive client detach while the hosted session remains in memory. They are not written to the session store and start empty when a session is recovered from disk. They must not be folded into `session.snapshot` or applied with `applySessionProtocolDelta`. Future non-persisted features should define their own independently revisioned facets rather than extending this replacement payload.
 
 ## ephemeral events
 

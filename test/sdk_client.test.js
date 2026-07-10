@@ -155,18 +155,15 @@ class FakeSessionProtocolTransport {
     });
     this.request = vi.fn(async (method, params) => {
       this.requests.push({ method, params });
-      if (method === "session.observe") {
-        this.emitLiveState(createLiveStateMessage(params.sessionId));
-      }
       const overrideResult = await this.onRequest?.(method, params);
       if (overrideResult !== undefined) {
         return overrideResult;
       }
       switch (method) {
         case "session.create":
-          return createSnapshot("session-2");
+          return { sessionId: "session-2" };
         case "session.observe":
-          return createSnapshot(params.sessionId);
+          return createObserveResult(params.sessionId);
         case "session.snapshot":
           return createSnapshot(params.sessionId);
         case "session.setRisk":
@@ -291,7 +288,7 @@ class FakeSessionProtocolTransport {
 
   requests = [];
   listeners = new Set();
-  liveStateListeners = new Set();
+  pendingUserMessagesListeners = new Set();
   clientToolListeners = new Set();
   initializeParams;
   connectTimeoutMs;
@@ -309,10 +306,10 @@ class FakeSessionProtocolTransport {
     return () => {};
   }
 
-  onLiveState(listener) {
-    this.liveStateListeners.add(listener);
+  onPendingUserMessages(listener) {
+    this.pendingUserMessagesListeners.add(listener);
     return () => {
-      this.liveStateListeners.delete(listener);
+      this.pendingUserMessagesListeners.delete(listener);
     };
   }
 
@@ -329,8 +326,8 @@ class FakeSessionProtocolTransport {
     }
   }
 
-  emitLiveState(message) {
-    for (const listener of this.liveStateListeners) {
+  emitPendingUserMessages(message) {
+    for (const listener of this.pendingUserMessagesListeners) {
       listener(message);
     }
   }
@@ -362,12 +359,19 @@ function createErrorResponse(id, error) {
   };
 }
 
-function createLiveStateMessage(sessionId, pendingUserMessages = [], revision = 1) {
+function createPendingUserMessagesMessage(sessionId, messages = [], revision = 1) {
   return {
     version: SESSION_PROTOCOL_VERSION,
-    type: "session.live",
+    type: "session.pendingUserMessages",
     sessionId,
-    state: { revision, pendingUserMessages },
+    state: { revision, messages },
+  };
+}
+
+function createObserveResult(sessionId, snapshot = createSnapshot(sessionId)) {
+  return {
+    snapshot,
+    pendingUserMessages: { revision: 1, messages: [] },
   };
 }
 
@@ -414,8 +418,7 @@ async function createConnectedClient(child, options = {}) {
       );
     }
     if (request.method === "session.observe") {
-      child.send(createSuccessResponse(request.id, createSnapshot(request.params.sessionId)));
-      child.send(createLiveStateMessage(request.params.sessionId));
+      child.send(createSuccessResponse(request.id, createObserveResult(request.params.sessionId)));
     }
   });
 
@@ -488,17 +491,21 @@ describe("sdk_client", () => {
     expect(transport.connectTimeoutMs).toBe(42);
 
     const readySession = await client.sessions.observe("session-1");
-    expect(readySession.liveState()).toEqual({ revision: 1, pendingUserMessages: [] });
-    const liveStates = [];
-    readySession.onLiveState((message) => liveStates.push(message.state));
-    transport.emitLiveState(
-      createLiveStateMessage("session-1", [{ id: "queue-1", mode: "queue", text: "queued" }], 2),
+    expect(readySession.pendingUserMessages()).toEqual({ revision: 1, messages: [] });
+    const pendingUserMessageStates = [];
+    readySession.onPendingUserMessages((message) => pendingUserMessageStates.push(message.state));
+    transport.emitPendingUserMessages(
+      createPendingUserMessagesMessage(
+        "session-1",
+        [{ id: "queue-1", mode: "queue", text: "queued" }],
+        2,
+      ),
     );
-    expect(readySession.liveState()).toEqual({
+    expect(readySession.pendingUserMessages()).toEqual({
       revision: 2,
-      pendingUserMessages: [{ id: "queue-1", mode: "queue", text: "queued" }],
+      messages: [{ id: "queue-1", mode: "queue", text: "queued" }],
     });
-    expect(liveStates.at(-1)).toEqual(readySession.liveState());
+    expect(pendingUserMessageStates.at(-1)).toEqual(readySession.pendingUserMessages());
 
     await expect(readySession.submit("hello", { historyEntryId: "entry-custom" })).resolves.toEqual(
       {
@@ -750,6 +757,32 @@ describe("sdk_client", () => {
     expect(transport.closed).toBe(true);
   });
 
+  it("keeps pending user message updates newer than the observe bootstrap", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    transport.onRequest = (method, params) => {
+      if (method !== "session.observe") {
+        return undefined;
+      }
+      transport.emitPendingUserMessages(
+        createPendingUserMessagesMessage(
+          params.sessionId,
+          [{ id: "queue-1", mode: "queue", text: "queued during bootstrap" }],
+          2,
+        ),
+      );
+      return createObserveResult(params.sessionId);
+    };
+    const client = await createTauSdkClientFromTransport(transport);
+
+    const session = await client.sessions.observe("session-1");
+
+    expect(session.pendingUserMessages()).toEqual({
+      revision: 2,
+      messages: [{ id: "queue-1", mode: "queue", text: "queued during bootstrap" }],
+    });
+    await client.close();
+  });
+
   it("advertises and executes client-provided tools", async () => {
     const transport = new FakeSessionProtocolTransport();
     const execute = vi.fn(async (args, context) => {
@@ -838,6 +871,7 @@ describe("sdk_client", () => {
 
     expect(transport.requests).toEqual([
       { method: "session.create", params: localCreateInput },
+      { method: "session.observe", params: { sessionId: "session-2" } },
       { method: "session.observe", params: { sessionId: "session-1" } },
     ]);
 
@@ -848,7 +882,10 @@ describe("sdk_client", () => {
     const transport = new FakeSessionProtocolTransport();
     transport.onRequest = (method, params) => {
       if (method === "session.observe") {
-        return { ...createSnapshot(params.sessionId), revision: 3 };
+        return createObserveResult(params.sessionId, {
+          ...createSnapshot(params.sessionId),
+          revision: 3,
+        });
       }
       return undefined;
     };
@@ -1021,13 +1058,14 @@ describe("sdk_client", () => {
       }
 
       if (request.method === "session.create") {
-        child.send(createSuccessResponse(request.id, createSnapshot(createdSessionId)));
+        child.send(createSuccessResponse(request.id, { sessionId: createdSessionId }));
         return;
       }
 
       if (request.method === "session.observe") {
-        child.send(createSuccessResponse(request.id, createSnapshot(request.params.sessionId)));
-        child.send(createLiveStateMessage(request.params.sessionId));
+        child.send(
+          createSuccessResponse(request.id, createObserveResult(request.params.sessionId)),
+        );
         return;
       }
 

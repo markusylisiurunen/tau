@@ -196,8 +196,8 @@ class FakeSession {
   id = "session-1";
   listeners = new Set();
   ephemeralListeners = new Set();
-  liveStateListeners = new Set();
-  liveStateValue = { revision: 1, pendingUserMessages: [] };
+  pendingUserMessagesListeners = new Set();
+  pendingUserMessagesValue = { revision: 1, messages: [] };
   operationLog = [];
   emitSubmitEvents = true;
   rejectSubmit = false;
@@ -468,19 +468,19 @@ class FakeSession {
     return () => this.ephemeralListeners.delete(listener);
   }
 
-  liveState() {
-    return structuredClone(this.liveStateValue);
+  pendingUserMessages() {
+    return structuredClone(this.pendingUserMessagesValue);
   }
 
-  onLiveState(listener) {
-    this.liveStateListeners.add(listener);
+  onPendingUserMessages(listener) {
+    this.pendingUserMessagesListeners.add(listener);
     listener({
       version: 1,
-      type: "session.live",
+      type: "session.pendingUserMessages",
       sessionId: this.id,
-      state: structuredClone(this.liveStateValue),
+      state: structuredClone(this.pendingUserMessagesValue),
     });
-    return () => this.liveStateListeners.delete(listener);
+    return () => this.pendingUserMessagesListeners.delete(listener);
   }
 
   async snapshot() {
@@ -1431,7 +1431,50 @@ describe("SessionChatController", () => {
     expect(session.submit).not.toHaveBeenCalled();
   });
 
-  it("renders pending queue and steering messages from session live state", async () => {
+  it("retains editor submissions while manual compaction is active", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+    controller.manualCompactionInProgress = true;
+
+    expect(controller.getInputHandlers().beforeSubmit?.("keep this text")).toBe(false);
+    expect(session.queue).not.toHaveBeenCalled();
+    expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("submits directly while local speech playback is active", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+    controller.speakTask = {
+      abortController: new AbortController(),
+      completion: Promise.resolve(),
+    };
+
+    expect(controller.getInputHandlers().beforeSubmit?.("continue working")).toBe(true);
+    controller.getInputHandlers().onSubmit("continue working");
+    await flush();
+
+    expect(session.submit).toHaveBeenCalledWith(
+      "continue working",
+      expect.objectContaining({ historyEntryId: expect.stringMatching(/^session-user-/) }),
+    );
+    expect(session.queue).not.toHaveBeenCalled();
+  });
+
+  it("renders pending queue and steering messages from session pending state", async () => {
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -1444,21 +1487,21 @@ describe("SessionChatController", () => {
 
     const message = {
       version: 1,
-      type: "session.live",
+      type: "session.pendingUserMessages",
       sessionId: session.id,
       state: {
         revision: 2,
-        pendingUserMessages: [
+        messages: [
           { id: "steer-1", mode: "steer", text: "change direction" },
           { id: "queue-1", mode: "queue", text: "run tests" },
         ],
       },
     };
-    for (const listener of session.liveStateListeners) {
+    for (const listener of session.pendingUserMessagesListeners) {
       listener(message);
     }
 
-    expect(view.pendingUserMessages).toEqual(message.state.pendingUserMessages);
+    expect(view.pendingUserMessages).toEqual(message.state.messages);
   });
 
   it("cancels all pending messages and restores their text to the editor", async () => {

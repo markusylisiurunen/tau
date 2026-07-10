@@ -6,7 +6,10 @@ import type {
   SessionProtocolInitializeParams,
   SessionProtocolResultByMethod,
 } from "../protocol/session_protocol.js";
-import { validateSessionProtocolParams } from "../protocol/session_protocol.js";
+import {
+  SESSION_PROTOCOL_VERSION,
+  validateSessionProtocolParams,
+} from "../protocol/session_protocol.js";
 import {
   type SessionProtocolTransport,
   TauSessionClientError,
@@ -18,6 +21,7 @@ import type {
   TauSdkDeltaListener,
   TauSdkEphemeralListener,
   TauSdkInitializeParams,
+  TauSdkPendingUserMessagesListener,
   TauSdkSession,
   TauSdkSessionClient,
   TauSdkSessionUserMessageOptions,
@@ -77,6 +81,10 @@ class TauSdkClientImpl implements TauSdkClient {
 
   subscribeEphemeral(listener: TauSdkEphemeralListener): () => void {
     return this.transport.onEphemeral(listener);
+  }
+
+  subscribePendingUserMessages(listener: TauSdkPendingUserMessagesListener): () => void {
+    return this.transport.onPendingUserMessages(listener);
   }
 
   createObservedSession(sessionId: string): TauSdkSessionImpl {
@@ -209,6 +217,12 @@ class TauSdkClientImpl implements TauSdkClient {
       text,
       ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
     });
+  }
+
+  sendCancelPendingMessages(
+    sessionId: string,
+  ): Promise<SessionProtocolResultByMethod["session.cancelPendingMessages"]> {
+    return this.transport.request("session.cancelPendingMessages", { sessionId });
   }
 
   sendRecord(
@@ -416,11 +430,8 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
   constructor(private readonly client: TauSdkClientImpl) {}
 
   async create(input: SessionProtocolCreateParams): Promise<TauSdkSession> {
-    const snapshot = await this.client.createSession(input);
-    const session = this.client.createObservedSession(snapshot.sessionId);
-    session.setInitialSnapshot(snapshot);
-    session.discardBufferedDeltasThrough(snapshot.revision);
-    return session;
+    const { sessionId } = await this.client.createSession(input);
+    return this.observe(sessionId);
   }
 
   async list() {
@@ -431,10 +442,11 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
   async observe(sessionId: string): Promise<TauSdkSession> {
     const session = this.client.createObservedSession(sessionId);
     try {
-      const snapshot = await this.client.observeSession(sessionId);
-      session.assertSessionId(snapshot.sessionId);
-      session.setInitialSnapshot(snapshot);
-      session.discardBufferedDeltasThrough(snapshot.revision);
+      const initialState = await this.client.observeSession(sessionId);
+      session.assertSessionId(initialState.snapshot.sessionId);
+      session.setInitialSnapshot(initialState.snapshot);
+      session.setInitialPendingUserMessages(initialState.pendingUserMessages);
+      session.discardBufferedDeltasThrough(initialState.snapshot.revision);
       return session;
     } catch (error) {
       session.disposeLocal();
@@ -447,10 +459,13 @@ class TauSdkSessionImpl implements TauSdkSession {
   private isUnobserved = false;
   private readonly deltaListeners = new Set<TauSdkDeltaListener>();
   private readonly ephemeralListeners = new Set<TauSdkEphemeralListener>();
+  private readonly pendingUserMessagesListeners = new Set<TauSdkPendingUserMessagesListener>();
   private readonly bufferedDeltas: Parameters<TauSdkDeltaListener>[0][] = [];
   private readonly unsubscribeClientDeltas: () => void;
   private readonly unsubscribeClientEphemeral: () => void;
+  private readonly unsubscribeClientPendingUserMessages: () => void;
   private initialSnapshot?: SessionProtocolResultByMethod["session.snapshot"];
+  private pendingUserMessagesValue?: Parameters<TauSdkPendingUserMessagesListener>[0]["state"];
 
   constructor(
     private readonly client: TauSdkClientImpl,
@@ -460,10 +475,21 @@ class TauSdkSessionImpl implements TauSdkSession {
     this.unsubscribeClientEphemeral = this.client.subscribeEphemeral((message) =>
       this.handleEphemeral(message),
     );
+    this.unsubscribeClientPendingUserMessages = this.client.subscribePendingUserMessages(
+      (message) => this.handlePendingUserMessages(message),
+    );
   }
 
   get id(): string {
     return this.sessionId;
+  }
+
+  pendingUserMessages(): Parameters<TauSdkPendingUserMessagesListener>[0]["state"] {
+    this.assertActive();
+    if (!this.pendingUserMessagesValue) {
+      throw new TauSessionClientError("tau sdk pending user messages are not initialized");
+    }
+    return structuredClone(this.pendingUserMessagesValue);
   }
 
   onDelta(listener: TauSdkDeltaListener): () => void {
@@ -486,6 +512,26 @@ class TauSdkSessionImpl implements TauSdkSession {
     this.ephemeralListeners.add(listener);
     return () => {
       this.ephemeralListeners.delete(listener);
+    };
+  }
+
+  onPendingUserMessages(listener: TauSdkPendingUserMessagesListener): () => void {
+    this.assertActive();
+    this.pendingUserMessagesListeners.add(listener);
+    if (this.pendingUserMessagesValue) {
+      try {
+        listener({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "session.pendingUserMessages",
+          sessionId: this.sessionId,
+          state: structuredClone(this.pendingUserMessagesValue),
+        });
+      } catch {
+        // SDK pending-message listeners must not break session event delivery.
+      }
+    }
+    return () => {
+      this.pendingUserMessagesListeners.delete(listener);
     };
   }
 
@@ -515,6 +561,10 @@ class TauSdkSessionImpl implements TauSdkSession {
     options: TauSdkSessionUserMessageOptions = {},
   ): Promise<SessionProtocolResultByMethod["session.steer"]> {
     return this.client.sendSteer(this.activeSessionId(), text, options);
+  }
+
+  cancelPendingMessages(): Promise<SessionProtocolResultByMethod["session.cancelPendingMessages"]> {
+    return this.client.sendCancelPendingMessages(this.activeSessionId());
   }
 
   async retry(): Promise<SessionProtocolResultByMethod["session.retry"]> {
@@ -689,6 +739,28 @@ class TauSdkSessionImpl implements TauSdkSession {
     }
   }
 
+  private handlePendingUserMessages(
+    message: Parameters<TauSdkPendingUserMessagesListener>[0],
+  ): void {
+    if (
+      this.isUnobserved ||
+      message.sessionId !== this.sessionId ||
+      (this.pendingUserMessagesValue &&
+        message.state.revision <= this.pendingUserMessagesValue.revision)
+    ) {
+      return;
+    }
+
+    this.pendingUserMessagesValue = structuredClone(message.state);
+    for (const listener of [...this.pendingUserMessagesListeners]) {
+      try {
+        listener(message);
+      } catch {
+        // SDK pending-message listeners must not break event delivery.
+      }
+    }
+  }
+
   assertSessionId(sessionId: string): void {
     if (sessionId !== this.sessionId) {
       throw new TauSessionClientError(
@@ -699,6 +771,14 @@ class TauSdkSessionImpl implements TauSdkSession {
 
   setInitialSnapshot(snapshot: SessionProtocolResultByMethod["session.snapshot"]): void {
     this.initialSnapshot = snapshot;
+  }
+
+  setInitialPendingUserMessages(
+    state: Parameters<TauSdkPendingUserMessagesListener>[0]["state"],
+  ): void {
+    if (!this.pendingUserMessagesValue || state.revision > this.pendingUserMessagesValue.revision) {
+      this.pendingUserMessagesValue = structuredClone(state);
+    }
   }
 
   discardBufferedDeltasThrough(revision: number): void {
@@ -713,8 +793,10 @@ class TauSdkSessionImpl implements TauSdkSession {
     this.isUnobserved = true;
     this.unsubscribeClientDeltas();
     this.unsubscribeClientEphemeral();
+    this.unsubscribeClientPendingUserMessages();
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
+    this.pendingUserMessagesListeners.clear();
     this.bufferedDeltas.splice(0);
   }
 

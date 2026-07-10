@@ -232,6 +232,9 @@ options:
 - `subscribeEphemeral(listener)`
   - subscribes to all live-only `session.ephemeral` messages on this client connection
   - returns an unsubscribe function
+- `subscribePendingUserMessages(listener)`
+  - subscribes to all `session.pendingUserMessages` state messages on this client connection
+  - returns an unsubscribe function
 - `close()`
   - closes the transport
   - for `createTauSdkClient()`, also shuts down the owned in-process host after persisting live session snapshots
@@ -240,8 +243,8 @@ options:
 ### `client.sessions`
 
 - `create()`
-  - sends `session.create`
-  - resolves with a new `TauSdkSession`
+  - sends `session.create`, constructs the session facade, then sends `session.observe`
+  - resolves with a fully bootstrapped `TauSdkSession`
 - `list()`
   - sends `session.list`
   - resolves with the hosted session summary array
@@ -253,6 +256,11 @@ options:
 
 - `id`
   - current session id for this facade
+- `pendingUserMessages()`
+  - returns the latest independently revisioned pending-message state
+- `onPendingUserMessages(listener)`
+  - subscribes to replacements of only the pending-message state for this session id
+  - immediately receives the current state
 - `onDelta(listener)`
   - subscribes to streamed `session.delta` messages for this session id only
   - replays any deltas received by this session facade before the first local listener was attached
@@ -273,6 +281,10 @@ options:
 - `steer(text, options?)`
   - sends `session.steer` with this session id
   - accepts active-turn steering semantics from the session protocol
+- `cancelPendingMessages()`
+  - sends `session.cancelPendingMessages` with this session id
+  - cancels all pending queue and steering messages without interrupting the active turn
+  - returns the cancelled messages in effective processing order
 - `retry()`
   - sends `session.retry` with this session id to run a turn without appending user text
 - `exec(command, options?)`
@@ -341,6 +353,24 @@ options:
 ```
 
 Clients can apply deltas to a `session.snapshot()` result with `applySessionProtocolDelta` from `@markusylisiurunen/tau/sdk`. If a revision gap is detected, refresh with `session.snapshot()`. For payload semantics, see [docs/rpc.md](./rpc.md).
+
+## pending user messages
+
+`pendingUserMessages()` and `onPendingUserMessages()` expose non-persisted pending input shared by clients attached to the same in-memory hosted session:
+
+```ts
+console.log(session.pendingUserMessages().messages);
+
+const unsubscribePendingUserMessages = session.onPendingUserMessages(
+  (message) => {
+    for (const pending of message.state.messages) {
+      console.log(pending.mode, pending.text);
+    }
+  },
+);
+```
+
+`session.observe` returns the initial snapshot and pending-message baseline together before the SDK session resolves. Pending-message revisions are independent from snapshot revisions, and each later event replaces only the pending-message list. Pending messages survive client detach but are discarded when the host restarts or the session is recovered from disk.
 
 ## ephemeral events
 

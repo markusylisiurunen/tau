@@ -112,6 +112,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
       }
     },
     requestTurnBoundaryStop: vi.fn(() => running),
+    cancelTurnBoundaryStop: vi.fn(() => running),
     interruptTurn: vi.fn(() => {
       if (!running || !releaseTurn) {
         return false;
@@ -278,6 +279,38 @@ describe("InProcessSessionProtocolTransport", () => {
     await reconnectedSession.unobserve();
     await reconnectedClient.close();
     expect(sessions.size).toBe(1);
+  });
+
+  it("shares pending state and cancels pending messages through the sdk", async () => {
+    const { host, createSession } = createHost();
+    const hostedSession = createSession({ holdTurns: true });
+    const transport = new InProcessSessionProtocolTransport({ host });
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.observe(hostedSession.sessionId);
+    const submit = session.submit("start");
+    await waitFor(() => hostedSession.isTurnRunning);
+
+    const queued = session.queue("run tests");
+    const steered = session.steer("change direction");
+    await waitFor(() => session.pendingUserMessages().messages.length === 2);
+    expect(session.pendingUserMessages().messages).toEqual([
+      expect.objectContaining({ mode: "steer", text: "change direction" }),
+      expect.objectContaining({ mode: "queue", text: "run tests" }),
+    ]);
+
+    await expect(session.cancelPendingMessages()).resolves.toEqual({
+      cancelled: [
+        expect.objectContaining({ mode: "steer", text: "change direction" }),
+        expect.objectContaining({ mode: "queue", text: "run tests" }),
+      ],
+    });
+    await expect(queued).rejects.toMatchObject({ code: "cancelled" });
+    await expect(steered).rejects.toMatchObject({ code: "cancelled" });
+    expect(session.pendingUserMessages().messages).toEqual([]);
+
+    hostedSession.interruptTurn();
+    await submit;
+    await client.close();
   });
 
   it("keeps transport event delivery isolated from listener failures", async () => {

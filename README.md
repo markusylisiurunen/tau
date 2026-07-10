@@ -136,7 +136,7 @@ For stdio attach, use `--session <id>` before `--`:
 tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/to/repo && tau rpc --risk read-only'
 ```
 
-Session attach renders the authoritative session snapshot, streams live `session.delta` updates, submits normal user input, supports steering/interruption, runs `!`/`!!` shell commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, changes the session risk level with `/risk:<level>` or `Ctrl+R`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
+Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` shell commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, changes the session risk level with `/risk:<level>` or `Ctrl+R`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
 
 ## Telegram runner
 
@@ -488,25 +488,23 @@ the prune commands drop bash tool results from the active context without summar
 
 ## keyboard shortcuts
 
-| key          | action                                       |
-| ------------ | -------------------------------------------- |
-| `shift+tab`  | cycle reasoning effort                       |
-| `ctrl+r`     | cycle risk level                             |
-| `ctrl+p`     | cycle personality                            |
-| `ctrl+t`     | toggle thinking visibility                   |
-| `ctrl+o`     | toggle compact tool display                  |
-| `ctrl+s`     | stash input to clipboard                     |
-| `ctrl+y`     | toggle voice recording (`/listen`)           |
-| `ctrl+g`     | terminate selected sub-agent                 |
-| `ctrl+enter` | steer running assistant with editor input    |
-| `alt+s`      | steer running assistant with queued messages |
-| `enter x2`   | retry last response on empty input           |
-| `esc x2`     | clear current prompt                         |
-| `alt+up`     | pop queued message                           |
-| `alt+c`      | collapse queued messages into one            |
-| `alt+down`   | cycle active sub-agents                      |
-| `esc`        | interrupt active task                        |
-| `ctrl+c`     | press twice to exit                          |
+| key          | action                                    |
+| ------------ | ----------------------------------------- |
+| `shift+tab`  | cycle reasoning effort                    |
+| `ctrl+r`     | cycle risk level                          |
+| `ctrl+p`     | cycle personality                         |
+| `ctrl+t`     | toggle thinking visibility                |
+| `ctrl+o`     | toggle compact tool display               |
+| `ctrl+s`     | stash input to clipboard                  |
+| `ctrl+y`     | toggle voice recording (`/listen`)        |
+| `ctrl+g`     | terminate selected sub-agent              |
+| `ctrl+enter` | steer running assistant with editor input |
+| `enter x2`   | retry last response on empty input        |
+| `esc x2`     | clear current prompt                      |
+| `alt+up`     | cancel pending messages into editor       |
+| `alt+down`   | cycle active sub-agents                   |
+| `esc`        | interrupt active task                     |
+| `ctrl+c`     | press twice to exit                       |
 
 ## configuration
 

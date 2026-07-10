@@ -72,6 +72,7 @@ server-to-client messages are:
 - `ready`
 - `response`
 - `session.delta`
+- `session.pendingUserMessages`
 - `session.ephemeral`
 
 client-to-server messages are:
@@ -96,6 +97,7 @@ when the rpc server starts, it immediately emits a `ready` line:
     "session.submit",
     "session.queue",
     "session.steer",
+    "session.cancelPendingMessages",
     "session.retry",
     "session.exec",
     "session.interrupt",
@@ -136,7 +138,7 @@ state transitions:
 
 `initialize` is a handshake signal, not a gate for other methods. clients may call other rpc methods before `initialize`, though most clients should still initialize immediately after `ready`.
 
-`tau rpc` and `tau serve` store session snapshots under `~/.config/tau/sessions` for the current host user. Starting a server does not create a session. `session.create` creates one in an explicitly selected, already-provisioned execution environment, and closing the transport or server persists hosted sessions. Stored sessions recover from persisted snapshot state, including current settings, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, agents, and facets; host-only config is resolved by the host and is not serialized into the snapshot.
+`tau rpc` and `tau serve` store session snapshots under `~/.config/tau/sessions` for the current host user. Starting a server does not create a session. `session.create` creates one in an explicitly selected, already-provisioned execution environment, and closing the transport or server persists hosted sessions. Stored sessions recover from persisted snapshot state, including current settings, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, agents, and facets; host-only config is resolved by the host and is not serialized into the snapshot. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
 
 ## requests
 
@@ -193,6 +195,7 @@ params (required):
       "session.submit",
       "session.queue",
       "session.steer",
+      "session.cancelPendingMessages",
       "session.retry",
       "session.exec",
       "session.interrupt",
@@ -231,7 +234,7 @@ params (required):
 }
 ```
 
-creates a new hosted session in the selected execution environment and returns its authoritative snapshot. Tau resolves config/content from the selected execution environment cwd before creating the runtime, then stores current settings, bootstrap metadata, lightweight catalog metadata, and prompt composition metadata in the snapshot. Prompt bodies and other large execution-environment content are loaded lazily when used. `session.reload` resolves config/content again and replaces the authoritative snapshot. For local execution environments the `cwd` is resolved on the host, not on the client:
+creates a new hosted session in the selected execution environment and returns its identity. Clients call `session.observe` to establish observation and receive the authoritative initial state. Tau resolves config/content from the selected execution environment cwd before creating the runtime, then stores current settings, bootstrap metadata, lightweight catalog metadata, and prompt composition metadata in the snapshot. Prompt bodies and other large execution-environment content are loaded lazily when used. `session.reload` resolves config/content again and replaces the authoritative snapshot. For local execution environments the `cwd` is resolved on the host, not on the client:
 
 Cloudflare Sandbox execution environments use host-configured bridge ids and already-provisioned sandbox ids. The `cwd` is a real path inside that sandbox:
 
@@ -264,72 +267,10 @@ Fly Sprites execution environments use host-configured API ids and already-provi
 Tau does not create or provision Sprites during `session.create`; provider-specific SDK behavior, command-backed config/content collection, command streaming, and path validation stay inside the Fly Sprite execution adapter.
 
 ```json
-{
-  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
-  "revision": 1,
-  "lifecycle": "idle",
-  "settings": {
-    "personaId": "gpt-5.5-coder",
-    "riskLevel": "read-only",
-    "reasoning": "medium"
-  },
-  "bootstrap": {
-    "model": {
-      "id": "gpt-5.5",
-      "name": "GPT-5.5",
-      "api": "openai-codex-responses",
-      "provider": "openai-codex",
-      "baseUrl": "",
-      "reasoning": true,
-      "input": ["text", "image"],
-      "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-      "contextWindow": 400000,
-      "maxTokens": 128000
-    },
-    "prompt": {
-      "environmentTag": "<environment>...</environment>",
-      "subagentPrompts": {}
-    }
-  },
-  "catalog": {
-    "personas": [
-      {
-        "id": "gpt-5.5-coder",
-        "label": "GPT-5.5 coder",
-        "allowedReasoningLevels": ["medium", "high", "xhigh"],
-        "tools": ["bash", "write", "edit", "view_image"],
-        "skills": "*",
-        "source": "builtin"
-      }
-    ],
-    "prompts": [{ "id": "fix", "label": "fix issue" }],
-    "skills": []
-  },
-  "executionEnvironment": {
-    "kind": "local",
-    "cwd": "/repo",
-    "home": "/home/user"
-  },
-  "messages": [
-    {
-      "id": "system",
-      "state": "committed",
-      "modelVisible": true,
-      "message": {
-        "role": "system",
-        "content": "You are Tau...",
-        "timestamp": 1782850000000
-      }
-    }
-  ],
-  "timeline": [],
-  "tools": {},
-  "agents": {},
-  "facets": {}
-}
+{ "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
 ```
 
-The snapshot stores current session settings explicitly and does not include a broad `runtimeConfig` blob. If a value is needed by clients, it is promoted to a typed snapshot field. Host-only values stay host-side. Theme files and theme selection are TUI-local presentation state and are not part of the session snapshot.
+The snapshot returned by `session.observe` stores current session settings explicitly and does not include a broad `runtimeConfig` blob. If a value is needed by clients, it is promoted to a typed snapshot field. Host-only values stay host-side. Theme files and theme selection are TUI-local presentation state and are not part of the session snapshot.
 
 #### session.list
 
@@ -355,68 +296,42 @@ params (required):
 { "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
 ```
 
-returns the authoritative current session snapshot for that session id:
+Establishes observation for that session on this connection and returns the authoritative bootstrap state:
 
 ```json
 {
-  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
-  "revision": 1,
-  "lifecycle": "idle",
-  "settings": {
-    "personaId": "gpt-5.5-coder",
-    "riskLevel": "read-only",
-    "reasoning": "medium"
-  },
-  "bootstrap": {
-    "model": {
-      "id": "gpt-5.5",
-      "name": "GPT-5.5",
-      "api": "openai-codex-responses",
-      "provider": "openai-codex",
-      "baseUrl": "",
-      "reasoning": true,
-      "input": ["text", "image"],
-      "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-      "contextWindow": 400000,
-      "maxTokens": 128000
+  "snapshot": {
+    "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
+    "revision": 1,
+    "lifecycle": "idle",
+    "settings": {
+      "personaId": "gpt-5.5-coder",
+      "riskLevel": "read-only",
+      "reasoning": "medium"
     },
-    "prompt": {
-      "environmentTag": "<environment>...</environment>",
-      "subagentPrompts": {}
-    }
+    "bootstrap": { "...": "model and prompt bootstrap metadata" },
+    "catalog": { "personas": [], "prompts": [], "skills": [] },
+    "executionEnvironment": {
+      "kind": "local",
+      "cwd": "/repo",
+      "home": "/home/user"
+    },
+    "messages": [],
+    "timeline": [],
+    "tools": {},
+    "agents": {},
+    "facets": {}
   },
-  "catalog": {
-    "personas": [],
-    "prompts": [],
-    "skills": []
-  },
-  "executionEnvironment": {
-    "kind": "local",
-    "cwd": "/repo",
-    "home": "/home/user"
-  },
-  "messages": [
-    {
-      "id": "system",
-      "state": "committed",
-      "modelVisible": true,
-      "message": {
-        "role": "system",
-        "content": "You are Tau...",
-        "timestamp": 1782850000000
-      }
-    }
-  ],
-  "timeline": [],
-  "tools": {},
-  "agents": {},
-  "facets": {}
+  "pendingUserMessages": {
+    "revision": 1,
+    "messages": []
+  }
 }
 ```
 
-for each `session.observe` response, any deltas produced while the server is preparing the snapshot are sent only after the response. deltas whose `toRevision` is already included in the returned snapshot are not replayed.
+The host buffers snapshot deltas and pending-message replacements while preparing this response. After the response, it sends only updates newer than the returned snapshot and pending-message revisions. Clients therefore install both baselines from the response before applying subsequent events; no separate hydration event is required.
 
-if the session id is not hosted, returns `not_found`.
+If the session id is not hosted, returns `not_found`.
 
 #### session.unobserve
 
@@ -526,6 +441,7 @@ behavior:
 
 - if the session is idle, behaves like `session.submit`
 - if an assistant turn or direct bash command is active, accepts the request and starts the queued user-message turn after active work settles
+- publishes the pending message through `session.pendingUserMessages` until its turn begins
 - does not ask the active turn to stop early
 - returns the same success shape as `session.submit`
 
@@ -545,7 +461,29 @@ behavior:
 
 - if the session is idle, behaves like `session.submit`
 - if an assistant turn is active, accepts the request, asks the active turn to stop at the next safe boundary, batches any additional steering messages in arrival order, and then starts one new turn with a short `<system>` steering instruction plus the batched user messages
+- publishes pending steering messages through `session.pendingUserMessages` until the steering turn begins
 - returns the same success shape as `session.submit`
+
+#### session.cancelPendingMessages
+
+params (required):
+
+```json
+{ "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
+```
+
+Atomically cancels every pending queued and steering message without interrupting the active turn. The result returns the cancelled messages in effective processing order, steering first and queued messages second:
+
+```json
+{
+  "cancelled": [
+    { "id": "pending-1", "mode": "steer", "text": "change direction" },
+    { "id": "pending-2", "mode": "queue", "text": "run tests afterward" }
+  ]
+}
+```
+
+Each cancelled `session.queue` or `session.steer` request receives a `cancelled` error. Cancelling steering also withdraws the requested turn-boundary stop when the active turn has not reached that boundary yet. A turn already stopping at the boundary cannot be resumed.
 
 #### session.retry
 
@@ -899,6 +837,29 @@ notes:
 - notices and maintenance operations are stored as timeline items, so late-attaching clients can reconstruct them from `session.snapshot`.
 - tool progress, tool UI payloads, and subagent progress are stored in `tools`, `agents`, and `facets` instead of live-only side-channel events.
 
+## pending user messages
+
+`session.pendingUserMessages` replaces the current non-persisted pending-message facet for an observed in-memory session:
+
+```json
+{
+  "version": 1,
+  "type": "session.pendingUserMessages",
+  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
+  "state": {
+    "revision": 3,
+    "messages": [
+      { "id": "pending-1", "mode": "steer", "text": "change direction" },
+      { "id": "pending-2", "mode": "queue", "text": "run tests afterward" }
+    ]
+  }
+}
+```
+
+Pending-message revisions are independent from snapshot revisions. Each event replaces only the pending-message list. The initial baseline is included in the `session.observe` result, and later replacements are sent while the connection observes that session. Pending steering messages are ordered before queued messages because steering has processing priority.
+
+Pending messages are shared across attached clients and survive client detach while the hosted session remains in memory. They are not written to the session store and start empty when a session is recovered from disk. They must not be folded into `session.snapshot` or applied with `applySessionProtocolDelta`. Future non-persisted features should define their own independently revisioned facets rather than extending this replacement payload.
+
 ## ephemeral events
 
 `session.ephemeral` messages carry non-recoverable observed-session activity that is intentionally not stored in `SessionSnapshot`. The current use is live ephemeral-agent progress:
@@ -956,6 +917,7 @@ error codes:
 - `invalid_params`: params failed method validation
 - `not_found`: requested session does not exist on this host
 - `busy`: overlapping idle-only `session.submit`/`session.retry`/`session.exec` or activity rejected while a mutating request is in progress
+- `cancelled`: a pending queued or steering request was explicitly cancelled
 - `internal_error`: unexpected runtime failure
 
 for lines that cannot produce a valid request id (for example malformed json), `id` is `null`.
@@ -970,6 +932,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 - only one idle-only `session.submit`, `session.retry`, or `session.exec` can run at once (`busy` otherwise)
 - `session.queue` can be accepted during active work and runs after the active turn settles
 - `session.steer` can be accepted during an active turn and runs at the next safe boundary after requesting the active turn to stop
+- `session.cancelPendingMessages` atomically removes pending queue and steering requests without interrupting active work
 - `session.submit`, `session.retry`, and `session.exec` are rejected with `busy` while a queued/running compact or prune mutation exists
 - responses and deltas may still interleave
 

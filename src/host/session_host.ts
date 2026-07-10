@@ -48,6 +48,7 @@ export type TauHostedSession = {
   runTurn(): Promise<SessionProtocolUserMessageTurnResult["turn"]>;
   interruptTurn(): boolean;
   requestTurnBoundaryStop(): boolean;
+  cancelTurnBoundaryStop(): boolean;
   exec(
     options: Omit<SessionProtocolExecParams, "sessionId"> & {
       signal?: AbortSignal;

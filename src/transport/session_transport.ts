@@ -5,12 +5,16 @@ import type {
   SessionProtocolInitializeParams,
   SessionProtocolMethod,
   SessionProtocolParamsByMethod,
+  SessionProtocolPendingUserMessagesMessage,
   SessionProtocolReadyMessage,
   SessionProtocolResultByMethod,
 } from "../protocol/session_protocol.js";
 
 export type SessionProtocolDeltaListener = (delta: SessionProtocolDeltaMessage) => void;
 export type SessionProtocolEphemeralListener = (message: SessionProtocolEphemeralMessage) => void;
+export type SessionProtocolPendingUserMessagesListener = (
+  message: SessionProtocolPendingUserMessagesMessage,
+) => void;
 export type SessionProtocolClientToolListener = (message: SessionProtocolClientToolMessage) => void;
 
 export type SessionProtocolTransport = {
@@ -22,6 +26,7 @@ export type SessionProtocolTransport = {
   ): Promise<SessionProtocolResultByMethod[M]>;
   onDelta(listener: SessionProtocolDeltaListener): () => void;
   onEphemeral(listener: SessionProtocolEphemeralListener): () => void;
+  onPendingUserMessages(listener: SessionProtocolPendingUserMessagesListener): () => void;
   onClientTool(listener: SessionProtocolClientToolListener): () => void;
   close(): Promise<void>;
 };

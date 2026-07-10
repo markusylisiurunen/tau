@@ -18,11 +18,13 @@ import {
   notifySessionProtocolClientToolListeners,
   notifySessionProtocolDeltaListeners,
   notifySessionProtocolEphemeralListeners,
+  notifySessionProtocolPendingUserMessagesListeners,
 } from "./session_protocol_transport_helpers.js";
 import type {
   SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
+  SessionProtocolPendingUserMessagesListener,
   SessionProtocolTransport,
 } from "./session_transport.js";
 
@@ -36,6 +38,8 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
   private readonly closeMode: "detach" | "shutdown-host";
   private readonly deltaListeners = new Set<SessionProtocolDeltaListener>();
   private readonly ephemeralListeners = new Set<SessionProtocolEphemeralListener>();
+  private readonly pendingUserMessagesListeners =
+    new Set<SessionProtocolPendingUserMessagesListener>();
   private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
 
@@ -121,6 +125,13 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     };
   }
 
+  onPendingUserMessages(listener: SessionProtocolPendingUserMessagesListener): () => void {
+    this.pendingUserMessagesListeners.add(listener);
+    return () => {
+      this.pendingUserMessagesListeners.delete(listener);
+    };
+  }
+
   onClientTool(listener: SessionProtocolClientToolListener): () => void {
     this.clientToolListeners.add(listener);
     return () => {
@@ -138,6 +149,7 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     this.pendingRequests.rejectAll(closeError);
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
+    this.pendingUserMessagesListeners.clear();
     this.clientToolListeners.clear();
     await this.handler.close(this.closeMode);
   }
@@ -159,6 +171,17 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
       notifySessionProtocolEphemeralListeners(this.ephemeralListeners, message, {
         ignoreListenerErrors: true,
       });
+      return;
+    }
+
+    if (message.type === "session.pendingUserMessages") {
+      notifySessionProtocolPendingUserMessagesListeners(
+        this.pendingUserMessagesListeners,
+        message,
+        {
+          ignoreListenerErrors: true,
+        },
+      );
       return;
     }
 

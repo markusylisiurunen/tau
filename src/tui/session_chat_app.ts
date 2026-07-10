@@ -131,9 +131,7 @@ export class SessionChatApp implements ModeAdapter {
     try {
       const session = await resolveSession(options.client, options.sessionSelection);
       const snapshot = await session.snapshot();
-      const queuedUserMessages: string[] = [];
       const view = new TuiChatView({
-        queuedUserMessages,
         compactToolUi: true,
         showThinking: false,
         terminalAppearance: options.terminalAppearance,
@@ -150,7 +148,6 @@ export class SessionChatApp implements ModeAdapter {
         config: options.config,
         defaultDiffTool: options.defaultDiffTool,
         deps: options.deps,
-        queuedUserMessages,
         caffeinated: options.caffeinated,
         themeIds: (options.themes ?? []).map((theme) => theme.id),
         onExit: () => app.exit(),

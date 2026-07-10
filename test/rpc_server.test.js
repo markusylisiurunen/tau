@@ -109,11 +109,11 @@ function createHarness(options = {}) {
   const sessions = new Map();
   let nextSessionId = 1;
 
-  const createHostedSession = () => {
+  const createHostedSession = (recoveredSessionId) => {
     const deltaHandlers = new Set();
     const historyEntries = [];
     const snapshotDelays = [...(options.snapshotDelays ?? [])];
-    let sessionId = `session-${nextSessionId++}`;
+    let sessionId = recoveredSessionId ?? `session-${nextSessionId++}`;
     let running = false;
     let nextHistoryId = 1;
     let releaseTurn;
@@ -240,6 +240,7 @@ function createHarness(options = {}) {
         }
       },
       requestTurnBoundaryStop: vi.fn(() => running),
+      cancelTurnBoundaryStop: vi.fn(() => running),
       async exec(runOptions) {
         if (options.exec) {
           return await options.exec(runOptions);
@@ -377,6 +378,13 @@ function createHarness(options = {}) {
     emitNotice: (text, revision) => seededSession?.emitNotice(text, revision),
     emitSubagent: (event, originHistoryEntryId) =>
       seededSession?.emitSubagent(event, originHistoryEntryId),
+    recoverSession: () => {
+      if (!seededSession) {
+        throw new Error("no seeded session to recover");
+      }
+      sessions.delete(seededSession.sessionId);
+      return createHostedSession(seededSession.sessionId);
+    },
   };
 }
 
@@ -453,10 +461,7 @@ describe("rpc_server", () => {
     expect(created).toEqual(
       expect.objectContaining({
         ok: true,
-        result: expect.objectContaining({
-          sessionId: "session-2",
-          lifecycle: "idle",
-        }),
+        result: { sessionId: "session-2" },
       }),
     );
 
@@ -793,8 +798,11 @@ describe("rpc_server", () => {
     expect(deltaIndex).toBeGreaterThan(responseIndex);
     expect(observerLines[responseIndex].result).toEqual(
       expect.objectContaining({
-        sessionId: "session-1",
-        revision: 1,
+        snapshot: expect.objectContaining({
+          sessionId: "session-1",
+          revision: 1,
+        }),
+        pendingUserMessages: { revision: 1, messages: [] },
       }),
     );
     expect(observerLines[deltaIndex]).toEqual(
@@ -807,7 +815,7 @@ describe("rpc_server", () => {
     await observer.close();
   });
 
-  it("keeps forwarding deltas while a repeated observe snapshot is pending", async () => {
+  it("buffers deltas while a repeated observe snapshot is pending", async () => {
     let harness;
     harness = createHarness({
       snapshotDelays: [
@@ -835,7 +843,7 @@ describe("rpc_server", () => {
     );
     expect(responseIndex).toBeGreaterThanOrEqual(0);
     expect(deltaIndex).toBeGreaterThanOrEqual(0);
-    expect(deltaIndex).toBeLessThan(responseIndex);
+    expect(deltaIndex).toBeGreaterThan(responseIndex);
 
     await observer.close();
   });
@@ -1141,6 +1149,143 @@ describe("rpc_server", () => {
     }
   });
 
+  it("publishes and cancels pending queue and steering state", async () => {
+    const harness = createHarness();
+    const observerLines = [];
+    const observer = new RpcServer({
+      host: harness.host,
+      send: (line) => observerLines.push(JSON.parse(line)),
+    });
+    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
+
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
+    );
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
+
+    const queued = harness.server.handleLine(
+      request("queue-1", "session.queue", {
+        sessionId: "session-1",
+        text: "run tests",
+      }),
+    );
+    const steered = harness.server.handleLine(
+      request("steer-1", "session.steer", {
+        sessionId: "session-1",
+        text: "change direction",
+      }),
+    );
+
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 2,
+      ),
+    );
+    const pending = harness.lines.findLast(
+      (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 2,
+    );
+    expect(pending.state.messages).toEqual([
+      expect.objectContaining({ mode: "steer", text: "change direction" }),
+      expect.objectContaining({ mode: "queue", text: "run tests" }),
+    ]);
+    await waitFor(() =>
+      observerLines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 2,
+      ),
+    );
+
+    await observer.handleLine(request("detach", "session.unobserve", { sessionId: "session-1" }));
+    await observer.handleLine(request("reattach", "session.observe", { sessionId: "session-1" }));
+    expect(
+      observerLines.find((line) => line.id === "reattach" && line.type === "response").result
+        .pendingUserMessages.messages,
+    ).toEqual([
+      expect.objectContaining({ mode: "steer", text: "change direction" }),
+      expect.objectContaining({ mode: "queue", text: "run tests" }),
+    ]);
+
+    await observer.handleLine(
+      request("cancel-1", "session.cancelPendingMessages", { sessionId: "session-1" }),
+    );
+    await Promise.all([queued, steered]);
+
+    expect(
+      observerLines.find((line) => line.id === "cancel-1" && line.type === "response"),
+    ).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          cancelled: [
+            expect.objectContaining({ mode: "steer", text: "change direction" }),
+            expect.objectContaining({ mode: "queue", text: "run tests" }),
+          ],
+        },
+      }),
+    );
+    for (const id of ["queue-1", "steer-1"]) {
+      expect(harness.lines.find((line) => line.id === id && line.type === "response")).toEqual(
+        expect.objectContaining({
+          ok: false,
+          error: expect.objectContaining({ code: SESSION_PROTOCOL_ERROR_CODES.cancelled }),
+        }),
+      );
+    }
+    expect(
+      harness.lines.findLast((line) => line.type === "session.pendingUserMessages").state.messages,
+    ).toEqual([]);
+    expect(harness.seededSession.cancelTurnBoundaryStop).toHaveBeenCalled();
+
+    harness.releaseTurn();
+    await firstSubmit;
+    await observer.close();
+  });
+
+  it("starts recovered sessions without pending user messages", async () => {
+    const harness = createHarness();
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
+    );
+    await waitFor(() => harness.seededSession.isTurnRunning);
+    const queued = harness.server.handleLine(
+      request("queue-1", "session.queue", {
+        sessionId: "session-1",
+        text: "must not recover",
+      }),
+    );
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 1,
+      ),
+    );
+
+    harness.recoverSession();
+    const recoveredLines = [];
+    const recovered = new RpcServer({
+      host: harness.host,
+      send: (line) => recoveredLines.push(JSON.parse(line)),
+    });
+    await recovered.handleLine(request("recover", "session.observe", { sessionId: "session-1" }));
+
+    expect(
+      recoveredLines.find((line) => line.id === "recover" && line.type === "response").result
+        .pendingUserMessages,
+    ).toEqual({ revision: 1, messages: [] });
+
+    await harness.server.handleLine(
+      request("cancel", "session.cancelPendingMessages", { sessionId: "session-1" }),
+    );
+    await queued;
+    harness.releaseTurn();
+    await firstSubmit;
+    await recovered.close();
+  });
+
   it("drops pending steering submits when a turn is interrupted", async () => {
     const harness = createHarness();
 
@@ -1313,8 +1458,11 @@ describe("rpc_server", () => {
     const attach = harness.lines.find((line) => line.type === "response" && line.id === "attach");
     expect(attach.result).toEqual(
       expect.objectContaining({
-        sessionId: "session-1",
-        lifecycle: "idle",
+        snapshot: expect.objectContaining({
+          sessionId: "session-1",
+          lifecycle: "idle",
+        }),
+        pendingUserMessages: { revision: 1, messages: [] },
       }),
     );
 

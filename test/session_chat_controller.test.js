@@ -196,6 +196,8 @@ class FakeSession {
   id = "session-1";
   listeners = new Set();
   ephemeralListeners = new Set();
+  pendingUserMessagesListeners = new Set();
+  pendingUserMessagesValue = { revision: 1, messages: [] };
   operationLog = [];
   emitSubmitEvents = true;
   rejectSubmit = false;
@@ -283,10 +285,15 @@ class FakeSession {
     });
     return { snapshot: this.snapshotValue, userHistoryEntryId: historyEntryId };
   });
+  queue = vi.fn(async () => ({
+    userHistoryEntryId: "queue-1",
+    turn: { aborted: false },
+  }));
   steer = vi.fn(async () => ({
     userHistoryEntryId: "steer-1",
     turn: { aborted: false },
   }));
+  cancelPendingMessages = vi.fn(async () => ({ cancelled: [] }));
   interrupt = vi.fn(async () => ({ interrupted: true, isTurnRunning: false }));
   setRiskLevel = vi.fn(async (riskLevel) => {
     this.snapshotValue = updateSnapshot(this.snapshotValue, {
@@ -461,6 +468,21 @@ class FakeSession {
     return () => this.ephemeralListeners.delete(listener);
   }
 
+  pendingUserMessages() {
+    return structuredClone(this.pendingUserMessagesValue);
+  }
+
+  onPendingUserMessages(listener) {
+    this.pendingUserMessagesListeners.add(listener);
+    listener({
+      version: 1,
+      type: "session.pendingUserMessages",
+      sessionId: this.id,
+      state: structuredClone(this.pendingUserMessagesValue),
+    });
+    return () => this.pendingUserMessagesListeners.delete(listener);
+  }
+
   async snapshot() {
     return this.snapshotValue;
   }
@@ -535,6 +557,7 @@ class FakeView {
   toolCost = 0;
   subagentSelectionCycles = [];
   selectedSubagentId;
+  pendingUserMessages = [];
   renderRequests = 0;
   workingIconStarts = 0;
   workingIconStops = 0;
@@ -606,6 +629,9 @@ class FakeView {
     return this.selectedSubagentId;
   }
   sendTerminalNotification() {}
+  setPendingUserMessages(messages) {
+    this.pendingUserMessages = structuredClone(messages);
+  }
   getEditorText() {
     return this.editorText;
   }
@@ -1382,15 +1408,13 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(delayedSubmit).toHaveBeenCalledTimes(1);
-    expect(view.systems).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          text: "message queued",
-          kind: "success",
-          options: { persist: false },
-        }),
-      ]),
+    expect(session.queue).toHaveBeenCalledWith(
+      "queued while response pending",
+      expect.objectContaining({
+        historyEntryId: expect.stringMatching(/^session-queue-/),
+      }),
     );
+    expect(view.systems).toEqual([]);
 
     session.submit = vi.fn(async (_text, options = {}) => ({
       userHistoryEntryId: options.historyEntryId ?? "queued-user",
@@ -1402,18 +1426,55 @@ describe("SessionChatController", () => {
     });
     await flush();
 
-    expect(view.workingIconStops).toBe(2);
+    expect(view.workingIconStops).toBe(1);
     expect(controller.submittedTurnInProgress).toBe(false);
+    expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("retains editor submissions while manual compaction is active", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+    controller.manualCompactionInProgress = true;
+
+    expect(controller.getInputHandlers().beforeSubmit?.("keep this text")).toBe(false);
+    expect(session.queue).not.toHaveBeenCalled();
+    expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("submits directly while local speech playback is active", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+    controller.speakTask = {
+      abortController: new AbortController(),
+      completion: Promise.resolve(),
+    };
+
+    expect(controller.getInputHandlers().beforeSubmit?.("continue working")).toBe(true);
+    controller.getInputHandlers().onSubmit("continue working");
+    await flush();
+
     expect(session.submit).toHaveBeenCalledWith(
-      "queued while response pending",
-      expect.objectContaining({
-        historyEntryId: expect.stringMatching(/^session-user-/),
-      }),
+      "continue working",
+      expect.objectContaining({ historyEntryId: expect.stringMatching(/^session-user-/) }),
     );
+    expect(session.queue).not.toHaveBeenCalled();
   });
 
-  it("flushes queued messages through the canonical steer request", async () => {
-    const queuedUserMessages = ["first queued", "second queued"];
+  it("renders pending queue and steering messages from session pending state", async () => {
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -1421,48 +1482,51 @@ describe("SessionChatController", () => {
       session,
       snapshot: await session.snapshot(),
       targetLabel: "in-process",
-      queuedUserMessages,
     });
     controller.start();
 
-    controller.getInputHandlers().onFlushQueueAsSteer?.();
-    await flush();
+    const message = {
+      version: 1,
+      type: "session.pendingUserMessages",
+      sessionId: session.id,
+      state: {
+        revision: 2,
+        messages: [
+          { id: "steer-1", mode: "steer", text: "change direction" },
+          { id: "queue-1", mode: "queue", text: "run tests" },
+        ],
+      },
+    };
+    for (const listener of session.pendingUserMessagesListeners) {
+      listener(message);
+    }
 
-    expect(queuedUserMessages).toEqual([]);
-    expect(session.steer).toHaveBeenCalledWith(
-      "first queued\n\nsecond queued",
-      expect.objectContaining({
-        historyEntryId: expect.stringMatching(/^session-steer-/),
-      }),
-    );
-    expect(view.systems).toEqual([]);
+    expect(view.pendingUserMessages).toEqual(message.state.messages);
   });
 
-  it("restores queued messages when flushing them as steering fails", async () => {
-    const queuedUserMessages = ["first queued", "second queued"];
+  it("cancels all pending messages and restores their text to the editor", async () => {
     const session = new FakeSession();
-    session.steer = vi.fn(async () => {
-      throw new Error("session busy");
-    });
+    session.cancelPendingMessages = vi.fn(async () => ({
+      cancelled: [
+        { id: "steer-1", mode: "steer", text: "change direction" },
+        { id: "queue-1", mode: "queue", text: "run tests" },
+      ],
+    }));
     const view = new FakeView();
+    view.editorText = "existing";
     const controller = new SessionChatController({
       view,
       session,
       snapshot: await session.snapshot(),
       targetLabel: "in-process",
-      queuedUserMessages,
     });
     controller.start();
 
-    controller.getInputHandlers().onFlushQueueAsSteer?.();
+    controller.getInputHandlers().onAltUp?.();
     await flush();
 
-    expect(queuedUserMessages).toEqual(["first queued", "second queued"]);
-    expect(view.systems).toContainEqual({
-      text: "steering failed: session busy",
-      kind: "error",
-      options: undefined,
-    });
+    expect(session.cancelPendingMessages).toHaveBeenCalledOnce();
+    expect(view.editorText).toBe("existing\n\n---\n\nchange direction\n\n---\n\nrun tests");
   });
 
   it("submits steering text as a normal turn while idle", async () => {
@@ -1489,7 +1553,6 @@ describe("SessionChatController", () => {
   });
 
   it("routes steering through the session protocol while a submitted turn is active", async () => {
-    const queuedUserMessages = ["first queued", "second queued"];
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -1497,7 +1560,6 @@ describe("SessionChatController", () => {
       session,
       snapshot: await session.snapshot(),
       targetLabel: "in-process",
-      queuedUserMessages,
     });
     controller.start();
     controller.isStreaming = true;
@@ -1508,18 +1570,6 @@ describe("SessionChatController", () => {
 
     expect(session.steer).toHaveBeenCalledWith(
       "change direction",
-      expect.objectContaining({
-        historyEntryId: expect.stringMatching(/^session-steer-/),
-      }),
-    );
-    expect(view.systems).toEqual([]);
-
-    controller.getInputHandlers().onFlushQueueAsSteer?.();
-    await flush();
-
-    expect(queuedUserMessages).toEqual([]);
-    expect(session.steer).toHaveBeenCalledWith(
-      "first queued\n\nsecond queued",
       expect.objectContaining({
         historyEntryId: expect.stringMatching(/^session-steer-/),
       }),
@@ -1702,9 +1752,11 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.submit).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ kind: "success", text: "message queued" }),
+    expect(session.queue).toHaveBeenCalledWith(
+      "queued after attach",
+      expect.objectContaining({ historyEntryId: expect.stringMatching(/^session-queue-/) }),
     );
+    expect(view.systems).toEqual([]);
 
     session.snapshotValue = createSnapshot([
       {
@@ -1723,12 +1775,7 @@ describe("SessionChatController", () => {
     });
     await flush();
 
-    expect(session.submit).toHaveBeenCalledWith(
-      "queued after attach",
-      expect.objectContaining({
-        historyEntryId: expect.stringMatching(/^session-user-/),
-      }),
-    );
+    expect(session.submit).not.toHaveBeenCalled();
   });
 
   it("applies assistant content append deltas without full snapshot reconciliation", async () => {

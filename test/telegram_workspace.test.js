@@ -57,6 +57,23 @@ describe("telegram workspace", () => {
     expect(await readdir(join(workspaceRoot, "demo"))).toEqual(["active"]);
   });
 
+  it("preserves a workspace that is also configured as a cleanup root", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    await mkdir(workspaceRoot, { recursive: true });
+    await writeFile(join(workspaceRoot, "keep.txt"), "keep");
+
+    await expect(cleanupWorkspaceRootsOnStartup([workspaceRoot], [workspaceRoot])).resolves.toEqual(
+      [
+        {
+          workspaceRoot,
+          deletedEntries: 0,
+          failures: [],
+        },
+      ],
+    );
+    expect(await readFile(join(workspaceRoot, "keep.txt"), "utf8")).toBe("keep");
+  });
+
   it("treats a missing workspace root as already clean", async () => {
     const workspaceRoot = await createWorkspaceRoot();
 

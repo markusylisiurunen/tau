@@ -557,9 +557,12 @@ export async function cleanupWorkspaceRootsOnStartup(
       deletedEntries: 0,
       failures: [],
     };
-    const preservedUnderRoot = preservedPaths.filter(
-      (workspacePath) =>
-        workspacePath !== workspaceRoot && isInsideWorkspace(workspaceRoot, workspacePath),
+    if (preservedPaths.includes(workspaceRoot)) {
+      results.push(result);
+      continue;
+    }
+    const preservedUnderRoot = preservedPaths.filter((workspacePath) =>
+      isInsideWorkspace(workspaceRoot, workspacePath),
     );
     await pruneWorkspaceDirectory(workspaceRoot, preservedUnderRoot, result);
     results.push(result);

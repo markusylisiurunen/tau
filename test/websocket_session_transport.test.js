@@ -333,7 +333,9 @@ describe("WebSocketSessionProtocolTransport", () => {
       const submit = session.submit("start");
 
       await waitFor(() => session.pendingUserMessages().revision === 1);
-      const queued = session.queue("run tests");
+      const queued = expect(session.queue("run tests")).rejects.toMatchObject({
+        code: "cancelled",
+      });
       await waitFor(() => session.pendingUserMessages().messages.length === 1);
 
       expect(session.pendingUserMessages().messages).toEqual([
@@ -342,7 +344,7 @@ describe("WebSocketSessionProtocolTransport", () => {
       await expect(session.cancelPendingMessages()).resolves.toEqual({
         cancelled: [expect.objectContaining({ mode: "queue", text: "run tests" })],
       });
-      await expect(queued).rejects.toMatchObject({ code: "cancelled" });
+      await queued;
 
       await session.interrupt();
       await submit;

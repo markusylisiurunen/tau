@@ -1,0 +1,10 @@
+{
+  "subagents": {
+    "defaultLaunchModels": [
+      "openai-codex/gpt-5.6-sol:medium",
+      "openai-codex/gpt-5.6-sol:high",
+      "openai-codex/gpt-5.6-terra:high",
+      "openai-codex/gpt-5.6-terra:xhigh"
+    ]
+  }
+}

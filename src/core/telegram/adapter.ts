@@ -1104,6 +1104,7 @@ class TelegramAdapterImpl {
       }
     }
 
+    this.restoreSessionMappings();
     this.unsubscribeSessionEvents = this.sessionManager.onEvent((event) => {
       this.onSessionEvent(event);
     });
@@ -1884,6 +1885,30 @@ class TelegramAdapterImpl {
       return false;
     }
     return this.allowedUserIds.has(userId);
+  }
+
+  private restoreSessionMappings(): void {
+    const ownerPrefix = `${this.botOwnerPrefix}:chat:`;
+    const sessions = this.sessionManager
+      .listSessions()
+      .filter(
+        (session) =>
+          this.allowedProjectIds.includes(session.projectId) &&
+          session.ownerId?.startsWith(ownerPrefix),
+      )
+      .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+
+    for (const session of sessions) {
+      const ownerId = session.ownerId;
+      if (!ownerId) {
+        continue;
+      }
+      const chatIdText = ownerId.slice(ownerPrefix.length);
+      const chatId = Number(chatIdText);
+      if (Number.isSafeInteger(chatId) && String(chatId) === chatIdText) {
+        this.setActiveSession(chatId, session.id);
+      }
+    }
   }
 
   private ownerIdForChat(chatId: number): string {

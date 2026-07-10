@@ -336,6 +336,69 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("restores active group routing from persisted session ownership", async () => {
+    const chatId = -12;
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: chatId, type: "supergroup" },
+            from: { id: 7 },
+            text: "/status@tau_bot",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: chatId, type: "supergroup" },
+            from: { id: 7 },
+            text: "@tau_bot continue",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "restored-session",
+        projectId: "demo",
+        ownerId: ownerIdForChat(chatId),
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        snapshot: createStatusSnapshot(),
+      },
+    ]);
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      allowedChatIds: [chatId],
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() =>
+        apiHarness.sendMessages.some((entry) => String(entry.text).includes("context usage")),
+      );
+      expect(managerHarness.manager.getSessionSnapshot).toHaveBeenCalledWith("restored-session");
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
+        "restored-session",
+        expect.stringContaining('text: "continue"'),
+        { mode: "steer" },
+      );
+      expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
+        "your demo session restored-session is waiting-input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("routes private DM commands and ignores non-private chats", async () => {
     const apiHarness = createApiHarness([
       [

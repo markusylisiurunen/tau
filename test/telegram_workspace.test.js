@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -32,51 +32,58 @@ describe("telegram workspace", () => {
     return join(root, "workspaces");
   }
 
-  it("wipes workspace root contents on startup", async () => {
+  it("removes orphaned workspace entries while preserving active workspaces", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    await mkdir(join(workspaceRoot, "demo", "s-123"), { recursive: true });
-    await mkdir(join(workspaceRoot, "demo", "s-456"), { recursive: true });
-    await writeFile(join(workspaceRoot, "stale-file.txt"), "stale");
+    const activeWorkspace = join(workspaceRoot, "demo", "active");
+    await mkdir(activeWorkspace, { recursive: true });
+    await writeFile(join(activeWorkspace, "keep.txt"), "keep");
+    await mkdir(join(workspaceRoot, "demo", "orphan"), { recursive: true });
+    await writeFile(join(workspaceRoot, "demo", "orphan", "remove.txt"), "remove");
+    await mkdir(join(workspaceRoot, "other", "stale"), { recursive: true });
+    await writeFile(join(workspaceRoot, "stale-file.txt"), "remove");
 
-    const [result] = await cleanupWorkspaceRootsOnStartup([workspaceRoot]);
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        workspaceRoot,
-        deletedEntries: 2,
-        failures: [],
-      }),
+    const [result] = await cleanupWorkspaceRootsOnStartup(
+      [workspaceRoot, workspaceRoot],
+      [activeWorkspace],
     );
-    expect(await readdir(workspaceRoot)).toEqual([]);
+
+    expect(result).toEqual({
+      workspaceRoot,
+      deletedEntries: 3,
+      failures: [],
+    });
+    expect(await readFile(join(activeWorkspace, "keep.txt"), "utf8")).toBe("keep");
+    expect(await readdir(workspaceRoot)).toEqual(["demo"]);
+    expect(await readdir(join(workspaceRoot, "demo"))).toEqual(["active"]);
   });
 
-  it("returns failure records for non-directory roots and continues", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-workspace-"));
-    tempRoots.push(tempRoot);
-    const notDirectoryPath = join(tempRoot, "not-a-directory");
-    await writeFile(notDirectoryPath, "value");
+  it("preserves a workspace that is also configured as a cleanup root", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    await mkdir(workspaceRoot, { recursive: true });
+    await writeFile(join(workspaceRoot, "keep.txt"), "keep");
 
-    const [missingRoot, nonDirectoryRoot] = await cleanupWorkspaceRootsOnStartup([
-      join(tempRoot, "missing-root"),
-      notDirectoryPath,
-    ]);
+    await expect(cleanupWorkspaceRootsOnStartup([workspaceRoot], [workspaceRoot])).resolves.toEqual(
+      [
+        {
+          workspaceRoot,
+          deletedEntries: 0,
+          failures: [],
+        },
+      ],
+    );
+    expect(await readFile(join(workspaceRoot, "keep.txt"), "utf8")).toBe("keep");
+  });
 
-    expect(missingRoot).toEqual(
-      expect.objectContaining({
+  it("treats a missing workspace root as already clean", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+
+    await expect(cleanupWorkspaceRootsOnStartup([workspaceRoot], [])).resolves.toEqual([
+      {
+        workspaceRoot,
         deletedEntries: 0,
         failures: [],
-      }),
-    );
-    expect(nonDirectoryRoot).toEqual(
-      expect.objectContaining({
-        deletedEntries: 0,
-        failures: [
-          expect.objectContaining({
-            path: notDirectoryPath,
-          }),
-        ],
-      }),
-    );
+      },
+    ]);
   });
 
   it("clones repository through a persistent cache and logs phase durations", async () => {

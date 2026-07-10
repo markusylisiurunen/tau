@@ -41,10 +41,19 @@ Merge order is parent-first, most specific wins:
           "contextWindow": 200000,
           "maxTokens": 16384,
           "cost": {
-            "input": 0,
-            "output": 0,
-            "cacheRead": 0,
-            "cacheWrite": 0
+            "input": 1,
+            "output": 6,
+            "cacheRead": 0.1,
+            "cacheWrite": 1.25,
+            "tiers": [
+              {
+                "inputTokensAbove": 272000,
+                "input": 2,
+                "output": 9,
+                "cacheRead": 0.2,
+                "cacheWrite": 2.5
+              }
+            ]
           },
           "compat": {
             "maxTokensField": "max_tokens"
@@ -65,6 +74,7 @@ Notes:
 - `headers` are merged (provider headers first, model headers override by key).
 - `headers` may contain secrets or tenant-specific routing data. Tau uses them only for runtime model calls and does not persist or broadcast them in session protocol snapshots.
 - `compat` is shallow-merged.
+- `cost.tiers` applies request-wide rates when total input usage exceeds `inputTokensAbove`. The highest matching threshold applies to input, output, cache-read, and cache-write costs for the request.
 
 ## behavior for unbundled model ids
 

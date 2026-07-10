@@ -297,7 +297,7 @@ custom themes loaded from `.tau/themes` or `~/.config/tau/themes` are single-var
 available palette tokens (theme keys):
 
 - core: `brandAccent`, `textMuted`, `textDim`, `linkText`, `thinkingText`, `codeInlineText`, `codeBlockText`
-- editor: `editorBorderNone`, `editorBorderMinimal`, `editorBorderLow`, `editorBorderMedium`, `editorBorderHigh`, `editorBorderXhigh`, `editorSubagentBorder`, `editorBorderRecording`
+- editor: `editorBorderNone`, `editorBorderMinimal`, `editorBorderLow`, `editorBorderMedium`, `editorBorderHigh`, `editorBorderXhigh`, `editorBorderMax`, `editorSubagentBorder`, `editorBorderRecording`
 - status: `statusWarn`, `statusError`, `modeMemory`, `modeBash`
 - action: `actionRunning`, `actionSuccess`, `actionError`, `actionOutput`
 - diff: `diffAdd`, `diffRemove`
@@ -669,7 +669,7 @@ optional frontmatter fields:
 - `label`: display name shown in the ui (defaults to the base persona label if `extends` is used)
 - `description`: human-readable description used in lists/autocomplete
 - `extends`: inherit optional fields from a built-in persona id (for example `gpt-5.5-coder`). `provider` and `model` are still required. if the markdown body is empty, the base persona's system prompt is used.
-- `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
+- `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`
 - `serviceTier`: `priority` or `flex` for providers that support service tiers (currently `openai` and `openai-codex`)
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.

@@ -20,11 +20,13 @@ import { extractAssistantText } from "../utils/messages.js";
 import { formatTauUserText } from "../utils/user_metadata.js";
 import {
   cleanupWorkspacePath as cleanupWorkspacePathOnDisk,
+  cleanupWorkspaceRootsOnStartup,
   type PrepareWorkspaceOptions,
   prepareWorkspace,
   type RunBootstrapCommandsOptions,
   resolveWorkspacePath,
   runBootstrapCommands,
+  type WorkspaceLogEntry,
 } from "./workspace.js";
 
 export type TelegramSessionState =
@@ -259,6 +261,7 @@ export type TelegramSessionManagerOptions = {
   systemMessage?: string;
   persistencePath?: string;
   now?: () => Date;
+  onLog?: (entry: WorkspaceLogEntry) => void;
   createClient: (options: TelegramSessionClientOptions) => Promise<TelegramSessionClient>;
   prepareWorkspace?: (options: PrepareWorkspaceOptions) => Promise<{
     workspacePath: string;
@@ -277,6 +280,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   private readonly systemMessage?: string;
   private readonly persistencePath?: string;
   private readonly now: () => Date;
+  private readonly onLog?: (entry: WorkspaceLogEntry) => void;
   private readonly createClient: (
     options: TelegramSessionClientOptions,
   ) => Promise<TelegramSessionClient>;
@@ -298,6 +302,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     this.systemMessage = options.systemMessage?.trim() || undefined;
     this.persistencePath = options.persistencePath ? resolve(options.persistencePath) : undefined;
     this.now = options.now ?? (() => new Date());
+    this.onLog = options.onLog;
     if (!options.createClient) {
       throw new Error("missing telegram session client factory");
     }
@@ -507,25 +512,25 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       }
       throw error;
     });
-    if (raw === undefined) {
-      return;
+    let persistedSessions: TelegramSessionRecord[] = [];
+    if (raw !== undefined) {
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(raw);
+      } catch (error) {
+        throw new Error(
+          `invalid telegram session state: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+
+      const parsed = telegramSessionStateSchema.safeParse(parsedJson);
+      if (!parsed.success) {
+        throw new Error(`invalid telegram session state: ${parsed.error.message}`);
+      }
+      persistedSessions = parsed.data.sessions;
     }
 
-    let parsedJson: unknown;
-    try {
-      parsedJson = JSON.parse(raw);
-    } catch (error) {
-      throw new Error(
-        `invalid telegram session state: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-
-    const parsed = telegramSessionStateSchema.safeParse(parsedJson);
-    if (!parsed.success) {
-      throw new Error(`invalid telegram session state: ${parsed.error.message}`);
-    }
-
-    for (const record of parsed.data.sessions) {
+    for (const record of persistedSessions) {
       const project = this.projects[record.projectId];
       if (!project || this.sessions.has(record.id)) {
         continue;
@@ -545,6 +550,8 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       };
       this.sessions.set(record.id, entry);
     }
+
+    await this.cleanupOrphanedWorkspaces();
 
     for (const entry of this.sessions.values()) {
       if (entry.record.state === "failed") {
@@ -569,13 +576,72 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     await this.persistSessions();
   }
 
+  private async cleanupOrphanedWorkspaces(): Promise<void> {
+    const workspaceRoots = new Set<string>([this.workspaceRoot]);
+    const preservedWorkspacePaths: string[] = [];
+
+    for (const entry of this.sessions.values()) {
+      const workspaceRoot = resolve(entry.project.workspaceRoot ?? this.workspaceRoot);
+      workspaceRoots.add(workspaceRoot);
+      preservedWorkspacePaths.push(
+        resolveWorkspacePath({
+          workspaceRoot,
+          projectId: entry.record.projectId,
+          sessionId: entry.record.id,
+        }),
+      );
+    }
+
+    for (const project of Object.values(this.projects)) {
+      if (project.workspaceRoot) {
+        workspaceRoots.add(resolve(project.workspaceRoot));
+      }
+    }
+
+    const results = await cleanupWorkspaceRootsOnStartup(
+      Array.from(workspaceRoots),
+      preservedWorkspacePaths,
+    );
+    for (const result of results) {
+      if (result.deletedEntries > 0) {
+        this.onLog?.({
+          level: "info",
+          message: "startup workspace cleanup complete",
+          data: {
+            workspaceRoot: result.workspaceRoot,
+            deletedEntries: result.deletedEntries,
+          },
+        });
+      }
+      for (const failure of result.failures) {
+        this.onLog?.({
+          level: "error",
+          message: "startup workspace cleanup failed",
+          data: {
+            workspaceRoot: result.workspaceRoot,
+            path: failure.path,
+            cause: failure.cause,
+          },
+        });
+      }
+    }
+  }
+
   private async reconnectSession(entry: SessionEntry): Promise<void> {
     const tauSessionId = entry.record.tauSessionId;
     if (!tauSessionId) {
       throw new Error("persisted session is missing its Tau session id");
     }
 
-    let workspacePath = entry.record.workspacePath;
+    const expectedWorkspacePath = resolveWorkspacePath({
+      workspaceRoot: entry.project.workspaceRoot ?? this.workspaceRoot,
+      projectId: entry.record.projectId,
+      sessionId: entry.record.id,
+    });
+    let workspacePath =
+      entry.record.workspacePath && resolve(entry.record.workspacePath) === expectedWorkspacePath
+        ? expectedWorkspacePath
+        : undefined;
     let sessionCwd = workspacePath
       ? resolve(workspacePath, entry.project.workingDirectory ?? ".")
       : undefined;

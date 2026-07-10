@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +11,10 @@ vi.mock("../dist/core/utils/spawn_capture.js", () => ({
   spawnWithCapture: spawnWithCaptureMock,
 }));
 
-import { prepareWorkspace } from "../dist/core/telegram/workspace.js";
+import {
+  cleanupWorkspaceRootsOnStartup,
+  prepareWorkspace,
+} from "../dist/core/telegram/workspace.js";
 
 describe("telegram workspace", () => {
   const tempRoots = [];
@@ -28,6 +31,43 @@ describe("telegram workspace", () => {
     tempRoots.push(root);
     return join(root, "workspaces");
   }
+
+  it("removes orphaned workspace entries while preserving active workspaces", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const activeWorkspace = join(workspaceRoot, "demo", "active");
+    await mkdir(activeWorkspace, { recursive: true });
+    await writeFile(join(activeWorkspace, "keep.txt"), "keep");
+    await mkdir(join(workspaceRoot, "demo", "orphan"), { recursive: true });
+    await writeFile(join(workspaceRoot, "demo", "orphan", "remove.txt"), "remove");
+    await mkdir(join(workspaceRoot, "other", "stale"), { recursive: true });
+    await writeFile(join(workspaceRoot, "stale-file.txt"), "remove");
+
+    const [result] = await cleanupWorkspaceRootsOnStartup(
+      [workspaceRoot, workspaceRoot],
+      [activeWorkspace],
+    );
+
+    expect(result).toEqual({
+      workspaceRoot,
+      deletedEntries: 3,
+      failures: [],
+    });
+    expect(await readFile(join(activeWorkspace, "keep.txt"), "utf8")).toBe("keep");
+    expect(await readdir(workspaceRoot)).toEqual(["demo"]);
+    expect(await readdir(join(workspaceRoot, "demo"))).toEqual(["active"]);
+  });
+
+  it("treats a missing workspace root as already clean", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+
+    await expect(cleanupWorkspaceRootsOnStartup([workspaceRoot], [])).resolves.toEqual([
+      {
+        workspaceRoot,
+        deletedEntries: 0,
+        failures: [],
+      },
+    ]);
+  });
 
   it("clones repository through a persistent cache and logs phase durations", async () => {
     const workspaceRoot = await createWorkspaceRoot();

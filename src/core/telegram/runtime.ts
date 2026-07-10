@@ -83,6 +83,9 @@ export async function startTelegramRuntime(
     maxSessions: options.config.maxSessions,
     systemMessage: options.config.systemMessage,
     persistencePath: resolveTelegramSessionStatePath(options.config.workspaceRoot),
+    onLog: (entry) => {
+      options.onLog?.(`[telegram:${entry.level}] ${entry.message}`);
+    },
     createClient: options.createSessionClient,
   });
 

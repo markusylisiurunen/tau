@@ -62,7 +62,7 @@ Notes:
 - failing `backgroundBootstrapCommands` are logged as warnings, but the session remains available.
 - `projects.<id>.ref` is optional, but recommended when every session should start from the same branch.
 - Repositories use an automatic persistent bare cache at `<workspaceRoot>-repo-cache/<projectId>.git`: the first session initializes it with `gh repo clone <owner/repo> <cache> -- --bare`, later sessions run `git fetch --prune origin`, then each session workspace is cloned from the local cache with `git clone --shared`.
-- Tau persists Telegram session records at `<workspaceRoot>-sessions.json`. Runner startup reconnects recoverable records to their Tau snapshots, reuses existing session workspaces, and reconstructs a missing workspace from the repository cache before reconnecting.
+- Tau persists Telegram session records at `<workspaceRoot>-sessions.json`. Runner startup removes workspace-root entries that are not referenced by persisted sessions, reconnects recoverable records to their Tau snapshots, reuses preserved session workspaces, and reconstructs a missing workspace from the repository cache before reconnecting.
 - On Telegram adapter startup, Tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory.
 - `systemMessage` is prepended to every submitted Telegram message inside a `<system>...</system>` block.
 - `bots.<botId>.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same `<system>...</system>` block.

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -990,6 +990,65 @@ describe("telegram session manager", () => {
       );
       await recoveredManager.close();
     } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes orphaned startup workspaces without removing persisted session workspaces", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-session-cleanup-"));
+    const workspaceRoot = join(tempRoot, "workspaces");
+    const projectWorkspaceRoot = join(tempRoot, "project-workspaces");
+    const activeWorkspace = join(projectWorkspaceRoot, "demo", "active");
+    const persistencePath = join(tempRoot, "sessions.json");
+    await mkdir(activeWorkspace, { recursive: true });
+    await writeFile(join(activeWorkspace, "keep.txt"), "keep");
+    await mkdir(join(projectWorkspaceRoot, "demo", "orphan"), { recursive: true });
+    await mkdir(join(workspaceRoot, "stale"), { recursive: true });
+    await writeFile(
+      persistencePath,
+      `${JSON.stringify({
+        version: 1,
+        sessions: [
+          {
+            id: "active",
+            projectId: "demo",
+            ownerId: "telegram:bot:chat:42",
+            state: "waiting-input",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            workspacePath: activeWorkspace,
+            tauSessionId: "rpc-1",
+          },
+        ],
+      })}\n`,
+      "utf8",
+    );
+
+    const clientHarness = createClientHarness();
+    const prepareWorkspace = vi.fn();
+    const manager = createTelegramSessionManager({
+      projects: {
+        demo: {
+          repo: "git@example.com:demo.git",
+          workspaceRoot: projectWorkspaceRoot,
+        },
+      },
+      workspaceRoot,
+      persistencePath,
+      prepareWorkspace,
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    try {
+      await manager.initialize();
+
+      expect(await readFile(join(activeWorkspace, "keep.txt"), "utf8")).toBe("keep");
+      expect(await readdir(join(projectWorkspaceRoot, "demo"))).toEqual(["active"]);
+      expect(await readdir(workspaceRoot)).toEqual([]);
+      expect(prepareWorkspace).not.toHaveBeenCalled();
+      expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+    } finally {
+      await manager.close();
       await rm(tempRoot, { recursive: true, force: true });
     }
   });

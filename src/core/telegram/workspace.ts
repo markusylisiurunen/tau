@@ -1,4 +1,4 @@
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { TelegramProjectConfig } from "../config/schema.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
@@ -23,6 +23,15 @@ export type PrepareWorkspaceOptions = {
 export type PreparedWorkspace = {
   workspacePath: string;
   sessionCwd: string;
+};
+
+export type WorkspaceRootCleanupResult = {
+  workspaceRoot: string;
+  deletedEntries: number;
+  failures: Array<{
+    path: string;
+    cause: string;
+  }>;
 };
 
 const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
@@ -479,6 +488,84 @@ async function cloneRepositoryFromCache(options: {
     cachePath: options.cachePath,
     durationMs: elapsedMs(cloneStart),
   });
+}
+
+async function pruneWorkspaceDirectory(
+  directoryPath: string,
+  preservedWorkspacePaths: string[],
+  result: WorkspaceRootCleanupResult,
+): Promise<void> {
+  const entries = await readdir(directoryPath, { withFileTypes: true }).catch((error) => {
+    if (getErrorCode(error) === "ENOENT") {
+      return undefined;
+    }
+    result.failures.push({
+      path: directoryPath,
+      cause: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  });
+  if (!entries) {
+    return;
+  }
+
+  for (const entry of entries) {
+    const entryPath = join(directoryPath, entry.name);
+    const matchingPaths = preservedWorkspacePaths.filter((workspacePath) =>
+      isInsideWorkspace(entryPath, workspacePath),
+    );
+    if (matchingPaths.includes(entryPath)) {
+      continue;
+    }
+    if (matchingPaths.length > 0) {
+      if (entry.isDirectory()) {
+        await pruneWorkspaceDirectory(entryPath, matchingPaths, result);
+      } else {
+        result.failures.push({
+          path: entryPath,
+          cause: "expected a directory containing a preserved workspace",
+        });
+      }
+      continue;
+    }
+
+    try {
+      await cleanupWorkspacePath(entryPath);
+      result.deletedEntries += 1;
+    } catch (error) {
+      result.failures.push({
+        path: entryPath,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+}
+
+export async function cleanupWorkspaceRootsOnStartup(
+  workspaceRoots: string[],
+  preservedWorkspacePaths: string[],
+): Promise<WorkspaceRootCleanupResult[]> {
+  const roots = Array.from(new Set(workspaceRoots.map((workspaceRoot) => resolve(workspaceRoot))));
+  const preservedPaths = Array.from(
+    new Set(preservedWorkspacePaths.map((workspacePath) => resolve(workspacePath))),
+  );
+  const results: WorkspaceRootCleanupResult[] = [];
+
+  for (const workspaceRoot of roots) {
+    const result: WorkspaceRootCleanupResult = {
+      workspaceRoot,
+      deletedEntries: 0,
+      failures: [],
+    };
+    const preservedUnderRoot = preservedPaths.filter(
+      (workspacePath) =>
+        workspacePath !== workspaceRoot && isInsideWorkspace(workspaceRoot, workspacePath),
+    );
+    await pruneWorkspaceDirectory(workspaceRoot, preservedUnderRoot, result);
+    results.push(result);
+  }
+
+  return results;
 }
 
 export async function cleanupWorkspacePath(workspacePath: string): Promise<void> {

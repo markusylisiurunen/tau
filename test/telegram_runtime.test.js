@@ -1,9 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { startTelegramRuntime } from "../dist/core/telegram/runtime.js";
+
+const workspaceRoot = join(tmpdir(), `tau-telegram-runtime-${process.pid}`);
+
+afterAll(async () => {
+  await rm(`${workspaceRoot}-sessions.json`, { force: true });
+});
 
 function createTelegramConfig(overrides = {}) {
   return {
-    workspaceRoot: "/tmp/tau-telegram",
+    workspaceRoot,
     projects: {
       alpha: {
         repo: "owner/alpha",

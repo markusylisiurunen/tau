@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,10 +11,7 @@ vi.mock("../dist/core/utils/spawn_capture.js", () => ({
   spawnWithCapture: spawnWithCaptureMock,
 }));
 
-import {
-  cleanupWorkspaceRootsOnStartup,
-  prepareWorkspace,
-} from "../dist/core/telegram/workspace.js";
+import { prepareWorkspace } from "../dist/core/telegram/workspace.js";
 
 describe("telegram workspace", () => {
   const tempRoots = [];
@@ -31,53 +28,6 @@ describe("telegram workspace", () => {
     tempRoots.push(root);
     return join(root, "workspaces");
   }
-
-  it("wipes workspace root contents on startup", async () => {
-    const workspaceRoot = await createWorkspaceRoot();
-    await mkdir(join(workspaceRoot, "demo", "s-123"), { recursive: true });
-    await mkdir(join(workspaceRoot, "demo", "s-456"), { recursive: true });
-    await writeFile(join(workspaceRoot, "stale-file.txt"), "stale");
-
-    const [result] = await cleanupWorkspaceRootsOnStartup([workspaceRoot]);
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        workspaceRoot,
-        deletedEntries: 2,
-        failures: [],
-      }),
-    );
-    expect(await readdir(workspaceRoot)).toEqual([]);
-  });
-
-  it("returns failure records for non-directory roots and continues", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-workspace-"));
-    tempRoots.push(tempRoot);
-    const notDirectoryPath = join(tempRoot, "not-a-directory");
-    await writeFile(notDirectoryPath, "value");
-
-    const [missingRoot, nonDirectoryRoot] = await cleanupWorkspaceRootsOnStartup([
-      join(tempRoot, "missing-root"),
-      notDirectoryPath,
-    ]);
-
-    expect(missingRoot).toEqual(
-      expect.objectContaining({
-        deletedEntries: 0,
-        failures: [],
-      }),
-    );
-    expect(nonDirectoryRoot).toEqual(
-      expect.objectContaining({
-        deletedEntries: 0,
-        failures: [
-          expect.objectContaining({
-            path: notDirectoryPath,
-          }),
-        ],
-      }),
-    );
-  });
 
   it("clones repository through a persistent cache and logs phase durations", async () => {
     const workspaceRoot = await createWorkspaceRoot();

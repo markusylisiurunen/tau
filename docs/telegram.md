@@ -62,7 +62,7 @@ Notes:
 - failing `backgroundBootstrapCommands` are logged as warnings, but the session remains available.
 - `projects.<id>.ref` is optional, but recommended when every session should start from the same branch.
 - Repositories use an automatic persistent bare cache at `<workspaceRoot>-repo-cache/<projectId>.git`: the first session initializes it with `gh repo clone <owner/repo> <cache> -- --bare`, later sessions run `git fetch --prune origin`, then each session workspace is cloned from the local cache with `git clone --shared`.
-- On runner startup, Tau removes existing entries under all configured workspace roots (`workspaceRoot` plus any `projects.<id>.workspaceRoot` overrides). Repository caches are not removed.
+- Tau persists Telegram session records at `<workspaceRoot>-sessions.json`. Runner startup reconnects recoverable records to their Tau snapshots, reuses existing session workspaces, and reconstructs a missing workspace from the repository cache before reconnecting.
 - On Telegram adapter startup, Tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory.
 - `systemMessage` is prepended to every submitted Telegram message inside a `<system>...</system>` block.
 - `bots.<botId>.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same `<system>...</system>` block.
@@ -99,4 +99,4 @@ Optional per-bot allowlists:
 - `allowedUserIds` limits who can trigger turns, run commands, and use callbacks; group messages from other users can still be included as pending context.
 - `allowedChatIds` enables opt-in group chats and can restrict DMs.
 
-Sessions are in-memory and process-local. On shutdown, the runner closes live SDK sessions and cleans up session workspaces.
+Sessions survive normal runner restarts and host reboots. Shutdown interrupts live work, persists running sessions as waiting for input, disconnects SDK clients, and preserves their workspaces. `/new` still closes the previous chat session and removes its workspace.

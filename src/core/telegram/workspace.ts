@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, rm, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { TelegramProjectConfig } from "../config/schema.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
@@ -25,17 +25,6 @@ export type PreparedWorkspace = {
   sessionCwd: string;
 };
 
-export type WorkspaceCleanupFailure = {
-  path: string;
-  cause: string;
-};
-
-export type WorkspaceRootCleanupResult = {
-  workspaceRoot: string;
-  deletedEntries: number;
-  failures: WorkspaceCleanupFailure[];
-};
-
 const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
 const repositoryCacheLocks = new Map<string, Promise<unknown>>();
 
@@ -59,10 +48,6 @@ function getErrorCode(error: unknown): string | undefined {
 
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" ? code : undefined;
-}
-
-function formatErrorCause(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function runCommand(args: {
@@ -498,55 +483,6 @@ async function cloneRepositoryFromCache(options: {
 
 export async function cleanupWorkspacePath(workspacePath: string): Promise<void> {
   await rm(workspacePath, { recursive: true, force: true });
-}
-
-export async function cleanupWorkspaceRootsOnStartup(
-  workspaceRoots: string[],
-): Promise<WorkspaceRootCleanupResult[]> {
-  const uniqueWorkspaceRoots = Array.from(
-    new Set(workspaceRoots.map((workspaceRoot) => resolve(workspaceRoot))),
-  );
-
-  const results: WorkspaceRootCleanupResult[] = [];
-
-  for (const workspaceRoot of uniqueWorkspaceRoots) {
-    const result: WorkspaceRootCleanupResult = {
-      workspaceRoot,
-      deletedEntries: 0,
-      failures: [],
-    };
-
-    const entries = await readdir(workspaceRoot).catch((error) => {
-      if (getErrorCode(error) === "ENOENT") {
-        return undefined;
-      }
-
-      result.failures.push({
-        path: workspaceRoot,
-        cause: formatErrorCause(error),
-      });
-      return undefined;
-    });
-
-    if (entries) {
-      for (const entry of entries) {
-        const entryPath = join(workspaceRoot, entry);
-        try {
-          await cleanupWorkspacePath(entryPath);
-          result.deletedEntries += 1;
-        } catch (error) {
-          result.failures.push({
-            path: entryPath,
-            cause: formatErrorCause(error),
-          });
-        }
-      }
-    }
-
-    results.push(result);
-  }
-
-  return results;
 }
 
 export async function prepareWorkspace(

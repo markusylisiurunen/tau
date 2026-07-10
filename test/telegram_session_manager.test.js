@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   createScopedTelegramSessionManager,
@@ -67,8 +70,8 @@ function createClientHarness() {
       methods: [],
     },
     sessions: {
-      attach: vi.fn(async () => session),
       create: vi.fn(async () => session),
+      observe: vi.fn(async () => session),
       list: vi.fn(async () => [{ sessionId: "rpc-1", lifecycle: "idle" }]),
     },
     close: vi.fn(async () => {}),
@@ -880,7 +883,7 @@ describe("telegram session manager", () => {
     await manager.closeSession(running.id);
   });
 
-  it("closes active sessions and sdk clients during manager shutdown", async () => {
+  it("detaches active sessions without deleting recoverable state during manager shutdown", async () => {
     const clientHarness = createClientHarness();
     clientHarness.session.interrupt = vi.fn(async () => {
       clientHarness.submitDeferred.resolve({
@@ -914,15 +917,81 @@ describe("telegram session manager", () => {
     await manager.close();
     await runningSubmit;
 
-    expect(manager.getSession(created.id)?.state).toBe("running");
+    expect(manager.getSession(created.id)?.state).toBe("waiting-input");
     expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
     expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
-    expect(cleanupWorkspacePath).toHaveBeenCalledTimes(1);
-    expect(cleanupWorkspacePath).toHaveBeenCalledWith("/tmp/ws/demo");
+    expect(cleanupWorkspacePath).not.toHaveBeenCalled();
+  });
 
-    const logs = manager.getLogs(created.id) ?? [];
-    expect(logs.some((entry) => entry.message === "manager shutdown requested")).toBe(true);
+  it("restores persisted sessions and reconnects their Tau snapshots", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-session-state-"));
+    const workspacePath = join(tempRoot, "workspaces", "demo", "session");
+    const persistencePath = join(tempRoot, "sessions.json");
+    await mkdir(workspacePath, { recursive: true });
+
+    const firstClientHarness = createClientHarness();
+    const firstManager = createTelegramSessionManager({
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      persistencePath,
+      prepareWorkspace: vi.fn(async () => ({ workspacePath, sessionCwd: workspacePath })),
+      createClient: vi.fn(async () => firstClientHarness.client),
+    });
+
+    try {
+      const created = await firstManager.createSession({
+        projectId: "demo",
+        ownerId: "telegram:bot:chat:42",
+      });
+      await waitFor(() => firstManager.getSession(created.id)?.state === "waiting-input");
+      await firstManager.close();
+
+      const storedState = JSON.parse(await readFile(persistencePath, "utf8"));
+      expect(storedState.sessions).toEqual([
+        expect.objectContaining({
+          id: created.id,
+          ownerId: "telegram:bot:chat:42",
+          state: "waiting-input",
+          workspacePath,
+          tauSessionId: "rpc-1",
+        }),
+      ]);
+      storedState.sessions[0].state = "running";
+      await writeFile(persistencePath, `${JSON.stringify(storedState)}\n`, "utf8");
+      await rm(workspacePath, { recursive: true, force: true });
+
+      const recoveredClientHarness = createClientHarness();
+      const prepareWorkspace = vi.fn(async () => {
+        await mkdir(workspacePath, { recursive: true });
+        return { workspacePath, sessionCwd: workspacePath };
+      });
+      const recoveredManager = createTelegramSessionManager({
+        projects: { demo: { repo: "git@example.com:demo.git" } },
+        persistencePath,
+        prepareWorkspace,
+        createClient: vi.fn(async () => recoveredClientHarness.client),
+      });
+
+      await recoveredManager.initialize();
+
+      expect(recoveredManager.getSession(created.id)).toEqual(
+        expect.objectContaining({
+          state: "waiting-input",
+          workspacePath,
+          tauSessionId: "rpc-1",
+        }),
+      );
+      expect(recoveredClientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+      expect(prepareWorkspace).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: created.id, projectId: "demo" }),
+      );
+      await expect(recoveredManager.getSessionSnapshot(created.id)).resolves.toEqual(
+        expect.objectContaining({ sessionId: "rpc-1" }),
+      );
+      await recoveredManager.close();
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("close is idempotent and tolerates client detach failures", async () => {
@@ -963,8 +1032,7 @@ describe("telegram session manager", () => {
     expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
     expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
     expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
-    expect(cleanupWorkspacePath).toHaveBeenCalledTimes(1);
-    expect(cleanupWorkspacePath).toHaveBeenCalledWith("/tmp/ws/demo");
+    expect(cleanupWorkspacePath).not.toHaveBeenCalled();
 
     const logs = manager.getLogs(created.id) ?? [];
     expect(logs.some((entry) => entry.message === "interrupt failed")).toBe(true);

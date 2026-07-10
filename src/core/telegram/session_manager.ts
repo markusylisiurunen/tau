@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { resolve } from "node:path";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { z } from "zod";
 import type {
   SessionProtocolCreateParams,
   SessionProtocolDeltaMessage,
@@ -71,6 +73,31 @@ export type TelegramSessionRecord = {
   error?: string;
 };
 
+const telegramSessionRecordSchema = z
+  .object({
+    id: z.string().min(1),
+    projectId: z.string().min(1),
+    ownerId: z.string().min(1).optional(),
+    state: z.enum(["queued", "preparing-workspace", "running", "waiting-input", "failed"]),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+    workspacePath: z.string().min(1).optional(),
+    tauSessionId: z.string().min(1).optional(),
+    error: z.string().optional(),
+  })
+  .strict();
+
+const telegramSessionStateSchema = z
+  .object({
+    version: z.literal(1),
+    sessions: z.array(telegramSessionRecordSchema),
+  })
+  .strict();
+
+export function resolveTelegramSessionStatePath(workspaceRoot: string): string {
+  return `${resolve(workspaceRoot)}-sessions.json`;
+}
+
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const PUBLIC_SESSION_ID_LENGTH = 8;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
@@ -84,6 +111,23 @@ const ACTIVE_STATES: Set<TelegramSessionState> = new Set([
 
 function elapsedMs(startTime: bigint): number {
   return Number((process.hrtime.bigint() - startTime) / NANOSECONDS_PER_MILLISECOND);
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("code" in error)) {
+    return undefined;
+  }
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
+async function pathIsDirectory(path: string): Promise<boolean> {
+  const pathStat = await stat(path).catch((error) => {
+    if (getErrorCode(error) === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  });
+  return pathStat?.isDirectory() ?? false;
 }
 
 export class TelegramSessionManagerError extends Error {
@@ -173,6 +217,7 @@ export type TelegramTauSession = {
 export type TelegramSessionClient = {
   sessions: {
     create(input: SessionProtocolCreateParams): Promise<TelegramTauSession>;
+    observe(sessionId: string): Promise<TelegramTauSession>;
   };
   close(): Promise<void>;
 };
@@ -184,6 +229,7 @@ export type TelegramSessionInterruptResult = {
 };
 
 export type TelegramSessionManager = {
+  initialize(): Promise<void>;
   createSession(input: {
     projectId: string;
     ownerId?: string;
@@ -211,6 +257,7 @@ export type TelegramSessionManagerOptions = {
   workspaceRoot?: string;
   maxSessions?: number;
   systemMessage?: string;
+  persistencePath?: string;
   now?: () => Date;
   createClient: (options: TelegramSessionClientOptions) => Promise<TelegramSessionClient>;
   prepareWorkspace?: (options: PrepareWorkspaceOptions) => Promise<{
@@ -228,6 +275,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   private readonly workspaceRoot: string;
   private readonly maxSessions?: number;
   private readonly systemMessage?: string;
+  private readonly persistencePath?: string;
   private readonly now: () => Date;
   private readonly createClient: (
     options: TelegramSessionClientOptions,
@@ -237,6 +285,8 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   ) => Promise<{ workspacePath: string; sessionCwd: string }>;
   private readonly runBootstrapCommands: (options: RunBootstrapCommandsOptions) => Promise<void>;
   private readonly cleanupWorkspacePath: (workspacePath: string) => Promise<void>;
+  private persistenceQueue: Promise<void> = Promise.resolve();
+  private initializePromise?: Promise<void>;
   private closePromise?: Promise<void>;
 
   constructor(options: TelegramSessionManagerOptions) {
@@ -246,6 +296,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     );
     this.maxSessions = options.maxSessions;
     this.systemMessage = options.systemMessage?.trim() || undefined;
+    this.persistencePath = options.persistencePath ? resolve(options.persistencePath) : undefined;
     this.now = options.now ?? (() => new Date());
     if (!options.createClient) {
       throw new Error("missing telegram session client factory");
@@ -256,12 +307,20 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     this.cleanupWorkspacePath = options.cleanupWorkspacePath ?? cleanupWorkspacePathOnDisk;
   }
 
+  async initialize(): Promise<void> {
+    if (!this.initializePromise) {
+      this.initializePromise = this.restorePersistedSessions();
+    }
+    await this.initializePromise;
+  }
+
   async createSession(input: {
     projectId: string;
     ownerId?: string;
     prompt?: string;
     additionalSystemMessage?: string;
   }): Promise<TelegramSessionRecord> {
+    await this.initialize();
     const project = this.projects[input.projectId];
     if (!project) {
       throw new TelegramSessionManagerError(
@@ -299,6 +358,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       type: "session-created",
       session: this.toRecord(entry),
     });
+    await this.persistSessions();
 
     let initializePromise: Promise<void>;
     initializePromise = this.initializeSession(
@@ -434,6 +494,145 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
     this.closePromise = this.closeAllSessions();
     await this.closePromise;
+  }
+
+  private async restorePersistedSessions(): Promise<void> {
+    if (!this.persistencePath) {
+      return;
+    }
+
+    const raw = await readFile(this.persistencePath, "utf8").catch((error) => {
+      if (getErrorCode(error) === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    });
+    if (raw === undefined) {
+      return;
+    }
+
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(raw);
+    } catch (error) {
+      throw new Error(
+        `invalid telegram session state: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const parsed = telegramSessionStateSchema.safeParse(parsedJson);
+    if (!parsed.success) {
+      throw new Error(`invalid telegram session state: ${parsed.error.message}`);
+    }
+
+    for (const record of parsed.data.sessions) {
+      const project = this.projects[record.projectId];
+      if (!project || this.sessions.has(record.id)) {
+        continue;
+      }
+
+      const entry: SessionEntry = {
+        record: {
+          ...record,
+          state: record.state === "running" ? "waiting-input" : record.state,
+        },
+        logs: [],
+        project,
+        abortController: new AbortController(),
+        cancelRequested: false,
+        consumedFacetEventCounts: new Map(),
+        emittedAssistantMessageIds: new Set(),
+      };
+      this.sessions.set(record.id, entry);
+    }
+
+    for (const entry of this.sessions.values()) {
+      if (entry.record.state === "failed") {
+        continue;
+      }
+
+      try {
+        if (!entry.record.tauSessionId) {
+          await this.initializeSession(entry);
+          continue;
+        }
+        await this.reconnectSession(entry);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        entry.record.error = `recovery failed: ${message}`;
+        this.setState(entry, "failed");
+        this.log(entry, "error", "session recovery failed", { cause: message });
+        await this.stopClient(entry);
+      }
+    }
+
+    await this.persistSessions();
+  }
+
+  private async reconnectSession(entry: SessionEntry): Promise<void> {
+    const tauSessionId = entry.record.tauSessionId;
+    if (!tauSessionId) {
+      throw new Error("persisted session is missing its Tau session id");
+    }
+
+    let workspacePath = entry.record.workspacePath;
+    let sessionCwd = workspacePath
+      ? resolve(workspacePath, entry.project.workingDirectory ?? ".")
+      : undefined;
+    if (!workspacePath || !sessionCwd || !(await pathIsDirectory(sessionCwd))) {
+      const workspace = await this.prepareWorkspace({
+        sessionId: entry.record.id,
+        projectId: entry.record.projectId,
+        project: entry.project,
+        workspaceRoot: entry.project.workspaceRoot ?? this.workspaceRoot,
+        signal: entry.abortController.signal,
+        onLog: (workspaceLog) => {
+          this.log(
+            entry,
+            workspaceLog.level === "error" ? "error" : "info",
+            workspaceLog.message,
+            workspaceLog.data,
+          );
+        },
+      });
+      workspacePath = workspace.workspacePath;
+      sessionCwd = workspace.sessionCwd;
+      entry.record.workspacePath = workspacePath;
+    }
+
+    const client = await this.createClient(this.buildClientOptions(entry, sessionCwd));
+    entry.client = client;
+    const tauSession = await client.sessions.observe(tauSessionId);
+    entry.tauSession = tauSession;
+    entry.unsubscribeClientEvents = tauSession.onDelta((event) => {
+      this.handleClientEvent(entry, event);
+    });
+    entry.record.error = undefined;
+    this.setState(entry, "waiting-input");
+    this.log(entry, "info", "session recovered", { tauSessionId, workspacePath });
+    this.startBackgroundBootstrap(entry, sessionCwd);
+  }
+
+  private persistSessions(): Promise<void> {
+    const persistencePath = this.persistencePath;
+    if (!persistencePath) {
+      return Promise.resolve();
+    }
+
+    const write = this.persistenceQueue
+      .catch(() => undefined)
+      .then(async () => {
+        const state = {
+          version: 1 as const,
+          sessions: Array.from(this.sessions.values()).map((entry) => this.toRecord(entry)),
+        };
+        await mkdir(dirname(persistencePath), { recursive: true });
+        const temporaryPath = `${persistencePath}.tmp`;
+        await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+        await rename(temporaryPath, persistencePath);
+      });
+    this.persistenceQueue = write;
+    return write;
   }
 
   private async initializeSession(
@@ -669,16 +868,23 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
     for (const entry of entries) {
       if (this.isActiveState(entry.record.state)) {
-        this.requestCancellation(entry, "manager shutdown requested");
+        entry.cancelRequested = true;
+        entry.abortController.abort();
+      }
+      if (entry.record.state === "running") {
+        this.setState(entry, "waiting-input");
       }
     }
 
+    await Promise.allSettled(entries.map(async (entry) => await this.stopClient(entry)));
     await Promise.allSettled(
-      entries.map(async (entry) => {
-        await this.stopClient(entry);
-        await this.runWorkspaceCleanup(entry);
-      }),
+      entries.flatMap((entry) =>
+        [entry.initializePromise, entry.activeSubmit, entry.backgroundBootstrapPromise].filter(
+          (promise): promise is Promise<void> => promise !== undefined,
+        ),
+      ),
     );
+    await this.persistSessions();
   }
 
   private async closeEntry(entry: SessionEntry, message: string): Promise<TelegramSessionRecord> {
@@ -692,7 +898,8 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     await this.runWorkspaceCleanup(entry);
 
     const record = this.toRecord(entry);
-    this.deleteEntry(entry.record.id);
+    this.sessions.delete(entry.record.id);
+    await this.persistSessions();
     return record;
   }
 
@@ -821,10 +1028,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     return CLOSEABLE_STATES_WITH_CLOSE_ALL.has(state);
   }
 
-  private deleteEntry(sessionId: string): void {
-    this.sessions.delete(sessionId);
-  }
-
   private getEntryBySessionId(sessionId: string): SessionEntry | undefined {
     return this.sessions.get(sessionId);
   }
@@ -895,6 +1098,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
   private touch(entry: SessionEntry): void {
     entry.record.updatedAt = this.now().toISOString();
+    void this.persistSessions().catch(() => undefined);
   }
 
   private log(
@@ -1093,6 +1297,10 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
     this.sessionManager = options.sessionManager;
     this.ownerId = options.ownerId;
     this.allowedProjectIds = options.allowedProjectIds;
+  }
+
+  async initialize(): Promise<void> {
+    await this.sessionManager.initialize();
   }
 
   async createSession(input: {

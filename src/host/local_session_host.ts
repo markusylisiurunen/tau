@@ -545,6 +545,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly unsubscribeSubagentEvent: () => void;
   private runtimeEventQueue: Promise<void> = Promise.resolve();
   private snapshotQueue: Promise<unknown> = Promise.resolve();
+  private costTotal = 0;
   private forceNextSnapshotRevision: boolean;
   private disposed = false;
 
@@ -1087,6 +1088,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return {
       sessionId: this.session.sessionId,
       lifecycle: this.runtime.isTurnRunning ? "running" : "idle",
+      costTotal: this.costTotal,
       settings: {
         personaId: this.runtime.persona.id,
         riskLevel: this.runtime.currentRiskLevel,
@@ -1206,6 +1208,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     for (const [id, agent] of Object.entries(snapshot.agents)) {
       this.agents.set(id, structuredClone(agent));
     }
+    this.costTotal = snapshot.costTotal;
     this.facets.clear();
     for (const [id, facet] of Object.entries(snapshot.facets)) {
       this.facets.set(id, structuredClone(facet));
@@ -1311,7 +1314,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         this.draftAssistantMessage = undefined;
         this.messageStates.delete(event.historyEntryId);
         this.seedToolRunsFromAssistantMessage(event.historyEntryId, event.message);
+        this.costTotal += event.message.usage?.cost?.total ?? 0;
         await this.emitPatch("assistant-message", [
+          { type: "cost.set", costTotal: this.costTotal },
           {
             type: "message.replace",
             message: {
@@ -1477,8 +1482,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     if (!agent) {
       return;
     }
+    this.costTotal += Math.max(0, agent.costTotal - (existing?.costTotal ?? 0));
     this.agents.set(agent.id, agent);
-    await this.emitPatch("agent-run", [{ type: "agent.set", agent: structuredClone(agent) }]);
+    await this.emitPatch("agent-run", [
+      { type: "cost.set", costTotal: this.costTotal },
+      { type: "agent.set", agent: structuredClone(agent) },
+    ]);
   }
 
   private buildAssistantPartialChanges(

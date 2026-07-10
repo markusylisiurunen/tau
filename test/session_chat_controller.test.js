@@ -68,6 +68,7 @@ function updateSnapshot(snapshot, overrides = {}) {
     sessionId: snapshot.sessionId,
     revision: overrides.revision ?? snapshot.revision,
     lifecycle: overrides.lifecycle ?? snapshot.lifecycle,
+    costTotal: overrides.costTotal ?? snapshot.costTotal,
     bootstrap: { ...bootstrap, riskLevel },
     catalog: overrides.catalog ?? snapshot.catalog,
     executionEnvironment: snapshot.executionEnvironment,
@@ -554,7 +555,6 @@ class FakeView {
   statusUpdates = [];
   editorText = "";
   editorEnabledUpdates = [];
-  toolCost = 0;
   subagentSelectionCycles = [];
   selectedSubagentId;
   pendingUserMessages = [];
@@ -618,9 +618,6 @@ class FakeView {
   resetToolUiSessionPreservingSubagents() {}
   finalizeToolUiPending() {}
   clearToolUiTransientState() {}
-  getToolUiCostTotal() {
-    return this.toolCost;
-  }
   cycleSubagentSelection(direction) {
     this.subagentSelectionCycles.push(direction);
     return undefined;
@@ -2372,6 +2369,7 @@ describe("SessionChatController", () => {
     };
     const snapshot = updateSnapshot(createSnapshot(), {
       revision: 3,
+      costTotal: 0.42,
       tools: {
         "tool-a": {
           id: "tool-a",
@@ -2403,7 +2401,6 @@ describe("SessionChatController", () => {
 
     controller.start();
     const resetCount = view.resetToolUiSession.mock.calls.length;
-    view.toolCost = 0.42;
     const delta = {
       version: 1,
       type: "session.delta",
@@ -2463,6 +2460,7 @@ describe("SessionChatController", () => {
     };
     const session = new FakeSession(
       updateSnapshot(createSnapshot(), {
+        costTotal: 0.555,
         messages: [
           {
             id: "system",
@@ -2612,7 +2610,10 @@ describe("SessionChatController", () => {
       reason: "agent-run",
       delta: {
         type: "snapshot.patch",
-        changes: [{ type: "agent.set", agent: nextAgent }],
+        changes: [
+          { type: "cost.set", costTotal: 0.02 },
+          { type: "agent.set", agent: nextAgent },
+        ],
       },
     };
     session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);

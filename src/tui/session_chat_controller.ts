@@ -1172,15 +1172,21 @@ export class SessionChatController {
   }
 
   private tryApplyFastAgentDelta(delta: SessionProtocolDeltaMessage): boolean {
-    if (delta.delta.type !== "snapshot.patch" || delta.delta.changes.length !== 1) {
+    if (delta.delta.type !== "snapshot.patch") {
       return false;
     }
 
-    const change = delta.delta.changes[0]!;
-    if (change.type !== "agent.set") {
+    const agentChanges = delta.delta.changes.filter((change) => change.type === "agent.set");
+    if (
+      agentChanges.length !== 1 ||
+      delta.delta.changes.some(
+        (change) => change.type !== "agent.set" && change.type !== "cost.set",
+      )
+    ) {
       return false;
     }
 
+    const change = agentChanges[0]!;
     const previousAgent = this.snapshot.agents[change.agent.id];
     this.snapshot = applySessionProtocolDelta(this.snapshot, delta);
     this.observedSessionRevision = Math.max(this.observedSessionRevision, this.snapshot.revision);
@@ -1900,13 +1906,7 @@ export class SessionChatController {
   }
 
   private getSessionCostString(): string {
-    let total = 0;
-    for (const entry of this.snapshot.messages) {
-      if (isAssistantMessage(entry.message)) {
-        total += entry.message.usage?.cost?.total ?? 0;
-      }
-    }
-    return formatSessionCost(total + this.view.getToolUiCostTotal());
+    return formatSessionCost(this.snapshot.costTotal);
   }
 
   private getTurnDurationString(): string {

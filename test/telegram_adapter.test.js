@@ -108,6 +108,7 @@ function createStatusSnapshot(overrides = {}) {
     sessionId: "tau-session",
     revision: 1,
     lifecycle: "idle",
+    costTotal: 0.12345,
     settings: {
       personaId: "default",
       reasoning: "medium",

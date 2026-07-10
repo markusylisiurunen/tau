@@ -73,6 +73,7 @@ export function createProtocolSnapshot(overrides = {}) {
     sessionId: overrides.sessionId ?? "session-1",
     revision: overrides.revision ?? 1,
     lifecycle: overrides.lifecycle ?? "idle",
+    costTotal: overrides.costTotal ?? 0,
     settings: overrides.settings ?? {
       personaId: bootstrap.persona?.id ?? "persona-1",
       riskLevel: bootstrap.riskLevel ?? "read-only",

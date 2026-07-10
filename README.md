@@ -156,7 +156,7 @@ The runner keeps tool and lifecycle progress quiet: Telegram receives command ac
 
 Telegram DM input supports plain text, voice/audio transcription, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). allowed groups are opt-in via `allowedChatIds`; non-triggering group text/captions, attachments, audio transcripts, and processing errors are buffered as sender-attributed context and the most recent 50 messages since the previous bot-triggering turn are included when a bot mention triggers a turn. group commands accept explicit bot mentions on or around the command, such as `/status@botusername`, `/status @botusername`, or `@botusername /status`.
 
-Telegram config defines `bots`, `projects`, `workspaceRoot`, optional `systemMessage`, and optional `maxSessions`. projects keep the same workspace preparation behavior as before: repositories use persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`, session workspaces are ephemeral, `bootstrapCommands` block readiness, and `backgroundBootstrapCommands` run after readiness. for config details, see [docs/telegram.md](docs/telegram.md).
+Telegram config defines `bots`, `projects`, `workspaceRoot`, optional `systemMessage`, and optional `maxSessions`. repositories use persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`; active session records are persisted at `<workspaceRoot>-sessions.json`, their workspaces survive runner restarts, and unreferenced workspace entries are removed on startup. Tau reconnects preserved sessions to their corresponding snapshots. When creating or reconstructing a workspace, `bootstrapCommands` block initial readiness and `backgroundBootstrapCommands` start without blocking; preserved workspaces skip both on restart. for config details, see [docs/telegram.md](docs/telegram.md).
 
 ## built-in tool commands
 
@@ -297,7 +297,7 @@ custom themes loaded from `.tau/themes` or `~/.config/tau/themes` are single-var
 available palette tokens (theme keys):
 
 - core: `brandAccent`, `textMuted`, `textDim`, `linkText`, `thinkingText`, `codeInlineText`, `codeBlockText`
-- editor: `editorBorderNone`, `editorBorderMinimal`, `editorBorderLow`, `editorBorderMedium`, `editorBorderHigh`, `editorBorderXhigh`, `editorSubagentBorder`, `editorBorderRecording`
+- editor: `editorBorderNone`, `editorBorderMinimal`, `editorBorderLow`, `editorBorderMedium`, `editorBorderHigh`, `editorBorderXhigh`, `editorBorderMax`, `editorSubagentBorder`, `editorBorderRecording`
 - status: `statusWarn`, `statusError`, `modeMemory`, `modeBash`
 - action: `actionRunning`, `actionSuccess`, `actionError`, `actionOutput`
 - diff: `diffAdd`, `diffRemove`
@@ -669,7 +669,7 @@ optional frontmatter fields:
 - `label`: display name shown in the ui (defaults to the base persona label if `extends` is used)
 - `description`: human-readable description used in lists/autocomplete
 - `extends`: inherit optional fields from a built-in persona id (for example `gpt-5.5-coder`). `provider` and `model` are still required. if the markdown body is empty, the base persona's system prompt is used.
-- `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
+- `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`
 - `serviceTier`: `priority` or `flex` for providers that support service tiers (currently `openai` and `openai-codex`)
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.

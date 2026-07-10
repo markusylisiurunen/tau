@@ -3,6 +3,7 @@ import { startTelegramAdapter, type TelegramAdapterHandle } from "./adapter.js";
 import type { TelegramConfig } from "./config.js";
 import {
   createTelegramSessionManager,
+  resolveTelegramSessionStatePath,
   type TelegramSessionClient,
   type TelegramSessionClientOptions,
   type TelegramSessionManager,
@@ -81,12 +82,18 @@ export async function startTelegramRuntime(
     workspaceRoot: options.config.workspaceRoot,
     maxSessions: options.config.maxSessions,
     systemMessage: options.config.systemMessage,
+    persistencePath: resolveTelegramSessionStatePath(options.config.workspaceRoot),
+    onLog: (entry) => {
+      options.onLog?.(`[telegram:${entry.level}] ${entry.message}`);
+    },
     createClient: options.createSessionClient,
   });
 
   const telegramAdapters: TelegramAdapterHandle[] = [];
 
   try {
+    await sessionManager.initialize();
+
     for (const [botId, botConfig] of Object.entries(options.config.bots)) {
       if (!botConfig.botToken) {
         throw new TelegramRuntimeError(`telegram bot '${botId}' is missing required botToken`);

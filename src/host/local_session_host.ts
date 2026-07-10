@@ -1989,7 +1989,10 @@ function modelSnapshotFromModel(model: Model<Api>): SessionProtocolModelSnapshot
     reasoning: model.reasoning,
     ...(thinkingLevelMap && Object.keys(thinkingLevelMap).length > 0 ? { thinkingLevelMap } : {}),
     input: [...model.input],
-    cost: { ...model.cost },
+    cost: {
+      ...model.cost,
+      ...(model.cost.tiers ? { tiers: model.cost.tiers.map((tier) => ({ ...tier })) } : {}),
+    },
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
     ...(model.compat !== undefined ? { compat: structuredClone(model.compat) } : {}),

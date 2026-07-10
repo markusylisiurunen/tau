@@ -264,7 +264,10 @@ export function resolveOpenAIReasoningEffort(
     return reasoning;
   }
 
-  if (getSupportedThinkingLevels(model).includes("xhigh") || reasoning !== "xhigh") {
+  if (
+    (reasoning !== "xhigh" && reasoning !== "max") ||
+    getSupportedThinkingLevels(model).includes(reasoning)
+  ) {
     return reasoning;
   }
 

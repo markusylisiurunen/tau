@@ -555,7 +555,6 @@ class FakeView {
   statusUpdates = [];
   editorText = "";
   editorEnabledUpdates = [];
-  toolCost = 0;
   subagentSelectionCycles = [];
   selectedSubagentId;
   pendingUserMessages = [];
@@ -619,9 +618,6 @@ class FakeView {
   resetToolUiSessionPreservingSubagents() {}
   finalizeToolUiPending() {}
   clearToolUiTransientState() {}
-  getToolUiCostTotal() {
-    return this.toolCost;
-  }
   cycleSubagentSelection(direction) {
     this.subagentSelectionCycles.push(direction);
     return undefined;
@@ -2449,6 +2445,49 @@ describe("SessionChatController", () => {
     expect(view.toolEvents).toEqual([queuedEvent, startedEvent]);
     expect(view.status.footer.sessionCost).toBe("$0.42");
     expect(controller.snapshot.tools["tool-a"].status).toBe("running");
+    await controller.dispose();
+  });
+
+  it("includes tier-priced assistant usage in the session footer cost", async () => {
+    const assistantMessage = createAssistantMessage("tiered response");
+    assistantMessage.usage = {
+      input: 273000,
+      output: 1000,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 274000,
+      cost: { input: 0.546, output: 0.009, cacheRead: 0, cacheWrite: 0, total: 0.555 },
+    };
+    const session = new FakeSession(
+      updateSnapshot(createSnapshot(), {
+        costTotal: 0.555,
+        messages: [
+          {
+            id: "system",
+            state: "committed",
+            modelVisible: true,
+            message: { role: "system", content: "system prompt", timestamp: 0 },
+          },
+          {
+            id: "assistant-tiered",
+            state: "committed",
+            modelVisible: true,
+            message: assistantMessage,
+          },
+        ],
+      }),
+    );
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "local",
+    });
+
+    controller.start();
+
+    expect(view.status.footer.sessionCost).toBe("$0.56");
     await controller.dispose();
   });
 

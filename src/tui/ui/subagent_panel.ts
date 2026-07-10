@@ -116,14 +116,6 @@ export class SubagentPanelComponent implements Component {
     }
   }
 
-  getCostTotal(): number {
-    let total = 0;
-    for (const entry of this.entries.values()) {
-      total += entry.costTotal;
-    }
-    return total;
-  }
-
   getSelectedId(): string | undefined {
     if (!this.selectedId) return undefined;
     const entry = this.entries.get(this.selectedId);

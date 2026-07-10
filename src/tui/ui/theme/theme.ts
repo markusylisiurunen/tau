@@ -35,6 +35,7 @@ export interface Palette {
   editorBorderMedium: (text: string) => string;
   editorBorderHigh: (text: string) => string;
   editorBorderXhigh: (text: string) => string;
+  editorBorderMax: (text: string) => string;
   editorSubagentBorder: (text: string) => string;
   editorBorderRecording: (text: string) => string;
 
@@ -159,6 +160,8 @@ function createEditorBorderForReasoning(
         return palette.editorBorderHigh;
       case "xhigh":
         return palette.editorBorderXhigh;
+      case "max":
+        return palette.editorBorderMax;
       default:
         assertNever(effort);
     }

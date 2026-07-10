@@ -4,7 +4,6 @@ import { getGoogleApiKey, getMistralApiKey, loadConfig } from "../config/schema.
 import { loadTelegramConfig, TelegramConfigError } from "./config.js";
 import { startTelegramRuntime, TelegramRuntimeError } from "./runtime.js";
 import type { TelegramSessionClient, TelegramSessionClientOptions } from "./session_manager.js";
-import { cleanupWorkspaceRootsOnStartup } from "./workspace.js";
 
 export class TelegramCliError extends Error {
   constructor(message: string) {
@@ -74,37 +73,6 @@ function parseTelegramArgs(argv: string[]): ParsedTelegramArgs {
   };
 }
 
-function logStartupCleanupSummary(args: {
-  stdout: (line: string) => void;
-  results: Awaited<ReturnType<typeof cleanupWorkspaceRootsOnStartup>>;
-}): void {
-  for (const result of args.results) {
-    if (result.deletedEntries > 0) {
-      args.stdout(
-        `[telegram:info] startup workspace cleanup removed ${result.deletedEntries} entries under ${result.workspaceRoot}`,
-      );
-    }
-
-    for (const failure of result.failures) {
-      args.stdout(
-        `[telegram:warn] startup workspace cleanup failed for ${failure.path}: ${failure.cause}`,
-      );
-    }
-  }
-}
-
-function collectWorkspaceRoots(config: ReturnType<typeof loadTelegramConfig>): string[] {
-  const roots = new Set<string>([config.workspaceRoot]);
-
-  for (const project of Object.values(config.projects)) {
-    if (project.workspaceRoot) {
-      roots.add(project.workspaceRoot);
-    }
-  }
-
-  return Array.from(roots);
-}
-
 export function printTelegramHelp(log: (line: string) => void = console.log): void {
   log(
     [
@@ -156,14 +124,6 @@ export async function runTelegramCommand(
       throw error;
     }
   })();
-
-  const startupCleanupResults = await cleanupWorkspaceRootsOnStartup(
-    collectWorkspaceRoots(telegramConfig),
-  );
-  logStartupCleanupSummary({
-    stdout,
-    results: startupCleanupResults,
-  });
 
   const runtime = await (async () => {
     try {

@@ -381,9 +381,17 @@ export type SessionProtocolReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 
-export type SessionProtocolThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type SessionProtocolThinkingLevel =
+  | "off"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
 
 export type SessionProtocolServiceTier = "priority" | "flex";
 
@@ -401,6 +409,13 @@ export type SessionProtocolModelSnapshot = {
     output: number;
     cacheRead: number;
     cacheWrite: number;
+    tiers?: Array<{
+      inputTokensAbove: number;
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+    }>;
   };
   contextWindow: number;
   maxTokens: number;
@@ -1076,6 +1091,7 @@ const sessionProtocolReasoningEffortSchema = z.enum([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]);
 
 const sessionProtocolSetReasoningParamsSchema = z
@@ -1262,7 +1278,7 @@ const sessionProtocolModelSnapshotSchema = z
     reasoning: z.boolean(),
     thinkingLevelMap: z
       .partialRecord(
-        z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]),
+        z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]),
         z.string().nullable(),
       )
       .optional(),
@@ -1273,6 +1289,19 @@ const sessionProtocolModelSnapshotSchema = z
         output: z.number().nonnegative(),
         cacheRead: z.number().nonnegative(),
         cacheWrite: z.number().nonnegative(),
+        tiers: z
+          .array(
+            z
+              .object({
+                inputTokensAbove: z.number().int().nonnegative(),
+                input: z.number().nonnegative(),
+                output: z.number().nonnegative(),
+                cacheRead: z.number().nonnegative(),
+                cacheWrite: z.number().nonnegative(),
+              })
+              .strict(),
+          )
+          .optional(),
       })
       .strict(),
     contextWindow: z.number().int().positive(),
@@ -3158,7 +3187,7 @@ function validateSetReasoningParams(
         : hasIssue(parsed.error, ["sessionId"])
           ? "session.setReasoning params.sessionId must be a non-empty string"
           : hasIssue(parsed.error, ["reasoning"])
-            ? "session.setReasoning params.reasoning must be one of none, minimal, low, medium, high, or xhigh"
+            ? "session.setReasoning params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
             : `session.setReasoning params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
@@ -3507,7 +3536,7 @@ function validateCreateParams(
                 : hasIssue(parsed.error, ["riskLevel"])
                   ? "session.create params.riskLevel must be 'read-only' or 'read-write'"
                   : hasIssue(parsed.error, ["reasoning"])
-                    ? "session.create params.reasoning must be one of none, minimal, low, medium, high, or xhigh"
+                    ? "session.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
                     : `session.create params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }

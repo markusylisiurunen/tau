@@ -24,6 +24,7 @@ export const REASONING_LEVELS_TUPLE = [
   "medium",
   "high",
   "xhigh",
+  "max",
 ] as const;
 
 export const ReasoningEffortSchema = z.enum(REASONING_LEVELS_TUPLE);

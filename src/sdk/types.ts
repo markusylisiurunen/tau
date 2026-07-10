@@ -95,7 +95,7 @@ export type TauSdkTransportClientOptions = {
 export type TauSdkClientOptions = TauSdkTransportClientOptions & {
   cwd?: string;
   persona?: string;
-  reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   riskLevel?: "read-only" | "read-write";
   noAgentContextFiles?: boolean;
 };
@@ -137,7 +137,7 @@ export type TauSdkSession = {
   snapshot(): Promise<TauSdkSessionSnapshotResult>;
   setRiskLevel(riskLevel: "read-only" | "read-write"): Promise<TauSdkSessionSetRiskResult>;
   setReasoning(
-    reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh",
+    reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
   ): Promise<TauSdkSessionSetReasoningResult>;
   setPersona(personaId: string): Promise<TauSdkSessionSetPersonaResult>;
   resolvePrompt(promptId: string): Promise<TauSdkResolvePromptResult>;

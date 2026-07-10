@@ -213,7 +213,7 @@ describe("session_protocol", () => {
         type: "request",
         id: "req-reasoning",
         method: "session.setReasoning",
-        params: { sessionId: "session-1", reasoning: "high" },
+        params: { sessionId: "session-1", reasoning: "max" },
       }),
     );
     expect(setReasoning).toEqual({
@@ -223,7 +223,7 @@ describe("session_protocol", () => {
         type: "request",
         id: "req-reasoning",
         method: "session.setReasoning",
-        params: { sessionId: "session-1", reasoning: "high" },
+        params: { sessionId: "session-1", reasoning: "max" },
       },
     });
 
@@ -860,11 +860,11 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolParams("session.setReasoning", {
         sessionId: "session-1",
-        reasoning: "high",
+        reasoning: "max",
       }),
     ).toEqual({
       ok: true,
-      value: { sessionId: "session-1", reasoning: "high" },
+      value: { sessionId: "session-1", reasoning: "max" },
     });
     expect(
       validateSessionProtocolParams("session.rewind", {
@@ -1080,13 +1080,13 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolResult("session.setReasoning", {
         revision: 2,
-        settings: { personaId: "default", riskLevel: "read-only", reasoning: "high" },
+        settings: { personaId: "default", riskLevel: "read-only", reasoning: "max" },
       }),
     ).toEqual({
       ok: true,
       value: {
         revision: 2,
-        settings: { personaId: "default", riskLevel: "read-only", reasoning: "high" },
+        settings: { personaId: "default", riskLevel: "read-only", reasoning: "max" },
       },
     });
 
@@ -1098,6 +1098,32 @@ describe("session_protocol", () => {
     ).toEqual({
       ok: true,
       value: createProtocolSnapshot({ bootstrap, catalog }),
+    });
+
+    const tieredSnapshot = createProtocolSnapshot({
+      bootstrap: {
+        ...bootstrap,
+        model: {
+          ...bootstrap.persona.model,
+          cost: {
+            ...bootstrap.persona.model.cost,
+            tiers: [
+              {
+                inputTokensAbove: 272000,
+                input: 2,
+                output: 9,
+                cacheRead: 0.2,
+                cacheWrite: 2.5,
+              },
+            ],
+          },
+          thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+        },
+      },
+    });
+    expect(validateSessionProtocolResult("session.snapshot", tieredSnapshot)).toEqual({
+      ok: true,
+      value: tieredSnapshot,
     });
 
     expect(

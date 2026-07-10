@@ -55,6 +55,7 @@ const PALETTE_TEXT_TOKENS = [
   "editorBorderMedium",
   "editorBorderHigh",
   "editorBorderXhigh",
+  "editorBorderMax",
   "editorSubagentBorder",
   "editorBorderRecording",
   "statusWarn",

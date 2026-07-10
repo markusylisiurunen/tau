@@ -1,4 +1,4 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, ModelCostTier } from "@earendil-works/pi-ai";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { z } from "zod";
 import type { ConfigDeps } from "../config/deps.js";
@@ -29,6 +29,7 @@ type ModelPatch = {
     output?: number;
     cacheRead?: number;
     cacheWrite?: number;
+    tiers?: ModelCostTier[];
   };
   contextWindow?: number;
   maxTokens?: number;
@@ -42,12 +43,23 @@ export type LoadedModelResolver = {
   errors: string[];
 };
 
+const CostTierSchema = z
+  .object({
+    inputTokensAbove: z.number().int().nonnegative(),
+    input: z.number().nonnegative(),
+    output: z.number().nonnegative(),
+    cacheRead: z.number().nonnegative(),
+    cacheWrite: z.number().nonnegative(),
+  })
+  .strict();
+
 const CostSchema = z
   .object({
     input: z.number().nonnegative().optional(),
     output: z.number().nonnegative().optional(),
     cacheRead: z.number().nonnegative().optional(),
     cacheWrite: z.number().nonnegative().optional(),
+    tiers: z.array(CostTierSchema).optional(),
   })
   .optional();
 
@@ -205,7 +217,10 @@ function cloneModel(model: Model<Api>): Model<Api> {
   return {
     ...model,
     input: [...model.input],
-    cost: { ...model.cost },
+    cost: {
+      ...model.cost,
+      ...(model.cost.tiers ? { tiers: model.cost.tiers.map((tier) => ({ ...tier })) } : {}),
+    },
     ...(model.headers ? { headers: { ...model.headers } } : {}),
     ...(model.compat !== undefined
       ? { compat: cloneCompat(model.compat) as Model<Api>["compat"] }

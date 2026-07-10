@@ -271,7 +271,7 @@ class TauSdkClientImpl implements TauSdkClient {
 
   sendSetReasoning(
     sessionId: string,
-    reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh",
+    reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
   ): Promise<SessionProtocolResultByMethod["session.setReasoning"]> {
     return this.transport.request("session.setReasoning", {
       sessionId,
@@ -607,7 +607,7 @@ class TauSdkSessionImpl implements TauSdkSession {
   }
 
   async setReasoning(
-    reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh",
+    reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
   ): Promise<SessionProtocolResultByMethod["session.setReasoning"]> {
     const snapshot = await this.client.sendSetReasoning(this.activeSessionId(), reasoning);
     this.discardBufferedDeltasThrough(snapshot.revision);

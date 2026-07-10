@@ -93,7 +93,7 @@ sdk lifecycle notes:
   - startup cwd for resolving SDK default config/content before sessions are created
 - `persona?: string`
   - default persona id and optional reasoning level for locally created in-process sessions
-- `reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh"`
+- `reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"`
   - explicit reasoning effort for locally created in-process sessions
 - `riskLevel?: "read-only" | "read-write"`
   - default risk level for locally created in-process sessions
@@ -298,7 +298,7 @@ options:
   - returns raw recoverable session user text; renderers should use `getTauUserDisplayText()` or `projectTauUserText()` to hide Tau metadata and leading exact `<system>...</system>\n` blocks from user messages before showing them to users
 - `setRiskLevel("read-only" | "read-write")`
   - sends `session.setRisk` with this session id and resolves with the updated session snapshot
-- `setReasoning("none" | "minimal" | "low" | "medium" | "high" | "xhigh")`
+- `setReasoning("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max")`
   - sends `session.setReasoning` with this session id and resolves with `{ revision, settings }`
 - `setPersona(personaId)`
   - sends `session.setPersona` with this session id and resolves with the updated session snapshot

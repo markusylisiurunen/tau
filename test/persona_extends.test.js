@@ -120,7 +120,7 @@ describe("custom personas", () => {
       );
       expect(
         personas.find((persona) => persona.id === "opus-4.6-chat")?.allowedReasoningLevels,
-      ).toEqual(["low", "medium", "high", "xhigh"]);
+      ).toEqual(["low", "medium", "high", "max"]);
       expect(personas.find((persona) => persona.id === "opus-4.6-coder")?.model.id).toBe(
         "claude-opus-4-6",
       );
@@ -132,7 +132,7 @@ describe("custom personas", () => {
       );
       expect(
         personas.find((persona) => persona.id === "opus-4.8-chat")?.allowedReasoningLevels,
-      ).toEqual(["low", "medium", "high", "xhigh"]);
+      ).toEqual(["low", "medium", "high", "xhigh", "max"]);
       expect(personas.find((persona) => persona.id === "opus-4.8-coder")?.model.id).toBe(
         "claude-opus-4-8",
       );
@@ -173,6 +173,9 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "gpt-5.6-sol-chat")?.model.id).toBe(
         "gpt-5.6-sol",
       );
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.6-sol-chat")?.allowedReasoningLevels,
+      ).toEqual(["low", "medium", "high", "xhigh", "max"]);
       expect(personas.find((persona) => persona.id === "gpt-5.6-terra-chat")?.model.id).toBe(
         "gpt-5.6-terra",
       );

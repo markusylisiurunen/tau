@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { calculateCost } from "@earendil-works/pi-ai";
 import { describe, expect, test } from "vitest";
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
 import {
@@ -91,7 +92,10 @@ describe("model stream option resolution", () => {
     });
   });
 
-  test("clamps unsupported openai xhigh reasoning in response options", () => {
+  test.each([
+    "xhigh",
+    "max",
+  ])("clamps unsupported openai %s reasoning in response options", (reasoning) => {
     expect(
       resolveOpenAIResponsesOptions(
         {
@@ -100,7 +104,7 @@ describe("model stream option resolution", () => {
           id: "gpt-5-mini",
         },
         {
-          reasoning: "xhigh",
+          reasoning,
           serviceTier: "priority",
         },
       ),
@@ -117,12 +121,48 @@ describe("model stream option resolution", () => {
     const openaiModel = runtime.resolveModel("openai", "gpt-5.6-luna");
     expect(openaiModel).toBeDefined();
     expect(openaiModel.api).toBe("openai-responses");
-    expect(openaiModel.cost).toEqual({ input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 });
+    expect(openaiModel.cost).toEqual({
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 1.25,
+      tiers: [
+        {
+          inputTokensAbove: 272000,
+          input: 2,
+          output: 9,
+          cacheRead: 0.2,
+          cacheWrite: 2.5,
+        },
+      ],
+    });
+    expect(openaiModel.contextWindow).toBe(272000);
 
     const codexModel = runtime.resolveModel("openai-codex", "gpt-5.6-sol");
     expect(codexModel).toBeDefined();
     expect(codexModel.api).toBe("openai-codex-responses");
-    expect(codexModel.contextWindow).toBe(272000);
+    expect(codexModel.contextWindow).toBe(372000);
+  });
+
+  test("calculates request cost with the highest matching input tier", () => {
+    const runtime = new ModelRuntime();
+    const model = runtime.resolveModel("openai", "gpt-5.6-luna");
+    expect(model).toBeDefined();
+
+    const cost = calculateCost(model, {
+      input: 273000,
+      output: 1000,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 274000,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    });
+
+    expect(cost.input).toBeCloseTo(0.546);
+    expect(cost.output).toBeCloseTo(0.009);
+    expect(cost.cacheRead).toBe(0);
+    expect(cost.cacheWrite).toBe(0);
+    expect(cost.total).toBeCloseTo(0.555);
   });
 
   test("resolves configured api keys through the pi-ai models runtime", async () => {

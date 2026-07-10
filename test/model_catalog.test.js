@@ -77,16 +77,44 @@ describe("model catalog", () => {
     expect(sol).toBeTruthy();
     expect(sol.provider).toBe("openai");
     expect(sol.api).toBe("openai-responses");
-    expect(sol.cost).toEqual({ input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 });
-    expect(sol.contextWindow).toBe(1050000);
+    expect(sol.cost).toEqual({
+      input: 5,
+      output: 30,
+      cacheRead: 0.5,
+      cacheWrite: 6.25,
+      tiers: [
+        {
+          inputTokensAbove: 272000,
+          input: 10,
+          output: 45,
+          cacheRead: 1,
+          cacheWrite: 12.5,
+        },
+      ],
+    });
+    expect(sol.contextWindow).toBe(272000);
     expect(sol.maxTokens).toBe(128000);
 
     const terra = resolveModel("openai-codex", "gpt-5.6-terra");
     expect(terra).toBeTruthy();
     expect(terra.provider).toBe("openai-codex");
     expect(terra.api).toBe("openai-codex-responses");
-    expect(terra.cost).toEqual({ input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 0 });
-    expect(terra.contextWindow).toBe(272000);
+    expect(terra.cost).toEqual({
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 3.125,
+      tiers: [
+        {
+          inputTokensAbove: 272000,
+          input: 5,
+          output: 22.5,
+          cacheRead: 0.5,
+          cacheWrite: 6.25,
+        },
+      ],
+    });
+    expect(terra.contextWindow).toBe(372000);
   });
 
   it("returns no models for unknown providers", () => {
@@ -135,6 +163,17 @@ describe("model catalog", () => {
                   {
                     id: "gpt-5.9-custom",
                     contextWindow: 200000,
+                    cost: {
+                      tiers: [
+                        {
+                          inputTokensAbove: 100000,
+                          input: 2,
+                          output: 4,
+                          cacheRead: 0.2,
+                          cacheWrite: 2.5,
+                        },
+                      ],
+                    },
                   },
                 ],
               },
@@ -166,6 +205,15 @@ describe("model catalog", () => {
       expect(model).toBeTruthy();
       expect(model.contextWindow).toBe(200000);
       expect(model.maxTokens).toBe(1000);
+      expect(model.cost.tiers).toEqual([
+        {
+          inputTokensAbove: 100000,
+          input: 2,
+          output: 4,
+          cacheRead: 0.2,
+          cacheWrite: 2.5,
+        },
+      ]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

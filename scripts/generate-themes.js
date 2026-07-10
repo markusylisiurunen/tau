@@ -141,6 +141,7 @@ const generatePalette = (brandHue, appearance) => {
     editorBorderMedium: toHex(editorBorder),
     editorBorderHigh: toHex(editorBorder),
     editorBorderXhigh: toHex(editorBorder),
+    editorBorderMax: toHex(editorBorder),
     editorSubagentBorder: toHex(editorSubagentBorder),
     editorBorderRecording: toHex(editorRecordingBorder),
 

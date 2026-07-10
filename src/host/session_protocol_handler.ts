@@ -113,22 +113,15 @@ function buildPendingUserMessagesState(
   };
 }
 
-function currentPendingUserMessagesMessage(
-  session: TauHostedSession,
-  state: SessionProtocolLiveSessionState,
-): SessionProtocolPendingUserMessagesMessage {
-  return createSessionProtocolPendingUserMessagesMessage({
-    sessionId: session.sessionId,
-    state: buildPendingUserMessagesState(state),
-  });
-}
-
 function publishPendingUserMessages(
   session: TauHostedSession,
   state: SessionProtocolLiveSessionState,
 ): void {
   state.revision += 1;
-  const message = currentPendingUserMessagesMessage(session, state);
+  const message = createSessionProtocolPendingUserMessagesMessage({
+    sessionId: session.sessionId,
+    state: buildPendingUserMessagesState(state),
+  });
   for (const listener of [...state.listeners]) {
     listener(message);
   }
@@ -299,7 +292,7 @@ export class SessionProtocolHandler {
     const states = [...this.sessionStates.values()];
 
     for (const state of states) {
-      this.unsubscribeDeltaListener(state);
+      this.unsubscribeSessionListeners(state);
 
       if (interruptActiveTurns && (state.live.activeSubmit || state.session.isTurnRunning)) {
         state.session.interruptTurn();
@@ -652,9 +645,7 @@ export class SessionProtocolHandler {
     request: Extract<SessionProtocolRequestMessage, { method: "session.observe" }>,
   ): Promise<void> {
     const wasObserved = this.sessionStates.has(request.params.sessionId);
-    const state = await this.getSessionState(request.params.sessionId, {
-      bufferInitialDeltas: true,
-    });
+    const state = await this.getSessionState(request.params.sessionId);
     if (!state) {
       this.sendMessage(
         createSessionProtocolErrorResponse(
@@ -684,7 +675,7 @@ export class SessionProtocolHandler {
       this.flushBufferedPendingUserMessagesAfter(state, pendingUserMessages.revision);
     } finally {
       if (!observed && !wasObserved) {
-        this.unsubscribeDeltaListener(state);
+        this.unsubscribeSessionListeners(state);
         this.sessionStates.delete(request.params.sessionId);
       } else if (!observed) {
         this.flushBufferedDeltasAfterSnapshot(state, 0);
@@ -702,7 +693,7 @@ export class SessionProtocolHandler {
       return;
     }
 
-    this.unsubscribeDeltaListener(state);
+    this.unsubscribeSessionListeners(state);
     this.sessionStates.delete(request.params.sessionId);
 
     const result: SessionProtocolResultByMethod["session.unobserve"] = {
@@ -1350,10 +1341,7 @@ export class SessionProtocolHandler {
     }
   }
 
-  private registerSession(
-    session: TauHostedSession,
-    options: { bufferInitialDeltas?: boolean } = {},
-  ): SessionProtocolHandlerSessionState {
+  private registerSession(session: TauHostedSession): SessionProtocolHandlerSessionState {
     const existing = this.sessionStates.get(session.sessionId);
     if (existing) {
       return existing;
@@ -1362,9 +1350,6 @@ export class SessionProtocolHandler {
     const state: SessionProtocolHandlerSessionState = {
       session,
       live: getSessionLiveState(session),
-      ...(options.bufferInitialDeltas
-        ? { bufferedDeltas: [], bufferedPendingUserMessages: [] }
-        : {}),
     };
 
     state.unsubscribeDelta = session.onDelta((delta) => {
@@ -1414,7 +1399,6 @@ export class SessionProtocolHandler {
 
   private async getSessionState(
     sessionId: string,
-    options: { bufferInitialDeltas?: boolean } = {},
   ): Promise<SessionProtocolHandlerSessionState | undefined> {
     const existing = this.sessionStates.get(sessionId);
     if (existing) {
@@ -1427,7 +1411,7 @@ export class SessionProtocolHandler {
     }
 
     const session = await this.host.observeSession(sessionId);
-    return session ? this.registerSession(session, options) : undefined;
+    return session ? this.registerSession(session) : undefined;
   }
 
   private flushBufferedDeltasAfterSnapshot(
@@ -1549,29 +1533,15 @@ export class SessionProtocolHandler {
     }
   }
 
-  private unsubscribeDeltaListener(state: SessionProtocolHandlerSessionState): void {
-    this.unsubscribeSessionListeners(state);
-  }
-
   private unsubscribeSessionListeners(state: SessionProtocolHandlerSessionState): void {
     this.clientToolRegistration?.detachSession(state.session.sessionId);
 
-    if (!state.unsubscribeDelta) {
-      // continue to ephemeral cleanup below
-    } else {
-      state.unsubscribeDelta();
-      state.unsubscribeDelta = undefined;
-    }
-
-    if (state.unsubscribeEphemeral) {
-      state.unsubscribeEphemeral();
-      state.unsubscribeEphemeral = undefined;
-    }
-
-    if (state.unsubscribePendingUserMessages) {
-      state.unsubscribePendingUserMessages();
-      state.unsubscribePendingUserMessages = undefined;
-    }
+    state.unsubscribeDelta?.();
+    state.unsubscribeDelta = undefined;
+    state.unsubscribeEphemeral?.();
+    state.unsubscribeEphemeral = undefined;
+    state.unsubscribePendingUserMessages?.();
+    state.unsubscribePendingUserMessages = undefined;
   }
 
   private sendMessage(message: SessionProtocolOutgoingMessage): void {

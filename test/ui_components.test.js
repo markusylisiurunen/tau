@@ -13,7 +13,7 @@ import {
 } from "../dist/tui/ui/components/one_line_segments.js";
 import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
 import { FooterComponent } from "../dist/tui/ui/footer.js";
-import { QueuedMessagesComponent } from "../dist/tui/ui/queued_messages.js";
+import { PendingMessagesComponent } from "../dist/tui/ui/pending_messages.js";
 import { RewindPickerComponent } from "../dist/tui/ui/rewind_picker.js";
 import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
 import { SlashAutocompleteProvider } from "../dist/tui/ui/slash_autocomplete.js";
@@ -272,9 +272,10 @@ test("renderChatMessage fails fast when a tool renderer is missing", () => {
   ).toThrow("missing tool ui renderer for event type 'list_success'.");
 });
 
-test("QueuedMessagesComponent distinguishes steering and queued previews", () => {
+test("PendingMessagesComponent distinguishes steering and queued previews", () => {
   const theme = createTagTheme();
-  const component = new QueuedMessagesComponent(theme, [
+  const component = new PendingMessagesComponent(theme);
+  component.setMessages([
     { id: "steer-1", mode: "steer", text: "change direction\nsecond" },
     { id: "queue-1", mode: "queue", text: "first queued" },
     { id: "queue-2", mode: "queue", text: "second queued" },

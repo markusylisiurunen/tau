@@ -8,11 +8,10 @@ function firstLine(text: string): string {
   return text.slice(0, idx);
 }
 
-export class QueuedMessagesComponent implements Component {
-  constructor(
-    private theme: Theme,
-    private messages: SessionProtocolPendingUserMessage[] = [],
-  ) {}
+export class PendingMessagesComponent implements Component {
+  private messages: SessionProtocolPendingUserMessage[] = [];
+
+  constructor(private theme: Theme) {}
 
   setTheme(theme: Theme): void {
     this.theme = theme;

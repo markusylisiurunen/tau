@@ -66,7 +66,6 @@ import {
   extractHistoryUserText,
 } from "./chat_controller/history_message_model.js";
 import { InterruptLifecycle } from "./chat_controller/interrupt_lifecycle.js";
-import { joinQueuedUserMessages } from "./chat_controller/queued_user_messages.js";
 import { formatDurationMs, formatSessionCost } from "./chat_controller/status_format.js";
 import type { ChatInputMode, ChatView, ChatViewInputHandlers } from "./chat_view.js";
 import { copyTextToClipboard } from "./clipboard.js";
@@ -662,10 +661,9 @@ export class SessionChatController {
 
       const editorText = this.view.getEditorText();
       this.view.setEditorText(
-        joinQueuedUserMessages([
-          ...(editorText ? [editorText] : []),
-          ...cancelled.map((message) => message.text),
-        ]),
+        [...(editorText ? [editorText] : []), ...cancelled.map((message) => message.text)].join(
+          "\n\n---\n\n",
+        ),
       );
       this.view.requestRender();
     } catch (error) {

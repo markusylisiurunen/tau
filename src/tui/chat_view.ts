@@ -16,7 +16,7 @@ import { ChatContainerComponent } from "./ui/chat_container.js";
 import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_model.js";
 import { CustomEditor } from "./ui/custom_editor.js";
 import { FooterComponent } from "./ui/footer.js";
-import { QueuedMessagesComponent } from "./ui/queued_messages.js";
+import { PendingMessagesComponent } from "./ui/pending_messages.js";
 import { RewindPickerComponent, type RewindPickerItem } from "./ui/rewind_picker.js";
 import { SubagentEditorPaneComponent } from "./ui/subagent_editor_pane.js";
 import { SubagentPanelComponent } from "./ui/subagent_panel.js";
@@ -125,7 +125,7 @@ export class TuiChatView implements ChatView {
   private ui: TUI;
   private chatContainer: ChatContainerComponent;
   private footer: FooterComponent;
-  private queuedMessages: QueuedMessagesComponent;
+  private pendingMessages: PendingMessagesComponent;
   private subagentPanel: SubagentPanelComponent;
   private editor: CustomEditor;
   private editorPane: SubagentEditorPaneComponent;
@@ -163,7 +163,7 @@ export class TuiChatView implements ChatView {
     );
     this.chatContainer.setCompactToolUi(options.compactToolUi);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
-    this.queuedMessages = new QueuedMessagesComponent(this.uiTheme);
+    this.pendingMessages = new PendingMessagesComponent(this.uiTheme);
     this.subagentPanel = new SubagentPanelComponent(this.uiTheme);
     this.editor = new CustomEditor(this.uiTheme);
     this.editor.onUiChange = () => this.ui.requestRender();
@@ -334,7 +334,7 @@ export class TuiChatView implements ChatView {
   }
 
   setPendingUserMessages(messages: SessionProtocolPendingUserMessage[]): void {
-    this.queuedMessages.setMessages(messages);
+    this.pendingMessages.setMessages(messages);
     this.ui.requestRender();
   }
 
@@ -450,7 +450,7 @@ export class TuiChatView implements ChatView {
 
     this.chatContainer.setTheme(this.uiTheme);
     this.footer.setTheme(this.uiTheme);
-    this.queuedMessages.setTheme(this.uiTheme);
+    this.pendingMessages.setTheme(this.uiTheme);
     this.subagentPanel.setTheme(this.uiTheme);
     this.editor.setUiTheme(this.uiTheme);
     this.editorPane.setTheme(this.uiTheme);
@@ -473,7 +473,7 @@ export class TuiChatView implements ChatView {
     this.ui.clear();
     this.ui.addChild(this.chatContainer);
     this.ui.addChild(new Spacer(1));
-    this.ui.addChild(this.queuedMessages);
+    this.ui.addChild(this.pendingMessages);
     this.ui.addChild(this.activeInputPane);
     this.ui.addChild(this.footer);
   }

@@ -924,6 +924,101 @@ describe("telegram session manager", () => {
     expect(cleanupWorkspacePath).not.toHaveBeenCalled();
   });
 
+  it("removes a session when its initial persistence fails", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-session-persist-failure-"));
+    const blockingPath = join(tempRoot, "not-a-directory");
+    const prepareWorkspace = vi.fn();
+    await writeFile(blockingPath, "value");
+
+    const manager = createTelegramSessionManager({
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      persistencePath: join(blockingPath, "sessions.json"),
+      prepareWorkspace,
+      createClient: vi.fn(async () => createClientHarness().client),
+    });
+
+    try {
+      await expect(manager.createSession({ projectId: "demo" })).rejects.toThrow();
+      expect(manager.listSessions()).toEqual([]);
+      expect(prepareWorkspace).not.toHaveBeenCalled();
+    } finally {
+      await manager.close().catch(() => undefined);
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("restores the initial prompt when shutdown interrupts session preparation", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-session-initial-prompt-"));
+    const workspaceRoot = join(tempRoot, "workspaces");
+    const persistencePath = join(tempRoot, "sessions.json");
+    const workspaceDeferred = deferred();
+    const firstManager = createTelegramSessionManager({
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      workspaceRoot,
+      persistencePath,
+      systemMessage: "global instructions",
+      prepareWorkspace: vi.fn(async ({ projectId, sessionId }) => {
+        await workspaceDeferred.promise;
+        const workspacePath = join(workspaceRoot, projectId, sessionId);
+        return { workspacePath, sessionCwd: workspacePath };
+      }),
+      createClient: vi.fn(async () => createClientHarness().client),
+    });
+
+    try {
+      const created = await firstManager.createSession({
+        projectId: "demo",
+        prompt: "finish the task",
+        additionalSystemMessage: "telegram instructions",
+      });
+      await waitFor(() => firstManager.getSession(created.id)?.state === "preparing-workspace");
+
+      const closePromise = firstManager.close();
+      workspaceDeferred.resolve();
+      await closePromise;
+
+      const interruptedState = JSON.parse(await readFile(persistencePath, "utf8"));
+      expect(interruptedState.sessions[0]).toEqual(
+        expect.objectContaining({
+          initialPrompt: "finish the task",
+          initialAdditionalSystemMessage: "telegram instructions",
+        }),
+      );
+
+      const recoveredClientHarness = createClientHarness();
+      const recoveredManager = createTelegramSessionManager({
+        projects: { demo: { repo: "git@example.com:demo.git" } },
+        workspaceRoot,
+        persistencePath,
+        systemMessage: "global instructions",
+        prepareWorkspace: vi.fn(async ({ projectId, sessionId }) => {
+          const workspacePath = join(workspaceRoot, projectId, sessionId);
+          await mkdir(workspacePath, { recursive: true });
+          return { workspacePath, sessionCwd: workspacePath };
+        }),
+        createClient: vi.fn(async () => recoveredClientHarness.client),
+      });
+
+      const initializePromise = recoveredManager.initialize();
+      await waitFor(() => recoveredClientHarness.session.submit.mock.calls.length === 1);
+      expect(recoveredClientHarness.session.submit).toHaveBeenCalledWith(
+        "<system>global instructions\ntelegram instructions</system>\nfinish the task",
+      );
+      recoveredClientHarness.submitDeferred.resolve({
+        userHistoryEntryId: "initial-history",
+        turn: { aborted: false },
+      });
+      await initializePromise;
+
+      const recoveredState = JSON.parse(await readFile(persistencePath, "utf8"));
+      expect(recoveredState.sessions[0]).not.toHaveProperty("initialPrompt");
+      expect(recoveredState.sessions[0]).not.toHaveProperty("initialAdditionalSystemMessage");
+      await recoveredManager.close();
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("restores persisted sessions and reconnects their Tau snapshots", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-session-state-"));
     const workspacePath = join(tempRoot, "workspaces", "demo", "session");
@@ -994,14 +1089,17 @@ describe("telegram session manager", () => {
     }
   });
 
-  it("prunes orphaned startup workspaces without removing persisted session workspaces", async () => {
+  it("prunes orphaned and failed workspaces while preserving recoverable workspaces", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-session-cleanup-"));
     const workspaceRoot = join(tempRoot, "workspaces");
     const projectWorkspaceRoot = join(tempRoot, "project-workspaces");
     const activeWorkspace = join(projectWorkspaceRoot, "demo", "active");
+    const failedWorkspace = join(projectWorkspaceRoot, "demo", "failed");
     const persistencePath = join(tempRoot, "sessions.json");
     await mkdir(activeWorkspace, { recursive: true });
     await writeFile(join(activeWorkspace, "keep.txt"), "keep");
+    await mkdir(failedWorkspace, { recursive: true });
+    await writeFile(join(failedWorkspace, "remove.txt"), "remove");
     await mkdir(join(projectWorkspaceRoot, "demo", "orphan"), { recursive: true });
     await mkdir(join(workspaceRoot, "stale"), { recursive: true });
     await writeFile(
@@ -1018,6 +1116,16 @@ describe("telegram session manager", () => {
             updatedAt: "2026-01-01T00:00:00.000Z",
             workspacePath: activeWorkspace,
             tauSessionId: "rpc-1",
+          },
+          {
+            id: "failed",
+            projectId: "demo",
+            ownerId: "telegram:bot:chat:43",
+            state: "failed",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            workspacePath: failedWorkspace,
+            error: "session failed",
           },
         ],
       })}\n`,
@@ -1045,6 +1153,9 @@ describe("telegram session manager", () => {
       expect(await readFile(join(activeWorkspace, "keep.txt"), "utf8")).toBe("keep");
       expect(await readdir(join(projectWorkspaceRoot, "demo"))).toEqual(["active"]);
       expect(await readdir(workspaceRoot)).toEqual([]);
+      expect(manager.getSession("failed")).toEqual(
+        expect.objectContaining({ state: "failed", workspacePath: failedWorkspace }),
+      );
       expect(prepareWorkspace).not.toHaveBeenCalled();
       expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
     } finally {

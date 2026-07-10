@@ -75,7 +75,7 @@ export type TelegramSessionRecord = {
   error?: string;
 };
 
-const telegramSessionRecordSchema = z
+const persistedTelegramSessionRecordSchema = z
   .object({
     id: z.string().min(1),
     projectId: z.string().min(1),
@@ -86,15 +86,19 @@ const telegramSessionRecordSchema = z
     workspacePath: z.string().min(1).optional(),
     tauSessionId: z.string().min(1).optional(),
     error: z.string().optional(),
+    initialPrompt: z.string().min(1).optional(),
+    initialAdditionalSystemMessage: z.string().min(1).optional(),
   })
   .strict();
 
 const telegramSessionStateSchema = z
   .object({
     version: z.literal(1),
-    sessions: z.array(telegramSessionRecordSchema),
+    sessions: z.array(persistedTelegramSessionRecordSchema),
   })
   .strict();
+
+type PersistedTelegramSessionRecord = z.infer<typeof persistedTelegramSessionRecordSchema>;
 
 export function resolveTelegramSessionStatePath(workspaceRoot: string): string {
   return `${resolve(workspaceRoot)}-sessions.json`;
@@ -159,6 +163,8 @@ type SessionEntry = {
   initializePromise?: Promise<void>;
   backgroundBootstrapPromise?: Promise<void>;
   workspaceCleanupPromise?: Promise<void>;
+  initialPrompt?: string;
+  initialAdditionalSystemMessage?: string;
   consumedFacetEventCounts: Map<string, number>;
   emittedAssistantMessageIds: Set<string>;
 };
@@ -340,6 +346,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
     const id = this.createSessionId();
     const now = this.now().toISOString();
+    const initialPrompt = input.prompt?.trim() || undefined;
     const entry: SessionEntry = {
       record: {
         id,
@@ -353,24 +360,30 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       project,
       abortController: new AbortController(),
       cancelRequested: false,
+      initialPrompt,
+      initialAdditionalSystemMessage: initialPrompt
+        ? input.additionalSystemMessage?.trim() || undefined
+        : undefined,
       consumedFacetEventCounts: new Map(),
       emittedAssistantMessageIds: new Set(),
     };
 
     this.sessions.set(id, entry);
+    try {
+      await this.persistSessions();
+    } catch (error) {
+      this.sessions.delete(id);
+      throw error;
+    }
+
     this.log(entry, "info", "session queued");
     this.emit({
       type: "session-created",
       session: this.toRecord(entry),
     });
-    await this.persistSessions();
 
     let initializePromise: Promise<void>;
-    initializePromise = this.initializeSession(
-      entry,
-      input.prompt,
-      input.additionalSystemMessage,
-    ).finally(() => {
+    initializePromise = this.initializeSession(entry).finally(() => {
       if (entry.initializePromise === initializePromise) {
         entry.initializePromise = undefined;
       }
@@ -512,7 +525,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       }
       throw error;
     });
-    let persistedSessions: TelegramSessionRecord[] = [];
+    let persistedSessions: PersistedTelegramSessionRecord[] = [];
     if (raw !== undefined) {
       let parsedJson: unknown;
       try {
@@ -530,7 +543,8 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       persistedSessions = parsed.data.sessions;
     }
 
-    for (const record of persistedSessions) {
+    for (const persistedRecord of persistedSessions) {
+      const { initialPrompt, initialAdditionalSystemMessage, ...record } = persistedRecord;
       const project = this.projects[record.projectId];
       if (!project || this.sessions.has(record.id)) {
         continue;
@@ -541,6 +555,8 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
           ...record,
           state: record.state === "running" ? "waiting-input" : record.state,
         },
+        initialPrompt,
+        initialAdditionalSystemMessage,
         logs: [],
         project,
         abortController: new AbortController(),
@@ -583,6 +599,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     for (const entry of this.sessions.values()) {
       const workspaceRoot = resolve(entry.project.workspaceRoot ?? this.workspaceRoot);
       workspaceRoots.add(workspaceRoot);
+      if (entry.record.state === "failed") {
+        continue;
+      }
       preservedWorkspacePaths.push(
         resolveWorkspacePath({
           workspaceRoot,
@@ -690,7 +709,13 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       .then(async () => {
         const state = {
           version: 1 as const,
-          sessions: Array.from(this.sessions.values()).map((entry) => this.toRecord(entry)),
+          sessions: Array.from(this.sessions.values()).map((entry) => ({
+            ...this.toRecord(entry),
+            ...(entry.initialPrompt ? { initialPrompt: entry.initialPrompt } : {}),
+            ...(entry.initialAdditionalSystemMessage
+              ? { initialAdditionalSystemMessage: entry.initialAdditionalSystemMessage }
+              : {}),
+          })),
         };
         await mkdir(dirname(persistencePath), { recursive: true });
         const temporaryPath = `${persistencePath}.tmp`;
@@ -701,11 +726,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     return write;
   }
 
-  private async initializeSession(
-    entry: SessionEntry,
-    prompt?: string,
-    additionalSystemMessage?: string,
-  ): Promise<void> {
+  private async initializeSession(entry: SessionEntry): Promise<void> {
     try {
       const sessionPreparationStart = process.hrtime.bigint();
       this.setState(entry, "preparing-workspace");
@@ -778,8 +799,16 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
       this.startBackgroundBootstrap(entry, workspace.sessionCwd);
 
-      if (prompt?.trim()) {
-        await this.submitText(entry, prompt.trim(), "initial-prompt", additionalSystemMessage);
+      if (entry.initialPrompt) {
+        await this.submitText(
+          entry,
+          entry.initialPrompt,
+          "initial-prompt",
+          entry.initialAdditionalSystemMessage,
+        );
+        entry.initialPrompt = undefined;
+        entry.initialAdditionalSystemMessage = undefined;
+        await this.persistSessions();
       }
 
       if (!entry.cancelRequested && entry.record.state !== "failed") {

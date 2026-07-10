@@ -492,6 +492,7 @@ export type SessionProtocolSnapshot = {
   sessionId: string;
   revision: number;
   lifecycle: SessionProtocolSessionLifecycle;
+  costTotal: number;
   settings: SessionProtocolSettingsSnapshot;
   bootstrap: SessionProtocolBootstrapSnapshot;
   catalog: SessionProtocolContentCatalogSnapshot;
@@ -728,6 +729,7 @@ export type SessionProtocolDeltaReason =
 
 export type SessionProtocolChange =
   | { type: "lifecycle.set"; lifecycle: SessionProtocolSessionLifecycle }
+  | { type: "cost.set"; costTotal: number }
   | { type: "settings.set"; settings: SessionProtocolSettingsSnapshot }
   | {
       type: "message.append";
@@ -1539,6 +1541,7 @@ const sessionProtocolSnapshotSchema = z
     sessionId: nonEmptyStringSchema,
     revision: z.number().int().positive(),
     lifecycle: sessionProtocolSessionLifecycleSchema,
+    costTotal: z.number().nonnegative(),
     settings: sessionProtocolSettingsSnapshotSchema,
     bootstrap: sessionProtocolBootstrapSnapshotSchema,
     catalog: sessionProtocolContentCatalogSnapshotSchema,
@@ -1601,6 +1604,12 @@ const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("lifecycle.set"),
       lifecycle: sessionProtocolSessionLifecycleSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("cost.set"),
+      costTotal: z.number().nonnegative(),
     })
     .strict(),
   z
@@ -2174,6 +2183,9 @@ export function applySessionProtocolDelta(
     switch (change.type) {
       case "lifecycle.set":
         next.lifecycle = change.lifecycle;
+        break;
+      case "cost.set":
+        next.costTotal = change.costTotal;
         break;
       case "settings.set":
         next.settings = structuredClone(change.settings);

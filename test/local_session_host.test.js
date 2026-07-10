@@ -149,6 +149,7 @@ function createStoredSnapshot(overrides = {}) {
     sessionId: overrides.sessionId ?? "stored-session",
     revision: overrides.revision ?? 1,
     lifecycle: overrides.lifecycle ?? "idle",
+    costTotal: overrides.costTotal ?? 0,
     settings: overrides.settings ?? expectedSettings(persona, overrides.riskLevel ?? "read-only"),
     bootstrap: overrides.bootstrap ?? {
       model: expectedModel(persona),
@@ -185,7 +186,7 @@ function historyEntriesFromSnapshot(snapshot) {
     .map((entry) => ({ id: entry.id, message: entry.message }));
 }
 
-function assistantMessageWithToolCalls(toolCalls) {
+function assistantMessageWithToolCalls(toolCalls, costTotal = 0) {
   return {
     role: "assistant",
     api: "anthropic",
@@ -199,7 +200,7 @@ function assistantMessageWithToolCalls(toolCalls) {
       cacheRead: 0,
       cacheWrite: 0,
       totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: costTotal },
     },
     timestamp: 1,
   };
@@ -509,6 +510,51 @@ describe("LocalSessionHost", () => {
           status: "running",
         }),
       }),
+    );
+  });
+
+  it("preserves cumulative session cost when compaction replaces message history", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+
+    const message = assistantMessageWithToolCalls([], 0.42);
+    hostedSession.session.addMessage(message, { historyEntryId: "assistant-before-compaction" });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_final",
+      historyEntryId: "assistant-before-compaction",
+      message,
+    });
+
+    hostedSession.session.restoreState({
+      sessionId: hostedSession.session.sessionId,
+      historyEntries: [
+        {
+          id: "compaction-summary",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "compacted summary" }],
+            timestamp: 2,
+          },
+        },
+      ],
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "compaction_end",
+      reason: "threshold",
+      outcome: "compacted",
+      result: {
+        summaryHistoryEntryId: "compaction-summary",
+        continuationHistoryEntryId: "compaction-continuation",
+        compactionMessage: "compacted summary",
+        cutType: "turn-boundary",
+        retainedMessageCount: 1,
+      },
+    });
+
+    await expect(hostedSession.snapshot()).resolves.toEqual(
+      expect.objectContaining({ costTotal: 0.42 }),
     );
   });
 

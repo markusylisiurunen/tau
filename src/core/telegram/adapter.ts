@@ -710,16 +710,7 @@ function formatTelegramContextUsage(snapshot: SessionProtocolSnapshot): string {
 }
 
 function getTelegramSessionCostTotal(snapshot: SessionProtocolSnapshot): number {
-  let total = 0;
-  for (const entry of snapshot.messages) {
-    if (isAssistantMessage(entry.message)) {
-      total += entry.message.usage?.cost?.total ?? 0;
-    }
-  }
-  for (const agent of Object.values(snapshot.agents)) {
-    total += agent.costTotal;
-  }
-  return total;
+  return snapshot.costTotal;
 }
 
 function formatTelegramSessionCost(total: number): string {

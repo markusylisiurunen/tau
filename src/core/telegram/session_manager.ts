@@ -533,7 +533,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       const entry: SessionEntry = {
         record: {
           ...record,
-          state: "queued",
+          state: record.tauSessionId ? "waiting-input" : "queued",
         },
         logs: [],
         project,
@@ -547,21 +547,23 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
     await this.cleanupOrphanedWorkspaces();
 
-    for (const entry of this.sessions.values()) {
-      try {
-        if (!entry.record.tauSessionId) {
-          await this.initializeSession(entry);
-          continue;
+    await Promise.all(
+      Array.from(this.sessions.values(), async (entry) => {
+        try {
+          if (!entry.record.tauSessionId) {
+            await this.initializeSession(entry);
+            return;
+          }
+          await this.reconnectSession(entry);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          entry.record.error = `recovery failed: ${message}`;
+          this.setState(entry, "failed");
+          this.log(entry, "error", "session recovery failed", { cause: message });
+          await this.stopClient(entry);
         }
-        await this.reconnectSession(entry);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        entry.record.error = `recovery failed: ${message}`;
-        this.setState(entry, "failed");
-        this.log(entry, "error", "session recovery failed", { cause: message });
-        await this.stopClient(entry);
-      }
-    }
+      }),
+    );
 
     await this.persistSessions();
   }
@@ -629,7 +631,8 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       sessionId: entry.record.id,
     });
     let sessionCwd = resolve(workspacePath, entry.project.workingDirectory ?? ".");
-    if (!(await pathIsDirectory(sessionCwd))) {
+    const shouldPrepareWorkspace = !(await pathIsDirectory(sessionCwd));
+    if (shouldPrepareWorkspace) {
       const workspace = await this.prepareWorkspace({
         sessionId: entry.record.id,
         projectId: entry.record.projectId,
@@ -660,7 +663,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     entry.record.error = undefined;
     this.setState(entry, "waiting-input");
     this.log(entry, "info", "session recovered", { tauSessionId, workspacePath });
-    this.startBackgroundBootstrap(entry, sessionCwd);
+    if (shouldPrepareWorkspace) {
+      this.startBackgroundBootstrap(entry, sessionCwd);
+    }
   }
 
   private persistSessions(): Promise<void> {

@@ -58,7 +58,8 @@ Notes:
 - `projects.<id>.workingDirectory` must be a relative path inside the cloned repository.
 - Tau starts each Telegram session from `workingDirectory` when configured, otherwise from the repo root.
 - `bootstrapCommands` run from the same session working directory and block readiness.
-- `backgroundBootstrapCommands` run from the same session working directory after the session is ready and do not block readiness.
+- `backgroundBootstrapCommands` run from the same session working directory after a new or reconstructed workspace is ready and do not block readiness.
+- Preserved workspaces skip both bootstrap command lists during runner restart recovery.
 - failing `backgroundBootstrapCommands` are logged as warnings, but the session remains available.
 - `projects.<id>.ref` is optional, but recommended when every session should start from the same branch.
 - Repositories use an automatic persistent bare cache at `<workspaceRoot>-repo-cache/<projectId>.git`: the first session initializes it with `gh repo clone <owner/repo> <cache> -- --bare`, later sessions run `git fetch --prune origin`, then each session workspace is cloned from the local cache with `git clone --shared`.

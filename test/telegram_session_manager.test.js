@@ -968,6 +968,7 @@ describe("telegram session manager", () => {
           state: "waiting-input",
           workspacePath,
           tauSessionId: "rpc-1",
+          updatedAt: storedState.sessions[0].updatedAt,
         }),
       );
       expect(recoveredClientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
@@ -979,6 +980,58 @@ describe("telegram session manager", () => {
       );
       await recoveredManager.close();
     } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reconnects persisted sessions concurrently", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-session-concurrency-"));
+    const workspaceRoot = join(tempRoot, "workspaces");
+    const persistencePath = join(tempRoot, "sessions.json");
+    const sessionIds = ["first", "second"];
+    await Promise.all(
+      sessionIds.map(async (sessionId) => {
+        await mkdir(join(workspaceRoot, "demo", sessionId), { recursive: true });
+      }),
+    );
+    await writeFile(
+      persistencePath,
+      `${JSON.stringify({
+        version: 1,
+        sessions: sessionIds.map((id) => ({
+          id,
+          projectId: "demo",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          tauSessionId: `rpc-${id}`,
+        })),
+      })}\n`,
+      "utf8",
+    );
+
+    const observeDeferred = deferred();
+    const clientHarness = createClientHarness();
+    clientHarness.client.sessions.observe = vi.fn(async () => {
+      await observeDeferred.promise;
+      return clientHarness.session;
+    });
+    const manager = createTelegramSessionManager({
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      workspaceRoot,
+      persistencePath,
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    try {
+      const initialize = manager.initialize();
+      await waitFor(() => clientHarness.client.sessions.observe.mock.calls.length === 2);
+      observeDeferred.resolve();
+      await initialize;
+
+      expect(clientHarness.client.sessions.observe).toHaveBeenCalledTimes(2);
+    } finally {
+      observeDeferred.resolve();
+      await manager.close();
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
@@ -1013,17 +1066,20 @@ describe("telegram session manager", () => {
 
     const clientHarness = createClientHarness();
     const prepareWorkspace = vi.fn();
+    const runBootstrapCommands = vi.fn();
     const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
           workspaceRoot: projectWorkspaceRoot,
+          backgroundBootstrapCommands: ["npm run dev"],
         },
       },
       workspaceRoot,
       persistencePath,
       prepareWorkspace,
       createClient: vi.fn(async () => clientHarness.client),
+      runBootstrapCommands,
     });
 
     try {
@@ -1033,6 +1089,7 @@ describe("telegram session manager", () => {
       expect(await readdir(join(projectWorkspaceRoot, "demo"))).toEqual(["active"]);
       expect(await readdir(workspaceRoot)).toEqual([]);
       expect(prepareWorkspace).not.toHaveBeenCalled();
+      expect(runBootstrapCommands).not.toHaveBeenCalled();
       expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
     } finally {
       await manager.close();

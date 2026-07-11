@@ -294,7 +294,7 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau install [--global] [--force] [--prompt <id> | --skill <name>]` - Install starter prompts and skills (or one selected item)
 - `tau tool pdf-unpack <file.pdf>` - OCR a PDF with Mistral, render local page patches with `pdftoppm`, and print the artifact paths.
 - `tau nook setup --domain <domain> --zone-name <zone> --access-team-domain <url> --access-aud <aud>` / `tau nook destroy --domain <domain> --access-client-id <id> --access-client-secret <secret> --yes` - Deploy or remove the bundled Nook Cloudflare Worker stack with Wrangler. Destroy first calls the authenticated Worker cleanup endpoint, then deletes the Worker and R2 bucket.
-- `tau nook deploy <dir> --site <slug> [--public]`, `tau nook list`, `tau nook delete <site>`, `tau nook skill`, `tau nook template ...`, and `tau nook kv ...` - Operate a configured Nook target
+- `tau nook deploy <dir> --site <slug> [--public]`, `tau nook copy <site> <dir>`, `tau nook list`, `tau nook delete <site>`, `tau nook skill`, `tau nook template ...`, and `tau nook kv ...` - Operate a configured Nook target
 - `tau telegram --config-file <path>` - Run the Telegram bot adapter over local in-process Tau SDK sessions
 - `tau diff-tool [--help]` - Built-in browser diff review demo tool and reference implementation for the diff-review protocol
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover

@@ -44,6 +44,19 @@ export type NookDeployResult = {
   byteCount: number;
 };
 
+export type NookSiteManifestResult = {
+  site: string;
+  deploymentId: string;
+  visibility: NookVisibility;
+  fileCount: number;
+  byteCount: number;
+  files: NookManifestFile[];
+};
+
+export type NookSiteCopyResult = Omit<NookSiteManifestResult, "files"> & {
+  directory: string;
+};
+
 export type NookKvListResult = {
   site: string;
   keys: Array<{ key: string; sizeBytes: number; updatedAt: string }>;
@@ -75,7 +88,7 @@ type NookClientOptions = {
 
 type NookClientDeployFile = NookDeployFile | NookBackendDeployFile;
 
-type NookDownloadedTemplateFile = NookManifestFile & {
+type NookDownloadedFile = NookManifestFile & {
   content: Buffer;
 };
 
@@ -83,6 +96,25 @@ function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
   const copy = new ArrayBuffer(buffer.byteLength);
   new Uint8Array(copy).set(buffer);
   return copy;
+}
+
+function validateCopyDestination(directory: string, artifact: string): void {
+  if (!existsSync(directory))
+    throw new Error(`${artifact} copy destination does not exist: ${directory}`);
+  if (!lstatSync(directory).isDirectory()) {
+    throw new Error(`${artifact} copy destination is not a directory: ${directory}`);
+  }
+  if (readdirSync(directory).length > 0) {
+    throw new Error(`${artifact} copy destination is not empty: ${directory}`);
+  }
+}
+
+function writeDownloadedFiles(directory: string, files: NookDownloadedFile[]): void {
+  for (const file of files) {
+    const destination = join(directory, file.path.replace(/^\/+/, ""));
+    mkdirSync(dirname(destination), { recursive: true });
+    writeFileSync(destination, file.content);
+  }
 }
 
 async function readDeployFileContent(file: NookClientDeployFile): Promise<Blob> {
@@ -178,6 +210,54 @@ export class NookClient {
       { method: "DELETE" },
     );
     return result;
+  }
+
+  async getSiteManifest(site: string): Promise<NookSiteManifestResult> {
+    return await this.requestJson<NookSiteManifestResult>(
+      `${this.baseUrl()}/__nook/api/sites/${encodeURIComponent(site)}`,
+    );
+  }
+
+  async downloadSiteFile(site: string, deploymentId: string, path: string): Promise<Buffer> {
+    const url = new URL(`${this.baseUrl()}/__nook/api/sites/${encodeURIComponent(site)}/file`);
+    url.searchParams.set("deployment", deploymentId);
+    url.searchParams.set("path", path);
+    const response = await this.fetchImpl(url, { headers: this.authHeaders() });
+    if (!response.ok) throw new Error(await formatNookHttpError(response));
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  async downloadSiteFiles(
+    site: string,
+    manifest: NookSiteManifestResult,
+  ): Promise<NookDownloadedFile[]> {
+    validateNookTemplateManifest(manifest.files);
+    const byteCount = manifest.files.reduce((total, file) => total + file.sizeBytes, 0);
+    if (manifest.fileCount !== manifest.files.length || manifest.byteCount !== byteCount) {
+      throw new Error("site manifest summary does not match its files");
+    }
+    const downloaded: NookDownloadedFile[] = [];
+    for (const file of manifest.files) {
+      const content = await this.downloadSiteFile(site, manifest.deploymentId, file.path);
+      if (content.byteLength !== file.sizeBytes) {
+        throw new Error(`site file '${file.path}' size does not match manifest`);
+      }
+      const sha256 = createHash("sha256").update(content).digest("hex");
+      if (sha256 !== file.sha256) {
+        throw new Error(`site file '${file.path}' hash does not match manifest`);
+      }
+      downloaded.push({ ...file, content });
+    }
+    return downloaded;
+  }
+
+  async copySiteToDirectory(site: string, directory: string): Promise<NookSiteCopyResult> {
+    validateCopyDestination(directory, "site");
+    const manifest = await this.getSiteManifest(site);
+    const files = await this.downloadSiteFiles(site, manifest);
+    writeDownloadedFiles(directory, files);
+    const { files: _files, ...result } = manifest;
+    return { ...result, directory };
   }
 
   async deploySite(args: {
@@ -312,7 +392,7 @@ export class NookClient {
   async downloadTemplateFiles(
     name: string,
     manifest: NookTemplateManifestResult,
-  ): Promise<NookDownloadedTemplateFile[]> {
+  ): Promise<NookDownloadedFile[]> {
     validateNookTemplateManifest(manifest.files);
     const byteCount = manifest.files.reduce((total, file) => total + file.sizeBytes, 0);
     if (
@@ -321,7 +401,7 @@ export class NookClient {
     ) {
       throw new Error("template manifest summary does not match its files");
     }
-    const downloaded: NookDownloadedTemplateFile[] = [];
+    const downloaded: NookDownloadedFile[] = [];
     for (const file of manifest.files) {
       const content = await this.downloadTemplateFile(
         name,
@@ -341,25 +421,10 @@ export class NookClient {
   }
 
   async copyTemplateToDirectory(name: string, directory: string): Promise<NookTemplateCopyResult> {
-    if (!existsSync(directory)) {
-      throw new Error(`template copy destination does not exist: ${directory}`);
-    }
-    const stats = lstatSync(directory);
-    if (!stats.isDirectory()) {
-      throw new Error(`template copy destination is not a directory: ${directory}`);
-    }
-    if (readdirSync(directory).length > 0) {
-      throw new Error(`template copy destination is not empty: ${directory}`);
-    }
-
+    validateCopyDestination(directory, "template");
     const manifest = await this.getTemplateManifest(name);
     const files = await this.downloadTemplateFiles(name, manifest);
-    for (const file of files) {
-      const relativePath = file.path.replace(/^\/+/, "");
-      const destination = join(directory, relativePath);
-      mkdirSync(dirname(destination), { recursive: true });
-      writeFileSync(destination, file.content);
-    }
+    writeDownloadedFiles(directory, files);
     return {
       ...manifest.template,
       directory,

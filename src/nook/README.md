@@ -56,6 +56,8 @@ Destroy first calls `https://<domain>/__nook/api/destroy` through Cloudflare Acc
 ```sh
 tau nook deploy ./dist --site demo
 tau nook deploy ./dist --site demo --public
+mkdir restored-demo
+tau nook copy demo ./restored-demo
 ```
 
 Deploy requirements:
@@ -70,6 +72,7 @@ Deploy requirements:
 - Uploads are checked against the manifest byte size and SHA-256 digest.
 - Each site can have at most three non-expired pending deploy sessions.
 - Deployed asset URLs remain stable across deploys, so responses require cache revalidation.
+- `copy` downloads the active deployment into an existing empty directory and verifies every file against its manifest. Site KV is not copied.
 
 ## templates
 

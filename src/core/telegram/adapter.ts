@@ -2043,12 +2043,16 @@ class TelegramAdapterImpl {
     const session = await this.requireActiveSession(chatId);
     if (!session) return;
 
+    await this.reply(chatId, "compacting session...");
+    this.startTypingIndicators(session.id);
     try {
       const sessionManager = this.getSessionManagerForChat(chatId);
       await sessionManager.compactSession(session.id);
       await this.reply(chatId, "session compacted. previous context has been summarized.");
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
+    } finally {
+      this.stopTypingIndicators(session.id);
     }
   }
 

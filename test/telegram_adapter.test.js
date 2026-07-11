@@ -1157,10 +1157,14 @@ describe("telegram adapter", () => {
     });
 
     try {
-      await waitFor(() => apiHarness.sendMessages.length === 1);
+      await waitFor(() => apiHarness.sendMessages.length === 2);
       expect(managerHarness.manager.compactSession).toHaveBeenCalledWith("s1");
-      expect(apiHarness.sendMessages[0].text).toBe(
+      expect(apiHarness.sendMessages.map((message) => message.text)).toEqual([
+        "compacting session...",
         "session compacted. previous context has been summarized.",
+      ]);
+      expect(apiHarness.chatActions).toContainEqual(
+        expect.objectContaining({ chatId: 329, action: "typing" }),
       );
     } finally {
       await adapter.close();

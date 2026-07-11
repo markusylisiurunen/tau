@@ -227,6 +227,15 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
         isTurnRunning: false,
       };
     }),
+    compactSession: vi.fn(async (sessionId) => {
+      const session = sessions.get(sessionId);
+      if (!session) throw new Error("missing session");
+      return {
+        snapshot: session.snapshot,
+        compactionMessage: "summary",
+        includedLastAssistant: false,
+      };
+    }),
     closeSession: vi.fn(async (sessionId) => {
       const session = sessions.get(sessionId);
       if (!session) {
@@ -283,6 +292,7 @@ describe("telegram adapter", () => {
       expect(apiHarness.setCommandsCalls[0]).toEqual([
         { command: "new", description: "start a new session" },
         { command: "status", description: "show active session status" },
+        { command: "compact", description: "compact session context" },
         { command: "interrupt", description: "interrupt active run" },
       ]);
     } finally {
@@ -1123,6 +1133,40 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("compacts the active session", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: { chat: { id: 329, type: "private" }, from: { id: 7 }, text: "/new" },
+        },
+        {
+          update_id: 2,
+          message: { chat: { id: 329, type: "private" }, from: { id: 7 }, text: "/compact" },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness();
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(managerHarness.manager.compactSession).toHaveBeenCalledWith("s1");
+      expect(apiHarness.sendMessages[0].text).toBe(
+        "session compacted. previous context has been summarized.",
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("rejects removed session-management commands", async () => {
     const apiHarness = createApiHarness([
       [
@@ -1151,7 +1195,7 @@ describe("telegram adapter", () => {
     try {
       await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(apiHarness.sendMessages[0].text).toBe(
-        "unsupported command. supported commands: /new, /status, /interrupt",
+        "unsupported command. supported commands: /new, /status, /compact, /interrupt",
       );
       expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
     } finally {

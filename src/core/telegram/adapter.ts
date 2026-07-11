@@ -1157,6 +1157,12 @@ class TelegramAdapterImpl {
         handler: async (chatId) => this.handleStatus(chatId),
       },
       {
+        command: "/compact",
+        description: "compact session context",
+        usage: "/compact",
+        handler: async (chatId, args) => this.handleCompact(chatId, args),
+      },
+      {
         command: "/interrupt",
         description: "interrupt active run",
         usage: "/interrupt",
@@ -1935,7 +1941,7 @@ class TelegramAdapterImpl {
     if (!handler) {
       await this.reply(
         chatId,
-        "unsupported command. supported commands: /new, /status, /interrupt",
+        "unsupported command. supported commands: /new, /status, /compact, /interrupt",
       );
       return;
     }
@@ -2027,6 +2033,23 @@ class TelegramAdapterImpl {
     }
 
     await this.reply(chatId, formatSessionStatus(session, snapshot));
+  }
+
+  private async handleCompact(chatId: number, args: string[]): Promise<void> {
+    if (args.length > 0) {
+      await this.reply(chatId, "usage: /compact");
+      return;
+    }
+    const session = await this.requireActiveSession(chatId);
+    if (!session) return;
+
+    try {
+      const sessionManager = this.getSessionManagerForChat(chatId);
+      await sessionManager.compactSession(session.id);
+      await this.reply(chatId, "session compacted. previous context has been summarized.");
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
+    }
   }
 
   private async handleInterrupt(chatId: number): Promise<void> {

@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import type {
+  SessionProtocolCompactResult,
   SessionProtocolCreateParams,
   SessionProtocolDeltaMessage,
   SessionProtocolFacet,
@@ -211,6 +212,7 @@ export type TelegramTauSession = {
   submit(text: string): Promise<SessionProtocolSubmitResult>;
   steer(text: string): Promise<SessionProtocolSteerResult>;
   interrupt(): Promise<SessionProtocolInterruptResult>;
+  compact(mode: "summary-only" | "summary-and-last"): Promise<SessionProtocolCompactResult>;
   snapshot(): Promise<SessionProtocolSnapshot>;
   unobserve(): Promise<SessionProtocolUnobserveResult>;
 };
@@ -242,6 +244,7 @@ export type TelegramSessionManager = {
     options?: TelegramSessionSubmitOptions,
   ): Promise<TelegramSessionRecord>;
   interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult>;
+  compactSession(sessionId: string): Promise<SessionProtocolCompactResult>;
   closeSession(sessionId: string): Promise<TelegramSessionRecord>;
   closeInactiveSessions(): Promise<TelegramSessionRecord[]>;
   close(): Promise<void>;
@@ -465,6 +468,17 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       interrupted: result.interrupted,
       isTurnRunning: result.isTurnRunning,
     };
+  }
+
+  async compactSession(sessionId: string): Promise<SessionProtocolCompactResult> {
+    const entry = this.requireSession(sessionId);
+    if (entry.record.state === "running" || entry.activeSubmit) {
+      throw new TelegramSessionManagerError("busy", "session is running");
+    }
+    if (!entry.tauSession) {
+      throw new TelegramSessionManagerError("not_ready", "session is still preparing");
+    }
+    return await entry.tauSession.compact("summary-only");
   }
 
   async closeSession(sessionId: string): Promise<TelegramSessionRecord> {
@@ -1421,6 +1435,11 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
   async interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult> {
     this.requireSession(sessionId);
     return await this.sessionManager.interruptSession(sessionId);
+  }
+
+  async compactSession(sessionId: string): Promise<SessionProtocolCompactResult> {
+    this.requireSession(sessionId);
+    return await this.sessionManager.compactSession(sessionId);
   }
 
   async closeSession(sessionId: string): Promise<TelegramSessionRecord> {

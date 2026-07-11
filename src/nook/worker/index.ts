@@ -693,7 +693,7 @@ async function handleBaseApi(
   }
 
   const match = url.pathname.match(
-    /^\/__nook\/api\/sites(?:\/([^/]+))?(?:\/deploy\/([^/]+)\/(file|finish)|\/deploy\/start)?$/,
+    /^\/__nook\/api\/sites(?:\/([^/]+))?(?:\/deploy\/([^/]+)\/(file|finish)|\/deploy\/start|\/file)?$/,
   );
   if (!match) return error("not_found", "Unknown Nook API route", 404);
 
@@ -714,6 +714,52 @@ async function handleBaseApi(
     await siteFetch(env, site, "/delete", { method: "POST" });
     await registryFetch(env, `/sites/${encodeURIComponent(site)}`, { method: "DELETE" });
     return json({ site, deleted: true });
+  }
+
+  if (request.method === "GET" && url.pathname === `/__nook/api/sites/${site}`) {
+    const active = await siteFetch(env, site, "/active");
+    if (!active.ok) return active;
+    const deployment = (await active.json()) as {
+      deploymentId: string;
+      public: boolean;
+      files: ManifestFile[];
+    };
+    return json({
+      site,
+      deploymentId: deployment.deploymentId,
+      visibility: deployment.public ? "public" : "private",
+      fileCount: deployment.files.length,
+      byteCount: deployment.files.reduce((total, file) => total + file.sizeBytes, 0),
+      files: deployment.files,
+    });
+  }
+
+  if (request.method === "GET" && url.pathname === `/__nook/api/sites/${site}/file`) {
+    const deploymentId = url.searchParams.get("deployment");
+    if (!deploymentId || !/^dep_[a-f0-9]{24}$/.test(deploymentId)) {
+      return error("invalid_deployment", "Invalid deployment", 400);
+    }
+    const path = url.searchParams.get("path");
+    const normalized = path ? normalizeAssetPath(path) : undefined;
+    if (!normalized || normalized !== path)
+      return error("invalid_path", "Invalid site file path", 400);
+    const active = await siteFetch(env, site, "/active");
+    if (!active.ok) return active;
+    const deployment = (await active.json()) as {
+      deploymentId: string;
+      files: ManifestFile[];
+    };
+    if (deployment.deploymentId !== deploymentId) {
+      return error("deployment_changed", "Active deployment changed during copy", 409);
+    }
+    if (!deployment.files.some((file) => file.path === normalized)) {
+      return error("invalid_path", "Path is not in the active deployment manifest", 400);
+    }
+    const object = await env.ASSETS.get(assetKey(site, deploymentId, normalized));
+    if (!object) return error("not_found", "Site file not found", 404);
+    return new Response(object.body, {
+      headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream" },
+    });
   }
 
   if (request.method === "POST" && url.pathname.endsWith("/deploy/start")) {

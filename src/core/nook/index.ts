@@ -2,6 +2,8 @@ export { NookCliError, printNookHelp, runNookCommand } from "./cli.js";
 export type {
   NookDeployResult,
   NookKvListResult,
+  NookSiteCopyResult,
+  NookSiteManifestResult,
   NookSiteSummary,
   NookTemplateCopyResult,
   NookTemplateManifestResult,

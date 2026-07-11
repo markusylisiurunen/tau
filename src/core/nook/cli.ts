@@ -50,6 +50,7 @@ export function printNookHelp(log: (line: string) => void = console.log): void {
       "  tau nook destroy --domain <domain> --access-client-id <id> --access-client-secret <secret> --yes",
       "  tau nook skill",
       "  tau nook deploy <dir> --site <slug> [--public]",
+      "  tau nook copy <site> <dir>",
       "  tau nook list",
       "  tau nook delete <site>",
       "  tau nook template list",
@@ -135,6 +136,19 @@ export async function runNookCommand(
       if (!site || args.length !== 1) throw new Error("usage: tau nook delete <site>");
       await client.deleteSite(site);
       stdout(`deleted ${site}`);
+      return;
+    }
+
+    if (subcommand === "copy") {
+      const [site, directory] = args;
+      if (!site || !directory || args.length !== 2) {
+        throw new Error("usage: tau nook copy <site> <dir>");
+      }
+      const result = await client.copySiteToDirectory(
+        site,
+        resolve(options.cwd ?? process.cwd(), directory),
+      );
+      stdout(`copied site ${result.site} to ${directory}`);
       return;
     }
 

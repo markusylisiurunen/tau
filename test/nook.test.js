@@ -162,6 +162,56 @@ describe("nook config", () => {
   });
 });
 
+describe("nook site copy", () => {
+  it("copies verified active deployment files into an existing empty directory", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "tau-nook-site-copy-test-"));
+    const content = Buffer.from("<html>restored</html>");
+    const sha256 = createHash("sha256").update(content).digest("hex");
+    const fetchImpl = vi.fn(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/__nook/api/sites/demo") {
+        return Response.json({
+          site: "demo",
+          deploymentId: "dep_aaaaaaaaaaaaaaaaaaaaaaaa",
+          visibility: "private",
+          fileCount: 1,
+          byteCount: content.byteLength,
+          files: [
+            {
+              path: "/index.html",
+              sizeBytes: content.byteLength,
+              contentType: "text/html; charset=utf-8",
+              sha256,
+            },
+          ],
+        });
+      }
+      if (url.pathname === "/__nook/api/sites/demo/file") {
+        expect(url.searchParams.get("deployment")).toBe("dep_aaaaaaaaaaaaaaaaaaaaaaaa");
+        expect(url.searchParams.get("path")).toBe("/index.html");
+        return new Response(content);
+      }
+      throw new Error(`unexpected request ${url}`);
+    });
+    const client = new NookClient({ config: { domain: "nook.example.com" }, fetchImpl });
+
+    const result = await client.copySiteToDirectory("demo", directory);
+
+    expect(result.deploymentId).toBe("dep_aaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(readFileSync(join(directory, "index.html"))).toEqual(content);
+  });
+
+  it("rejects a non-empty destination before downloading", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "tau-nook-site-copy-test-"));
+    writeFileSync(join(directory, "existing.txt"), "keep");
+    const fetchImpl = vi.fn();
+    const client = new NookClient({ config: { domain: "nook.example.com" }, fetchImpl });
+
+    await expect(client.copySiteToDirectory("demo", directory)).rejects.toThrow(/not empty/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
 describe("nook templates", () => {
   it("copies verified binary files into an existing empty directory", async () => {
     const directory = await mkdtemp(join(tmpdir(), "tau-nook-copy-test-"));

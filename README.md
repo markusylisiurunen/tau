@@ -181,6 +181,7 @@ tau nook setup \
   --access-aud <access-application-audience>
 tau nook deploy ./dist --site demo
 tau nook deploy ./dist --site demo --public
+mkdir restored-demo && tau nook copy demo ./restored-demo
 tau nook template save starter ./app
 tau nook template copy starter ./next-app
 tau nook kv put demo settings '{"theme":"dark"}'

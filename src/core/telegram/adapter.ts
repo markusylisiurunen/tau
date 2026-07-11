@@ -2093,6 +2093,9 @@ class TelegramAdapterImpl {
         errors,
       );
       const processingErrors = this.collectGroupProcessingErrors(chatId, errors);
+      if (audioTranscript) {
+        await this.reply(chatId, `transcribed: ${audioTranscript}`);
+      }
       await this.submitSessionMessage(chatId, session.id, text, sourceMessageId, {
         includePendingAttachments: false,
       });
@@ -2328,6 +2331,7 @@ class TelegramAdapterImpl {
     }
 
     try {
+      await this.reply(chatId, `transcribed: ${result.transcript}`);
       await this.submitSessionMessage(chatId, session.id, result.transcript, sourceMessageId);
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));

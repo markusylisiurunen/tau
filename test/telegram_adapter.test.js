@@ -1033,6 +1033,9 @@ describe("telegram adapter", () => {
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s21", "ship the fix", {
         mode: "steer",
       });
+      expect(apiHarness.sendMessages).toEqual([
+        expect.objectContaining({ chatId: 210, text: "transcribed: ship the fix" }),
+      ]);
       expect(mistralFetch).toHaveBeenCalledTimes(1);
       await waitFor(() =>
         apiHarness.setMessageReactions.some(

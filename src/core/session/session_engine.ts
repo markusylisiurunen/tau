@@ -5,6 +5,7 @@ import {
   cleanupSessionResources,
   type Message,
   type ToolCall,
+  type ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
@@ -65,7 +66,11 @@ import {
   type SessionPruneOptions,
   type SessionPruneResult,
 } from "./pruning.js";
-import { runModelSubturn, runToolCalls } from "./runner.js";
+import {
+  runModelSubturn,
+  SequentialToolCallRunner,
+  type SequentialToolCallRunnerOptions,
+} from "./runner.js";
 
 const MAX_ASSISTANT_SUBTURNS = 200;
 
@@ -714,21 +719,6 @@ export class SessionEngine {
       }
 
       subturns += 1;
-      const { finalMessage } = yield* this.runSingleSubturn(signal, turnSettings);
-
-      if (signal.aborted) {
-        break;
-      }
-
-      if (finalMessage?.stopReason !== "toolUse") {
-        break;
-      }
-
-      const toolCalls = finalMessage.content.filter((c): c is ToolCall => c.type === "toolCall");
-      if (!toolCalls.length) {
-        break;
-      }
-
       const enabledTools = this.getEnabledToolSchemas(
         turnSettings.persona,
         turnSettings.clientToolDefinitions,
@@ -750,9 +740,7 @@ export class SessionEngine {
         authPath: this.authPath,
         subagentControlPlane: this.subagentControlPlane,
       };
-
-      for await (const event of runToolCalls({
-        toolCalls,
+      const { finalMessage } = yield* this.runSingleSubturn(signal, turnSettings, {
         toolRegistry: this.toolRegistry,
         extraToolDefinitions: [
           ...this.getConfiguredToolDefinitions(),
@@ -761,21 +749,19 @@ export class SessionEngine {
         enabledTools,
         signal,
         dispatchContext,
-      })) {
-        if (event.type === "tool_result") {
-          const historyEntryId = this.addMessage(event.message, {
-            historyEntryId: event.message.toolCallId,
-          });
-          const coreEvent: CoreEvent = {
-            ...event,
-            historyEntryId,
-          };
-          this.emitEvent(coreEvent);
-          yield coreEvent;
-          continue;
-        }
-        this.emitEvent(event);
-        yield event;
+      });
+
+      if (signal.aborted) {
+        break;
+      }
+
+      if (finalMessage?.stopReason !== "toolUse") {
+        break;
+      }
+
+      const toolCalls = finalMessage.content.filter((c): c is ToolCall => c.type === "toolCall");
+      if (!toolCalls.length) {
+        break;
       }
 
       if (options?.shouldStopAtBoundary?.()) {
@@ -1013,6 +999,7 @@ export class SessionEngine {
   private async *runSingleSubturn(
     signal: AbortSignal,
     turnSettings: SessionTurnSettings,
+    toolOptions: SequentialToolCallRunnerOptions,
   ): AsyncGenerator<CoreEvent, { finalMessage?: AssistantMessage }, void> {
     const historyEntryId = this.createHistoryEntryId();
     const startEvent: CoreEvent = { type: "assistant_start", historyEntryId };
@@ -1043,71 +1030,150 @@ export class SessionEngine {
       };
     }
 
+    const modelStream = runModelSubturn({
+      model: turnSettings.persona.model,
+      modelRuntime: this.modelRuntime,
+      context,
+      streamOptions: baseOptions,
+      signal,
+      emitPartials: true,
+      retry: {
+        shouldRetryAfterError: ({ error, model }) => shouldAutoRetry({ model, error }),
+        maxRetries: 1,
+        delayMs: 3000,
+        notice: { text: "auto-retrying after transient error", severity: "warn" },
+      },
+    });
+    const toolRunner = new SequentialToolCallRunner(toolOptions);
+    const toolStream = toolRunner[Symbol.asyncIterator]();
+    const pendingToolResults: ToolResultMessage[] = [];
+    const streamedToolCallIds = new Set<string>();
+    let modelDone = false;
+    let toolDone = false;
+    let finalMessage: AssistantMessage | undefined;
+    let modelNext = modelStream.next().then((result) => ({ source: "model" as const, result }));
+    let toolNext = toolStream.next().then((result) => ({ source: "tool" as const, result }));
+
     try {
-      const stream = runModelSubturn({
-        model: turnSettings.persona.model,
-        modelRuntime: this.modelRuntime,
-        context,
-        streamOptions: baseOptions,
-        signal,
-        emitPartials: true,
-        retry: {
-          shouldRetryAfterError: ({ error, model }) => shouldAutoRetry({ model, error }),
-          maxRetries: 1,
-          delayMs: 3000,
-          notice: { text: "auto-retrying after transient error", severity: "warn" },
-        },
-      });
+      while (!modelDone || !toolDone) {
+        const next = await Promise.race([
+          ...(modelDone ? [] : [modelNext]),
+          ...(toolDone ? [] : [toolNext]),
+        ]);
 
-      let finalMessage: AssistantMessage | undefined;
-      while (true) {
-        const next = await stream.next();
-        if (next.done) {
-          finalMessage = next.value;
-          break;
-        }
+        if (next.source === "model") {
+          if (next.result.done) {
+            modelDone = true;
+            finalMessage = next.result.value;
+            toolRunner.finish();
 
-        if (next.value.type === "assistant_partial") {
-          const event: CoreEvent = {
-            type: "assistant_partial",
-            historyEntryId,
-            snapshot: next.value.snapshot,
-          };
+            const finalToolCalls = finalMessage.content.filter(
+              (content): content is ToolCall => content.type === "toolCall",
+            );
+            const missingToolCall = finalToolCalls.find(
+              (toolCall) => !streamedToolCallIds.has(toolCall.id),
+            );
+            if (missingToolCall) {
+              throw new Error(
+                `model stream completed without toolcall_end for '${missingToolCall.id}'`,
+              );
+            }
+
+            if (finalMessage.stopReason === "error") {
+              await this.noteCurrentProviderError(finalMessage.errorMessage);
+            }
+
+            this.addMessage(finalMessage, { historyEntryId });
+            appendUsageLogEntry({
+              timestamp: finalMessage.timestamp,
+              sessionId: this.sessionId,
+              personaId: turnSettings.persona.id,
+              provider: finalMessage.provider,
+              model: finalMessage.model,
+              api: finalMessage.api,
+              reasoningEffort: turnSettings.reasoningEffort,
+              usage: getUsageTotals(finalMessage.usage),
+              cost: { total: getUsageCostTotal(finalMessage.usage) },
+              agent: { type: "main" },
+            });
+            const event: CoreEvent = {
+              type: "assistant_final",
+              historyEntryId,
+              message: finalMessage,
+            };
+            this.emitEvent(event);
+            yield event;
+
+            for (const toolResult of pendingToolResults.splice(0)) {
+              const toolHistoryEntryId = this.addMessage(toolResult, {
+                historyEntryId: toolResult.toolCallId,
+              });
+              const toolEvent: CoreEvent = {
+                type: "tool_result",
+                historyEntryId: toolHistoryEntryId,
+                message: toolResult,
+              };
+              this.emitEvent(toolEvent);
+              yield toolEvent;
+            }
+            continue;
+          }
+
+          const event = next.result.value;
+          modelNext = modelStream.next().then((result) => ({ source: "model" as const, result }));
+          if (event.type === "tool_call") {
+            streamedToolCallIds.add(event.toolCall.id);
+            toolRunner.enqueue(event.toolCall);
+            continue;
+          }
+          if (event.type === "assistant_partial") {
+            const partialEvent: CoreEvent = {
+              type: "assistant_partial",
+              historyEntryId,
+              snapshot: event.snapshot,
+            };
+            this.emitEvent(partialEvent);
+            yield partialEvent;
+            continue;
+          }
+
           this.emitEvent(event);
           yield event;
           continue;
         }
 
-        this.emitEvent(next.value);
-        yield next.value;
+        if (next.result.done) {
+          toolDone = true;
+          continue;
+        }
+
+        const event = next.result.value;
+        toolNext = toolStream.next().then((result) => ({ source: "tool" as const, result }));
+        if (event.type === "tool_result") {
+          if (!modelDone) {
+            pendingToolResults.push(event.message);
+            continue;
+          }
+
+          const toolHistoryEntryId = this.addMessage(event.message, {
+            historyEntryId: event.message.toolCallId,
+          });
+          const toolEvent: CoreEvent = {
+            ...event,
+            historyEntryId: toolHistoryEntryId,
+          };
+          this.emitEvent(toolEvent);
+          yield toolEvent;
+          continue;
+        }
+
+        this.emitEvent(event);
+        yield event;
       }
 
-      if (!finalMessage) {
-        return { finalMessage: undefined };
-      }
-
-      if (finalMessage.stopReason === "error") {
-        await this.noteCurrentProviderError(finalMessage.errorMessage);
-      }
-
-      this.addMessage(finalMessage, { historyEntryId });
-      appendUsageLogEntry({
-        timestamp: finalMessage.timestamp,
-        sessionId: this.sessionId,
-        personaId: turnSettings.persona.id,
-        provider: finalMessage.provider,
-        model: finalMessage.model,
-        api: finalMessage.api,
-        reasoningEffort: turnSettings.reasoningEffort,
-        usage: getUsageTotals(finalMessage.usage),
-        cost: { total: getUsageCostTotal(finalMessage.usage) },
-        agent: { type: "main" },
-      });
-      const event: CoreEvent = { type: "assistant_final", historyEntryId, message: finalMessage };
-      this.emitEvent(event);
-      yield event;
       return { finalMessage };
     } catch (err) {
+      toolRunner.finish();
       if (!signal.aborted) {
         await this.noteCurrentProviderError(err instanceof Error ? err.message : String(err));
       }

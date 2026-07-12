@@ -12,6 +12,7 @@ import type {
   CoreNoticeEvent,
   CoreToolUiEvent,
   RunnerAssistantPartialEvent,
+  RunnerToolCallEvent,
   RunnerToolResultEvent,
 } from "../events/types.js";
 import type {
@@ -28,7 +29,7 @@ import { MessageAccumulator } from "./message_accumulator.js";
 
 const ASSISTANT_PARTIAL_MIN_INTERVAL_MS = 33;
 
-export type ModelRunnerEvent = CoreNoticeEvent | RunnerAssistantPartialEvent;
+export type ModelRunnerEvent = CoreNoticeEvent | RunnerAssistantPartialEvent | RunnerToolCallEvent;
 export type ToolRunnerEvent = CoreNoticeEvent | CoreToolUiEvent | RunnerToolResultEvent;
 export type RunnerEvent = ModelRunnerEvent | ToolRunnerEvent;
 
@@ -62,6 +63,8 @@ export async function* runModelSubturn(
     retry,
   } = options;
 
+  let hasEmittedToolCall = false;
+
   const runAttempt = async function* (
     attemptOptions: TauStreamOptions,
   ): AsyncGenerator<ModelRunnerEvent, AssistantMessage, void> {
@@ -76,7 +79,7 @@ export async function* runModelSubturn(
       }
       const snapshot = accumulator.snapshot;
       hasPendingPartial = false;
-      if (!snapshot.hasTextStarted && !snapshot.hasAnyThinking) {
+      if (!snapshot.hasTextStarted && !snapshot.hasAnyThinking && snapshot.toolCalls.length === 0) {
         return;
       }
       yield { type: "assistant_partial", snapshot };
@@ -100,6 +103,19 @@ export async function* runModelSubturn(
               yield* emitPartialIfPending();
             }
           }
+          continue;
+        }
+
+        if (event.type === "toolcall_start") {
+          yield* emitPartialIfPending();
+          continue;
+        }
+
+        if (event.type === "toolcall_end") {
+          hasPendingPartial = true;
+          yield* emitPartialIfPending();
+          hasEmittedToolCall = true;
+          yield { type: "tool_call", toolCall: event.toolCall };
         }
       }
     } catch (error) {
@@ -147,7 +163,11 @@ export async function* runModelSubturn(
   while (true) {
     try {
       const result = yield* runAttempt(streamOptions);
-      if (attempt < maxRetries && retry?.shouldRetryAfterError?.({ error: result, model })) {
+      if (
+        !hasEmittedToolCall &&
+        attempt < maxRetries &&
+        retry?.shouldRetryAfterError?.({ error: result, model })
+      ) {
         attempt += 1;
         if (retryNotice) {
           yield retryNotice;
@@ -160,7 +180,11 @@ export async function* runModelSubturn(
       }
       return result;
     } catch (error) {
-      if (attempt < maxRetries && retry?.shouldRetryAfterError?.({ error, model })) {
+      if (
+        !hasEmittedToolCall &&
+        attempt < maxRetries &&
+        retry?.shouldRetryAfterError?.({ error, model })
+      ) {
         attempt += 1;
         if (retryNotice) {
           yield retryNotice;
@@ -188,6 +212,96 @@ export type RunToolCallsOptions = {
     unsupported?: (toolCall: ToolCall) => string;
   };
 };
+
+export type SequentialToolCallRunnerOptions = Omit<RunToolCallsOptions, "toolCalls">;
+
+class AsyncEventQueue<T> implements AsyncIterable<T>, AsyncIterator<T> {
+  private values: T[] = [];
+  private waiters: Array<{
+    resolve: (result: IteratorResult<T>) => void;
+    reject: (error: unknown) => void;
+  }> = [];
+  private closed = false;
+  private error: unknown;
+
+  push(value: T): void {
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter.resolve({ done: false, value });
+      return;
+    }
+    this.values.push(value);
+  }
+
+  close(): void {
+    this.closed = true;
+    for (const waiter of this.waiters.splice(0)) {
+      waiter.resolve({ done: true, value: undefined });
+    }
+  }
+
+  fail(error: unknown): void {
+    this.error = error;
+    for (const waiter of this.waiters.splice(0)) {
+      waiter.reject(error);
+    }
+  }
+
+  next(): Promise<IteratorResult<T>> {
+    const value = this.values.shift();
+    if (value !== undefined) {
+      return Promise.resolve({ done: false, value });
+    }
+    if (this.error !== undefined) {
+      return Promise.reject(this.error);
+    }
+    if (this.closed) {
+      return Promise.resolve({ done: true, value: undefined });
+    }
+    return new Promise((resolve, reject) => {
+      this.waiters.push({ resolve, reject });
+    });
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    return this;
+  }
+}
+
+export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> {
+  private readonly events = new AsyncEventQueue<ToolRunnerEvent>();
+  private execution: Promise<void> = Promise.resolve();
+  private finished = false;
+
+  constructor(private readonly options: SequentialToolCallRunnerOptions) {}
+
+  enqueue(toolCall: ToolCall): void {
+    if (this.finished) {
+      throw new Error("cannot enqueue a tool call after finishing the runner");
+    }
+
+    this.execution = this.execution.then(async () => {
+      for await (const event of runToolCalls({ ...this.options, toolCalls: [toolCall] })) {
+        this.events.push(event);
+      }
+    });
+  }
+
+  finish(): void {
+    if (this.finished) {
+      return;
+    }
+    this.finished = true;
+    void this.execution.then(
+      () => this.events.close(),
+      (error: unknown) => this.events.fail(error),
+    );
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<ToolRunnerEvent> {
+    return this.events;
+  }
+}
 
 type PhasedToolRaceResult =
   | { type: "run"; result: ToolDispatchResult }

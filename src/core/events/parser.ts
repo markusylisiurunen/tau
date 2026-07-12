@@ -1,3 +1,4 @@
+import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
 import {
   CORE_EVENT_VERSION,
   type CoreEvent,
@@ -95,6 +96,7 @@ function stripCoreEvent(value: UnknownRecord): CoreEvent {
         snapshot: {
           text: snapshot.text as string,
           thinking: snapshot.thinking as string,
+          toolCalls: snapshot.toolCalls as AssistantPartialSnapshot["toolCalls"],
           hasTextStarted: snapshot.hasTextStarted as boolean,
           hasAnyThinking: snapshot.hasAnyThinking as boolean,
         },
@@ -240,11 +242,23 @@ function isToolResultMessage(value: unknown): boolean {
   );
 }
 
+function isToolCall(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    value.type === "toolCall" &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    isRecord(value.arguments)
+  );
+}
+
 function isAssistantPartialSnapshot(value: unknown): boolean {
   return (
     isRecord(value) &&
     typeof value.text === "string" &&
     typeof value.thinking === "string" &&
+    Array.isArray(value.toolCalls) &&
+    value.toolCalls.every(isToolCall) &&
     typeof value.hasTextStarted === "boolean" &&
     typeof value.hasAnyThinking === "boolean" &&
     (value.hasTextStarted || value.text.length === 0) &&

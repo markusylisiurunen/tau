@@ -240,6 +240,7 @@ function assistantPartial(text) {
   return {
     text,
     thinking: "",
+    toolCalls: [],
     hasTextStarted: Boolean(text),
     hasAnyThinking: false,
   };
@@ -659,6 +660,61 @@ describe("LocalSessionHost", () => {
       }),
     );
     expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it("publishes streamed tool calls before the assistant message is final", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    const toolCall = {
+      type: "toolCall",
+      id: "streamed-tool-call",
+      name: "bash",
+      arguments: { command: "pwd" },
+    };
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_start",
+      historyEntryId: "assistant-streaming-tool",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-streaming-tool",
+      snapshot: {
+        ...assistantPartial("running a command"),
+        toolCalls: [toolCall],
+      },
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "tool_ui",
+      uiEvent: {
+        type: "tool_call_queued",
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        headerTarget: toolCall.name,
+      },
+    });
+
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "assistant-streaming-tool",
+          state: "draft",
+          message: expect.objectContaining({
+            content: [{ type: "text", text: "running a command" }, toolCall],
+          }),
+        }),
+      ]),
+    );
+    expect(snapshot.tools[toolCall.id]).toEqual(
+      expect.objectContaining({
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        status: "queued",
+        facetIds: [`tool-ui-${toolCall.id}`],
+      }),
+    );
   });
 
   it("does not persist unchanged live snapshots during refreshes", async () => {

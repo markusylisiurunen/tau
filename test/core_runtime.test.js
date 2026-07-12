@@ -457,6 +457,149 @@ describe("core session rewind APIs", () => {
     }
   });
 
+  it("starts streamed tool calls early while preserving sequential execution", async () => {
+    const firstCall = fauxToolCall("first_tool", {}, { id: "first-call" });
+    const secondCall = fauxToolCall("second_tool", {}, { id: "second-call" });
+    const toolMessage = fauxAssistantMessage([firstCall, secondCall], {
+      stopReason: "toolUse",
+    });
+    const finalMessage = fauxAssistantMessage("done");
+    let releaseFirst;
+    const firstRun = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    let releaseModel;
+    const modelRun = new Promise((resolve) => {
+      releaseModel = resolve;
+    });
+    let markFirstStarted;
+    const firstStarted = new Promise((resolve) => {
+      markFirstStarted = resolve;
+    });
+    let markSecondStarted;
+    const secondStarted = new Promise((resolve) => {
+      markSecondStarted = resolve;
+    });
+    let secondHasStarted = false;
+
+    const createDefinition = (name, dispatch) => ({
+      schema: {
+        name,
+        description: "test tool",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+      },
+      dispatch,
+    });
+    const toolRegistry = new ToolRegistry([
+      createDefinition("first_tool", async (toolCall) => {
+        markFirstStarted();
+        await firstRun;
+        return {
+          kind: "single",
+          toolResult: {
+            role: "toolResult",
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            content: [{ type: "text", text: "first done" }],
+            isError: false,
+            timestamp: 2,
+          },
+        };
+      }),
+      createDefinition("second_tool", async (toolCall) => {
+        secondHasStarted = true;
+        markSecondStarted();
+        return {
+          kind: "single",
+          toolResult: {
+            role: "toolResult",
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            content: [{ type: "text", text: "second done" }],
+            isError: false,
+            timestamp: 3,
+          },
+        };
+      }),
+    ]);
+    const persona = {
+      id: "early-tools",
+      label: "early tools",
+      model: personas[0].model,
+      systemPrompt: "system",
+      settings: { reasoning: "none" },
+      tools: ["first_tool", "second_tool"],
+      skills: "*",
+      source: "builtin",
+    };
+    const session = new CoreSession({
+      persona,
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry,
+    });
+    const responses = [toolMessage, finalMessage];
+    session.engine.modelRuntime.streamModel = () => {
+      const response = responses.shift();
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (response === toolMessage) {
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall: firstCall,
+              partial: toolMessage,
+            };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 1,
+              toolCall: secondCall,
+              partial: toolMessage,
+            };
+            await modelRun;
+          }
+        },
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    session.addUserText("use both tools");
+    const events = [];
+    const turn = (async () => {
+      for await (const event of session.events(new AbortController().signal)) {
+        events.push(event);
+      }
+    })();
+
+    await firstStarted;
+    expect(secondHasStarted).toBe(false);
+    releaseFirst();
+    await secondStarted;
+    expect(secondHasStarted).toBe(true);
+    expect(events.some((event) => event.type === "assistant_final")).toBe(false);
+
+    releaseModel();
+    await turn;
+
+    const relevantEvents = events
+      .filter((event) => event.type === "assistant_final" || event.type === "tool_result")
+      .map((event) =>
+        event.type === "tool_result" ? `${event.type}:${event.message.toolCallId}` : event.type,
+      );
+    expect(relevantEvents).toEqual([
+      "assistant_final",
+      "tool_result:first-call",
+      "tool_result:second-call",
+      "assistant_final",
+    ]);
+  });
+
   it("keeps reasoning frozen across all subturns in an agent turn", async () => {
     const requestedReasoning = [];
     const toolContextReasoning = [];
@@ -515,7 +658,13 @@ describe("core session rewind APIs", () => {
       requestedReasoning.push(options.reasoning);
       const response = responses.shift();
       return {
-        async *[Symbol.asyncIterator]() {},
+        async *[Symbol.asyncIterator]() {
+          for (const [contentIndex, content] of response.content.entries()) {
+            if (content.type === "toolCall") {
+              yield { type: "toolcall_end", contentIndex, toolCall: content, partial: response };
+            }
+          }
+        },
         async result() {
           return response;
         },

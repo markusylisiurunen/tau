@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
 import type { ToolUiEvent } from "../tools/registry.js";
@@ -98,6 +98,11 @@ export type RunnerAssistantPartialEvent = {
   snapshot: AssistantPartialSnapshot;
 };
 
+export type RunnerToolCallEvent = {
+  type: "tool_call";
+  toolCall: ToolCall;
+};
+
 export type RunnerToolResultEvent = {
   type: "tool_result";
   message: ToolResultMessage;
@@ -106,6 +111,7 @@ export type RunnerToolResultEvent = {
 export type RunnerEvent =
   | CoreNoticeEvent
   | RunnerAssistantPartialEvent
+  | RunnerToolCallEvent
   | CoreToolUiEvent
   | RunnerToolResultEvent;
 

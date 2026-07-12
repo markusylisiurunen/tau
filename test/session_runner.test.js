@@ -107,6 +107,7 @@ describe("session runner tool dispatch context", () => {
           snapshot: {
             text: "a",
             thinking: "",
+            toolCalls: [],
             hasTextStarted: true,
             hasAnyThinking: false,
           },
@@ -116,10 +117,108 @@ describe("session runner tool dispatch context", () => {
           snapshot: {
             text: "abc",
             thinking: "",
+            toolCalls: [],
             hasTextStarted: true,
             hasAnyThinking: false,
           },
         },
+      ]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("flushes pending assistant text before tool-call streaming", async () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    const toolCall = {
+      id: "tool-call-1",
+      type: "toolCall",
+      name: "fake_tool",
+      arguments: {},
+    };
+    const finalMessage = {
+      role: "assistant",
+      api: "anthropic",
+      provider: "anthropic",
+      model: "claude-opus",
+      stopReason: "toolUse",
+      content: [{ type: "text", text: "ab" }, toolCall],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [
+            { type: "text_delta", delta: "a" },
+            { type: "text_delta", delta: "b" },
+            { type: "toolcall_start" },
+            { type: "toolcall_delta", delta: "{}" },
+            { type: "toolcall_end", toolCall },
+          ],
+          finalMessage,
+        );
+      },
+    };
+
+    try {
+      const events = [];
+      const runner = runModelSubturn({
+        model: {},
+        context: {},
+        modelRuntime,
+        streamOptions: {},
+        signal: new AbortController().signal,
+        emitPartials: true,
+      });
+      while (true) {
+        const next = await runner.next();
+        if (next.done) {
+          expect(next.value).toBe(finalMessage);
+          break;
+        }
+        events.push(next.value);
+      }
+
+      expect(events).toEqual([
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "a",
+            thinking: "",
+            toolCalls: [],
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "ab",
+            thinking: "",
+            toolCalls: [],
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "ab",
+            thinking: "",
+            toolCalls: [toolCall],
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+        { type: "tool_call", toolCall },
       ]);
     } finally {
       now.mockRestore();

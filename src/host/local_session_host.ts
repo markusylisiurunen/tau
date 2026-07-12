@@ -1257,16 +1257,25 @@ class LocalHostedSessionHandle implements LocalHostedSession {
               ...(event.snapshot.hasTextStarted
                 ? [{ type: "text" as const, text: event.snapshot.text }]
                 : []),
+              ...event.snapshot.toolCalls,
             ],
             timestamp: Date.now(),
           },
         };
         const changes = this.buildAssistantPartialChanges(previousDraft, nextDraft);
-        if (changes.length === 0) {
+        if (nextDraft.message.role !== "assistant" || !Array.isArray(nextDraft.message.content)) {
+          throw new Error("assistant partial produced a non-assistant message");
+        }
+        this.seedToolRunsFromAssistantMessage(event.historyEntryId, nextDraft.message);
+        const toolChanges = this.toolChangesForAssistantMessage(
+          event.historyEntryId,
+          nextDraft.message,
+        );
+        if (changes.length === 0 && toolChanges.length === 0) {
           return;
         }
         this.draftAssistantMessage = nextDraft;
-        await this.emitPatch("assistant-stream", changes, {
+        await this.emitPatch("assistant-stream", [...changes, ...toolChanges], {
           persist: false,
         });
         return;
@@ -1560,7 +1569,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
-  private seedToolRunsFromAssistantMessage(messageId: string, message: AssistantMessage): void {
+  private seedToolRunsFromAssistantMessage(
+    messageId: string,
+    message: Pick<AssistantMessage, "content">,
+  ): void {
     const toolCalls = message.content
       .map((content, index) => ({ content, index }))
       .filter(
@@ -1587,7 +1599,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   private toolChangesForAssistantMessage(
     _messageId: string,
-    message: AssistantMessage,
+    message: Pick<AssistantMessage, "content">,
   ): SessionProtocolChange[] {
     return message.content
       .map((content, index) => ({ content, index }))

@@ -539,7 +539,10 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(nodeScriptCalls).toHaveLength(1);
     expect(nodeScriptCalls[0].args[0]).toBe("/workspace/repo");
     expect(JSON.parse(nodeScriptCalls[0].args[3])).toEqual(["/workspace/repo/docs/AGENTS.md"]);
-    expect(nodeScriptCalls[0].options.cwd).toBe("/workspace/repo");
+    expect(nodeScriptCalls[0].options).toMatchObject({
+      cwd: "/workspace/repo",
+      maxCaptureBytes: null,
+    });
     expect(environment.snapshot()).toEqual({
       kind: "cloudflare-sandbox",
       bridgeId: "default",

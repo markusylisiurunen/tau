@@ -295,7 +295,11 @@ async function inspectRuntimePromptContext(
       JSON.stringify(DEFAULT_IGNORED_CHILD_DIRS),
       String(CHILD_AGENTS_WALK_MAX_DIRS),
     ],
-    { cwd: args.cwd, timeoutMs: RUNTIME_PROMPT_CONTEXT_TIMEOUT_MS },
+    {
+      cwd: args.cwd,
+      timeoutMs: RUNTIME_PROMPT_CONTEXT_TIMEOUT_MS,
+      maxCaptureBytes: null,
+    },
   );
   if (result.exitCode !== 0) {
     const output = result.output.trim();

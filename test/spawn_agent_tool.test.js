@@ -49,10 +49,14 @@ function createContext(overrides = {}) {
   const context = {
     scope: "main",
     modelResolver,
-    resolveSubagentRuntime: async ({ cwd, name }) => ({
+    resolveSubagentRuntime: async ({ cwd, persona }) => ({
+      persona,
       config: {},
       modelResolver,
-      systemPrompt: `${name} prompt\n<cwd>${cwd}</cwd>`,
+      subagentPrompts: {
+        default: `default prompt\n<cwd>${cwd}</cwd>`,
+        researcher: `researcher prompt\n<cwd>${cwd}</cwd>`,
+      },
     }),
     persona: {
       id: "test-persona",
@@ -416,11 +420,25 @@ describe("spawn_agent tool", () => {
     expect(spawned[0].workingDirectory).toBe("/repo");
   });
 
-  it("resolves working-directory context through the execution environment", async () => {
-    const resolveSubagentRuntime = vi.fn(async ({ cwd, name }) => ({
+  it("uses target persona policy and context for a working-directory subagent", async () => {
+    const resolveSubagentRuntime = vi.fn(async ({ cwd, persona }) => ({
+      persona: {
+        ...persona,
+        settings: { reasoning: "xhigh", serviceTier: "flex" },
+        subagents: {
+          ...persona.subagents,
+          researcher: {
+            ...persona.subagents.researcher,
+            launchModels: ["openai/gpt-5.5:low"],
+            tools: ["view_image"],
+          },
+        },
+      },
       config: { modelSystemNotices: {} },
       modelResolver: createModelResolver(cwd, "/repo"),
-      systemPrompt: `${name} target prompt\n<cwd>${cwd}</cwd>\ntarget AGENTS context`,
+      subagentPrompts: {
+        researcher: `researcher target prompt\n<cwd>${cwd}</cwd>\ntarget AGENTS context`,
+      },
     }));
     const { context, spawned } = createContext({
       cwd: "/repo/src",
@@ -438,6 +456,7 @@ describe("spawn_agent tool", () => {
           name: "researcher",
           title: "research task",
           prompt: "collect findings",
+          model: "openai/gpt-5.5:low",
           workingDirectory: "..",
         },
       },
@@ -450,10 +469,12 @@ describe("spawn_agent tool", () => {
     expect(resolveSubagentRuntime).toHaveBeenCalledWith({
       cwd: "/repo",
       persona,
-      name: "researcher",
     });
     expect(spawned).toHaveLength(1);
     expect(spawned[0].workingDirectory).toBe("/repo");
+    expect(spawned[0].model).toMatchObject({ provider: "openai", id: "gpt-5.5" });
+    expect(spawned[0].settings).toMatchObject({ reasoning: "low", serviceTier: "flex" });
+    expect(spawned[0].tools).toEqual(["view_image"]);
     expect(spawned[0].systemPrompt).toContain("target AGENTS context");
   });
 

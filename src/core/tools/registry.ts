@@ -292,15 +292,15 @@ type ToolDispatchBaseContext = {
 };
 
 export type ResolvedSubagentRuntime = {
+  persona: Persona;
   config: Config;
   modelResolver: ModelResolver;
-  systemPrompt: string;
+  subagentPrompts: Record<string, string>;
 };
 
 export type ResolveSubagentRuntime = (options: {
   cwd: string;
   persona: Persona;
-  name: string;
 }) => Promise<ResolvedSubagentRuntime>;
 
 export type MainToolDispatchContext = ToolDispatchBaseContext & {

@@ -7,18 +7,24 @@ export function createExecutionEnvironmentSubagentRuntimeResolver(options: {
   includeAgentContext: boolean;
   now: () => number;
 }): ResolveSubagentRuntime {
-  return async ({ cwd, persona, name }) => {
+  return async ({ cwd, persona }) => {
     const runtimeConfig = await options.executionEnvironment.resolveRuntimeConfig(cwd);
+    const targetPersona = runtimeConfig.personas.find(
+      (candidate) => candidate.id.toLowerCase() === persona.id.toLowerCase(),
+    );
+    if (!targetPersona) {
+      throw new Error(`persona '${persona.id}' is not available for working directory '${cwd}'`);
+    }
     const runtimeContext = await options.executionEnvironment.resolveRuntimeContext({
       cwd,
-      persona,
+      persona: targetPersona,
       discoveredSkills: runtimeConfig.skills,
       includeAgentContext: options.includeAgentContext,
       agentContextFiles: runtimeConfig.config.agentContextFiles ?? [],
     });
     const promptContext = runtimeContext.promptBootstrap.promptContext;
     const composition = composeSessionPrompts({
-      persona,
+      persona: targetPersona,
       cwd: promptContext.cwd,
       repoRoot: promptContext.repoRoot,
       datetime: new Date(options.now()).toISOString(),
@@ -27,14 +33,11 @@ export function createExecutionEnvironmentSubagentRuntimeResolver(options: {
       skillsBlock: promptContext.skillsBlock,
       projectContextBlock: promptContext.projectContextBlock,
     });
-    const systemPrompt = composition.subagentPrompts[name];
-    if (!systemPrompt) {
-      throw new Error(`subagent '${name}' is missing its system prompt`);
-    }
     return {
+      persona: targetPersona,
       config: runtimeConfig.config,
       modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
-      systemPrompt,
+      subagentPrompts: composition.subagentPrompts,
     };
   };
 }

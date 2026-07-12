@@ -270,7 +270,10 @@ describe("Fly Sprite execution environment", () => {
     });
     expect(nodeScriptCalls).toHaveLength(1);
     expect(nodeScriptCalls[0].args[0]).toBe("/home/sprite/repo");
-    expect(nodeScriptCalls[0].options.cwd).toBe("/home/sprite/repo");
+    expect(nodeScriptCalls[0].options).toMatchObject({
+      cwd: "/home/sprite/repo",
+      maxCaptureBytes: null,
+    });
   });
 
   it("times out when the worker never becomes ready", async () => {

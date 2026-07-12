@@ -145,34 +145,21 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
 
       const { persona, cwd: baseCwd, subagentPrompts } = context;
 
-      if (!persona.subagents || Object.keys(persona.subagents).length === 0) {
-        return blocked("The spawn_agent tool is not enabled for the current persona.", {
-          name,
-          title,
-        });
-      }
-
-      const personaConfig = persona.subagents[name];
-      if (!personaConfig) {
-        return blocked(`Subagent '${name}' is not enabled for the current persona.`, {
-          name,
-          title,
-        });
-      }
-
       const cwd = workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
+      let effectivePersona = persona;
       let config = context.config;
       let modelResolver = context.modelResolver;
-      let systemPrompt = subagentPrompts[name];
+      let effectiveSubagentPrompts = subagentPrompts;
       if (workingDirectory) {
         if (!context.resolveSubagentRuntime) {
           return blocked("Working-directory context resolution is unavailable.", { name, title });
         }
         try {
-          const runtime = await context.resolveSubagentRuntime({ cwd, persona, name });
+          const runtime = await context.resolveSubagentRuntime({ cwd, persona });
+          effectivePersona = runtime.persona;
           config = runtime.config;
           modelResolver = runtime.modelResolver;
-          systemPrompt = runtime.systemPrompt;
+          effectiveSubagentPrompts = runtime.subagentPrompts;
         } catch (error) {
           return blocked(
             `Failed to build the subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
@@ -183,6 +170,20 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           );
         }
       }
+      if (!effectivePersona.subagents || Object.keys(effectivePersona.subagents).length === 0) {
+        return blocked("The spawn_agent tool is not enabled for the resolved persona.", {
+          name,
+          title,
+        });
+      }
+      const personaConfig = effectivePersona.subagents[name];
+      if (!personaConfig) {
+        return blocked(`Subagent '${name}' is not enabled for the resolved persona.`, {
+          name,
+          title,
+        });
+      }
+      const systemPrompt = effectiveSubagentPrompts[name];
       if (!systemPrompt) {
         return blocked(`Subagent '${name}' is missing its system prompt.`, {
           name,
@@ -225,7 +226,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       }
 
       const effectiveSettings = resolveSubagentEffectiveSettings({
-        persona,
+        persona: effectivePersona,
         config: personaConfig,
         launchModel: launchModelOverride,
       });
@@ -287,7 +288,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             modelResolver,
             authPath: context.authPath,
             backend,
-            personaId: context.persona.id,
+            personaId: effectivePersona.id,
           });
 
           if (!spawnResult.ok) {

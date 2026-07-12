@@ -131,7 +131,7 @@ export async function resolvePromptTemplateWithBackend(options: {
   const result = await options.backend.runNodeScript(
     COLLECT_PROMPT_TEMPLATE_CANDIDATES_SCRIPT,
     [options.cwd, options.home, options.promptId],
-    { cwd: options.cwd, timeoutMs: 10_000 },
+    { cwd: options.cwd, timeoutMs: 10_000, maxCaptureBytes: null },
   );
   if (result.exitCode !== 0) {
     const output = result.output.trim();

@@ -55,6 +55,35 @@ describe("LocalExecutionEnvironment", () => {
     });
   });
 
+  it("loads prompt context larger than the tool output preview budget", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tau-local-env-context-"));
+    try {
+      const repo = join(home, "repo");
+      await mkdir(repo, { recursive: true });
+      const largeAgents = `large context marker\n${"x".repeat(1_100_000)}`;
+      await writeFile(join(repo, "AGENTS.md"), largeAgents, "utf8");
+      const environment = new LocalExecutionEnvironment({
+        cwd: repo,
+        home,
+        backend: createLocalToolExecutionBackend(),
+      });
+
+      const runtimeContext = await environment.resolveRuntimeContext({
+        cwd: repo,
+        persona: personas[0],
+        discoveredSkills: [],
+        includeAgentContext: true,
+        agentContextFiles: [],
+      });
+
+      expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
+        largeAgents,
+      );
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("restores persisted local execution home", async () => {
     const resolver = new LocalExecutionEnvironmentResolver({
       home: "/host/home",
@@ -79,8 +108,14 @@ describe("LocalExecutionEnvironment", () => {
     try {
       const repo = join(storedHome, "repo");
       await mkdir(join(storedHome, ".config", "tau"), { recursive: true });
-      await mkdir(repo, { recursive: true });
+      await mkdir(join(repo, ".tau", "prompts"), { recursive: true });
       await writeFile(join(storedHome, ".config", "tau", "config.json"), "{}", "utf8");
+      const largePrompt = "x".repeat(1_100_000);
+      await writeFile(
+        join(repo, ".tau", "prompts", "large.md"),
+        `---\nid: large\n---\n${largePrompt}`,
+        "utf8",
+      );
       const resolver = new LocalExecutionEnvironmentResolver({
         home: "/host/home",
         toolBackend: createLocalToolExecutionBackend(),
@@ -94,6 +129,7 @@ describe("LocalExecutionEnvironment", () => {
       const runtime = await environment.resolveRuntimeConfig(repo);
 
       expect(runtime.bootstrap.levels[0].levelRoot).toBe(storedHome);
+      expect(runtime.prompts.find((prompt) => prompt.id === "large")?.template).toBe(largePrompt);
     } finally {
       await rm(storedHome, { recursive: true, force: true });
     }

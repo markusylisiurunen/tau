@@ -338,10 +338,10 @@ tau comes with several built-in personas across different models:
 - **Claude Opus 4.6** (Anthropic): `opus-4.6-chat`, `opus-4.6-coder`
 - **Claude Opus 4.8** (Anthropic): `opus-4.8-chat`, `opus-4.8-coder`
 - **GPT-5.5** (OpenAI): `gpt-5.5-chat`, `gpt-5.5-coder`
-- **GPT-5.5 Fast (ChatGPT)** and **GPT-5.6 Fast (ChatGPT)** (OpenAI Codex, priority tier): `gpt-5.5-chatgpt-fast-chat`, `gpt-5.5-chatgpt-fast-coder`, `gpt-5.6-sol-chatgpt-fast-chat`, `gpt-5.6-sol-chatgpt-fast-coder`, `gpt-5.6-terra-chatgpt-fast-chat`, `gpt-5.6-terra-chatgpt-fast-coder`
+- **GPT-5.5 Fast (ChatGPT)** and **GPT-5.6 Fast (ChatGPT)** (OpenAI Codex, priority tier): `gpt-5.5-chatgpt-fast-chat`, `gpt-5.5-chatgpt-fast-coder`, `gpt-5.6-sol-chatgpt-fast-chat`, `gpt-5.6-sol-chatgpt-fast-coder`, `gpt-5.6-terra-chatgpt-fast-chat`, `gpt-5.6-terra-chatgpt-fast-coder`, `gpt-5.6-luna-chatgpt-fast-chat`, `gpt-5.6-luna-chatgpt-fast-coder`
 - **GPT-5.5 (ChatGPT)** (OpenAI Codex): `gpt-5.5-chatgpt-chat`, `gpt-5.5-chatgpt-coder`
-- **GPT-5.6 Sol** and **GPT-5.6 Terra** (OpenAI): `gpt-5.6-sol-chat`, `gpt-5.6-sol-coder`, `gpt-5.6-terra-chat`, `gpt-5.6-terra-coder`
-- **GPT-5.6 Sol (ChatGPT)** and **GPT-5.6 Terra (ChatGPT)** (OpenAI Codex): `gpt-5.6-sol-chatgpt-chat`, `gpt-5.6-sol-chatgpt-coder`, `gpt-5.6-terra-chatgpt-chat`, `gpt-5.6-terra-chatgpt-coder`
+- **GPT-5.6 Sol**, **GPT-5.6 Terra**, and **GPT-5.6 Luna** (OpenAI): `gpt-5.6-sol-chat`, `gpt-5.6-sol-coder`, `gpt-5.6-terra-chat`, `gpt-5.6-terra-coder`, `gpt-5.6-luna-chat`, `gpt-5.6-luna-coder`
+- **GPT-5.6 Sol (ChatGPT)**, **GPT-5.6 Terra (ChatGPT)**, and **GPT-5.6 Luna (ChatGPT)** (OpenAI Codex): `gpt-5.6-sol-chatgpt-chat`, `gpt-5.6-sol-chatgpt-coder`, `gpt-5.6-terra-chatgpt-chat`, `gpt-5.6-terra-chatgpt-coder`, `gpt-5.6-luna-chatgpt-chat`, `gpt-5.6-luna-chatgpt-coder`
 - **Gemini 3.1 Pro** and **Gemini 3 Flash** (Google): `gemini-3.1-pro-chat`, `gemini-3-flash-chat`
 
 chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.

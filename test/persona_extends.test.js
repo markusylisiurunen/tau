@@ -179,8 +179,18 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "gpt-5.6-terra-chat")?.model.id).toBe(
         "gpt-5.6-terra",
       );
+      expect(personas.find((persona) => persona.id === "gpt-5.6-luna-chat")?.model.id).toBe(
+        "gpt-5.6-luna",
+      );
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.6-luna-chatgpt-coder")?.model.id,
+      ).toBe("gpt-5.6-luna");
       expect(
         personas.find((persona) => persona.id === "gpt-5.6-sol-chatgpt-fast-chat")?.settings
+          .serviceTier,
+      ).toBe("priority");
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.6-luna-chatgpt-fast-chat")?.settings
           .serviceTier,
       ).toBe("priority");
     } finally {

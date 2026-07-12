@@ -239,6 +239,67 @@ export type RunToolCallsOptions = {
 
 export type SequentialToolCallRunnerOptions = Omit<RunToolCallsOptions, "toolCalls" | "signal">;
 
+type ToolCallPreparationOptions = Pick<
+  RunToolCallsOptions,
+  "toolRegistry" | "extraToolDefinitions" | "enabledTools" | "toolErrorMessages"
+>;
+
+type PreparedToolCall =
+  | {
+      type: "ready";
+      toolCall: ToolCall;
+      definition: ToolDefinition;
+    }
+  | {
+      type: "rejected";
+      message: string;
+      result: ToolResultMessage;
+    };
+
+function prepareToolCall(
+  toolCall: ToolCall,
+  options: ToolCallPreparationOptions,
+): PreparedToolCall {
+  if (!options.enabledTools.some((tool) => tool.name === toolCall.name)) {
+    const message =
+      options.toolErrorMessages?.notEnabled?.(toolCall) ??
+      `Tool '${toolCall.name}' is not enabled for this session.`;
+    return {
+      type: "rejected",
+      message,
+      result: createToolError(toolCall, message),
+    };
+  }
+
+  const definition =
+    options.toolRegistry.get(toolCall.name) ??
+    options.extraToolDefinitions?.find((candidate) => candidate.schema.name === toolCall.name);
+  if (!definition) {
+    const message =
+      options.toolErrorMessages?.unsupported?.(toolCall) ??
+      `Tool '${toolCall.name}' is not supported by tau.`;
+    return {
+      type: "rejected",
+      message,
+      result: createToolError(toolCall, message),
+    };
+  }
+
+  return { type: "ready", toolCall, definition };
+}
+
+function createToolQueuedEvent(toolCall: ToolCall): CoreToolUiEvent {
+  return {
+    type: "tool_ui",
+    uiEvent: {
+      type: "tool_call_queued",
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      headerTarget: toolCall.name,
+    },
+  };
+}
+
 export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> {
   private readonly events: ToolRunnerEvent[] = [];
   private readonly waiters: Array<{
@@ -256,23 +317,24 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
     private readonly signal: AbortSignal,
   ) {}
 
-  enqueue(toolCall: ToolCall): void {
+  enqueue(toolCall: ToolCall): CoreToolUiEvent | undefined {
     if (this.finished) {
       throw new Error("cannot enqueue a tool call after finishing the runner");
     }
 
+    const prepared = prepareToolCall(toolCall, this.options);
     this.execution = this.execution.then(async () => {
-      for await (const event of runToolCalls({
-        ...this.options,
-        toolCalls: [toolCall],
-        signal: this.signal,
-      })) {
-        const waiter = this.waiters.shift();
-        if (waiter) {
-          waiter.resolve({ done: false, value: event });
-        } else {
-          this.events.push(event);
+      if (this.signal.aborted) {
+        return;
+      }
+      const execution = runPreparedToolCall(prepared, this.signal, this.options.dispatchContext);
+      while (true) {
+        const next = await execution.next();
+        if (next.done) {
+          this.publish({ type: "tool_result", message: next.value });
+          return;
         }
+        this.publish(next.value);
       }
     });
     void this.execution.catch((error: unknown) => {
@@ -281,6 +343,17 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
         waiter.reject(error);
       }
     });
+
+    return prepared.type === "ready" ? createToolQueuedEvent(toolCall) : undefined;
+  }
+
+  private publish(event: ToolRunnerEvent): void {
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter.resolve({ done: false, value: event });
+    } else {
+      this.events.push(event);
+    }
   }
 
   finish(): Promise<void> {
@@ -317,100 +390,85 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
   }
 }
 
+async function* runPreparedToolCall(
+  prepared: PreparedToolCall,
+  signal: AbortSignal,
+  dispatchContext: ToolDispatchContext,
+): AsyncGenerator<ToolRunnerEvent, ToolResultMessage, void> {
+  if (prepared.type === "rejected") {
+    yield { type: "notice", severity: "error", text: prepared.message };
+    return prepared.result;
+  }
+
+  const { toolCall, definition } = prepared;
+  try {
+    const dispatch = await definition.dispatch(toolCall, signal, dispatchContext);
+    if (dispatch.startedUiEvent) {
+      yield { type: "tool_ui", uiEvent: dispatch.startedUiEvent };
+    }
+    const result = await dispatch.run;
+    if (result.uiEvent) {
+      yield { type: "tool_ui", uiEvent: result.uiEvent };
+    }
+    return result.toolResult;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    yield {
+      type: "notice",
+      severity: "error",
+      text: `Tool '${toolCall.name}' (${toolCall.id}) execution failed: ${errorMessage}`,
+    };
+    return createToolError(toolCall, `Tool '${toolCall.name}' execution failed: ${errorMessage}`);
+  }
+}
+
 export async function* runToolCalls(
   options: RunToolCallsOptions,
 ): AsyncGenerator<ToolRunnerEvent, void, void> {
-  const {
-    toolCalls,
-    toolRegistry,
-    enabledTools,
-    extraToolDefinitions = [],
-    signal,
-    dispatchContext,
-    toolErrorMessages,
-  } = options;
-  const enabledToolNames = new Set(enabledTools.map((tool) => tool.name));
-
+  const { toolCalls, signal, dispatchContext, ...preparationOptions } = options;
+  const preparedCalls: PreparedToolCall[] = [];
+  for (const toolCall of toolCalls) {
+    if (signal.aborted) {
+      break;
+    }
+    preparedCalls.push(prepareToolCall(toolCall, preparationOptions));
+  }
   const resultsByIndex = new Map<number, ToolResultMessage>();
-  const validToolCalls: Array<{ index: number; toolCall: ToolCall; def: ToolDefinition }> = [];
 
-  for (let i = 0; i < toolCalls.length; i++) {
-    if (signal.aborted) break;
-
-    const toolCall = toolCalls[i]!;
-
-    if (!enabledToolNames.has(toolCall.name)) {
-      const msg =
-        toolErrorMessages?.notEnabled?.(toolCall) ??
-        `Tool '${toolCall.name}' is not enabled for this session.`;
-      const toolError = createToolError(toolCall, msg);
-      resultsByIndex.set(i, toolError);
-      yield { type: "notice", severity: "error", text: msg };
+  for (const [index, prepared] of preparedCalls.entries()) {
+    if (signal.aborted) {
+      break;
+    }
+    if (prepared.type !== "rejected") {
       continue;
     }
+    resultsByIndex.set(index, prepared.result);
+    yield { type: "notice", severity: "error", text: prepared.message };
+  }
 
-    const def =
-      toolRegistry.get(toolCall.name) ??
-      extraToolDefinitions.find((definition) => definition.schema.name === toolCall.name);
-    if (!def) {
-      const msg =
-        toolErrorMessages?.unsupported?.(toolCall) ??
-        `Tool '${toolCall.name}' is not supported by tau.`;
-      const toolError = createToolError(toolCall, msg);
-      resultsByIndex.set(i, toolError);
-      yield { type: "notice", severity: "error", text: msg };
+  for (const prepared of preparedCalls) {
+    if (signal.aborted) {
+      break;
+    }
+    if (prepared.type === "ready") {
+      yield createToolQueuedEvent(prepared.toolCall);
+    }
+  }
+
+  for (const [index, prepared] of preparedCalls.entries()) {
+    if (signal.aborted) {
+      break;
+    }
+    if (prepared.type === "rejected") {
       continue;
     }
-
-    validToolCalls.push({ index: i, toolCall, def });
+    resultsByIndex.set(index, yield* runPreparedToolCall(prepared, signal, dispatchContext));
   }
 
-  for (const { toolCall } of validToolCalls) {
-    if (signal.aborted) break;
-    yield {
-      type: "tool_ui",
-      uiEvent: {
-        type: "tool_call_queued",
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        headerTarget: toolCall.name,
-      },
-    };
-  }
-
-  for (const entry of validToolCalls) {
-    if (signal.aborted) break;
-
-    const { index, toolCall, def } = entry;
-    try {
-      const dispatch = await def.dispatch(toolCall, signal, dispatchContext);
-      if (dispatch.startedUiEvent) {
-        yield { type: "tool_ui", uiEvent: dispatch.startedUiEvent };
-      }
-      const { toolResult, uiEvent } = await dispatch.run;
-      resultsByIndex.set(index, toolResult);
-      if (uiEvent) {
-        yield { type: "tool_ui", uiEvent };
-      }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      const toolError = createToolError(
-        toolCall,
-        `Tool '${toolCall.name}' execution failed: ${errorMsg}`,
-      );
-      resultsByIndex.set(index, toolError);
-      yield {
-        type: "notice",
-        severity: "error",
-        text: `Tool '${toolCall.name}' (${toolCall.id}) execution failed: ${errorMsg}`,
-      };
-    }
-  }
-
-  for (let i = 0; i < toolCalls.length; i++) {
-    const toolResult = resultsByIndex.get(i);
-    if (toolResult) {
-      yield { type: "tool_result", message: toolResult };
+  for (const [index] of toolCalls.entries()) {
+    const result = resultsByIndex.get(index);
+    if (result) {
+      yield { type: "tool_result", message: result };
     }
   }
 }

@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { createLocalToolExecutionBackend, ToolCatalog } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
@@ -754,6 +758,104 @@ describe("LocalSessionHost", () => {
       messageId: "assistant-streaming-tool",
       contentIndex: 0,
     });
+  });
+
+  it("publishes later streamed tool calls as queued before they execute", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-tool-streaming-"));
+    const executionEnvironment = createTestExecutionEnvironment({
+      kind: "local",
+      cwd,
+      home: cwd,
+    });
+    const host = createHostForEnvironment(new MemorySessionStore(), executionEnvironment);
+
+    try {
+      const hostedSession = await host.createSession({
+        executionEnvironment: { kind: "local", cwd },
+      });
+      const firstCall = fauxToolCall(
+        "bash",
+        { command: `node -e "setTimeout(() => process.stdout.write('first'), 100)"` },
+        { id: "first-call" },
+      );
+      const secondCall = fauxToolCall("bash", { command: "printf second" }, { id: "second-call" });
+      const toolMessage = fauxAssistantMessage(
+        [{ type: "text", text: "running commands" }, firstCall, secondCall],
+        { stopReason: "toolUse" },
+      );
+      const finalMessage = fauxAssistantMessage("done");
+      const responses = [toolMessage, finalMessage];
+
+      hostedSession.runtime.session.engine.modelRuntime.streamModel = () => {
+        const response = responses.shift();
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (response !== toolMessage) {
+              return;
+            }
+            yield { type: "text_delta", contentIndex: 0, delta: "running commands" };
+            yield { type: "toolcall_start", contentIndex: 1 };
+            yield { type: "toolcall_end", contentIndex: 1, toolCall: firstCall };
+            yield { type: "toolcall_start", contentIndex: 2 };
+            yield { type: "toolcall_end", contentIndex: 2, toolCall: secondCall };
+          },
+          async result() {
+            return response;
+          },
+        };
+      };
+
+      const events = [];
+      let resolveFirstStarted;
+      const firstStarted = new Promise((resolve) => {
+        resolveFirstStarted = resolve;
+      });
+      let resolveSecondQueued;
+      const secondQueued = new Promise((resolve) => {
+        resolveSecondQueued = resolve;
+      });
+      hostedSession.onDelta((delta) => {
+        for (const change of delta.delta.changes ?? []) {
+          if (change.type !== "facet.set" || change.facet.kind !== "tau.tool-ui-events") {
+            continue;
+          }
+          const event = change.facet.data.events.at(-1);
+          events.push(event);
+          if (event.type === "bash_started" && event.toolCallId === firstCall.id) {
+            resolveFirstStarted();
+          } else if (event.type === "tool_call_queued" && event.toolCallId === secondCall.id) {
+            resolveSecondQueued();
+          }
+        }
+      });
+
+      await hostedSession.record({ text: "run both" });
+      const turn = hostedSession.runTurn();
+      await Promise.all([firstStarted, secondQueued]);
+
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "tool_call_queued", toolCallId: firstCall.id }),
+          expect.objectContaining({ type: "bash_started", toolCallId: firstCall.id }),
+          expect.objectContaining({ type: "tool_call_queued", toolCallId: secondCall.id }),
+        ]),
+      );
+      expect(events).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "bash_execution", toolCallId: firstCall.id }),
+        ]),
+      );
+      expect(events).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "bash_started", toolCallId: secondCall.id }),
+        ]),
+      );
+
+      await turn;
+    } finally {
+      await host.shutdown();
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it("replaces a tool-only draft when later text changes the content shape", async () => {

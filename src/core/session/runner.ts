@@ -12,7 +12,6 @@ import type {
   CoreNoticeEvent,
   CoreToolUiEvent,
   RunnerAssistantPartialEvent,
-  RunnerToolCallEvent,
   RunnerToolResultEvent,
 } from "../events/types.js";
 import type {
@@ -29,14 +28,14 @@ import { MessageAccumulator } from "./message_accumulator.js";
 
 const ASSISTANT_PARTIAL_MIN_INTERVAL_MS = 33;
 
-export type ModelRunnerEvent = CoreNoticeEvent | RunnerAssistantPartialEvent | RunnerToolCallEvent;
+export type ModelRunnerEvent = CoreNoticeEvent | RunnerAssistantPartialEvent;
 export type ToolRunnerEvent = CoreNoticeEvent | CoreToolUiEvent | RunnerToolResultEvent;
 export type RunnerEvent = ModelRunnerEvent | ToolRunnerEvent;
 
 export type RetryOptions = {
   notice?: { text: string; severity?: CoreNoticeEvent["severity"] };
   shouldRetryAfterError?: (args: { error: unknown; model: Model<Api> }) => boolean;
-  allowAfterToolCall: boolean;
+  onRetry?: () => void;
   maxRetries?: number;
   delayMs?: number;
 };
@@ -47,22 +46,14 @@ export type RunModelSubturnOptions = {
   modelRuntime: ModelRuntime;
   streamOptions: TauStreamOptions;
   signal: AbortSignal;
-  emitPartials?: boolean;
+  emitPartials: boolean;
   retry?: RetryOptions;
 };
 
 export async function* runModelSubturn(
   options: RunModelSubturnOptions,
 ): AsyncGenerator<ModelRunnerEvent, AssistantMessage, void> {
-  const {
-    model,
-    context,
-    modelRuntime,
-    streamOptions,
-    signal,
-    emitPartials = false,
-    retry,
-  } = options;
+  const { model, context, modelRuntime, streamOptions, signal, emitPartials, retry } = options;
 
   let hasEmittedToolCall = false;
 
@@ -73,8 +64,12 @@ export async function* runModelSubturn(
     const accumulator = emitPartials ? new MessageAccumulator() : undefined;
     let lastPartialEmittedAt = 0;
     let hasPendingPartial = false;
+    let emittedToolCallCount = 0;
     const toolCallOrder: number[] = [];
-    const completedToolCalls = new Map<number, ToolCall>();
+    const completedToolCalls = new Map<
+      number,
+      Extract<AssistantMessageEvent, { type: "toolcall_end" }>
+    >();
 
     const emitPartialIfPending = async function* (): AsyncGenerator<ModelRunnerEvent, void, void> {
       if (!accumulator || !hasPendingPartial) {
@@ -85,14 +80,18 @@ export async function* runModelSubturn(
       if (!snapshot.hasTextStarted && !snapshot.hasAnyThinking && snapshot.toolCalls.length === 0) {
         return;
       }
+      if (snapshot.toolCalls.length > emittedToolCallCount) {
+        hasEmittedToolCall = true;
+        emittedToolCallCount = snapshot.toolCalls.length;
+      }
       yield { type: "assistant_partial", snapshot };
       lastPartialEmittedAt = Date.now();
     };
 
     try {
       for await (const event of stream) {
-        if (accumulator) {
-          accumulator.processEvent(event as AssistantMessageEvent);
+        if (accumulator && event.type !== "toolcall_end") {
+          accumulator.processEvent(event);
         }
 
         if (event.type === "text_delta" || event.type.startsWith("thinking_")) {
@@ -111,6 +110,9 @@ export async function* runModelSubturn(
 
         if (event.type === "toolcall_start") {
           yield* emitPartialIfPending();
+          if (!accumulator) {
+            continue;
+          }
           if (toolCallOrder.includes(event.contentIndex)) {
             throw new Error(`model stream started tool call index ${event.contentIndex} twice`);
           }
@@ -120,25 +122,27 @@ export async function* runModelSubturn(
         }
 
         if (event.type === "toolcall_end") {
+          if (!accumulator) {
+            continue;
+          }
           if (!toolCallOrder.includes(event.contentIndex)) {
             throw new Error(
               `model stream completed tool call at index ${event.contentIndex} without starting it`,
             );
           }
-          completedToolCalls.set(event.contentIndex, event.toolCall);
-          hasPendingPartial = true;
-          yield* emitPartialIfPending();
+          completedToolCalls.set(event.contentIndex, event);
 
           while (toolCallOrder.length > 0) {
             const contentIndex = toolCallOrder[0]!;
-            const toolCall = completedToolCalls.get(contentIndex);
-            if (!toolCall) {
+            const completed = completedToolCalls.get(contentIndex);
+            if (!completed) {
               break;
             }
             toolCallOrder.shift();
             completedToolCalls.delete(contentIndex);
-            hasEmittedToolCall = true;
-            yield { type: "tool_call", toolCall };
+            accumulator.processEvent(completed);
+            hasPendingPartial = true;
+            yield* emitPartialIfPending();
           }
         }
       }
@@ -188,11 +192,12 @@ export async function* runModelSubturn(
     try {
       const result = yield* runAttempt(streamOptions);
       if (
-        (!hasEmittedToolCall || retry?.allowAfterToolCall) &&
+        !hasEmittedToolCall &&
         attempt < maxRetries &&
         retry?.shouldRetryAfterError?.({ error: result, model })
       ) {
         attempt += 1;
+        retry?.onRetry?.();
         if (retryNotice) {
           yield retryNotice;
         }
@@ -205,11 +210,12 @@ export async function* runModelSubturn(
       return result;
     } catch (error) {
       if (
-        (!hasEmittedToolCall || retry?.allowAfterToolCall) &&
+        !hasEmittedToolCall &&
         attempt < maxRetries &&
         retry?.shouldRetryAfterError?.({ error, model })
       ) {
         attempt += 1;
+        retry?.onRetry?.();
         if (retryNotice) {
           yield retryNotice;
         }
@@ -237,47 +243,72 @@ export type RunToolCallsOptions = {
   };
 };
 
-export type SequentialToolCallRunnerOptions = Omit<RunToolCallsOptions, "toolCalls">;
+export type SequentialToolCallRunnerOptions = Omit<RunToolCallsOptions, "toolCalls" | "signal">;
 
-class AsyncEventQueue<T> implements AsyncIterable<T>, AsyncIterator<T> {
-  private values: T[] = [];
-  private waiters: Array<{
-    resolve: (result: IteratorResult<T>) => void;
+export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> {
+  private readonly events: ToolRunnerEvent[] = [];
+  private readonly waiters: Array<{
+    resolve: (result: IteratorResult<ToolRunnerEvent>) => void;
     reject: (error: unknown) => void;
   }> = [];
+  private execution: Promise<void> = Promise.resolve();
+  private completion?: Promise<void>;
+  private finished = false;
   private closed = false;
-  private error: unknown;
+  private failure?: { error: unknown };
 
-  push(value: T): void {
-    const waiter = this.waiters.shift();
-    if (waiter) {
-      waiter.resolve({ done: false, value });
-      return;
+  constructor(
+    private readonly options: SequentialToolCallRunnerOptions,
+    private readonly signal: AbortSignal,
+  ) {}
+
+  enqueue(toolCall: ToolCall): void {
+    if (this.finished) {
+      throw new Error("cannot enqueue a tool call after finishing the runner");
     }
-    this.values.push(value);
+
+    this.execution = this.execution.then(async () => {
+      for await (const event of runToolCalls({
+        ...this.options,
+        toolCalls: [toolCall],
+        signal: this.signal,
+      })) {
+        const waiter = this.waiters.shift();
+        if (waiter) {
+          waiter.resolve({ done: false, value: event });
+        } else {
+          this.events.push(event);
+        }
+      }
+    });
+    void this.execution.catch((error: unknown) => {
+      this.failure = { error };
+      for (const waiter of this.waiters.splice(0)) {
+        waiter.reject(error);
+      }
+    });
   }
 
-  close(): void {
-    this.closed = true;
-    for (const waiter of this.waiters.splice(0)) {
-      waiter.resolve({ done: true, value: undefined });
+  finish(): Promise<void> {
+    if (!this.completion) {
+      this.finished = true;
+      this.completion = this.execution.then(() => {
+        this.closed = true;
+        for (const waiter of this.waiters.splice(0)) {
+          waiter.resolve({ done: true, value: undefined });
+        }
+      });
     }
+    return this.completion;
   }
 
-  fail(error: unknown): void {
-    this.error = error;
-    for (const waiter of this.waiters.splice(0)) {
-      waiter.reject(error);
+  next(): Promise<IteratorResult<ToolRunnerEvent>> {
+    const event = this.events.shift();
+    if (event) {
+      return Promise.resolve({ done: false, value: event });
     }
-  }
-
-  next(): Promise<IteratorResult<T>> {
-    const value = this.values.shift();
-    if (value !== undefined) {
-      return Promise.resolve({ done: false, value });
-    }
-    if (this.error !== undefined) {
-      return Promise.reject(this.error);
+    if (this.failure) {
+      return Promise.reject(this.failure.error);
     }
     if (this.closed) {
       return Promise.resolve({ done: true, value: undefined });
@@ -287,48 +318,8 @@ class AsyncEventQueue<T> implements AsyncIterable<T>, AsyncIterator<T> {
     });
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return this;
-  }
-}
-
-export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> {
-  private readonly events = new AsyncEventQueue<ToolRunnerEvent>();
-  private execution: Promise<void> = Promise.resolve();
-  private completion?: Promise<void>;
-  private finished = false;
-
-  constructor(private readonly options: SequentialToolCallRunnerOptions) {}
-
-  enqueue(toolCall: ToolCall): void {
-    if (this.finished) {
-      throw new Error("cannot enqueue a tool call after finishing the runner");
-    }
-
-    this.execution = this.execution.then(async () => {
-      for await (const event of runToolCalls({ ...this.options, toolCalls: [toolCall] })) {
-        this.events.push(event);
-      }
-    });
-    void this.execution.catch(() => undefined);
-  }
-
-  finish(): Promise<void> {
-    if (!this.completion) {
-      this.finished = true;
-      this.completion = this.execution.then(
-        () => this.events.close(),
-        (error: unknown) => {
-          this.events.fail(error);
-          throw error;
-        },
-      );
-    }
-    return this.completion;
-  }
-
   [Symbol.asyncIterator](): AsyncIterator<ToolRunnerEvent> {
-    return this.events;
+    return this;
   }
 }
 
@@ -428,7 +419,6 @@ export async function* runToolCalls(
   } = options;
   const enabledToolNames = new Set(enabledTools.map((tool) => tool.name));
 
-  // Step 1: Validate all tools and create result buffer.
   const resultsByIndex = new Map<number, ToolResultMessage>();
   const validToolCalls: Array<{ index: number; toolCall: ToolCall; def: ToolDefinition }> = [];
 
@@ -476,50 +466,37 @@ export async function* runToolCalls(
     };
   }
 
-  // Step 2: Execute tools in original order.
   for (const entry of validToolCalls) {
     if (signal.aborted) break;
 
     const { index, toolCall, def } = entry;
-    let result: ToolDispatchResult | ToolDispatchResultWithPhases;
     try {
-      result = await def.dispatch(toolCall, signal, dispatchContext);
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      const toolError = createToolError(
-        toolCall,
-        `Tool '${toolCall.name}' dispatch failed: ${errorMsg}`,
-      );
-      resultsByIndex.set(index, toolError);
-      yield {
-        type: "notice",
-        severity: "error",
-        text: `Tool '${toolCall.name}' (${toolCall.id}) dispatch failed: ${errorMsg}`,
-      };
-      continue;
-    }
-
-    if (result.kind === "phased") {
-      if (result.startedUiEvent) {
-        yield { type: "tool_ui", uiEvent: result.startedUiEvent };
+      const dispatched = await def.dispatch(toolCall, signal, dispatchContext);
+      if (dispatched.kind === "phased" && dispatched.startedUiEvent) {
+        yield { type: "tool_ui", uiEvent: dispatched.startedUiEvent };
       }
-
-      const phasedResult = yield* runPhasedToolResult(result);
-      const { toolResult, uiEvent } = phasedResult;
-      resultsByIndex.set(index, toolResult);
-      if (uiEvent) {
-        yield { type: "tool_ui", uiEvent };
-      }
-    } else {
+      const result =
+        dispatched.kind === "phased" ? yield* runPhasedToolResult(dispatched) : dispatched;
       const { toolResult, uiEvent } = result;
       resultsByIndex.set(index, toolResult);
       if (uiEvent) {
         yield { type: "tool_ui", uiEvent };
       }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const toolError = createToolError(
+        toolCall,
+        `Tool '${toolCall.name}' execution failed: ${errorMsg}`,
+      );
+      resultsByIndex.set(index, toolError);
+      yield {
+        type: "notice",
+        severity: "error",
+        text: `Tool '${toolCall.name}' (${toolCall.id}) execution failed: ${errorMsg}`,
+      };
     }
   }
 
-  // Step 6: Append all results to conversation history in original order.
   for (let i = 0; i < toolCalls.length; i++) {
     const toolResult = resultsByIndex.get(i);
     if (toolResult) {

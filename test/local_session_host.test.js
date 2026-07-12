@@ -808,52 +808,6 @@ describe("LocalSessionHost", () => {
     ]);
   });
 
-  it("removes streamed tool runs omitted by a replacement partial", async () => {
-    const host = createHost(new MemorySessionStore());
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    const deltas = [];
-    hostedSession.onDelta((delta) => deltas.push(delta));
-    const toolCall = {
-      type: "toolCall",
-      id: "superseded-tool-call",
-      name: "bash",
-      arguments: { command: "pwd" },
-    };
-
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_start",
-      historyEntryId: "assistant-retried",
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_partial",
-      historyEntryId: "assistant-retried",
-      snapshot: {
-        ...assistantPartial(""),
-        toolCalls: [toolCall],
-      },
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_partial",
-      historyEntryId: "assistant-retried",
-      snapshot: assistantPartial("retry output"),
-    });
-
-    expect(deltas.at(-1).delta.changes).toEqual([
-      expect.objectContaining({
-        type: "message.replace",
-        message: expect.objectContaining({
-          message: expect.objectContaining({
-            content: [{ type: "text", text: "retry output" }],
-          }),
-        }),
-      }),
-      { type: "tool.remove", id: toolCall.id },
-    ]);
-    const snapshot = await hostedSession.snapshot();
-    expect(snapshot.tools[toolCall.id]).toBeUndefined();
-  });
-
   it("records recovered tool results without model-visible tool result messages", async () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);

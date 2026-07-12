@@ -246,8 +246,28 @@ function isAssistantMessage(value: unknown): boolean {
   return (
     isRecord(value) &&
     value.role === "assistant" &&
-    (value.stopReason === undefined || isOneOf(value.stopReason, stopReasons))
+    Array.isArray(value.content) &&
+    value.content.every(isAssistantContent) &&
+    typeof value.api === "string" &&
+    typeof value.provider === "string" &&
+    typeof value.model === "string" &&
+    isRecord(value.usage) &&
+    isOneOf(value.stopReason, stopReasons) &&
+    isFiniteNumber(value.timestamp)
   );
+}
+
+function isAssistantContent(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.type === "text") {
+    return typeof value.text === "string";
+  }
+  if (value.type === "thinking") {
+    return typeof value.thinking === "string";
+  }
+  return isToolCall(value);
 }
 
 function isToolResultMessage(value: unknown): boolean {
@@ -255,7 +275,11 @@ function isToolResultMessage(value: unknown): boolean {
     isRecord(value) &&
     value.role === "toolResult" &&
     typeof value.toolCallId === "string" &&
-    typeof value.toolName === "string"
+    typeof value.toolName === "string" &&
+    Array.isArray(value.content) &&
+    value.content.every(isUserContent) &&
+    typeof value.isError === "boolean" &&
+    isFiniteNumber(value.timestamp)
   );
 }
 
@@ -263,7 +287,21 @@ function isUserMessage(value: unknown): boolean {
   return (
     isRecord(value) &&
     value.role === "user" &&
-    (typeof value.content === "string" || Array.isArray(value.content))
+    (typeof value.content === "string" ||
+      (Array.isArray(value.content) && value.content.every(isUserContent))) &&
+    isFiniteNumber(value.timestamp)
+  );
+}
+
+function isUserContent(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.type === "text") {
+    return typeof value.text === "string";
+  }
+  return (
+    value.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string"
   );
 }
 

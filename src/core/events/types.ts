@@ -1,14 +1,9 @@
-import type {
-  AssistantMessage,
-  ToolCall,
-  ToolResultMessage,
-  UserMessage,
-} from "@earendil-works/pi-ai";
+import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
 import type { ToolUiEvent } from "../tools/registry.js";
 
-export type CoreEventVersion = 1;
+export type CoreEventVersion = 2;
 
 export type CoreAssistantStartEvent = {
   type: "assistant_start";
@@ -111,11 +106,6 @@ export type RunnerAssistantPartialEvent = {
   snapshot: AssistantPartialSnapshot;
 };
 
-export type RunnerToolCallEvent = {
-  type: "tool_call";
-  toolCall: ToolCall;
-};
-
 export type RunnerToolResultEvent = {
   type: "tool_result";
   message: ToolResultMessage;
@@ -124,7 +114,6 @@ export type RunnerToolResultEvent = {
 export type RunnerEvent =
   | CoreNoticeEvent
   | RunnerAssistantPartialEvent
-  | RunnerToolCallEvent
   | CoreToolUiEvent
   | RunnerToolResultEvent;
 
@@ -133,7 +122,7 @@ export type CoreEventEnvelope = {
   event: CoreEvent;
 };
 
-export const CORE_EVENT_VERSION: CoreEventVersion = 1;
+export const CORE_EVENT_VERSION: CoreEventVersion = 2;
 
 export function wrapCoreEvent(event: CoreEvent): CoreEventEnvelope {
   return { version: CORE_EVENT_VERSION, event };

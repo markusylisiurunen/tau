@@ -56,7 +56,7 @@ export type SubagentRunResult = {
   toolCalls: number;
 };
 
-const MAX_SUBAGENT_SUBTURNS = 128;
+const MAX_SUBAGENT_SUBTURNS = 256;
 
 function getStreamingSettings(settings: SubagentRuntimeConfig["settings"]): TauStreamOptions {
   const merged = { ...(settings ?? {}) } as Record<string, unknown>;
@@ -209,7 +209,6 @@ export async function runSubagent(options: {
       emitPartials: false,
       retry: {
         shouldRetryAfterError: ({ error, model }) => shouldAutoRetry({ model, error }),
-        allowAfterToolCall: true,
         maxRetries: 1,
         delayMs: 3000,
         notice: { text: "auto-retrying after transient error", severity: "warn" },

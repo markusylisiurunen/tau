@@ -18,7 +18,7 @@ import {
 } from "../core/utils/project_files.js";
 import {
   hasAutoCompactionContinuationMetadata,
-  splitTauUserText,
+  isTauUserMessageHidden,
 } from "../core/utils/user_metadata.js";
 import type {
   ExecutionEnvironment,
@@ -35,6 +35,7 @@ import type {
   SessionProtocolCreateParams,
   SessionProtocolDeltaMessage,
   SessionProtocolDeltaReason,
+  SessionProtocolDraftAssistantMessage,
   SessionProtocolEphemeralCloseResult,
   SessionProtocolEphemeralCreateParams,
   SessionProtocolEphemeralCreateResult,
@@ -1125,10 +1126,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     if (message.id === "system") {
       return false;
     }
-    if (isHiddenSystemOnlyUserMessage(message.message)) {
-      return false;
-    }
-    if (isCoreMessage(message.message) && hasAutoCompactionContinuationMetadata(message.message)) {
+    if (
+      isCoreMessage(message.message) &&
+      (isTauUserMessageHidden(message.message) ||
+        hasAutoCompactionContinuationMetadata(message.message))
+    ) {
       return false;
     }
     if (!this.restoredTimelineMessageIds || !this.restoredMessageIds) {
@@ -1245,37 +1247,32 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
       case "assistant_partial": {
         const previousDraft = this.draftAssistantMessage;
+        const message: SessionProtocolDraftAssistantMessage = {
+          role: "assistant",
+          content: [
+            ...(event.snapshot.hasAnyThinking
+              ? [
+                  {
+                    type: "thinking" as const,
+                    thinking: event.snapshot.thinking,
+                  },
+                ]
+              : []),
+            ...(event.snapshot.hasTextStarted
+              ? [{ type: "text" as const, text: event.snapshot.text }]
+              : []),
+            ...event.snapshot.toolCalls,
+          ],
+          timestamp: Date.now(),
+        };
         const nextDraft: SessionProtocolMessage = {
           id: event.historyEntryId,
           state: "draft",
           modelVisible: false,
-          message: {
-            role: "assistant",
-            content: [
-              ...(event.snapshot.hasAnyThinking
-                ? [
-                    {
-                      type: "thinking" as const,
-                      thinking: event.snapshot.thinking,
-                    },
-                  ]
-                : []),
-              ...(event.snapshot.hasTextStarted
-                ? [{ type: "text" as const, text: event.snapshot.text }]
-                : []),
-              ...event.snapshot.toolCalls,
-            ],
-            timestamp: Date.now(),
-          },
+          message,
         };
         const changes = this.buildAssistantPartialChanges(previousDraft, nextDraft);
-        if (nextDraft.message.role !== "assistant" || !Array.isArray(nextDraft.message.content)) {
-          throw new Error("assistant partial produced a non-assistant message");
-        }
-        const toolChanges = this.syncToolRunsFromAssistantMessage(
-          event.historyEntryId,
-          nextDraft.message,
-        );
+        const toolChanges = this.syncToolRunsFromAssistantMessage(event.historyEntryId, message);
         if (changes.length === 0 && toolChanges.length === 0) {
           return;
         }
@@ -1362,7 +1359,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         for (const toolResult of event.toolResults) {
           const existing = this.tools.get(toolResult.toolCallId);
           if (!existing) {
-            continue;
+            throw new Error(`missing protocol tool run for '${toolResult.toolCallId}'`);
           }
           const nextTool: SessionProtocolToolRun = {
             ...existing,
@@ -1615,21 +1612,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       .filter(
         (item): item is { content: ToolCall; index: number } => item.content.type === "toolCall",
       );
-    const toolCallIds = new Set(toolCalls.map(({ content }) => content.id));
-
-    for (const [id, tool] of this.tools) {
-      if (tool.call.messageId !== messageId || toolCallIds.has(tool.toolCallId)) {
-        continue;
-      }
-      this.tools.delete(id);
-      changes.push({ type: "tool.remove", id });
-      for (const facetId of tool.facetIds) {
-        if (this.facets.delete(facetId)) {
-          changes.push({ type: "facet.remove", id: facetId });
-        }
-      }
-    }
-
     for (const { content, index } of toolCalls) {
       const existing = this.tools.get(content.id);
       const nextTool: SessionProtocolToolRun = {
@@ -1645,7 +1627,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           contentIndex: index,
         },
       };
-      if (existing && JSON.stringify(existing) === JSON.stringify(nextTool)) {
+      if (
+        existing?.toolName === nextTool.toolName &&
+        existing.call.messageId === nextTool.call.messageId &&
+        existing.call.contentIndex === nextTool.call.contentIndex
+      ) {
         continue;
       }
       this.tools.set(content.id, nextTool);
@@ -1705,12 +1691,21 @@ function buildAssistantContentAppendChange(
     return undefined;
   }
 
-  if (!assistantDraftStaticContentEquals(previousDraft, nextDraft)) {
+  const previousContent = previousDraft.message.content;
+  const nextContent = nextDraft.message.content;
+  const previousStaticContent = previousContent.filter(
+    (content) => content.type !== "text" && content.type !== "thinking",
+  );
+  const nextStaticContent = nextContent.filter(
+    (content) => content.type !== "text" && content.type !== "thinking",
+  );
+  if (JSON.stringify(previousStaticContent) !== JSON.stringify(nextStaticContent)) {
     return undefined;
   }
   if (
-    assistantDraftHasStaticContent(previousDraft) &&
-    !assistantDraftContentShapeEquals(previousDraft, nextDraft)
+    previousStaticContent.length > 0 &&
+    (previousContent.length !== nextContent.length ||
+      previousContent.some((content, index) => content.type !== nextContent[index]!.type))
   ) {
     return undefined;
   }
@@ -1747,44 +1742,6 @@ function assistantDraftContentEquals(
     previousDraft.message.role === "assistant" &&
     nextDraft.message.role === "assistant" &&
     JSON.stringify(previousDraft.message.content) === JSON.stringify(nextDraft.message.content)
-  );
-}
-
-function assistantDraftStaticContentEquals(
-  previousDraft: SessionProtocolMessage,
-  nextDraft: SessionProtocolMessage,
-): boolean {
-  if (previousDraft.message.role !== "assistant" || nextDraft.message.role !== "assistant") {
-    return false;
-  }
-  const previousContent = previousDraft.message.content.filter(
-    (content) => content.type !== "text" && content.type !== "thinking",
-  );
-  const nextContent = nextDraft.message.content.filter(
-    (content) => content.type !== "text" && content.type !== "thinking",
-  );
-  return JSON.stringify(previousContent) === JSON.stringify(nextContent);
-}
-
-function assistantDraftHasStaticContent(message: SessionProtocolMessage): boolean {
-  return (
-    message.message.role === "assistant" &&
-    message.message.content.some(
-      (content) => content.type !== "text" && content.type !== "thinking",
-    )
-  );
-}
-
-function assistantDraftContentShapeEquals(
-  previousDraft: SessionProtocolMessage,
-  nextDraft: SessionProtocolMessage,
-): boolean {
-  if (previousDraft.message.role !== "assistant" || nextDraft.message.role !== "assistant") {
-    return false;
-  }
-  return (
-    JSON.stringify(previousDraft.message.content.map((content) => content.type)) ===
-    JSON.stringify(nextDraft.message.content.map((content) => content.type))
   );
 }
 
@@ -1850,21 +1807,6 @@ function timelineItemForMessage(messageId: string): SessionProtocolTimelineItem 
     id: `timeline-${messageId}`,
     messageId,
   };
-}
-
-function isHiddenSystemOnlyUserMessage(message: SessionProtocolMessage["message"]): boolean {
-  if (message.role !== "user") {
-    return false;
-  }
-  const text =
-    typeof message.content === "string"
-      ? message.content
-      : message.content
-          .filter((content) => content.type === "text")
-          .map((content) => content.text)
-          .join("\n\n");
-  const split = splitTauUserText(text);
-  return split.hiddenSystemBlocks.length > 0 && !split.displayText.trim();
 }
 
 function isCoreMessage(message: SessionProtocolMessage["message"]): message is Message {

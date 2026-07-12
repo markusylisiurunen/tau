@@ -218,14 +218,13 @@ describe("session runner tool dispatch context", () => {
             hasAnyThinking: false,
           },
         },
-        { type: "tool_call", toolCall },
       ]);
     } finally {
       now.mockRestore();
     }
   });
 
-  it("allows consumers without early execution to retry after streamed tool calls", async () => {
+  it("retries without exposing tool calls when early execution is disabled", async () => {
     const toolCall = {
       id: "tool-call-1",
       type: "toolCall",
@@ -278,8 +277,8 @@ describe("session runner tool dispatch context", () => {
       modelRuntime,
       streamOptions: {},
       signal: new AbortController().signal,
+      emitPartials: false,
       retry: {
-        allowAfterToolCall: true,
         shouldRetryAfterError: () => true,
         maxRetries: 1,
       },
@@ -296,7 +295,7 @@ describe("session runner tool dispatch context", () => {
     }
 
     expect(attempts).toBe(2);
-    expect(events).toEqual([{ type: "tool_call", toolCall }]);
+    expect(events).toEqual([]);
     expect(finalMessage).toBe(successMessage);
   });
 

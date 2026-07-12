@@ -226,6 +226,21 @@ export function stripTauUserDisplayText(text: string): string {
   return splitTauUserText(text).displayText;
 }
 
+export function isTauUserMessageHidden(message: Message): boolean {
+  if (message.role !== "user") {
+    return false;
+  }
+  const text =
+    typeof message.content === "string"
+      ? message.content
+      : message.content
+          .filter((content) => content.type === "text")
+          .map((content) => content.text)
+          .join("\n\n");
+  const split = splitTauUserText(text);
+  return split.hiddenSystemBlocks.length > 0 && !split.displayText.trim();
+}
+
 export function splitTauUserText(text: string): TauUserTextSplit {
   const metadataSplit = splitTauUserMetadata(text);
   const displaySplit = splitTauHiddenSystemBlocks(metadataSplit.visibleText);

@@ -547,6 +547,7 @@ class FakeView {
   subagentSelectionCycles = [];
   selectedSubagentId;
   pendingUserMessages = [];
+  terminalNotifications = [];
   renderRequests = 0;
   workingIconStarts = 0;
   workingIconStops = 0;
@@ -614,7 +615,9 @@ class FakeView {
   getSelectedSubagentId() {
     return this.selectedSubagentId;
   }
-  sendTerminalNotification() {}
+  sendTerminalNotification(title) {
+    this.terminalNotifications.push(title);
+  }
   setPendingUserMessages(messages) {
     this.pendingUserMessages = structuredClone(messages);
   }
@@ -1455,6 +1458,27 @@ describe("SessionChatController", () => {
       expect.objectContaining({ historyEntryId: expect.stringMatching(/^session-user-/) }),
     );
     expect(session.queue).not.toHaveBeenCalled();
+  });
+
+  it("notifies when a session turn becomes idle", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    session.emit({ type: "assistant_start", historyEntryId: "assistant-1" });
+    session.emit({
+      type: "assistant_final",
+      historyEntryId: "assistant-1",
+      message: createAssistantMessage("done"),
+    });
+
+    expect(view.terminalNotifications).toEqual(["tau is waiting for your input"]);
   });
 
   it("renders pending queue and steering messages from session pending state", async () => {

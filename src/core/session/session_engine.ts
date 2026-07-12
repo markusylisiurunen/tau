@@ -16,7 +16,12 @@ import {
   type NormalizedAutoCompactConfig,
   normalizeAutoCompactConfig,
 } from "../config/index.js";
-import type { CoreCompactionResult, CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
+import type {
+  CoreCompactionResult,
+  CoreEvent,
+  CoreSubagentUiEvent,
+  CoreToolUiEvent,
+} from "../events/types.js";
 import type { ModelResolver } from "../models/catalog.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
@@ -1218,9 +1223,13 @@ export class SessionEngine {
             if (signal.aborted) {
               continue;
             }
+            const queuedEvents: CoreToolUiEvent[] = [];
             for (const toolCall of event.snapshot.toolCalls.slice(streamedToolCalls.length)) {
               streamedToolCalls.push(toolCall);
-              toolRunner.enqueue(toolCall);
+              const queuedEvent = toolRunner.enqueue(toolCall);
+              if (queuedEvent) {
+                queuedEvents.push(queuedEvent);
+              }
             }
             const partialEvent: CoreEvent = {
               type: "assistant_partial",
@@ -1229,6 +1238,10 @@ export class SessionEngine {
             };
             this.emitEvent(partialEvent);
             yield partialEvent;
+            for (const queuedEvent of queuedEvents) {
+              this.emitEvent(queuedEvent);
+              yield queuedEvent;
+            }
             continue;
           }
 

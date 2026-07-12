@@ -613,13 +613,29 @@ describe("core session rewind APIs", () => {
 
     session.addUserText("use both tools");
     const events = [];
+    let markSecondQueued;
+    const secondQueued = new Promise((resolve) => {
+      markSecondQueued = resolve;
+    });
     const turn = (async () => {
       for await (const event of session.events(new AbortController().signal)) {
         events.push(event);
+        if (
+          event.type === "tool_ui" &&
+          event.uiEvent.type === "tool_call_queued" &&
+          event.uiEvent.toolCallId === secondCall.id
+        ) {
+          markSecondQueued();
+        }
       }
     })();
 
-    await firstStarted;
+    await Promise.all([firstStarted, secondQueued]);
+    expect(
+      events
+        .filter((event) => event.type === "tool_ui" && event.uiEvent.type === "tool_call_queued")
+        .map((event) => event.uiEvent.toolCallId),
+    ).toEqual([firstCall.id, secondCall.id]);
     expect(secondHasStarted).toBe(false);
     releaseFirst();
     await secondStarted;

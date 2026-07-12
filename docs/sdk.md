@@ -4,6 +4,7 @@ tau ships a Node SDK at `@markusylisiurunen/tau/sdk`. by default it creates an i
 
 ```sh
 tau attach ws://vps:8787
+tau attach -- ssh vps 'cd /repo && tau rpc'
 ```
 
 ## install and import
@@ -317,6 +318,7 @@ options:
 - `terminateSubagent(subagentId)`
   - sends `session.terminateSubagent` with this session id
   - resolves with `{ found: boolean }`
+- `createEphemeralContext({ instructions, tools })`
   - sends `session.ephemeral.create` with this session id
   - creates non-persisted host-owned agent context and returns `{ contextId }`
 - `submitEphemeralThread({ contextId, threadId, forkFromThreadId?, message })`

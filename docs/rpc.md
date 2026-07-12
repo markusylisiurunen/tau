@@ -5,7 +5,7 @@ rpc mode runs tau without the interactive TUI. instead of rendering a terminal U
 the same session protocol can also be hosted over WebSocket:
 
 ```sh
-
+tau serve --host 0.0.0.0 --port 8787 --auth-token "$TAU_WS_AUTH_TOKEN"
 ```
 
 and observed from a local TUI:
@@ -17,13 +17,13 @@ tau attach --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787
 start it like this:
 
 ```sh
-
+tau rpc --persona gpt-5.5-coder
 ```
 
 The terminal UI can attach to any command that exposes this protocol over stdio:
 
 ```sh
-
+tau attach -- ssh vps 'cd /repo && tau rpc'
 ```
 
 Use `tau attach --session <id> -- <command...>` to attach the TUI to an existing stored session id.
@@ -32,9 +32,11 @@ Use `tau attach --session <id> ws://host:port` to attach the TUI to an existing 
 
 Use `tau attach --new --cwd /path/to/repo ws://host:port` or `tau attach --new --cwd /path/to/repo -- <command...>` to create and attach a fresh hosted session in an already-provisioned host-local directory. Add `--execution-kind cloudflare-sandbox --cloudflare-bridge <id> --cloudflare-sandbox <sandboxId>` or `--execution-kind fly-sprite --fly-api <id> --fly-sprite <name>` to create sessions in those already-provisioned execution environments. Without `--session` or `--new`, attach asks the server for `session.list` and prompts for which session to open; choosing to create a session prompts for the execution environment.
 
+you can still use the usual startup flags (`--persona`, `--no-agent-context-files`, etc). `--persona` accepts `<id>` or `<id>:<reasoning>`. rpc and serve mode start without creating a session or selecting a project cwd; clients must call `session.list`, `session.observe`, or `session.create` with an execution environment. `session.create` resolves session-owned Tau config, model overlays, personas, prompt metadata, skills, project files, and AGENTS.md context from the selected execution environment cwd, then persists the resolved session bootstrap in the session snapshot. Prompt bodies and other large execution-environment content are loaded lazily when used. Component-owned config stays with the component that runs it: the attaching TUI uses local TUI config such as themes and speech settings, the host uses host config such as sandbox bridge credentials, and the execution environment owns session content/defaults. `--caffeinated` is TUI-only and rejected outside TUI mode.
+
 ## transport
 
-The session protocol has one semantic request/response/delta contract and multiple transports.
+The session protocol has one semantic request/response/delta contract and multiple transports. Object payloads accept and strip unknown fields while still validating known fields, required fields, discriminators, and method names.
 
 ### stdio
 
@@ -564,6 +566,7 @@ returns current session state:
 - `sessionId`
 - `revision` (monotonic snapshot revision for this session id)
 - `lifecycle` (`"idle"` or `"running"`)
+- `settings` (current persona id, reasoning, and service tier)
 - `bootstrap` (selected model/provider metadata and prompt-composition metadata)
 - `catalog` (lightweight personas, prompt metadata, and skills available to observed clients)
 - `executionEnvironment` (where tools/files/commands execute)
@@ -576,14 +579,6 @@ returns current session state:
 derive transcript length from `messages.length`; the protocol does not duplicate it. The first committed message is the effective system instruction message. Running state is derived from `lifecycle`, draft/interrupted messages, tools, agents, and operations; there is no `activeTurn` side object. If an assistant turn is interrupted mid-stream, the streamed content is retained as an `interrupted` assistant message and remains model-visible unless the host intentionally marks that record `modelVisible: false`.
 
 User message text in `messages` is the raw recoverable Tau session text. It may start with Tau's internal metadata prefix, which is persisted for recovery but is never sent to the model or shown to users. After that metadata is removed, user text may start with one or more strict hidden model instruction blocks in the form `<system>...</system>\n`; these blocks are sent to the model as part of the user turn but should be hidden from user-facing renderers. Clients that render user messages should derive display text by removing Tau metadata and then removing only leading exact `<system>...</system>\n` blocks from user messages. Do not apply this display projection to assistant, tool, or protocol system messages.
-
-params (required):
-
-```json
-{
-  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3"
-}
-```
 
 #### session.setReasoning
 
@@ -740,6 +735,8 @@ params (required):
   "tools": ["bash", "view_image"]
 }
 ```
+
+creates a host-owned ephemeral agent context outside the persisted session timeline. The context inherits the hosted session persona and execution environment, appends the provided instructions, uses the requested tool set, and returns `{ "contextId" }`. These contexts are not persisted in `session.snapshot` and are not recoverable after disconnect or host restart.
 
 #### session.ephemeral.submit
 
@@ -914,6 +911,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 `runRpcServer` handles incoming lines concurrently with explicit serialization for mutating transitions. this means:
 
 - multiple requests can be accepted before earlier ones complete
+- `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, `session.terminateSubagent`, `session.ephemeral.create`, and `session.ephemeral.close` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
 - `session.setReasoning` updates settings immediately without interrupting an active turn; active turns keep their captured reasoning and the new setting applies to the next user-message turn
 - only one idle-only `session.submit`, `session.retry`, or `session.exec` can run at once (`busy` otherwise)
 - `session.queue` can be accepted during active work and runs after the active turn settles

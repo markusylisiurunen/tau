@@ -2484,17 +2484,6 @@ export function parseSessionProtocolRequestLine(line: string): SessionProtocolPa
       };
     }
 
-    if (hasIssue(requestEnvelope.error, [], "unrecognized_keys")) {
-      return {
-        ok: false,
-        id: requestId,
-        error: createSessionProtocolError(
-          SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
-          "request contains unsupported top-level fields",
-        ),
-      };
-    }
-
     if (hasIssue(requestEnvelope.error, ["version"])) {
       const parsedVersionField = sessionProtocolVersionFieldSchema.safeParse(parsed);
       const version = parsedVersionField.success ? parsedVersionField.data.version : undefined;
@@ -2981,11 +2970,9 @@ function validateSessionIdParams<
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? `${method} params must be an object`
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? `${method} params only support sessionId`
-        : hasIssue(parsed.error, ["sessionId"])
-          ? `${method} params.sessionId must be a non-empty string`
-          : `${method} params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? `${method} params.sessionId must be a non-empty string`
+        : `${method} params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3004,7 +2991,7 @@ function validateInitializeParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "initialize params must be an object with client metadata"
-      : hasIssue(parsed.error, ["client"]) || hasIssue(parsed.error, [], "unrecognized_keys")
+      : hasIssue(parsed.error, ["client"])
         ? "initialize.client must be an object with name/version strings and optional tools"
         : hasIssue(parsed.error, ["client", "name"])
           ? "initialize.client.name must be a non-empty string"
@@ -3034,15 +3021,13 @@ function validateUserMessageParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? `${method} params must be an object`
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? `${method} params only support sessionId, text, and optional historyEntryId`
-        : hasIssue(parsed.error, ["sessionId"])
-          ? `${method} params.sessionId must be a non-empty string`
-          : hasIssue(parsed.error, ["text"])
-            ? `${method} params.text must be a string`
-            : hasIssue(parsed.error, ["historyEntryId"])
-              ? `${method} params.historyEntryId must be a non-empty string when provided`
-              : `${method} params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? `${method} params.sessionId must be a non-empty string`
+        : hasIssue(parsed.error, ["text"])
+          ? `${method} params.text must be a string`
+          : hasIssue(parsed.error, ["historyEntryId"])
+            ? `${method} params.historyEntryId must be a non-empty string when provided`
+            : `${method} params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3065,15 +3050,13 @@ function validateRecordParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.record params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.record params only support sessionId, text, and optional historyEntryId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.record params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["text"])
-            ? "session.record params.text must be a string"
-            : hasIssue(parsed.error, ["historyEntryId"])
-              ? "session.record params.historyEntryId must be a non-empty string when provided"
-              : `session.record params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.record params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["text"])
+          ? "session.record params.text must be a string"
+          : hasIssue(parsed.error, ["historyEntryId"])
+            ? "session.record params.historyEntryId must be a non-empty string when provided"
+            : `session.record params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3096,17 +3079,15 @@ function validateExecParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.exec params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.exec params only support sessionId, command, optional cwd, and optional timeoutMs"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.exec params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["command"])
-            ? "session.exec params.command must be a non-empty string"
-            : hasIssue(parsed.error, ["cwd"])
-              ? "session.exec params.cwd must be a non-empty string when provided"
-              : hasIssue(parsed.error, ["timeoutMs"])
-                ? "session.exec params.timeoutMs must be a positive integer when provided"
-                : `session.exec params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.exec params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["command"])
+          ? "session.exec params.command must be a non-empty string"
+          : hasIssue(parsed.error, ["cwd"])
+            ? "session.exec params.cwd must be a non-empty string when provided"
+            : hasIssue(parsed.error, ["timeoutMs"])
+              ? "session.exec params.timeoutMs must be a positive integer when provided"
+              : `session.exec params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3128,13 +3109,11 @@ function validateSetReasoningParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.setReasoning params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.setReasoning params only support sessionId and reasoning"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.setReasoning params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["reasoning"])
-            ? "session.setReasoning params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
-            : `session.setReasoning params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.setReasoning params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["reasoning"])
+          ? "session.setReasoning params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
+          : `session.setReasoning params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3154,13 +3133,11 @@ function validateSetPersonaParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.setPersona params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.setPersona params only support sessionId and personaId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.setPersona params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["personaId"])
-            ? "session.setPersona params.personaId must be a non-empty string"
-            : `session.setPersona params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.setPersona params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["personaId"])
+          ? "session.setPersona params.personaId must be a non-empty string"
+          : `session.setPersona params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3180,13 +3157,11 @@ function validateResolvePromptParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.resolvePrompt params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.resolvePrompt params only support sessionId and promptId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.resolvePrompt params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["promptId"])
-            ? "session.resolvePrompt params.promptId must be a non-empty string"
-            : `session.resolvePrompt params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.resolvePrompt params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["promptId"])
+          ? "session.resolvePrompt params.promptId must be a non-empty string"
+          : `session.resolvePrompt params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3206,15 +3181,13 @@ function validateAutocompletePathsParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.autocompletePaths params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.autocompletePaths params only support sessionId, query, and limit"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.autocompletePaths params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["query"])
-            ? "session.autocompletePaths params.query must be a string"
-            : hasIssue(parsed.error, ["limit"])
-              ? "session.autocompletePaths params.limit must be a positive integer up to 100"
-              : `session.autocompletePaths params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.autocompletePaths params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["query"])
+          ? "session.autocompletePaths params.query must be a string"
+          : hasIssue(parsed.error, ["limit"])
+            ? "session.autocompletePaths params.limit must be a positive integer up to 100"
+            : `session.autocompletePaths params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3235,15 +3208,13 @@ function validateCompactParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.compact params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.compact params only support sessionId, mode, and optional guidance"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.compact params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["mode"])
-            ? "session.compact params.mode must be 'summary-only' or 'summary-and-last'"
-            : hasIssue(parsed.error, ["guidance"])
-              ? "session.compact params.guidance must be a string when provided"
-              : `session.compact params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.compact params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["mode"])
+          ? "session.compact params.mode must be 'summary-only' or 'summary-and-last'"
+          : hasIssue(parsed.error, ["guidance"])
+            ? "session.compact params.guidance must be a string when provided"
+            : `session.compact params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3264,17 +3235,15 @@ function validatePruneParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.prune params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.prune params only support sessionId, strategy, fraction, and optional guidance"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.prune params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["strategy"])
-            ? "session.prune params.strategy must be 'earliest', 'largest', or 'smart'"
-            : hasIssue(parsed.error, ["fraction"])
-              ? "session.prune params.fraction must be a number between 0 and 1"
-              : hasIssue(parsed.error, ["guidance"])
-                ? "session.prune params.guidance must be a string when provided"
-                : `session.prune params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.prune params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["strategy"])
+          ? "session.prune params.strategy must be 'earliest', 'largest', or 'smart'"
+          : hasIssue(parsed.error, ["fraction"])
+            ? "session.prune params.fraction must be a number between 0 and 1"
+            : hasIssue(parsed.error, ["guidance"])
+              ? "session.prune params.guidance must be a string when provided"
+              : `session.prune params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3296,13 +3265,11 @@ function validateRewindParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.rewind params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.rewind params only support sessionId and historyEntryId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.rewind params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["historyEntryId"])
-            ? "session.rewind params.historyEntryId must be a non-empty string"
-            : `session.rewind params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.rewind params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["historyEntryId"])
+          ? "session.rewind params.historyEntryId must be a non-empty string"
+          : `session.rewind params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3322,13 +3289,11 @@ function validateTerminateSubagentParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.terminateSubagent params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.terminateSubagent params only support sessionId and subagentId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.terminateSubagent params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["subagentId"])
-            ? "session.terminateSubagent params.subagentId must be a non-empty string"
-            : `session.terminateSubagent params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.terminateSubagent params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["subagentId"])
+          ? "session.terminateSubagent params.subagentId must be a non-empty string"
+          : `session.terminateSubagent params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3348,15 +3313,13 @@ function validateEphemeralCreateParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.ephemeral.create params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.ephemeral.create params only support sessionId, instructions, and tools"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.ephemeral.create params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["instructions"])
-            ? "session.ephemeral.create params.instructions must be a non-empty string"
-            : hasIssue(parsed.error, ["tools"])
-              ? "session.ephemeral.create params.tools are invalid"
-              : `session.ephemeral.create params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.ephemeral.create params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["instructions"])
+          ? "session.ephemeral.create params.instructions must be a non-empty string"
+          : hasIssue(parsed.error, ["tools"])
+            ? "session.ephemeral.create params.tools are invalid"
+            : `session.ephemeral.create params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3370,19 +3333,17 @@ function validateEphemeralSubmitParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.ephemeral.submit params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.ephemeral.submit params only support sessionId, contextId, threadId, optional forkFromThreadId, and message"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.ephemeral.submit params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["contextId"])
-            ? "session.ephemeral.submit params.contextId must be a non-empty string"
-            : hasIssue(parsed.error, ["threadId"])
-              ? "session.ephemeral.submit params.threadId must be a non-empty string"
-              : hasIssue(parsed.error, ["forkFromThreadId"])
-                ? "session.ephemeral.submit params.forkFromThreadId must be a non-empty string when provided"
-                : hasIssue(parsed.error, ["message"])
-                  ? "session.ephemeral.submit params.message must be a non-empty string"
-                  : `session.ephemeral.submit params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.ephemeral.submit params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["contextId"])
+          ? "session.ephemeral.submit params.contextId must be a non-empty string"
+          : hasIssue(parsed.error, ["threadId"])
+            ? "session.ephemeral.submit params.threadId must be a non-empty string"
+            : hasIssue(parsed.error, ["forkFromThreadId"])
+              ? "session.ephemeral.submit params.forkFromThreadId must be a non-empty string when provided"
+              : hasIssue(parsed.error, ["message"])
+                ? "session.ephemeral.submit params.message must be a non-empty string"
+                : `session.ephemeral.submit params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3407,13 +3368,11 @@ function validateEphemeralCloseParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.ephemeral.close params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.ephemeral.close params only support sessionId and contextId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.ephemeral.close params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["contextId"])
-            ? "session.ephemeral.close params.contextId must be a non-empty string"
-            : `session.ephemeral.close params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.ephemeral.close params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["contextId"])
+          ? "session.ephemeral.close params.contextId must be a non-empty string"
+          : `session.ephemeral.close params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3427,13 +3386,11 @@ function validateClientToolAckParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.clientTool.ack params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.clientTool.ack params only support sessionId and callId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.clientTool.ack params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["callId"])
-            ? "session.clientTool.ack params.callId must be a non-empty string"
-            : `session.clientTool.ack params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.clientTool.ack params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["callId"])
+          ? "session.clientTool.ack params.callId must be a non-empty string"
+          : `session.clientTool.ack params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3447,13 +3404,11 @@ function validateClientToolResultParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.clientTool.result params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.clientTool.result params only support sessionId, callId, ok, content, and error"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.clientTool.result params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["callId"])
-            ? "session.clientTool.result params.callId must be a non-empty string"
-            : `session.clientTool.result params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.clientTool.result params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["callId"])
+          ? "session.clientTool.result params.callId must be a non-empty string"
+          : `session.clientTool.result params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3467,19 +3422,17 @@ function validateCreateParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.create params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.create params only support executionEnvironment, personaId, and reasoning"
-        : hasIssue(parsed.error, ["executionEnvironment"])
-          ? "session.create params.executionEnvironment must be an object"
-          : hasIssue(parsed.error, ["executionEnvironment", "kind"])
-            ? "session.create params.executionEnvironment.kind must be 'local', 'cloudflare-sandbox', or 'fly-sprite'"
-            : hasIssue(parsed.error, ["executionEnvironment", "cwd"])
-              ? "session.create params.executionEnvironment.cwd must be an absolute path"
-              : hasIssue(parsed.error, ["personaId"])
-                ? "session.create params.personaId must be a non-empty string"
-                : hasIssue(parsed.error, ["reasoning"])
-                  ? "session.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
-                  : `session.create params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["executionEnvironment"])
+        ? "session.create params.executionEnvironment must be an object"
+        : hasIssue(parsed.error, ["executionEnvironment", "kind"])
+          ? "session.create params.executionEnvironment.kind must be 'local', 'cloudflare-sandbox', or 'fly-sprite'"
+          : hasIssue(parsed.error, ["executionEnvironment", "cwd"])
+            ? "session.create params.executionEnvironment.cwd must be an absolute path"
+            : hasIssue(parsed.error, ["personaId"])
+              ? "session.create params.personaId must be a non-empty string"
+              : hasIssue(parsed.error, ["reasoning"])
+                ? "session.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
+                : `session.create params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3555,10 +3508,6 @@ function parseSessionProtocolDeltaMessage(payload: unknown): SessionProtocolOutg
 
   const deltaMessage = sessionProtocolDeltaMessageSchema.safeParse(payload);
   if (!deltaMessage.success) {
-    if (hasIssue(deltaMessage.error, [], "unrecognized_keys")) {
-      return fail("session.delta message contains unsupported fields");
-    }
-
     if (hasIssue(deltaMessage.error, ["sessionId"])) {
       return fail("session.delta.sessionId must be a non-empty string");
     }
@@ -3608,9 +3557,6 @@ function parseSessionProtocolClientToolMessage(
 
   const message = sessionProtocolClientToolMessageSchema.safeParse(payload);
   if (!message.success) {
-    if (hasIssue(message.error, [], "unrecognized_keys")) {
-      return fail(`${String(messageType)} message contains unsupported fields`);
-    }
     return fail(`invalid ${String(messageType)} message: ${formatZodError(message.error)}`);
   }
 
@@ -3633,9 +3579,6 @@ function parseSessionProtocolEphemeralMessage(
 
   const ephemeralMessage = sessionProtocolEphemeralMessageSchema.safeParse(payload);
   if (!ephemeralMessage.success) {
-    if (hasIssue(ephemeralMessage.error, [], "unrecognized_keys")) {
-      return fail("session.ephemeral message contains unsupported fields");
-    }
     if (hasIssue(ephemeralMessage.error, ["sessionId"])) {
       return fail("session.ephemeral.sessionId must be a non-empty string");
     }
@@ -3664,9 +3607,6 @@ function parseSessionProtocolPendingUserMessagesMessage(
 
   const message = sessionProtocolPendingUserMessagesMessageSchema.safeParse(payload);
   if (!message.success) {
-    if (hasIssue(message.error, [], "unrecognized_keys")) {
-      return fail("session.pendingUserMessages message contains unsupported fields");
-    }
     if (hasIssue(message.error, ["sessionId"])) {
       return fail("session.pendingUserMessages.sessionId must be a non-empty string");
     }
@@ -3712,10 +3652,6 @@ function parseSessionProtocolResponseMessage(payload: unknown): SessionProtocolO
   if (ok === true) {
     const successResponse = sessionProtocolResponseSuccessSchema.safeParse(payload);
     if (!successResponse.success) {
-      if (hasIssue(successResponse.error, [], "unrecognized_keys")) {
-        return fail("successful response must only include result payload");
-      }
-
       if (hasIssue(successResponse.error, ["result"], "invalid_type")) {
         return fail("successful response must include result");
       }
@@ -3745,10 +3681,6 @@ function parseSessionProtocolResponseMessage(payload: unknown): SessionProtocolO
 
   const errorResponse = sessionProtocolResponseErrorSchema.safeParse(payload);
   if (!errorResponse.success) {
-    if (hasIssue(errorResponse.error, [], "unrecognized_keys")) {
-      return fail("error response must only include error payload");
-    }
-
     if (hasIssue(errorResponse.error, ["error"])) {
       return fail("error response.error must be an object");
     }

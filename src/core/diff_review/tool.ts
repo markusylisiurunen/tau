@@ -61,7 +61,7 @@ const diffReviewArgsSchema = z
     patchFiles: z.array(z.string().trim().min(1)).optional(),
     label: z.string().trim().min(1).optional(),
   })
-  .strip()
+  .strict()
   .superRefine((value, context) => {
     if (value.source === "patch_files" && (!value.patchFiles || value.patchFiles.length === 0)) {
       context.addIssue({

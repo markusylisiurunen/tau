@@ -327,12 +327,14 @@ function resolveBashWorkingDirectory(args: {
   return args.workingDirectory ? resolve(baseCwd, args.workingDirectory) : baseCwd;
 }
 
-const bashArgsSchema = z.object({
-  command: z.string().trim().min(1),
-  workingDirectory: z.string().trim().min(1).optional(),
-  timeout: z.number().positive().optional(),
-  maxOutputTokens: z.number().int().positive().optional(),
-});
+const bashArgsSchema = z
+  .object({
+    command: z.string().trim().min(1),
+    workingDirectory: z.string().trim().min(1).optional(),
+    timeout: z.number().positive().optional(),
+    maxOutputTokens: z.number().int().positive().optional(),
+  })
+  .strict();
 
 function parseBashArgs(raw: unknown):
   | {

@@ -716,14 +716,6 @@ function parseAutoCompactConfig(
     if (parsed.error.issues.some((issue) => issue.path[0] === "keepRecentTokens")) {
       errors.add(`${sourceLabel}: autoCompact.keepRecentTokens must be a positive integer.`);
     }
-    for (const issue of parsed.error.issues) {
-      if (issue.code === "unrecognized_keys") {
-        const keyLabel = issue.keys.length === 1 ? "key" : "keys";
-        errors.add(
-          `${sourceLabel}: unknown ${keyLabel} in autoCompact: ${issue.keys.sort().join(", ")}.`,
-        );
-      }
-    }
     if (errors.size === 0) {
       errors.add(`${sourceLabel}: 'autoCompact' must be an object.`);
     }

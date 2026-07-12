@@ -87,31 +87,11 @@ export class FooterComponent implements Component {
     const commandHint = this.status?.commandHint?.trim();
     const leftRaw = toast ? toast.text : commandHint || leftFull;
     const leftStyle = toast ? this.getToastStyle(toast.kind) : palette.textDim;
-    const rightWidth = 0;
-    const leftWidth = visibleWidth(leftRaw);
+    const availableWidth = Math.max(0, width - iconWidth - 3);
+    const left = truncateFromEndByWidth(leftRaw, availableWidth);
+    const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(left)));
 
-    let line: string;
-
-    const totalContentWidth = 1 + iconWidth + 1 + leftWidth + rightWidth + 1 + 1;
-
-    if (totalContentWidth > width) {
-      const availableLeft = Math.max(0, width - 1 - iconWidth - 1 - rightWidth - 1 - 1);
-      const truncatedLeft = truncateFromEndByWidth(leftRaw, availableLeft);
-      const leftStyled = leftStyle(truncatedLeft);
-      const rightStyled = "";
-
-      line = ` ${icon} ${leftStyled} ${rightStyled} `;
-    } else {
-      const spaces = " ".repeat(
-        Math.max(1, width - 1 - iconWidth - 1 - leftWidth - rightWidth - 1),
-      );
-
-      const leftStyled = leftStyle(leftRaw);
-      const rightStyled = "";
-      line = ` ${icon} ${leftStyled + spaces}${rightStyled} `;
-    }
-
-    return [line];
+    return [` ${icon} ${leftStyle(left)}${padding} `];
   }
 
   private getToastStyle(kind: SystemMessageKind): (text: string) => string {

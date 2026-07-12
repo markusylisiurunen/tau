@@ -104,12 +104,6 @@ function createProjectSchema(configDir: string) {
     .strip();
 }
 
-function formatUnknownKeysError(sourceLabel: string, fieldPath: string, keys: string[]): string {
-  const unknownKeys = [...keys].sort();
-  const keyLabel = unknownKeys.length === 1 ? "key" : "keys";
-  return `${sourceLabel}: unknown ${keyLabel} in ${fieldPath}: ${unknownKeys.join(", ")}.`;
-}
-
 function formatSectionZodErrors(
   error: z.ZodError,
   sourceLabel: string,
@@ -117,11 +111,6 @@ function formatSectionZodErrors(
 ): string[] {
   const errors: string[] = [];
   for (const issue of error.issues) {
-    if (issue.code === "unrecognized_keys") {
-      errors.push(formatUnknownKeysError(sourceLabel, fieldPath, issue.keys));
-      continue;
-    }
-
     const issuePath = issue.path.length > 0 ? `.${issue.path.join(".")}` : "";
     errors.push(`${sourceLabel}: ${fieldPath}${issuePath} ${issue.message}`);
   }

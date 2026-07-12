@@ -106,7 +106,6 @@ describe("ChatRuntime", () => {
         cwd: "/repo",
       },
       environment: createEnvironment(),
-      config: {},
     });
 
     runtime.session.addUserText("hello from create");

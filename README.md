@@ -82,10 +82,10 @@ filters: `--since`, `--persona`, `--provider`, `--model`.
 tau can run without the TUI via NDJSON RPC over stdin/stdout:
 
 ```sh
-
+tau rpc --persona gpt-5.5-coder
 ```
 
-RPC mode reuses the same startup config, persona loading, and risk handling as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message). `--caffeinated` is a macOS-only TUI flag and is rejected outside TUI mode.
+RPC mode reuses the same startup config and persona loading as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message). `--caffeinated` is a macOS-only TUI flag and is rejected outside TUI mode.
 
 for protocol details and examples, see [docs/rpc.md](docs/rpc.md).
 
@@ -94,7 +94,7 @@ for protocol details and examples, see [docs/rpc.md](docs/rpc.md).
 tau can host sessions over WebSocket:
 
 ```sh
-
+tau serve --host 0.0.0.0 --port 8787 --auth-token "$TAU_WS_AUTH_TOKEN"
 ```
 
 WebSocket auth tokens authorize full session access. Prefer `wss://` behind a trusted TLS proxy on untrusted networks, avoid putting tokens in URLs or shell history, and treat any proxy/access logs that capture headers, query strings, or WebSocket handshake details as sensitive.
@@ -127,14 +127,16 @@ tau attach --new --execution-kind fly-sprite --fly-api default --fly-sprite spri
 tau can also run the terminal UI against any command that speaks the same session protocol on stdin/stdout:
 
 ```sh
-
+tau attach -- ssh vps 'cd /path/to/repo && tau rpc'
 ```
 
 For stdio attach, use `--session <id>` before `--`:
 
 ```sh
-
+tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/to/repo && tau rpc'
 ```
+
+Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` shell commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
 
 ## Telegram runner
 
@@ -256,7 +258,6 @@ this writes prompts and skills into `.tau/` under your current working directory
 
 ## security notice
 
-- **no command analysis**: the system doesn't inspect command content. it trusts the declared safety level without verifying what the command actually does.
 - **full system access**: the model can access any file on your system that your user account can read or write, not just the current working directory. if you need stronger isolation, run Tau inside a VM or container.
 - **no tty / non-interactive tools**: tool commands run with stdin ignored and no TTY. anything that prompts for input or opens an editor can hang or fail (for example `sudo`, `ssh` password prompts, `git` credential prompts). tau also forces git into non-interactive mode (no prompt/editor/pager, batch-mode ssh).
 
@@ -316,7 +317,9 @@ and in config (`.tau/config.json` or `~/.config/tau/config.json`):
 { "defaultTheme": "solarized" }
 ```
 
-Enabled tools execute directly; persona and sub-agent tool lists determine which tools are available.
+## tool access
+
+enabled tools execute directly. persona and sub-agent tool lists determine which tools are available.
 
 ## power management (macOS)
 
@@ -354,6 +357,8 @@ tau --persona opus-4.8-coder
 ## sub-agents
 
 some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, and `terminate_agent` tools. sub-agents report progress in the subagent panel, and `wait_for_agents` returns completed outputs as soon as at least one requested agent finishes.
+
+the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, tool access (minus sub-agent management tools), and system prompt. the inherited main prompt is wrapped with default sub-agent-specific rules, and those wrapper rules take precedence on conflicts. custom sub-agents can override model, reasoning, and tools.
 
 `spawn_agent` supports an optional launch override string (`model: "<provider>/<model>:<effort>"`) and an optional `workingDirectory`. when `workingDirectory` is set, the sub-agent runs from that directory and its prompt context (cwd, AGENTS.md scope, and skills block) is rebuilt as if tau was started there. launch overrides are allowlisted per subagent. custom subagents can define `launchModels` in persona frontmatter, and the built-in `default` sub-agent uses `subagents.defaultLaunchModels` from config.
 
@@ -443,7 +448,7 @@ tau supports slash commands for common actions:
 | `/persona:<id>` | switch to a different persona |
 | `/prompt:<id>` | insert a saved prompt template |
 | `/theme:<id>` | switch to a loaded theme |
-| `!<cmd>` | run a shell command directly (bypasses risk checks) |
+| `!<cmd>` | run a shell command directly |
 | `!!<cmd>` | run a shell command without adding output to the model context |
 
 tau automatically compacts long sessions when provider-reported usage approaches the model context limit. automatic compaction summarizes older context, asks the compaction model to select original user messages to append verbatim inside the summary by history id, retains a recent tail verbatim, and inserts a hidden continuation note so the assistant continues without asking you to repeat context.
@@ -643,6 +648,8 @@ optional frontmatter fields:
 - `serviceTier`: `priority` or `flex` for providers that support service tiers (currently `openai` and `openai-codex`)
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.
+- `tools`: optional list of persona-selected host tools. Nook is not selected here; when effective config contains `nook`, Tau exposes the `nook` tool automatically.
+- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `serviceTier`, `tools`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
   ```yaml
   subagents:
     default: false
@@ -658,6 +665,7 @@ optional frontmatter fields:
         - openai/gpt-5.5:high
         - anthropic/claude-haiku-4-5:medium
   ```
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled).
 
 the markdown body becomes the system prompt.
 
@@ -708,6 +716,8 @@ enable skills per persona with the `skills` frontmatter field. you can list spec
 use `/reload` to pick up changes to personas, model overrides, prompts, skills, and AGENTS.md without restarting.
 
 ## how it works
+
+tau connects your terminal to large language models, giving them tools to interact with your filesystem. when you ask the model to explore code or make changes, it decides which tools to use and executes them directly.
 
 the model sees your messages, any file contents you've shared, and the results of tool calls. it doesn't have ambient access to your filesystem; it only sees what you show it or what it explicitly requests through tools.
 

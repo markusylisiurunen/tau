@@ -665,6 +665,66 @@ describe("rpc_server", () => {
     );
   });
 
+  it("broadcasts session updates across handlers and stops after detach", async () => {
+    const harness = createHarness();
+    const observerLines = [];
+    const observer = new RpcServer({
+      host: harness.host,
+      send: (line) => observerLines.push(JSON.parse(line)),
+    });
+
+    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
+    await harness.server.handleLine(
+      request("reasoning", "session.setReasoning", {
+        sessionId: "session-1",
+        reasoning: "high",
+      }),
+    );
+
+    await waitFor(() =>
+      observerLines.some(
+        (line) =>
+          line.type === "session.delta" &&
+          line.sessionId === "session-1" &&
+          line.delta?.type === "snapshot.patch" &&
+          line.reason === "configuration",
+      ),
+    );
+    expect(observerLines.find((line) => line.type === "session.delta")).toEqual(
+      expect.objectContaining({
+        sessionId: "session-1",
+        toRevision: expect.any(Number),
+        reason: "configuration",
+        delta: expect.objectContaining({ type: "snapshot.patch" }),
+      }),
+    );
+
+    await observer.handleLine(request("detach", "session.unobserve", { sessionId: "session-1" }));
+    expect(observerLines.find((line) => line.type === "response" && line.id === "detach")).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: { unobserved: true },
+      }),
+    );
+    const updateCountAfterDetach = observerLines.filter(
+      (line) => line.type === "session.delta",
+    ).length;
+
+    await harness.server.handleLine(
+      request("reasoning-again", "session.setReasoning", {
+        sessionId: "session-1",
+        reasoning: "low",
+      }),
+    );
+    await Promise.resolve();
+
+    expect(observerLines.filter((line) => line.type === "session.delta")).toHaveLength(
+      updateCountAfterDetach,
+    );
+
+    await observer.close();
+  });
+
   it("buffers initial observed deltas until after the observe snapshot response", async () => {
     let harness;
     harness = createHarness({

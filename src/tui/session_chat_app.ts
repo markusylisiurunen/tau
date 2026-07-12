@@ -165,7 +165,6 @@ export class SessionChatApp implements ModeAdapter {
           },
           sources.skills,
           sources.subagents,
-          sources.riskLevels,
         ),
       );
       const handlers = controller.getInputHandlers();

@@ -1,7 +1,6 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import { formatZodError } from "../utils/zod.js";
 import {
@@ -52,7 +51,6 @@ export function createEmitOutputToolDefinition(): ToolDefinition {
     schema: EMIT_OUTPUT_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      _riskLevel: RiskLevel,
       _signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatchResult> {

@@ -1,7 +1,6 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { RiskLevel } from "../types.js";
 import { buildLineDiff } from "../utils/line_diff.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import { formatZodError } from "../utils/zod.js";
@@ -122,7 +121,7 @@ function buildEditUiText(args: {
 export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: EDIT_TOOL,
-    async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+    async dispatch(toolCall: ToolCall): Promise<ToolDispatchResult> {
       const parsedArgs = parseEditArgs(toolCall.arguments);
       const path = parsedArgs.ok ? parsedArgs.data.path : "";
       const headerTarget = path || "(invalid arguments)";
@@ -144,12 +143,6 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDef
       }
 
       const { oldText, newText } = parsedArgs.data;
-
-      if (riskLevel !== "read-write") {
-        return blocked(
-          `Requires risk level 'read-write', but the current level is '${riskLevel}'. Ask the user to run /risk:read-write.`,
-        );
-      }
 
       let content: string;
       try {

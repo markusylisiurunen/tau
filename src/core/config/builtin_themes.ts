@@ -37,8 +37,6 @@ export const PALETTE_TOKEN_NAMES = [
   "userReviewText",
   "userReviewTextMuted",
   "userReviewTextDim",
-  "riskReadOnlyText",
-  "riskReadWriteText",
 ] as const;
 
 export const builtinThemes: ThemeDefinition[] = [
@@ -81,8 +79,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#928a8c",
-      riskReadWriteText: "#928a8c",
     },
     variants: {
       light: {
@@ -122,8 +118,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#7f7074",
-        riskReadWriteText: "#7f7074",
       },
     },
     sourcePath: "builtin:themes/crimson.json",
@@ -168,8 +162,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#928a89",
-      riskReadWriteText: "#928a89",
     },
     variants: {
       light: {
@@ -209,8 +201,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#80706f",
-        riskReadWriteText: "#80706f",
       },
     },
     sourcePath: "builtin:themes/ember.json",
@@ -255,8 +245,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#928a87",
-      riskReadWriteText: "#928a87",
     },
     variants: {
       light: {
@@ -296,8 +284,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#7f716a",
-        riskReadWriteText: "#7f716a",
       },
     },
     sourcePath: "builtin:themes/gold.json",
@@ -342,8 +328,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#908b86",
-      riskReadWriteText: "#908b86",
     },
     variants: {
       light: {
@@ -383,8 +367,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#7c7368",
-        riskReadWriteText: "#7c7368",
       },
     },
     sourcePath: "builtin:themes/lime.json",
@@ -429,8 +411,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#8e8c85",
-      riskReadWriteText: "#8e8c85",
     },
     variants: {
       light: {
@@ -470,8 +450,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#787568",
-        riskReadWriteText: "#787568",
       },
     },
     sourcePath: "builtin:themes/grass.json",
@@ -516,8 +494,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#8b8d86",
-      riskReadWriteText: "#8b8d86",
     },
     variants: {
       light: {
@@ -557,8 +533,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#737669",
-        riskReadWriteText: "#737669",
       },
     },
     sourcePath: "builtin:themes/emerald.json",
@@ -603,8 +577,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#898e88",
-      riskReadWriteText: "#898e88",
     },
     variants: {
       light: {
@@ -644,8 +616,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#6e786d",
-        riskReadWriteText: "#6e786d",
       },
     },
     sourcePath: "builtin:themes/jade.json",
@@ -690,8 +660,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#878e8b",
-      riskReadWriteText: "#878e8b",
     },
     variants: {
       light: {
@@ -731,8 +699,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#6a7872",
-        riskReadWriteText: "#6a7872",
       },
     },
     sourcePath: "builtin:themes/teal.json",
@@ -777,8 +743,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#868e8e",
-      riskReadWriteText: "#868e8e",
     },
     variants: {
       light: {
@@ -818,8 +782,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#687877",
-        riskReadWriteText: "#687877",
       },
     },
     sourcePath: "builtin:themes/cyan.json",
@@ -864,8 +826,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#868e90",
-      riskReadWriteText: "#868e90",
     },
     variants: {
       light: {
@@ -905,8 +865,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#68787c",
-        riskReadWriteText: "#68787c",
       },
     },
     sourcePath: "builtin:themes/azure.json",
@@ -951,8 +909,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#878d92",
-      riskReadWriteText: "#878d92",
     },
     variants: {
       light: {
@@ -992,8 +948,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#6a767f",
-        riskReadWriteText: "#6a767f",
       },
     },
     sourcePath: "builtin:themes/cobalt.json",
@@ -1038,8 +992,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#898c92",
-      riskReadWriteText: "#898c92",
     },
     variants: {
       light: {
@@ -1079,8 +1031,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#6e7581",
-        riskReadWriteText: "#6e7581",
       },
     },
     sourcePath: "builtin:themes/violet.json",
@@ -1125,8 +1075,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#8c8b92",
-      riskReadWriteText: "#8c8b92",
     },
     variants: {
       light: {
@@ -1166,8 +1114,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#737380",
-        riskReadWriteText: "#737380",
       },
     },
     sourcePath: "builtin:themes/purple.json",
@@ -1212,8 +1158,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#8e8a91",
-      riskReadWriteText: "#8e8a91",
     },
     variants: {
       light: {
@@ -1253,8 +1197,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#78717d",
-        riskReadWriteText: "#78717d",
       },
     },
     sourcePath: "builtin:themes/magenta.json",
@@ -1299,8 +1241,6 @@ export const builtinThemes: ThemeDefinition[] = [
       userReviewText: "#bad0aa",
       userReviewTextMuted: "#9da498",
       userReviewTextDim: "#7b7e79",
-      riskReadOnlyText: "#908a8e",
-      riskReadWriteText: "#908a8e",
     },
     variants: {
       light: {
@@ -1340,8 +1280,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewText: "#183400",
         userReviewTextMuted: "#424f38",
         userReviewTextDim: "#686e64",
-        riskReadOnlyText: "#7c7079",
-        riskReadWriteText: "#7c7079",
       },
     },
     sourcePath: "builtin:themes/rose.json",

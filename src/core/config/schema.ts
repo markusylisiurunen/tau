@@ -9,7 +9,7 @@ import {
 import { normalizeNookDomain } from "../nook/validation.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
-import { REASONING_LEVELS, type RiskLevel, RiskLevelSchema } from "../types.js";
+import { REASONING_LEVELS } from "../types.js";
 import { normalizeModelNoticeKey, parseModelNoticeKey } from "../utils/model_notices.js";
 import type { ConfigDeps } from "./deps.js";
 import type { DiffToolConfig } from "./diff_tool.js";
@@ -21,7 +21,6 @@ import { getVirtualConfigDefaults } from "./virtual_defaults.js";
 export interface Config {
   apiKeys?: Record<string, string>;
   defaultPersona?: string;
-  defaultRisk?: RiskLevel;
   disableBuiltinPersonas?: boolean;
   disableBuiltinThemes?: boolean;
   defaultTheme?: string;
@@ -120,7 +119,6 @@ export type TelegramProjectConfig = {
   bootstrapCommands?: string[];
   backgroundBootstrapCommands?: string[];
   persona?: string;
-  riskLevel?: RiskLevel;
   noAgentContextFiles?: boolean;
 };
 
@@ -181,26 +179,7 @@ const BuiltInDiffToolSchema = z
   .object({
     codeTheme: z.string().trim().min(1).optional(),
   })
-  .passthrough();
-
-const KNOWN_TOP_LEVEL_CONFIG_KEYS = new Set([
-  "apiKeys",
-  "defaultPersona",
-  "defaultRisk",
-  "disableBuiltinPersonas",
-  "disableBuiltinThemes",
-  "defaultTheme",
-  "diffTool",
-  "builtInDiffTool",
-  "agentContextFiles",
-  "subagents",
-  "autoCompact",
-  "modelSystemNotices",
-  "speechToText",
-  "cloudflareSandbox",
-  "flySprites",
-  "nook",
-]);
+  .strip();
 
 const NonEmptyStringSchema = z.string().trim().min(1);
 const BooleanSchema = z.boolean();
@@ -211,7 +190,7 @@ const SpeechToTextConfigSchema = z
   .object({
     provider: z.enum(["mistral", "gemini"]),
   })
-  .passthrough();
+  .strip();
 const CloudflareSandboxBridgeSchema = z
   .object({
     url: NonEmptyStringSchema,
@@ -219,12 +198,12 @@ const CloudflareSandboxBridgeSchema = z
     apiKeyEnv: NonEmptyStringSchema.optional(),
     home: NonEmptyStringSchema.optional(),
   })
-  .strict();
+  .strip();
 const CloudflareSandboxConfigSchema = z
   .object({
     bridges: z.record(NonEmptyStringSchema, CloudflareSandboxBridgeSchema).optional(),
   })
-  .strict();
+  .strip();
 const FlySpritesApiSchema = z
   .object({
     baseURL: NonEmptyStringSchema.optional(),
@@ -232,12 +211,12 @@ const FlySpritesApiSchema = z
     tokenEnv: NonEmptyStringSchema.optional(),
     home: NonEmptyStringSchema.optional(),
   })
-  .strict();
+  .strip();
 const FlySpritesConfigSchema = z
   .object({
     apis: z.record(NonEmptyStringSchema, FlySpritesApiSchema).optional(),
   })
-  .strict();
+  .strip();
 const NookConfigSchema = z
   .object({
     domain: NonEmptyStringSchema,
@@ -245,12 +224,12 @@ const NookConfigSchema = z
     accessClientSecret: NonEmptyStringSchema.optional(),
     accessClientSecretEnv: NonEmptyStringSchema.optional(),
   })
-  .strict();
+  .strip();
 const SubagentsConfigSchema = z
   .object({
     defaultLaunchModels: z.array(z.string()).optional(),
   })
-  .passthrough();
+  .strip();
 const StringRecordSchema = z.object({}).catchall(z.unknown());
 const PositiveIntegerSchema = z.number().int().finite().gt(0);
 const AutoCompactConfigSchema = z
@@ -259,7 +238,7 @@ const AutoCompactConfigSchema = z
     reserveTokens: PositiveIntegerSchema.optional(),
     keepRecentTokens: PositiveIntegerSchema.optional(),
   })
-  .strict();
+  .strip();
 
 function parseOptionalFields(
   data: Record<string, unknown>,
@@ -415,12 +394,6 @@ function validateConfigData(
   const config: Config = {};
   const errors: string[] = [];
 
-  const unknownKeys = Object.keys(data).filter((key) => !KNOWN_TOP_LEVEL_CONFIG_KEYS.has(key));
-  if (unknownKeys.length > 0) {
-    const keyLabel = unknownKeys.length === 1 ? "key" : "keys";
-    errors.push(`${sourceLabel}: unknown ${keyLabel} in config: ${unknownKeys.sort().join(", ")}.`);
-  }
-
   const apiKeysResult = parseApiKeysConfig(data.apiKeys, sourceLabel);
   assignParsedConfigValue(config, errors, "apiKeys", apiKeysResult.config, apiKeysResult.errors);
 
@@ -434,7 +407,6 @@ function validateConfigData(
   );
 
   const scalarResult = parseOptionalFields(data, sourceLabel, [
-    ["defaultRisk", RiskLevelSchema, "'defaultRisk' must be a valid risk level."],
     ["disableBuiltinPersonas", BooleanSchema, "'disableBuiltinPersonas' must be a boolean."],
     ["disableBuiltinThemes", BooleanSchema, "'disableBuiltinThemes' must be a boolean."],
     ["defaultTheme", NonEmptyStringSchema, "'defaultTheme' must be a non-empty string."],
@@ -994,10 +966,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
     if (config.defaultPersona !== undefined) {
       merged.defaultPersona = config.defaultPersona;
-    }
-
-    if (config.defaultRisk !== undefined) {
-      merged.defaultRisk = config.defaultRisk;
     }
 
     if (config.disableBuiltinPersonas !== undefined) {

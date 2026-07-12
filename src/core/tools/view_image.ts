@@ -3,7 +3,6 @@ import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
 import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
@@ -228,7 +227,7 @@ function buildViewImageUiText(args: { mimeType: string; fullText: string }): Too
 export function createViewImageToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: VIEW_IMAGE_TOOL,
-    async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+    async dispatch(toolCall: ToolCall): Promise<ToolDispatchResult> {
       const parsedArgs = parseViewImageArgs(toolCall.arguments);
       const path = parsedArgs.ok ? parsedArgs.data.path : "";
       const headerTarget = path || "(invalid arguments)";

@@ -8,7 +8,7 @@ import {
 } from "./subagents/registry.js";
 import type { SubagentPersonaConfig } from "./subagents/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
-import type { Persona, RiskLevel, Skill } from "./types.js";
+import type { Persona, Skill } from "./types.js";
 import {
   buildBaseSystemPrompt,
   buildEnvironmentTag,
@@ -82,7 +82,6 @@ export function printDebugInfo(args: {
   skills: Skill[];
   selectedPersona?: Persona;
   noAgentContextFiles: boolean;
-  riskLevel?: RiskLevel;
   toolRegistry: ToolRegistry;
   virtualBundle?: VirtualBundle;
 }): void {
@@ -92,7 +91,6 @@ export function printDebugInfo(args: {
     skills,
     selectedPersona,
     noAgentContextFiles,
-    riskLevel,
     toolRegistry,
     virtualBundle,
   } = args;
@@ -109,11 +107,9 @@ export function printDebugInfo(args: {
     console.log("\n  (not available)");
   } else {
     const defaultPersona = virtualBundle.config.defaultPersona ?? "(none)";
-    const defaultRisk = virtualBundle.config.defaultRisk ?? "(none)";
     const personaIds = virtualBundle.personas.map((p) => p.id).join(", ") || "(none)";
     const promptIds = virtualBundle.prompts.map((p) => p.id).join(", ") || "(none)";
     console.log(`\n  defaultPersona: ${defaultPersona}`);
-    console.log(`  defaultRisk: ${defaultRisk}`);
     console.log(`  personas: ${personaIds}`);
     console.log(`  prompts: ${promptIds}`);
   }
@@ -176,10 +172,8 @@ export function printDebugInfo(args: {
   const projectContextBlock = !noAgentContextFiles
     ? buildProjectContextBlock({ cwd, home, readFile: deps.fs.readFile })
     : undefined;
-  const effectiveRiskLevel: RiskLevel = riskLevel ?? "read-only";
   const repoRoot = resolvePromptGitRoot({ cwd });
   const environmentTag = buildEnvironmentTag({
-    riskLevel: effectiveRiskLevel,
     cwd,
     repoRoot,
     datetime: new Date(deps.clock.now()).toISOString(),
@@ -213,13 +207,11 @@ export function printDebugInfo(args: {
       const effective = resolveSubagentEffectiveSettings({
         persona: selectedPersona,
         config: cfg,
-        riskLevel: effectiveRiskLevel,
       });
       console.log(`  model: ${effective.model.provider}:${effective.model.id}`);
       if (effective.settings) {
         console.log(`  settings: ${JSON.stringify(effective.settings)}`);
       }
-      console.log(`  riskLevel: ${effective.riskLevel}`);
       if (effective.tools.length > 0) {
         console.log(`  tools: ${effective.tools.join(", ")}`);
       }

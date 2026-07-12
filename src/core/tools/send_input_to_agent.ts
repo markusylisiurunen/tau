@@ -2,7 +2,6 @@ import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
-import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
@@ -63,7 +62,6 @@ export function createSendInputToAgentToolDefinition(
     schema: SEND_INPUT_TO_AGENT_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      _riskLevel: RiskLevel,
       signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {

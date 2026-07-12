@@ -1,7 +1,5 @@
 # Tau
 
-Terminal-based AI chat client with tool execution, streaming responses, and risk-level controls. Supports Anthropic, OpenAI, and Google models.
-
 ## Platform support
 
 - **Supported**: macOS and Linux.
@@ -146,26 +144,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 
 ## Tool system
 
-| Tool | Purpose | Risk requirement |
-| --- | --- | --- |
-| `bash` | Shell execution | `read-only` for reads, `read-write` for writes |
-| `write` | Create/overwrite files | `read-write` |
-| `edit` | Replace exact text in files | `read-write` |
-| `view_image` | View an image file | `read-only` |
-| `spawn_agent` | Start a background subagent | `read-only` or `read-write` |
-| `send_input_to_agent` | Send input to an idle subagent | `read-only` or `read-write` |
-| `wait_for_agents` | Await completed subagent outputs, returning when at least one requested agent finishes | `read-only` or `read-write` |
-| `terminate_agent` | Stop a running subagent | `read-only` or `read-write` |
-| `emit_output` | Subagent-only output to main (currently disabled in subagent registries) | `read-only` or `read-write` |
-| `nook` | Operate the configured Nook static mini-app platform | `read-write` |
-
-Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set. The TUI advertises `diff_review` as a client-provided tool; it is not a host tool registry entry. The `nook` host tool is automatically exposed only when effective Tau config contains `nook`, and all operations require read-write risk.
-
-Risk levels (`read-only`, `read-write`) gate model tool calls. Subagents inherit the session risk level unless overridden in persona config. The model declares intent via `safetyLevel` on bash calls.
-
-Main session system prompts are immutable after session start to preserve model caching. The environment tag is not updated mid-session. `/risk` changes are injected as system messages on the next user turn instead. Subagent prompts are rebuilt on risk changes so inherited risk applies to subagents.
-
-Prompt/context tag style: use dash-case for XML-like tag names in prompt text (for example `<risk-level>`, `<available-skills>`, `<tool-call>`, `<tool-result>`, `<last-assistant-message-verbatim>`). Do not introduce new snake_case tag names.
+Enabled tools execute directly. Persona and subagent tool lists determine tool availability; there is no secondary read/write authorization gate.
 
 **Bash limits**: 1MB raw capture (tail of output, stdout/stderr merged in arrival order), 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized by dropping vars that match sensitive key patterns, git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
 
@@ -185,8 +164,6 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 - Current preview shapes: bash uses head/tail output plus a status line; write shows up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
 - Pruned tool results patch existing tool cards by `toolCallId`, preserve headers, replace the body with model-visible pruned content, and prefix status as `✂ pruned · <existing status>` (or `✂ pruned` when no status exists).
 
-**Subagent-only tools**: subagents run with a dedicated tool registry that includes the tools enabled for that subagent (inherited from the main persona or explicitly overridden). The `emit_output` tool definition remains in the codebase but is currently disabled for subagent registries. Risk level is inherited by default but can be overridden per subagent, including `read-write` even when the main session is `read-only`. The built-in `default` subagent prompt wraps and inherits the main persona system prompt, while enforcing default-subagent rules that take precedence on conflicts. `spawn_agent` can optionally set launch model/reasoning via `<provider>/<model>:<effort>` (allowlisted by `launchModels`) and can optionally set `workingDirectory`. When `workingDirectory` is set, the subagent runs from that directory and its prompt context (cwd, AGENTS.md scope, skills block) is rebuilt as if tau was started there. See `src/core/subagents/subagent_engine.ts` and `src/core/tools/spawn_agent.ts`.
-
 **Subagent limit**: at most 8 subagents may run concurrently.
 
 ## Personas and subagents
@@ -201,33 +178,29 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `serviceTier`: `priority` or `flex` for providers that support service tiers (currently `openai` and `openai-codex`)
 - `allowedReasoningLevels`: list of reasoning levels (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`) shown in the UI
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted on custom personas, defaults to `"*"`; set `skills: []` to disable skills completely.
-- `subagents`: optional map of subagent definitions. The built-in `default` subagent is implicitly enabled unless `default: false` is provided. Custom subagents must be defined as `{ systemPrompt, description?, provider+model?, reasoning?, serviceTier?, tools?, riskLevel?, launchModels? }` with lowercase-dash names (max 64 chars). `launchModels` values are allowlisted launch overrides in `<provider>/<model>:<effort>` format. Persona/subagent model ids may be unbundled as long as provider is known (Tau derives provider defaults when needed, and `models.json` can override fields). The `default` subagent cannot be overridden.
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled). risk levels still apply.
 
 On conflicts, the most specific level wins (built-ins are the base layer).
 
 ## Configuration
 
-- **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `defaultRisk`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `builtInDiffTool`, `agentContextFiles`, `subagents`, `autoCompact`, `modelSystemNotices`, `speechToText`, `cloudflareSandbox`, `flySprites`). This level is only included when cwd is inside home.
-  - `apiKeys` (optional): Map of provider id to API key (`apiKeys.<provider>`). Keys merge by provider id across config levels.
-  - `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
-  - `apiKeys.mistral` (optional): Mistral API key for `/listen`, Telegram audio transcription, and PDF OCR.
-  - `apiKeys.google` (optional): Google API key for Gemini chat models, `/speak`, and speech-to-text when `speechToText.provider` is `gemini`.
-  - `defaultPersona` (optional): String persona reference used by default when starting the app. Accepts `<id>` or `<id>:<reasoning>` and matches are exact/case-sensitive. Overridden by `--persona` flag.
-  - `defaultRisk` (optional): Default risk level (`read-only`, `read-write`). Overridden by `--risk` flag. Defaults to `read-only`.
-  - `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.
-  - `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.
-  - `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Must be non-empty and matches are exact/case-sensitive. Defaults to `gold`.
-  - `diffTool` (optional): Diff-review tool launcher config (`command`, optional `args`, optional `env`). Relative `command` paths resolve from the config level root. `/diff` launches this tool from the TUI side while host-owned review work runs through the session protocol.
-  - `builtInDiffTool` (optional): Built-in diff tool settings used only by the fallback launcher. `codeTheme` sets the initial code theme, defaults to `github-dark-dimmed`, and accepts the dark themes listed in README.md; users can still switch themes in the diff tool UI.
-  - `subagents.defaultLaunchModels` (optional): Allowlisted `spawn_agent` launch overrides for the built-in `default` subagent (`<provider>/<model>:<effort>` entries).
-  - `autoCompact` (optional): Automatic compaction settings, merged field-by-field. Defaults are `{ "enabled": true, "reserveTokens": 16384, "keepRecentTokens": 20000 }`. Threshold detection uses only provider-reported assistant usage against `model.contextWindow - reserveTokens`; Tau's token heuristic is only used after threshold crossing to choose the retained-tail cut point, with retention capped at that threshold. Auto-compaction summarizes older context, asks the compaction model to select original user messages to append verbatim inside the summary by history id, keeps a recent tail, inserts a hidden continuation user message, and emits `compaction_start`/`compaction_end` core events. Context-overflow compact-and-retry is not implemented.
-  - `modelSystemNotices` (optional): Map of `<provider>/<model>` to notice text. Provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). Tau prepends the notice as a `<system>` block before each user message sent to that model (main session and subagents).
-  - `speechToText` (optional): Speech-to-text config for `/listen` and Telegram audio transcription. `provider` is required when present and accepts `mistral` (default, Voxtral) or `gemini` (Gemini 3.5 Flash with minimal thinking).
-  - `cloudflareSandbox.bridges` (optional): Host-owned Cloudflare Sandbox bridge targets for hosted execution environments. Each bridge has `url`, optional `apiKey`, optional `apiKeyEnv`, and optional `home`. `session.create` references bridges by id plus an already-provisioned `sandboxId` and real sandbox `cwd`; Tau does not create or provision Cloudflare sandboxes during session creation. Tau resolves config/content from the sandbox `cwd`, while bridge credentials are resolved by the host and are not persisted in session snapshots.
-  - `flySprites.apis` (optional): Host-owned Fly Sprites API targets for hosted execution environments. Each API has optional `baseURL`, optional `token`, optional `tokenEnv`, and optional `home`. `session.create` references APIs by id plus an already-provisioned `spriteName` and real Sprite `cwd`; Tau does not create or provision Sprites during session creation. Tau resolves config/content from the Sprite `cwd`, while API tokens are resolved by the host and are not persisted in session snapshots.
-  - `nook` (optional): Single effective Nook target for an already deployed Cloudflare Nook instance. Fields: required `domain`, optional `accessClientId`, optional `accessClientSecret`, optional `accessClientSecretEnv`. When `accessClientSecretEnv` resolves to a value, it wins over `accessClientSecret`. The Nook Worker validates Cloudflare Access JWTs against the configured Access issuer and audience; raw service-token headers are only used to pass Cloudflare Access and are not trusted by the Worker. `tau nook setup` takes infrastructure route and Access validation inputs through `--zone-name`/`--access-team-domain`/`--access-aud` or `NOOK_ZONE_NAME`/`NOOK_ACCESS_TEAM_DOMAIN`/`NOOK_ACCESS_AUD`. `tau nook destroy` takes cleanup service-token inputs through flags or `NOOK_ACCESS_CLIENT_ID`/`NOOK_ACCESS_CLIENT_SECRET`.
-  - Telegram runner settings are loaded from a separate JSON file passed via `tau telegram --config-file <path>` (`bots` map keyed by bot id, optional `maxSessions`, `projects`, `workspaceRoot`, `systemMessage`, and project fields like `workingDirectory`, `description`, `bootstrapCommands`, and `backgroundBootstrapCommands`). Telegram sessions are chat-scoped within each bot, allowed groups share one group session namespace, and group turns trigger only on explicit bot mentions. Telegram repositories use automatic persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`, refreshed with pruned fetches and reinitialized if the configured repo changes. Session records are persisted at `<workspaceRoot>-sessions.json`; normal shutdown preserves session workspaces, startup removes workspace-root entries not referenced by recoverable persisted sessions, and running sessions recover as waiting for input, while missing workspaces are reconstructed from the repository cache before Tau snapshot reconnection. Bootstrap command lists run only when a workspace is created or reconstructed, not when a preserved workspace is reconnected. The Telegram adapter reconstructs chat routing from persisted session ownership and prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Assume zero or one Telegram runner process per host; concurrent runners are unsupported.
+- `apiKeys` (optional): Map of provider id to API key (`apiKeys.<provider>`). Keys merge by provider id across config levels.
+- `apiKeys.parallel` (optional): Parallel API key for `web_search`/`web_fetch` usage in subagents.
+- `apiKeys.mistral` (optional): Mistral API key for `/listen`, Telegram audio transcription, and PDF OCR.
+- `apiKeys.google` (optional): Google API key for Gemini chat models, `/speak`, and speech-to-text when `speechToText.provider` is `gemini`.
+- `defaultPersona` (optional): String persona reference used by default when starting the app. Accepts `<id>` or `<id>:<reasoning>` and matches are exact/case-sensitive. Overridden by `--persona` flag.
+- `disableBuiltinPersonas` (optional): If true, tau will not load built-in personas, only entries from disk.
+- `disableBuiltinThemes` (optional): If true, tau will not load built-in themes, only entries from disk.
+- `defaultTheme` (optional): Theme id to load from built-in themes, `.tau/themes/<id>.json`, or `~/.config/tau/themes/<id>.json`. Must be non-empty and matches are exact/case-sensitive. Defaults to `gold`.
+- `diffTool` (optional): Diff-review tool launcher config (`command`, optional `args`, optional `env`). Relative `command` paths resolve from the config level root. `/diff` launches this tool from the TUI side while host-owned review work runs through the session protocol.
+- `builtInDiffTool` (optional): Built-in diff tool settings used only by the fallback launcher. `codeTheme` sets the initial code theme, defaults to `github-dark-dimmed`, and accepts the dark themes listed in README.md; users can still switch themes in the diff tool UI.
+- `subagents.defaultLaunchModels` (optional): Allowlisted `spawn_agent` launch overrides for the built-in `default` subagent (`<provider>/<model>:<effort>` entries).
+- `autoCompact` (optional): Automatic compaction settings, merged field-by-field. Defaults are `{ "enabled": true, "reserveTokens": 16384, "keepRecentTokens": 20000 }`. Threshold detection uses only provider-reported assistant usage against `model.contextWindow - reserveTokens`; Tau's token heuristic is only used after threshold crossing to choose the retained-tail cut point, with retention capped at that threshold. Auto-compaction summarizes older context, asks the compaction model to select original user messages to append verbatim inside the summary by history id, keeps a recent tail, inserts a hidden continuation user message, and emits `compaction_start`/`compaction_end` core events. Context-overflow compact-and-retry is not implemented.
+- `modelSystemNotices` (optional): Map of `<provider>/<model>` to notice text. Provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). Tau prepends the notice as a `<system>` block before each user message sent to that model (main session and subagents).
+- `speechToText` (optional): Speech-to-text config for `/listen` and Telegram audio transcription. `provider` is required when present and accepts `mistral` (default, Voxtral) or `gemini` (Gemini 3.5 Flash with minimal thinking).
+- `cloudflareSandbox.bridges` (optional): Host-owned Cloudflare Sandbox bridge targets for hosted execution environments. Each bridge has `url`, optional `apiKey`, optional `apiKeyEnv`, and optional `home`. `session.create` references bridges by id plus an already-provisioned `sandboxId` and real sandbox `cwd`; Tau does not create or provision Cloudflare sandboxes during session creation. Tau resolves config/content from the sandbox `cwd`, while bridge credentials are resolved by the host and are not persisted in session snapshots.
+- `flySprites.apis` (optional): Host-owned Fly Sprites API targets for hosted execution environments. Each API has optional `baseURL`, optional `token`, optional `tokenEnv`, and optional `home`. `session.create` references APIs by id plus an already-provisioned `spriteName` and real Sprite `cwd`; Tau does not create or provision Sprites during session creation. Tau resolves config/content from the Sprite `cwd`, while API tokens are resolved by the host and are not persisted in session snapshots.
+- `nook` (optional): Single effective Nook target for an already deployed Cloudflare Nook instance. Fields: required `domain`, optional `accessClientId`, optional `accessClientSecret`, optional `accessClientSecretEnv`. When `accessClientSecretEnv` resolves to a value, it wins over `accessClientSecret`. The Nook Worker validates Cloudflare Access JWTs against the configured Access issuer and audience; raw service-token headers are only used to pass Cloudflare Access and are not trusted by the Worker. `tau nook setup` takes infrastructure route and Access validation inputs through `--zone-name`/`--access-team-domain`/`--access-aud` or `NOOK_ZONE_NAME`/`NOOK_ACCESS_TEAM_DOMAIN`/`NOOK_ACCESS_AUD`. `tau nook destroy` takes cleanup service-token inputs through flags or `NOOK_ACCESS_CLIENT_ID`/`NOOK_ACCESS_CLIENT_SECRET`.
+- Telegram runner settings are loaded from a separate JSON file passed via `tau telegram --config-file <path>` (`bots` map keyed by bot id, optional `maxSessions`, `projects`, `workspaceRoot`, `systemMessage`, and project fields like `workingDirectory`, `description`, `bootstrapCommands`, and `backgroundBootstrapCommands`). Telegram sessions are chat-scoped within each bot, allowed groups share one group session namespace, and group turns trigger only on explicit bot mentions. Telegram repositories use automatic persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`, refreshed with pruned fetches and reinitialized if the configured repo changes. Session records are persisted at `<workspaceRoot>-sessions.json`; normal shutdown preserves session workspaces, startup removes workspace-root entries not referenced by recoverable persisted sessions, and running sessions recover as waiting for input, while missing workspaces are reconstructed from the repository cache before Tau snapshot reconnection. Bootstrap command lists run only when a workspace is created or reconstructed, not when a preserved workspace is reconnected. The Telegram adapter reconstructs chat routing from persisted session ownership and prunes stale `tau-telegram-attachments-*` directories under the system temp directory. Assume zero or one Telegram runner process per host; concurrent runners are unsupported.
 
 - **Config levels**: `.tau/config.json` files are discovered from cwd up to home (or filesystem root if cwd is outside home). The global level is included only when cwd is under home. Scalars use most-specific wins; `apiKeys`, `autoCompact`, `modelSystemNotices`, `cloudflareSandbox.bridges`, and `flySprites.apis` merge per field; `diffTool` is selected from the most specific level, and its relative `command` is resolved from that level root; `builtInDiffTool` is selected from the most specific level and applies to the built-in `tau diff-tool` demo; `agentContextFiles` are additive.
 - **Model overrides**: `~/.config/tau/models.json` (global, only when cwd is under home) and `.tau/models.json` (project) are discovered using the same level resolution as `config.json`. Entries overlay bundled model definitions by `provider + model id` (most specific wins), including request-wide `cost.tiers` selected by the highest matching `inputTokensAbove` threshold. Known providers only.
@@ -273,7 +246,6 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 - `--debug` - Print debug info (loaded personas, prompts, skills, full system prompt, tool schemas) and exit
 - `--load`, `-l <file>` - Load a checkpoint file in TUI mode
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
-- `--risk <level>`, `-r` - Set initial risk level (`read-only`, `read-write`)
 - `--caffeinated` - Keep macOS awake during active assistant turns in TUI mode (currently a no-op on Linux)
 - `--no-agent-context-files` - Disable AGENTS.md injection into the system prompt
 
@@ -286,7 +258,6 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `tau rpc` - Run headless stdio RPC mode (NDJSON request/response + core event streaming)
 - `tau serve [--host <host>] [--port <port>] [--auth-token <token>]` - Host session protocol over WebSocket (`TAU_WS_AUTH_TOKEN` can provide the token)
 - `tau attach [--session <id> | --new --cwd <path>] [--auth-token <token>] ws://host:port` - Run the terminal UI against a WebSocket session host
-- `tau attach [--session <id> | --new --cwd <path>] -- <command...>` - Run the terminal UI against a session-protocol command, for example `ssh vps 'tau rpc --risk read-only'`; without `--session` or `--new`, attach lists hosted sessions and prompts for a selection, and new sessions require a host-local execution cwd
 - `tau auth login codex` - OAuth login for ChatGPT Plus/Pro; stores `~/.config/tau/auth.json`
 - `tau auth list` - List authenticated accounts and usage windows
 - `tau auth logout codex --account <email>` - Remove stored OAuth credentials
@@ -307,16 +278,11 @@ The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you c
 - `/help`, `/new`, `/exit`, `/rewind`, `/diff [git diff args...]` (opens the TUI-local diff review tool), `/copy:text`, `/copy:code`, `/reload`, `/listen` (macOS only; can record while assistant works; warns on Linux), `/speak` (macOS only; speaks the last assistant message)
 - `/compact:summary-only`, `/compact:summary-and-last` - Manually compact history into a single synthetic user summary message with compaction-model-selected original user messages copied verbatim inside the summary (optionally includes last assistant message verbatim when available); automatic compaction is separate and keeps a retained recent tail
 - `/prune:earliest`, `/prune:largest`, `/prune:smart` - Prune tool results and compact edit call payloads/results
-- `/risk:read-only`, `/risk:read-write`, `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`
 - `!<cmd>` - Direct bash execution (bypasses model)
 - `!!<cmd>` - Direct bash execution without adding output to the model context
 - `#<request>` - Memory mode for updating AGENTS.md (single-line only)
 
 Slash commands only trigger on single-line inputs. `/diff` launches the local diff tool and records returned review feedback without auto-running the assistant. Unknown slash-prefixed text is sent as a normal prompt.
-
-RPC mode command surface is protocol-based (`initialize`, `session.create`, `session.list`, `session.observe`, `session.unobserve`, `session.record`, `session.submit`, `session.queue`, `session.steer`, `session.cancelPendingMessages`, `session.retry`, `session.exec`, `session.interrupt`, `session.snapshot`, `session.setRisk`, `session.setReasoning`, `session.setPersona`, `session.resolvePrompt`, `session.autocompletePaths`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, `session.terminateSubagent`, `session.ephemeral.create`, `session.ephemeral.submit`, `session.ephemeral.close`, `session.clientTool.ack`, `session.clientTool.result`) over NDJSON stdin/stdout.
-
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+R` (cycle risk level), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (terminate selected subagent), `Ctrl+Enter` (steer running assistant with editor input), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (cancel pending queue and steering messages into the editor), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work), `Ctrl+C` (press twice to exit)
 
 Reasoning changes are allowed while a turn is running. The active user-message turn keeps the reasoning captured when that turn started, including all tool-call subturns; the new reasoning applies to the next submitted, queued, or steering user-message turn when it actually starts.
 
@@ -382,7 +348,6 @@ EOF
 
 ## Security
 
-- Risk levels gate model tools only; `!` commands bypass checks
 - Bash sanitizes environment, blocks `*_KEY`, `*_SECRET`, `*_TOKEN`, `*_PASSWORD` patterns
 - Process groups terminated on abort to prevent orphaned processes
 

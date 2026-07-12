@@ -88,14 +88,14 @@ describe("FileSessionStore", () => {
     });
   });
 
-  it("rejects stored snapshots with legacy duplicate history", async () => {
+  it("rejects stored snapshots with invalid known fields", async () => {
     await withTempStore(async (store, directory) => {
       await mkdir(directory, { recursive: true });
       await writeFile(
         join(directory, "c2Vzc2lvbi0x.json"),
         JSON.stringify({
           ...createSnapshot("session-1", "entry"),
-          history: [{ role: "user", content: [{ type: "text", text: "legacy duplicate" }] }],
+          settings: "invalid",
         }),
         "utf8",
       );
@@ -111,7 +111,7 @@ describe("FileSessionStore", () => {
       await expect(
         store.commitSessionSnapshot({
           ...createSnapshot("session-1", "entry"),
-          history: [{ role: "user", content: [{ type: "text", text: "legacy duplicate" }] }],
+          settings: "invalid",
         }),
       ).rejects.toThrow("session snapshot is invalid");
 

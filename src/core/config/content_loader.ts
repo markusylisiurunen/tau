@@ -21,7 +21,7 @@ import {
   type ToolName,
 } from "../tools/tool_names.js";
 import type { Persona, Skill } from "../types.js";
-import { ReasoningEffortSchema, RiskLevelSchema, ServiceTierSchema } from "../types.js";
+import { ReasoningEffortSchema, ServiceTierSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
 import { parseMarkdownFrontMatter } from "./markdown_frontmatter.js";
@@ -77,12 +77,11 @@ const SubagentSpecSchema = z
     reasoning: ReasoningEffortSchema.optional(),
     serviceTier: ServiceTierSchema.optional(),
     tools: z.array(z.string()).optional(),
-    riskLevel: RiskLevelSchema.optional(),
     launchModels: z.array(z.string()).optional(),
     systemPrompt: z.string().trim().min(1).optional(),
     description: z.string().trim().min(1).optional(),
   })
-  .passthrough()
+  .strip()
   .superRefine((spec, ctx) => {
     const hasProvider = spec.provider !== undefined;
     const hasModel = spec.model !== undefined;
@@ -233,7 +232,6 @@ function parseSubagentConfig(
     }
     const tools = toolsResult.tools;
     const launchModels = launchModelsResult.launchModels;
-    const riskLevel = specRaw.riskLevel;
     const settings =
       specRaw.reasoning !== undefined || specRaw.serviceTier !== undefined
         ? {
@@ -258,7 +256,6 @@ function parseSubagentConfig(
       ...(modelObj ? { model: modelObj } : {}),
       ...(settings ? { settings } : {}),
       ...(tools !== undefined ? { tools } : {}),
-      ...(riskLevel ? { riskLevel } : {}),
       ...(launchModels !== undefined ? { launchModels } : {}),
     };
 
@@ -495,7 +492,7 @@ const personaFrontMatterSchema = z
     subagents: z.unknown().optional(),
     tools: z.unknown().optional(),
   })
-  .passthrough();
+  .strip();
 
 const skillsSchema = z.union([z.literal("*"), z.array(z.string())]);
 
@@ -505,7 +502,7 @@ const promptFrontMatterSchema = z
     label: z.string().trim().optional(),
     description: z.string().trim().optional(),
   })
-  .passthrough();
+  .strip();
 
 const PERSONA_TOOL_NAMES = [
   TOOL_NAME_BASH,

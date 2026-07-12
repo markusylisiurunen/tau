@@ -35,7 +35,6 @@ describe("ClientToolBroker", () => {
     const definition = broker.getToolDefinitions("session-1")[0];
     const result = await definition.dispatch(
       createToolCall({ choice: "a" }),
-      "read-only",
       new AbortController().signal,
       {},
     );
@@ -84,7 +83,6 @@ describe("ClientToolBroker", () => {
 
     const result = await definition.dispatch(
       createToolCall({ choice: "a" }),
-      "read-only",
       new AbortController().signal,
       {},
     );
@@ -117,7 +115,6 @@ describe("ClientToolBroker", () => {
 
       const dispatched = definition.dispatch(
         createToolCall({ choice: "a" }),
-        "read-only",
         new AbortController().signal,
         {},
       );

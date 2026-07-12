@@ -672,20 +672,9 @@ describe("nook tool", () => {
     arguments: { operation: "list_sites" },
   };
 
-  it("requires read-write risk for every operation", async () => {
-    const tool = createNookToolDefinition({});
-    const result = await tool.dispatch(toolCall, "read-only", new AbortController().signal, {
-      config: { nook: { domain: "nook.example.com" } },
-    });
-
-    expect(result.kind).toBe("single");
-    expect(result.toolResult.isError).toBe(true);
-    expect(result.toolResult.content[0].text).toContain("read-write");
-  });
-
   it("fails fast when nook is not configured", async () => {
     const tool = createNookToolDefinition({});
-    const result = await tool.dispatch(toolCall, "read-write", new AbortController().signal, {
+    const result = await tool.dispatch(toolCall, new AbortController().signal, {
       config: {},
     });
 
@@ -714,7 +703,6 @@ describe("nook tool", () => {
           directory: "/workspace/app",
         },
       },
-      "read-write",
       new AbortController().signal,
       { config: { nook: { domain: "nook.example.com" } } },
     );
@@ -734,7 +722,6 @@ describe("nook tool", () => {
         name: "nook",
         arguments: { operation: "put_kv", site: "demo", key: "settings" },
       },
-      "read-write",
       new AbortController().signal,
       { config: { nook: { domain: "nook.example.com" } } },
     );

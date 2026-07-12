@@ -104,7 +104,7 @@ describe("MemorySessionStore", () => {
     await expect(
       store.commitSessionSnapshot({
         ...createSnapshot("session-1", "entry"),
-        history: [{ role: "user", content: [{ type: "text", text: "legacy duplicate" }] }],
+        settings: "invalid",
       }),
     ).rejects.toThrow("session snapshot is invalid");
 

@@ -31,10 +31,9 @@ const altBootstrap = createProtocolBootstrap({
   },
 });
 
-function createSnapshot(historyEntries = [], riskLevel = "read-only") {
+function createSnapshot(historyEntries = []) {
   return createProtocolSnapshot({
     sessionId: "session-1",
-    bootstrap: { ...bootstrap, riskLevel },
     catalog: {
       personas: [bootstrap.persona, altBootstrap.persona],
       prompts: [{ id: "fix", label: "Fix", template: "fix the bug" }],
@@ -63,13 +62,11 @@ function historyEntriesFromSnapshot(snapshot) {
 }
 
 function updateSnapshot(snapshot, overrides = {}) {
-  const riskLevel = overrides.riskLevel ?? snapshot.settings.riskLevel;
   return createProtocolSnapshot({
     sessionId: snapshot.sessionId,
     revision: overrides.revision ?? snapshot.revision,
     lifecycle: overrides.lifecycle ?? snapshot.lifecycle,
     costTotal: overrides.costTotal ?? snapshot.costTotal,
-    bootstrap: { ...bootstrap, riskLevel },
     catalog: overrides.catalog ?? snapshot.catalog,
     executionEnvironment: snapshot.executionEnvironment,
     historyEntries: overrides.historyEntries ?? historyEntriesFromSnapshot(snapshot),
@@ -296,14 +293,6 @@ class FakeSession {
   }));
   cancelPendingMessages = vi.fn(async () => ({ cancelled: [] }));
   interrupt = vi.fn(async () => ({ interrupted: true, isTurnRunning: false }));
-  setRiskLevel = vi.fn(async (riskLevel) => {
-    this.snapshotValue = updateSnapshot(this.snapshotValue, {
-      revision: this.snapshotValue.revision + 1,
-      riskLevel,
-      settings: { ...this.snapshotValue.settings, riskLevel },
-    });
-    return this.snapshotValue;
-  });
   setReasoning = vi.fn(async (reasoning) => {
     this.snapshotValue = updateSnapshot(this.snapshotValue, {
       revision: this.snapshotValue.revision + 1,
@@ -1209,8 +1198,6 @@ describe("SessionChatController", () => {
 
     session.snapshotValue = updateSnapshot(session.snapshotValue, {
       revision: session.snapshotValue.revision + 1,
-      riskLevel: "read-write",
-      settings: { ...session.snapshotValue.settings, riskLevel: "read-write" },
       historyEntries: [
         {
           id: "other-user",
@@ -1235,7 +1222,6 @@ describe("SessionChatController", () => {
         }),
       ]),
     );
-    expect(view.status.footer.riskLevel).toBe("read-write");
   });
 
   it("ignores stale snapshot reset deltas", async () => {
@@ -1616,13 +1602,11 @@ describe("SessionChatController", () => {
 
     expect(controller.isStreaming).toBe(false);
     expect(controller.submittedTurnInProgress).toBe(true);
-    expect(controller.getInputHandlers().beforeSubmit?.("/risk:read-write")).toBe(false);
+    expect(session.submit).toHaveBeenCalledTimes(1);
 
-    controller.getInputHandlers().onSubmit("/risk:read-write");
+    controller.getInputHandlers().onSubmit("/help");
     await flush();
 
-    expect(session.setRiskLevel).not.toHaveBeenCalled();
-    expect(session.submit).toHaveBeenCalledTimes(1);
     expect(view.systems).toContainEqual(
       expect.objectContaining({
         kind: "warn",
@@ -2754,16 +2738,12 @@ describe("SessionChatController", () => {
     });
     controller.start();
 
-    controller.getInputHandlers().onSubmit("/risk:read-write");
-    await flush();
-
     controller.getInputHandlers().onSubmit("/compact:summary-and-last preserve decisions");
     await flush();
 
     controller.getInputHandlers().onSubmit("/prune:smart 0.5 keep errors");
     await flush();
 
-    expect(session.setRiskLevel).toHaveBeenCalledWith("read-write");
     expect(session.compact).toHaveBeenCalledWith("summary-and-last", {
       guidance: "preserve decisions",
     });
@@ -2772,7 +2752,6 @@ describe("SessionChatController", () => {
       guidance: "keep errors",
     });
     expect(session.submit).not.toHaveBeenCalled();
-    expect(view.status.footer.riskLevel).toBe("read-write");
     expect(view.messages).toContainEqual({
       id: "summary-entry",
       model: { type: "user", text: "compacted summary: preserve decisions" },
@@ -2781,12 +2760,6 @@ describe("SessionChatController", () => {
       expect.objectContaining({
         kind: "success",
         text: "session compacted. previous context and last assistant message have been included.",
-      }),
-    );
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({
-        kind: "success",
-        text: "risk level set to read-write (all tools)",
       }),
     );
     expect(view.systems).toContainEqual(
@@ -2830,10 +2803,6 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(view.status.footer.commandHint).toBe("compacting context...");
-    controller.getInputHandlers().onSubmit("/risk:read-write");
-    await flush();
-    expect(session.setRiskLevel).not.toHaveBeenCalled();
-
     pendingCompact.resolve();
     await flush();
 
@@ -2851,16 +2820,12 @@ describe("SessionChatController", () => {
     });
     controller.start();
 
-    controller.getInputHandlers().onSubmit("/risk:read-write trailing words");
-    await flush();
-
     controller.getInputHandlers().onSubmit("/reload ignored");
     await flush();
 
     controller.getInputHandlers().onSubmit("/help extra");
     await flush();
 
-    expect(session.setRiskLevel).toHaveBeenCalledWith("read-write");
     expect(session.reload).toHaveBeenCalledTimes(1);
     expect(session.submit).not.toHaveBeenCalled();
     expect(view.systems.some((message) => message.text.includes("commands:"))).toBe(true);
@@ -3234,7 +3199,6 @@ describe("SessionChatController", () => {
     expect(session.createEphemeralContext).toHaveBeenCalledWith({
       instructions: expect.stringContaining("src/main.ts"),
       tools: ["bash", "view_image"],
-      riskLevel: "read-only",
     });
     expect(session.submitEphemeralThread).toHaveBeenCalledWith({
       contextId: "ephemeral-1",
@@ -3604,7 +3568,7 @@ describe("SessionChatController", () => {
         },
       ]),
     );
-    const nextSession = new FakeSession(createSnapshot([], "read-write"));
+    const nextSession = new FakeSession(createSnapshot([]));
     nextSession.id = "session-2";
     nextSession.snapshotValue = {
       ...nextSession.snapshotValue,
@@ -3629,7 +3593,6 @@ describe("SessionChatController", () => {
     expect(createSession).toHaveBeenCalledWith({
       executionEnvironment: { kind: "local", cwd: "/session/repo" },
       personaId: "persona-1",
-      riskLevel: "read-only",
       reasoning: "none",
     });
     expect(session.unobserve).toHaveBeenCalledTimes(1);

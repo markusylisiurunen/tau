@@ -36,12 +36,6 @@ describe("cli", () => {
     );
   });
 
-  it("requires exact risk level casing", () => {
-    expect(() => parseCliArgs(["--risk", "READ-ONLY"], [])).toThrow(
-      "invalid risk level 'READ-ONLY'",
-    );
-  });
-
   it("prints telegram help text when telegram command parsing fails", () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
     const result = spawnSync(process.execPath, [mainPath, "telegram"], {

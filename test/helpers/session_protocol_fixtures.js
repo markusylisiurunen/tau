@@ -22,7 +22,6 @@ export function createProtocolBootstrap(overrides = {}) {
       skills: "*",
       source: "builtin",
     },
-    riskLevel: "read-only",
     prompt: {
       environmentTag: "<environment></environment>",
       baseSystemPrompt: "system prompt",
@@ -76,7 +75,6 @@ export function createProtocolSnapshot(overrides = {}) {
     costTotal: overrides.costTotal ?? 0,
     settings: overrides.settings ?? {
       personaId: bootstrap.persona?.id ?? "persona-1",
-      riskLevel: bootstrap.riskLevel ?? "read-only",
       ...(bootstrap.persona?.settings?.reasoning !== undefined
         ? { reasoning: bootstrap.persona.settings.reasoning }
         : {}),

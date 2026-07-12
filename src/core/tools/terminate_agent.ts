@@ -2,7 +2,6 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import type { SubagentResult } from "../subagents/control_plane.js";
-import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { parseToolArgs } from "../utils/zod.js";
 import {
@@ -79,7 +78,6 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
     schema: TERMINATE_AGENT_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      _riskLevel: RiskLevel,
       signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {

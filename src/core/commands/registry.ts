@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-import { type RiskLevel, RiskLevelSchema, type Skill } from "../types.js";
+import type { Skill } from "../types.js";
 import { formatPathForDisplay } from "../utils/format.js";
 
 export type Command = (
@@ -18,7 +18,6 @@ export type Command = (
   | { type: "reload" }
   | { type: "listen" }
   | { type: "speak" }
-  | { type: "risk"; level: RiskLevel }
   | { type: "persona"; id: string }
   | { type: "prompt"; id: string }
   | { type: "theme"; id: string }
@@ -26,8 +25,8 @@ export type Command = (
 ) & { extra?: string };
 
 export type CommandId = Command["type"];
-export type CommandArgument = "none" | "risk" | "persona" | "prompt" | "theme";
-export type CommandSection = "base" | "risk" | "trailing";
+export type CommandArgument = "none" | "persona" | "prompt" | "theme";
+export type CommandSection = "base" | "trailing";
 
 export interface CommandInfo {
   id: CommandId;
@@ -61,7 +60,6 @@ export interface CommandDispatchContext {
   reload: () => Promise<void>;
   listen: () => Promise<void> | void;
   speak: () => Promise<void> | void;
-  risk: (level: RiskLevel) => void;
   persona: (id: string) => void;
   prompt: (id: string) => void;
   theme: (id: string) => void;
@@ -71,33 +69,8 @@ export interface CommandDispatchContext {
 export interface HelpTextOptions {
   agentsFiles?: string[];
   skills?: Skill[];
-  riskLevels?: RiskLevel[];
   themes?: string[];
   formatPath?: (path: string) => string;
-}
-
-const DEFAULT_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
-const RISK_LEVEL_HELP_DESCRIPTIONS: Record<RiskLevel, string> = {
-  "read-only": "allow read-only tool calls",
-  "read-write": "allow all tools",
-};
-
-export function getRiskLevelDescription(level: RiskLevel): string {
-  switch (level) {
-    case "read-only":
-      return "read-only tools";
-    case "read-write":
-      return "all tools";
-  }
-}
-
-export function getRiskLevelAutocompleteOptions(
-  allowed: RiskLevel[],
-): Array<{ id: RiskLevel; description: string }> {
-  return allowed.map((level) => ({
-    id: level,
-    description: RISK_LEVEL_HELP_DESCRIPTIONS[level],
-  }));
 }
 
 function formatSkillPath(fullPath: string, formatPath: (path: string) => string): string {
@@ -151,7 +124,7 @@ export class CommandRegistry<Ctx = unknown> {
 
   buildHelpText(options: HelpTextOptions = {}): string {
     const lines: string[] = [];
-    const { agentsFiles, skills, riskLevels, themes } = options;
+    const { agentsFiles, skills, themes } = options;
     const formatPath = options.formatPath ?? formatPathForDisplay;
 
     if (agentsFiles && agentsFiles.length > 0) {
@@ -177,20 +150,11 @@ export class CommandRegistry<Ctx = unknown> {
     const commands = this.list().filter((command) => command.argument !== "theme" || hasThemes);
     const baseCommands = commands.filter((command) => command.section === "base");
     const trailingCommands = commands.filter((command) => command.section === "trailing");
-    const riskCommand = commands.find((command) => command.section === "risk");
 
     const commandEntries: Array<[string, string]> = [];
     baseCommands.forEach((command) => {
       commandEntries.push([command.usage, command.description]);
     });
-
-    if (riskCommand) {
-      const allowed = riskLevels ?? DEFAULT_RISK_LEVELS;
-      allowed.forEach((level) => {
-        const description = RISK_LEVEL_HELP_DESCRIPTIONS[level];
-        commandEntries.push([`/risk:${level}`, description]);
-      });
-    }
 
     trailingCommands.forEach((command) => {
       commandEntries.push([command.usage, command.description]);
@@ -198,7 +162,6 @@ export class CommandRegistry<Ctx = unknown> {
 
     const keyEntries: Array<[string, string]> = [
       ["shift+tab", "cycle reasoning effort"],
-      ["ctrl+r", "cycle risk level"],
       ["ctrl+p", "cycle personality"],
       ["ctrl+t", "toggle thoughts visibility"],
       ["ctrl+o", "toggle compact tool UI"],
@@ -455,23 +418,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "copyCode", extra };
     },
     run: (ctx) => ctx.copyCode(),
-  });
-
-  registry.register({
-    id: "risk",
-    usage: "/risk:<level>",
-    description: "set risk level",
-    argument: "risk",
-    section: "risk",
-    parse: (raw) => {
-      const { command, extra } = splitCommandInput(raw);
-      const match = command.match(/^\/risk:(read-only|read-write)$/i);
-      if (!match) return null;
-      const parsed = RiskLevelSchema.safeParse(match[1]?.toLowerCase());
-      if (!parsed.success) return null;
-      return { type: "risk", level: parsed.data, extra };
-    },
-    run: (ctx, command) => ctx.risk(command.level),
   });
 
   registry.register({

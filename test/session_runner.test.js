@@ -317,7 +317,6 @@ describe("session runner tool dispatch context", () => {
       toolCalls: [toolCall],
       toolRegistry,
       enabledTools: toolRegistry.schemas,
-      riskLevel: "read-only",
       signal,
       dispatchContext,
     })) {
@@ -461,7 +460,6 @@ describe("session runner tool dispatch context", () => {
       toolCalls: [slowCall, fastCall],
       toolRegistry,
       enabledTools: toolRegistry.schemas,
-      riskLevel: "read-only",
       signal,
       dispatchContext,
     })[Symbol.asyncIterator]();
@@ -522,7 +520,7 @@ describe("session runner tool dispatch context", () => {
           additionalProperties: false,
         },
       },
-      async dispatch(call, _riskLevel, dispatchSignal, context) {
+      async dispatch(call, dispatchSignal, context) {
         receivedSignal = dispatchSignal;
         receivedContext = context;
         return {
@@ -554,7 +552,6 @@ describe("session runner tool dispatch context", () => {
       toolCalls: [toolCall],
       toolRegistry,
       enabledTools: toolRegistry.schemas,
-      riskLevel: "read-only",
       signal,
       dispatchContext,
     })) {

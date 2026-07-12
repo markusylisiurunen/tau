@@ -214,14 +214,14 @@ const diffReviewRequestEnvelopeSchema = z
     method: z.string(),
     params: z.unknown().optional(),
   })
-  .strict();
+  .strip();
 const diffReviewErrorSchema = z
   .object({
     code: z.string().trim().min(1),
     message: z.string(),
     data: z.unknown().optional(),
   })
-  .strict();
+  .strip();
 const diffReviewSuccessResponseSchema = z
   .object({
     version: z.literal(DIFF_REVIEW_PROTOCOL_VERSION),
@@ -230,7 +230,7 @@ const diffReviewSuccessResponseSchema = z
     ok: z.literal(true),
     result: z.unknown(),
   })
-  .strict();
+  .strip();
 const diffReviewErrorResponseSchema = z
   .object({
     version: z.literal(DIFF_REVIEW_PROTOCOL_VERSION),
@@ -239,38 +239,38 @@ const diffReviewErrorResponseSchema = z
     ok: z.literal(false),
     error: diffReviewErrorSchema,
   })
-  .strict();
+  .strip();
 const diffReviewResponseSchema = z.union([
   diffReviewSuccessResponseSchema,
   diffReviewErrorResponseSchema,
 ]);
-const diffReviewIdFieldSchema = z.object({ id: z.unknown() }).passthrough();
-const diffReviewVersionFieldSchema = z.object({ version: z.unknown() }).passthrough();
-const diffReviewTypeFieldSchema = z.object({ type: z.unknown() }).passthrough();
-const emptyObjectSchema = z.object({}).strict();
+const diffReviewIdFieldSchema = z.object({ id: z.unknown() }).strip();
+const diffReviewVersionFieldSchema = z.object({ version: z.unknown() }).strip();
+const diffReviewTypeFieldSchema = z.object({ type: z.unknown() }).strip();
+const emptyObjectSchema = z.object({}).strip();
 
 const initializeParamsSchema = z
   .object({
     token: z.string().trim().min(1),
   })
-  .strict();
+  .strip();
 const sessionGetDiffParamsSchema = z
   .object({
     path: z.string().min(1).optional(),
   })
-  .strict();
+  .strip();
 const sessionSetUiTextParamsSchema = z
   .object({
     text: z.string(),
   })
-  .strict();
+  .strip();
 const threadSubmitMessageParamsSchema = z
   .object({
     threadId: z.string().trim().min(1).optional(),
     forkFromThreadId: z.string().trim().min(1).optional(),
     message: z.string().trim().min(1),
   })
-  .strict()
+  .strip()
   .superRefine((value, context) => {
     if (value.threadId && value.forkFromThreadId) {
       context.addIssue({
@@ -284,7 +284,7 @@ const sessionReturnReviewParamsSchema = z
   .object({
     review: z.string().trim().min(1),
   })
-  .strict();
+  .strip();
 
 export function createDiffReviewError(
   code: DiffReviewErrorCode,

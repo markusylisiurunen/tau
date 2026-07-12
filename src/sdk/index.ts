@@ -61,7 +61,6 @@ export type {
   TauSdkSessionRewindResult,
   TauSdkSessionSetPersonaResult,
   TauSdkSessionSetReasoningResult,
-  TauSdkSessionSetRiskResult,
   TauSdkSessionSnapshotResult,
   TauSdkSessionSteerResult,
   TauSdkSessionSubmitResult,

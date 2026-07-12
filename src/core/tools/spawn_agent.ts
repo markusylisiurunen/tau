@@ -9,7 +9,7 @@ import { composeSessionPrompts } from "../runtime/session_prompt_composer.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
 import { getSubagentDescription, resolveSubagentEffectiveSettings } from "../subagents/registry.js";
 import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/types.js";
-import type { Persona, RiskLevel } from "../types.js";
+import type { Persona } from "../types.js";
 import { formatCwd } from "../utils/format.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { parseToolArgs } from "../utils/zod.js";
@@ -109,7 +109,6 @@ function formatAllowedLaunchModels(launchModels: string[]): string {
 async function buildSubagentSystemPrompt(args: {
   name: string;
   persona: Persona;
-  riskLevel: RiskLevel;
   config: ToolDispatchContext["config"];
   cwd: string;
   home: string;
@@ -147,7 +146,6 @@ async function buildSubagentSystemPrompt(args: {
 
   const composition = composeSessionPrompts({
     persona: args.persona,
-    riskLevel: args.riskLevel,
     cwd: args.cwd,
     datetime: new Date().toISOString(),
     platform: process.platform,
@@ -164,7 +162,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
     schema: SPAWN_AGENT_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      riskLevel: RiskLevel,
       signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
@@ -270,7 +267,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           systemPrompt = await buildSubagentSystemPrompt({
             name,
             persona,
-            riskLevel,
             config,
             cwd,
             home: baseHome,
@@ -298,7 +294,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       const effectiveSettings = resolveSubagentEffectiveSettings({
         persona,
         config: personaConfig,
-        riskLevel,
         launchModel: launchModelOverride,
       });
       const runtimeConfig: SubagentRuntimeConfig = {

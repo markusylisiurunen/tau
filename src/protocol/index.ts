@@ -99,7 +99,6 @@ export type {
   SessionProtocolSessionSummary,
   SessionProtocolSetPersonaParams,
   SessionProtocolSetReasoningParams,
-  SessionProtocolSetRiskParams,
   SessionProtocolSettingsSnapshot,
   SessionProtocolSkillSnapshot,
   SessionProtocolSnapshot,

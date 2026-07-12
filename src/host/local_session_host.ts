@@ -10,7 +10,7 @@ import type { SessionPromptComposition } from "../core/runtime/session_prompt_co
 import type { CoreSession } from "../core/session/core_session.js";
 import type { SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolUiEvent } from "../core/tools/registry.js";
-import type { Persona, ReasoningEffort, RiskLevel, Skill } from "../core/types.js";
+import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
 import {
   filterProjectPathAutocompleteEntries,
   loadProjectPathAutocompleteEntriesWithBackend,
@@ -75,7 +75,6 @@ const PATH_AUTOCOMPLETE_CACHE_TTL_MS = 5_000;
 
 export type LocalSessionHostSessionOptions = {
   persona: Persona;
-  riskLevel: RiskLevel;
   discoveredSkills: Skill[];
   personas: Persona[];
   prompts: PromptTemplate[];
@@ -93,7 +92,6 @@ export type LocalSessionHostOptions = LocalSessionHostSessionOptions & {
 
 export type LocalSessionResolvedBootstrap = {
   persona: Persona;
-  riskLevel: RiskLevel;
   discoveredSkills: Skill[];
   personas: Persona[];
   prompts: PromptTemplate[];
@@ -271,7 +269,6 @@ export class LocalSessionHost implements TauSessionHost {
   ): LocalHostedSessionHandle {
     const runtime = ChatRuntime.create({
       persona: bootstrap.persona,
-      riskLevel: bootstrap.riskLevel,
       toolRegistry: runtimeContext.toolRegistry,
       clientToolDefinitions: (sessionId) => this.clientToolBroker.getToolDefinitions(sessionId),
       promptContext: runtimeContext.promptBootstrap.promptContext,
@@ -326,7 +323,6 @@ export class LocalSessionHost implements TauSessionHost {
     if (snapshot.settings.serviceTier !== undefined) {
       bootstrap.persona.settings.serviceTier = snapshot.settings.serviceTier;
     }
-    bootstrap.riskLevel = snapshot.settings.riskLevel;
     return bootstrap;
   }
 
@@ -348,16 +344,11 @@ export class LocalSessionHost implements TauSessionHost {
     if (createParams.reasoning !== undefined) {
       bootstrap.persona.settings.reasoning = createParams.reasoning;
     }
-
-    if (createParams.riskLevel !== undefined) {
-      bootstrap.riskLevel = createParams.riskLevel;
-    }
   }
 
   private defaultSessionBootstrap(): LocalSessionResolvedBootstrap {
     return cloneResolvedBootstrap({
       persona: this.sessionOptions.persona,
-      riskLevel: this.sessionOptions.riskLevel,
       discoveredSkills: this.sessionOptions.discoveredSkills,
       personas: this.sessionOptions.personas,
       prompts: this.sessionOptions.prompts,
@@ -670,14 +661,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
   }
 
-  async setRiskLevel(level: RiskLevel): Promise<SessionProtocolSnapshot> {
-    this.assertActive();
-    this.runtime.setRiskLevel(level);
-    const snapshot = await this.commitSnapshot();
-    this.emitSnapshotReset("configuration", snapshot);
-    return snapshot;
-  }
-
   async setReasoning(reasoning: ReasoningEffort): Promise<SessionProtocolSettingsUpdateResult> {
     this.assertActive();
     const fromRevision = this.committedSnapshot?.revision;
@@ -729,7 +712,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
     this.bootstrap = {
       persona: clonePersona(selectedPersona),
-      riskLevel: this.runtime.currentRiskLevel,
       discoveredSkills: structuredClone(runtimeConfig.skills),
       personas: personas.map(clonePersona),
       prompts: structuredClone(runtimeConfig.prompts),
@@ -768,7 +750,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
     this.bootstrap = {
       persona: clonePersona(nextPersona),
-      riskLevel: this.runtime.currentRiskLevel,
       discoveredSkills: structuredClone(runtimeConfig.skills),
       personas: personas.map(clonePersona),
       prompts: structuredClone(runtimeConfig.prompts),
@@ -928,7 +909,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       executionEnvironment: this.executionEnvironment,
       instructions: options.instructions,
       tools: options.tools,
-      riskLevel: options.riskLevel,
       emitUpdate: (threadId, update) => {
         this.emitEphemeral(
           createSessionProtocolEphemeralMessage({
@@ -1091,7 +1071,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       costTotal: this.costTotal,
       settings: {
         personaId: this.runtime.persona.id,
-        riskLevel: this.runtime.currentRiskLevel,
         ...(this.runtime.persona.settings.reasoning !== undefined
           ? { reasoning: this.runtime.persona.settings.reasoning }
           : {}),
@@ -1929,7 +1908,6 @@ function cloneResolvedBootstrap(
 ): LocalSessionResolvedBootstrap {
   return {
     persona: clonePersona(bootstrap.persona),
-    riskLevel: bootstrap.riskLevel,
     discoveredSkills: structuredClone(bootstrap.discoveredSkills),
     personas: bootstrap.personas.map(clonePersona),
     prompts: structuredClone(bootstrap.prompts),
@@ -2007,7 +1985,6 @@ function subagentSnapshotsFromConfig(
     snapshots[name] = {
       ...(config.description !== undefined ? { description: config.description } : {}),
       ...(config.tools ? { tools: [...config.tools] } : {}),
-      ...(config.riskLevel !== undefined ? { riskLevel: config.riskLevel } : {}),
       ...(config.launchModels ? { launchModels: [...config.launchModels] } : {}),
     };
   }

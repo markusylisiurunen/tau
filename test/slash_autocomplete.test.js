@@ -15,7 +15,6 @@ function createProvider(options = {}) {
       (options.files ?? []).filter((path) => path.includes(query)).slice(0, limit),
     () => options.skills ?? [],
     () => options.agents ?? [],
-    () => ["read-only", "read-write"],
   );
 }
 

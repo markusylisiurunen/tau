@@ -53,7 +53,7 @@ const BLOCK_TOOL_USE_GUIDELINES = `
 
 **Restraint**: Don't race ahead with bash commands. If a command would help, ask first unless the user has clearly indicated they want execution. Never use bash just to print text; respond directly instead. Don't speculate about how long tasks will take.
 
-**Safety**: File modification tools require read-write risk level. If permissions don't match, stop and tell the user. When a request is ambiguous, clarify before running anything that mutates state.
+**Safety**: When a request is ambiguous, clarify before running anything that mutates state.
 `.trim();
 
 const BLOCK_TOOL_USE_GUIDELINES_CODER = `
@@ -65,7 +65,7 @@ const BLOCK_TOOL_USE_GUIDELINES_CODER = `
 
 **Bias toward action**: When the user asks you to implement, fix, or modify code, do the work directly rather than asking for permission. Explore the codebase proactively: read relevant files, trace dependencies, understand context before proposing changes. Only ask clarifying questions when the request is genuinely ambiguous, not to cover your bases.
 
-**Safety**: File modification tools require read-write risk level. If permissions don't match, stop and tell the user. For destructive operations (deleting files, dropping data, force-pushing), confirm intent even if the user seems confident.
+**Safety**: For destructive operations (deleting files, dropping data, force-pushing), confirm intent even if the user seems confident.
 `.trim();
 
 const BLOCK_CODER_PROGRESS_UPDATES = `
@@ -163,17 +163,6 @@ const BLOCK_PROJECT_CONTEXT = `
 If an AGENTS.md file is present, read it early. Treat it as the baseline for project-specific conventions, build commands, and architecture notes. User instructions always take precedence, including when they conflict with AGENTS.md. If the contents are already provided in the conversation context, do not re-read it unless the user asks.
 `.trim();
 
-const BLOCK_RISK_LEVELS = `
-### Risk levels and tools
-
-Your available tools depend on the current risk level (shown in the <environment> tag or in the latest system notification):
-
-- **read-only**: Shell commands that don't modify state. Background tasks and sub-agents available.
-- **read-write**: Full access including file modifications and write operations.
-
-Bash-specific guidance in this prompt (ripgrep, fd, sed, etc.) applies when bash is available.
-`.trim();
-
 const BLOCK_HIDDEN_SYSTEM_INSTRUCTIONS = `
 ### Hidden Tau system instructions
 
@@ -186,7 +175,6 @@ const BASIC_SYSTEM_PROMPT = [
   BLOCK_GENERAL_PURPOSE_PREAMBLE,
   BLOCK_OUTPUT_STYLE_GUIDELINES,
   BLOCK_TOOL_USE_GUIDELINES,
-  BLOCK_RISK_LEVELS,
   BLOCK_HIDDEN_SYSTEM_INSTRUCTIONS,
   BLOCK_FILE_MENTIONS,
   BLOCK_FILE_EDIT_GUIDELINES,
@@ -199,7 +187,6 @@ const CODER_SYSTEM_PROMPT = [
   BLOCK_OUTPUT_STYLE_GUIDELINES,
   BLOCK_TOOL_USE_GUIDELINES_CODER,
   BLOCK_CODER_PROGRESS_UPDATES,
-  BLOCK_RISK_LEVELS,
   BLOCK_HIDDEN_SYSTEM_INSTRUCTIONS,
   BLOCK_FILE_MENTIONS,
   BLOCK_FILE_EDIT_GUIDELINES,

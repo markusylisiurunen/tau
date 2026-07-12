@@ -94,7 +94,6 @@ describe("subagent engine model notices", () => {
         systemPrompt: "subagent system",
         model: persona.model,
         tools: [],
-        riskLevel: "read-only",
         workingDirectory: "/repo/current",
       },
       prompt: "collect findings",
@@ -132,7 +131,6 @@ describe("subagent engine model notices", () => {
       name: "bash",
       arguments: {
         command: "pwd",
-        safetyLevel: "read",
       },
     };
 
@@ -163,7 +161,6 @@ describe("subagent engine model notices", () => {
         systemPrompt: "subagent system",
         model: persona.model,
         tools: ["bash"],
-        riskLevel: "read-only",
         workingDirectory: "/repo/subdir",
       },
       prompt: "collect findings",

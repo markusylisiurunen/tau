@@ -30,8 +30,6 @@ export function getCommandHint(command: Command): string | undefined {
       return "start microphone recording and transcribe to editor (macOS only)";
     case "speak":
       return "speak the last assistant message aloud (macOS only)";
-    case "risk":
-      return "set risk level: /risk:read-only or /risk:read-write";
     case "persona":
       return "switch persona: /persona:<id>";
     case "prompt":

@@ -112,7 +112,6 @@ function createStatusSnapshot(overrides = {}) {
     settings: {
       personaId: "default",
       reasoning: "medium",
-      riskLevel: "read-write",
     },
     bootstrap: {
       model: {

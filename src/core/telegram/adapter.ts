@@ -776,7 +776,7 @@ function formatSessionHeadline(sessionId: string, label: string): string {
   return `(${sessionId}) ${label}`;
 }
 
-const telegramObject = <Shape extends z.ZodRawShape>(shape: Shape) => z.object(shape).passthrough();
+const telegramObject = <Shape extends z.ZodRawShape>(shape: Shape) => z.object(shape).strip();
 
 const telegramPartialObject = <Shape extends z.ZodRawShape>(shape: Shape) =>
   telegramObject(shape).partial();

@@ -166,17 +166,11 @@ class FakeSessionProtocolTransport {
           return createObserveResult(params.sessionId);
         case "session.snapshot":
           return createSnapshot(params.sessionId);
-        case "session.setRisk":
-          return createProtocolSnapshot({
-            sessionId: params.sessionId,
-            bootstrap: { ...bootstrap, riskLevel: params.riskLevel },
-          });
         case "session.setReasoning":
           return {
             revision: 2,
             settings: {
               personaId: bootstrap.persona.id,
-              riskLevel: "read-only",
               reasoning: params.reasoning,
             },
           };
@@ -600,17 +594,6 @@ describe("sdk_client", () => {
       method: "session.record",
       params: { sessionId: "session-1", text: "review", historyEntryId: "review-1" },
     });
-
-    await expect(readySession.setRiskLevel("read-write")).resolves.toEqual(
-      expect.objectContaining({
-        settings: expect.objectContaining({ riskLevel: "read-write" }),
-      }),
-    );
-    expect(transport.requests.at(-1)).toEqual({
-      method: "session.setRisk",
-      params: { sessionId: "session-1", riskLevel: "read-write" },
-    });
-
     await expect(readySession.setReasoning("high")).resolves.toEqual(
       expect.objectContaining({
         settings: expect.objectContaining({ reasoning: "high" }),
@@ -1113,7 +1096,6 @@ describe("sdk_client", () => {
     const transport = new StdioSessionProtocolTransport(child);
     const clientPromise = createTauSdkClientFromTransport(transport, {
       persona: "gpt-5.5-coder",
-      riskLevel: "read-only",
       noAgentContextFiles: true,
       connectTimeoutMs: 500,
     });

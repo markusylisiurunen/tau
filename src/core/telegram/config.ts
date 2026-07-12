@@ -49,7 +49,7 @@ const telegramTopLevelSchema = z
     bots: z.unknown().optional(),
     projects: z.unknown().optional(),
   })
-  .strict();
+  .strip();
 
 const telegramBotSchema = z
   .object({
@@ -62,7 +62,7 @@ const telegramBotSchema = z
     pollIntervalMs: positiveIntegerSchema.optional(),
     requestTimeoutSeconds: positiveIntegerSchema.optional(),
   })
-  .strict();
+  .strip();
 
 function createProjectSchema(configDir: string) {
   return z
@@ -99,10 +99,9 @@ function createProjectSchema(configDir: string) {
         .min(1, "must be a non-empty string array.")
         .optional(),
       persona: z.string().optional(),
-      riskLevel: z.enum(["read-only", "read-write"]).optional(),
       noAgentContextFiles: z.boolean().optional(),
     })
-    .strict();
+    .strip();
 }
 
 function formatUnknownKeysError(sourceLabel: string, fieldPath: string, keys: string[]): string {

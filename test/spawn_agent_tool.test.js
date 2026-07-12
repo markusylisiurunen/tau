@@ -79,7 +79,6 @@ function createContext(overrides = {}) {
         },
       },
     },
-    riskLevel: "read-only",
     subagentPrompts: {
       default: "default prompt",
       researcher: "research prompt",
@@ -120,7 +119,6 @@ describe("spawn_agent tool", () => {
           model: "openai/gpt-5.5:high",
         },
       },
-      "read-only",
       undefined,
       context,
     );
@@ -175,7 +173,6 @@ describe("spawn_agent tool", () => {
           model: "openai/gpt-5.5:high",
         },
       },
-      "read-only",
       undefined,
       context,
     );
@@ -221,7 +218,6 @@ describe("spawn_agent tool", () => {
           model: "openai/gpt-5.5:high",
         },
       },
-      "read-only",
       undefined,
       context,
     );
@@ -247,7 +243,6 @@ describe("spawn_agent tool", () => {
           model: "openai/gpt-5.5:low",
         },
       },
-      "read-only",
       undefined,
       context,
     );
@@ -274,7 +269,6 @@ describe("spawn_agent tool", () => {
           prompt: "collect findings",
         },
       },
-      "read-only",
       undefined,
       context,
     );
@@ -306,7 +300,6 @@ describe("spawn_agent tool", () => {
           model: "openai/gpt-5.5:high",
         },
       },
-      "read-only",
       undefined,
       context,
     );
@@ -336,7 +329,6 @@ describe("spawn_agent tool", () => {
           model: "",
         },
       },
-      "read-only",
       undefined,
       context,
     );
@@ -363,7 +355,6 @@ describe("spawn_agent tool", () => {
           workingDirectory: "",
         },
       },
-      "read-only",
       undefined,
       context,
     );
@@ -392,7 +383,6 @@ describe("spawn_agent tool", () => {
           workingDirectory: "/tmp",
         },
       },
-      "read-only",
       undefined,
       context,
     );
@@ -421,7 +411,6 @@ describe("spawn_agent tool", () => {
           workingDirectory: "..",
         },
       },
-      "read-only",
       undefined,
       context,
     );
@@ -472,7 +461,6 @@ describe("spawn_agent tool", () => {
             workingDirectory: "..",
           },
         },
-        "read-only",
         undefined,
         context,
       );
@@ -525,7 +513,6 @@ describe("spawn_agent tool", () => {
             workingDirectory: "..",
           },
         },
-        "read-only",
         undefined,
         context,
       );
@@ -565,7 +552,6 @@ describe("spawn_agent tool", () => {
             workingDirectory: ".",
           },
         },
-        "read-only",
         undefined,
         context,
       );
@@ -628,7 +614,6 @@ describe("spawn_agent tool", () => {
             workingDirectory: ".",
           },
         },
-        "read-only",
         undefined,
         context,
       );

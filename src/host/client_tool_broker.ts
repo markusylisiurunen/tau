@@ -7,7 +7,6 @@ import type {
   ToolUiEvent,
   ToolUiText,
 } from "../core/tools/registry.js";
-import type { RiskLevel } from "../core/types.js";
 import { createToolError, createToolResult } from "../core/utils/messages.js";
 import { formatTokenEstimate } from "../core/utils/token.js";
 import { buildHeadTailPreviewLines } from "../core/utils/tool_preview.js";
@@ -363,7 +362,6 @@ function createClientToolDefinition(
     schema,
     async dispatch(
       toolCall: ToolCall,
-      _riskLevel: RiskLevel,
       signal: AbortSignal,
       _context: ToolDispatchContext,
     ): Promise<ToolDispatchResult> {

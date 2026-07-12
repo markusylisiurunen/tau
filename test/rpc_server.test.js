@@ -119,7 +119,6 @@ function createHarness(options = {}) {
     let releaseTurn;
     let pendingTurnResult = { aborted: false };
     let pendingTurn = null;
-    let riskLevel = bootstrap.riskLevel;
     let reasoning = bootstrap.persona.settings.reasoning;
 
     const emitDelta = (delta) => {
@@ -167,7 +166,6 @@ function createHarness(options = {}) {
           lifecycle: running ? "running" : "idle",
           bootstrap: {
             ...bootstrap,
-            riskLevel,
             persona: {
               ...bootstrap.persona,
               settings: { ...bootstrap.persona.settings, reasoning },
@@ -248,29 +246,6 @@ function createHarness(options = {}) {
         return createProtocolExecResult({
           command: runOptions.command,
         });
-      },
-      async setRiskLevel(nextRiskLevel) {
-        riskLevel = nextRiskLevel;
-        const snapshot = createProtocolSnapshot({
-          sessionId,
-          revision: historyEntries.length + 2,
-          lifecycle: running ? "running" : "idle",
-          bootstrap: {
-            ...bootstrap,
-            riskLevel,
-            persona: {
-              ...bootstrap.persona,
-              settings: { ...bootstrap.persona.settings, reasoning },
-            },
-          },
-          executionEnvironment: { kind: "local", cwd: "/repo", home: "/home/user" },
-          historyEntries: historyEntries.map((entry) => ({
-            id: entry.id,
-            message: entry.message,
-          })),
-        });
-        emitDelta(createResetDelta(sessionId, historyEntries.length + 1, snapshot));
-        return snapshot;
       },
       async setReasoning(nextReasoning) {
         reasoning = nextReasoning;
@@ -525,25 +500,6 @@ describe("rpc_server", () => {
     await submit;
 
     await harness.server.handleLine(
-      request("risk-created", "session.setRisk", {
-        sessionId: "session-2",
-        riskLevel: "read-write",
-      }),
-    );
-    const riskChanged = harness.lines.find(
-      (line) => line.type === "response" && line.id === "risk-created",
-    );
-    expect(riskChanged).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: expect.objectContaining({
-          sessionId: "session-2",
-          settings: expect.objectContaining({ riskLevel: "read-write" }),
-        }),
-      }),
-    );
-
-    await harness.server.handleLine(
       request("compact-created", "session.compact", {
         sessionId: "session-2",
         mode: "summary-and-last",
@@ -707,68 +663,6 @@ describe("rpc_server", () => {
         },
       }),
     );
-  });
-
-  it("broadcasts non-core session updates across handlers and supports detach", async () => {
-    const harness = createHarness();
-    const observerLines = [];
-    const observer = new RpcServer({
-      host: harness.host,
-      send: (line) => observerLines.push(JSON.parse(line)),
-    });
-
-    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
-    await harness.server.handleLine(
-      request("risk", "session.setRisk", {
-        sessionId: "session-1",
-        riskLevel: "read-write",
-      }),
-    );
-
-    await waitFor(() =>
-      observerLines.some(
-        (line) =>
-          line.type === "session.delta" &&
-          line.sessionId === "session-1" &&
-          line.delta?.type === "snapshot.reset" &&
-          line.reason === "configuration",
-      ),
-    );
-    const update = observerLines.find((line) => line.type === "session.delta");
-    expect(update).toEqual(
-      expect.objectContaining({
-        sessionId: "session-1",
-        toRevision: expect.any(Number),
-        reason: "configuration",
-        delta: expect.objectContaining({ type: "snapshot.reset" }),
-      }),
-    );
-
-    await observer.handleLine(request("detach", "session.unobserve", { sessionId: "session-1" }));
-    const detach = observerLines.find((line) => line.type === "response" && line.id === "detach");
-    expect(detach).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: { unobserved: true },
-      }),
-    );
-    const updateCountAfterDetach = observerLines.filter(
-      (line) => line.type === "session.delta",
-    ).length;
-
-    await harness.server.handleLine(
-      request("risk-again", "session.setRisk", {
-        sessionId: "session-1",
-        riskLevel: "read-only",
-      }),
-    );
-    await Promise.resolve();
-
-    expect(observerLines.filter((line) => line.type === "session.delta")).toHaveLength(
-      updateCountAfterDetach,
-    );
-
-    await observer.close();
   });
 
   it("buffers initial observed deltas until after the observe snapshot response", async () => {

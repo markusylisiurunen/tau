@@ -1,7 +1,7 @@
 import type { Config } from "../config/index.js";
 import { CoreSession } from "../session/core_session.js";
 import type { ToolDefinition, ToolRegistry } from "../tools/registry.js";
-import type { Persona, ReasoningEffort, RiskLevel } from "../types.js";
+import type { Persona, ReasoningEffort } from "../types.js";
 import {
   type ConversationTurnResult,
   ConversationTurnRuntime,
@@ -26,7 +26,6 @@ export type ChatRuntimeEnvironment = {
 export type ChatRuntimeOptions = {
   session: CoreSession;
   persona: Persona;
-  riskLevel: RiskLevel;
   promptContext: ChatRuntimePromptContext;
   environment: ChatRuntimeEnvironment;
   initialPromptComposition?: SessionPromptComposition;
@@ -34,7 +33,6 @@ export type ChatRuntimeOptions = {
 
 export type CreateChatRuntimeOptions = {
   persona: Persona;
-  riskLevel: RiskLevel;
   toolRegistry: ToolRegistry;
   clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
   promptContext: ChatRuntimePromptContext;
@@ -48,7 +46,6 @@ export class ChatRuntime {
   private readonly sessionInstance: CoreSession;
   private readonly turnRuntime: ConversationTurnRuntime;
   private currentPersona: Persona;
-  private riskLevel: RiskLevel;
   private promptContext: ChatRuntimePromptContext;
   private readonly environment: ChatRuntimeEnvironment;
   private latestPromptComposition: SessionPromptComposition;
@@ -58,7 +55,6 @@ export class ChatRuntime {
       options.initialPromptComposition ??
       composeSessionPrompts({
         persona: options.persona,
-        riskLevel: options.riskLevel,
         cwd: options.promptContext.cwd,
         datetime: new Date(options.environment.now()).toISOString(),
         platform: options.environment.platform(),
@@ -71,7 +67,6 @@ export class ChatRuntime {
       persona: options.persona,
       systemPrompt: promptComposition.baseSystemPrompt,
       subagentPrompts: promptComposition.subagentPrompts,
-      riskLevel: options.riskLevel,
       toolRegistry: options.toolRegistry,
       clientToolDefinitions: options.clientToolDefinitions,
       config: options.config,
@@ -84,7 +79,6 @@ export class ChatRuntime {
     return new ChatRuntime({
       session,
       persona: options.persona,
-      riskLevel: options.riskLevel,
       promptContext: options.promptContext,
       environment: options.environment,
       initialPromptComposition: promptComposition,
@@ -95,7 +89,6 @@ export class ChatRuntime {
     this.sessionInstance = options.session;
     this.turnRuntime = new ConversationTurnRuntime(this.sessionInstance);
     this.currentPersona = options.persona;
-    this.riskLevel = options.riskLevel;
     this.promptContext = { ...options.promptContext };
     this.environment = options.environment;
 
@@ -124,10 +117,6 @@ export class ChatRuntime {
 
   get persona(): Persona {
     return this.currentPersona;
-  }
-
-  get currentRiskLevel(): RiskLevel {
-    return this.riskLevel;
   }
 
   runTurn(
@@ -161,16 +150,6 @@ export class ChatRuntime {
       },
     };
     this.sessionInstance.setReasoning(reasoning);
-  }
-
-  setRiskLevel(level: RiskLevel): void {
-    const previous = this.riskLevel;
-    this.riskLevel = level;
-    this.sessionInstance.setRiskLevel(level);
-
-    if (previous !== level) {
-      this.rebuildSubagentPrompts();
-    }
   }
 
   setPersona(persona: Persona, options?: { skillsBlock?: string }): void {
@@ -224,7 +203,6 @@ export class ChatRuntime {
   private composePromptSet(skillsBlock?: string): SessionPromptComposition {
     return composeSessionPrompts({
       persona: this.currentPersona,
-      riskLevel: this.riskLevel,
       cwd: this.promptContext.cwd,
       datetime: new Date(this.environment.now()).toISOString(),
       platform: this.environment.platform(),

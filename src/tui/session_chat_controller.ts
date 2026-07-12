@@ -5,7 +5,6 @@ import {
   type CommandDispatchContext,
   type CommandRegistry,
   createCommandRegistry,
-  getRiskLevelDescription,
 } from "../core/commands/index.js";
 import { type Config, type DiffToolConfig, getGoogleApiKey } from "../core/config/index.js";
 import type {
@@ -26,7 +25,7 @@ import {
 } from "../core/session/pruning.js";
 import type { SubagentStatus, SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolUiEvent } from "../core/tools/registry.js";
-import { REASONING_LEVELS, type ReasoningEffort, type RiskLevel } from "../core/types.js";
+import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
 import { collectSpeechToTextContext } from "../core/utils/speech_to_text_context.js";
@@ -188,7 +187,6 @@ export class SessionChatController {
       reload: () => this.reloadContent(),
       listen: () => this.startListenCaptureFromCommand(),
       speak: () => this.speakLastAssistantMessage(),
-      risk: (level) => this.setRiskLevel(level),
       persona: (id) => this.setPersona(id),
       prompt: (id) => this.insertPrompt(id),
       theme: (id) => this.switchTheme(id),
@@ -251,7 +249,6 @@ export class SessionChatController {
       onCtrlT: () => this.toggleThinkingVisibility(),
       onCtrlO: () => this.toggleCompactToolUi(),
       onShiftTab: () => void this.cycleReasoningLevel(),
-      onCtrlR: () => void this.cycleRiskLevel(),
       onCtrlP: () => void this.cyclePersonality(),
       onCtrlS: () => void this.stashEditorToClipboard(),
       onCtrlY: () => void this.toggleListenCapture(),
@@ -395,7 +392,6 @@ export class SessionChatController {
       this.commandRegistry.buildHelpText({
         agentsFiles: this.getAgentsFilePaths(),
         skills: this.snapshot.catalog.skills,
-        riskLevels: ["read-only", "read-write"],
         themes: this.themeIds,
         formatPath: (path) =>
           formatPathForSessionDisplay(path, this.snapshot.executionEnvironment.home),
@@ -456,7 +452,6 @@ export class SessionChatController {
     autocompletePaths: (query: string, limit: number) => Promise<string[]>;
     skills: () => string[];
     subagents: () => string[];
-    riskLevels: () => Array<"read-only" | "read-write">;
   } {
     return {
       personas: () =>
@@ -474,7 +469,6 @@ export class SessionChatController {
         (await this.session.autocompletePaths({ query, limit })).paths,
       skills: () => this.snapshot.catalog.skills.map((skill) => skill.name),
       subagents: () => Object.keys(this.getCurrentPersonaSnapshot()?.subagents ?? {}),
-      riskLevels: () => ["read-only", "read-write"],
     };
   }
 
@@ -1018,7 +1012,6 @@ export class SessionChatController {
       const nextSession = await this.createSession({
         executionEnvironment: this.createExecutionEnvironmentInputFromSnapshot(),
         personaId: this.snapshot.settings.personaId,
-        riskLevel: this.snapshot.settings.riskLevel,
         ...(this.snapshot.settings.reasoning !== undefined
           ? { reasoning: this.snapshot.settings.reasoning }
           : {}),
@@ -1517,11 +1510,6 @@ export class SessionChatController {
     );
   }
 
-  private async cycleRiskLevel(): Promise<void> {
-    const next = this.snapshot.settings.riskLevel === "read-only" ? "read-write" : "read-only";
-    await this.setRiskLevel(next);
-  }
-
   private async cyclePersonality(): Promise<void> {
     const personas = this.snapshot.catalog.personas;
     if (personas.length === 0) {
@@ -1572,36 +1560,6 @@ export class SessionChatController {
     );
     const unique = [...new Set(normalized)];
     return unique.length ? unique : REASONING_LEVELS;
-  }
-
-  private async setRiskLevel(rawLevel: string): Promise<void> {
-    const riskLevel = rawLevel.trim();
-    if (riskLevel !== "read-only" && riskLevel !== "read-write") {
-      this.view.addSystemMessage(
-        `invalid risk level '${rawLevel}'. allowed: read-only, read-write`,
-        "error",
-      );
-      return;
-    }
-
-    if (this.isSessionOperationActive()) {
-      this.view.addSystemMessage("cannot change risk while a session turn is running", "warn");
-      return;
-    }
-
-    try {
-      this.snapshot = await this.session.setRiskLevel(riskLevel);
-      this.syncRenderedHistory(this.snapshot);
-      this.refreshStatus();
-      this.view.addSystemMessage(this.formatRiskLevelNotice(riskLevel), "success");
-    } catch (error) {
-      this.view.addSystemMessage(`risk change failed: ${(error as Error).message}`, "error");
-    }
-  }
-
-  private formatRiskLevelNotice(level: RiskLevel): string {
-    const details = getRiskLevelDescription(level);
-    return details ? `risk level set to ${level} (${details})` : `risk level set to ${level}`;
   }
 
   private async setPersona(rawId: string): Promise<void> {
@@ -1848,7 +1806,6 @@ export class SessionChatController {
         contextUsage: this.getContextUsageString(),
         sessionCost: this.getSessionCostString(),
         duration: this.getTurnDurationString(),
-        riskLevel: this.snapshot.settings.riskLevel,
         commandHint: this.diffReviewService.getCommandHint(
           this.getSessionOperationStatusHint() ?? this.speechStatusHint ?? this.commandHint,
         ),
@@ -2101,7 +2058,6 @@ export class SessionChatController {
     const ephemeral = await this.session.createEphemeralContext({
       instructions: buildDiffReviewInstructions(snapshot),
       tools: ["bash", "view_image"],
-      riskLevel: "read-only",
     });
     const bridge = new DiffReviewBridge({
       snapshot,

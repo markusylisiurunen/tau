@@ -90,7 +90,6 @@ describe("config paths", () => {
       writeFileSync(
         join(fx.home, ".config", "tau", "config.json"),
         JSON.stringify({
-          defaultRisk: "read-only",
           apiKeys: { openai: "global", anthropic: "anthropic-key", mistral: "mistral-key" },
           diffTool: {
             command: "./scripts/global-diff-tool",
@@ -135,7 +134,6 @@ describe("config paths", () => {
       writeFileSync(
         join(repo, ".tau", "config.json"),
         JSON.stringify({
-          defaultRisk: "read-write",
           apiKeys: { openai: "repo", google: "google-key" },
           diffTool: {
             command: "./scripts/repo-diff-tool",
@@ -187,7 +185,6 @@ describe("config paths", () => {
       });
 
       const config = loadConfig(nested, deps);
-      expect(config.defaultRisk).toBe("read-write");
       expect(config.defaultPersona).toBe("custom-persona");
       expect(config.apiKeys).toEqual({
         openai: "repo",
@@ -260,7 +257,6 @@ describe("config paths", () => {
       const config = loadConfig(fx.repo, deps);
       expect(config).toMatchObject({
         defaultPersona: "opus-4.8-chat",
-        defaultRisk: "read-only",
         autoCompact: {
           enabled: true,
           reserveTokens: 16384,
@@ -290,7 +286,6 @@ describe("config paths", () => {
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
       expect(result.config).toMatchObject({
         defaultPersona: "opus-4.8-chat",
-        defaultRisk: "read-only",
       });
       expect(result.errors.length).toBeGreaterThan(0);
     } finally {
@@ -306,7 +301,6 @@ describe("config paths", () => {
       writeFileSync(
         join(fx.repo, ".tau", "config.json"),
         JSON.stringify({
-          defaultRisk: "invalid",
           disableBuiltinPersonas: true,
           disableBuiltinThemes: "yes",
           defaultTheme: " midnight ",
@@ -322,13 +316,9 @@ describe("config paths", () => {
       const levels = resolveConfigLevels(deps, { cwd: fx.repo });
       const modelResolver = loadModelResolver({ deps, levels });
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
-      expect(result.config.defaultRisk).toBe("read-only");
       expect(result.config.disableBuiltinPersonas).toBe(true);
       expect(result.config.disableBuiltinThemes).toBeUndefined();
       expect(result.config.defaultTheme).toBe("midnight");
-      expect(result.errors).toContain(
-        `${join(fx.repo, ".tau", "config.json")}: 'defaultRisk' must be a valid risk level.`,
-      );
       expect(result.errors).toContain(
         `${join(fx.repo, ".tau", "config.json")}: 'disableBuiltinThemes' must be a boolean.`,
       );
@@ -420,7 +410,7 @@ describe("config paths", () => {
     }
   });
 
-  it("reports unknown top-level config keys", () => {
+  it("strips unknown top-level config keys", () => {
     const fx = setupFixture();
 
     try {
@@ -441,15 +431,14 @@ describe("config paths", () => {
       const modelResolver = loadModelResolver({ deps, levels });
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
 
-      expect(result.errors).toContain(
-        `${join(fx.repo, ".tau", "config.json")}: unknown key in config: async.`,
-      );
+      expect(result.config).not.toHaveProperty("async");
+      expect(result.errors).toEqual([]);
     } finally {
       fx.cleanup();
     }
   });
 
-  it("reports unknown autoCompact keys", () => {
+  it("strips unknown autoCompact keys", () => {
     const fx = setupFixture();
 
     try {
@@ -470,9 +459,12 @@ describe("config paths", () => {
       const modelResolver = loadModelResolver({ deps, levels });
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
 
-      expect(result.errors).toContain(
-        `${join(fx.repo, ".tau", "config.json")}: unknown key in autoCompact: bogus.`,
-      );
+      expect(result.config.autoCompact).toEqual({
+        enabled: true,
+        reserveTokens: 1000,
+        keepRecentTokens: 20000,
+      });
+      expect(result.errors).toEqual([]);
     } finally {
       fx.cleanup();
     }

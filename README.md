@@ -82,7 +82,7 @@ filters: `--since`, `--persona`, `--provider`, `--model`.
 tau can run without the TUI via NDJSON RPC over stdin/stdout:
 
 ```sh
-tau rpc --persona gpt-5.5-coder --risk read-only
+
 ```
 
 RPC mode reuses the same startup config, persona loading, and risk handling as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message). `--caffeinated` is a macOS-only TUI flag and is rejected outside TUI mode.
@@ -94,7 +94,7 @@ for protocol details and examples, see [docs/rpc.md](docs/rpc.md).
 tau can host sessions over WebSocket:
 
 ```sh
-tau serve --host 0.0.0.0 --port 8787 --auth-token "$TAU_WS_AUTH_TOKEN" --risk read-only
+
 ```
 
 WebSocket auth tokens authorize full session access. Prefer `wss://` behind a trusted TLS proxy on untrusted networks, avoid putting tokens in URLs or shell history, and treat any proxy/access logs that capture headers, query strings, or WebSocket handshake details as sensitive.
@@ -127,16 +127,14 @@ tau attach --new --execution-kind fly-sprite --fly-api default --fly-sprite spri
 tau can also run the terminal UI against any command that speaks the same session protocol on stdin/stdout:
 
 ```sh
-tau attach -- ssh vps 'cd /path/to/repo && tau rpc --risk read-only'
+
 ```
 
 For stdio attach, use `--session <id>` before `--`:
 
 ```sh
-tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/to/repo && tau rpc --risk read-only'
-```
 
-Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` shell commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, changes the session risk level with `/risk:<level>` or `Ctrl+R`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
+```
 
 ## Telegram runner
 
@@ -199,7 +197,7 @@ Add a single configured target to Tau config after deploying the Worker and crea
 }
 ```
 
-Template copies require a destination directory that already exists and is empty. The Worker validates Cloudflare Access JWTs against the Access JWKS with the configured issuer and audience. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker does not treat those raw headers as authentication. When `nook` is configured, Tau automatically exposes a read-write model tool named `nook`. Detailed setup, deploy, template, Worker, browser SDK, and V0 scope notes live in [src/nook/README.md](src/nook/README.md).
+Template copies require a destination directory that already exists and is empty. The Worker validates Cloudflare Access JWTs against the Access JWKS with the configured issuer and audience. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker does not treat those raw headers as authentication. When `nook` is configured, Tau automatically exposes a model tool named `nook`. Detailed setup, deploy, template, Worker, browser SDK, and V0 scope notes live in [src/nook/README.md](src/nook/README.md).
 
 ## SDK usage (Node)
 
@@ -258,13 +256,9 @@ this writes prompts and skills into `.tau/` under your current working directory
 
 ## security notice
 
-**the risk level system is a UX guardrail, not a hard security boundary.** it helps prevent accidental writes and guides model behavior, but it has significant limitations:
-
-- **model trust**: the bash tool relies on the model honestly declaring whether a command is a read or write. there's no runtime validation that the command actually matches the declared intent. a model could declare `safetyLevel="read"` while running `rm -rf /`.
 - **no command analysis**: the system doesn't inspect command content. it trusts the declared safety level without verifying what the command actually does.
 - **full system access**: the model can access any file on your system that your user account can read or write, not just the current working directory. if you need stronger isolation, run Tau inside a VM or container.
 - **no tty / non-interactive tools**: tool commands run with stdin ignored and no TTY. anything that prompts for input or opens an editor can hang or fail (for example `sudo`, `ssh` password prompts, `git` credential prompts). tau also forces git into non-interactive mode (no prompt/editor/pager, batch-mode ssh).
-- **user bypasses**: the `!` prefix executes shell commands directly and completely bypasses risk level checks. this is intentional for direct use, but means risk levels only constrain the model, not the user.
 
 note that there is no confirmation step before tool execution. the model runs commands immediately, and you can only observe the results after the fact.
 
@@ -305,7 +299,6 @@ available palette tokens (theme keys):
 - diff: `diffAdd`, `diffRemove`
 - toasts: `toastSuccess`, `toastWarn`, `toastError`
 - user: `userSurface`, `userMemorySurface`, `userMemoryText`
-- risk: `riskReadOnlyText`, `riskReadWriteText`
 
 example theme file (`.tau/themes/solarized.json`):
 
@@ -323,24 +316,7 @@ and in config (`.tau/config.json` or `~/.config/tau/config.json`):
 { "defaultTheme": "solarized" }
 ```
 
-## risk levels
-
-tau uses risk levels to control what the model can do. this lets you stay in control while working alongside AI.
-
-- **read-only** (default): model can run read-only tools (no file modifications)
-- **read-write**: model can create, edit, and delete files
-
-sub-agents inherit the session risk level unless overridden in persona config. a sub-agent configured with `riskLevel: read-write` can write even when the main session is `read-only`.
-
-start with a specific risk level (exact values: `read-only` or `read-write`):
-
-```sh
-tau --risk read-write
-```
-
-or change it during a session with `/risk:read-only` or `/risk:read-write`.
-
-the default is read-only because it lets the model investigate your code and answer questions without risk of unintended changes. bump it to read-write when you're ready to let the model make edits.
+Enabled tools execute directly; persona and sub-agent tool lists determine which tools are available.
 
 ## power management (macOS)
 
@@ -378,8 +354,6 @@ tau --persona opus-4.8-coder
 ## sub-agents
 
 some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, and `terminate_agent` tools. sub-agents report progress in the subagent panel, and `wait_for_agents` returns completed outputs as soon as at least one requested agent finishes.
-
-the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, tool access (minus sub-agent management tools), risk level, and system prompt. the inherited main prompt is wrapped with default sub-agent-specific rules, and those wrapper rules take precedence on conflicts. custom sub-agents can override model, reasoning, tools, and risk level. a sub-agent configured with `riskLevel: read-write` can perform writes even when the main session is `read-only`.
 
 `spawn_agent` supports an optional launch override string (`model: "<provider>/<model>:<effort>"`) and an optional `workingDirectory`. when `workingDirectory` is set, the sub-agent runs from that directory and its prompt context (cwd, AGENTS.md scope, and skills block) is rebuilt as if tau was started there. launch overrides are allowlisted per subagent. custom subagents can define `launchModels` in persona frontmatter, and the built-in `default` sub-agent uses `subagents.defaultLaunchModels` from config.
 
@@ -469,8 +443,6 @@ tau supports slash commands for common actions:
 | `/persona:<id>` | switch to a different persona |
 | `/prompt:<id>` | insert a saved prompt template |
 | `/theme:<id>` | switch to a loaded theme |
-| `/risk:read-only` | allow read-only tool calls |
-| `/risk:read-write` | allow all tools |
 | `!<cmd>` | run a shell command directly (bypasses risk checks) |
 | `!!<cmd>` | run a shell command without adding output to the model context |
 
@@ -493,7 +465,6 @@ the prune commands drop bash tool results from the active context without summar
 | key          | action                                    |
 | ------------ | ----------------------------------------- |
 | `shift+tab`  | cycle reasoning effort                    |
-| `ctrl+r`     | cycle risk level                          |
 | `ctrl+p`     | cycle personality                         |
 | `ctrl+t`     | toggle thinking visibility                |
 | `ctrl+o`     | toggle compact tool display               |
@@ -526,7 +497,6 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
     "mistral": "..."
   },
   "defaultPersona": "gpt-5.5-chat",
-  "defaultRisk": "read-write",
   "disableBuiltinPersonas": false,
   "disableBuiltinThemes": false,
   "defaultTheme": "solarized",
@@ -579,8 +549,6 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
 for built-in providers and features, the `apiKeys` field uses these keys: `anthropic`, `openai`, `google`, `parallel`, and `mistral`. keys are merged across config levels by key name.
 
 the `defaultPersona` field specifies which persona to use when starting the app. it accepts `<id>` or `<id>:<reasoning>`, and matching is exact/case-sensitive. the `--persona` flag overrides this setting.
-
-the `defaultRisk` field sets the initial risk level (`read-only` or `read-write`). the `--risk` flag overrides this setting. if not specified, defaults to `read-only`.
 
 the `defaultTheme` field sets the theme id to load at startup. it must be non-empty, and matching is exact/case-sensitive. if not specified, it defaults to `gold`.
 
@@ -675,8 +643,6 @@ optional frontmatter fields:
 - `serviceTier`: `priority` or `flex` for providers that support service tiers (currently `openai` and `openai-codex`)
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.
-- `tools`: optional list of persona-selected host tools. Nook is not selected here; when effective config contains `nook`, Tau exposes the `nook` tool automatically and gates every operation on read-write risk.
-- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `serviceTier`, `tools`, `riskLevel`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
   ```yaml
   subagents:
     default: false
@@ -688,12 +654,10 @@ optional frontmatter fields:
       model: claude-haiku-4-5
       reasoning: medium
       tools: [web_search, web_fetch, bash]
-      riskLevel: read-only
       launchModels:
         - openai/gpt-5.5:high
         - anthropic/claude-haiku-4-5:medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled). risk levels still apply.
 
 the markdown body becomes the system prompt.
 
@@ -744,8 +708,6 @@ enable skills per persona with the `skills` frontmatter field. you can list spec
 use `/reload` to pick up changes to personas, model overrides, prompts, skills, and AGENTS.md without restarting.
 
 ## how it works
-
-tau connects your terminal to large language models, giving them tools to interact with your filesystem. when you ask the model to explore code or make changes, it decides which tools to use and executes them subject to the active risk level.
 
 the model sees your messages, any file contents you've shared, and the results of tool calls. it doesn't have ambient access to your filesystem; it only sees what you show it or what it explicitly requests through tools.
 

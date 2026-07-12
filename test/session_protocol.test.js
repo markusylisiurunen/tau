@@ -187,26 +187,6 @@ describe("session_protocol", () => {
       },
     });
 
-    const setRisk = parseSessionProtocolRequestLine(
-      JSON.stringify({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "request",
-        id: "req-risk",
-        method: "session.setRisk",
-        params: { sessionId: "session-1", riskLevel: "read-write" },
-      }),
-    );
-    expect(setRisk).toEqual({
-      ok: true,
-      request: {
-        version: SESSION_PROTOCOL_VERSION,
-        type: "request",
-        id: "req-risk",
-        method: "session.setRisk",
-        params: { sessionId: "session-1", riskLevel: "read-write" },
-      },
-    });
-
     const setReasoning = parseSessionProtocolRequestLine(
       JSON.stringify({
         version: SESSION_PROTOCOL_VERSION,
@@ -297,7 +277,6 @@ describe("session_protocol", () => {
           sessionId: "session-1",
           instructions: "review this",
           tools: ["bash", "view_image"],
-          riskLevel: "read-only",
         },
       }),
     );
@@ -312,7 +291,6 @@ describe("session_protocol", () => {
           sessionId: "session-1",
           instructions: "review this",
           tools: ["bash", "view_image"],
-          riskLevel: "read-only",
         },
       },
     });
@@ -495,12 +473,14 @@ describe("session_protocol", () => {
       }),
     );
     expect(requestWithUnsupportedFields).toEqual({
-      ok: false,
-      id: "req-unsupported",
-      error: expect.objectContaining({
-        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
-        message: "request contains unsupported top-level fields",
-      }),
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-unsupported",
+        method: "session.submit",
+        params: { sessionId: "session-1", text: "hello" },
+      },
     });
 
     const requestWithoutParams = parseSessionProtocolRequestLine(
@@ -621,14 +601,14 @@ describe("session_protocol", () => {
       }),
     );
     expect(responseWithUnsupportedFields).toEqual({
-      ok: false,
-      reason: "invalid_payload",
-      messageType: "response",
-      id: "req-10",
-      error: expect.objectContaining({
-        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
-        message: "successful response must only include result payload",
-      }),
+      ok: true,
+      message: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "response",
+        id: "req-10",
+        ok: true,
+        result: { shutdown: true },
+      },
     });
 
     const oldEventEnvelope = parseSessionProtocolOutgoingLine(
@@ -721,7 +701,6 @@ describe("session_protocol", () => {
       validateSessionProtocolParams("session.create", {
         executionEnvironment: { kind: "local", cwd: "/repo" },
         personaId: "coder",
-        riskLevel: "read-write",
         reasoning: "high",
       }),
     ).toEqual({
@@ -729,7 +708,6 @@ describe("session_protocol", () => {
       value: {
         executionEnvironment: { kind: "local", cwd: "/repo" },
         personaId: "coder",
-        riskLevel: "read-write",
         reasoning: "high",
       },
     });
@@ -889,7 +867,6 @@ describe("session_protocol", () => {
         sessionId: "session-1",
         instructions: "review this",
         tools: ["bash", "view_image"],
-        riskLevel: "read-only",
       }),
     ).toEqual({
       ok: true,
@@ -897,7 +874,6 @@ describe("session_protocol", () => {
         sessionId: "session-1",
         instructions: "review this",
         tools: ["bash", "view_image"],
-        riskLevel: "read-only",
       },
     });
     expect(
@@ -975,17 +951,20 @@ describe("session_protocol", () => {
     });
 
     expect(
-      createSessionProtocolRequest("req-bad", "session.submit", {
+      createSessionProtocolRequest("req-extra", "session.submit", {
         sessionId: "session-1",
         text: "hello",
         mode: "submit",
       }),
     ).toEqual({
-      ok: false,
-      error: expect.objectContaining({
-        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
-        message: "session.submit params only support sessionId, text, and optional historyEntryId",
-      }),
+      ok: true,
+      value: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-extra",
+        method: "session.submit",
+        params: { sessionId: "session-1", text: "hello" },
+      },
     });
 
     expect(
@@ -1055,11 +1034,8 @@ describe("session_protocol", () => {
         turn: { aborted: false },
       }),
     ).toEqual({
-      ok: false,
-      error: expect.objectContaining({
-        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
-        message: expect.stringContaining("Unrecognized key"),
-      }),
+      ok: true,
+      value: { turn: { aborted: false } },
     });
 
     expect(
@@ -1080,13 +1056,13 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolResult("session.setReasoning", {
         revision: 2,
-        settings: { personaId: "default", riskLevel: "read-only", reasoning: "max" },
+        settings: { personaId: "default", reasoning: "high" },
       }),
     ).toEqual({
       ok: true,
       value: {
         revision: 2,
-        settings: { personaId: "default", riskLevel: "read-only", reasoning: "max" },
+        settings: { personaId: "default", reasoning: "high" },
       },
     });
 
@@ -1387,11 +1363,8 @@ describe("session_protocol", () => {
         status: "running",
       }),
     ).toEqual({
-      ok: false,
-      error: expect.objectContaining({
-        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
-        message: expect.stringContaining("Unrecognized key"),
-      }),
+      ok: true,
+      value: createProtocolSnapshot(),
     });
 
     expect(
@@ -1400,33 +1373,26 @@ describe("session_protocol", () => {
         runtimeConfig: {},
       }),
     ).toEqual({
-      ok: false,
-      error: expect.objectContaining({
-        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
-        message: expect.stringContaining("Unrecognized key"),
-      }),
+      ok: true,
+      value: createProtocolSnapshot(),
     });
 
-    expect(
-      validateSessionProtocolResult(
-        "session.snapshot",
-        createProtocolSnapshot({
-          bootstrap: {
-            ...bootstrap,
-            model: {
-              ...bootstrap.persona.model,
-              headers: { authorization: "Bearer secret", "x-custom": "secret" },
-            },
+    const snapshotWithUnknownModelFields = validateSessionProtocolResult(
+      "session.snapshot",
+      createProtocolSnapshot({
+        bootstrap: {
+          ...bootstrap,
+          model: {
+            ...bootstrap.persona.model,
+            headers: { authorization: "Bearer secret", "x-custom": "secret" },
           },
-        }),
-      ),
-    ).toEqual({
-      ok: false,
-      error: expect.objectContaining({
-        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
-        message: expect.stringContaining("session.snapshot result is invalid"),
+        },
       }),
-    });
+    );
+    expect(snapshotWithUnknownModelFields.ok).toBe(true);
+    if (snapshotWithUnknownModelFields.ok) {
+      expect(snapshotWithUnknownModelFields.value.bootstrap.model).not.toHaveProperty("headers");
+    }
 
     expect(
       validateSessionProtocolResult("session.snapshot", {
@@ -1446,11 +1412,8 @@ describe("session_protocol", () => {
         history: [{ role: "alien", content: [] }],
       }),
     ).toEqual({
-      ok: false,
-      error: expect.objectContaining({
-        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
-        message: expect.stringContaining("session.snapshot result is invalid"),
-      }),
+      ok: true,
+      value: createProtocolSnapshot(),
     });
 
     expect(
@@ -1518,11 +1481,8 @@ describe("session_protocol", () => {
         },
       }),
     ).toEqual({
-      ok: false,
-      error: expect.objectContaining({
-        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
-        message: expect.stringContaining("session.snapshot result is invalid"),
-      }),
+      ok: true,
+      value: createProtocolSnapshot(),
     });
   });
 
@@ -1610,7 +1570,7 @@ describe("session_protocol", () => {
         changes: [
           {
             type: "settings.set",
-            settings: { personaId: "default", riskLevel: "read-only", reasoning: "high" },
+            settings: { personaId: "default", reasoning: "high" },
           },
         ],
       },
@@ -1619,14 +1579,12 @@ describe("session_protocol", () => {
       createProtocolSnapshot({
         sessionId: "session-1",
         revision: 2,
-        settings: { personaId: "default", riskLevel: "read-only", reasoning: "medium" },
       }),
       settingsDelta,
     );
     expect(settingsPatchedSnapshot.revision).toBe(3);
     expect(settingsPatchedSnapshot.settings).toEqual({
       personaId: "default",
-      riskLevel: "read-only",
       reasoning: "high",
     });
 

@@ -87,7 +87,7 @@ describe("sdk client integration", () => {
       await mkdir(join(repo, ".tau", "personas"), { recursive: true });
       await writeFile(
         join(repo, ".tau", "config.json"),
-        JSON.stringify({ defaultPersona: "rpc-project-persona:high", defaultRisk: "read-write" }),
+        JSON.stringify({ defaultPersona: "rpc-project-persona:high" }),
         "utf8",
       );
       await writeFile(
@@ -116,7 +116,6 @@ describe("sdk client integration", () => {
 
         expect(snapshot.settings).toEqual({
           personaId: "rpc-project-persona",
-          riskLevel: "read-write",
           reasoning: "high",
         });
         expect(snapshot.catalog.personas).toEqual(

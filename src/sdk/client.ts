@@ -78,7 +78,6 @@ async function createInProcessSdkHost(options: TauSdkClientOptions): Promise<Loc
   return new LocalSessionHost({
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
     persona,
-    riskLevel: options.riskLevel ?? runtime.config.defaultRisk ?? "read-only",
     discoveredSkills: runtime.skills,
     personas: runtime.personas.map(clonePersonaForSession),
     prompts: runtime.prompts,
@@ -112,7 +111,6 @@ async function createInProcessSdkHost(options: TauSdkClientOptions): Promise<Loc
 
       return {
         persona: envPersona,
-        riskLevel: options.riskLevel ?? envRuntime.config.defaultRisk ?? "read-only",
         discoveredSkills: envRuntime.skills,
         personas: envRuntime.personas.map(clonePersonaForSession),
         prompts: envRuntime.prompts,

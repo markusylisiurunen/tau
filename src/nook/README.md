@@ -120,4 +120,4 @@ tau nook kv delete demo settings
 tau nook kv list demo --prefix todos/
 ```
 
-The assistant-facing model tool named `nook` appears automatically when Tau config contains `nook`. All tool operations require `read-write` risk.
+The assistant-facing model tool named `nook` appears automatically when Tau config contains `nook`. Enabled operations execute directly.

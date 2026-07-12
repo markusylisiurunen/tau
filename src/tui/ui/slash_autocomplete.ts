@@ -1,7 +1,5 @@
 import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
 import type { CommandRegistry } from "../../core/commands/index.js";
-import { getRiskLevelAutocompleteOptions } from "../../core/commands/index.js";
-import type { RiskLevel } from "../../core/types.js";
 import { fuzzyFilter } from "../../core/utils/fuzzy.js";
 
 const MENTION_TOKEN_REGEX = /(?:^|[\t ])(@[^\t ]*)$/;
@@ -47,7 +45,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
   private getPaths: (query: string, limit: number, signal: AbortSignal) => Promise<string[]>;
   private getSkills: () => string[];
   private getAgents: () => string[];
-  private getRiskLevels: () => RiskLevel[];
 
   constructor(
     commandRegistry: CommandRegistry<Ctx>,
@@ -61,7 +58,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     ) => Promise<string[]> = async () => [],
     skills: () => string[] = () => [],
     agents: () => string[] = () => [],
-    riskLevels: () => RiskLevel[] = () => ["read-only", "read-write"],
   ) {
     this.commandRegistry = commandRegistry;
     this.getPersonas = personas;
@@ -70,7 +66,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     this.getPaths = paths;
     this.getSkills = skills;
     this.getAgents = agents;
-    this.getRiskLevels = riskLevels;
   }
 
   async getSuggestions(
@@ -243,11 +238,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
       return this.buildArgSuggestions(themeMatch[1] ?? "", this.getThemes());
     }
 
-    const riskMatch = afterSlash.match(/^risk:(.*)$/i);
-    if (riskMatch) {
-      return this.buildRiskSuggestions(riskMatch[1] ?? "");
-    }
-
     return null;
   }
 
@@ -260,21 +250,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
       value: p.id,
       label: p.id,
       description: p.label,
-    }));
-
-    if (items.length === 0) return null;
-    return { items, prefix: argPrefix };
-  }
-
-  private buildRiskSuggestions(
-    argPrefix: string,
-  ): { items: AutocompleteItem[]; prefix: string } | null {
-    const options = getRiskLevelAutocompleteOptions(this.getRiskLevels());
-    const filtered = fuzzyFilter(options, argPrefix, (o) => `${o.id} ${o.description}`);
-    const items = filtered.map((o) => ({
-      value: o.id,
-      label: o.id,
-      description: o.description,
     }));
 
     if (items.length === 0) return null;
@@ -297,18 +272,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
         item: { value, label: value, description },
         searchText: `${usage} ${description}`,
       });
-    }
-
-    const hasRisk = commandInfos.some((command) => command.argument === "risk");
-    if (hasRisk) {
-      const options = getRiskLevelAutocompleteOptions(this.getRiskLevels());
-      for (const option of options) {
-        const value = `risk:${option.id}`;
-        candidates.push({
-          item: { value, label: value, description: option.description },
-          searchText: `${value} ${option.description}`,
-        });
-      }
     }
 
     const hasPersona = commandInfos.some((command) => command.argument === "persona");
@@ -383,8 +346,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     const isArgCompletion =
       lowerBeforePrefix.endsWith("/persona:") ||
       lowerBeforePrefix.endsWith("/prompt:") ||
-      lowerBeforePrefix.endsWith("/theme:") ||
-      lowerBeforePrefix.endsWith("/risk:");
+      lowerBeforePrefix.endsWith("/theme:");
 
     if (isArgCompletion) {
       return item.value;

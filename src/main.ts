@@ -1034,16 +1034,20 @@ if (cli.personaId) {
 }
 
 if (cli.debug) {
-  let debugPersona: Persona | undefined;
-  if (personas.length > 0) {
-    const selectedPersona = initialPersonaId
-      ? (personas.find((p) => p.id === initialPersonaId) ?? personas[0]!)
-      : personas[0]!;
-    debugPersona = clonePersonaForSession(selectedPersona);
+  const selectedPersona = initialPersonaId
+    ? personas.find((persona) => persona.id === initialPersonaId)
+    : personas[0];
+  if (!selectedPersona && initialPersonaId) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `cannot resolve persona '${initialPersonaId}' for --debug without an execution environment`,
+    );
+    process.exit(1);
+  }
 
-    if (reasoningOverride !== undefined) {
-      debugPersona.settings.reasoning = reasoningOverride;
-    }
+  const debugPersona = selectedPersona ? clonePersonaForSession(selectedPersona) : undefined;
+  if (debugPersona && reasoningOverride !== undefined) {
+    debugPersona.settings.reasoning = reasoningOverride;
   }
 
   const virtualBundle = runtimeBootstrap?.virtualBundle;

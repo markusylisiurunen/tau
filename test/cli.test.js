@@ -35,6 +35,24 @@ describe("cli", () => {
     );
   });
 
+  it("does not substitute a host persona for unresolved server debug personas", () => {
+    const mainPath = resolve(process.cwd(), "dist/main.js");
+    const result = spawnSync(
+      process.execPath,
+      [mainPath, "rpc", "--debug", "--persona", "sandbox-persona"],
+      {
+        encoding: "utf8",
+        env: process.env,
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "cannot resolve persona 'sandbox-persona' for --debug without an execution environment",
+    );
+    expect(result.stdout).toBe("");
+  });
+
   it("prints telegram help text when telegram command parsing fails", () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
     const result = spawnSync(process.execPath, [mainPath, "telegram"], {

@@ -248,6 +248,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
             cwd,
             timeoutMs: runOptions.timeoutMs,
             signal: runOptions.signal,
+            maxCaptureBytes: runOptions.maxCaptureBytes,
             sessionId,
             onAbort: () => resetCommandSession(cwd),
           });
@@ -347,6 +348,7 @@ export class CloudflareSandboxBridgeClient {
       cwd?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
+      maxCaptureBytes?: number | null;
       sessionId?: string;
       onAbort?: () => Promise<void>;
     },
@@ -380,7 +382,7 @@ export class CloudflareSandboxBridgeClient {
         throw new Error(`Cloudflare Sandbox bridge '${this.bridgeId}' returned an empty exec body`);
       }
 
-      return await parseExecSse(response.body);
+      return await parseExecSse(response.body, options.maxCaptureBytes);
     } catch (err) {
       if (isAbortError(err) && options.onAbort) {
         await options.onAbort();
@@ -464,13 +466,16 @@ export class CloudflareSandboxBridgeClient {
   }
 }
 
-async function parseExecSse(body: ReadableStream<Uint8Array>): Promise<BashExecutionResult> {
+async function parseExecSse(
+  body: ReadableStream<Uint8Array>,
+  maxCaptureBytes: number | null = BASH_MAX_CAPTURE_BYTES,
+): Promise<BashExecutionResult> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  const output = new ExecCaptureBuffer();
-  const stdout = new ExecCaptureBuffer();
-  const stderr = new ExecCaptureBuffer();
+  const output = new ExecCaptureBuffer(maxCaptureBytes);
+  const stdout = new ExecCaptureBuffer(maxCaptureBytes);
+  const stderr = new ExecCaptureBuffer(maxCaptureBytes);
   let exitCode: number | null = null;
   let truncated = false;
 
@@ -541,25 +546,27 @@ class ExecCaptureBuffer {
   private chunks: Buffer[] = [];
   private bytes = 0;
 
+  constructor(private readonly maxBytes: number | null) {}
+
   append(value: string): boolean {
     let truncated = false;
     let nextValue = value;
-    if (Buffer.byteLength(nextValue, "utf-8") > BASH_MAX_CAPTURE_BYTES) {
+    if (this.maxBytes !== null && Buffer.byteLength(nextValue, "utf-8") > this.maxBytes) {
       truncated = true;
-      while (Buffer.byteLength(nextValue, "utf-8") > BASH_MAX_CAPTURE_BYTES) {
+      while (Buffer.byteLength(nextValue, "utf-8") > this.maxBytes) {
         nextValue = nextValue.slice(Math.max(1, Math.floor(nextValue.length / 10)));
       }
     }
 
     let chunk = Buffer.from(nextValue, "utf-8");
-    if (chunk.byteLength > BASH_MAX_CAPTURE_BYTES) {
-      chunk = chunk.subarray(chunk.byteLength - BASH_MAX_CAPTURE_BYTES);
+    if (this.maxBytes !== null && chunk.byteLength > this.maxBytes) {
+      chunk = chunk.subarray(chunk.byteLength - this.maxBytes);
       truncated = true;
     }
 
     this.chunks.push(chunk);
     this.bytes += chunk.byteLength;
-    while (this.bytes > BASH_MAX_CAPTURE_BYTES && this.chunks.length > 0) {
+    while (this.maxBytes !== null && this.bytes > this.maxBytes && this.chunks.length > 0) {
       const removed = this.chunks.shift()!;
       this.bytes -= removed.byteLength;
       truncated = true;

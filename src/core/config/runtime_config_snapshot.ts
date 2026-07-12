@@ -117,7 +117,7 @@ export async function loadRuntimeConfigFromToolBackend(options: {
   const result = await options.backend.runNodeScript(
     COLLECT_RUNTIME_CONFIG_SCRIPT,
     [options.cwd, options.home],
-    { cwd: options.cwd, timeoutMs: 30_000 },
+    { cwd: options.cwd, timeoutMs: 30_000, maxCaptureBytes: null },
   );
   if (result.exitCode !== 0) {
     throw new Error(formatConfigSnapshotCommandFailure(result));

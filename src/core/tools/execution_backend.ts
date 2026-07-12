@@ -68,7 +68,12 @@ export interface ToolExecutionBackend {
   runNodeScript(
     script: string,
     args?: string[],
-    options?: { timeoutMs?: number; signal?: AbortSignal; cwd?: string },
+    options?: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      cwd?: string;
+      maxCaptureBytes?: number | null;
+    },
   ): Promise<BashExecutionResult>;
   readFile(path: string): Promise<ReadFileResult>;
   readFileBinary(path: string, options?: { maxBytes?: number }): Promise<ReadFileBinaryResult>;
@@ -175,7 +180,10 @@ export function createLocalToolExecutionBackend(
         cwd,
         signal,
         timeoutMs: effectiveTimeoutMs,
-        maxCaptureBytes: BASH_MAX_CAPTURE_BYTES,
+        maxCaptureBytes:
+          options.maxCaptureBytes === null
+            ? undefined
+            : (options.maxCaptureBytes ?? BASH_MAX_CAPTURE_BYTES),
         maxCaptureMode: "ignore",
         maxCaptureStrategy: "tail",
         captureOutput: "combined-and-split",

@@ -1,14 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { safeParseCoreEventEnvelope } from "../dist/core/events/parser.js";
-import { resolveRuntimePromptBootstrap } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
-import { resolveRuntimePromptBootstrapAsync } from "../dist/core/runtime/runtime_bootstrap.js";
+import { resolveRuntimePromptBootstrap } from "../dist/core/runtime/runtime_bootstrap.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
 import {
   buildAutoCompactionContinuationMessage,
@@ -742,139 +741,6 @@ describe("context builder", () => {
 });
 
 describe("runtime prompt bootstrap", () => {
-  it("builds canonical prompt context from skills and AGENTS data", () => {
-    const home = mkdtempSync(join(tmpdir(), "tau-runtime-bootstrap-home-"));
-    const repo = join(home, "repo");
-
-    try {
-      mkdirSync(repo, { recursive: true });
-      writeFileSync(join(repo, "AGENTS.md"), "# repo agents\n", "utf-8");
-      mkdirSync(join(repo, ".tau"), { recursive: true });
-      writeFileSync(
-        join(repo, ".tau", "config.json"),
-        JSON.stringify({ agentContextFiles: [123] }),
-        "utf-8",
-      );
-
-      const persona = {
-        id: "test-persona",
-        label: "test persona",
-        model: personas[0].model,
-        systemPrompt: "test prompt",
-        settings: {},
-        source: "project",
-        skills: ["alpha", "missing"],
-      };
-
-      const resolved = resolveRuntimePromptBootstrap({
-        persona,
-        discoveredSkills: [
-          {
-            name: "alpha",
-            description: "alpha skill",
-            path: join(repo, "skills", "alpha", "SKILL.md"),
-          },
-        ],
-        cwd: repo,
-        home,
-        includeAgentContext: true,
-        readFile: (path) => {
-          return path === join(repo, "AGENTS.md") ? "# repo agents\n" : "";
-        },
-      });
-
-      expect(resolved.promptContext.cwd).toBe(repo);
-      expect(resolved.promptContext.includeAgentContext).toBe(true);
-      expect(resolved.promptContext.projectContextBlock).toContain('<file path="');
-      expect(resolved.promptContext.projectContextBlock).toContain("AGENTS.md");
-      expect(resolved.promptContext.skillsBlock).toContain("<name>alpha</name>");
-      expect(resolved.promptContext.skillsBlock).not.toContain("missing");
-      expect(resolved.unknownSkills).toEqual(["missing"]);
-      expect(resolved.agentsFiles).toEqual([join(repo, "AGENTS.md")]);
-      expect(resolved.warnings.length).toBeGreaterThan(0);
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("uses normal host paths for AGENTS and skills", () => {
-    const home = mkdtempSync(join(tmpdir(), "tau-runtime-bootstrap-home-"));
-    const repo = join(home, "repo");
-    const repoAgents = join(repo, "AGENTS.md");
-    const homeAgents = join(home, "AGENTS.md");
-    const inScopeSkillPath = join(repo, ".tau", "skills", "in-scope", "SKILL.md");
-    const outOfScopeSkillPath = join(home, ".config", "tau", "skills", "out-of-scope", "SKILL.md");
-
-    try {
-      mkdirSync(join(repo, ".tau", "skills", "in-scope"), { recursive: true });
-      mkdirSync(join(home, ".config", "tau", "skills", "out-of-scope"), {
-        recursive: true,
-      });
-      writeFileSync(repoAgents, "# repo agents\nrepo only\n", "utf-8");
-      writeFileSync(homeAgents, "# home agents\nhome only\n", "utf-8");
-      writeFileSync(
-        inScopeSkillPath,
-        "---\nname: in-scope\ndescription: project skill\n---\n",
-        "utf-8",
-      );
-      writeFileSync(
-        outOfScopeSkillPath,
-        "---\nname: out-of-scope\ndescription: home skill\n---\n",
-        "utf-8",
-      );
-
-      const persona = {
-        id: "test-persona",
-        label: "test persona",
-        model: personas[0].model,
-        systemPrompt: "test prompt",
-        settings: {},
-        source: "project",
-        skills: ["in-scope", "out-of-scope"],
-      };
-
-      const resolved = resolveRuntimePromptBootstrap({
-        persona,
-        discoveredSkills: [
-          {
-            name: "in-scope",
-            description: "project skill",
-            path: inScopeSkillPath,
-          },
-          {
-            name: "out-of-scope",
-            description: "home skill",
-            path: outOfScopeSkillPath,
-          },
-        ],
-        cwd: repo,
-        home,
-        includeAgentContext: true,
-        readFile: (path) => {
-          if (path === repoAgents) return "# repo agents\nrepo only\n";
-          if (path === homeAgents) return "# home agents\nhome only\n";
-          return "";
-        },
-      });
-
-      expect(resolved.promptContext.cwd).toBe(repo);
-      expect(resolved.promptContext.projectContextBlock).toContain(`<file path="${homeAgents}">`);
-      expect(resolved.promptContext.projectContextBlock).toContain(`<file path="${repoAgents}">`);
-      expect(resolved.promptContext.projectContextBlock).toContain("repo only");
-      expect(resolved.promptContext.projectContextBlock).toContain("home only");
-      expect(resolved.promptContext.skillsBlock).toContain(
-        `<location>${inScopeSkillPath}</location>`,
-      );
-      expect(resolved.promptContext.skillsBlock).toContain(
-        `<location>${outOfScopeSkillPath}</location>`,
-      );
-      expect(resolved.unknownSkills).toEqual([]);
-      expect(resolved.agentsFiles).toEqual([repoAgents, homeAgents]);
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
   it("keeps ancestor AGENTS files when resolving prompt context through a command", async () => {
     const persona = {
       id: "test-persona",
@@ -886,30 +752,29 @@ describe("runtime prompt bootstrap", () => {
       skills: "*",
     };
 
-    const resolved = await resolveRuntimePromptBootstrapAsync({
+    const resolved = await resolveRuntimePromptBootstrap({
       persona,
       discoveredSkills: [],
       cwd: "/workspace/repo",
       home: "/workspace",
       includeAgentContext: true,
-      fs: {
-        async runBash(command) {
-          expect(command).toContain("for file in");
+      agentContextFiles: [],
+      backend: {
+        async runNodeScript(_script, args) {
+          expect(args[0]).toBe("/workspace/repo");
           return {
-            output: [
-              `A\t${Buffer.from("/workspace/repo/AGENTS.md", "utf-8").toString("base64")}\t${Buffer.from("repo instructions", "utf-8").toString("base64")}`,
-              `A\t${Buffer.from("/workspace/AGENTS.md", "utf-8").toString("base64")}\t${Buffer.from("workspace instructions", "utf-8").toString("base64")}`,
-              `C\t${Buffer.from("/workspace/repo/src/AGENTS.md", "utf-8").toString("base64")}`,
-              "",
-            ].join("\n"),
+            output: JSON.stringify({
+              platform: "linux",
+              nodeVersion: "v24.0.0",
+              repoRoot: "/workspace/repo",
+              agentsFiles: [
+                { path: "/workspace/repo/AGENTS.md", content: "repo instructions" },
+                { path: "/workspace/AGENTS.md", content: "workspace instructions" },
+              ],
+              childAgentsFiles: ["/workspace/repo/src/AGENTS.md"],
+            }),
             exitCode: 0,
           };
-        },
-        async readFile() {
-          throw new Error("readFile should not be called when command output includes content");
-        },
-        async listDir() {
-          throw new Error("listDir should not be called when runBash is available");
         },
       },
     });
@@ -918,6 +783,34 @@ describe("runtime prompt bootstrap", () => {
     expect(resolved.promptContext.projectContextBlock).toContain("repo instructions");
     expect(resolved.promptContext.projectContextBlock).toContain("workspace instructions");
     expect(resolved.promptContext.projectContextBlock).toContain("/workspace/repo/src/AGENTS.md");
+  });
+
+  it("rejects hosted AGENTS symlinks that escape the execution home", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-hosted-agents-symlink-"));
+    const home = join(root, "home");
+    const repo = join(home, "repo");
+    const outside = join(root, "outside");
+    mkdirSync(repo, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, "AGENTS.md"), "outside instructions", "utf-8");
+    symlinkSync(join(outside, "AGENTS.md"), join(repo, "AGENTS.md"));
+
+    try {
+      const resolved = await resolveRuntimePromptBootstrap({
+        persona: personas[0],
+        discoveredSkills: [],
+        cwd: repo,
+        home,
+        includeAgentContext: true,
+        agentContextFiles: [],
+        backend: createLocalToolExecutionBackend(),
+      });
+
+      expect(resolved.agentsFiles).toEqual([]);
+      expect(resolved.promptContext.projectContextBlock).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -996,6 +889,7 @@ describe("session prompt composer", () => {
     const result = composeSessionPrompts({
       persona,
       cwd,
+      repoRoot: gitRoot,
       datetime: "2026-01-01T00:00:00.000Z",
       platform: "darwin",
       nodeVersion: "v24.0.0",

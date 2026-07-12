@@ -360,7 +360,7 @@ some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_
 
 the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, tool access (minus sub-agent management tools), and system prompt. the inherited main prompt is wrapped with default sub-agent-specific rules, and those wrapper rules take precedence on conflicts. custom sub-agents can override model, reasoning, and tools.
 
-`spawn_agent` supports an optional launch override string (`model: "<provider>/<model>:<effort>"`) and an optional `workingDirectory`. when `workingDirectory` is set, the sub-agent runs from that directory and its prompt context (cwd, AGENTS.md scope, and skills block) is rebuilt as if tau was started there. launch overrides are allowlisted per subagent. custom subagents can define `launchModels` in persona frontmatter, and the built-in `default` sub-agent uses `subagents.defaultLaunchModels` from config.
+`spawn_agent` supports an optional launch override string (`model: "<provider>/<model>:<effort>"`) and an optional `workingDirectory`. when `workingDirectory` is set, the sub-agent runs from that directory and its config, model catalog, repository metadata, AGENTS.md context, and skills are resolved through the session execution environment as if tau was started there. launch overrides are allowlisted per subagent. custom subagents can define `launchModels` in persona frontmatter, and the built-in `default` sub-agent uses `subagents.defaultLaunchModels` from config.
 
 sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 8.
 

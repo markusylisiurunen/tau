@@ -27,7 +27,6 @@ import {
   parseDiffReviewMessageLine,
   serializeDiffReviewMessage,
 } from "./protocol.js";
-import type { DiffReviewAgentUsageSnapshot, DiffReviewThreadUpdate } from "./review_thread.js";
 import type { DiffReviewSnapshot } from "./snapshot.js";
 
 export type DiffReviewCancelledReason =
@@ -72,13 +71,27 @@ export type DiffReviewBridgeOptions = {
   contextWindow: number;
   submitThreadMessage: DiffReviewSubmitThreadMessage;
   deps?: CoreDeps;
-  toolLaunchCwd?: string;
   toolLauncher?: DiffReviewToolLauncher;
 };
 
 export type StartedDiffReviewBridge = {
   bridge: DiffReviewBridge;
   result: Promise<DiffReviewResult>;
+};
+
+export type DiffReviewAgentUsageSnapshot = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  contextWindowUsageTokens: number;
+  contextWindow: number;
+};
+
+export type DiffReviewThreadUpdate = {
+  costTotal: number;
+  usage: DiffReviewAgentUsageSnapshot;
+  lastActivityText?: string;
 };
 
 export type DiffReviewAgentStatus = "running" | "idle" | "failed";
@@ -159,7 +172,6 @@ export class DiffReviewBridge {
   private readonly contextWindow: number;
   private readonly submitThreadMessage: DiffReviewSubmitThreadMessage;
   private readonly deps: CoreDeps;
-  private readonly toolLaunchCwd?: string;
   private readonly toolLauncher: DiffReviewToolLauncher;
   private readonly socketPath: string;
   private readonly authToken: string;
@@ -183,7 +195,6 @@ export class DiffReviewBridge {
     this.contextWindow = options.contextWindow;
     this.submitThreadMessage = options.submitThreadMessage;
     this.deps = options.deps ?? createDefaultCoreDeps();
-    this.toolLaunchCwd = options.toolLaunchCwd;
     this.toolLauncher = options.toolLauncher ?? launchDiffToolProcess;
     this.socketPath = join("/tmp", `tau-diff-${randomBytes(8).toString("hex")}.sock`);
     this.authToken = randomBytes(24).toString("hex");
@@ -267,7 +278,7 @@ export class DiffReviewBridge {
 
     await this.toolLauncher({
       diffTool,
-      cwd: this.toolLaunchCwd ?? this.snapshot.cwd,
+      cwd: this.deps.env.cwd(),
       env,
     });
   }

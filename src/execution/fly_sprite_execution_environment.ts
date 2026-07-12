@@ -158,6 +158,7 @@ export function createFlySpriteToolExecutionBackend(options: {
           args,
           cwd: runOptions.cwd ?? options.cwd,
           timeoutMs: runOptions.timeoutMs,
+          maxCaptureBytes: runOptions.maxCaptureBytes,
         },
         { signal: runOptions.signal },
       );
@@ -253,6 +254,7 @@ type FlySpriteWorkerRequestByMethod = {
     args: string[];
     cwd: string;
     timeoutMs?: number;
+    maxCaptureBytes?: number | null;
   };
   readFile: {
     path: string;
@@ -654,6 +656,7 @@ async function handleLine(line) {
       const result = await runCommand(request.id, "node", ["-e", request.script, ...request.args], {
         cwd: request.cwd,
         timeoutMs: request.timeoutMs,
+        maxCaptureBytes: request.maxCaptureBytes,
       });
       respond(request.id, result);
       return;
@@ -727,6 +730,8 @@ function runCommand(id, command, args, options) {
     let settled = false;
     let timer;
     let stopTimer;
+    const maxCaptureBytes =
+      options.maxCaptureBytes === undefined ? BASH_MAX_CAPTURE_BYTES : options.maxCaptureBytes;
 
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -736,7 +741,11 @@ function runCommand(id, command, args, options) {
 
     const trimChunks = (targetChunks, targetBytes) => {
       let nextBytes = targetBytes;
-      while (nextBytes > BASH_MAX_CAPTURE_BYTES && targetChunks.length > 0) {
+      while (
+        maxCaptureBytes !== null &&
+        nextBytes > maxCaptureBytes &&
+        targetChunks.length > 0
+      ) {
         const removed = targetChunks.shift();
         nextBytes -= removed.byteLength;
         truncated = true;

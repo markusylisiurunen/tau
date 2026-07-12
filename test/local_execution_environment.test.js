@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createLocalToolExecutionBackend, ToolCatalog } from "../dist/core/index.js";
+import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
 import {
   LocalExecutionEnvironment,
@@ -25,43 +25,68 @@ describe("LocalExecutionEnvironment", () => {
     expect(result.truncated).toBe(false);
   });
 
-  it("resolves runtime bootstrap from local execution context", () => {
-    const toolBackend = createLocalToolExecutionBackend();
-    const toolRegistry = ToolCatalog.createRegistry(toolBackend);
+  it("resolves runtime bootstrap through the local execution backend", async () => {
+    const cwd = process.cwd();
     const environment = new LocalExecutionEnvironment({
-      cwd: "/repo",
-      home: "/home/user",
-      readFile: () => {
-        throw new Error("readFile should not be called when agent context is disabled");
-      },
-      toolBackend,
-      toolRegistry,
+      cwd,
+      home: process.env.HOME ?? cwd,
+      backend: createLocalToolExecutionBackend(),
     });
 
-    const runtimeContext = environment.resolveRuntimeContext({
+    const runtimeContext = await environment.resolveRuntimeContext({
+      cwd,
       persona: personas[0],
       discoveredSkills: [],
       includeAgentContext: false,
+      agentContextFiles: [],
     });
 
     const { promptBootstrap } = runtimeContext;
-    expect(promptBootstrap.promptContext.cwd).toBe("/repo");
-    expect(promptBootstrap.promptContext.home).toBe("/home/user");
+    expect(promptBootstrap.promptContext.cwd).toBe(cwd);
+    expect(promptBootstrap.promptContext.home).toBe(process.env.HOME ?? cwd);
     expect(promptBootstrap.promptContext.includeAgentContext).toBe(false);
-    expect(runtimeContext.toolRegistry).toBe(toolRegistry);
+    expect(promptBootstrap.promptContext.platform).toBe(process.platform);
+    expect(promptBootstrap.promptContext.nodeVersion).toBe(process.version);
+    expect(runtimeContext.toolRegistry.schemas.length).toBeGreaterThan(0);
     expect(environment.snapshot()).toEqual({
       kind: "local",
-      cwd: "/repo",
-      home: "/home/user",
+      cwd,
+      home: process.env.HOME ?? cwd,
     });
+  });
+
+  it("loads prompt context larger than the tool output preview budget", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tau-local-env-context-"));
+    try {
+      const repo = join(home, "repo");
+      await mkdir(repo, { recursive: true });
+      const largeAgents = `large context marker\n${"x".repeat(1_100_000)}`;
+      await writeFile(join(repo, "AGENTS.md"), largeAgents, "utf8");
+      const environment = new LocalExecutionEnvironment({
+        cwd: repo,
+        home,
+        backend: createLocalToolExecutionBackend(),
+      });
+
+      const runtimeContext = await environment.resolveRuntimeContext({
+        cwd: repo,
+        persona: personas[0],
+        discoveredSkills: [],
+        includeAgentContext: true,
+        agentContextFiles: [],
+      });
+
+      expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
+        largeAgents,
+      );
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it("restores persisted local execution home", async () => {
     const resolver = new LocalExecutionEnvironmentResolver({
       home: "/host/home",
-      readFile: () => {
-        throw new Error("readFile should not be called while restoring the snapshot");
-      },
       toolBackend: createLocalToolExecutionBackend(),
     });
 
@@ -83,13 +108,16 @@ describe("LocalExecutionEnvironment", () => {
     try {
       const repo = join(storedHome, "repo");
       await mkdir(join(storedHome, ".config", "tau"), { recursive: true });
-      await mkdir(repo, { recursive: true });
+      await mkdir(join(repo, ".tau", "prompts"), { recursive: true });
       await writeFile(join(storedHome, ".config", "tau", "config.json"), "{}", "utf8");
+      const largePrompt = "x".repeat(1_100_000);
+      await writeFile(
+        join(repo, ".tau", "prompts", "large.md"),
+        `---\nid: large\n---\n${largePrompt}`,
+        "utf8",
+      );
       const resolver = new LocalExecutionEnvironmentResolver({
         home: "/host/home",
-        readFile: () => {
-          throw new Error("readFile should not be called while resolving runtime config");
-        },
         toolBackend: createLocalToolExecutionBackend(),
       });
 
@@ -98,9 +126,10 @@ describe("LocalExecutionEnvironment", () => {
         cwd: repo,
         home: storedHome,
       });
-      const runtime = await environment.resolveRuntimeConfig();
+      const runtime = await environment.resolveRuntimeConfig(repo);
 
       expect(runtime.bootstrap.levels[0].levelRoot).toBe(storedHome);
+      expect(runtime.prompts.find((prompt) => prompt.id === "large")?.template).toBe(largePrompt);
     } finally {
       await rm(storedHome, { recursive: true, force: true });
     }

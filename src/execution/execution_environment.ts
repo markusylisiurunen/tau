@@ -9,9 +9,11 @@ import type {
 } from "../protocol/session_protocol.js";
 
 export type ResolveExecutionRuntimeContextOptions = {
+  cwd: string;
   persona: Persona;
   discoveredSkills: Skill[];
   includeAgentContext: boolean;
+  agentContextFiles: string[];
 };
 
 export type ExecutionRuntimeContext = {
@@ -19,13 +21,11 @@ export type ExecutionRuntimeContext = {
   toolRegistry: ToolRegistry;
 };
 
-export type MaybePromise<T> = T | Promise<T>;
-
 export interface ExecutionEnvironment {
-  resolveRuntimeConfig(): MaybePromise<RuntimeConfigResult>;
+  resolveRuntimeConfig(cwd: string): Promise<RuntimeConfigResult>;
   resolveRuntimeContext(
     options: ResolveExecutionRuntimeContextOptions,
-  ): MaybePromise<ExecutionRuntimeContext>;
+  ): Promise<ExecutionRuntimeContext>;
   getToolExecutionBackend(): ToolExecutionBackend;
   snapshot(): SessionProtocolExecutionEnvironmentSnapshot;
   dispose(): Promise<void>;

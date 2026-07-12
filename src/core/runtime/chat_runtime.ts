@@ -1,6 +1,7 @@
 import type { Config } from "../config/index.js";
+import type { ModelResolver } from "../models/catalog.js";
 import { CoreSession } from "../session/core_session.js";
-import type { ToolDefinition, ToolRegistry } from "../tools/registry.js";
+import type { ResolveSubagentRuntime, ToolDefinition, ToolRegistry } from "../tools/registry.js";
 import type { Persona, ReasoningEffort } from "../types.js";
 import {
   type ConversationTurnResult,
@@ -11,16 +12,17 @@ import { composeSessionPrompts, type SessionPromptComposition } from "./session_
 
 export type ChatRuntimePromptContext = {
   cwd: string;
-  home?: string;
-  includeAgentContext?: boolean;
+  home: string;
+  repoRoot?: string;
+  platform: NodeJS.Platform;
+  nodeVersion: string;
+  includeAgentContext: boolean;
   projectContextBlock?: string;
   skillsBlock?: string;
 };
 
 export type ChatRuntimeEnvironment = {
   now: () => number;
-  platform: () => NodeJS.Platform;
-  nodeVersion: () => string;
 };
 
 export type ChatRuntimeOptions = {
@@ -35,6 +37,8 @@ export type CreateChatRuntimeOptions = {
   persona: Persona;
   toolRegistry: ToolRegistry;
   clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
+  modelResolver: ModelResolver;
+  resolveSubagentRuntime?: ResolveSubagentRuntime;
   promptContext: ChatRuntimePromptContext;
   environment: ChatRuntimeEnvironment;
   initialPromptComposition?: SessionPromptComposition;
@@ -56,9 +60,10 @@ export class ChatRuntime {
       composeSessionPrompts({
         persona: options.persona,
         cwd: options.promptContext.cwd,
+        repoRoot: options.promptContext.repoRoot,
         datetime: new Date(options.environment.now()).toISOString(),
-        platform: options.environment.platform(),
-        nodeVersion: options.environment.nodeVersion(),
+        platform: options.promptContext.platform,
+        nodeVersion: options.promptContext.nodeVersion,
         skillsBlock: options.promptContext.skillsBlock,
         projectContextBlock: options.promptContext.projectContextBlock,
       });
@@ -69,6 +74,10 @@ export class ChatRuntime {
       subagentPrompts: promptComposition.subagentPrompts,
       toolRegistry: options.toolRegistry,
       clientToolDefinitions: options.clientToolDefinitions,
+      modelResolver: options.modelResolver,
+      ...(options.resolveSubagentRuntime
+        ? { resolveSubagentRuntime: options.resolveSubagentRuntime }
+        : {}),
       config: options.config,
       deps: options.deps,
       cwd: options.promptContext.cwd,
@@ -137,8 +146,8 @@ export class ChatRuntime {
     return this.turnRuntime.interrupt();
   }
 
-  setConfig(config: Config): void {
-    this.sessionInstance.setConfig(config);
+  setRuntimeConfig(config: Config, modelResolver: ModelResolver): void {
+    this.sessionInstance.setRuntimeConfig(config, modelResolver);
   }
 
   setReasoning(reasoning: ReasoningEffort): void {
@@ -186,9 +195,10 @@ export class ChatRuntime {
     return composeSessionPrompts({
       persona: this.currentPersona,
       cwd: this.promptContext.cwd,
+      repoRoot: this.promptContext.repoRoot,
       datetime: new Date(this.environment.now()).toISOString(),
-      platform: this.environment.platform(),
-      nodeVersion: this.environment.nodeVersion(),
+      platform: this.promptContext.platform,
+      nodeVersion: this.promptContext.nodeVersion,
       skillsBlock: skillsBlock ?? this.promptContext.skillsBlock,
       projectContextBlock: this.promptContext.projectContextBlock,
     });

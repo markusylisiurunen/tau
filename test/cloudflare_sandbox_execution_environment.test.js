@@ -448,18 +448,26 @@ describe("Cloudflare Sandbox execution environment", () => {
     );
   });
 
-  it("resolves prompt context through backend filesystem operations", async () => {
-    const bashCommands = [];
+  it("resolves prompt context and machine metadata through the execution backend", async () => {
+    const nodeScriptCalls = [];
     const backend = {
-      async runBash(command) {
-        bashCommands.push(command);
+      async runNodeScript(script, args, options) {
+        nodeScriptCalls.push({ script, args, options });
         return {
-          output: [
-            `A\t${base64("utf-8", "/workspace/repo/AGENTS.md")}\t${base64("utf-8", "repo instructions")}`,
-            `A\t${base64("utf-8", "/workspace/AGENTS.md")}\t${base64("utf-8", "workspace instructions")}`,
-            `C\t${base64("utf-8", "/workspace/repo/src/AGENTS.md")}`,
-            "",
-          ].join("\n"),
+          output: JSON.stringify({
+            platform: "linux",
+            nodeVersion: "v24.1.0",
+            repoRoot: "/workspace/repo",
+            agentsFiles: [
+              { path: "/workspace/repo/AGENTS.md", content: "repo instructions" },
+              { path: "/workspace/AGENTS.md", content: "workspace instructions" },
+              {
+                path: "/workspace/repo/docs/AGENTS.md",
+                content: "configured instructions",
+              },
+            ],
+            childAgentsFiles: ["/workspace/repo/src/AGENTS.md"],
+          }),
           exitCode: 0,
           truncated: false,
         };
@@ -498,15 +506,18 @@ describe("Cloudflare Sandbox execution environment", () => {
     });
 
     const runtimeContext = await environment.resolveRuntimeContext({
+      cwd: "/workspace/repo",
       persona: personas[0],
       discoveredSkills: [],
       includeAgentContext: true,
+      agentContextFiles: ["/workspace/repo/docs/AGENTS.md"],
     });
 
     expect(runtimeContext.promptBootstrap.promptContext.cwd).toBe("/workspace/repo");
     expect(runtimeContext.promptBootstrap.agentsFiles).toEqual([
       "/workspace/repo/AGENTS.md",
       "/workspace/AGENTS.md",
+      "/workspace/repo/docs/AGENTS.md",
     ]);
     expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
       "repo instructions",
@@ -515,11 +526,23 @@ describe("Cloudflare Sandbox execution environment", () => {
       "workspace instructions",
     );
     expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
+      "configured instructions",
+    );
+    expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
       "/workspace/repo/src/AGENTS.md",
     );
-    expect(bashCommands).toHaveLength(1);
-    expect(bashCommands[0]).toContain("find /workspace/repo");
-    expect(bashCommands[0]).toContain("-name AGENTS.md");
+    expect(runtimeContext.promptBootstrap.promptContext).toMatchObject({
+      repoRoot: "/workspace/repo",
+      platform: "linux",
+      nodeVersion: "v24.1.0",
+    });
+    expect(nodeScriptCalls).toHaveLength(1);
+    expect(nodeScriptCalls[0].args[0]).toBe("/workspace/repo");
+    expect(JSON.parse(nodeScriptCalls[0].args[3])).toEqual(["/workspace/repo/docs/AGENTS.md"]);
+    expect(nodeScriptCalls[0].options).toMatchObject({
+      cwd: "/workspace/repo",
+      maxCaptureBytes: null,
+    });
     expect(environment.snapshot()).toEqual({
       kind: "cloudflare-sandbox",
       bridgeId: "default",
@@ -532,7 +555,3 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(environment.snapshot().cwd).toBe("/workspace/repo");
   });
 });
-
-function base64(encoding, value) {
-  return Buffer.from(value, encoding).toString("base64");
-}

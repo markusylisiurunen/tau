@@ -82,13 +82,11 @@ export type { CoreDeps } from "./runtime/deps.js";
 export { createDefaultCoreDeps } from "./runtime/deps.js";
 export type {
   ResolvedPersonaSkills,
-  ResolvedProjectContext,
   ResolveRuntimePromptBootstrapArgs,
   RuntimePromptBootstrap,
 } from "./runtime/runtime_bootstrap.js";
 export {
   resolvePersonaSkillsForPromptContext,
-  resolveProjectContextForPromptContext,
   resolveRuntimePromptBootstrap,
 } from "./runtime/runtime_bootstrap.js";
 export type {

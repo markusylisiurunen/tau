@@ -1,11 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createLocalToolExecutionBackend, ToolCatalog } from "../dist/core/index.js";
+import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
-import {
-  LocalExecutionEnvironment,
-  LocalExecutionEnvironmentResolver,
-} from "../dist/execution/local_execution_environment.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 
@@ -14,49 +11,84 @@ const localCreateInput = {
 };
 
 function createEnvironment(now = Date.parse("2026-01-01T00:00:00.000Z")) {
+  return { now: () => now };
+}
+
+function createTestExecutionEnvironment(
+  snapshot = { kind: "local", cwd: "/repo", home: "/home/user" },
+) {
+  const toolBackend = createLocalToolExecutionBackend();
+  const toolRegistry = ToolCatalog.createRegistry(toolBackend);
   return {
-    now: () => now,
-    platform: () => "darwin",
-    nodeVersion: () => "v24.0.0",
+    resolveRuntimeConfig: async () => ({
+      bootstrap: { modelResolver: { resolveModel } },
+      config: {},
+      personas: [personas[0]],
+      prompts: [],
+      skills: [],
+      themes: [],
+      warnings: [],
+    }),
+    resolveRuntimeContext: async ({ cwd, includeAgentContext }) => ({
+      toolRegistry,
+      promptBootstrap: {
+        promptContext: {
+          cwd,
+          home: snapshot.home,
+          repoRoot: snapshot.cwd,
+          platform: "linux",
+          nodeVersion: "v24.0.0",
+          includeAgentContext,
+        },
+        agentsFiles: [],
+        warnings: [],
+        unknownSkills: [],
+      },
+    }),
+    getToolExecutionBackend: () => toolBackend,
+    snapshot: () => ({ ...snapshot }),
+    dispose: async () => {},
   };
 }
 
-function createTestExecutionEnvironment() {
-  const toolBackend = createLocalToolExecutionBackend();
-  return new LocalExecutionEnvironment({
-    cwd: "/repo",
-    home: "/home/user",
-    readFile: () => {
-      throw new Error("readFile should not be called when agent context is disabled");
-    },
-    toolBackend,
-    toolRegistry: ToolCatalog.createRegistry(toolBackend),
-  });
-}
-
 function createHost(store, options = {}) {
-  const executionEnvironmentResolver =
-    options.executionEnvironmentResolver ??
-    new LocalExecutionEnvironmentResolver({
-      home: "/home/user",
-      readFile: () => {
-        throw new Error("readFile should not be called when agent context is disabled");
-      },
-      toolBackend: createLocalToolExecutionBackend(),
-    });
+  const executionEnvironmentResolver = options.executionEnvironmentResolver ?? {
+    resolve: async () => createTestExecutionEnvironment(),
+    canRestore: (snapshot) => snapshot.kind === "local",
+    restore: async (snapshot) => createTestExecutionEnvironment(snapshot),
+  };
 
   return new LocalSessionHost({
     store,
-    persona: options.persona ?? personas[0],
-    discoveredSkills: [],
-    personas: options.personas ?? [personas[0]],
-    prompts: [],
+    ...(options.defaultBootstrap === false
+      ? {}
+      : {
+          defaultBootstrap: {
+            persona: options.persona ?? personas[0],
+            discoveredSkills: [],
+            personas: options.personas ?? [personas[0]],
+            prompts: [],
+            modelResolver: resolveModel,
+            ...(options.config ? { config: options.config } : {}),
+          },
+        }),
     executionEnvironmentResolver,
     includeAgentContext: false,
     environment: createEnvironment(options.now),
     ...(options.resolveSessionBootstrap
       ? { resolveSessionBootstrap: options.resolveSessionBootstrap }
       : {}),
+  });
+}
+
+function createHostForEnvironment(store, executionEnvironment, options = {}) {
+  return createHost(store, {
+    ...options,
+    executionEnvironmentResolver: {
+      resolve: async () => executionEnvironment,
+      canRestore: () => true,
+      restore: async () => executionEnvironment,
+    },
   });
 }
 
@@ -979,12 +1011,11 @@ describe("LocalSessionHost", () => {
     );
   });
 
-  it("loads initial history only into explicitly created local sessions", async () => {
+  it("keeps explicitly recorded history isolated between sessions", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
-    const session = host.createSessionNow(createTestExecutionEnvironment(), [
-      { role: "user", content: [{ type: "text", text: "loaded" }] },
-    ]);
+    const session = await host.createSession(localCreateInput);
+    session.session.addMessage({ role: "user", content: [{ type: "text", text: "loaded" }] });
 
     expect(session.session.history).toEqual([
       { role: "user", content: [{ type: "text", text: "loaded" }] },
@@ -994,15 +1025,16 @@ describe("LocalSessionHost", () => {
 
   it("switches personas using live execution environment config", async () => {
     const store = new MemorySessionStore();
-    const host = createHost(store);
     const livePersona = {
       ...personas[1],
       label: "live persona",
       systemPrompt: "live persona system prompt",
     };
     const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
+    const liveModelResolver = vi.fn(resolveModel);
     const resolveRuntimeConfig = vi.fn(async () => ({
-      bootstrap: {},
+      bootstrap: { modelResolver: { resolveModel: liveModelResolver } },
+      config: {},
       personas: [livePersona],
       prompts: [],
       skills: [
@@ -1023,6 +1055,9 @@ describe("LocalSessionHost", () => {
           promptContext: {
             cwd: "/repo",
             home: "/home/user",
+            repoRoot: "/repo",
+            platform: "linux",
+            nodeVersion: "v24.0.0",
             includeAgentContext,
             projectContextBlock: "<project-context>live context</project-context>",
             skillsBlock: `<skills>${persona.id}:${discoveredSkills.length}</skills>`,
@@ -1036,11 +1071,13 @@ describe("LocalSessionHost", () => {
       snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
       dispose: async () => {},
     };
-    const session = host.createSessionNow(executionEnvironment);
+    const host = createHostForEnvironment(store, executionEnvironment);
+    const session = await host.createSession(localCreateInput);
 
     const snapshot = await session.setPersona(livePersona.id);
 
     expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
+    expect(session.runtime.session.engine.modelResolver).toBe(liveModelResolver);
     expect(session.runtime.persona.label).toBe("live persona");
     expect(snapshot.settings.personaId).toBe(livePersona.id);
     expect(snapshot.catalog.personas).toEqual([expect.objectContaining({ label: "live persona" })]);
@@ -1066,6 +1103,7 @@ describe("LocalSessionHost", () => {
       settings: { ...personas[0].settings, reasoning: "high" },
     };
     const host = createHost(store, {
+      defaultBootstrap: false,
       resolveSessionBootstrap: async ({ executionEnvironment }) => {
         expect(executionEnvironment.snapshot()).toEqual({
           kind: "local",
@@ -1083,6 +1121,7 @@ describe("LocalSessionHost", () => {
           ],
           personas: [resolvedPersona],
           prompts: [],
+          modelResolver: resolveModel,
         };
       },
     });
@@ -1105,14 +1144,14 @@ describe("LocalSessionHost", () => {
 
   it("reloads hosted session content from the execution environment", async () => {
     const store = new MemorySessionStore();
-    const host = createHost(store);
     const reloadedPersona = {
       ...personas[0],
       label: "reloaded persona",
     };
     const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     const resolveRuntimeConfig = vi.fn(async () => ({
-      bootstrap: {},
+      bootstrap: { modelResolver: { resolveModel } },
+      config: {},
       personas: [reloadedPersona],
       prompts: [{ id: "reload-prompt", template: "reload prompt" }],
       skills: [
@@ -1161,6 +1200,9 @@ describe("LocalSessionHost", () => {
           promptContext: {
             cwd: "/repo",
             home: "/home/user",
+            repoRoot: "/repo",
+            platform: "linux",
+            nodeVersion: "v24.0.0",
             includeAgentContext,
             projectContextBlock: "<project-context>reloaded</project-context>",
             skillsBlock: `<skills>${persona.id}:${discoveredSkills.length}</skills>`,
@@ -1175,13 +1217,13 @@ describe("LocalSessionHost", () => {
       dispose: async () => {},
     };
 
-    const session = host.createSessionNow(executionEnvironment);
+    const host = createHostForEnvironment(store, executionEnvironment);
+    const session = await host.createSession(localCreateInput);
     const result = await session.reload();
 
     expect(result.counts).toEqual({ personas: 1, prompts: 1, skills: 1 });
     expect(result.warnings).toEqual([
       "config warning",
-      "agents warning",
       `unknown skill enabled by persona '${personas[0].id}': missing-skill`,
     ]);
     expect(result.snapshot.catalog.personas[0].label).toBe("reloaded persona");
@@ -1203,13 +1245,40 @@ describe("LocalSessionHost", () => {
     expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps execution-environment context in hosted ephemeral system prompts", async () => {
+    const store = new MemorySessionStore();
+    const executionEnvironment = createTestExecutionEnvironment();
+    const resolveRuntimeContext = executionEnvironment.resolveRuntimeContext;
+    executionEnvironment.resolveRuntimeContext = async (options) => {
+      const context = await resolveRuntimeContext(options);
+      context.promptBootstrap.promptContext.projectContextBlock =
+        "### Project context\n\ntarget AGENTS instructions";
+      context.promptBootstrap.promptContext.skillsBlock = "### Skills\n\ntarget skill";
+      return context;
+    };
+    const host = createHostForEnvironment(store, executionEnvironment);
+    const session = await host.createSession(localCreateInput);
+    const { contextId } = await session.createEphemeralContext({
+      instructions: "review instructions",
+      tools: ["bash"],
+    });
+
+    const hostedContext = session.ephemeralAgentSessions.get(contextId);
+    const thread = await hostedContext.createThread("thread-1");
+    const systemPrompt = thread.session.engine.systemPrompt;
+
+    expect(systemPrompt).toContain("target AGENTS instructions");
+    expect(systemPrompt).toContain("target skill");
+    expect(systemPrompt).toContain("<cwd>/repo</cwd>");
+    expect(systemPrompt).toContain("review instructions");
+  });
+
   it("resolves prompt bodies from the execution environment each time", async () => {
     const store = new MemorySessionStore();
-    const host = createHost(store);
     const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     let promptText = "first body";
     const resolveRuntimeConfig = vi.fn(async () => ({
-      bootstrap: {},
+      bootstrap: { modelResolver: { resolveModel } },
       config: {},
       personas: [personas[0]],
       prompts: [],
@@ -1246,6 +1315,9 @@ describe("LocalSessionHost", () => {
           promptContext: {
             cwd: "/repo",
             home: "/home/user",
+            repoRoot: "/repo",
+            platform: "linux",
+            nodeVersion: "v24.0.0",
             includeAgentContext,
             skillsBlock: `<skills>${persona.id}</skills>`,
           },
@@ -1258,7 +1330,8 @@ describe("LocalSessionHost", () => {
       snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
       dispose: async () => {},
     };
-    const session = host.createSessionNow(executionEnvironment);
+    const host = createHostForEnvironment(store, executionEnvironment);
+    const session = await host.createSession(localCreateInput);
 
     await expect(session.resolvePrompt("live-prompt")).resolves.toEqual({
       promptId: "live-prompt",
@@ -1275,7 +1348,6 @@ describe("LocalSessionHost", () => {
 
   it("reuses the hosted path autocomplete scan for nearby queries", async () => {
     const store = new MemorySessionStore();
-    const host = createHost(store);
     const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     const autocompleteOutput = "src/main.ts\nsrc/host/local_session_host.ts\nREADME.md\n";
     const runBash = vi.fn(async () => ({
@@ -1287,7 +1359,7 @@ describe("LocalSessionHost", () => {
     }));
     const executionEnvironment = {
       resolveRuntimeConfig: async () => ({
-        bootstrap: {},
+        bootstrap: { modelResolver: { resolveModel } },
         config: {},
         personas: [personas[0]],
         prompts: [],
@@ -1301,6 +1373,9 @@ describe("LocalSessionHost", () => {
           promptContext: {
             cwd: "/repo",
             home: "/home/user",
+            repoRoot: "/repo",
+            platform: "linux",
+            nodeVersion: "v24.0.0",
             includeAgentContext,
             projectContextBlock: "",
             skillsBlock: `<skills>${persona.id}:${discoveredSkills.length}</skills>`,
@@ -1314,7 +1389,8 @@ describe("LocalSessionHost", () => {
       snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
       dispose: async () => {},
     };
-    const session = host.createSessionNow(executionEnvironment);
+    const host = createHostForEnvironment(store, executionEnvironment);
+    const session = await host.createSession(localCreateInput);
 
     await expect(session.autocompletePaths({ query: "main", limit: 10 })).resolves.toEqual({
       paths: expect.arrayContaining(["src/main.ts"]),
@@ -1425,7 +1501,7 @@ describe("LocalSessionHost", () => {
     });
     const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     const resolveRuntimeConfig = vi.fn(async () => ({
-      bootstrap: {},
+      bootstrap: { modelResolver: { resolveModel } },
       config: { autoCompact: { enabled: false } },
       personas: [personas[0]],
       prompts: [],
@@ -1441,6 +1517,9 @@ describe("LocalSessionHost", () => {
           promptContext: {
             cwd: "/repo",
             home: "/home/user",
+            repoRoot: "/repo",
+            platform: "linux",
+            nodeVersion: "v24.0.0",
             includeAgentContext,
             skillsBlock: `<skills>${persona.id}</skills>`,
           },
@@ -1462,12 +1541,15 @@ describe("LocalSessionHost", () => {
         restore: async () => restoredEnvironment,
       },
       resolveSessionBootstrap: async ({ executionEnvironment }) => {
-        const runtimeConfig = await executionEnvironment.resolveRuntimeConfig();
+        const runtimeConfig = await executionEnvironment.resolveRuntimeConfig(
+          executionEnvironment.snapshot().cwd,
+        );
         return {
           persona: runtimeConfig.personas[0],
           discoveredSkills: runtimeConfig.skills,
           personas: runtimeConfig.personas,
           prompts: runtimeConfig.prompts,
+          modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
           config: runtimeConfig.config,
         };
       },
@@ -1733,14 +1815,24 @@ describe("LocalSessionHost", () => {
     store.commitSessionSnapshot = vi.fn(async () => {
       throw new Error("commit failed");
     });
-    const host = createHost(store);
     const firstEnvironment = createTestExecutionEnvironment();
     const secondEnvironment = createTestExecutionEnvironment();
     firstEnvironment.dispose = vi.fn(async () => {});
     secondEnvironment.dispose = vi.fn(async () => {});
+    const resolve = vi
+      .fn()
+      .mockResolvedValueOnce(firstEnvironment)
+      .mockResolvedValueOnce(secondEnvironment);
+    const host = createHost(store, {
+      executionEnvironmentResolver: {
+        resolve,
+        canRestore: () => true,
+        restore: async () => createTestExecutionEnvironment(),
+      },
+    });
 
-    host.createSessionNow(firstEnvironment);
-    host.createSessionNow(secondEnvironment);
+    await host.createSession(localCreateInput);
+    await host.createSession(localCreateInput);
 
     await expect(host.shutdown()).rejects.toThrow("failed to shut down local session host");
     expect(firstEnvironment.dispose).toHaveBeenCalledTimes(1);

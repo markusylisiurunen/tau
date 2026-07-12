@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
 import { type Config, resolvePromptTemplateWithBackend } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
+import type { ModelResolver } from "../core/models/catalog.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_runtime.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
@@ -19,7 +20,6 @@ import { hasAutoCompactionContinuationMetadata } from "../core/utils/user_metada
 import type {
   ExecutionEnvironment,
   ExecutionEnvironmentResolver,
-  MaybePromise,
 } from "../execution/execution_environment.js";
 import type {
   SessionProtocolAgentRun,
@@ -68,39 +68,44 @@ import {
 } from "../protocol/session_protocol.js";
 import type { SessionStore } from "../store/session_store.js";
 import { ClientToolBroker } from "./client_tool_broker.js";
+import { createExecutionEnvironmentSubagentRuntimeResolver } from "./execution_runtime.js";
 import { HostedEphemeralAgentSession } from "./hosted_ephemeral_agent_session.js";
 import type { TauHostedSession, TauSessionHost } from "./session_host.js";
 
 const PATH_AUTOCOMPLETE_CACHE_TTL_MS = 5_000;
-
-export type LocalSessionHostSessionOptions = {
-  persona: Persona;
-  discoveredSkills: Skill[];
-  personas: Persona[];
-  prompts: PromptTemplate[];
-  executionEnvironmentResolver: ExecutionEnvironmentResolver;
-  includeAgentContext: boolean;
-  environment: ChatRuntimeEnvironment;
-  config?: Config;
-  deps?: CoreDeps;
-  resolveSessionBootstrap?: LocalSessionBootstrapResolver;
-};
-
-export type LocalSessionHostOptions = LocalSessionHostSessionOptions & {
-  store: SessionStore;
-};
 
 export type LocalSessionResolvedBootstrap = {
   persona: Persona;
   discoveredSkills: Skill[];
   personas: Persona[];
   prompts: PromptTemplate[];
+  modelResolver: ModelResolver;
   config?: Config;
 };
 
 export type LocalSessionBootstrapResolver = (args: {
   executionEnvironment: ExecutionEnvironment;
-}) => MaybePromise<LocalSessionResolvedBootstrap>;
+}) => Promise<LocalSessionResolvedBootstrap>;
+
+export type LocalSessionHostSessionOptions = {
+  executionEnvironmentResolver: ExecutionEnvironmentResolver;
+  includeAgentContext: boolean;
+  environment: ChatRuntimeEnvironment;
+  deps?: CoreDeps;
+} & (
+  | {
+      defaultBootstrap: LocalSessionResolvedBootstrap;
+      resolveSessionBootstrap?: LocalSessionBootstrapResolver;
+    }
+  | {
+      defaultBootstrap?: LocalSessionResolvedBootstrap;
+      resolveSessionBootstrap: LocalSessionBootstrapResolver;
+    }
+);
+
+export type LocalSessionHostOptions = LocalSessionHostSessionOptions & {
+  store: SessionStore;
+};
 
 export type LocalHostedSession = TauHostedSession & {
   runtime: ChatRuntime;
@@ -171,20 +176,6 @@ export class LocalSessionHost implements TauSessionHost {
     return hostedSession;
   }
 
-  createSessionNow(
-    executionEnvironment: ExecutionEnvironment,
-    initialHistory: readonly Message[] = [],
-  ): LocalHostedSession {
-    this.assertHostActive();
-    const hostedSession = this.createLocalSessionHandleSync(executionEnvironment);
-
-    for (const message of initialHistory) {
-      hostedSession.session.addMessage(message);
-    }
-
-    return hostedSession;
-  }
-
   private async createRecoveredSession(
     snapshot: SessionProtocolSnapshot,
     executionEnvironment: ExecutionEnvironment,
@@ -220,9 +211,11 @@ export class LocalSessionHost implements TauSessionHost {
       this.applyCreateParamsToBootstrap(bootstrap, createParams);
     }
     const runtimeContext = await executionEnvironment.resolveRuntimeContext({
+      cwd: executionEnvironment.snapshot().cwd,
       persona: bootstrap.persona,
       discoveredSkills: bootstrap.discoveredSkills,
       includeAgentContext: this.sessionOptions.includeAgentContext,
+      agentContextFiles: bootstrap.config?.agentContextFiles ?? [],
     });
     const catalog = createContentCatalogSnapshot(bootstrap);
     return this.createLocalSessionHandleFromRuntimeContext(
@@ -232,30 +225,6 @@ export class LocalSessionHost implements TauSessionHost {
       catalog,
       committedSnapshot,
       forceNextSnapshotRevision,
-    );
-  }
-
-  private createLocalSessionHandleSync(
-    executionEnvironment: ExecutionEnvironment,
-    committedSnapshot?: SessionProtocolSnapshot,
-  ): LocalHostedSessionHandle {
-    const bootstrap = committedSnapshot
-      ? this.applySnapshotSettingsToBootstrap(this.defaultSessionBootstrap(), committedSnapshot)
-      : this.defaultSessionBootstrap();
-    const runtimeContext = executionEnvironment.resolveRuntimeContext({
-      persona: bootstrap.persona,
-      discoveredSkills: bootstrap.discoveredSkills,
-      includeAgentContext: this.sessionOptions.includeAgentContext,
-    });
-    if (isPromiseLike(runtimeContext)) {
-      throw new Error("cannot synchronously create a session for an async execution environment");
-    }
-    return this.createLocalSessionHandleFromRuntimeContext(
-      executionEnvironment,
-      runtimeContext,
-      bootstrap,
-      createContentCatalogSnapshot(bootstrap),
-      committedSnapshot,
     );
   }
 
@@ -271,6 +240,12 @@ export class LocalSessionHost implements TauSessionHost {
       persona: bootstrap.persona,
       toolRegistry: runtimeContext.toolRegistry,
       clientToolDefinitions: (sessionId) => this.clientToolBroker.getToolDefinitions(sessionId),
+      modelResolver: bootstrap.modelResolver,
+      resolveSubagentRuntime: createExecutionEnvironmentSubagentRuntimeResolver({
+        executionEnvironment,
+        includeAgentContext: this.sessionOptions.includeAgentContext,
+        now: this.sessionOptions.environment.now,
+      }),
       promptContext: runtimeContext.promptBootstrap.promptContext,
       environment: this.sessionOptions.environment,
       initialPromptComposition: committedSnapshot
@@ -347,13 +322,11 @@ export class LocalSessionHost implements TauSessionHost {
   }
 
   private defaultSessionBootstrap(): LocalSessionResolvedBootstrap {
-    return cloneResolvedBootstrap({
-      persona: this.sessionOptions.persona,
-      discoveredSkills: this.sessionOptions.discoveredSkills,
-      personas: this.sessionOptions.personas,
-      prompts: this.sessionOptions.prompts,
-      config: this.sessionOptions.config,
-    });
+    const bootstrap = this.sessionOptions.defaultBootstrap;
+    if (!bootstrap) {
+      throw new Error("local session host has no default session bootstrap");
+    }
+    return cloneResolvedBootstrap(bootstrap);
   }
 
   async observeSession(sessionId: string): Promise<LocalHostedSession | undefined> {
@@ -504,10 +477,6 @@ export class LocalSessionHost implements TauSessionHost {
     }
     return false;
   }
-}
-
-function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
-  return typeof (value as { then?: unknown }).then === "function";
 }
 
 class LocalHostedSessionHandle implements LocalHostedSession {
@@ -688,7 +657,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async setPersona(personaId: string): Promise<SessionProtocolSnapshot> {
     this.assertActive();
-    const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig();
+    const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
+      this.executionEnvironment.snapshot().cwd,
+    );
     const personas = runtimeConfig.personas.map((persona) =>
       this.normalizeReloadedPersona(persona),
     );
@@ -701,11 +672,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
     const selectedPersona = clonePersona(persona);
     const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
+      cwd: this.executionEnvironment.snapshot().cwd,
       persona: selectedPersona,
       discoveredSkills: runtimeConfig.skills,
       includeAgentContext: this.includeAgentContext,
+      agentContextFiles: runtimeConfig.config.agentContextFiles ?? [],
     });
-    this.runtime.setConfig(runtimeConfig.config);
+    this.runtime.setRuntimeConfig(
+      runtimeConfig.config,
+      runtimeConfig.bootstrap.modelResolver.resolveModel,
+    );
     this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
     this.runtime.setPersona(selectedPersona, {
       skillsBlock: runtimeContext.promptBootstrap.promptContext.skillsBlock,
@@ -715,6 +691,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       discoveredSkills: structuredClone(runtimeConfig.skills),
       personas: personas.map(clonePersona),
       prompts: structuredClone(runtimeConfig.prompts),
+      modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
       config: runtimeConfig.config,
     };
     this.catalog = createContentCatalogSnapshot(this.bootstrap);
@@ -725,7 +702,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async reload(): Promise<SessionProtocolReloadResult> {
     this.assertActive();
-    const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig();
+    const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
+      this.executionEnvironment.snapshot().cwd,
+    );
     if (runtimeConfig.personas.length === 0) {
       throw new Error("reload failed: no personas available");
     }
@@ -738,12 +717,17 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       personas.find((persona) => persona.id.toLowerCase() === currentPersonaId) ?? personas[0]!;
 
     const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
+      cwd: this.executionEnvironment.snapshot().cwd,
       persona: nextPersona,
       discoveredSkills: runtimeConfig.skills,
       includeAgentContext: this.includeAgentContext,
+      agentContextFiles: runtimeConfig.config.agentContextFiles ?? [],
     });
 
-    this.runtime.setConfig(runtimeConfig.config);
+    this.runtime.setRuntimeConfig(
+      runtimeConfig.config,
+      runtimeConfig.bootstrap.modelResolver.resolveModel,
+    );
     this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
     this.runtime.setPersona(nextPersona, {
       skillsBlock: runtimeContext.promptBootstrap.promptContext.skillsBlock,
@@ -753,6 +737,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       discoveredSkills: structuredClone(runtimeConfig.skills),
       personas: personas.map(clonePersona),
       prompts: structuredClone(runtimeConfig.prompts),
+      modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
       config: runtimeConfig.config,
     };
 
@@ -766,11 +751,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.emitSnapshotReset("configuration", snapshot);
     return {
       snapshot,
-      warnings: [
-        ...runtimeConfig.warnings,
-        ...runtimeContext.promptBootstrap.warnings,
-        ...unknownSkillWarnings,
-      ],
+      warnings: [...runtimeConfig.warnings, ...unknownSkillWarnings],
       counts: {
         personas: runtimeConfig.personas.length,
         prompts: runtimeConfig.prompts.length,
@@ -904,6 +885,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       contextId,
       persona: this.runtime.persona,
       config: this.bootstrap.config ?? {},
+      modelResolver: this.bootstrap.modelResolver,
       discoveredSkills: this.bootstrap.discoveredSkills,
       includeAgentContext: this.includeAgentContext,
       executionEnvironment: this.executionEnvironment,
@@ -1911,6 +1893,7 @@ function cloneResolvedBootstrap(
     discoveredSkills: structuredClone(bootstrap.discoveredSkills),
     personas: bootstrap.personas.map(clonePersona),
     prompts: structuredClone(bootstrap.prompts),
+    modelResolver: bootstrap.modelResolver,
     ...(bootstrap.config !== undefined ? { config: structuredClone(bootstrap.config) } : {}),
   };
 }

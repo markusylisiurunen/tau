@@ -2,7 +2,7 @@ import type { RuntimeConfigResult } from "../core/config/index.js";
 import { loadRuntimeConfigFromToolBackend } from "../core/config/runtime_config_snapshot.js";
 import {
   type RuntimePromptBootstrap,
-  resolveRuntimePromptBootstrapAsync,
+  resolveRuntimePromptBootstrap,
 } from "../core/runtime/runtime_bootstrap.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
 import {
@@ -44,10 +44,10 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
     this.toolRegistry = ToolCatalog.createRegistry(this.scopedBackend);
   }
 
-  async resolveRuntimeConfig(): Promise<RuntimeConfigResult> {
+  async resolveRuntimeConfig(cwd: string): Promise<RuntimeConfigResult> {
     return await loadRuntimeConfigFromToolBackend({
       backend: this.backend,
-      cwd: this.cwd,
+      cwd,
       home: this.home,
     });
   }
@@ -55,18 +55,14 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
   async resolveRuntimeContext(
     options: ResolveExecutionRuntimeContextOptions,
   ): Promise<ExecutionRuntimeContext> {
-    const promptBootstrap: RuntimePromptBootstrap = await resolveRuntimePromptBootstrapAsync({
+    const promptBootstrap: RuntimePromptBootstrap = await resolveRuntimePromptBootstrap({
       persona: options.persona,
       discoveredSkills: options.discoveredSkills,
-      cwd: this.cwd,
+      cwd: options.cwd,
       home: this.home,
       includeAgentContext: options.includeAgentContext,
-      fs: {
-        readFile: async (path) => (await this.backend.readFile(path)).content,
-        runBash: (command, runOptions) =>
-          this.backend.runBash(command, { cwd: this.cwd, timeoutMs: runOptions?.timeoutMs }),
-        listDir: async (path) => (await this.backend.listDir(path)).entries,
-      },
+      agentContextFiles: options.agentContextFiles,
+      backend: this.backend,
     });
 
     return {

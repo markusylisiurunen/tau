@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { Config } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
+import type { ModelResolver } from "../core/models/catalog.js";
 import { ConversationTurnRuntime } from "../core/runtime/conversation_turn_runtime.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
@@ -8,6 +9,7 @@ import { CoreSession, type HistoryEntry } from "../core/session/core_session.js"
 import type { SubagentToolName } from "../core/subagents/types.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
 import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
+import type { ResolveSubagentRuntime } from "../core/tools/registry.js";
 import type { Persona, Skill } from "../core/types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../core/usage/logs.js";
 import { extractAssistantText } from "../core/utils/messages.js";
@@ -22,6 +24,7 @@ import type {
   SessionProtocolEphemeralSubmitParams,
   SessionProtocolEphemeralSubmitResult,
 } from "../protocol/session_protocol.js";
+import { createExecutionEnvironmentSubagentRuntimeResolver } from "./execution_runtime.js";
 
 export type EphemeralAgentUsageSnapshot = {
   input: number;
@@ -47,6 +50,7 @@ export type HostedEphemeralAgentSessionOptions = {
   contextId: string;
   persona: Persona;
   config: Config;
+  modelResolver: ModelResolver;
   discoveredSkills: Skill[];
   includeAgentContext: boolean;
   executionEnvironment: ExecutionEnvironment;
@@ -67,6 +71,7 @@ export class HostedEphemeralAgentSession {
   private readonly contextId: string;
   private readonly persona: Persona;
   private readonly config: Config;
+  private readonly modelResolver: ModelResolver;
   private readonly discoveredSkills: Skill[];
   private readonly includeAgentContext: boolean;
   private readonly executionEnvironment: ExecutionEnvironment;
@@ -80,6 +85,7 @@ export class HostedEphemeralAgentSession {
     this.contextId = options.contextId;
     this.persona = structuredClone(options.persona);
     this.config = options.config;
+    this.modelResolver = options.modelResolver;
     this.discoveredSkills = structuredClone(options.discoveredSkills);
     this.includeAgentContext = options.includeAgentContext;
     this.executionEnvironment = options.executionEnvironment;
@@ -149,19 +155,23 @@ export class HostedEphemeralAgentSession {
     threadId: string,
     forkFrom?: EphemeralAgentThreadForkSource,
   ): Promise<EphemeralAgentThread> {
+    const cwd = this.executionEnvironment.snapshot().cwd;
     const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
+      cwd,
       persona: this.persona,
       discoveredSkills: this.discoveredSkills,
       includeAgentContext: this.includeAgentContext,
+      agentContextFiles: this.config.agentContextFiles ?? [],
     });
     const deps = createDefaultCoreDeps();
     const promptContext = runtimeContext.promptBootstrap.promptContext;
     const promptComposition = composeSessionPrompts({
       persona: this.persona,
       cwd: promptContext.cwd,
+      repoRoot: promptContext.repoRoot,
       datetime: new Date(deps.clock.now()).toISOString(),
-      platform: deps.env.platform(),
-      nodeVersion: deps.env.nodeVersion(),
+      platform: promptContext.platform,
+      nodeVersion: promptContext.nodeVersion,
       skillsBlock: promptContext.skillsBlock,
       projectContextBlock: promptContext.projectContextBlock,
     });
@@ -169,9 +179,15 @@ export class HostedEphemeralAgentSession {
     return new EphemeralAgentThread({
       threadId,
       persona: this.persona,
-      instructions: this.instructions,
+      systemPrompt: [promptComposition.baseSystemPrompt, this.instructions].join("\n\n"),
       subagentPrompts: promptComposition.subagentPrompts,
       config: this.config,
+      modelResolver: this.modelResolver,
+      resolveSubagentRuntime: createExecutionEnvironmentSubagentRuntimeResolver({
+        executionEnvironment: this.executionEnvironment,
+        includeAgentContext: this.includeAgentContext,
+        now: deps.clock.now,
+      }),
       deps,
       backend: this.executionEnvironment.getToolExecutionBackend(),
       tools: this.tools,
@@ -193,9 +209,11 @@ export class HostedEphemeralAgentSession {
 type EphemeralAgentThreadOptions = {
   threadId: string;
   persona: Persona;
-  instructions: string;
+  systemPrompt: string;
   subagentPrompts: Record<string, string>;
   config: Config;
+  modelResolver: ModelResolver;
+  resolveSubagentRuntime: ResolveSubagentRuntime;
   deps: ReturnType<typeof createDefaultCoreDeps>;
   backend: ToolExecutionBackend;
   tools: SubagentToolName[];
@@ -217,8 +235,7 @@ class EphemeralAgentThread {
   private lastActivityText?: string;
 
   constructor(options: EphemeralAgentThreadOptions) {
-    const systemPrompt = [options.persona.systemPrompt, options.instructions].join("\n\n");
-    const persona = createEphemeralPersona(options.persona, systemPrompt, options.tools);
+    const persona = createEphemeralPersona(options.persona, options.systemPrompt, options.tools);
     this.personaId = persona.id;
     this.reasoningEffort = persona.settings.reasoning ?? "none";
     this.onUpdate = options.onUpdate;
@@ -233,13 +250,15 @@ class EphemeralAgentThread {
 
     this.session = new CoreSession({
       persona,
-      systemPrompt,
+      systemPrompt: options.systemPrompt,
       subagentPrompts: options.subagentPrompts,
       toolRegistry: ToolCatalog.createSubagentRegistry(
         options.tools,
         options.config,
         options.backend,
       ),
+      modelResolver: options.modelResolver,
+      resolveSubagentRuntime: options.resolveSubagentRuntime,
       config: options.config,
       deps: options.deps,
       cwd: options.cwd,

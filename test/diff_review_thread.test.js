@@ -21,26 +21,6 @@ vi.mock("../src/core/runtime/deps.ts", () => ({
   }),
 }));
 
-vi.mock("../src/core/runtime/runtime_bootstrap.ts", () => ({
-  resolveRuntimePromptBootstrap: () => ({
-    promptContext: {
-      cwd: "/repo",
-      home: "/home/test",
-      includeAgentContext: true,
-      projectContextBlock: "### Project context\n",
-      skillsBlock: "### Skills\n",
-    },
-  }),
-}));
-
-vi.mock("../src/core/runtime/session_prompt_composer.ts", () => ({
-  composeSessionPrompts: (args) => ({
-    environmentTag: `<environment datetime="${args.datetime}"></environment>`,
-    baseSystemPrompt: `review system prompt ${args.datetime}`,
-    subagentPrompts: { reviewer: `subagent prompt ${args.datetime}` },
-  }),
-}));
-
 vi.mock("../src/core/session/core_session.ts", () => ({
   CoreSession: class CoreSession {
     historyEntries = [];
@@ -166,6 +146,14 @@ vi.mock("../src/core/usage/logs.ts", () => ({
 import { DiffReviewThread } from "../src/core/diff_review/review_thread.ts";
 import { DiffReviewSnapshot, formatDiffReviewScope } from "../src/core/diff_review/snapshot.ts";
 
+function createPromptComposition() {
+  return {
+    environmentTag: "<environment><cwd>/repo</cwd></environment>",
+    baseSystemPrompt: "review system prompt",
+    subagentPrompts: { reviewer: "reviewer system prompt" },
+  };
+}
+
 describe("diff_review thread", () => {
   it("records review agent usage", async () => {
     conversationTurnMode.blocked = false;
@@ -194,6 +182,7 @@ describe("diff_review thread", () => {
         source: "builtin",
       },
       config: {},
+      promptComposition: createPromptComposition(),
     });
 
     await expect(thread.submitMessage("what changed?")).resolves.toBe("review answer");
@@ -243,6 +232,7 @@ describe("diff_review thread", () => {
         source: "builtin",
       },
       config: {},
+      promptComposition: createPromptComposition(),
       onUpdate: (update) => {
         updates.push(update);
       },
@@ -306,6 +296,7 @@ describe("diff_review thread", () => {
         source: "builtin",
       },
       config: {},
+      promptComposition: createPromptComposition(),
     });
     await parent.submitMessage("bootstrap");
 
@@ -323,6 +314,7 @@ describe("diff_review thread", () => {
         source: "builtin",
       },
       config: {},
+      promptComposition: createPromptComposition(),
       forkFrom: parent.createForkSource(),
       onUpdate: (update) => {
         childUpdates.push(update);
@@ -405,6 +397,7 @@ describe("diff_review thread", () => {
         source: "builtin",
       },
       config: {},
+      promptComposition: createPromptComposition(),
     });
 
     await expect(thread.submitMessage("first question")).resolves.toBe("review answer");

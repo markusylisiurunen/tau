@@ -1,16 +1,5 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
 import { resolveConfigLevels } from "../dist/core/config/index.js";
 import { loadModelResolver } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
@@ -55,10 +44,16 @@ function createContext(overrides = {}) {
   const spawned = [];
   const baseCwd = overrides.cwd ?? "/repo/current";
   const baseHome = overrides.home ?? "/repo";
+  const modelResolver = createModelResolver(baseCwd, baseHome);
 
   const context = {
     scope: "main",
-    modelResolver: createModelResolver(baseCwd, baseHome),
+    modelResolver,
+    resolveSubagentRuntime: async ({ cwd, name }) => ({
+      config: {},
+      modelResolver,
+      systemPrompt: `${name} prompt\n<cwd>${cwd}</cwd>`,
+    }),
     persona: {
       id: "test-persona",
       label: "test persona",
@@ -421,222 +416,73 @@ describe("spawn_agent tool", () => {
     expect(spawned[0].workingDirectory).toBe("/repo");
   });
 
-  it("rebuilds subagent prompt context for workingDirectory", async () => {
-    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-"));
-    const projectRoot = join(tmpRoot, "project");
-    const skillDir = join(projectRoot, ".tau", "skills", "scoped-skill");
-    const sourceDir = join(projectRoot, "src");
+  it("resolves working-directory context through the execution environment", async () => {
+    const resolveSubagentRuntime = vi.fn(async ({ cwd, name }) => ({
+      config: { modelSystemNotices: {} },
+      modelResolver: createModelResolver(cwd, "/repo"),
+      systemPrompt: `${name} target prompt\n<cwd>${cwd}</cwd>\ntarget AGENTS context`,
+    }));
+    const { context, spawned } = createContext({
+      cwd: "/repo/src",
+      resolveSubagentRuntime,
+    });
+    const persona = context.persona;
 
-    mkdirSync(skillDir, { recursive: true });
-    mkdirSync(sourceDir, { recursive: true });
-    writeFileSync(
-      join(skillDir, "SKILL.md"),
-      ["---", "name: scoped-skill", "description: scoped helper", "---", "", "body"].join("\n"),
-      "utf-8",
+    const dispatched = await createSpawnAgentToolDefinition(
+      createLocalToolExecutionBackend(),
+    ).dispatch(
+      {
+        id: "call-9",
+        name: TOOL_NAME_SPAWN_AGENT,
+        arguments: {
+          name: "researcher",
+          title: "research task",
+          prompt: "collect findings",
+          workingDirectory: "..",
+        },
+      },
+      undefined,
+      context,
     );
-    writeFileSync(join(projectRoot, "AGENTS.md"), "project context marker\n", "utf-8");
 
-    try {
-      const backend = createLocalToolExecutionBackend();
-      const tool = createSpawnAgentToolDefinition(backend);
-      const base = createContext();
-      const { context, spawned } = createContext({
-        cwd: sourceDir,
-        home: tmpRoot,
-        includeAgentContext: true,
-        persona: {
-          ...base.context.persona,
-          skills: ["scoped-skill"],
-        },
-      });
-
-      const dispatched = await tool.dispatch(
-        {
-          id: "call-9",
-          name: TOOL_NAME_SPAWN_AGENT,
-          arguments: {
-            name: "researcher",
-            title: "research task",
-            prompt: "collect findings",
-            workingDirectory: "..",
-          },
-        },
-        undefined,
-        context,
-      );
-
-      expect(dispatched.kind).toBe("phased");
-      const result = await dispatched.run;
-      expect(result.kind).toBe("single");
-      expect(result.toolResult.isError).toBe(false);
-      expect(spawned).toHaveLength(1);
-      expect(spawned[0].workingDirectory).toBe(projectRoot);
-      expect(spawned[0].systemPrompt).toContain(`<cwd>${projectRoot}</cwd>`);
-      expect(spawned[0].systemPrompt).toContain("project context marker");
-      expect(spawned[0].systemPrompt).toContain("<available-skills>");
-      expect(spawned[0].systemPrompt).toContain("<name>scoped-skill</name>");
-    } finally {
-      rmSync(tmpRoot, { recursive: true, force: true });
-    }
+    expect(dispatched.kind).toBe("phased");
+    await dispatched.run;
+    expect(resolveSubagentRuntime).toHaveBeenCalledWith({
+      cwd: "/repo",
+      persona,
+      name: "researcher",
+    });
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].workingDirectory).toBe("/repo");
+    expect(spawned[0].systemPrompt).toContain("target AGENTS context");
   });
 
-  it("reports skill-loading diagnostics when workingDirectory prompt rebuild finds invalid skills", async () => {
-    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-invalid-skill-"));
-    const projectRoot = join(tmpRoot, "project");
-    const invalidSkillDir = join(projectRoot, ".tau", "skills", "bad--skill");
-    const sourceDir = join(projectRoot, "src");
+  it("reports execution-environment context resolution failures", async () => {
+    const { context, spawned } = createContext({
+      resolveSubagentRuntime: async () => {
+        throw new Error("target skill configuration is invalid");
+      },
+    });
 
-    mkdirSync(invalidSkillDir, { recursive: true });
-    mkdirSync(sourceDir, { recursive: true });
-    writeFileSync(
-      join(invalidSkillDir, "SKILL.md"),
-      ["---", "name: bad--skill", "description: invalid helper", "---", "", "body"].join("\n"),
-      "utf-8",
+    const result = await createSpawnAgentToolDefinition(createLocalToolExecutionBackend()).dispatch(
+      {
+        id: "call-10",
+        name: TOOL_NAME_SPAWN_AGENT,
+        arguments: {
+          name: "researcher",
+          title: "research task",
+          prompt: "collect findings",
+          workingDirectory: ".",
+        },
+      },
+      undefined,
+      context,
     );
 
-    try {
-      const backend = createLocalToolExecutionBackend();
-      const tool = createSpawnAgentToolDefinition(backend);
-      const { context, spawned } = createContext({
-        cwd: sourceDir,
-        home: tmpRoot,
-      });
-
-      const result = await tool.dispatch(
-        {
-          id: "call-9b",
-          name: TOOL_NAME_SPAWN_AGENT,
-          arguments: {
-            name: "researcher",
-            title: "research task",
-            prompt: "collect findings",
-            workingDirectory: "..",
-          },
-        },
-        undefined,
-        context,
-      );
-
-      expect(result.kind).toBe("single");
-      expect(result.toolResult.isError).toBe(true);
-      expect(getText(result.toolResult)).toContain("Failed to build the subagent prompt");
-      expect(getText(result.toolResult)).toContain("Failed to load skills for prompt context");
-      expect(getText(result.toolResult)).toContain("invalid frontmatter");
-      expect(spawned).toHaveLength(0);
-    } finally {
-      rmSync(tmpRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps the resolved workingDirectory in subagent prompt context", async () => {
-    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-working-directory-"));
-    const sourceDir = join(tmpRoot, "plain-dir", "src");
-    mkdirSync(sourceDir, { recursive: true });
-
-    try {
-      const backend = createLocalToolExecutionBackend();
-      const tool = createSpawnAgentToolDefinition(backend);
-      const { context, spawned } = createContext({
-        cwd: sourceDir,
-        home: tmpRoot,
-      });
-
-      const dispatched = await tool.dispatch(
-        {
-          id: "call-10",
-          name: TOOL_NAME_SPAWN_AGENT,
-          arguments: {
-            name: "researcher",
-            title: "research task",
-            prompt: "collect findings",
-            workingDirectory: ".",
-          },
-        },
-        undefined,
-        context,
-      );
-
-      expect(dispatched.kind).toBe("phased");
-      const result = await dispatched.run;
-      expect(result.kind).toBe("single");
-      expect(result.toolResult.isError).toBe(false);
-      expect(spawned).toHaveLength(1);
-      expect(spawned[0].workingDirectory).toBe(sourceDir);
-      expect(spawned[0].systemPrompt).toContain(`<cwd>${sourceDir}</cwd>`);
-    } finally {
-      rmSync(tmpRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("uses normal host paths for AGENTS and skills when rebuilding prompt context", async () => {
-    const tmpRoot = mkdtempSync(join(tmpdir(), "tau-spawn-agent-host-scope-"));
-    const hostRoot = join(tmpRoot, "mounted-root");
-    const hostSourceDir = join(hostRoot, "src");
-
-    mkdirSync(hostSourceDir, { recursive: true });
-    mkdirSync(join(hostRoot, ".tau", "skills", "in-scope"), { recursive: true });
-    mkdirSync(join(tmpRoot, ".tau", "skills", "out-of-scope"), { recursive: true });
-    writeFileSync(join(hostRoot, "AGENTS.md"), "mounted agents\n", "utf-8");
-    writeFileSync(join(tmpRoot, "AGENTS.md"), "outside agents\n", "utf-8");
-    writeFileSync(
-      join(hostRoot, ".tau", "skills", "in-scope", "SKILL.md"),
-      ["---", "name: in-scope", "description: mounted skill", "---", "", "body"].join("\n"),
-      "utf-8",
-    );
-    writeFileSync(
-      join(tmpRoot, ".tau", "skills", "out-of-scope", "SKILL.md"),
-      ["---", "name: out-of-scope", "description: outside skill", "---", "", "body"].join("\n"),
-      "utf-8",
-    );
-
-    try {
-      const backend = createLocalToolExecutionBackend();
-      const tool = createSpawnAgentToolDefinition(backend);
-      const base = createContext();
-      const { context, spawned } = createContext({
-        cwd: hostSourceDir,
-        home: tmpRoot,
-        includeAgentContext: true,
-        persona: {
-          ...base.context.persona,
-          skills: ["in-scope", "out-of-scope"],
-        },
-      });
-
-      const dispatched = await tool.dispatch(
-        {
-          id: "call-11",
-          name: TOOL_NAME_SPAWN_AGENT,
-          arguments: {
-            name: "researcher",
-            title: "research task",
-            prompt: "collect findings",
-            workingDirectory: ".",
-          },
-        },
-        undefined,
-        context,
-      );
-
-      expect(dispatched.kind).toBe("phased");
-      const result = await dispatched.run;
-      expect(result.kind).toBe("single");
-      expect(result.toolResult.isError).toBe(false);
-      expect(spawned).toHaveLength(1);
-      expect(spawned[0].systemPrompt).toContain(`<file path="${hostRoot}/AGENTS.md">`);
-      expect(spawned[0].systemPrompt).toContain(`<file path="${tmpRoot}/AGENTS.md">`);
-      expect(spawned[0].systemPrompt).toContain("mounted agents");
-      expect(spawned[0].systemPrompt).toContain("outside agents");
-      expect(spawned[0].systemPrompt).toContain("<name>in-scope</name>");
-      expect(spawned[0].systemPrompt).toContain(
-        `<location>${hostRoot}/.tau/skills/in-scope/SKILL.md</location>`,
-      );
-      expect(spawned[0].systemPrompt).toContain("<name>out-of-scope</name>");
-      expect(spawned[0].systemPrompt).toContain(
-        `<location>${tmpRoot}/.tau/skills/out-of-scope/SKILL.md</location>`,
-      );
-    } finally {
-      rmSync(tmpRoot, { recursive: true, force: true });
-    }
+    expect(result.kind).toBe("single");
+    expect(result.toolResult.isError).toBe(true);
+    expect(getText(result.toolResult)).toContain("Failed to build the subagent prompt");
+    expect(getText(result.toolResult)).toContain("target skill configuration is invalid");
+    expect(spawned).toHaveLength(0);
   });
 });

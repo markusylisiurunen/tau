@@ -291,12 +291,25 @@ type ToolDispatchBaseContext = {
   authPath: string;
 };
 
+export type ResolvedSubagentRuntime = {
+  config: Config;
+  modelResolver: ModelResolver;
+  systemPrompt: string;
+};
+
+export type ResolveSubagentRuntime = (options: {
+  cwd: string;
+  persona: Persona;
+  name: string;
+}) => Promise<ResolvedSubagentRuntime>;
+
 export type MainToolDispatchContext = ToolDispatchBaseContext & {
   scope: "main";
   persona: Persona;
   home: string;
   includeAgentContext: boolean;
   subagentPrompts: Record<string, string>;
+  resolveSubagentRuntime?: ResolveSubagentRuntime;
   subagentControlPlane: SubagentControlPlane;
 };
 

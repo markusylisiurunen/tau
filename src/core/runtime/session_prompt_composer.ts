@@ -1,11 +1,10 @@
 import { formatSubagentsForPrompt, getSubagentBasePrompt } from "../subagents/registry.js";
 import type { Persona } from "../types.js";
 import { buildBaseSystemPrompt, buildEnvironmentTag } from "../utils/context.js";
-import { resolvePromptGitRoot } from "../utils/git.js";
-
 export type ComposeSessionPromptsArgs = {
   persona: Persona;
   cwd: string;
+  repoRoot?: string;
   datetime: string;
   platform: NodeJS.Platform;
   nodeVersion: string;
@@ -20,11 +19,9 @@ export type SessionPromptComposition = {
 };
 
 export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionPromptComposition {
-  const repoRoot = resolvePromptGitRoot({ cwd: args.cwd });
-
   const environmentTag = buildEnvironmentTag({
     cwd: args.cwd,
-    repoRoot,
+    repoRoot: args.repoRoot,
     datetime: args.datetime,
     platform: args.platform,
     nodeVersion: args.nodeVersion,
@@ -50,7 +47,7 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
 
       const subagentEnvironmentTag = buildEnvironmentTag({
         cwd: args.cwd,
-        repoRoot,
+        repoRoot: args.repoRoot,
         datetime: args.datetime,
         platform: args.platform,
         nodeVersion: args.nodeVersion,

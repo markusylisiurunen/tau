@@ -5,33 +5,32 @@ import { parseCliArgs } from "../dist/core/cli.js";
 
 describe("cli", () => {
   it("rejects unknown options", () => {
-    expect(() => parseCliArgs(["--bogus"], [])).toThrow("unknown option: --bogus");
+    expect(() => parseCliArgs(["--bogus"])).toThrow("unknown option: --bogus");
   });
 
   it("parses --caffeinated", () => {
-    const options = parseCliArgs(["--caffeinated"], []);
+    const options = parseCliArgs(["--caffeinated"]);
     expect(options.caffeinated).toBe(true);
   });
 
   it("defaults caffeinated to false", () => {
-    const options = parseCliArgs([], []);
+    const options = parseCliArgs([]);
     expect(options.caffeinated).toBe(false);
   });
 
-  it("requires exact persona id matching", () => {
-    expect(() => parseCliArgs(["--persona", "demo"], [{ id: "Demo" }])).toThrow(
-      "unknown persona 'demo'",
-    );
+  it("defers persona resolution until an execution environment exists", () => {
+    const options = parseCliArgs(["--persona", "sandbox-persona"]);
+    expect(options.personaId).toBe("sandbox-persona");
   });
 
   it("parses persona reasoning suffix", () => {
-    const options = parseCliArgs(["--persona", "demo:high"], [{ id: "demo" }]);
+    const options = parseCliArgs(["--persona", "demo:high"]);
     expect(options.personaId).toBe("demo");
     expect(options.reasoningOverride).toBe("high");
   });
 
   it("rejects invalid persona reasoning suffix", () => {
-    expect(() => parseCliArgs(["--persona", "demo:ultra"], [{ id: "demo" }])).toThrow(
+    expect(() => parseCliArgs(["--persona", "demo:ultra"])).toThrow(
       "invalid reasoning level 'ultra'",
     );
   });

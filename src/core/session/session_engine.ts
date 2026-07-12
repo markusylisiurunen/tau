@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import {
   type AssistantMessage,
   type Context,
@@ -14,14 +13,18 @@ import {
   type NormalizedAutoCompactConfig,
   normalizeAutoCompactConfig,
 } from "../config/index.js";
-import { resolveConfigLevels } from "../config/paths.js";
 import type { CoreCompactionResult, CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
-import { loadModelResolver, type ModelResolver } from "../models/catalog.js";
+import type { ModelResolver } from "../models/catalog.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
-import type { ToolDefinition, ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
+import type {
+  ResolveSubagentRuntime,
+  ToolDefinition,
+  ToolDispatchContext,
+  ToolRegistry,
+} from "../tools/registry.js";
 import { TOOL_NAME_NOOK } from "../tools/tool_names.js";
 import type { Persona, ReasoningEffort } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
@@ -72,6 +75,8 @@ export type SessionEngineOptions = {
   subagentPrompts: Record<string, string>;
   toolRegistry: ToolRegistry;
   clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
+  modelResolver: ModelResolver;
+  resolveSubagentRuntime?: ResolveSubagentRuntime;
   config?: Config;
   deps?: CoreDeps;
   cwd?: string;
@@ -139,6 +144,7 @@ export class SessionEngine {
   private home: string;
   private includeAgentContext: boolean;
   private modelResolver: ModelResolver;
+  private readonly resolveSubagentRuntime?: ResolveSubagentRuntime;
   private readonly subagentControlPlane: SubagentControlPlane;
   private readonly eventListeners = new Set<(event: CoreEvent) => void>();
   private readonly subagentEventListeners = new Set<(event: CoreSubagentUiEvent) => void>();
@@ -156,7 +162,8 @@ export class SessionEngine {
     this.cwd = options.cwd ?? this.deps.env.cwd();
     this.home = options.home ?? this.deps.env.home();
     this.includeAgentContext = options.includeAgentContext ?? true;
-    this.modelResolver = this.createDispatchModelResolver();
+    this.modelResolver = options.modelResolver;
+    this.resolveSubagentRuntime = options.resolveSubagentRuntime;
     this.authPath = getAuthPath(this.deps.env.home());
     this.modelRuntime = new ModelRuntime({
       authStorage: new AuthStorage(this.authPath),
@@ -223,9 +230,9 @@ export class SessionEngine {
     };
   }
 
-  setConfig(config: Config): void {
+  setRuntimeConfig(config: Config, modelResolver: ModelResolver): void {
     this.config = config;
-    this.modelResolver = this.createDispatchModelResolver();
+    this.modelResolver = modelResolver;
   }
 
   setPromptContext(context: { cwd?: string; home?: string; includeAgentContext?: boolean }): void {
@@ -238,8 +245,6 @@ export class SessionEngine {
     if (context.includeAgentContext !== undefined) {
       this.includeAgentContext = context.includeAgentContext;
     }
-
-    this.modelResolver = this.createDispatchModelResolver();
   }
 
   onEvent(handler: (event: CoreEvent) => void): () => void {
@@ -690,28 +695,6 @@ export class SessionEngine {
     return nook ? [nook] : [];
   }
 
-  private createDispatchModelResolver(): ModelResolver {
-    const cwd = this.cwd || this.deps.env.cwd();
-    const home = this.home || this.deps.env.home() || cwd;
-
-    const deps = {
-      fs: {
-        readFile: (path: string) => readFileSync(path, "utf-8"),
-        exists: (path: string) => existsSync(path),
-        listDir: (path: string) => readdirSync(path),
-        stat: (path: string) => statSync(path),
-      },
-      env: {
-        getEnv: () => this.deps.env.env(),
-        cwd: () => cwd,
-        home: () => home,
-      },
-    };
-    const levels = resolveConfigLevels(deps, { cwd });
-
-    return loadModelResolver({ deps, levels }).resolveModel;
-  }
-
   async *processTurn(
     signal: AbortSignal,
     options?: { shouldStopAtBoundary?: () => boolean },
@@ -759,6 +742,9 @@ export class SessionEngine {
         home: this.home,
         includeAgentContext: this.includeAgentContext,
         subagentPrompts: this.subagentPrompts,
+        ...(this.resolveSubagentRuntime
+          ? { resolveSubagentRuntime: this.resolveSubagentRuntime }
+          : {}),
         toolRegistry: this.toolRegistry,
         modelResolver: this.modelResolver,
         authPath: this.authPath,

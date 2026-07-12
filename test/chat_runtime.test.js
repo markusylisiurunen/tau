@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ChatRuntime, createLocalToolExecutionBackend, ToolCatalog } from "../dist/core/index.js";
+import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 
 function createPersona(overrides = {}) {
@@ -55,10 +56,17 @@ function createStubSession(eventGenerator) {
 }
 
 function createEnvironment(now = Date.parse("2026-01-01T00:00:00.000Z")) {
+  return { now: () => now };
+}
+
+function createPromptContext(overrides = {}) {
   return {
-    now: () => now,
-    platform: () => "darwin",
-    nodeVersion: () => "v24.0.0",
+    cwd: "/repo",
+    home: "/home/user",
+    platform: "linux",
+    nodeVersion: "v24.0.0",
+    includeAgentContext: true,
+    ...overrides,
   };
 }
 
@@ -78,9 +86,7 @@ describe("ChatRuntime", () => {
     runtime = new ChatRuntime({
       session,
       persona: createPersona(),
-      promptContext: {
-        cwd: "/repo",
-      },
+      promptContext: createPromptContext(),
       environment: createEnvironment(),
     });
 
@@ -102,9 +108,8 @@ describe("ChatRuntime", () => {
     const runtime = ChatRuntime.create({
       persona: createPersona(),
       toolRegistry,
-      promptContext: {
-        cwd: "/repo",
-      },
+      modelResolver: resolveModel,
+      promptContext: createPromptContext(),
       environment: createEnvironment(),
     });
 
@@ -135,9 +140,8 @@ describe("ChatRuntime", () => {
     const runtime = ChatRuntime.create({
       persona: createPersona(),
       toolRegistry,
-      promptContext: {
-        cwd: "/repo",
-      },
+      modelResolver: resolveModel,
+      promptContext: createPromptContext(),
       environment: createEnvironment(Date.parse("2027-01-01T00:00:00.000Z")),
       initialPromptComposition,
     });
@@ -153,11 +157,10 @@ describe("ChatRuntime", () => {
     const runtime = new ChatRuntime({
       session,
       persona,
-      promptContext: {
-        cwd: "/repo",
+      promptContext: createPromptContext({
         skillsBlock: "### Skills\n\n- skill-a",
         projectContextBlock: '### Project context\n\n<file path="/repo/AGENTS.md">ctx</file>',
-      },
+      }),
       environment: createEnvironment(),
     });
 

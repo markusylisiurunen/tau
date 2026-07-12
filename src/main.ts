@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeSync } from "node:fs";
+import { writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
@@ -494,6 +494,7 @@ async function resolveHostedSessionBootstrap(options: {
   discoveredSkills: Skill[];
   personas: Persona[];
   prompts: RuntimeConfigResult["prompts"];
+  modelResolver: RuntimeConfigResult["bootstrap"]["modelResolver"]["resolveModel"];
   config: Config;
 }> {
   const runtime = options.runtime;
@@ -535,23 +536,17 @@ async function resolveHostedSessionBootstrap(options: {
     discoveredSkills: runtime.skills,
     personas: runtime.personas.map(clonePersonaForSession),
     prompts: runtime.prompts,
+    modelResolver: runtime.bootstrap.modelResolver.resolveModel,
     config: runtime.config,
   };
 }
 
-function createLocalSessionHost(options: {
-  cli: CliOptions;
-  config: Config;
-  persona: Persona;
-  skills: Skill[];
-}): LocalSessionHost {
+function createLocalSessionHost(options: { cli: CliOptions; config: Config }): LocalSessionHost {
   const deps = createDefaultCoreDeps();
-  const persona = clonePersonaForSession(options.persona);
   const home = deps.env.home() || process.env.HOME || homedir();
   const toolBackend = createLocalToolExecutionBackend();
   const localExecutionEnvironmentResolver = new LocalExecutionEnvironmentResolver({
     home,
-    readFile: (path) => readFileSync(path, "utf-8"),
     toolBackend,
   });
   const executionEnvironmentResolver = new CompositeExecutionEnvironmentResolver({
@@ -574,22 +569,15 @@ function createLocalSessionHost(options: {
 
   return new LocalSessionHost({
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
-    persona,
-    discoveredSkills: options.skills,
-    personas: [persona],
-    prompts: [],
     executionEnvironmentResolver,
     includeAgentContext: !options.cli.noAgentContextFiles,
     environment: {
       now: () => deps.clock.now(),
-      platform: () => deps.env.platform(),
-      nodeVersion: () => deps.env.nodeVersion(),
     },
-    config: options.config,
     deps,
     resolveSessionBootstrap: async ({ executionEnvironment }) => {
       const snapshot = executionEnvironment.snapshot();
-      const runtime = await executionEnvironment.resolveRuntimeConfig();
+      const runtime = await executionEnvironment.resolveRuntimeConfig(snapshot.cwd);
       return await resolveHostedSessionBootstrap({
         cli: options.cli,
         runtime,
@@ -599,12 +587,7 @@ function createLocalSessionHost(options: {
   });
 }
 
-async function runRpcMode(options: {
-  cli: CliOptions;
-  config: Config;
-  persona: Persona;
-  skills: Skill[];
-}): Promise<void> {
+async function runRpcMode(options: { cli: CliOptions; config: Config }): Promise<void> {
   const sessionHost = createLocalSessionHost(options);
 
   const abortController = new AbortController();
@@ -993,7 +976,17 @@ const cliArgv = isRpcSubcommand ? argv.slice(1) : isServeSubcommand ? serve!.cli
 
 let cli: CliOptions;
 try {
-  cli = parseCliArgs(cliArgv, personas);
+  cli = parseCliArgs(cliArgv);
+  if (
+    !isRpcSubcommand &&
+    !isServeSubcommand &&
+    cli.personaId &&
+    !personas.some((persona) => persona.id === cli.personaId)
+  ) {
+    throw new CliError(
+      `unknown persona '${cli.personaId}'. available personas: ${personas.map((persona) => persona.id).join(", ")}`,
+    );
+  }
 } catch (err) {
   if (err instanceof CliError) {
     // eslint-disable-next-line no-console
@@ -1028,7 +1021,7 @@ let reasoningOverride: ReasoningEffort | undefined = cli.reasoningOverride;
 
 if (cli.personaId) {
   initialPersonaId = cli.personaId;
-} else if (config.defaultPersona) {
+} else if (!isRpcSubcommand && !isServeSubcommand && config.defaultPersona) {
   const parsedDefaultPersona = parsePersonaString(config.defaultPersona, personas);
   initialPersonaId = parsedDefaultPersona.personaId;
   if (
@@ -1067,30 +1060,8 @@ if (cli.debug) {
   process.exit(0);
 }
 
-if (personas.length === 0) {
-  // eslint-disable-next-line no-console
-  console.error(
-    "no personas available. add a custom persona in ~/.config/tau/personas or .tau/personas, or unset disableBuiltinPersonas.",
-  );
-  process.exit(1);
-}
-
-const initialPersonaBase = initialPersonaId
-  ? (personas.find((p) => p.id === initialPersonaId) ?? personas[0]!)
-  : personas[0]!;
-const initialPersona = clonePersonaForSession(initialPersonaBase);
-
-if (reasoningOverride !== undefined) {
-  initialPersona.settings.reasoning = reasoningOverride;
-}
-
 if (isServeSubcommand) {
-  const sessionHost = createLocalSessionHost({
-    cli,
-    config,
-    persona: initialPersona,
-    skills,
-  });
+  const sessionHost = createLocalSessionHost({ cli, config });
 
   const abortController = new AbortController();
   const requestShutdown = () => {
@@ -1128,18 +1099,21 @@ if (isServeSubcommand) {
 
 if (isRpcSubcommand) {
   try {
-    await runRpcMode({
-      cli,
-      config,
-      persona: initialPersona,
-      skills,
-    });
+    await runRpcMode({ cli, config });
     process.exit(0);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error((err as Error).message);
     process.exit(1);
   }
+}
+
+if (personas.length === 0) {
+  // eslint-disable-next-line no-console
+  console.error(
+    "no personas available. add a custom persona in ~/.config/tau/personas or .tau/personas, or unset disableBuiltinPersonas.",
+  );
+  process.exit(1);
 }
 
 const initialUserMessage = await readPipedStdin();

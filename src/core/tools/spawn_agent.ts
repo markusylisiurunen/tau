@@ -1,15 +1,10 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import { loadSkillsForPromptContext } from "../config/skills_loader.js";
-import { resolveRuntimePromptBootstrap } from "../runtime/runtime_bootstrap.js";
-import { composeSessionPrompts } from "../runtime/session_prompt_composer.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
 import { getSubagentDescription, resolveSubagentEffectiveSettings } from "../subagents/registry.js";
 import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/types.js";
-import type { Persona } from "../types.js";
 import { formatCwd } from "../utils/format.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { parseToolArgs } from "../utils/zod.js";
@@ -106,57 +101,6 @@ function formatAllowedLaunchModels(launchModels: string[]): string {
   return launchModels.map((entry) => `'${entry}'`).join(", ");
 }
 
-async function buildSubagentSystemPrompt(args: {
-  name: string;
-  persona: Persona;
-  config: ToolDispatchContext["config"];
-  cwd: string;
-  home: string;
-  includeAgentContext: boolean;
-}): Promise<string | undefined> {
-  const skillsResult = await loadSkillsForPromptContext({
-    config: args.config,
-    cwd: args.cwd,
-    deps: {
-      fs: {
-        readFile: (path) => readFileSync(path, "utf-8"),
-        exists: (path) => existsSync(path),
-        listDir: (path) => readdirSync(path),
-        stat: (path) => statSync(path),
-      },
-      env: {
-        getEnv: () => process.env,
-        cwd: () => args.cwd,
-        home: () => args.home,
-      },
-    },
-  });
-  if (skillsResult.errors.length > 0) {
-    throw new Error(`Failed to load skills for prompt context:\n${skillsResult.errors.join("\n")}`);
-  }
-
-  const bootstrap = resolveRuntimePromptBootstrap({
-    persona: args.persona,
-    discoveredSkills: skillsResult.skills,
-    cwd: args.cwd,
-    home: args.home,
-    includeAgentContext: args.includeAgentContext,
-    readFile: (path) => readFileSync(path, "utf-8"),
-  });
-
-  const composition = composeSessionPrompts({
-    persona: args.persona,
-    cwd: args.cwd,
-    datetime: new Date().toISOString(),
-    platform: process.platform,
-    nodeVersion: process.version,
-    skillsBlock: bootstrap.promptContext.skillsBlock,
-    projectContextBlock: bootstrap.promptContext.projectContextBlock,
-  });
-
-  return composition.subagentPrompts[args.name];
-}
-
 export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: SPAWN_AGENT_TOOL,
@@ -199,14 +143,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         });
       }
 
-      const {
-        persona,
-        config,
-        cwd: baseCwd,
-        home: baseHome,
-        includeAgentContext,
-        subagentPrompts,
-      } = context;
+      const { persona, cwd: baseCwd, subagentPrompts } = context;
 
       if (!persona.subagents || Object.keys(persona.subagents).length === 0) {
         return blocked("The spawn_agent tool is not enabled for the current persona.", {
@@ -223,11 +160,39 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         });
       }
 
+      const cwd = workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
+      let config = context.config;
+      let modelResolver = context.modelResolver;
+      let systemPrompt = subagentPrompts[name];
+      if (workingDirectory) {
+        if (!context.resolveSubagentRuntime) {
+          return blocked("Working-directory context resolution is unavailable.", { name, title });
+        }
+        try {
+          const runtime = await context.resolveSubagentRuntime({ cwd, persona, name });
+          config = runtime.config;
+          modelResolver = runtime.modelResolver;
+          systemPrompt = runtime.systemPrompt;
+        } catch (error) {
+          return blocked(
+            `Failed to build the subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
+            {
+              name,
+              title,
+            },
+          );
+        }
+      }
+      if (!systemPrompt) {
+        return blocked(`Subagent '${name}' is missing its system prompt.`, {
+          name,
+          title,
+        });
+      }
+
       let launchModelOverride: SubagentLaunchModel | undefined;
       if (model) {
-        const parsedLaunchModel = parseSubagentLaunchModel(model, {
-          resolveModel: context.modelResolver,
-        });
+        const parsedLaunchModel = parseSubagentLaunchModel(model, { resolveModel: modelResolver });
         if (parsedLaunchModel.error || !parsedLaunchModel.launchModel) {
           return blocked(`Invalid model parameter: ${parsedLaunchModel.error}.`, {
             name,
@@ -257,38 +222,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         }
 
         launchModelOverride = parsedLaunchModel.launchModel;
-      }
-
-      const cwd = workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
-
-      let systemPrompt: string | undefined;
-      if (workingDirectory) {
-        try {
-          systemPrompt = await buildSubagentSystemPrompt({
-            name,
-            persona,
-            config,
-            cwd,
-            home: baseHome,
-            includeAgentContext,
-          });
-        } catch (error) {
-          return blocked(
-            `Failed to build the subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
-            {
-              name,
-              title,
-            },
-          );
-        }
-      } else {
-        systemPrompt = subagentPrompts[name];
-      }
-      if (!systemPrompt) {
-        return blocked(`Subagent '${name}' is missing its system prompt.`, {
-          name,
-          title,
-        });
       }
 
       const effectiveSettings = resolveSubagentEffectiveSettings({
@@ -351,7 +284,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             modelLabel,
             originHistoryEntryId: context.originHistoryEntryId,
             config,
-            modelResolver: context.modelResolver,
+            modelResolver,
             authPath: context.authPath,
             backend,
             personaId: context.persona.id,

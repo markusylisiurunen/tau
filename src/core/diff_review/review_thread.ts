@@ -1,14 +1,11 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
 import type { CoreEvent } from "../events/types.js";
+import { resolveModel } from "../models/catalog.js";
 import { ConversationTurnRuntime } from "../runtime/conversation_turn_runtime.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
-import { resolveRuntimePromptBootstrap } from "../runtime/runtime_bootstrap.js";
-import {
-  composeSessionPrompts,
-  type SessionPromptComposition,
-} from "../runtime/session_prompt_composer.js";
+import type { SessionPromptComposition } from "../runtime/session_prompt_composer.js";
 import { CoreSession, type HistoryEntry } from "../session/core_session.js";
 import { renderDiffReviewWrapperPrompt } from "../static/index.js";
 import { ToolCatalog } from "../tools/catalog.js";
@@ -17,7 +14,7 @@ import {
   type ToolExecutionBackend,
 } from "../tools/execution_backend.js";
 import { TOOL_NAME_BASH, TOOL_NAME_VIEW_IMAGE } from "../tools/tool_names.js";
-import type { Persona, Skill } from "../types.js";
+import type { Persona } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { extractAssistantText } from "../utils/messages.js";
 import {
@@ -53,11 +50,9 @@ export type CreateDiffReviewThreadOptions = {
   snapshot: DiffReviewSnapshot;
   persona: Persona;
   config: Config;
-  discoveredSkills?: Skill[];
-  includeAgentContext?: boolean;
   deps?: CoreDeps;
   toolExecutionBackend?: ToolExecutionBackend;
-  promptComposition?: SessionPromptComposition;
+  promptComposition: SessionPromptComposition;
   onUpdate?: (update: DiffReviewThreadUpdate) => void;
   forkFrom?: DiffReviewThreadForkSource;
 };
@@ -92,27 +87,7 @@ export class DiffReviewThread {
       contextWindow: options.persona.model.contextWindow,
     };
     const persona = createDiffReviewPersona(options.persona, options.snapshot);
-    const promptBootstrap = options.promptComposition
-      ? undefined
-      : resolveRuntimePromptBootstrap({
-          persona,
-          discoveredSkills: options.discoveredSkills ?? [],
-          cwd: options.snapshot.cwd,
-          home: deps.env.home(),
-          includeAgentContext: options.includeAgentContext ?? true,
-          readFile: deps.fs.readFile,
-        });
-    const promptComposition =
-      options.promptComposition ??
-      composeSessionPrompts({
-        persona,
-        cwd: promptBootstrap!.promptContext.cwd,
-        datetime: new Date(deps.clock.now()).toISOString(),
-        platform: deps.env.platform(),
-        nodeVersion: deps.env.nodeVersion(),
-        skillsBlock: promptBootstrap!.promptContext.skillsBlock,
-        projectContextBlock: promptBootstrap!.promptContext.projectContextBlock,
-      });
+    const promptComposition = options.promptComposition;
     const toolRegistry = ToolCatalog.createSubagentRegistry(
       [TOOL_NAME_BASH, TOOL_NAME_VIEW_IMAGE],
       options.config,
@@ -124,12 +99,12 @@ export class DiffReviewThread {
       systemPrompt: promptComposition.baseSystemPrompt,
       subagentPrompts: promptComposition.subagentPrompts,
       toolRegistry,
+      modelResolver: resolveModel,
       config: options.config,
       deps,
-      cwd: promptBootstrap?.promptContext.cwd ?? options.snapshot.cwd,
-      home: promptBootstrap?.promptContext.home ?? deps.env.home(),
-      includeAgentContext:
-        promptBootstrap?.promptContext.includeAgentContext ?? options.includeAgentContext ?? true,
+      cwd: options.snapshot.cwd,
+      home: deps.env.home(),
+      includeAgentContext: false,
     });
     if (options.forkFrom) {
       this.usage = { ...options.forkFrom.usageBaseline };

@@ -183,6 +183,31 @@ afterEach(() => {
 });
 
 describe("diff review bridge", () => {
+  it("launches the client-local diff tool from a client-local cwd", async () => {
+    const toolLauncher = vi.fn(async () => {});
+    const bridge = createDiffReviewBridge({
+      snapshot: createSnapshot(),
+      toolLauncher,
+      deps: {
+        env: {
+          cwd: () => "/client/workspace",
+          env: () => ({}),
+        },
+      },
+    });
+
+    await bridge.launchTool({ command: "diff-tool" });
+
+    expect(toolLauncher).toHaveBeenCalledWith({
+      diffTool: { command: "diff-tool" },
+      cwd: "/client/workspace",
+      env: expect.objectContaining({
+        TAU_DIFF_CWD: "/repo/packages/app",
+        TAU_DIFF_REPO_ROOT: "/repo",
+      }),
+    });
+  });
+
   it("serves snapshot data, threads, and returned reviews over the diff protocol", async () => {
     const threadMessages = new Map();
     const bridge = createDiffReviewBridge({

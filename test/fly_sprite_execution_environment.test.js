@@ -188,18 +188,22 @@ describe("Fly Sprite execution environment", () => {
     });
   });
 
-  it("resolves prompt context through SDK-backed filesystem operations", async () => {
-    const bashCommands = [];
+  it("resolves prompt context and machine metadata through the execution backend", async () => {
+    const nodeScriptCalls = [];
     const backend = {
-      async runBash(command) {
-        bashCommands.push(command);
+      async runNodeScript(script, args, options) {
+        nodeScriptCalls.push({ script, args, options });
         return {
-          output: [
-            `A\t${base64("utf-8", "/home/sprite/repo/AGENTS.md")}\t${base64("utf-8", "repo instructions")}`,
-            `A\t${base64("utf-8", "/home/sprite/AGENTS.md")}\t${base64("utf-8", "sprite home instructions")}`,
-            `C\t${base64("utf-8", "/home/sprite/repo/src/AGENTS.md")}`,
-            "",
-          ].join("\n"),
+          output: JSON.stringify({
+            platform: "linux",
+            nodeVersion: "v24.2.0",
+            repoRoot: "/home/sprite/repo",
+            agentsFiles: [
+              { path: "/home/sprite/repo/AGENTS.md", content: "repo instructions" },
+              { path: "/home/sprite/AGENTS.md", content: "sprite home instructions" },
+            ],
+            childAgentsFiles: ["/home/sprite/repo/src/AGENTS.md"],
+          }),
           exitCode: 0,
           truncated: false,
         };
@@ -238,9 +242,11 @@ describe("Fly Sprite execution environment", () => {
     });
 
     const runtimeContext = await environment.resolveRuntimeContext({
+      cwd: "/home/sprite/repo",
       persona: personas[0],
       discoveredSkills: [],
       includeAgentContext: true,
+      agentContextFiles: [],
     });
 
     expect(runtimeContext.promptBootstrap.promptContext.cwd).toBe("/home/sprite/repo");
@@ -257,9 +263,14 @@ describe("Fly Sprite execution environment", () => {
     expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
       "/home/sprite/repo/src/AGENTS.md",
     );
-    expect(bashCommands).toHaveLength(1);
-    expect(bashCommands[0]).toContain("find /home/sprite/repo");
-    expect(bashCommands[0]).toContain("-name AGENTS.md");
+    expect(runtimeContext.promptBootstrap.promptContext).toMatchObject({
+      repoRoot: "/home/sprite/repo",
+      platform: "linux",
+      nodeVersion: "v24.2.0",
+    });
+    expect(nodeScriptCalls).toHaveLength(1);
+    expect(nodeScriptCalls[0].args[0]).toBe("/home/sprite/repo");
+    expect(nodeScriptCalls[0].options.cwd).toBe("/home/sprite/repo");
   });
 
   it("times out when the worker never becomes ready", async () => {
@@ -412,7 +423,3 @@ describe("Fly Sprite execution environment", () => {
     });
   });
 });
-
-function base64(encoding, value) {
-  return Buffer.from(value, encoding).toString("base64");
-}

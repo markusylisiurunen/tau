@@ -39,10 +39,10 @@ export function parsePersonaString(
   };
 }
 
-function parsePersonaOption(
-  raw: string,
-  personas: Persona[],
-): { personaId: string; reasoningOverride: ReasoningEffort | undefined } {
+function parsePersonaOption(raw: string): {
+  personaId: string;
+  reasoningOverride: ReasoningEffort | undefined;
+} {
   const parsedReference = parsePersonaReference(raw);
 
   if (parsedReference.error === "missing-reasoning") {
@@ -60,16 +60,8 @@ function parsePersonaOption(
     throw new CliError("missing persona id in --persona");
   }
 
-  const personaId = resolvePersonaId(parsedReference.personaId, personas);
-  if (!personaId) {
-    const available = personas.map((p) => p.id).join(", ");
-    throw new CliError(
-      `unknown persona '${parsedReference.personaId}'. available personas: ${available}`,
-    );
-  }
-
   return {
-    personaId,
+    personaId: parsedReference.personaId,
     reasoningOverride: parsedReference.reasoning,
   };
 }
@@ -95,7 +87,7 @@ function parseValue(
   return { value: next, nextIndex: index + 1 };
 }
 
-export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
+export function parseCliArgs(argv: string[]): CliOptions {
   let help = false;
   let debug = false;
   let personaId: string | undefined;
@@ -133,7 +125,7 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       arg.startsWith("-p=")
     ) {
       const parsed = parseValue(arg, argv, i);
-      const persona = parsePersonaOption(parsed.value, personas);
+      const persona = parsePersonaOption(parsed.value);
       personaId = persona.personaId;
       reasoningOverride = persona.reasoningOverride;
       i = parsed.nextIndex;

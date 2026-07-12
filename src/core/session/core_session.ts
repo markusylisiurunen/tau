@@ -1,8 +1,9 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
 import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
+import type { ModelResolver } from "../models/catalog.js";
 import type { CoreDeps } from "../runtime/deps.js";
-import type { ToolDefinition, ToolRegistry } from "../tools/registry.js";
+import type { ResolveSubagentRuntime, ToolDefinition, ToolRegistry } from "../tools/registry.js";
 import type { Persona, ReasoningEffort } from "../types.js";
 import {
   type HistoryEntry,
@@ -35,6 +36,8 @@ export type CoreSessionOptions = {
   subagentPrompts: Record<string, string>;
   toolRegistry: ToolRegistry;
   clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
+  modelResolver: ModelResolver;
+  resolveSubagentRuntime?: ResolveSubagentRuntime;
   config?: Config;
   deps?: CoreDeps;
   cwd?: string;
@@ -73,8 +76,8 @@ export class CoreSession {
     this.engine.setReasoning(reasoning);
   }
 
-  setConfig(config: Config): void {
-    this.engine.setConfig(config);
+  setRuntimeConfig(config: Config, modelResolver: ModelResolver): void {
+    this.engine.setRuntimeConfig(config, modelResolver);
   }
 
   setPromptContext(context: { cwd?: string; home?: string; includeAgentContext?: boolean }): void {

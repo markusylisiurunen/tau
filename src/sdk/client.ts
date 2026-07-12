@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { parsePersonaString } from "../core/cli.js";
 import { createDefaultConfigDeps, loadRuntimeConfig } from "../core/config/index.js";
@@ -37,24 +36,10 @@ async function createInProcessSdkHost(options: TauSdkClientOptions): Promise<Loc
   const cwd = options.cwd ?? deps.env.cwd();
   const home = deps.env.home() || process.env.HOME || homedir();
   const runtime = await loadRuntimeConfig(cwd, configDeps);
-  if (runtime.personas.length === 0) {
-    throw new TauTransportError("no personas available for in-process tau sdk client");
-  }
-
-  const selectedPersona = selectSdkPersona(runtime.personas, {
-    requestedPersona: options.persona,
-    defaultPersona: runtime.config.defaultPersona,
-  });
-  const persona = clonePersonaForSession(selectedPersona.persona);
-  const selectedReasoning = options.reasoning ?? selectedPersona.reasoning;
-  if (selectedReasoning !== undefined) {
-    persona.settings.reasoning = selectedReasoning;
-  }
 
   const toolBackend = createLocalToolExecutionBackend();
   const localResolver = new LocalExecutionEnvironmentResolver({
     home,
-    readFile: (path) => readFileSync(path, "utf-8"),
     toolBackend,
   });
   const executionEnvironmentResolver = new CompositeExecutionEnvironmentResolver({
@@ -77,22 +62,15 @@ async function createInProcessSdkHost(options: TauSdkClientOptions): Promise<Loc
 
   return new LocalSessionHost({
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
-    persona,
-    discoveredSkills: runtime.skills,
-    personas: runtime.personas.map(clonePersonaForSession),
-    prompts: runtime.prompts,
-    config: runtime.config,
     executionEnvironmentResolver,
     includeAgentContext: !options.noAgentContextFiles,
     environment: {
       now: () => deps.clock.now(),
-      platform: () => deps.env.platform(),
-      nodeVersion: () => deps.env.nodeVersion(),
     },
     deps,
     resolveSessionBootstrap: async ({ executionEnvironment }) => {
       const snapshot = executionEnvironment.snapshot();
-      const envRuntime = await executionEnvironment.resolveRuntimeConfig();
+      const envRuntime = await executionEnvironment.resolveRuntimeConfig(snapshot.cwd);
       if (envRuntime.personas.length === 0) {
         throw new Error(
           `no personas available for execution environment cwd '${snapshot.cwd}'. add a custom persona or enable built-ins.`,
@@ -114,6 +92,7 @@ async function createInProcessSdkHost(options: TauSdkClientOptions): Promise<Loc
         discoveredSkills: envRuntime.skills,
         personas: envRuntime.personas.map(clonePersonaForSession),
         prompts: envRuntime.prompts,
+        modelResolver: envRuntime.bootstrap.modelResolver.resolveModel,
         config: envRuntime.config,
       };
     },

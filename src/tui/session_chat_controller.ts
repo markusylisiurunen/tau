@@ -131,6 +131,8 @@ export class SessionChatController {
   private pendingUserMessagesUnsubscribe?: () => void;
   private snapshotRecovery?: Promise<void>;
   private readonly snapshotRecoveryDeltas: SessionProtocolDeltaMessage[] = [];
+  private hasPendingUserMessages = false;
+  private pendingIdleNotification = false;
   private isStreaming = false;
   private submittedTurnInProgress = false;
   private manualCompactionInProgress = false;
@@ -1069,7 +1071,9 @@ export class SessionChatController {
   }
 
   private onSdkPendingUserMessages(message: SessionProtocolPendingUserMessagesMessage): void {
+    this.hasPendingUserMessages = message.state.messages.length > 0;
     this.view.setPendingUserMessages(message.state.messages);
+    this.sendPendingIdleNotification();
   }
 
   private onSdkDelta(delta: SessionProtocolDeltaMessage): void {
@@ -1391,6 +1395,17 @@ export class SessionChatController {
     }
 
     void this.stopTurnCaffeinate();
+    this.pendingIdleNotification = true;
+    this.sendPendingIdleNotification();
+  }
+
+  private sendPendingIdleNotification(): void {
+    if (!this.pendingIdleNotification || this.isStreaming || this.hasPendingUserMessages) {
+      return;
+    }
+
+    this.pendingIdleNotification = false;
+    this.view.sendTerminalNotification("tau is waiting for your input");
   }
 
   private stopVisibleSessionTurn(): boolean {

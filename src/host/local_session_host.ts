@@ -1266,7 +1266,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         if (nextDraft.message.role !== "assistant" || !Array.isArray(nextDraft.message.content)) {
           throw new Error("assistant partial produced a non-assistant message");
         }
-        this.seedToolRunsFromAssistantMessage(event.historyEntryId, nextDraft.message);
+        this.syncToolRunsFromAssistantMessage(event.historyEntryId, nextDraft.message);
         const toolChanges = this.toolChangesForAssistantMessage(
           event.historyEntryId,
           nextDraft.message,
@@ -1283,7 +1283,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       case "assistant_final": {
         this.draftAssistantMessage = undefined;
         this.messageStates.delete(event.historyEntryId);
-        this.seedToolRunsFromAssistantMessage(event.historyEntryId, event.message);
+        this.syncToolRunsFromAssistantMessage(event.historyEntryId, event.message);
         this.costTotal += event.message.usage?.cost?.total ?? 0;
         await this.emitPatch("assistant-message", [
           { type: "cost.set", costTotal: this.costTotal },
@@ -1569,7 +1569,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
-  private seedToolRunsFromAssistantMessage(
+  private syncToolRunsFromAssistantMessage(
     messageId: string,
     message: Pick<AssistantMessage, "content">,
   ): void {
@@ -1580,19 +1580,19 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       );
 
     for (const { content, index } of toolCalls) {
-      if (this.tools.has(content.id)) {
-        continue;
-      }
+      const existing = this.tools.get(content.id);
       this.tools.set(content.id, {
-        id: content.id,
-        toolCallId: content.id,
+        ...(existing ?? {
+          id: content.id,
+          toolCallId: content.id,
+          status: "queued" as const,
+          facetIds: [],
+        }),
         toolName: content.name,
         call: {
           messageId,
           contentIndex: index,
         },
-        status: "queued",
-        facetIds: [],
       });
     }
   }
@@ -1665,6 +1665,10 @@ function buildAssistantContentAppendChange(
     return undefined;
   }
 
+  if (!assistantDraftStaticContentEquals(previousDraft, nextDraft)) {
+    return undefined;
+  }
+
   const previousText = getAssistantDraftBlockText(previousDraft, "text");
   const nextText = getAssistantDraftBlockText(nextDraft, "text");
   const previousThinking = getAssistantDraftBlockText(previousDraft, "thinking");
@@ -1694,11 +1698,26 @@ function assistantDraftContentEquals(
 ): boolean {
   return (
     previousDraft.id === nextDraft.id &&
-    getAssistantDraftBlockText(previousDraft, "text") ===
-      getAssistantDraftBlockText(nextDraft, "text") &&
-    getAssistantDraftBlockText(previousDraft, "thinking") ===
-      getAssistantDraftBlockText(nextDraft, "thinking")
+    previousDraft.message.role === "assistant" &&
+    nextDraft.message.role === "assistant" &&
+    JSON.stringify(previousDraft.message.content) === JSON.stringify(nextDraft.message.content)
   );
+}
+
+function assistantDraftStaticContentEquals(
+  previousDraft: SessionProtocolMessage,
+  nextDraft: SessionProtocolMessage,
+): boolean {
+  if (previousDraft.message.role !== "assistant" || nextDraft.message.role !== "assistant") {
+    return false;
+  }
+  const previousContent = previousDraft.message.content.filter(
+    (content) => content.type !== "text" && content.type !== "thinking",
+  );
+  const nextContent = nextDraft.message.content.filter(
+    (content) => content.type !== "text" && content.type !== "thinking",
+  );
+  return JSON.stringify(previousContent) === JSON.stringify(nextContent);
 }
 
 function getAssistantDraftBlockText(

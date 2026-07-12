@@ -72,6 +72,8 @@ export async function* runModelSubturn(
     const accumulator = emitPartials ? new MessageAccumulator() : undefined;
     let lastPartialEmittedAt = 0;
     let hasPendingPartial = false;
+    const toolCallOrder: number[] = [];
+    const completedToolCalls = new Map<number, ToolCall>();
 
     const emitPartialIfPending = async function* (): AsyncGenerator<ModelRunnerEvent, void, void> {
       if (!accumulator || !hasPendingPartial) {
@@ -108,14 +110,35 @@ export async function* runModelSubturn(
 
         if (event.type === "toolcall_start") {
           yield* emitPartialIfPending();
+          if (toolCallOrder.includes(event.contentIndex)) {
+            throw new Error(`model stream started tool call index ${event.contentIndex} twice`);
+          }
+          toolCallOrder.push(event.contentIndex);
+          toolCallOrder.sort((left, right) => left - right);
           continue;
         }
 
         if (event.type === "toolcall_end") {
+          if (!toolCallOrder.includes(event.contentIndex)) {
+            throw new Error(
+              `model stream completed tool call at index ${event.contentIndex} without starting it`,
+            );
+          }
+          completedToolCalls.set(event.contentIndex, event.toolCall);
           hasPendingPartial = true;
           yield* emitPartialIfPending();
-          hasEmittedToolCall = true;
-          yield { type: "tool_call", toolCall: event.toolCall };
+
+          while (toolCallOrder.length > 0) {
+            const contentIndex = toolCallOrder[0]!;
+            const toolCall = completedToolCalls.get(contentIndex);
+            if (!toolCall) {
+              break;
+            }
+            toolCallOrder.shift();
+            completedToolCalls.delete(contentIndex);
+            hasEmittedToolCall = true;
+            yield { type: "tool_call", toolCall };
+          }
         }
       }
     } catch (error) {
@@ -271,6 +294,7 @@ class AsyncEventQueue<T> implements AsyncIterable<T>, AsyncIterator<T> {
 export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> {
   private readonly events = new AsyncEventQueue<ToolRunnerEvent>();
   private execution: Promise<void> = Promise.resolve();
+  private completion?: Promise<void>;
   private finished = false;
 
   constructor(private readonly options: SequentialToolCallRunnerOptions) {}
@@ -285,17 +309,21 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
         this.events.push(event);
       }
     });
+    void this.execution.catch(() => undefined);
   }
 
-  finish(): void {
-    if (this.finished) {
-      return;
+  finish(): Promise<void> {
+    if (!this.completion) {
+      this.finished = true;
+      this.completion = this.execution.then(
+        () => this.events.close(),
+        (error: unknown) => {
+          this.events.fail(error);
+          throw error;
+        },
+      );
     }
-    this.finished = true;
-    void this.execution.then(
-      () => this.events.close(),
-      (error: unknown) => this.events.fail(error),
-    );
+    return this.completion;
   }
 
   [Symbol.asyncIterator](): AsyncIterator<ToolRunnerEvent> {

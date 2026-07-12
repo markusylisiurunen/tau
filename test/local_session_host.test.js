@@ -666,6 +666,8 @@ describe("LocalSessionHost", () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);
     await hostedSession.snapshot();
+    const deltas = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
     const toolCall = {
       type: "toolCall",
       id: "streamed-tool-call",
@@ -680,11 +682,33 @@ describe("LocalSessionHost", () => {
     await hostedSession.enqueueRuntimeEvent({
       type: "assistant_partial",
       historyEntryId: "assistant-streaming-tool",
+      snapshot: assistantPartial("running a command"),
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-streaming-tool",
       snapshot: {
         ...assistantPartial("running a command"),
         toolCalls: [toolCall],
       },
     });
+    expect(deltas.at(-1).delta.changes).toEqual([
+      expect.objectContaining({
+        type: "message.replace",
+        message: expect.objectContaining({
+          message: expect.objectContaining({
+            content: [{ type: "text", text: "running a command" }, toolCall],
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        type: "tool.set",
+        tool: expect.objectContaining({
+          call: { messageId: "assistant-streaming-tool", contentIndex: 1 },
+        }),
+      }),
+    ]);
+
     await hostedSession.enqueueRuntimeEvent({
       type: "tool_ui",
       uiEvent: {
@@ -715,6 +739,21 @@ describe("LocalSessionHost", () => {
         facetIds: [`tool-ui-${toolCall.id}`],
       }),
     );
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_final",
+      historyEntryId: "assistant-streaming-tool",
+      message: assistantMessageWithToolCalls([
+        toolCall,
+        { type: "text", text: "running a command" },
+      ]),
+    });
+
+    const finalSnapshot = await hostedSession.snapshot();
+    expect(finalSnapshot.tools[toolCall.id].call).toEqual({
+      messageId: "assistant-streaming-tool",
+      contentIndex: 0,
+    });
   });
 
   it("does not persist unchanged live snapshots during refreshes", async () => {

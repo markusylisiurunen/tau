@@ -1044,15 +1044,32 @@ export class SessionEngine {
         notice: { text: "auto-retrying after transient error", severity: "warn" },
       },
     });
-    const toolRunner = new SequentialToolCallRunner(toolOptions);
+    const toolAbortController = new AbortController();
+    const abortTools = () => toolAbortController.abort();
+    if (signal.aborted) {
+      abortTools();
+    } else {
+      signal.addEventListener("abort", abortTools, { once: true });
+    }
+    const toolRunner = new SequentialToolCallRunner({
+      ...toolOptions,
+      signal: toolAbortController.signal,
+    });
     const toolStream = toolRunner[Symbol.asyncIterator]();
     const pendingToolResults: ToolResultMessage[] = [];
     const streamedToolCallIds = new Set<string>();
     let modelDone = false;
     let toolDone = false;
+    let shouldNoteProviderError = false;
     let finalMessage: AssistantMessage | undefined;
-    let modelNext = modelStream.next().then((result) => ({ source: "model" as const, result }));
-    let toolNext = toolStream.next().then((result) => ({ source: "tool" as const, result }));
+    let modelNext = modelStream.next().then(
+      (result) => ({ source: "model" as const, result }),
+      (error: unknown) => ({ source: "model_error" as const, error }),
+    );
+    let toolNext = toolStream.next().then(
+      (result) => ({ source: "tool" as const, result }),
+      (error: unknown) => ({ source: "tool_error" as const, error }),
+    );
 
     try {
       while (!modelDone || !toolDone) {
@@ -1061,11 +1078,19 @@ export class SessionEngine {
           ...(toolDone ? [] : [toolNext]),
         ]);
 
+        if (next.source === "model_error") {
+          shouldNoteProviderError = true;
+          throw next.error;
+        }
+        if (next.source === "tool_error") {
+          throw next.error;
+        }
+
         if (next.source === "model") {
           if (next.result.done) {
             modelDone = true;
             finalMessage = next.result.value;
-            toolRunner.finish();
+            void toolRunner.finish().catch(() => undefined);
 
             const finalToolCalls = finalMessage.content.filter(
               (content): content is ToolCall => content.type === "toolCall",
@@ -1074,6 +1099,7 @@ export class SessionEngine {
               (toolCall) => !streamedToolCallIds.has(toolCall.id),
             );
             if (missingToolCall) {
+              shouldNoteProviderError = true;
               throw new Error(
                 `model stream completed without toolcall_end for '${missingToolCall.id}'`,
               );
@@ -1120,7 +1146,10 @@ export class SessionEngine {
           }
 
           const event = next.result.value;
-          modelNext = modelStream.next().then((result) => ({ source: "model" as const, result }));
+          modelNext = modelStream.next().then(
+            (result) => ({ source: "model" as const, result }),
+            (error: unknown) => ({ source: "model_error" as const, error }),
+          );
           if (event.type === "tool_call") {
             streamedToolCallIds.add(event.toolCall.id);
             toolRunner.enqueue(event.toolCall);
@@ -1148,7 +1177,10 @@ export class SessionEngine {
         }
 
         const event = next.result.value;
-        toolNext = toolStream.next().then((result) => ({ source: "tool" as const, result }));
+        toolNext = toolStream.next().then(
+          (result) => ({ source: "tool" as const, result }),
+          (error: unknown) => ({ source: "tool_error" as const, error }),
+        );
         if (event.type === "tool_result") {
           if (!modelDone) {
             pendingToolResults.push(event.message);
@@ -1173,14 +1205,25 @@ export class SessionEngine {
 
       return { finalMessage };
     } catch (err) {
-      toolRunner.finish();
-      if (!signal.aborted) {
+      abortTools();
+      try {
+        await toolRunner.finish();
+      } catch {}
+      if (!signal.aborted && shouldNoteProviderError) {
         await this.noteCurrentProviderError(err instanceof Error ? err.message : String(err));
       }
       if (signal.aborted) {
         return { finalMessage: undefined };
       }
       throw err;
+    } finally {
+      signal.removeEventListener("abort", abortTools);
+      if (!modelDone || !toolDone) {
+        abortTools();
+        try {
+          await toolRunner.finish();
+        } catch {}
+      }
     }
   }
 }

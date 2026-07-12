@@ -548,16 +548,18 @@ describe("core session rewind APIs", () => {
       return {
         async *[Symbol.asyncIterator]() {
           if (response === toolMessage) {
-            yield {
-              type: "toolcall_end",
-              contentIndex: 0,
-              toolCall: firstCall,
-              partial: toolMessage,
-            };
+            yield { type: "toolcall_start", contentIndex: 0, partial: toolMessage };
+            yield { type: "toolcall_start", contentIndex: 1, partial: toolMessage };
             yield {
               type: "toolcall_end",
               contentIndex: 1,
               toolCall: secondCall,
+              partial: toolMessage,
+            };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall: firstCall,
               partial: toolMessage,
             };
             await modelRun;
@@ -598,6 +600,76 @@ describe("core session rewind APIs", () => {
       "tool_result:second-call",
       "assistant_final",
     ]);
+  });
+
+  it("aborts an early tool when the model stream fails", async () => {
+    const toolCall = fauxToolCall("early_tool", {}, { id: "early-call" });
+    const toolMessage = fauxAssistantMessage([toolCall], { stopReason: "toolUse" });
+    let markToolStarted;
+    const toolStarted = new Promise((resolve) => {
+      markToolStarted = resolve;
+    });
+    let toolAborted = false;
+    const toolRegistry = new ToolRegistry([
+      {
+        schema: {
+          name: "early_tool",
+          description: "test tool",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+        dispatch: async (call, signal) => {
+          markToolStarted();
+          await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+          toolAborted = true;
+          return {
+            kind: "single",
+            toolResult: {
+              role: "toolResult",
+              toolCallId: call.id,
+              toolName: call.name,
+              content: [{ type: "text", text: "cancelled" }],
+              isError: true,
+              timestamp: 2,
+            },
+          };
+        },
+      },
+    ]);
+    const session = new CoreSession({
+      persona: { ...personas[0], tools: ["early_tool"] },
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry,
+    });
+    session.engine.modelRuntime.streamModel = () => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "toolcall_start", contentIndex: 0, partial: toolMessage };
+        yield {
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall,
+          partial: toolMessage,
+        };
+        await toolStarted;
+        throw new Error("model stream failed");
+      },
+      async result() {
+        throw new Error("model stream failed");
+      },
+    });
+
+    session.addUserText("use a tool");
+    const turn = async () => {
+      for await (const _event of session.events(new AbortController().signal)) {
+      }
+    };
+
+    await expect(turn()).rejects.toThrow("model stream failed");
+    expect(toolAborted).toBe(true);
   });
 
   it("keeps reasoning frozen across all subturns in an agent turn", async () => {
@@ -661,6 +733,7 @@ describe("core session rewind APIs", () => {
         async *[Symbol.asyncIterator]() {
           for (const [contentIndex, content] of response.content.entries()) {
             if (content.type === "toolCall") {
+              yield { type: "toolcall_start", contentIndex, partial: response };
               yield { type: "toolcall_end", contentIndex, toolCall: content, partial: response };
             }
           }

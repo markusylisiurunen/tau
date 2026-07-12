@@ -159,9 +159,9 @@ describe("session runner tool dispatch context", () => {
           [
             { type: "text_delta", delta: "a" },
             { type: "text_delta", delta: "b" },
-            { type: "toolcall_start" },
-            { type: "toolcall_delta", delta: "{}" },
-            { type: "toolcall_end", toolCall },
+            { type: "toolcall_start", contentIndex: 1 },
+            { type: "toolcall_delta", contentIndex: 1, delta: "{}" },
+            { type: "toolcall_end", contentIndex: 1, toolCall },
           ],
           finalMessage,
         );

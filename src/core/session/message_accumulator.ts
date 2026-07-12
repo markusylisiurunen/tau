@@ -12,7 +12,7 @@ export class MessageAccumulator {
   private text = "";
   private thinkingBlocks: string[] = [];
   private thinkingCurrent = "";
-  private toolCalls: ToolCall[] = [];
+  private toolCalls: Array<{ contentIndex: number; toolCall: ToolCall }> = [];
   private hasTextStarted = false;
 
   processEvent(event: AssistantMessageEvent): void {
@@ -55,7 +55,8 @@ export class MessageAccumulator {
       }
 
       case "toolcall_end": {
-        this.toolCalls.push(event.toolCall);
+        this.toolCalls.push({ contentIndex: event.contentIndex, toolCall: event.toolCall });
+        this.toolCalls.sort((left, right) => left.contentIndex - right.contentIndex);
         return;
       }
 
@@ -72,7 +73,7 @@ export class MessageAccumulator {
     return {
       text: this.text,
       thinking,
-      toolCalls: [...this.toolCalls],
+      toolCalls: this.toolCalls.map(({ toolCall }) => toolCall),
       hasTextStarted: this.hasTextStarted,
       hasAnyThinking: Boolean(thinking.trim()),
     };

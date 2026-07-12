@@ -35,21 +35,15 @@ describe("cli", () => {
     );
   });
 
-  it("does not substitute a host persona for unresolved server debug personas", () => {
+  it.each(["rpc", "serve"])("rejects --debug in %s mode", (mode) => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(
-      process.execPath,
-      [mainPath, "rpc", "--debug", "--persona", "sandbox-persona"],
-      {
-        encoding: "utf8",
-        env: process.env,
-      },
-    );
+    const result = spawnSync(process.execPath, [mainPath, mode, "--debug"], {
+      encoding: "utf8",
+      env: process.env,
+    });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain(
-      "cannot resolve persona 'sandbox-persona' for --debug without an execution environment",
-    );
+    expect(result.stderr).toContain("--debug is only supported in TUI mode.");
     expect(result.stdout).toBe("");
   });
 

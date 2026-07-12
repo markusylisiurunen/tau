@@ -27,7 +27,6 @@ import {
   parseDiffReviewMessageLine,
   serializeDiffReviewMessage,
 } from "./protocol.js";
-import type { DiffReviewAgentUsageSnapshot, DiffReviewThreadUpdate } from "./review_thread.js";
 import type { DiffReviewSnapshot } from "./snapshot.js";
 
 export type DiffReviewCancelledReason =
@@ -78,6 +77,21 @@ export type DiffReviewBridgeOptions = {
 export type StartedDiffReviewBridge = {
   bridge: DiffReviewBridge;
   result: Promise<DiffReviewResult>;
+};
+
+export type DiffReviewAgentUsageSnapshot = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  contextWindowUsageTokens: number;
+  contextWindow: number;
+};
+
+export type DiffReviewThreadUpdate = {
+  costTotal: number;
+  usage: DiffReviewAgentUsageSnapshot;
+  lastActivityText?: string;
 };
 
 export type DiffReviewAgentStatus = "running" | "idle" | "failed";

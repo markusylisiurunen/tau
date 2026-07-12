@@ -1,6 +1,7 @@
 export type {
   DiffReviewAgentActivity,
   DiffReviewAgentStatus,
+  DiffReviewAgentUsageSnapshot,
   DiffReviewBridgeOptions,
   DiffReviewBridgeUiState,
   DiffReviewBridgeUiStateListener,
@@ -9,6 +10,7 @@ export type {
   DiffReviewSubmitThreadMessage,
   DiffReviewSubmitThreadMessageOptions,
   DiffReviewSubmitThreadMessageResult,
+  DiffReviewThreadUpdate,
   DiffReviewToolLauncher,
   StartedDiffReviewBridge,
 } from "./bridge.js";
@@ -72,7 +74,6 @@ export {
   formatDiffReviewReturnedReviewUserSystemMessage,
   formatDiffReviewReviewedFiles,
 } from "./result_text.js";
-export type { DiffReviewAgentUsageSnapshot, DiffReviewThreadUpdate } from "./review_thread.js";
 export type {
   CaptureDiffReviewSnapshotOptions,
   DiffReviewFile,

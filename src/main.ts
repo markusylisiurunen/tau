@@ -1004,6 +1004,12 @@ if (cli.help) {
   process.exit(0);
 }
 
+if ((isRpcSubcommand || isServeSubcommand) && cli.debug) {
+  // eslint-disable-next-line no-console
+  console.error("--debug is only supported in TUI mode.");
+  process.exit(1);
+}
+
 if (isRpcSubcommand && cli.caffeinated) {
   // eslint-disable-next-line no-console
   console.error("--caffeinated is only supported in TUI mode.");
@@ -1037,14 +1043,6 @@ if (cli.debug) {
   const selectedPersona = initialPersonaId
     ? personas.find((persona) => persona.id === initialPersonaId)
     : personas[0];
-  if (!selectedPersona && initialPersonaId) {
-    // eslint-disable-next-line no-console
-    console.error(
-      `cannot resolve persona '${initialPersonaId}' for --debug without an execution environment`,
-    );
-    process.exit(1);
-  }
-
   const debugPersona = selectedPersona ? clonePersonaForSession(selectedPersona) : undefined;
   if (debugPersona && reasoningOverride !== undefined) {
     debugPersona.settings.reasoning = reasoningOverride;

@@ -173,7 +173,7 @@ export function printHelp(personas: Persona[]): void {
       "",
       "options:",
       "  --help                        show this help and exit.",
-      "  --debug                       print debug info (personas, prompts, skills, system prompt) and exit.",
+      "  --debug                       print debug info and exit (TUI mode only).",
       `  --persona, -p <id>[:<level>]  start with a persona. available: ${personaList}.`,
       `                                optionally specify reasoning level. levels: ${reasoningList}.`,
       `                                if not specified, uses resolved config defaultPersona.`,

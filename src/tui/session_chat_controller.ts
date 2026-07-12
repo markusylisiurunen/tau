@@ -16,7 +16,7 @@ import {
   DiffReviewBridge,
   type DiffReviewToolLauncher,
 } from "../core/diff_review/index.js";
-import { buildDiffReviewInstructions } from "../core/diff_review/review_thread.js";
+import { buildDiffReviewInstructions } from "../core/diff_review/review_instructions.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import {

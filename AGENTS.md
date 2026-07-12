@@ -271,15 +271,15 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 ## CLI flags
 
 - `--help`, `-h` - Show help and exit
-- `--debug` - Print debug info (loaded personas, prompts, skills, full system prompt, tool schemas) and exit
+- `--debug` - Print debug info (loaded personas, prompts, skills, full system prompt, tool schemas) and exit; TUI mode only
 - `--load`, `-l <file>` - Load a checkpoint file in TUI mode
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
 - `--caffeinated` - Keep macOS awake during active assistant turns in TUI mode (currently a no-op on Linux)
 - `--no-agent-context-files` - Disable AGENTS.md injection into the system prompt
 
-These startup flags apply to interactive TUI mode (`tau`), headless RPC mode (`tau rpc`), and WebSocket server mode (`tau serve`), except `--load` (TUI-only because hosted servers start without a session) and `--caffeinated` (macOS-only TUI flag, rejected outside TUI mode).
+These startup flags apply to interactive TUI mode (`tau`), headless RPC mode (`tau rpc`), and WebSocket server mode (`tau serve`), except `--load` and `--debug` (TUI-only because hosted servers start without a session) and `--caffeinated` (macOS-only TUI flag, rejected outside TUI mode).
 
-The `--debug` flag respects `--persona` and `--no-agent-context-files`, so you can inspect exactly what system prompt a given configuration produces.
+In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so you can inspect exactly what system prompt a given configuration produces.
 
 ## CLI subcommands
 

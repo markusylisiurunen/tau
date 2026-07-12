@@ -17,7 +17,6 @@ import type {
   ToolRegistry,
   ToolUiEvent,
 } from "../tools/registry.js";
-import type { RiskLevel } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
@@ -288,8 +287,6 @@ export async function runSubagent(options: {
       return finish();
     }
 
-    const riskLevel = runtimeConfig.riskLevel as RiskLevel;
-
     const handleUi = (uiEvent: ToolUiEvent | undefined) => {
       if (!uiEvent) return;
 
@@ -325,7 +322,6 @@ export async function runSubagent(options: {
       toolCalls: messageToolCalls,
       toolRegistry,
       enabledTools: toolRegistry.getEnabledToolSchemas(),
-      riskLevel,
       signal,
       dispatchContext,
       toolErrorMessages: {

@@ -262,13 +262,6 @@ class TauSdkClientImpl implements TauSdkClient {
     return this.transport.request("session.snapshot", { sessionId });
   }
 
-  sendSetRisk(
-    sessionId: string,
-    riskLevel: "read-only" | "read-write",
-  ): Promise<SessionProtocolResultByMethod["session.setRisk"]> {
-    return this.transport.request("session.setRisk", { sessionId, riskLevel });
-  }
-
   sendSetReasoning(
     sessionId: string,
     reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
@@ -364,14 +357,12 @@ class TauSdkClientImpl implements TauSdkClient {
     options: {
       instructions: string;
       tools: SessionProtocolEphemeralAgentTool[];
-      riskLevel: "read-only" | "read-write";
     },
   ): Promise<SessionProtocolResultByMethod["session.ephemeral.create"]> {
     return this.transport.request("session.ephemeral.create", {
       sessionId,
       instructions: options.instructions,
       tools: options.tools,
-      riskLevel: options.riskLevel,
     });
   }
 
@@ -598,14 +589,6 @@ class TauSdkSessionImpl implements TauSdkSession {
     return snapshot;
   }
 
-  async setRiskLevel(
-    riskLevel: "read-only" | "read-write",
-  ): Promise<SessionProtocolResultByMethod["session.setRisk"]> {
-    const snapshot = await this.client.sendSetRisk(this.activeSessionId(), riskLevel);
-    this.discardBufferedDeltasThrough(snapshot.revision);
-    return snapshot;
-  }
-
   async setReasoning(
     reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
   ): Promise<SessionProtocolResultByMethod["session.setReasoning"]> {
@@ -676,7 +659,6 @@ class TauSdkSessionImpl implements TauSdkSession {
   async createEphemeralContext(options: {
     instructions: string;
     tools: SessionProtocolEphemeralAgentTool[];
-    riskLevel: "read-only" | "read-write";
   }): Promise<SessionProtocolResultByMethod["session.ephemeral.create"]> {
     return await this.client.sendEphemeralCreate(this.activeSessionId(), options);
   }

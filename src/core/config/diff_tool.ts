@@ -14,7 +14,7 @@ const DiffToolSchema = z
     args: z.array(z.string()).optional(),
     env: z.record(z.string(), z.string()).optional(),
   })
-  .passthrough();
+  .strip();
 
 export function parseDiffToolConfig(
   raw: unknown,

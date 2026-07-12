@@ -18,7 +18,6 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.exec",
   "session.interrupt",
   "session.snapshot",
-  "session.setRisk",
   "session.setReasoning",
   "session.setPersona",
   "session.resolvePrompt",
@@ -117,7 +116,6 @@ export type SessionProtocolExecutionEnvironmentInput =
 export type SessionProtocolCreateParams = {
   executionEnvironment: SessionProtocolExecutionEnvironmentInput;
   personaId?: string;
-  riskLevel?: "read-only" | "read-write";
   reasoning?: SessionProtocolReasoningEffort;
 };
 export type SessionProtocolListParams = Record<string, never>;
@@ -145,9 +143,6 @@ export type SessionProtocolExecParams = SessionProtocolSessionIdParams & {
   timeoutMs?: number;
 };
 
-export type SessionProtocolSetRiskParams = SessionProtocolSessionIdParams & {
-  riskLevel: "read-only" | "read-write";
-};
 export type SessionProtocolSetReasoningParams = SessionProtocolSessionIdParams & {
   reasoning: SessionProtocolReasoningEffort;
 };
@@ -191,7 +186,6 @@ export type SessionProtocolEphemeralAgentTool =
 export type SessionProtocolEphemeralCreateParams = SessionProtocolSessionIdParams & {
   instructions: string;
   tools: SessionProtocolEphemeralAgentTool[];
-  riskLevel: "read-only" | "read-write";
 };
 export type SessionProtocolEphemeralSubmitParams = SessionProtocolSessionIdParams & {
   contextId: string;
@@ -233,7 +227,6 @@ export type SessionProtocolParamsByMethod = {
   "session.exec": SessionProtocolExecParams;
   "session.interrupt": SessionProtocolSessionIdParams;
   "session.snapshot": SessionProtocolSessionIdParams;
-  "session.setRisk": SessionProtocolSetRiskParams;
   "session.setReasoning": SessionProtocolSetReasoningParams;
   "session.setPersona": SessionProtocolSetPersonaParams;
   "session.resolvePrompt": SessionProtocolResolvePromptParams;
@@ -431,7 +424,6 @@ export type SessionProtocolPersonaSettingsSnapshot = {
 export type SessionProtocolSubagentSnapshot = {
   description?: string;
   tools?: string[];
-  riskLevel?: "read-only" | "read-write";
   launchModels?: string[];
 };
 
@@ -471,7 +463,6 @@ export type SessionProtocolContentCatalogSnapshot = {
 
 export type SessionProtocolSettingsSnapshot = {
   personaId: string;
-  riskLevel: "read-only" | "read-write";
   reasoning?: SessionProtocolReasoningEffort;
   serviceTier?: SessionProtocolServiceTier;
 };
@@ -666,7 +657,6 @@ export type SessionProtocolResultByMethod = {
   "session.exec": SessionProtocolExecResult;
   "session.interrupt": SessionProtocolInterruptResult;
   "session.snapshot": SessionProtocolSnapshot;
-  "session.setRisk": SessionProtocolSnapshot;
   "session.setReasoning": SessionProtocolSettingsUpdateResult;
   "session.setPersona": SessionProtocolSnapshot;
   "session.resolvePrompt": SessionProtocolResolvePromptResult;
@@ -945,7 +935,7 @@ const sessionProtocolReadyMessageSchema = z
     type: z.literal("ready"),
     methods: sessionProtocolMethodListSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolClientToolCallMessageSchema = z
   .object({
@@ -958,7 +948,7 @@ const sessionProtocolClientToolCallMessageSchema = z
     ackDeadlineMs: z.number().int().positive(),
     executionDeadlineMs: z.number().int().positive(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolClientToolCancelMessageSchema = z
   .object({
@@ -968,7 +958,7 @@ const sessionProtocolClientToolCancelMessageSchema = z
     callId: nonEmptyStringSchema,
     reason: z.enum(["aborted", "timeout", "client-detached"]),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolClientToolMessageSchema = z.discriminatedUnion("type", [
   sessionProtocolClientToolCallMessageSchema,
@@ -983,7 +973,7 @@ const sessionProtocolRequestEnvelopeSchema = z
     method: z.string(),
     params: z.unknown(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolOutgoingRoutingSchema = z
   .object({
@@ -998,12 +988,12 @@ const sessionProtocolOutgoingRoutingSchema = z
       "response",
     ]),
   })
-  .passthrough();
+  .strip();
 
-const sessionProtocolIdFieldSchema = z.object({ id: z.unknown() }).passthrough();
-const sessionProtocolOkFieldSchema = z.object({ ok: z.unknown() }).passthrough();
-const sessionProtocolVersionFieldSchema = z.object({ version: z.unknown() }).passthrough();
-const sessionProtocolTypeFieldSchema = z.object({ type: z.unknown() }).passthrough();
+const sessionProtocolIdFieldSchema = z.object({ id: z.unknown() }).strip();
+const sessionProtocolOkFieldSchema = z.object({ ok: z.unknown() }).strip();
+const sessionProtocolVersionFieldSchema = z.object({ version: z.unknown() }).strip();
+const sessionProtocolTypeFieldSchema = z.object({ type: z.unknown() }).strip();
 
 const sessionProtocolResponseSuccessSchema = z
   .object({
@@ -1013,7 +1003,7 @@ const sessionProtocolResponseSuccessSchema = z
     ok: z.literal(true),
     result: z.unknown(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolResponseErrorSchema = z
   .object({
@@ -1027,9 +1017,9 @@ const sessionProtocolResponseErrorSchema = z
         message: z.string(),
         data: z.unknown().optional(),
       })
-      .strict(),
+      .strip(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolClientToolDefinitionSchema = z
   .object({
@@ -1038,7 +1028,7 @@ const sessionProtocolClientToolDefinitionSchema = z
     parameters: z.unknown(),
     executionTimeoutMs: z.number().int().positive().optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolInitializeParamsSchema = z
   .object({
@@ -1048,9 +1038,9 @@ const sessionProtocolInitializeParamsSchema = z
         version: nonEmptyStringSchema,
         tools: z.array(sessionProtocolClientToolDefinitionSchema).optional(),
       })
-      .strict(),
+      .strip(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolUserMessageParamsSchema = z
   .object({
@@ -1058,7 +1048,7 @@ const sessionProtocolUserMessageParamsSchema = z
     text: z.string(),
     historyEntryId: nonEmptyStringSchema.optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolRecordParamsSchema = sessionProtocolUserMessageParamsSchema;
 
@@ -1069,20 +1059,13 @@ const sessionProtocolExecParamsSchema = z
     cwd: nonEmptyStringSchema.optional(),
     timeoutMs: z.number().int().positive().optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolSessionIdParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
   })
-  .strict();
-
-const sessionProtocolSetRiskParamsSchema = z
-  .object({
-    sessionId: nonEmptyStringSchema,
-    riskLevel: z.enum(["read-only", "read-write"]),
-  })
-  .strict();
+  .strip();
 
 const sessionProtocolReasoningEffortSchema = z.enum([
   "none",
@@ -1099,21 +1082,21 @@ const sessionProtocolSetReasoningParamsSchema = z
     sessionId: nonEmptyStringSchema,
     reasoning: sessionProtocolReasoningEffortSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolSetPersonaParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     personaId: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolResolvePromptParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     promptId: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolAutocompletePathsParamsSchema = z
   .object({
@@ -1121,7 +1104,7 @@ const sessionProtocolAutocompletePathsParamsSchema = z
     query: z.string(),
     limit: z.number().int().positive().max(100),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolCompactParamsSchema = z
   .object({
@@ -1129,7 +1112,7 @@ const sessionProtocolCompactParamsSchema = z
     mode: z.enum(["summary-only", "summary-and-last"]),
     guidance: z.string().optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolPruneParamsSchema = z
   .object({
@@ -1138,21 +1121,21 @@ const sessionProtocolPruneParamsSchema = z
     fraction: z.number().min(0).max(1),
     guidance: z.string().optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolRewindParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     historyEntryId: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolTerminateSubagentParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     subagentId: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolEphemeralAgentToolSchema = z.enum([
   "bash",
@@ -1168,9 +1151,8 @@ const sessionProtocolEphemeralCreateParamsSchema = z
     sessionId: nonEmptyStringSchema,
     instructions: nonEmptyStringSchema,
     tools: z.array(sessionProtocolEphemeralAgentToolSchema),
-    riskLevel: z.enum(["read-only", "read-write"]),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolEphemeralSubmitParamsSchema = z
   .object({
@@ -1180,21 +1162,21 @@ const sessionProtocolEphemeralSubmitParamsSchema = z
     forkFromThreadId: nonEmptyStringSchema.optional(),
     message: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolEphemeralCloseParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     contextId: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolClientToolAckParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     callId: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
   z
@@ -1204,7 +1186,7 @@ const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
       ok: z.literal(true),
       content: z.string(),
     })
-    .strict(),
+    .strip(),
   z
     .object({
       sessionId: nonEmptyStringSchema,
@@ -1212,7 +1194,7 @@ const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
       ok: z.literal(false),
       error: z.string(),
     })
-    .strict(),
+    .strip(),
 ]);
 
 const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
@@ -1222,7 +1204,7 @@ const sessionProtocolLocalExecutionEnvironmentInputSchema = z
     kind: z.literal("local"),
     cwd: absolutePathSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolCloudflareSandboxExecutionEnvironmentInputSchema = z
   .object({
@@ -1231,7 +1213,7 @@ const sessionProtocolCloudflareSandboxExecutionEnvironmentInputSchema = z
     sandboxId: nonEmptyStringSchema,
     cwd: absolutePathSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolFlySpriteExecutionEnvironmentInputSchema = z
   .object({
@@ -1240,7 +1222,7 @@ const sessionProtocolFlySpriteExecutionEnvironmentInputSchema = z
     spriteName: nonEmptyStringSchema,
     cwd: absolutePathSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolExecutionEnvironmentInputSchema = z.discriminatedUnion("kind", [
   sessionProtocolLocalExecutionEnvironmentInputSchema,
@@ -1252,19 +1234,18 @@ const sessionProtocolCreateParamsSchema = z
   .object({
     executionEnvironment: sessionProtocolExecutionEnvironmentInputSchema,
     personaId: nonEmptyStringSchema.optional(),
-    riskLevel: z.enum(["read-only", "read-write"]).optional(),
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
   })
-  .strict();
+  .strip();
 
-const sessionProtocolEmptyParamsSchema = z.object({}).strict();
+const sessionProtocolEmptyParamsSchema = z.object({}).strip();
 
 const sessionProtocolSessionSummarySchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     lifecycle: sessionProtocolSessionLifecycleSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolServiceTierSchema = z.enum(["priority", "flex"]);
 
@@ -1299,16 +1280,16 @@ const sessionProtocolModelSnapshotSchema = z
                 cacheRead: z.number().nonnegative(),
                 cacheWrite: z.number().nonnegative(),
               })
-              .strict(),
+              .strip(),
           )
           .optional(),
       })
-      .strict(),
+      .strip(),
     contextWindow: z.number().int().positive(),
     maxTokens: z.number().int().positive(),
     compat: z.unknown().optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolPersonaSettingsSnapshotSchema = z
   .object({
@@ -1316,16 +1297,15 @@ const sessionProtocolPersonaSettingsSnapshotSchema = z
     interleavedThinking: z.boolean().optional(),
     serviceTier: sessionProtocolServiceTierSchema.optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolSubagentSnapshotSchema = z
   .object({
     description: z.string().optional(),
     tools: z.array(nonEmptyStringSchema).optional(),
-    riskLevel: z.enum(["read-only", "read-write"]).optional(),
     launchModels: z.array(nonEmptyStringSchema).optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolPersonaSnapshotSchema = z
   .object({
@@ -1338,7 +1318,7 @@ const sessionProtocolPersonaSnapshotSchema = z
     skills: z.union([z.literal("*"), z.array(nonEmptyStringSchema)]),
     source: z.enum(["builtin", "user", "project"]),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolPromptTemplateSnapshotSchema = z
   .object({
@@ -1346,7 +1326,7 @@ const sessionProtocolPromptTemplateSnapshotSchema = z
     label: z.string().optional(),
     description: z.string().optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolSkillSnapshotSchema = z
   .object({
@@ -1354,7 +1334,7 @@ const sessionProtocolSkillSnapshotSchema = z
     description: nonEmptyStringSchema,
     path: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolContentCatalogSnapshotSchema = z
   .object({
@@ -1362,16 +1342,15 @@ const sessionProtocolContentCatalogSnapshotSchema = z
     prompts: z.array(sessionProtocolPromptTemplateSnapshotSchema),
     skills: z.array(sessionProtocolSkillSnapshotSchema),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolSettingsSnapshotSchema = z
   .object({
     personaId: nonEmptyStringSchema,
-    riskLevel: z.enum(["read-only", "read-write"]),
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
     serviceTier: sessionProtocolServiceTierSchema.optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolBootstrapSnapshotSchema = z
   .object({
@@ -1381,9 +1360,9 @@ const sessionProtocolBootstrapSnapshotSchema = z
         environmentTag: nonEmptyStringSchema,
         subagentPrompts: z.record(z.string(), z.string()),
       })
-      .strict(),
+      .strip(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolLocalExecutionEnvironmentSnapshotSchema = z
   .object({
@@ -1391,7 +1370,7 @@ const sessionProtocolLocalExecutionEnvironmentSnapshotSchema = z
     cwd: nonEmptyStringSchema,
     home: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolCloudflareSandboxExecutionEnvironmentSnapshotSchema = z
   .object({
@@ -1401,7 +1380,7 @@ const sessionProtocolCloudflareSandboxExecutionEnvironmentSnapshotSchema = z
     cwd: nonEmptyStringSchema,
     home: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolFlySpriteExecutionEnvironmentSnapshotSchema = z
   .object({
@@ -1411,7 +1390,7 @@ const sessionProtocolFlySpriteExecutionEnvironmentSnapshotSchema = z
     cwd: nonEmptyStringSchema,
     home: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolExecutionEnvironmentSnapshotSchema = z.discriminatedUnion("kind", [
   sessionProtocolLocalExecutionEnvironmentSnapshotSchema,
@@ -1425,7 +1404,7 @@ const sessionProtocolSystemMessageSchema = z
     content: z.string(),
     timestamp: z.number().finite(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolDraftAssistantMessageSchema = z
   .object({
@@ -1433,7 +1412,7 @@ const sessionProtocolDraftAssistantMessageSchema = z
     content: z.array(z.unknown()),
     timestamp: z.number().finite(),
   })
-  .strict() as z.ZodType<SessionProtocolDraftAssistantMessage>;
+  .strip() as z.ZodType<SessionProtocolDraftAssistantMessage>;
 
 const sessionProtocolMessagePayloadSchema = z.union([
   sessionProtocolSystemMessageSchema,
@@ -1448,7 +1427,7 @@ const sessionProtocolMessageSchema = z
     modelVisible: z.boolean(),
     message: sessionProtocolMessagePayloadSchema,
   })
-  .strict() as z.ZodType<SessionProtocolMessage>;
+  .strip() as z.ZodType<SessionProtocolMessage>;
 
 const sessionProtocolNoticeSchema = z
   .object({
@@ -1456,7 +1435,7 @@ const sessionProtocolNoticeSchema = z
     text: z.string(),
     timestamp: z.number().finite(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolOperationSchema = z
   .object({
@@ -1468,7 +1447,7 @@ const sessionProtocolOperationSchema = z
     error: z.string().optional(),
     data: z.record(z.string(), z.unknown()).optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolTimelineItemSchema = z.discriminatedUnion("type", [
   z
@@ -1477,21 +1456,21 @@ const sessionProtocolTimelineItemSchema = z.discriminatedUnion("type", [
       id: nonEmptyStringSchema,
       messageId: nonEmptyStringSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("notice"),
       id: nonEmptyStringSchema,
       notice: sessionProtocolNoticeSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("operation"),
       id: nonEmptyStringSchema,
       operation: sessionProtocolOperationSchema,
     })
-    .strict(),
+    .strip(),
 ]);
 
 const sessionProtocolToolRunSchema = z
@@ -1504,7 +1483,7 @@ const sessionProtocolToolRunSchema = z
         messageId: nonEmptyStringSchema,
         contentIndex: z.number().int().nonnegative(),
       })
-      .strict(),
+      .strip(),
     status: z.enum(["queued", "running", "succeeded", "failed", "blocked", "cancelled"]),
     startedAt: z.number().finite().optional(),
     finishedAt: z.number().finite().optional(),
@@ -1513,7 +1492,7 @@ const sessionProtocolToolRunSchema = z
     error: z.string().optional(),
     facetIds: z.array(nonEmptyStringSchema),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolAgentUsageSchema = z
   .object({
@@ -1524,7 +1503,7 @@ const sessionProtocolAgentUsageSchema = z
     contextWindowUsageTokens: z.number().finite(),
     contextWindow: z.number().finite(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolAgentRunSchema = z
   .object({
@@ -1545,14 +1524,14 @@ const sessionProtocolAgentRunSchema = z
     finalText: z.string().optional(),
     error: z.string().optional(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolFacetSubjectSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("session") }).strict(),
-  z.object({ type: z.literal("message"), id: nonEmptyStringSchema }).strict(),
-  z.object({ type: z.literal("tool"), id: nonEmptyStringSchema }).strict(),
-  z.object({ type: z.literal("agent"), id: nonEmptyStringSchema }).strict(),
-  z.object({ type: z.literal("operation"), id: nonEmptyStringSchema }).strict(),
+  z.object({ type: z.literal("session") }).strip(),
+  z.object({ type: z.literal("message"), id: nonEmptyStringSchema }).strip(),
+  z.object({ type: z.literal("tool"), id: nonEmptyStringSchema }).strip(),
+  z.object({ type: z.literal("agent"), id: nonEmptyStringSchema }).strip(),
+  z.object({ type: z.literal("operation"), id: nonEmptyStringSchema }).strip(),
 ]);
 
 const sessionProtocolFacetSchema = z
@@ -1563,7 +1542,7 @@ const sessionProtocolFacetSchema = z
     version: z.number().int().positive(),
     data: z.record(z.string(), z.unknown()),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolSnapshotSchema = z
   .object({
@@ -1581,7 +1560,7 @@ const sessionProtocolSnapshotSchema = z
     agents: z.record(nonEmptyStringSchema, sessionProtocolAgentRunSchema),
     facets: z.record(nonEmptyStringSchema, sessionProtocolFacetSchema),
   })
-  .strict()
+  .strip()
   .superRefine((snapshot, ctx) => {
     const messageIds = new Set<string>();
     for (const message of snapshot.messages) {
@@ -1634,32 +1613,32 @@ const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
       type: z.literal("lifecycle.set"),
       lifecycle: sessionProtocolSessionLifecycleSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("cost.set"),
       costTotal: z.number().nonnegative(),
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("settings.set"),
       settings: sessionProtocolSettingsSnapshotSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("message.append"),
       message: sessionProtocolMessageSchema,
       timelineItem: sessionProtocolTimelineItemSchema.optional(),
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("message.replace"),
       message: sessionProtocolMessageSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("message.content.append"),
@@ -1668,61 +1647,61 @@ const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
       thinking: z.string().optional(),
       timestamp: z.number().finite(),
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("timeline.append"),
       item: sessionProtocolTimelineItemSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("timeline.replace"),
       item: sessionProtocolTimelineItemSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("timeline.remove"),
       id: nonEmptyStringSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("tool.set"),
       tool: sessionProtocolToolRunSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("tool.remove"),
       id: nonEmptyStringSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("agent.set"),
       agent: sessionProtocolAgentRunSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("agent.remove"),
       id: nonEmptyStringSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("facet.set"),
       facet: sessionProtocolFacetSchema,
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("facet.remove"),
       id: nonEmptyStringSchema,
     })
-    .strict(),
+    .strip(),
 ]) as z.ZodType<SessionProtocolChange>;
 
 const sessionProtocolDeltaSchema = z.discriminatedUnion("type", [
@@ -1731,13 +1710,13 @@ const sessionProtocolDeltaSchema = z.discriminatedUnion("type", [
       type: z.literal("snapshot.patch"),
       changes: z.array(sessionProtocolChangeSchema),
     })
-    .strict(),
+    .strip(),
   z
     .object({
       type: z.literal("snapshot.reset"),
       snapshot: sessionProtocolSnapshotSchema,
     })
-    .strict(),
+    .strip(),
 ]) as z.ZodType<SessionProtocolDelta>;
 
 const sessionProtocolDeltaMessageSchema = z
@@ -1750,7 +1729,7 @@ const sessionProtocolDeltaMessageSchema = z
     reason: sessionProtocolDeltaReasonSchema,
     delta: sessionProtocolDeltaSchema,
   })
-  .strict()
+  .strip()
   .superRefine((message, ctx) => {
     if (message.delta.type === "snapshot.patch" && message.fromRevision === null) {
       ctx.addIssue({
@@ -1808,9 +1787,9 @@ const sessionProtocolEphemeralAgentThreadUpdateEventSchema = z
         usage: sessionProtocolAgentUsageSchema,
         lastActivityText: z.string().optional(),
       })
-      .strict(),
+      .strip(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolEphemeralEventSchema = sessionProtocolEphemeralAgentThreadUpdateEventSchema;
 
@@ -1821,7 +1800,7 @@ const sessionProtocolEphemeralMessageSchema = z
     sessionId: nonEmptyStringSchema,
     event: sessionProtocolEphemeralEventSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolPendingUserMessageSchema = z
   .object({
@@ -1829,14 +1808,14 @@ const sessionProtocolPendingUserMessageSchema = z
     mode: z.enum(["queue", "steer"]),
     text: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolPendingUserMessagesStateSchema = z
   .object({
     revision: z.number().int().positive(),
     messages: z.array(sessionProtocolPendingUserMessageSchema),
   })
-  .strict()
+  .strip()
   .superRefine((state, ctx) => {
     const ids = new Set<string>();
     for (const message of state.messages) {
@@ -1858,7 +1837,7 @@ const sessionProtocolPendingUserMessagesMessageSchema = z
     sessionId: nonEmptyStringSchema,
     state: sessionProtocolPendingUserMessagesStateSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolInitializeResultSchema = z
   .object({
@@ -1866,26 +1845,26 @@ const sessionProtocolInitializeResultSchema = z
     methods: sessionProtocolMethodListSchema,
     alreadyInitialized: z.boolean(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolCreateResultSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolObserveResultSchema = z
   .object({
     snapshot: sessionProtocolSnapshotSchema,
     pendingUserMessages: sessionProtocolPendingUserMessagesStateSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolListResultSchema = z
   .object({
     sessions: z.array(sessionProtocolSessionSummarySchema),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolSubmitResultSchema = z
   .object({
@@ -1897,12 +1876,12 @@ const sessionProtocolSubmitResultSchema = z
             reason: z.literal("auto-compaction-failed"),
             message: z.string(),
           })
-          .strict()
+          .strip()
           .optional(),
       })
-      .strict(),
+      .strip(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolTurnResultSchema = sessionProtocolSubmitResultSchema;
 
@@ -1912,20 +1891,20 @@ const sessionProtocolSubmitWithUserResultSchema = sessionProtocolTurnResultSchem
   .extend({
     userHistoryEntryId: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolCancelPendingMessagesResultSchema = z
   .object({
     cancelled: z.array(sessionProtocolPendingUserMessageSchema),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolRecordResultSchema = z
   .object({
     snapshot: sessionProtocolSnapshotSchema,
     userHistoryEntryId: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolExecResultSchema = z
   .object({
@@ -1935,21 +1914,21 @@ const sessionProtocolExecResultSchema = z
     exitCode: z.number().int().nullable(),
     truncated: z.boolean(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolInterruptResultSchema = z
   .object({
     interrupted: z.boolean(),
     isTurnRunning: z.boolean(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolSettingsUpdateResultSchema = z
   .object({
     revision: z.number().int().positive(),
     settings: sessionProtocolSettingsSnapshotSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolCompactResultSchema = z
   .object({
@@ -1957,7 +1936,7 @@ const sessionProtocolCompactResultSchema = z
     compactionMessage: nonEmptyStringSchema,
     includedLastAssistant: z.boolean(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolPruneResultSchema = z
   .object({
@@ -1969,7 +1948,7 @@ const sessionProtocolPruneResultSchema = z
     editResultsPruned: z.number().int().nonnegative(),
     bytesPruned: z.number().int().nonnegative(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolRewindResultSchema = z
   .object({
@@ -1978,7 +1957,7 @@ const sessionProtocolRewindResultSchema = z
     text: z.string(),
     removedEntryIds: z.array(nonEmptyStringSchema),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolReloadResultSchema = z
   .object({
@@ -1990,65 +1969,65 @@ const sessionProtocolReloadResultSchema = z
         prompts: z.number().int().nonnegative(),
         skills: z.number().int().nonnegative(),
       })
-      .strict(),
+      .strip(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolResolvePromptResultSchema = z
   .object({
     promptId: nonEmptyStringSchema,
     text: z.string(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolAutocompletePathsResultSchema = z
   .object({
     paths: z.array(z.string()),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolUnobserveResultSchema = z
   .object({
     unobserved: z.literal(true),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolTerminateSubagentResultSchema = z
   .object({
     found: z.boolean(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolEphemeralCreateResultSchema = z
   .object({
     contextId: nonEmptyStringSchema,
   })
-  .strict();
+  .strip();
 
 const sessionProtocolEphemeralSubmitResultSchema = z
   .object({
     threadId: nonEmptyStringSchema,
     response: z.string(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolEphemeralCloseResultSchema = z
   .object({
     closed: z.boolean(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolClientToolAckResultSchema = z
   .object({
     accepted: z.boolean(),
   })
-  .strict();
+  .strip();
 
 const sessionProtocolClientToolResultResultSchema = z
   .object({
     accepted: z.boolean(),
   })
-  .strict();
+  .strip();
 
 export function isSessionProtocolMethod(value: unknown): value is SessionProtocolMethod {
   return typeof value === "string" && SESSION_PROTOCOL_METHOD_SET.has(value);
@@ -2505,17 +2484,6 @@ export function parseSessionProtocolRequestLine(line: string): SessionProtocolPa
       };
     }
 
-    if (hasIssue(requestEnvelope.error, [], "unrecognized_keys")) {
-      return {
-        ok: false,
-        id: requestId,
-        error: createSessionProtocolError(
-          SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
-          "request contains unsupported top-level fields",
-        ),
-      };
-    }
-
     if (hasIssue(requestEnvelope.error, ["version"])) {
       const parsedVersionField = sessionProtocolVersionFieldSchema.safeParse(parsed);
       const version = parsedVersionField.success ? parsedVersionField.data.version : undefined;
@@ -2807,10 +2775,6 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolReloadParams>;
 export function validateSessionProtocolParams(
-  method: "session.setRisk",
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolSetRiskParams>;
-export function validateSessionProtocolParams(
   method: "session.setReasoning",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolSetReasoningParams>;
@@ -2895,8 +2859,6 @@ export function validateSessionProtocolParams(
     case "session.snapshot":
     case "session.reload":
       return validateSessionIdParams(method, params);
-    case "session.setRisk":
-      return validateSetRiskParams(params);
     case "session.setReasoning":
       return validateSetReasoningParams(params);
     case "session.setPersona":
@@ -2942,7 +2904,6 @@ export function validateSessionProtocolResult(
     case "session.observe":
       return validateResult(method, result, sessionProtocolObserveResultSchema);
     case "session.snapshot":
-    case "session.setRisk":
     case "session.setPersona":
       return validateResult(method, result, sessionProtocolSnapshotSchema);
     case "session.setReasoning":
@@ -3009,11 +2970,9 @@ function validateSessionIdParams<
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? `${method} params must be an object`
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? `${method} params only support sessionId`
-        : hasIssue(parsed.error, ["sessionId"])
-          ? `${method} params.sessionId must be a non-empty string`
-          : `${method} params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? `${method} params.sessionId must be a non-empty string`
+        : `${method} params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3032,7 +2991,7 @@ function validateInitializeParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "initialize params must be an object with client metadata"
-      : hasIssue(parsed.error, ["client"]) || hasIssue(parsed.error, [], "unrecognized_keys")
+      : hasIssue(parsed.error, ["client"])
         ? "initialize.client must be an object with name/version strings and optional tools"
         : hasIssue(parsed.error, ["client", "name"])
           ? "initialize.client.name must be a non-empty string"
@@ -3062,15 +3021,13 @@ function validateUserMessageParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? `${method} params must be an object`
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? `${method} params only support sessionId, text, and optional historyEntryId`
-        : hasIssue(parsed.error, ["sessionId"])
-          ? `${method} params.sessionId must be a non-empty string`
-          : hasIssue(parsed.error, ["text"])
-            ? `${method} params.text must be a string`
-            : hasIssue(parsed.error, ["historyEntryId"])
-              ? `${method} params.historyEntryId must be a non-empty string when provided`
-              : `${method} params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? `${method} params.sessionId must be a non-empty string`
+        : hasIssue(parsed.error, ["text"])
+          ? `${method} params.text must be a string`
+          : hasIssue(parsed.error, ["historyEntryId"])
+            ? `${method} params.historyEntryId must be a non-empty string when provided`
+            : `${method} params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3093,15 +3050,13 @@ function validateRecordParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.record params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.record params only support sessionId, text, and optional historyEntryId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.record params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["text"])
-            ? "session.record params.text must be a string"
-            : hasIssue(parsed.error, ["historyEntryId"])
-              ? "session.record params.historyEntryId must be a non-empty string when provided"
-              : `session.record params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.record params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["text"])
+          ? "session.record params.text must be a string"
+          : hasIssue(parsed.error, ["historyEntryId"])
+            ? "session.record params.historyEntryId must be a non-empty string when provided"
+            : `session.record params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3124,17 +3079,15 @@ function validateExecParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.exec params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.exec params only support sessionId, command, optional cwd, and optional timeoutMs"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.exec params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["command"])
-            ? "session.exec params.command must be a non-empty string"
-            : hasIssue(parsed.error, ["cwd"])
-              ? "session.exec params.cwd must be a non-empty string when provided"
-              : hasIssue(parsed.error, ["timeoutMs"])
-                ? "session.exec params.timeoutMs must be a positive integer when provided"
-                : `session.exec params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.exec params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["command"])
+          ? "session.exec params.command must be a non-empty string"
+          : hasIssue(parsed.error, ["cwd"])
+            ? "session.exec params.cwd must be a non-empty string when provided"
+            : hasIssue(parsed.error, ["timeoutMs"])
+              ? "session.exec params.timeoutMs must be a positive integer when provided"
+              : `session.exec params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3149,32 +3102,6 @@ function validateExecParams(
   };
 }
 
-function validateSetRiskParams(
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolSetRiskParams> {
-  const parsed = sessionProtocolSetRiskParamsSchema.safeParse(params);
-  if (!parsed.success) {
-    const message = hasIssue(parsed.error, [], "invalid_type")
-      ? "session.setRisk params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.setRisk params only support sessionId and riskLevel"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.setRisk params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["riskLevel"])
-            ? "session.setRisk params.riskLevel must be 'read-only' or 'read-write'"
-            : `session.setRisk params are invalid: ${formatZodError(parsed.error)}`;
-    return invalidParams(message);
-  }
-
-  return {
-    ok: true,
-    value: {
-      sessionId: parsed.data.sessionId,
-      riskLevel: parsed.data.riskLevel,
-    },
-  };
-}
-
 function validateSetReasoningParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolSetReasoningParams> {
@@ -3182,13 +3109,11 @@ function validateSetReasoningParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.setReasoning params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.setReasoning params only support sessionId and reasoning"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.setReasoning params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["reasoning"])
-            ? "session.setReasoning params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
-            : `session.setReasoning params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.setReasoning params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["reasoning"])
+          ? "session.setReasoning params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
+          : `session.setReasoning params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3208,13 +3133,11 @@ function validateSetPersonaParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.setPersona params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.setPersona params only support sessionId and personaId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.setPersona params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["personaId"])
-            ? "session.setPersona params.personaId must be a non-empty string"
-            : `session.setPersona params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.setPersona params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["personaId"])
+          ? "session.setPersona params.personaId must be a non-empty string"
+          : `session.setPersona params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3234,13 +3157,11 @@ function validateResolvePromptParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.resolvePrompt params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.resolvePrompt params only support sessionId and promptId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.resolvePrompt params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["promptId"])
-            ? "session.resolvePrompt params.promptId must be a non-empty string"
-            : `session.resolvePrompt params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.resolvePrompt params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["promptId"])
+          ? "session.resolvePrompt params.promptId must be a non-empty string"
+          : `session.resolvePrompt params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3260,15 +3181,13 @@ function validateAutocompletePathsParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.autocompletePaths params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.autocompletePaths params only support sessionId, query, and limit"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.autocompletePaths params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["query"])
-            ? "session.autocompletePaths params.query must be a string"
-            : hasIssue(parsed.error, ["limit"])
-              ? "session.autocompletePaths params.limit must be a positive integer up to 100"
-              : `session.autocompletePaths params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.autocompletePaths params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["query"])
+          ? "session.autocompletePaths params.query must be a string"
+          : hasIssue(parsed.error, ["limit"])
+            ? "session.autocompletePaths params.limit must be a positive integer up to 100"
+            : `session.autocompletePaths params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3289,15 +3208,13 @@ function validateCompactParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.compact params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.compact params only support sessionId, mode, and optional guidance"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.compact params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["mode"])
-            ? "session.compact params.mode must be 'summary-only' or 'summary-and-last'"
-            : hasIssue(parsed.error, ["guidance"])
-              ? "session.compact params.guidance must be a string when provided"
-              : `session.compact params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.compact params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["mode"])
+          ? "session.compact params.mode must be 'summary-only' or 'summary-and-last'"
+          : hasIssue(parsed.error, ["guidance"])
+            ? "session.compact params.guidance must be a string when provided"
+            : `session.compact params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3318,17 +3235,15 @@ function validatePruneParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.prune params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.prune params only support sessionId, strategy, fraction, and optional guidance"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.prune params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["strategy"])
-            ? "session.prune params.strategy must be 'earliest', 'largest', or 'smart'"
-            : hasIssue(parsed.error, ["fraction"])
-              ? "session.prune params.fraction must be a number between 0 and 1"
-              : hasIssue(parsed.error, ["guidance"])
-                ? "session.prune params.guidance must be a string when provided"
-                : `session.prune params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.prune params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["strategy"])
+          ? "session.prune params.strategy must be 'earliest', 'largest', or 'smart'"
+          : hasIssue(parsed.error, ["fraction"])
+            ? "session.prune params.fraction must be a number between 0 and 1"
+            : hasIssue(parsed.error, ["guidance"])
+              ? "session.prune params.guidance must be a string when provided"
+              : `session.prune params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3350,13 +3265,11 @@ function validateRewindParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.rewind params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.rewind params only support sessionId and historyEntryId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.rewind params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["historyEntryId"])
-            ? "session.rewind params.historyEntryId must be a non-empty string"
-            : `session.rewind params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.rewind params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["historyEntryId"])
+          ? "session.rewind params.historyEntryId must be a non-empty string"
+          : `session.rewind params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3376,13 +3289,11 @@ function validateTerminateSubagentParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.terminateSubagent params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.terminateSubagent params only support sessionId and subagentId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.terminateSubagent params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["subagentId"])
-            ? "session.terminateSubagent params.subagentId must be a non-empty string"
-            : `session.terminateSubagent params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.terminateSubagent params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["subagentId"])
+          ? "session.terminateSubagent params.subagentId must be a non-empty string"
+          : `session.terminateSubagent params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3402,17 +3313,13 @@ function validateEphemeralCreateParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.ephemeral.create params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.ephemeral.create params only support sessionId, instructions, tools, and riskLevel"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.ephemeral.create params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["instructions"])
-            ? "session.ephemeral.create params.instructions must be a non-empty string"
-            : hasIssue(parsed.error, ["tools"])
-              ? "session.ephemeral.create params.tools are invalid"
-              : hasIssue(parsed.error, ["riskLevel"])
-                ? "session.ephemeral.create params.riskLevel must be read-only or read-write"
-                : `session.ephemeral.create params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.ephemeral.create params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["instructions"])
+          ? "session.ephemeral.create params.instructions must be a non-empty string"
+          : hasIssue(parsed.error, ["tools"])
+            ? "session.ephemeral.create params.tools are invalid"
+            : `session.ephemeral.create params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3426,19 +3333,17 @@ function validateEphemeralSubmitParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.ephemeral.submit params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.ephemeral.submit params only support sessionId, contextId, threadId, optional forkFromThreadId, and message"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.ephemeral.submit params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["contextId"])
-            ? "session.ephemeral.submit params.contextId must be a non-empty string"
-            : hasIssue(parsed.error, ["threadId"])
-              ? "session.ephemeral.submit params.threadId must be a non-empty string"
-              : hasIssue(parsed.error, ["forkFromThreadId"])
-                ? "session.ephemeral.submit params.forkFromThreadId must be a non-empty string when provided"
-                : hasIssue(parsed.error, ["message"])
-                  ? "session.ephemeral.submit params.message must be a non-empty string"
-                  : `session.ephemeral.submit params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.ephemeral.submit params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["contextId"])
+          ? "session.ephemeral.submit params.contextId must be a non-empty string"
+          : hasIssue(parsed.error, ["threadId"])
+            ? "session.ephemeral.submit params.threadId must be a non-empty string"
+            : hasIssue(parsed.error, ["forkFromThreadId"])
+              ? "session.ephemeral.submit params.forkFromThreadId must be a non-empty string when provided"
+              : hasIssue(parsed.error, ["message"])
+                ? "session.ephemeral.submit params.message must be a non-empty string"
+                : `session.ephemeral.submit params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3463,13 +3368,11 @@ function validateEphemeralCloseParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.ephemeral.close params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.ephemeral.close params only support sessionId and contextId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.ephemeral.close params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["contextId"])
-            ? "session.ephemeral.close params.contextId must be a non-empty string"
-            : `session.ephemeral.close params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.ephemeral.close params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["contextId"])
+          ? "session.ephemeral.close params.contextId must be a non-empty string"
+          : `session.ephemeral.close params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3483,13 +3386,11 @@ function validateClientToolAckParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.clientTool.ack params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.clientTool.ack params only support sessionId and callId"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.clientTool.ack params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["callId"])
-            ? "session.clientTool.ack params.callId must be a non-empty string"
-            : `session.clientTool.ack params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.clientTool.ack params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["callId"])
+          ? "session.clientTool.ack params.callId must be a non-empty string"
+          : `session.clientTool.ack params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3503,13 +3404,11 @@ function validateClientToolResultParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.clientTool.result params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.clientTool.result params only support sessionId, callId, ok, content, and error"
-        : hasIssue(parsed.error, ["sessionId"])
-          ? "session.clientTool.result params.sessionId must be a non-empty string"
-          : hasIssue(parsed.error, ["callId"])
-            ? "session.clientTool.result params.callId must be a non-empty string"
-            : `session.clientTool.result params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.clientTool.result params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["callId"])
+          ? "session.clientTool.result params.callId must be a non-empty string"
+          : `session.clientTool.result params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3523,21 +3422,17 @@ function validateCreateParams(
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
       ? "session.create params must be an object"
-      : hasIssue(parsed.error, [], "unrecognized_keys")
-        ? "session.create params only support executionEnvironment, personaId, riskLevel, and reasoning"
-        : hasIssue(parsed.error, ["executionEnvironment"])
-          ? "session.create params.executionEnvironment must be an object"
-          : hasIssue(parsed.error, ["executionEnvironment", "kind"])
-            ? "session.create params.executionEnvironment.kind must be 'local', 'cloudflare-sandbox', or 'fly-sprite'"
-            : hasIssue(parsed.error, ["executionEnvironment", "cwd"])
-              ? "session.create params.executionEnvironment.cwd must be an absolute path"
-              : hasIssue(parsed.error, ["personaId"])
-                ? "session.create params.personaId must be a non-empty string"
-                : hasIssue(parsed.error, ["riskLevel"])
-                  ? "session.create params.riskLevel must be 'read-only' or 'read-write'"
-                  : hasIssue(parsed.error, ["reasoning"])
-                    ? "session.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
-                    : `session.create params are invalid: ${formatZodError(parsed.error)}`;
+      : hasIssue(parsed.error, ["executionEnvironment"])
+        ? "session.create params.executionEnvironment must be an object"
+        : hasIssue(parsed.error, ["executionEnvironment", "kind"])
+          ? "session.create params.executionEnvironment.kind must be 'local', 'cloudflare-sandbox', or 'fly-sprite'"
+          : hasIssue(parsed.error, ["executionEnvironment", "cwd"])
+            ? "session.create params.executionEnvironment.cwd must be an absolute path"
+            : hasIssue(parsed.error, ["personaId"])
+              ? "session.create params.personaId must be a non-empty string"
+              : hasIssue(parsed.error, ["reasoning"])
+                ? "session.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
+                : `session.create params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3613,10 +3508,6 @@ function parseSessionProtocolDeltaMessage(payload: unknown): SessionProtocolOutg
 
   const deltaMessage = sessionProtocolDeltaMessageSchema.safeParse(payload);
   if (!deltaMessage.success) {
-    if (hasIssue(deltaMessage.error, [], "unrecognized_keys")) {
-      return fail("session.delta message contains unsupported fields");
-    }
-
     if (hasIssue(deltaMessage.error, ["sessionId"])) {
       return fail("session.delta.sessionId must be a non-empty string");
     }
@@ -3666,9 +3557,6 @@ function parseSessionProtocolClientToolMessage(
 
   const message = sessionProtocolClientToolMessageSchema.safeParse(payload);
   if (!message.success) {
-    if (hasIssue(message.error, [], "unrecognized_keys")) {
-      return fail(`${String(messageType)} message contains unsupported fields`);
-    }
     return fail(`invalid ${String(messageType)} message: ${formatZodError(message.error)}`);
   }
 
@@ -3691,9 +3579,6 @@ function parseSessionProtocolEphemeralMessage(
 
   const ephemeralMessage = sessionProtocolEphemeralMessageSchema.safeParse(payload);
   if (!ephemeralMessage.success) {
-    if (hasIssue(ephemeralMessage.error, [], "unrecognized_keys")) {
-      return fail("session.ephemeral message contains unsupported fields");
-    }
     if (hasIssue(ephemeralMessage.error, ["sessionId"])) {
       return fail("session.ephemeral.sessionId must be a non-empty string");
     }
@@ -3722,9 +3607,6 @@ function parseSessionProtocolPendingUserMessagesMessage(
 
   const message = sessionProtocolPendingUserMessagesMessageSchema.safeParse(payload);
   if (!message.success) {
-    if (hasIssue(message.error, [], "unrecognized_keys")) {
-      return fail("session.pendingUserMessages message contains unsupported fields");
-    }
     if (hasIssue(message.error, ["sessionId"])) {
       return fail("session.pendingUserMessages.sessionId must be a non-empty string");
     }
@@ -3770,10 +3652,6 @@ function parseSessionProtocolResponseMessage(payload: unknown): SessionProtocolO
   if (ok === true) {
     const successResponse = sessionProtocolResponseSuccessSchema.safeParse(payload);
     if (!successResponse.success) {
-      if (hasIssue(successResponse.error, [], "unrecognized_keys")) {
-        return fail("successful response must only include result payload");
-      }
-
       if (hasIssue(successResponse.error, ["result"], "invalid_type")) {
         return fail("successful response must include result");
       }
@@ -3803,10 +3681,6 @@ function parseSessionProtocolResponseMessage(payload: unknown): SessionProtocolO
 
   const errorResponse = sessionProtocolResponseErrorSchema.safeParse(payload);
   if (!errorResponse.success) {
-    if (hasIssue(errorResponse.error, [], "unrecognized_keys")) {
-      return fail("error response must only include error payload");
-    }
-
     if (hasIssue(errorResponse.error, ["error"])) {
       return fail("error response.error must be an object");
     }

@@ -9,6 +9,4 @@ export type {
 export {
   CommandRegistry,
   createCommandRegistry,
-  getRiskLevelAutocompleteOptions,
-  getRiskLevelDescription,
 } from "./registry.js";

@@ -21,7 +21,7 @@ const skillFrontMatterSchema = z
     metadata: z.record(z.string(), z.string()).optional(),
     "allowed-tools": z.string().trim().min(1).optional(),
   })
-  .passthrough();
+  .strip();
 
 export function parseSkill(filePath: string, content: string): { skill?: Skill; error?: string } {
   const markdownResult = parseMarkdownFrontMatter(content);

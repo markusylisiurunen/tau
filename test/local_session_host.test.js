@@ -48,7 +48,6 @@ function createHost(store, options = {}) {
   return new LocalSessionHost({
     store,
     persona: options.persona ?? personas[0],
-    riskLevel: options.riskLevel ?? "read-only",
     discoveredSkills: [],
     personas: options.personas ?? [personas[0]],
     prompts: [],
@@ -116,10 +115,9 @@ function expectedCatalog(persona = personas[0]) {
   };
 }
 
-function expectedSettings(persona = personas[0], riskLevel = "read-only") {
+function expectedSettings(persona = personas[0]) {
   return {
     personaId: persona.id,
-    riskLevel,
     ...(persona.settings.reasoning !== undefined ? { reasoning: persona.settings.reasoning } : {}),
     ...(persona.settings.serviceTier !== undefined
       ? { serviceTier: persona.settings.serviceTier }
@@ -150,7 +148,6 @@ function createStoredSnapshot(overrides = {}) {
     revision: overrides.revision ?? 1,
     lifecycle: overrides.lifecycle ?? "idle",
     costTotal: overrides.costTotal ?? 0,
-    settings: overrides.settings ?? expectedSettings(persona, overrides.riskLevel ?? "read-only"),
     bootstrap: overrides.bootstrap ?? {
       model: expectedModel(persona),
       prompt: {
@@ -159,6 +156,7 @@ function createStoredSnapshot(overrides = {}) {
       },
     },
     catalog: overrides.catalog ?? expectedCatalog(persona),
+    settings: overrides.settings ?? expectedSettings(persona),
     executionEnvironment: overrides.executionEnvironment ?? {
       kind: "local",
       cwd: "/repo",
@@ -957,24 +955,21 @@ describe("LocalSessionHost", () => {
     );
   });
 
-  it("applies session.create persona, risk, and reasoning overrides before startup", async () => {
+  it("applies session.create persona and reasoning overrides before startup", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store, { personas: [personas[0], personas[1]] });
     const hostedSession = await host.createSession({
       executionEnvironment: { kind: "local", cwd: "/repo" },
       personaId: personas[1].id,
-      riskLevel: "read-write",
       reasoning: "high",
     });
 
     expect(hostedSession.runtime.persona.id).toBe(personas[1].id);
     expect(hostedSession.runtime.persona.settings.reasoning).toBe("high");
-    expect(hostedSession.runtime.currentRiskLevel).toBe("read-write");
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({
         settings: {
           personaId: personas[1].id,
-          riskLevel: "read-write",
           reasoning: "high",
         },
         bootstrap: expect.objectContaining({
@@ -1008,7 +1003,6 @@ describe("LocalSessionHost", () => {
     const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     const resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: {},
-      config: { defaultRisk: "read-only" },
       personas: [livePersona],
       prompts: [],
       skills: [
@@ -1080,7 +1074,6 @@ describe("LocalSessionHost", () => {
         });
         return {
           persona: resolvedPersona,
-          riskLevel: "read-write",
           discoveredSkills: [
             {
               name: "resolved-skill",
@@ -1090,7 +1083,6 @@ describe("LocalSessionHost", () => {
           ],
           personas: [resolvedPersona],
           prompts: [],
-          config: { defaultRisk: "read-write" },
         };
       },
     });
@@ -1100,7 +1092,6 @@ describe("LocalSessionHost", () => {
 
     expect(snapshot.settings).toEqual({
       personaId: "resolved-persona",
-      riskLevel: "read-write",
       reasoning: "high",
     });
     expect(snapshot.catalog.personas).toEqual([
@@ -1110,7 +1101,6 @@ describe("LocalSessionHost", () => {
       }),
     ]);
     expect(session.runtime.persona.id).toBe("resolved-persona");
-    expect(session.runtime.currentRiskLevel).toBe("read-write");
   });
 
   it("reloads hosted session content from the execution environment", async () => {
@@ -1123,7 +1113,6 @@ describe("LocalSessionHost", () => {
     const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     const resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: {},
-      config: { defaultRisk: "read-only" },
       personas: [reloadedPersona],
       prompts: [{ id: "reload-prompt", template: "reload prompt" }],
       skills: [
@@ -1476,7 +1465,6 @@ describe("LocalSessionHost", () => {
         const runtimeConfig = await executionEnvironment.resolveRuntimeConfig();
         return {
           persona: runtimeConfig.personas[0],
-          riskLevel: runtimeConfig.config.defaultRisk ?? "read-only",
           discoveredSkills: runtimeConfig.skills,
           personas: runtimeConfig.personas,
           prompts: runtimeConfig.prompts,

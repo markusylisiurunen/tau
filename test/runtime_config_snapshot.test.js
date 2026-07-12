@@ -21,7 +21,7 @@ describe("runtime config snapshot", () => {
       await mkdir(join(repo, ".tau", "personas"), { recursive: true });
       await writeFile(
         join(repo, ".tau", "config.json"),
-        JSON.stringify({ defaultPersona: "project-persona:high", defaultRisk: "read-write" }),
+        JSON.stringify({ defaultPersona: "project-persona:high" }),
         "utf8",
       );
       await writeFile(
@@ -45,7 +45,6 @@ describe("runtime config snapshot", () => {
       });
 
       expect(runtime.config.defaultPersona).toBe("project-persona:high");
-      expect(runtime.config.defaultRisk).toBe("read-write");
       expect(runtime.personas.find((persona) => persona.id === "project-persona")).toEqual(
         expect.objectContaining({
           label: "Project Persona",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildBashUiText,
+  createBashToolDefinition,
   formatBashToolResultText,
   getBashOutputPolicy,
   prepareBashOutput,
@@ -25,6 +26,22 @@ const backend = {
 };
 
 describe("bash output policy", () => {
+  it("rejects unknown execution arguments", async () => {
+    const tool = createBashToolDefinition(backend);
+    const result = await tool.dispatch(
+      {
+        id: "bash-1",
+        name: "bash",
+        arguments: { command: "pwd", unexpected: true },
+      },
+      new AbortController().signal,
+      { scope: "main" },
+    );
+
+    expect(result.kind).toBe("single");
+    expect(result.toolResult.isError).toBe(true);
+  });
+
   it("gates default output and includes maxOutputTokens instructions", async () => {
     const policy = getBashOutputPolicy({ mode: "model" });
     const output = "a".repeat(tokensToBytes(policy.maxTokens) + 12);

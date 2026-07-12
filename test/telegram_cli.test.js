@@ -38,7 +38,6 @@ describe("telegram cli", () => {
           workspaceRoot: "project-workspaces",
           workingDirectory: "packages/core",
           persona: "gpt-5.5-coder:high",
-          riskLevel: "read-only",
         },
       },
     });
@@ -61,7 +60,6 @@ describe("telegram cli", () => {
           workspaceRoot: join(dir, "project-workspaces"),
           workingDirectory: "packages/core",
           persona: "gpt-5.5-coder:high",
-          riskLevel: "read-only",
         },
       },
     });

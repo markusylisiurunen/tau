@@ -78,14 +78,11 @@ describe("view_image tool", () => {
 
       const backend = createLocalToolExecutionBackend();
       const tool = createViewImageToolDefinition(backend);
-      const result = await tool.dispatch(
-        {
-          id: "tool-1",
-          name: TOOL_NAME_VIEW_IMAGE,
-          arguments: { path: filePath },
-        },
-        "read-only",
-      );
+      const result = await tool.dispatch({
+        id: "tool-1",
+        name: TOOL_NAME_VIEW_IMAGE,
+        arguments: { path: filePath },
+      });
 
       expect(result.kind).toBe("single");
       if (result.kind !== "single") {
@@ -120,14 +117,11 @@ describe("view_image tool", () => {
 
       const backend = createLocalToolExecutionBackend();
       const tool = createViewImageToolDefinition(backend);
-      const result = await tool.dispatch(
-        {
-          id: "tool-2",
-          name: TOOL_NAME_VIEW_IMAGE,
-          arguments: { path: filePath },
-        },
-        "read-only",
-      );
+      const result = await tool.dispatch({
+        id: "tool-2",
+        name: TOOL_NAME_VIEW_IMAGE,
+        arguments: { path: filePath },
+      });
 
       expect(result.kind).toBe("single");
       if (result.kind !== "single") {
@@ -159,14 +153,11 @@ describe("view_image tool", () => {
 
       const backend = createLocalToolExecutionBackend();
       const tool = createViewImageToolDefinition(backend);
-      const result = await tool.dispatch(
-        {
-          id: "tool-3",
-          name: TOOL_NAME_VIEW_IMAGE,
-          arguments: { path: filePath },
-        },
-        "read-only",
-      );
+      const result = await tool.dispatch({
+        id: "tool-3",
+        name: TOOL_NAME_VIEW_IMAGE,
+        arguments: { path: filePath },
+      });
 
       expect(result.kind).toBe("single");
       if (result.kind !== "single") {
@@ -205,14 +196,11 @@ describe("view_image tool", () => {
 
       const backend = createLocalToolExecutionBackend();
       const tool = createViewImageToolDefinition(backend);
-      const result = await tool.dispatch(
-        {
-          id: "tool-4",
-          name: TOOL_NAME_VIEW_IMAGE,
-          arguments: { path: filePath },
-        },
-        "read-only",
-      );
+      const result = await tool.dispatch({
+        id: "tool-4",
+        name: TOOL_NAME_VIEW_IMAGE,
+        arguments: { path: filePath },
+      });
 
       expect(result.kind).toBe("single");
       if (result.kind !== "single") {

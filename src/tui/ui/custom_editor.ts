@@ -29,7 +29,6 @@ export class CustomEditor extends Editor {
   public onCtrlO?: () => void;
   public onEscape?: () => void;
   public onShiftTab?: () => void;
-  public onCtrlR?: () => void;
   public onCtrlP?: () => void;
   public onCtrlS?: () => void;
   public onCtrlY?: () => void;
@@ -154,11 +153,6 @@ export class CustomEditor extends Editor {
 
     if (matchesKey(data, Key.ctrl("g")) && this.onCtrlG && !this.isShowingAutocomplete()) {
       this.onCtrlG();
-      return;
-    }
-
-    if (matchesKey(data, Key.ctrl("r")) && this.onCtrlR && !this.isShowingAutocomplete()) {
-      this.onCtrlR();
       return;
     }
 

@@ -53,7 +53,6 @@ export type TauSdkSessionRecordResult = SessionProtocolRecordResult;
 export type TauSdkSessionInterruptResult = SessionProtocolInterruptResult;
 export type TauSdkSessionExecResult = SessionProtocolExecResult;
 export type TauSdkSessionSnapshotResult = SessionProtocolSnapshot;
-export type TauSdkSessionSetRiskResult = SessionProtocolSnapshot;
 export type TauSdkSessionSetReasoningResult = SessionProtocolSettingsUpdateResult;
 export type TauSdkSessionSetPersonaResult = SessionProtocolSnapshot;
 export type TauSdkSessionCompactResult = SessionProtocolCompactResult;
@@ -96,7 +95,6 @@ export type TauSdkClientOptions = TauSdkTransportClientOptions & {
   cwd?: string;
   persona?: string;
   reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  riskLevel?: "read-only" | "read-write";
   noAgentContextFiles?: boolean;
 };
 
@@ -135,7 +133,6 @@ export type TauSdkSession = {
   ): Promise<TauSdkSessionExecResult>;
   interrupt(): Promise<TauSdkSessionInterruptResult>;
   snapshot(): Promise<TauSdkSessionSnapshotResult>;
-  setRiskLevel(riskLevel: "read-only" | "read-write"): Promise<TauSdkSessionSetRiskResult>;
   setReasoning(
     reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
   ): Promise<TauSdkSessionSetReasoningResult>;
@@ -159,7 +156,6 @@ export type TauSdkSession = {
   createEphemeralContext(options: {
     instructions: string;
     tools: TauSdkEphemeralAgentTool[];
-    riskLevel: "read-only" | "read-write";
   }): Promise<TauSdkEphemeralCreateResult>;
   submitEphemeralThread(options: {
     contextId: string;

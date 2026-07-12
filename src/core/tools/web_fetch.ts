@@ -3,7 +3,6 @@ import { Type } from "typebox";
 import { z } from "zod";
 import type { Config } from "../config/index.js";
 import { getParallelApiKey } from "../config/index.js";
-import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import {
   extractParallelErrorMessage,
@@ -206,7 +205,6 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
     schema: WEB_FETCH_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      _riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const parsedArgs = parseArgs(toolCall.arguments);

@@ -39,7 +39,7 @@ export function safeParseCoreEvent(value: unknown): CoreEventParseResult<CoreEve
     return fail("invalid core event payload");
   }
 
-  return { ok: true, value: value as CoreEvent };
+  return { ok: true, value: stripCoreEvent(value) };
 }
 
 export function parseCoreEventEnvelope(value: unknown): CoreEventEnvelope {
@@ -53,16 +53,6 @@ export function safeParseCoreEventEnvelope(
 ): CoreEventParseResult<CoreEventEnvelope> {
   if (!isRecord(value)) {
     return fail("core event envelope must be an object");
-  }
-
-  const envelopeKeys = Object.keys(value);
-  const unsupportedEnvelopeKeys = envelopeKeys.filter(
-    (key) => key !== "version" && key !== "event",
-  );
-  if (unsupportedEnvelopeKeys.length > 0) {
-    return fail(
-      `core event envelope contains unsupported fields: ${unsupportedEnvelopeKeys.join(", ")}`,
-    );
   }
 
   if (!isCoreEventVersion(value.version)) {
@@ -87,55 +77,119 @@ export function isCoreEventVersion(value: unknown): value is CoreEventVersion {
   return value === CORE_EVENT_VERSION;
 }
 
+function stripCoreEvent(value: UnknownRecord): CoreEvent {
+  switch (value.type) {
+    case "assistant_start":
+      return { type: "assistant_start", historyEntryId: value.historyEntryId as string };
+    case "assistant_final":
+      return {
+        type: "assistant_final",
+        historyEntryId: value.historyEntryId as string,
+        message: value.message as Extract<CoreEvent, { type: "assistant_final" }>["message"],
+      };
+    case "assistant_partial": {
+      const snapshot = value.snapshot as UnknownRecord;
+      return {
+        type: "assistant_partial",
+        historyEntryId: value.historyEntryId as string,
+        snapshot: {
+          text: snapshot.text as string,
+          thinking: snapshot.thinking as string,
+          hasTextStarted: snapshot.hasTextStarted as boolean,
+          hasAnyThinking: snapshot.hasAnyThinking as boolean,
+        },
+      };
+    }
+    case "notice":
+      return {
+        type: "notice",
+        severity: value.severity as Extract<CoreEvent, { type: "notice" }>["severity"],
+        text: value.text as string,
+      };
+    case "tool_ui":
+      return {
+        type: "tool_ui",
+        uiEvent: value.uiEvent as Extract<CoreEvent, { type: "tool_ui" }>["uiEvent"],
+      };
+    case "subagent_ui":
+      return {
+        type: "subagent_ui",
+        event: value.event as Extract<CoreEvent, { type: "subagent_ui" }>["event"],
+        originHistoryEntryId: value.originHistoryEntryId as string,
+      };
+    case "tool_result":
+      return {
+        type: "tool_result",
+        historyEntryId: value.historyEntryId as string,
+        message: value.message as Extract<CoreEvent, { type: "tool_result" }>["message"],
+      };
+    case "compaction_start":
+      return { type: "compaction_start", reason: "threshold" };
+    case "compaction_end":
+      return stripCompactionEndEvent(value);
+    default:
+      throw new Error("invalid core event payload");
+  }
+}
+
+function stripCompactionEndEvent(
+  value: UnknownRecord,
+): Extract<CoreEvent, { type: "compaction_end" }> {
+  switch (value.outcome) {
+    case "compacted": {
+      const result = value.result as UnknownRecord;
+      return {
+        type: "compaction_end",
+        reason: "threshold",
+        outcome: "compacted",
+        result: {
+          summaryHistoryEntryId: result.summaryHistoryEntryId as string,
+          continuationHistoryEntryId: result.continuationHistoryEntryId as string,
+          compactionMessage: result.compactionMessage as string,
+          cutType: result.cutType as "turn-boundary" | "split-turn",
+          retainedMessageCount: result.retainedMessageCount as number,
+        },
+      };
+    }
+    case "failed":
+      return {
+        type: "compaction_end",
+        reason: "threshold",
+        outcome: "failed",
+        errorMessage: value.errorMessage as string,
+      };
+    case "skipped":
+      return { type: "compaction_end", reason: "threshold", outcome: "skipped" };
+    case "aborted":
+      return { type: "compaction_end", reason: "threshold", outcome: "aborted" };
+    default:
+      throw new Error("invalid core event payload");
+  }
+}
+
 function isValidCoreEvent(value: UnknownRecord, eventType: string): boolean {
   switch (eventType) {
     case "assistant_start":
-      return (
-        hasOnlyKeys(value, ["type", "historyEntryId"]) && typeof value.historyEntryId === "string"
-      );
+      return typeof value.historyEntryId === "string";
     case "assistant_final":
-      return (
-        hasOnlyKeys(value, ["type", "historyEntryId", "message"]) &&
-        typeof value.historyEntryId === "string" &&
-        isAssistantMessage(value.message)
-      );
+      return typeof value.historyEntryId === "string" && isAssistantMessage(value.message);
     case "assistant_partial":
-      return (
-        hasOnlyKeys(value, ["type", "historyEntryId", "snapshot"]) &&
-        typeof value.historyEntryId === "string" &&
-        isAssistantPartialSnapshot(value.snapshot)
-      );
+      return typeof value.historyEntryId === "string" && isAssistantPartialSnapshot(value.snapshot);
     case "notice":
-      return (
-        hasOnlyKeys(value, ["type", "severity", "text"]) &&
-        isOneOf(value.severity, noticeSeverities) &&
-        typeof value.text === "string"
-      );
+      return isOneOf(value.severity, noticeSeverities) && typeof value.text === "string";
     case "tool_ui":
-      return hasOnlyKeys(value, ["type", "uiEvent"]) && isToolUiEvent(value.uiEvent);
+      return isToolUiEvent(value.uiEvent);
     case "subagent_ui":
-      return (
-        hasOnlyKeys(value, ["type", "event", "originHistoryEntryId"]) &&
-        typeof value.originHistoryEntryId === "string" &&
-        isSubagentUiEvent(value.event)
-      );
+      return typeof value.originHistoryEntryId === "string" && isSubagentUiEvent(value.event);
     case "tool_result":
-      return (
-        hasOnlyKeys(value, ["type", "historyEntryId", "message"]) &&
-        typeof value.historyEntryId === "string" &&
-        isToolResultMessage(value.message)
-      );
+      return typeof value.historyEntryId === "string" && isToolResultMessage(value.message);
     case "compaction_start":
-      return hasOnlyKeys(value, ["type", "reason"]) && isOneOf(value.reason, compactionReasons);
+      return isOneOf(value.reason, compactionReasons);
     case "compaction_end":
       return isCompactionEndEvent(value);
     default:
       return false;
   }
-}
-
-function hasOnlyKeys(value: UnknownRecord, allowedKeys: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowedKeys.includes(key));
 }
 
 function isCompactionEndEvent(value: UnknownRecord): boolean {
@@ -145,24 +199,12 @@ function isCompactionEndEvent(value: UnknownRecord): boolean {
 
   switch (value.outcome) {
     case "compacted":
-      return (
-        hasOnlyKeys(value, ["type", "reason", "outcome", "result"]) &&
-        value.errorMessage === undefined &&
-        isCompactionResult(value.result)
-      );
+      return value.errorMessage === undefined && isCompactionResult(value.result);
     case "failed":
-      return (
-        hasOnlyKeys(value, ["type", "reason", "outcome", "errorMessage"]) &&
-        value.result === undefined &&
-        typeof value.errorMessage === "string"
-      );
+      return value.result === undefined && typeof value.errorMessage === "string";
     case "skipped":
     case "aborted":
-      return (
-        hasOnlyKeys(value, ["type", "reason", "outcome"]) &&
-        value.result === undefined &&
-        value.errorMessage === undefined
-      );
+      return value.result === undefined && value.errorMessage === undefined;
   }
 }
 

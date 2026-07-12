@@ -84,11 +84,7 @@ describe("LocalExecutionEnvironment", () => {
       const repo = join(storedHome, "repo");
       await mkdir(join(storedHome, ".config", "tau"), { recursive: true });
       await mkdir(repo, { recursive: true });
-      await writeFile(
-        join(storedHome, ".config", "tau", "config.json"),
-        JSON.stringify({ defaultRisk: "read-write" }),
-        "utf8",
-      );
+      await writeFile(join(storedHome, ".config", "tau", "config.json"), "{}", "utf8");
       const resolver = new LocalExecutionEnvironmentResolver({
         home: "/host/home",
         readFile: () => {
@@ -104,7 +100,6 @@ describe("LocalExecutionEnvironment", () => {
       });
       const runtime = await environment.resolveRuntimeConfig();
 
-      expect(runtime.config.defaultRisk).toBe("read-write");
       expect(runtime.bootstrap.levels[0].levelRoot).toBe(storedHome);
     } finally {
       await rm(storedHome, { recursive: true, force: true });

@@ -12,7 +12,6 @@ import type {
   Persona,
   PromptTemplate,
   ReasoningEffort,
-  RiskLevel,
   RuntimeBootstrap,
   Skill,
   ThemeDefinition,
@@ -422,9 +421,6 @@ function printAttachHelp(): void {
       "  tau attach --new --execution-kind cloudflare-sandbox --cloudflare-bridge default --cloudflare-sandbox sandbox-1 --cwd /workspace/repo ws://127.0.0.1:8787",
       "  tau attach --new --execution-kind fly-sprite --fly-api default --fly-sprite sprite-1 --cwd /home/sprite/repo ws://127.0.0.1:8787",
       "  tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 --auth-token $TAU_WS_AUTH_TOKEN ws://vps:8787",
-      "  tau attach -- tau rpc --risk read-only",
-      "  tau attach --new --cwd /repo -- tau rpc --risk read-only",
-      "  tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /repo && tau rpc --risk read-only'",
       "",
       "without --session or --new, attach lists hosted sessions and prompts for a selection.",
       "stdio commands and websocket servers both speak Tau's session protocol.",
@@ -446,11 +442,9 @@ function printServeHelp(): void {
       "  --auth-token <token> require tau attach / SDK websocket clients to provide this token.",
       "  --help, -h           show this help and exit.",
       "",
-      "tau session options such as --risk and --persona are accepted too.",
-      "",
       "examples:",
-      "  tau serve --risk read-only",
-      "  tau serve --host 0.0.0.0 --port 8787 --auth-token $TAU_WS_AUTH_TOKEN --risk read-only",
+      "  tau serve",
+      "  tau serve --host 0.0.0.0 --port 8787 --auth-token $TAU_WS_AUTH_TOKEN",
     ].join("\n"),
   );
 }
@@ -497,7 +491,6 @@ async function resolveHostedSessionBootstrap(options: {
   cwd: string;
 }): Promise<{
   persona: Persona;
-  riskLevel: RiskLevel;
   discoveredSkills: Skill[];
   personas: Persona[];
   prompts: RuntimeConfigResult["prompts"];
@@ -539,7 +532,6 @@ async function resolveHostedSessionBootstrap(options: {
 
   return {
     persona,
-    riskLevel: options.cli.riskLevel ?? runtime.config.defaultRisk ?? "read-only",
     discoveredSkills: runtime.skills,
     personas: runtime.personas.map(clonePersonaForSession),
     prompts: runtime.prompts,
@@ -551,7 +543,6 @@ function createLocalSessionHost(options: {
   cli: CliOptions;
   config: Config;
   persona: Persona;
-  riskLevel: RiskLevel;
   skills: Skill[];
 }): LocalSessionHost {
   const deps = createDefaultCoreDeps();
@@ -584,7 +575,6 @@ function createLocalSessionHost(options: {
   return new LocalSessionHost({
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
     persona,
-    riskLevel: options.riskLevel,
     discoveredSkills: options.skills,
     personas: [persona],
     prompts: [],
@@ -613,7 +603,6 @@ async function runRpcMode(options: {
   cli: CliOptions;
   config: Config;
   persona: Persona;
-  riskLevel: RiskLevel;
   skills: Skill[];
 }): Promise<void> {
   const sessionHost = createLocalSessionHost(options);
@@ -1051,8 +1040,6 @@ if (cli.personaId) {
   }
 }
 
-const initialRiskLevel = cli.riskLevel ?? config.defaultRisk;
-
 if (cli.debug) {
   let debugPersona: Persona | undefined;
   if (personas.length > 0) {
@@ -1066,7 +1053,6 @@ if (cli.debug) {
     }
   }
 
-  const debugRiskLevel = initialRiskLevel;
   const virtualBundle = runtimeBootstrap?.virtualBundle;
   const debugToolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
   printDebugInfo({
@@ -1076,7 +1062,6 @@ if (cli.debug) {
     virtualBundle,
     selectedPersona: debugPersona,
     noAgentContextFiles: cli.noAgentContextFiles,
-    riskLevel: debugRiskLevel,
     toolRegistry: debugToolRegistry,
   });
   process.exit(0);
@@ -1099,14 +1084,11 @@ if (reasoningOverride !== undefined) {
   initialPersona.settings.reasoning = reasoningOverride;
 }
 
-const effectiveRiskLevel: RiskLevel = initialRiskLevel ?? "read-only";
-
 if (isServeSubcommand) {
   const sessionHost = createLocalSessionHost({
     cli,
     config,
     persona: initialPersona,
-    riskLevel: effectiveRiskLevel,
     skills,
   });
 
@@ -1150,7 +1132,6 @@ if (isRpcSubcommand) {
       cli,
       config,
       persona: initialPersona,
-      riskLevel: effectiveRiskLevel,
       skills,
     });
     process.exit(0);
@@ -1175,7 +1156,6 @@ const sessionClient = await createTauSdkClient({
   cwd,
   persona: initialPersonaId,
   reasoning: reasoningOverride,
-  riskLevel: effectiveRiskLevel,
   noAgentContextFiles: cli.noAgentContextFiles,
   initialize: { client: { name: "tau-tui", version: "1" } },
   clientTools: createTuiClientTools({ getController: () => sessionChatApp?.getController() }),
@@ -1188,7 +1168,6 @@ const app = await SessionChatApp.open({
     input: {
       executionEnvironment: { kind: "local", cwd },
       ...(initialPersonaId !== undefined ? { personaId: initialPersonaId } : {}),
-      riskLevel: effectiveRiskLevel,
       ...(reasoningOverride !== undefined ? { reasoning: reasoningOverride } : {}),
     },
   },

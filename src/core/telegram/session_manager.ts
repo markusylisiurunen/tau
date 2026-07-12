@@ -16,7 +16,6 @@ import type {
   SessionProtocolUnobserveResult,
 } from "../../protocol/session_protocol.js";
 import type { TelegramProjectConfig } from "../config/schema.js";
-import type { RiskLevel } from "../types.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { formatTauUserText } from "../utils/user_metadata.js";
 import {
@@ -85,14 +84,14 @@ const persistedTelegramSessionRecordSchema = z
     updatedAt: z.string().datetime(),
     tauSessionId: z.string().min(1).optional(),
   })
-  .strict();
+  .strip();
 
 const telegramSessionStateSchema = z
   .object({
     version: z.literal(1),
     sessions: z.array(persistedTelegramSessionRecordSchema),
   })
-  .strict();
+  .strip();
 
 type PersistedTelegramSessionRecord = z.infer<typeof persistedTelegramSessionRecordSchema>;
 
@@ -200,7 +199,6 @@ export type TelegramSessionSubmitOptions = {
 export type TelegramSessionClientOptions = {
   cwd: string;
   persona?: string;
-  riskLevel?: RiskLevel;
   noAgentContextFiles?: boolean;
 };
 
@@ -923,9 +921,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     const options: TelegramSessionClientOptions = { cwd };
     if (entry.project.persona) {
       options.persona = entry.project.persona;
-    }
-    if (entry.project.riskLevel) {
-      options.riskLevel = entry.project.riskLevel;
     }
     if (entry.project.noAgentContextFiles !== undefined) {
       options.noAgentContextFiles = entry.project.noAgentContextFiles;

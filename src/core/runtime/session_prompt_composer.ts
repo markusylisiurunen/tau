@@ -1,11 +1,10 @@
 import { formatSubagentsForPrompt, getSubagentBasePrompt } from "../subagents/registry.js";
-import type { Persona, RiskLevel } from "../types.js";
+import type { Persona } from "../types.js";
 import { buildBaseSystemPrompt, buildEnvironmentTag } from "../utils/context.js";
 import { resolvePromptGitRoot } from "../utils/git.js";
 
 export type ComposeSessionPromptsArgs = {
   persona: Persona;
-  riskLevel: RiskLevel;
   cwd: string;
   datetime: string;
   platform: NodeJS.Platform;
@@ -24,7 +23,6 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
   const repoRoot = resolvePromptGitRoot({ cwd: args.cwd });
 
   const environmentTag = buildEnvironmentTag({
-    riskLevel: args.riskLevel,
     cwd: args.cwd,
     repoRoot,
     datetime: args.datetime,
@@ -51,7 +49,6 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
       });
 
       const subagentEnvironmentTag = buildEnvironmentTag({
-        riskLevel: config.riskLevel ?? args.riskLevel,
         cwd: args.cwd,
         repoRoot,
         datetime: args.datetime,

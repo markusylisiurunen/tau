@@ -1,7 +1,6 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import { formatTokenEstimate } from "../utils/token.js";
 import {
@@ -95,7 +94,7 @@ function buildWriteUiText(args: {
 export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: WRITE_TOOL,
-    async dispatch(toolCall: ToolCall, riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+    async dispatch(toolCall: ToolCall): Promise<ToolDispatchResult> {
       const parsedArgs = parseWriteArgs(toolCall.arguments);
       const path = parsedArgs.ok ? parsedArgs.data.path : "";
       const headerTarget = path || "(invalid arguments)";
@@ -117,12 +116,6 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
       }
 
       const { content } = parsedArgs.data;
-
-      if (riskLevel !== "read-write") {
-        return blocked(
-          `Requires risk level 'read-write', but the current level is '${riskLevel}'. Ask the user to run /risk:read-write.`,
-        );
-      }
 
       try {
         const { bytes, lines } = await backend.writeFile(path, content);

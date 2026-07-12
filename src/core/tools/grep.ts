@@ -1,7 +1,6 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import { TRUNCATION_MARKER, type TruncationResult, truncateForTokens } from "../utils/truncate.js";
@@ -232,7 +231,6 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
     schema: GREP_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      _riskLevel: RiskLevel,
       signal?: AbortSignal,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
       const parsedArgs = parseGrepArgs(toolCall.arguments);

@@ -6,7 +6,6 @@ import {
   buildNookDeployManifestFromBackend,
   buildNookTemplateManifestFromBackend,
 } from "../nook/deploy.js";
-import type { RiskLevel } from "../types.js";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import { formatZodError } from "../utils/zod.js";
@@ -27,7 +26,6 @@ const NOOK_DESCRIPTION = [
   "If the user asks to deploy a static artifact or mini-app, this is usually the right deployment target.",
   "When preparing site files for deployment, write the complete site directory under a fresh mktemp directory and deploy that directory; do not scatter generated site files into the project tree.",
   "Sites and templates can be copied to an existing empty destination directory. Edit/build copied files normally, then deploy a built static directory separately.",
-  "All operations require read-write risk.",
   "Input keys by operation: read_skill, list_sites, and list_templates need only operation; deploy_site and copy_site need site and directory, with public optional only for deploy_site; delete_site needs site; template copy/save/delete operations need template, and copy/save also need directory; get_kv and delete_kv need site and key; put_kv needs site, key, and value; list_kv needs site, with prefix optional.",
 ].join(" ");
 
@@ -181,22 +179,12 @@ export function createNookToolDefinition(backend: ToolExecutionBackend): ToolDef
     schema: NOOK_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      riskLevel: RiskLevel,
       _signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatchResult> {
       const parsed = nookArgsSchema.safeParse(toolCall.arguments);
       if (!parsed.success) {
         const message = `Invalid arguments: ${formatZodError(parsed.error)}`;
-        return {
-          kind: "single",
-          toolResult: createToolError(toolCall, message),
-          uiEvent: buildUiEvent(toolCall, "error", message),
-        };
-      }
-
-      if (riskLevel !== "read-write") {
-        const message = `Requires risk level 'read-write', but the current level is '${riskLevel}'. Ask the user to run /risk:read-write.`;
         return {
           kind: "single",
           toolResult: createToolError(toolCall, message),

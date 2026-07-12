@@ -1,5 +1,4 @@
 import { type Component, type TUI, visibleWidth } from "@earendil-works/pi-tui";
-import type { RiskLevel } from "../../core/types.js";
 import { truncateFromEndByWidth } from "./components/one_line_segments.js";
 import type { SystemMessageKind } from "./system_message.js";
 import type { Theme } from "./theme/index.js";
@@ -7,7 +6,6 @@ import type { Theme } from "./theme/index.js";
 export interface FooterStatus {
   contextUsage: string;
   sessionCost: string;
-  riskLevel: RiskLevel;
   duration?: string;
   commandHint?: string;
 }
@@ -89,36 +87,11 @@ export class FooterComponent implements Component {
     const commandHint = this.status?.commandHint?.trim();
     const leftRaw = toast ? toast.text : commandHint || leftFull;
     const leftStyle = toast ? this.getToastStyle(toast.kind) : palette.textDim;
-    const rightPrefixRaw = "";
-    const { riskText, riskStyled } = this.status
-      ? this.formatRiskLabel(this.status.riskLevel)
-      : { riskText: "", riskStyled: "" };
+    const availableWidth = Math.max(0, width - iconWidth - 3);
+    const left = truncateFromEndByWidth(leftRaw, availableWidth);
+    const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(left)));
 
-    const rightWidth = visibleWidth(`${rightPrefixRaw}${riskText}`);
-    const leftWidth = visibleWidth(leftRaw);
-
-    let line: string;
-
-    const totalContentWidth = 1 + iconWidth + 1 + leftWidth + rightWidth + 1 + 1;
-
-    if (totalContentWidth > width) {
-      const availableLeft = Math.max(0, width - 1 - iconWidth - 1 - rightWidth - 1 - 1);
-      const truncatedLeft = truncateFromEndByWidth(leftRaw, availableLeft);
-      const leftStyled = leftStyle(truncatedLeft);
-      const rightStyled = `${palette.textDim(rightPrefixRaw)}${riskStyled}`;
-
-      line = ` ${icon} ${leftStyled} ${rightStyled} `;
-    } else {
-      const spaces = " ".repeat(
-        Math.max(1, width - 1 - iconWidth - 1 - leftWidth - rightWidth - 1),
-      );
-
-      const leftStyled = leftStyle(leftRaw);
-      const rightStyled = `${palette.textDim(rightPrefixRaw)}${riskStyled}`;
-      line = ` ${icon} ${leftStyled + spaces}${rightStyled} `;
-    }
-
-    return [line];
+    return [` ${icon} ${leftStyle(left)}${padding} `];
   }
 
   private getToastStyle(kind: SystemMessageKind): (text: string) => string {
@@ -127,21 +100,5 @@ export class FooterComponent implements Component {
     if (kind === "warn") return palette.toastWarn;
     if (kind === "muted") return palette.textMuted;
     return palette.toastSuccess;
-  }
-
-  private formatRiskLabel(riskLevel: RiskLevel): { riskText: string; riskStyled: string } {
-    const { palette } = this.theme;
-    switch (riskLevel) {
-      case "read-only":
-        return {
-          riskText: "read-only",
-          riskStyled: palette.riskReadOnlyText("read-only"),
-        };
-      case "read-write":
-        return {
-          riskText: "read-write",
-          riskStyled: palette.riskReadWriteText("read-write"),
-        };
-    }
   }
 }

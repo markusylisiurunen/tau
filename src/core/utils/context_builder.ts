@@ -1,6 +1,5 @@
-import type { RiskLevel, Skill } from "../types.js";
+import type { Skill } from "../types.js";
 import { findAgentsFilesInScope, findChildAgentsFiles } from "./agents_files.js";
-import { formatTauHiddenSystemBlock } from "./user_metadata.js";
 
 function escapeXml(value: string): string {
   return value
@@ -121,24 +120,13 @@ export function buildProjectContextBlock(args: {
   return out.trim() ? out : undefined;
 }
 
-export function describeRiskLevel(level: RiskLevel): string {
-  switch (level) {
-    case "read-only":
-      return "Model may use tools in read-only mode; bash safetyLevel must be 'read' and write/edit tools are blocked.";
-    case "read-write":
-      return "Model may use all tools and bash for read or write commands (safetyLevel='read' or 'write').";
-  }
-}
-
 export function buildEnvironmentTag(args: {
   datetime: string;
   cwd: string;
   repoRoot?: string;
-  riskLevel: RiskLevel;
   platform: NodeJS.Platform;
   nodeVersion: string;
 }): string {
-  const riskDesc = describeRiskLevel(args.riskLevel);
   const nodeVersion = args.nodeVersion;
   const platform = args.platform;
   const lines = [
@@ -152,19 +140,10 @@ export function buildEnvironmentTag(args: {
   }
 
   lines.push(
-    `  <risk-level level="${args.riskLevel}">${riskDesc}</risk-level>`,
     `  <node>${nodeVersion}</node>`,
     `  <platform>${platform}</platform>`,
-    "  <notes>This environment tag reflects the current session environment. If the user changes risk level, you will be informed in a <system> tag at the start of the next user message.</notes>",
     "</environment>",
   );
 
   return lines.join("\n");
-}
-
-export function formatRiskLevelChangeNotice(change: { from: RiskLevel; to: RiskLevel }): string {
-  const toDesc = describeRiskLevel(change.to);
-  return formatTauHiddenSystemBlock(
-    `Risk level changed by user from '${change.from}' to '${change.to}'. ${toDesc} This overrides the initial risk level described in the system prompt.`,
-  );
 }

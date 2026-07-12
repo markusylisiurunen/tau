@@ -3,7 +3,7 @@ import type { Config } from "../config/index.js";
 import type { ModelResolver } from "../models/catalog.js";
 import type { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentName, SubagentStatus } from "../subagents/types.js";
-import type { Persona, RiskLevel } from "../types.js";
+import type { Persona } from "../types.js";
 import type { BashTruncationInfo } from "./bash.js";
 import type { ToolName } from "./tool_names.js";
 
@@ -323,7 +323,6 @@ export interface ToolDefinition {
   readonly schema: Tool;
   dispatch(
     toolCall: ToolCall,
-    riskLevel: RiskLevel,
     signal: AbortSignal,
     context: ToolDispatchContext,
   ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases>;

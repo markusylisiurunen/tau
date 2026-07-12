@@ -42,7 +42,6 @@ Telegram runner settings are loaded from the JSON file passed to `--config-file`
       "bootstrapCommands": ["npm ci"],
       "backgroundBootstrapCommands": ["npm run build"],
       "persona": "gpt-5.5-coder",
-      "riskLevel": "read-only",
       "noAgentContextFiles": false
     }
   }

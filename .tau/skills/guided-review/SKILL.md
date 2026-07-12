@@ -106,7 +106,7 @@ Use the `diff_review` tool for each chunk when it is available.
 
 Prefer `source: "git_diff"` when a chunk can be represented cleanly with `git diff` arguments, especially path-limited scopes such as `["main...HEAD", "--", "src/foo.ts", "test/foo.test.ts"]` or `["--", "src/foo.ts"]`.
 
-Use `source: "patch_files"` only when path-limited `git diff` is not precise enough, such as selected hunks, hand-curated subsets, or multiple custom patches. Patch files must contain git unified diff sections with `diff --git` headers. If writing patch files would require read-write access that is not available, explain the limitation and either use a broader `git_diff` chunk or ask the user to switch risk level.
+Use `source: "patch_files"` only when path-limited `git diff` is not precise enough, such as selected hunks, hand-curated subsets, or multiple custom patches. Patch files must contain git unified diff sections with `diff --git` headers. If the available tools cannot write patch files, explain the limitation and use a broader `git_diff` chunk.
 
 ## Required preamble before each review
 

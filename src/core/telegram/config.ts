@@ -49,7 +49,7 @@ const telegramTopLevelSchema = z
     bots: z.unknown().optional(),
     projects: z.unknown().optional(),
   })
-  .strict();
+  .strip();
 
 const telegramBotSchema = z
   .object({
@@ -62,7 +62,7 @@ const telegramBotSchema = z
     pollIntervalMs: positiveIntegerSchema.optional(),
     requestTimeoutSeconds: positiveIntegerSchema.optional(),
   })
-  .strict();
+  .strip();
 
 function createProjectSchema(configDir: string) {
   return z
@@ -99,16 +99,9 @@ function createProjectSchema(configDir: string) {
         .min(1, "must be a non-empty string array.")
         .optional(),
       persona: z.string().optional(),
-      riskLevel: z.enum(["read-only", "read-write"]).optional(),
       noAgentContextFiles: z.boolean().optional(),
     })
-    .strict();
-}
-
-function formatUnknownKeysError(sourceLabel: string, fieldPath: string, keys: string[]): string {
-  const unknownKeys = [...keys].sort();
-  const keyLabel = unknownKeys.length === 1 ? "key" : "keys";
-  return `${sourceLabel}: unknown ${keyLabel} in ${fieldPath}: ${unknownKeys.join(", ")}.`;
+    .strip();
 }
 
 function formatSectionZodErrors(
@@ -118,11 +111,6 @@ function formatSectionZodErrors(
 ): string[] {
   const errors: string[] = [];
   for (const issue of error.issues) {
-    if (issue.code === "unrecognized_keys") {
-      errors.push(formatUnknownKeysError(sourceLabel, fieldPath, issue.keys));
-      continue;
-    }
-
     const issuePath = issue.path.length > 0 ? `.${issue.path.join(".")}` : "";
     errors.push(`${sourceLabel}: ${fieldPath}${issuePath} ${issue.message}`);
   }

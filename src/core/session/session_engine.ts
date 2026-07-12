@@ -23,7 +23,7 @@ import { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
 import type { ToolDefinition, ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
 import { TOOL_NAME_NOOK } from "../tools/tool_names.js";
-import type { Persona, ReasoningEffort, RiskLevel } from "../types.js";
+import type { Persona, ReasoningEffort } from "../types.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
@@ -70,7 +70,6 @@ export type SessionEngineOptions = {
   persona: Persona;
   systemPrompt: string;
   subagentPrompts: Record<string, string>;
-  riskLevel: RiskLevel;
   toolRegistry: ToolRegistry;
   clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
   config?: Config;
@@ -130,7 +129,6 @@ export class SessionEngine {
   private persona: Persona;
   private systemPrompt: string;
   private subagentPrompts: Record<string, string>;
-  private riskLevel: RiskLevel;
   private readonly toolRegistry: ToolRegistry;
   private readonly clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
   private config: Config;
@@ -151,7 +149,6 @@ export class SessionEngine {
     this.persona = options.persona;
     this.systemPrompt = options.systemPrompt;
     this.subagentPrompts = options.subagentPrompts;
-    this.riskLevel = options.riskLevel;
     this.toolRegistry = options.toolRegistry;
     this.clientToolDefinitions = options.clientToolDefinitions;
     this.config = options.config ?? {};
@@ -224,10 +221,6 @@ export class SessionEngine {
         reasoning,
       },
     };
-  }
-
-  setRiskLevel(level: RiskLevel): void {
-    this.riskLevel = level;
   }
 
   setConfig(config: Config): void {
@@ -780,7 +773,6 @@ export class SessionEngine {
           ...turnSettings.clientToolDefinitions,
         ],
         enabledTools,
-        riskLevel: this.riskLevel,
         signal,
         dispatchContext,
       })) {

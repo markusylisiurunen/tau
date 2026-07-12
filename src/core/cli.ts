@@ -1,18 +1,11 @@
 import { parsePersonaReference } from "./persona_reference.js";
-import {
-  type Persona,
-  REASONING_LEVELS,
-  type ReasoningEffort,
-  type RiskLevel,
-  RiskLevelSchema,
-} from "./types.js";
+import { type Persona, REASONING_LEVELS, type ReasoningEffort } from "./types.js";
 
 export type CliOptions = {
   help: boolean;
   debug: boolean;
   personaId?: string;
   reasoningOverride?: ReasoningEffort;
-  riskLevel?: RiskLevel;
   caffeinated: boolean;
   noAgentContextFiles: boolean;
 };
@@ -81,21 +74,6 @@ function parsePersonaOption(
   };
 }
 
-function parseRiskOption(raw: string): RiskLevel {
-  const normalized = raw.trim();
-  if (!normalized) {
-    throw new CliError("missing value for --risk");
-  }
-
-  const parsed = RiskLevelSchema.safeParse(normalized);
-  if (!parsed.success) {
-    const allowed = RiskLevelSchema.options.join(", ");
-    throw new CliError(`invalid risk level '${raw}'. allowed levels: ${allowed}`);
-  }
-
-  return parsed.data;
-}
-
 function parseValue(
   arg: string,
   argv: string[],
@@ -122,7 +100,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
   let debug = false;
   let personaId: string | undefined;
   let reasoningOverride: ReasoningEffort | undefined;
-  let riskLevel: RiskLevel | undefined;
   let caffeinated = false;
   let noAgentContextFiles = false;
 
@@ -163,13 +140,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
       continue;
     }
 
-    if (arg === "--risk" || arg === "-r" || arg.startsWith("--risk=") || arg.startsWith("-r=")) {
-      const parsed = parseValue(arg, argv, i);
-      riskLevel = parseRiskOption(parsed.value);
-      i = parsed.nextIndex;
-      continue;
-    }
-
     if (arg.startsWith("-")) {
       throw new CliError(`unknown option: ${arg}`);
     }
@@ -182,7 +152,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
     debug,
     personaId,
     reasoningOverride,
-    riskLevel,
     caffeinated,
     noAgentContextFiles,
   };
@@ -191,7 +160,6 @@ export function parseCliArgs(argv: string[], personas: Persona[]): CliOptions {
 export function printHelp(personas: Persona[]): void {
   const personaList = personas.map((p) => p.id).join(", ");
   const reasoningList = REASONING_LEVELS.join(", ");
-  const riskList = RiskLevelSchema.options.join(", ");
 
   console.log(
     [
@@ -217,8 +185,6 @@ export function printHelp(personas: Persona[]): void {
       `  --persona, -p <id>[:<level>]  start with a persona. available: ${personaList}.`,
       `                                optionally specify reasoning level. levels: ${reasoningList}.`,
       `                                if not specified, uses resolved config defaultPersona.`,
-      `  --risk, -r <level>            set initial model risk level. levels: ${riskList}.`,
-      `                                if not specified, uses resolved config defaultRisk (default: read-only).`,
       "  --caffeinated                 keep macOS awake during active assistant turns in TUI mode (no-op on Linux).",
       "  --no-agent-context-files      disable AGENTS.md injection into the system prompt.",
       "",
@@ -237,12 +203,8 @@ export function printHelp(personas: Persona[]): void {
       "examples:",
       "  tau --persona gpt-5.4-chat:high",
       "  tau -p opus-4.8-coder",
-      "  tau --persona gpt-5.4-chat:medium --risk read-write",
-      "  tau -p gpt-5.4-coder:high -r read-write",
-      "  tau serve --host 0.0.0.0 --port 8787 --risk read-only",
       "  tau attach --new --cwd /repo ws://127.0.0.1:8787",
       "  tau attach ws://127.0.0.1:8787",
-      "  tau attach --new --cwd /repo -- ssh vps 'tau rpc --risk read-only'",
       "",
       "notes:",
       "  use `tau auth login codex` to authenticate ChatGPT subscription credentials.",
@@ -254,7 +216,6 @@ export function printHelp(personas: Persona[]): void {
       "  /diff opens the local diff review tool and delegates review work to the session host.",
       "  you can switch persona during a session with /persona:<id>.",
       "  insert prompt templates with /prompt:<id>.",
-      "  you can change model risk level during a session with /risk:read-only or /risk:read-write.",
       "  if stdin is piped, its contents are sent as the first message automatically in TUI mode.",
       "  in RPC mode, stdin/stdout are reserved for protocol traffic.",
       "  reasoning only affects providers that support it.",

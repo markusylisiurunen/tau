@@ -136,7 +136,6 @@ describe("diffTool config", () => {
       writeFileSync(
         join(fx.repo, ".tau", "config.json"),
         JSON.stringify({
-          defaultRisk: "read-write",
           diffTool: { command: "", args: ["--ok"] },
           builtInDiffTool: { codeTheme: "not-a-theme" },
         }),
@@ -147,7 +146,6 @@ describe("diffTool config", () => {
       const modelResolver = loadModelResolver({ deps, levels });
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
 
-      expect(result.config.defaultRisk).toBe("read-write");
       expect(result.config.diffTool).toBeUndefined();
       expect(result.config.builtInDiffTool).toBeUndefined();
       expect(result.errors).toContain(

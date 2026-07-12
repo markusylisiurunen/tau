@@ -8,7 +8,7 @@ import {
 import type { SubagentUiEvent } from "../core/subagents/types.js";
 import type { BashTruncationInfo } from "../core/tools/bash.js";
 import type { ToolUiEvent, ToolUiText } from "../core/tools/registry.js";
-import type { ReasoningEffort, RiskLevel } from "../core/types.js";
+import type { ReasoningEffort } from "../core/types.js";
 import type { SessionProtocolPendingUserMessage } from "../protocol/session_protocol.js";
 import { createAppTerminal } from "./terminal.js";
 import { ToolUiRouter } from "./tool_ui_router.js";
@@ -31,7 +31,6 @@ export type ChatViewStatus = {
     contextUsage: string;
     sessionCost: string;
     duration: string;
-    riskLevel: RiskLevel;
     commandHint?: string;
   };
   editor: {
@@ -48,7 +47,6 @@ export type ChatViewInputHandlers = {
   onCtrlT?: () => void;
   onCtrlO?: () => void;
   onShiftTab?: () => void;
-  onCtrlR?: () => void;
   onCtrlP?: () => void;
   onCtrlS?: () => void;
   onCtrlY?: () => void;
@@ -261,7 +259,6 @@ export class TuiChatView implements ChatView {
       contextUsage: status.footer.contextUsage,
       sessionCost: status.footer.sessionCost,
       duration: status.footer.duration,
-      riskLevel: status.footer.riskLevel,
       commandHint: status.footer.commandHint,
     });
 
@@ -391,7 +388,6 @@ export class TuiChatView implements ChatView {
     this.editor.onCtrlT = handlers.onCtrlT;
     this.editor.onCtrlO = handlers.onCtrlO;
     this.editor.onShiftTab = handlers.onShiftTab;
-    this.editor.onCtrlR = handlers.onCtrlR;
     this.editor.onCtrlP = handlers.onCtrlP;
     this.editor.onCtrlS = handlers.onCtrlS;
     this.editor.onCtrlY = handlers.onCtrlY;

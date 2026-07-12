@@ -6,7 +6,7 @@ import {
   TOOL_NAME_WEB_SEARCH,
   TOOL_NAME_WRITE,
 } from "../tools/tool_names.js";
-import type { Persona, RiskLevel } from "../types.js";
+import type { Persona } from "../types.js";
 import { buildDefaultSubagentSystemPrompt, DEFAULT_SUBAGENT_DESCRIPTION } from "./default.js";
 import {
   DEFAULT_SUBAGENT_NAME,
@@ -51,15 +51,11 @@ function getInheritedSubagentTools(persona: Persona): SubagentToolName[] {
   return normalizeTools(selected);
 }
 
-export type SubagentEffectiveSettings = Pick<
-  SubagentRuntimeConfig,
-  "model" | "settings" | "tools" | "riskLevel"
->;
+export type SubagentEffectiveSettings = Pick<SubagentRuntimeConfig, "model" | "settings" | "tools">;
 
 export function resolveSubagentEffectiveSettings(args: {
   persona: Persona;
   config: SubagentPersonaConfig;
-  riskLevel: RiskLevel;
   launchModel?: SubagentLaunchModel;
 }): SubagentEffectiveSettings {
   const model = args.launchModel?.model ?? args.config.model ?? args.persona.model;
@@ -73,12 +69,10 @@ export function resolveSubagentEffectiveSettings(args: {
   const tools = args.config.tools
     ? normalizeTools(args.config.tools)
     : getInheritedSubagentTools(args.persona);
-  const riskLevel = args.config.riskLevel ?? args.riskLevel;
   return {
     model,
     settings: Object.keys(mergedSettings).length > 0 ? mergedSettings : undefined,
     tools,
-    riskLevel,
   };
 }
 

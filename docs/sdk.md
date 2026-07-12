@@ -4,7 +4,7 @@ tau ships a Node SDK at `@markusylisiurunen/tau/sdk`. by default it creates an i
 
 ```sh
 tau attach ws://vps:8787
-tau attach -- ssh vps 'cd /repo && tau rpc --risk read-only'
+tau attach -- ssh vps 'cd /repo && tau rpc'
 ```
 
 ## install and import
@@ -28,7 +28,6 @@ import {
 
 const client = await createTauSdkClient({
   persona: "gpt-5.5-coder",
-  riskLevel: "read-only",
 });
 
 const session = await client.sessions.create({
@@ -95,8 +94,6 @@ sdk lifecycle notes:
   - default persona id and optional reasoning level for locally created in-process sessions
 - `reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"`
   - explicit reasoning effort for locally created in-process sessions
-- `riskLevel?: "read-only" | "read-write"`
-  - default risk level for locally created in-process sessions
 - `noAgentContextFiles?: boolean`
   - disables AGENTS.md context discovery for locally created in-process sessions
 - `connectTimeoutMs?: number`
@@ -296,8 +293,6 @@ options:
 - `snapshot()`
   - sends `session.snapshot` with this session id
   - returns raw recoverable session user text; renderers should use `getTauUserDisplayText()` or `projectTauUserText()` to hide Tau metadata and leading exact `<system>...</system>\n` blocks from user messages before showing them to users
-- `setRiskLevel("read-only" | "read-write")`
-  - sends `session.setRisk` with this session id and resolves with the updated session snapshot
 - `setReasoning("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max")`
   - sends `session.setReasoning` with this session id and resolves with `{ revision, settings }`
 - `setPersona(personaId)`
@@ -323,7 +318,7 @@ options:
 - `terminateSubagent(subagentId)`
   - sends `session.terminateSubagent` with this session id
   - resolves with `{ found: boolean }`
-- `createEphemeralContext({ instructions, tools, riskLevel })`
+- `createEphemeralContext({ instructions, tools })`
   - sends `session.ephemeral.create` with this session id
   - creates non-persisted host-owned agent context and returns `{ contextId }`
 - `submitEphemeralThread({ contextId, threadId, forkFromThreadId?, message })`

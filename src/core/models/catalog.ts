@@ -51,7 +51,7 @@ const CostTierSchema = z
     cacheRead: z.number().nonnegative(),
     cacheWrite: z.number().nonnegative(),
   })
-  .strict();
+  .strip();
 
 const CostSchema = z
   .object({
@@ -77,7 +77,7 @@ const ModelSchema = z
     maxTokens: z.number().int().positive().optional(),
     compat: z.unknown().optional(),
   })
-  .passthrough();
+  .strip();
 
 const ProviderSchema = z
   .object({
@@ -87,13 +87,13 @@ const ProviderSchema = z
     compat: z.unknown().optional(),
     models: z.array(ModelSchema).optional(),
   })
-  .passthrough();
+  .strip();
 
 const ModelsFileSchema = z
   .object({
     providers: z.record(z.string(), ProviderSchema),
   })
-  .passthrough();
+  .strip();
 
 type ParsedModelsFile = z.infer<typeof ModelsFileSchema>;
 type ParsedModel = z.infer<typeof ModelSchema>;

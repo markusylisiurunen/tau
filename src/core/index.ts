@@ -122,6 +122,6 @@ export { createTerminateAgentToolDefinition } from "./tools/terminate_agent.js";
 export { createViewImageToolDefinition } from "./tools/view_image.js";
 export { createWaitForAgentsToolDefinition } from "./tools/wait_for_agents.js";
 export { createWriteToolDefinition } from "./tools/write.js";
-export type { Persona, ReasoningEffort, RiskLevel, Skill } from "./types.js";
+export type { Persona, ReasoningEffort, Skill } from "./types.js";
 export { REASONING_LEVELS } from "./types.js";
 export { printUsageHelp, runUsageCommand, UsageCliError } from "./usage/cli.js";

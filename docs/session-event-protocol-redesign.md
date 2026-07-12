@@ -137,13 +137,10 @@ type SessionSnapshot = {
 ```ts
 type SessionSettingsSnapshot = {
   personaId: string;
-  riskLevel: "read-only" | "read-write";
   reasoning?: ReasoningEffort;
   serviceTier?: "priority" | "flex";
 };
 ```
-
-The snapshot should store the current risk level, not both default and current risk. Defaults are only used when creating a session.
 
 `bootstrap` describes resolved runtime facts that clients need to understand the session: selected model/provider metadata and prompt-composition identifiers. Execution environment identity lives in the top-level `executionEnvironment` snapshot field. Bootstrap should not duplicate large prompt bodies or mutable per-turn settings that already live in `settings`.
 
@@ -382,7 +379,6 @@ type SessionChange =
 For broad rewrites, do not overfit patch changes:
 
 - `session.reload`: `snapshot.reset`
-- `session.setRisk`: `snapshot.reset`
 - `session.setReasoning`: `settings.set`
 - `session.setPersona`: `snapshot.reset`
 - `session.compact`: `snapshot.reset`
@@ -696,7 +692,7 @@ Known tool renderers can use typed facets. Unknown tools can still render name, 
 4. Tool UI payloads are stored as `SessionToolRun` updates and typed facets before they cross the protocol boundary.
 5. Notices are timeline notice records.
 6. Subagent UI events are stored as `agents` updates.
-7. `snapshot.reset` is used for reload, persona/risk changes, rewind, compact, and prune; reasoning changes use `settings.set`.
+7. `snapshot.reset` is used for reload, persona changes, rewind, compact, and prune; reasoning changes use `settings.set`.
 8. Transports and SDK listeners expose `session.delta`; ephemeral agent progress uses `session.ephemeral`.
 9. TUI rendering is driven from snapshots and local delta application.
 10. Themes stay in TUI-local config/content loading rather than the session protocol.

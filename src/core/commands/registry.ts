@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-import { type RiskLevel, RiskLevelSchema, type Skill } from "../types.js";
+import type { Skill } from "../types.js";
 import { formatPathForDisplay } from "../utils/format.js";
 
 export type Command = (
@@ -18,7 +18,6 @@ export type Command = (
   | { type: "reload" }
   | { type: "listen" }
   | { type: "speak" }
-  | { type: "risk"; level: RiskLevel }
   | { type: "persona"; id: string }
   | { type: "prompt"; id: string }
   | { type: "theme"; id: string }
@@ -26,8 +25,7 @@ export type Command = (
 ) & { extra?: string };
 
 export type CommandId = Command["type"];
-export type CommandArgument = "none" | "risk" | "persona" | "prompt" | "theme";
-export type CommandSection = "base" | "risk" | "trailing";
+export type CommandArgument = "none" | "persona" | "prompt" | "theme";
 
 export interface CommandInfo {
   id: CommandId;
@@ -35,7 +33,6 @@ export interface CommandInfo {
   description: string;
   autocompleteDescription?: string;
   argument: CommandArgument;
-  section: CommandSection;
 }
 
 interface CommandDefinition<Ctx, T extends Command = Command> extends CommandInfo {
@@ -61,7 +58,6 @@ export interface CommandDispatchContext {
   reload: () => Promise<void>;
   listen: () => Promise<void> | void;
   speak: () => Promise<void> | void;
-  risk: (level: RiskLevel) => void;
   persona: (id: string) => void;
   prompt: (id: string) => void;
   theme: (id: string) => void;
@@ -71,33 +67,8 @@ export interface CommandDispatchContext {
 export interface HelpTextOptions {
   agentsFiles?: string[];
   skills?: Skill[];
-  riskLevels?: RiskLevel[];
   themes?: string[];
   formatPath?: (path: string) => string;
-}
-
-const DEFAULT_RISK_LEVELS: RiskLevel[] = ["read-only", "read-write"];
-const RISK_LEVEL_HELP_DESCRIPTIONS: Record<RiskLevel, string> = {
-  "read-only": "allow read-only tool calls",
-  "read-write": "allow all tools",
-};
-
-export function getRiskLevelDescription(level: RiskLevel): string {
-  switch (level) {
-    case "read-only":
-      return "read-only tools";
-    case "read-write":
-      return "all tools";
-  }
-}
-
-export function getRiskLevelAutocompleteOptions(
-  allowed: RiskLevel[],
-): Array<{ id: RiskLevel; description: string }> {
-  return allowed.map((level) => ({
-    id: level,
-    description: RISK_LEVEL_HELP_DESCRIPTIONS[level],
-  }));
 }
 
 function formatSkillPath(fullPath: string, formatPath: (path: string) => string): string {
@@ -151,7 +122,7 @@ export class CommandRegistry<Ctx = unknown> {
 
   buildHelpText(options: HelpTextOptions = {}): string {
     const lines: string[] = [];
-    const { agentsFiles, skills, riskLevels, themes } = options;
+    const { agentsFiles, skills, themes } = options;
     const formatPath = options.formatPath ?? formatPathForDisplay;
 
     if (agentsFiles && agentsFiles.length > 0) {
@@ -175,30 +146,13 @@ export class CommandRegistry<Ctx = unknown> {
 
     const hasThemes = (themes?.length ?? 0) > 0;
     const commands = this.list().filter((command) => command.argument !== "theme" || hasThemes);
-    const baseCommands = commands.filter((command) => command.section === "base");
-    const trailingCommands = commands.filter((command) => command.section === "trailing");
-    const riskCommand = commands.find((command) => command.section === "risk");
-
-    const commandEntries: Array<[string, string]> = [];
-    baseCommands.forEach((command) => {
-      commandEntries.push([command.usage, command.description]);
-    });
-
-    if (riskCommand) {
-      const allowed = riskLevels ?? DEFAULT_RISK_LEVELS;
-      allowed.forEach((level) => {
-        const description = RISK_LEVEL_HELP_DESCRIPTIONS[level];
-        commandEntries.push([`/risk:${level}`, description]);
-      });
-    }
-
-    trailingCommands.forEach((command) => {
-      commandEntries.push([command.usage, command.description]);
-    });
+    const commandEntries = commands.map((command): [string, string] => [
+      command.usage,
+      command.description,
+    ]);
 
     const keyEntries: Array<[string, string]> = [
       ["shift+tab", "cycle reasoning effort"],
-      ["ctrl+r", "cycle risk level"],
       ["ctrl+p", "cycle personality"],
       ["ctrl+t", "toggle thoughts visibility"],
       ["ctrl+o", "toggle compact tool UI"],
@@ -236,7 +190,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "show this help",
     autocompleteDescription: "show help",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/help") return null;
@@ -251,7 +204,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "exit tau",
     autocompleteDescription: "exit tau",
     argument: "none",
-    section: "base",
     allowDuringStreaming: true,
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -267,7 +219,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "new session",
     autocompleteDescription: "new session",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/new") return null;
@@ -282,7 +233,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "rewind context to an earlier user message",
     autocompleteDescription: "rewind context to a selected user message",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/rewind") return null;
@@ -297,7 +247,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "open the local diff review tool for the session diff",
     autocompleteDescription: "open diff review for git diff args",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/diff") return null;
@@ -312,7 +261,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "summarize and start new session",
     autocompleteDescription: "compact history to a summary",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/compact:summary-only") return null;
@@ -327,7 +275,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "summarize and include previous last assistant message",
     autocompleteDescription: "compact history, keep last assistant message",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/compact:summary-and-last") return null;
@@ -342,7 +289,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "prune earliest tool results from context",
     autocompleteDescription: "prune earliest tool results",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/prune:earliest") return null;
@@ -357,7 +303,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "prune largest tool results from context",
     autocompleteDescription: "prune largest tool results",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/prune:largest") return null;
@@ -372,7 +317,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "prune tool results using model selection",
     autocompleteDescription: "prune tool results with model selection",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/prune:smart") return null;
@@ -387,7 +331,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "reload prompts, skills, themes, and AGENTS.md",
     autocompleteDescription: "reload prompts, skills, themes, and AGENTS.md",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/reload") return null;
@@ -402,7 +345,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "start voice recording and transcription",
     autocompleteDescription: "start voice recording",
     argument: "none",
-    section: "base",
     allowDuringStreaming: true,
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -418,7 +360,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "speak the last assistant message aloud",
     autocompleteDescription: "speak the last assistant message",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/speak") return null;
@@ -433,7 +374,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "copy last assistant message",
     autocompleteDescription: "copy last assistant message",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/copy:text") return null;
@@ -448,7 +388,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "copy code blocks from last assistant message",
     autocompleteDescription: "copy code blocks from last assistant message",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/copy:code") return null;
@@ -458,28 +397,10 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
   });
 
   registry.register({
-    id: "risk",
-    usage: "/risk:<level>",
-    description: "set risk level",
-    argument: "risk",
-    section: "risk",
-    parse: (raw) => {
-      const { command, extra } = splitCommandInput(raw);
-      const match = command.match(/^\/risk:(read-only|read-write)$/i);
-      if (!match) return null;
-      const parsed = RiskLevelSchema.safeParse(match[1]?.toLowerCase());
-      if (!parsed.success) return null;
-      return { type: "risk", level: parsed.data, extra };
-    },
-    run: (ctx, command) => ctx.risk(command.level),
-  });
-
-  registry.register({
     id: "persona",
     usage: "/persona:<id>",
     description: "switch persona",
     argument: "persona",
-    section: "trailing",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       const match = command.match(/^\/persona:(.+)$/i);
@@ -495,7 +416,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     usage: "/prompt:<id>",
     description: "insert prompt template",
     argument: "prompt",
-    section: "trailing",
     allowDuringStreaming: true,
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -512,7 +432,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     usage: "/theme:<id>",
     description: "switch theme",
     argument: "theme",
-    section: "trailing",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       const match = command.match(/^\/theme:(.+)$/i);
@@ -528,7 +447,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     usage: "",
     description: "",
     argument: "none",
-    section: "base",
     hidden: true,
     parse: () => null,
     run: (ctx, command) => ctx.unknown(command.raw),

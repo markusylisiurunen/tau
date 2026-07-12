@@ -106,7 +106,6 @@ export class DiffReviewThread {
       options.promptComposition ??
       composeSessionPrompts({
         persona,
-        riskLevel: "read-only",
         cwd: promptBootstrap!.promptContext.cwd,
         datetime: new Date(deps.clock.now()).toISOString(),
         platform: deps.env.platform(),
@@ -124,7 +123,6 @@ export class DiffReviewThread {
       persona,
       systemPrompt: promptComposition.baseSystemPrompt,
       subagentPrompts: promptComposition.subagentPrompts,
-      riskLevel: "read-only",
       toolRegistry,
       config: options.config,
       deps,

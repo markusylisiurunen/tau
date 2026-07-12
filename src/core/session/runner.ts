@@ -21,7 +21,6 @@ import type {
   ToolDispatchResultWithPhases,
   ToolRegistry,
 } from "../tools/registry.js";
-import type { RiskLevel } from "../types.js";
 import { createToolError } from "../utils/messages.js";
 import type { ModelRuntime } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
@@ -182,7 +181,6 @@ export type RunToolCallsOptions = {
   toolRegistry: ToolRegistry;
   extraToolDefinitions?: ToolDefinition[];
   enabledTools: Tool[];
-  riskLevel: RiskLevel;
   signal: AbortSignal;
   dispatchContext: ToolDispatchContext;
   toolErrorMessages?: {
@@ -281,7 +279,6 @@ export async function* runToolCalls(
     toolRegistry,
     enabledTools,
     extraToolDefinitions = [],
-    riskLevel,
     signal,
     dispatchContext,
     toolErrorMessages,
@@ -343,7 +340,7 @@ export async function* runToolCalls(
     const { index, toolCall, def } = entry;
     let result: ToolDispatchResult | ToolDispatchResultWithPhases;
     try {
-      result = await def.dispatch(toolCall, riskLevel, signal, dispatchContext);
+      result = await def.dispatch(toolCall, signal, dispatchContext);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       const toolError = createToolError(

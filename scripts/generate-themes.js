@@ -170,9 +170,6 @@ const generatePalette = (brandHue, appearance) => {
     userReviewText: toHex(userReviewText),
     userReviewTextMuted: toHex(userReviewTextMuted),
     userReviewTextDim: toHex(userReviewTextDim),
-
-    riskReadOnlyText: toHex(textMuted),
-    riskReadWriteText: toHex(textMuted),
   };
 };
 

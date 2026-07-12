@@ -9,6 +9,4 @@ export {
   buildEnvironmentTag,
   buildProjectContextBlock,
   buildSkillsIndexBlock,
-  describeRiskLevel,
-  formatRiskLevelChangeNotice,
 } from "./context_builder.js";

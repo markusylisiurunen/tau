@@ -29,7 +29,6 @@ import type {
   SessionProtocolSessionSummary,
   SessionProtocolSetPersonaParams,
   SessionProtocolSetReasoningParams,
-  SessionProtocolSetRiskParams,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
   SessionProtocolTerminateSubagentResult,
@@ -54,7 +53,6 @@ export type TauHostedSession = {
       signal?: AbortSignal;
     },
   ): Promise<SessionProtocolExecResult>;
-  setRiskLevel(level: SessionProtocolSetRiskParams["riskLevel"]): Promise<SessionProtocolSnapshot>;
   setReasoning(
     reasoning: SessionProtocolSetReasoningParams["reasoning"],
   ): Promise<SessionProtocolSettingsUpdateResult>;

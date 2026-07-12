@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
+import { safeParseCoreEventEnvelope } from "../dist/core/events/parser.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
 import { resolveRuntimePromptBootstrapAsync } from "../dist/core/runtime/runtime_bootstrap.js";
@@ -43,11 +44,54 @@ import {
   getCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
+  splitTauUserMetadata,
   stripTauUserDisplayText,
   stripTauUserMetadata,
   stripTauUserMetadataFromMessage,
   TAU_USER_METADATA_PREFIX,
 } from "../dist/core/utils/user_metadata.js";
+
+describe("core event parser", () => {
+  it("strips unknown envelope, event, and nested payload fields", () => {
+    expect(
+      safeParseCoreEventEnvelope({
+        version: 1,
+        envelopeExtra: true,
+        event: {
+          type: "compaction_end",
+          reason: "threshold",
+          outcome: "compacted",
+          eventExtra: true,
+          result: {
+            summaryHistoryEntryId: "summary-1",
+            continuationHistoryEntryId: "continuation-1",
+            compactionMessage: "compacted",
+            cutType: "turn-boundary",
+            retainedMessageCount: 2,
+            resultExtra: true,
+          },
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        version: 1,
+        event: {
+          type: "compaction_end",
+          reason: "threshold",
+          outcome: "compacted",
+          result: {
+            summaryHistoryEntryId: "summary-1",
+            continuationHistoryEntryId: "continuation-1",
+            compactionMessage: "compacted",
+            cutType: "turn-boundary",
+            retainedMessageCount: 2,
+          },
+        },
+      },
+    });
+  });
+});
 
 describe("command registry", () => {
   it("parses and dispatches commands", async () => {
@@ -69,16 +113,11 @@ describe("command registry", () => {
       reload: async () => calls.push({ type: "reload" }),
       listen: () => calls.push({ type: "listen" }),
       speak: () => calls.push({ type: "speak" }),
-      risk: (level) => calls.push({ type: "risk", level }),
       persona: (id) => calls.push({ type: "persona", id }),
       prompt: (id) => calls.push({ type: "prompt", id }),
       theme: (id) => calls.push({ type: "theme", id }),
       unknown: (raw) => calls.push({ type: "unknown", raw }),
     };
-
-    const cmd = registry.parse("/risk:read-only");
-    expect(cmd).toEqual({ type: "risk", level: "read-only" });
-    await registry.dispatch(cmd, ctx);
 
     const rewind = registry.parse("/rewind");
     expect(rewind).toEqual({ type: "rewind" });
@@ -116,7 +155,6 @@ describe("command registry", () => {
     const unknown = registry.parse("/not-a-command");
     await registry.dispatch(unknown, ctx);
 
-    expect(calls).toContainEqual({ type: "risk", level: "read-only" });
     expect(calls).toContainEqual({ type: "rewind" });
     expect(calls).toContainEqual({ type: "copyText" });
     expect(calls).toContainEqual({ type: "compactSummaryOnly" });
@@ -128,7 +166,7 @@ describe("command registry", () => {
   });
 });
 
-describe("tool enablement by risk level", () => {
+describe("tool enablement", () => {
   it("exposes a stable tool list", () => {
     const backend = createLocalToolExecutionBackend();
     const registry = ToolCatalog.createRegistry(backend);
@@ -163,7 +201,6 @@ describe("core session rewind APIs", () => {
       persona: personas[0],
       systemPrompt: "system",
       subagentPrompts: {},
-      riskLevel: "read-only",
       toolRegistry,
     });
 
@@ -219,7 +256,6 @@ describe("core session rewind APIs", () => {
       persona: personas[0],
       systemPrompt: "system",
       subagentPrompts: {},
-      riskLevel: "read-only",
       toolRegistry,
     });
     const text = prependTauUserMetadata("visible summary", [
@@ -258,7 +294,6 @@ describe("core session rewind APIs", () => {
       persona: personas[0],
       systemPrompt: "system",
       subagentPrompts: {},
-      riskLevel: "read-only",
       toolRegistry,
     });
 
@@ -297,7 +332,6 @@ describe("core session rewind APIs", () => {
         persona,
         systemPrompt: "system",
         subagentPrompts: {},
-        riskLevel: "read-only",
         toolRegistry: new ToolRegistry([]),
         config: { nook: { domain: "nook.example.com" } },
       });
@@ -336,7 +370,6 @@ describe("core session rewind APIs", () => {
         persona,
         systemPrompt: "system",
         subagentPrompts: {},
-        riskLevel: "read-only",
         toolRegistry: new ToolRegistry([]),
       });
 
@@ -379,7 +412,6 @@ describe("core session rewind APIs", () => {
         persona,
         systemPrompt: "system",
         subagentPrompts: {},
-        riskLevel: "read-only",
         toolRegistry: new ToolRegistry([]),
         config: {
           autoCompact: {
@@ -441,7 +473,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
-        async dispatch(_toolCall, _riskLevel, _signal, context) {
+        async dispatch(_toolCall, _signal, context) {
           toolContextReasoning.push(context.persona.settings.reasoning);
           session.setReasoning("high");
           return {
@@ -472,7 +504,6 @@ describe("core session rewind APIs", () => {
       persona,
       systemPrompt: "system",
       subagentPrompts: {},
-      riskLevel: "read-only",
       toolRegistry,
     });
     const responses = [
@@ -535,7 +566,7 @@ describe("core session rewind APIs", () => {
               additionalProperties: false,
             },
           },
-          async dispatch(toolCall, _riskLevel, _signal, context) {
+          async dispatch(toolCall, _signal, context) {
             receivedOriginHistoryEntryId = context.originHistoryEntryId;
             return {
               kind: "single",
@@ -564,7 +595,6 @@ describe("core session rewind APIs", () => {
         persona,
         systemPrompt: "system",
         subagentPrompts: {},
-        riskLevel: "read-only",
         toolRegistry,
         config: {
           autoCompact: {
@@ -620,7 +650,6 @@ describe("core session model notices", () => {
       persona,
       systemPrompt: "system",
       subagentPrompts: {},
-      riskLevel: "read-only",
       toolRegistry,
       config: {
         modelSystemNotices: {
@@ -647,7 +676,6 @@ describe("core session model notices", () => {
       persona: openaiPersona,
       systemPrompt: "system",
       subagentPrompts: {},
-      riskLevel: "read-only",
       toolRegistry,
       config: {
         modelSystemNotices: {
@@ -672,7 +700,6 @@ describe("context builder", () => {
       datetime: "2025-01-01T00:00:00.000Z",
       cwd: "/repo",
       repoRoot: "/repo",
-      riskLevel: "read-only",
       platform: "darwin",
       nodeVersion: "v20.0.0",
     });
@@ -895,7 +922,7 @@ describe("runtime prompt bootstrap", () => {
 });
 
 describe("session prompt composer", () => {
-  it("composes main and subagent prompts with risk overrides", () => {
+  it("composes main and subagent prompts", () => {
     const persona = {
       id: "test-persona",
       label: "test persona",
@@ -909,7 +936,6 @@ describe("session prompt composer", () => {
         researcher: {
           systemPrompt: "research subagent prompt",
           description: "deep research helper",
-          riskLevel: "read-write",
           launchModels: ["openai/gpt-5.4:high"],
         },
       },
@@ -919,14 +945,12 @@ describe("session prompt composer", () => {
       persona,
       skillsBlock: "### Skills\n\n- skill-a",
       projectContextBlock: '### Project context\n\n<file path="/repo/AGENTS.md">ctx</file>',
-      riskLevel: "read-only",
       cwd: "/repo",
       datetime: "2026-01-01T00:00:00.000Z",
       platform: "darwin",
       nodeVersion: "v24.0.0",
     });
 
-    expect(result.environmentTag).toContain('<risk-level level="read-only">');
     expect(result.baseSystemPrompt).toContain("main system prompt");
     expect(result.baseSystemPrompt).toContain("### Skills");
     expect(result.baseSystemPrompt).toContain("### Project context");
@@ -938,7 +962,6 @@ describe("session prompt composer", () => {
       "By default, launch the subagent without a model override unless the user explicitly asks to use a specific model.",
     );
 
-    expect(result.subagentPrompts.default).toContain('<risk-level level="read-only">');
     expect(result.subagentPrompts.default).toContain("<inherited-instructions>");
     expect(result.subagentPrompts.default).toContain("main system prompt");
     expect(result.subagentPrompts.default).not.toContain("{{inherited_instructions}}");
@@ -946,7 +969,6 @@ describe("session prompt composer", () => {
       "You are a subagent supporting the main agent.",
     );
     expect(result.subagentPrompts.researcher).toContain("research subagent prompt");
-    expect(result.subagentPrompts.researcher).toContain('<risk-level level="read-write">');
   });
 
   it("includes repo root in the environment tag when inside a git repo", () => {
@@ -973,7 +995,6 @@ describe("session prompt composer", () => {
 
     const result = composeSessionPrompts({
       persona,
-      riskLevel: "read-only",
       cwd,
       datetime: "2026-01-01T00:00:00.000Z",
       platform: "darwin",
@@ -995,7 +1016,6 @@ describe("session prompt composer", () => {
 
     const result = composeSessionPrompts({
       persona,
-      riskLevel: "read-only",
       cwd: "/repo",
       datetime: "2026-01-01T00:00:00.000Z",
       platform: "darwin",
@@ -1069,10 +1089,10 @@ describe("summary formatting", () => {
     const history = [userMessage("continue")];
 
     const summary = formatHistoryForCompaction(history, {
-      systemPrompt: "follow AGENTS.md and current risk level",
+      systemPrompt: "follow AGENTS.md and current instructions",
     });
 
-    expect(summary).toContain("[System prompt]:\nfollow AGENTS.md and current risk level");
+    expect(summary).toContain("[System prompt]:\nfollow AGENTS.md and current instructions");
     expect(summary).toContain("[User]:\ncontinue");
   });
 
@@ -1226,12 +1246,39 @@ describe("compaction context message", () => {
     ).toThrow("invalid tau user metadata");
 
     const encoded = Buffer.from(
-      JSON.stringify([{ type: "compaction", version: 1, summary: "summary", extra: true }]),
+      JSON.stringify([{ type: "compaction", version: 2, summary: "summary" }]),
       "utf8",
     ).toString("base64url");
     expect(() =>
       stripTauUserMetadata(`${TAU_USER_METADATA_PREFIX}${encoded}\u001evisible`),
-    ).toThrow("invalid tau user metadata: unknown key: extra");
+    ).toThrow("invalid tau user metadata: unsupported compaction metadata version");
+  });
+
+  it("strips unknown tau user metadata fields", () => {
+    const encoded = Buffer.from(
+      JSON.stringify([
+        {
+          type: "compaction",
+          version: 1,
+          summary: "summary",
+          preservedUserMessages: [{ id: "user-1", text: "keep me", extra: true }],
+          extra: true,
+        },
+      ]),
+      "utf8",
+    ).toString("base64url");
+
+    expect(splitTauUserMetadata(`${TAU_USER_METADATA_PREFIX}${encoded}\u001evisible`)).toEqual({
+      metadata: [
+        {
+          type: "compaction",
+          version: 1,
+          summary: "summary",
+          preservedUserMessages: [{ id: "user-1", text: "keep me" }],
+        },
+      ],
+      visibleText: "visible",
+    });
   });
 
   it("skips hidden auto-continuation messages when preparing manual compaction", () => {

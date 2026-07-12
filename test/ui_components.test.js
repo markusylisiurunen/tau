@@ -44,7 +44,6 @@ function createSlashProvider(options = {}) {
     () => options.files ?? [],
     () => options.skills ?? [],
     () => options.agents ?? [],
-    () => options.riskLevels ?? ["read-only", "read-write"],
   );
 }
 
@@ -293,17 +292,15 @@ test("PendingMessagesComponent distinguishes steering and queued previews", () =
   );
 });
 
-test("FooterComponent renders risk label with styling", () => {
+test("FooterComponent renders session status", () => {
   const theme = createTagTheme();
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
-    riskLevel: "read-only",
   });
   const line = renderLines(footer, 120)[0];
-  expect(line).toContain("<riskReadOnlyText>read-only</riskReadOnlyText>");
   expect(line).toContain("<textDim>ctx 10/100 · $0.01</textDim>");
 });
 
@@ -314,7 +311,6 @@ test("FooterComponent compacts cwd before truncating and keeps ellipsis styled",
   footer.setStatus({
     contextUsage: "ctx",
     sessionCost: "$0.01",
-    riskLevel: "read-only",
   });
 
   const compactLine = renderLines(footer, 50)[0];
@@ -323,7 +319,6 @@ test("FooterComponent compacts cwd before truncating and keeps ellipsis styled",
   footer.setStatus({
     contextUsage: "this is a very long context usage string",
     sessionCost: "$0.01",
-    riskLevel: "read-only",
   });
 
   const truncatedLine = renderLines(footer, 40)[0];

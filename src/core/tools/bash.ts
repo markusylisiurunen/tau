@@ -3,7 +3,6 @@ import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import stripAnsi from "strip-ansi";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { RiskLevel } from "../types.js";
 import { formatCwd } from "../utils/format.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { bytesToTokens, formatTokenEstimate } from "../utils/token.js";
@@ -75,18 +74,9 @@ export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 const BASH_DESCRIPTION = [
   "Execute a shell command in the current working directory and return its output.",
   "Interactive commands are not supported (no TTY/stdin); commands that prompt or open editors will hang or fail.",
-  "CRITICAL: Always evaluate and provide an accurate safetyLevel assessment.",
 ].join(" ");
 
 const BASH_COMMAND_DESCRIPTION = "The shell command to execute.";
-
-const BASH_SAFETY_LEVEL_DESCRIPTION = [
-  "Safety classification: 'read' (query-only, no side effects) or 'write' (modifies or has the potential to modify system state).",
-  "Use 'read' for: queries (ls, rg, cat, fd, find, ps, df, etc), information gathering (curl for APIs, git log, etc), analysis (wc, sort, sha256sum, etc).",
-  "Use 'write' for: filesystem changes (cp, mv, rm, mkdir, touch, echo >, etc), file modifications (sed -i, tee, chmod, chown, etc), process management (kill, pkill, etc), package management (apt, npm, etc), network changes (firewall, DNS, interfaces, etc), or any command that creates/deletes/modifies resources.",
-  "When in doubt, default to 'write' to be conservative. The system will enforce appropriate access controls based on your declared safetyLevel.",
-  "Always respect and strictly adhere to user-defined risk tolerance levels; never exceed the configured risk level under any circumstances.",
-].join(" ");
 
 const BASH_WORKING_DIRECTORY_DESCRIPTION =
   "Working directory for the command. If omitted, uses the current working directory. Prefer this over `cd` in the command.";
@@ -111,10 +101,6 @@ export const BASH_TOOL: Tool = {
       command: Type.String({
         description: BASH_COMMAND_DESCRIPTION,
       }),
-      safetyLevel: Type.String({
-        description: BASH_SAFETY_LEVEL_DESCRIPTION,
-        enum: ["read", "write"],
-      }),
       workingDirectory: Type.Optional(
         Type.String({
           description: BASH_WORKING_DIRECTORY_DESCRIPTION,
@@ -136,8 +122,6 @@ export const BASH_TOOL: Tool = {
     { additionalProperties: false },
   ),
 };
-
-export type BashSafetyLevel = "read" | "write";
 
 export interface BashTruncationInfo {
   output: string;
@@ -343,20 +327,20 @@ function resolveBashWorkingDirectory(args: {
   return args.workingDirectory ? resolve(baseCwd, args.workingDirectory) : baseCwd;
 }
 
-const bashArgsSchema = z.object({
-  command: z.string().trim().min(1),
-  safetyLevel: z.enum(["read", "write"]),
-  workingDirectory: z.string().trim().min(1).optional(),
-  timeout: z.number().positive().optional(),
-  maxOutputTokens: z.number().int().positive().optional(),
-});
+const bashArgsSchema = z
+  .object({
+    command: z.string().trim().min(1),
+    workingDirectory: z.string().trim().min(1).optional(),
+    timeout: z.number().positive().optional(),
+    maxOutputTokens: z.number().int().positive().optional(),
+  })
+  .strict();
 
 function parseBashArgs(raw: unknown):
   | {
       ok: true;
       data: {
         command: string;
-        safetyLevel: BashSafetyLevel;
         workingDirectory?: string;
         timeout?: number;
         maxOutputTokens?: number;
@@ -386,7 +370,6 @@ function parseBashArgs(raw: unknown):
     ok: true,
     data: {
       command: parsed.data.command,
-      safetyLevel: parsed.data.safetyLevel as BashSafetyLevel,
       workingDirectory: parsed.data.workingDirectory,
       timeout: parsed.data.timeout,
       maxOutputTokens: clampOutputTokens(parsed.data.maxOutputTokens),
@@ -401,7 +384,6 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
     schema: BASH_TOOL,
     async dispatch(
       toolCall: ToolCall,
-      riskLevel: RiskLevel,
       signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
@@ -427,20 +409,8 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
         return blocked(`Invalid arguments: ${parsedArgs.error}`);
       }
 
-      const {
-        command,
-        safetyLevel,
-        workingDirectory,
-        timeout,
-        maxOutputTokens,
-        hasMaxOutputTokens,
-      } = parsedArgs.data;
-
-      if (riskLevel === "read-only" && safetyLevel === "write") {
-        return blocked(
-          "Blocked because the risk level is set to 'read-only'. The declared safetyLevel 'write' exceeds the current risk level. Ask the user to enable it with /risk:read-write or revise to a read-only command.",
-        );
-      }
+      const { command, workingDirectory, timeout, maxOutputTokens, hasMaxOutputTokens } =
+        parsedArgs.data;
 
       const effectiveWorkingDirectory = resolveBashWorkingDirectory({
         contextCwd: context.cwd,

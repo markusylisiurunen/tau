@@ -16,7 +16,6 @@ function createPersona(overrides = {}) {
       researcher: {
         systemPrompt: "research subagent prompt",
         description: "deep research helper",
-        riskLevel: "read-write",
         launchModels: ["openai/gpt-5.4:high"],
       },
     },
@@ -26,7 +25,6 @@ function createPersona(overrides = {}) {
 
 function createStubSession(eventGenerator) {
   const setPersonaCalls = [];
-  const setRiskLevelCalls = [];
   const setConfigCalls = [];
   const setPromptContextCalls = [];
 
@@ -41,9 +39,6 @@ function createStubSession(eventGenerator) {
       setPersona(persona, systemPrompt, subagentPrompts) {
         setPersonaCalls.push({ persona, systemPrompt, subagentPrompts });
       },
-      setRiskLevel(level) {
-        setRiskLevelCalls.push(level);
-      },
       setConfig(config) {
         setConfigCalls.push(config);
       },
@@ -53,7 +48,6 @@ function createStubSession(eventGenerator) {
     },
     calls: {
       setPersonaCalls,
-      setRiskLevelCalls,
       setConfigCalls,
       setPromptContextCalls,
     },
@@ -84,7 +78,6 @@ describe("ChatRuntime", () => {
     runtime = new ChatRuntime({
       session,
       persona: createPersona(),
-      riskLevel: "read-only",
       promptContext: {
         cwd: "/repo",
       },
@@ -108,15 +101,11 @@ describe("ChatRuntime", () => {
 
     const runtime = ChatRuntime.create({
       persona: createPersona(),
-      riskLevel: "read-only",
       toolRegistry,
       promptContext: {
         cwd: "/repo",
       },
       environment: createEnvironment(),
-      config: {
-        defaultRisk: "read-only",
-      },
     });
 
     runtime.session.addUserText("hello from create");
@@ -125,9 +114,6 @@ describe("ChatRuntime", () => {
     expect(runtime.session.history[0]?.role).toBe("user");
     expect(runtime.promptComposition.baseSystemPrompt).toContain("main system prompt");
     expect(runtime.promptComposition.baseSystemPrompt).toContain("<cwd>/repo</cwd>");
-    expect(runtime.promptComposition.subagentPrompts.default).toContain(
-      '<risk-level level="read-only">',
-    );
     expect(runtime.promptComposition.subagentPrompts.default).toContain("<inherited-instructions>");
     expect(runtime.promptComposition.subagentPrompts.default).toContain("main system prompt");
     expect(runtime.promptComposition.subagentPrompts.default).not.toContain(
@@ -148,7 +134,6 @@ describe("ChatRuntime", () => {
 
     const runtime = ChatRuntime.create({
       persona: createPersona(),
-      riskLevel: "read-only",
       toolRegistry,
       promptContext: {
         cwd: "/repo",
@@ -168,7 +153,6 @@ describe("ChatRuntime", () => {
     const runtime = new ChatRuntime({
       session,
       persona,
-      riskLevel: "read-only",
       promptContext: {
         cwd: "/repo",
         skillsBlock: "### Skills\n\n- skill-a",
@@ -193,48 +177,14 @@ describe("ChatRuntime", () => {
     );
     expect(composition.baseSystemPrompt).toContain("<datetime>2026-01-01T00:00:00.000Z</datetime>");
 
-    expect(composition.subagentPrompts.default).toContain('<risk-level level="read-only">');
     expect(composition.subagentPrompts.default).toContain("<inherited-instructions>");
     expect(composition.subagentPrompts.default).toContain("main system prompt");
     expect(composition.subagentPrompts.researcher).toContain("research subagent prompt");
-    expect(composition.subagentPrompts.researcher).toContain('<risk-level level="read-write">');
 
     const lastSetPersona = calls.setPersonaCalls.at(-1);
     expect(lastSetPersona).toBeDefined();
     expect(lastSetPersona.persona).toBe(persona);
     expect(lastSetPersona.systemPrompt).toBe(composition.baseSystemPrompt);
-    expect(lastSetPersona.subagentPrompts).toEqual(composition.subagentPrompts);
-  });
-
-  it("rebuilds only subagent prompts while preserving the main system prompt", () => {
-    const { session, calls } = createStubSession();
-
-    const runtime = new ChatRuntime({
-      session,
-      persona: createPersona(),
-      riskLevel: "read-only",
-      promptContext: {
-        cwd: "/repo/start",
-        skillsBlock: "### Skills\n\n- initial",
-      },
-      environment: createEnvironment(),
-    });
-
-    const mainBefore = runtime.promptComposition.baseSystemPrompt;
-    const subagentBefore = runtime.promptComposition.subagentPrompts.researcher;
-
-    runtime.updatePromptContext({ cwd: "/repo/next" });
-    runtime.rebuildSubagentPrompts();
-
-    const composition = runtime.promptComposition;
-    expect(composition.baseSystemPrompt).toBe(mainBefore);
-    expect(composition.baseSystemPrompt).toContain("<cwd>/repo/start</cwd>");
-    expect(composition.subagentPrompts.researcher).toContain("<cwd>/repo/next</cwd>");
-    expect(composition.subagentPrompts.researcher).not.toBe(subagentBefore);
-
-    const lastSetPersona = calls.setPersonaCalls.at(-1);
-    expect(lastSetPersona).toBeDefined();
-    expect(lastSetPersona.systemPrompt).toBe(mainBefore);
     expect(lastSetPersona.subagentPrompts).toEqual(composition.subagentPrompts);
   });
 });

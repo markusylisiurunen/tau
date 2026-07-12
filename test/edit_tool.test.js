@@ -66,31 +66,25 @@ describe("edit tool", () => {
       const backend = createLocalToolExecutionBackend();
       const editTool = createEditToolDefinition(backend);
 
-      await editTool.dispatch(
-        {
-          id: "tool-1",
-          name: TOOL_NAME_EDIT,
-          arguments: {
-            path: filePath,
-            oldText: originalLines[0],
-            newText: "const cost = `$${formatAdaptiveNumber(entry.costTotal, 2, 5)}`;",
-          },
+      await editTool.dispatch({
+        id: "tool-1",
+        name: TOOL_NAME_EDIT,
+        arguments: {
+          path: filePath,
+          oldText: originalLines[0],
+          newText: "const cost = `$${formatAdaptiveNumber(entry.costTotal, 2, 5)}`;",
         },
-        "read-write",
-      );
+      });
 
-      await editTool.dispatch(
-        {
-          id: "tool-2",
-          name: TOOL_NAME_EDIT,
-          arguments: {
-            path: filePath,
-            oldText: originalLines[1],
-            newText: 'const label = "$1";',
-          },
+      await editTool.dispatch({
+        id: "tool-2",
+        name: TOOL_NAME_EDIT,
+        arguments: {
+          path: filePath,
+          oldText: originalLines[1],
+          newText: 'const label = "$1";',
         },
-        "read-write",
-      );
+      });
 
       const updated = readFileSync(filePath, "utf-8");
       expect(updated).toBe(

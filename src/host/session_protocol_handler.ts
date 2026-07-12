@@ -141,7 +141,6 @@ type SessionProtocolMutationRequest = Extract<
   {
     method:
       | "session.record"
-      | "session.setRisk"
       | "session.setPersona"
       | "session.reload"
       | "session.compact"
@@ -219,9 +218,6 @@ export class SessionProtocolHandler {
           return;
         case "session.snapshot":
           await this.handleSnapshot(request);
-          return;
-        case "session.setRisk":
-          await this.handleSetRisk(request);
           return;
         case "session.setReasoning":
           await this.handleSetReasoning(request);
@@ -1090,17 +1086,6 @@ export class SessionProtocolHandler {
     );
   }
 
-  private async handleSetRisk(
-    request: Extract<SessionProtocolRequestMessage, { method: "session.setRisk" }>,
-  ): Promise<void> {
-    await this.withSessionMutation(request, "session risk level changed", async (state) => {
-      const snapshot = await state.session.setRiskLevel(request.params.riskLevel);
-      this.sendMessage(
-        createSessionProtocolSuccessResponse(request.id, "session.setRisk", snapshot),
-      );
-    });
-  }
-
   private async handleSetReasoning(
     request: Extract<SessionProtocolRequestMessage, { method: "session.setReasoning" }>,
   ): Promise<void> {
@@ -1228,7 +1213,6 @@ export class SessionProtocolHandler {
       const result = await mutationState.session.createEphemeralContext({
         instructions: request.params.instructions,
         tools: request.params.tools,
-        riskLevel: request.params.riskLevel,
       });
       this.sendMessage(
         createSessionProtocolSuccessResponse(request.id, "session.ephemeral.create", result),

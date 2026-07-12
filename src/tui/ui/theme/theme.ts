@@ -68,10 +68,6 @@ export interface Palette {
   userReviewText: (text: string) => string;
   userReviewTextMuted: (text: string) => string;
   userReviewTextDim: (text: string) => string;
-
-  // Risk level indicators
-  riskReadOnlyText: (text: string) => string;
-  riskReadWriteText: (text: string) => string;
 }
 
 export interface Theme {

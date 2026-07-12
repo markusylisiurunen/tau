@@ -45,7 +45,6 @@ function createHostedSession(sessionId, sessions, options = {}) {
   let running = false;
   let releaseTurn;
   let pendingTurnResult = { aborted: false };
-  let riskLevel = bootstrap.riskLevel;
 
   const hostedSession = {
     get isTurnRunning() {
@@ -139,15 +138,11 @@ function createHostedSession(sessionId, sessions, options = {}) {
     async closeEphemeralContext() {
       return { closed: true };
     },
-    setRiskLevel(nextRiskLevel) {
-      riskLevel = nextRiskLevel;
-    },
     async snapshot() {
       return createProtocolSnapshot({
         sessionId,
         revision: historyEntries.length + 1,
         lifecycle: running ? "running" : "idle",
-        bootstrap: { ...bootstrap, riskLevel },
         historyEntries: historyEntries.map((entry) => ({
           id: entry.id,
           message: entry.message,

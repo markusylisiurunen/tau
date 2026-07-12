@@ -85,7 +85,7 @@ describe("sdk npm pack types", () => {
       writeFileSync(
         validFixturePath,
         [
-          'import type { SessionProtocolSnapshot, SessionProtocolTransport, TauSdkClient, TauSdkCreateSessionInput, TauSdkDelta, TauSdkInitializeParams, TauSdkRequestId, TauSdkSessionExecResult, TauSdkSessionSetReasoningResult, TauSdkSessionSetRiskResult, TauSdkReadyMessage, TauSdkTransportClientOptions, TauSdkUserTextProjection } from "@markusylisiurunen/tau/sdk";',
+          'import type { SessionProtocolSnapshot, SessionProtocolTransport, TauSdkClient, TauSdkCreateSessionInput, TauSdkDelta, TauSdkInitializeParams, TauSdkRequestId, TauSdkSessionExecResult, TauSdkSessionSetReasoningResult, TauSdkReadyMessage, TauSdkTransportClientOptions, TauSdkUserTextProjection } from "@markusylisiurunen/tau/sdk";',
           'import { StdioSessionProtocolTransport, applySessionProtocolDelta, createTauSdkClient, createTauSdkClientFromTransport, createTauSdkWebSocketClient, getTauUserDisplayText, getTauUserModelText, projectTauUserText } from "@markusylisiurunen/tau/sdk";',
           "",
           "const sdkDelta: TauSdkDelta = {",
@@ -115,7 +115,6 @@ describe("sdk npm pack types", () => {
           "const initializeParams: TauSdkInitializeParams = { client: { name: 'fixture', version: '1' } };",
           "const requestId: TauSdkRequestId = 'req-1';",
           "declare const execResult: TauSdkSessionExecResult;",
-          "declare const setRiskResult: TauSdkSessionSetRiskResult;",
           "declare const setReasoningResult: TauSdkSessionSetReasoningResult;",
           "declare const snapshot: SessionProtocolSnapshot;",
           "const patchedSnapshot = applySessionProtocolDelta(snapshot, sdkDelta);",
@@ -132,7 +131,6 @@ describe("sdk npm pack types", () => {
           "void initializeParams;",
           "void requestId;",
           "void execResult;",
-          "void setRiskResult;",
           "void setReasoningResult;",
           "void patchedSnapshot;",
           "void projectedUserText;",

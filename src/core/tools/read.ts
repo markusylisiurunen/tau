@@ -1,7 +1,6 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { RiskLevel } from "../types.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import {
@@ -135,7 +134,7 @@ function buildReadUiText(args: {
 export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: READ_TOOL,
-    async dispatch(toolCall: ToolCall, _riskLevel: RiskLevel): Promise<ToolDispatchResult> {
+    async dispatch(toolCall: ToolCall): Promise<ToolDispatchResult> {
       const parsedArgs = parseReadArgs(toolCall.arguments);
       const path = parsedArgs.ok ? parsedArgs.data.path : "";
       const headerTarget = path || "(invalid arguments)";

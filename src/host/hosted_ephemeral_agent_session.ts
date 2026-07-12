@@ -18,7 +18,6 @@ import {
 } from "../core/utils/subagent_utils.js";
 import type { ExecutionEnvironment } from "../execution/execution_environment.js";
 import type {
-  SessionProtocolEphemeralCreateParams,
   SessionProtocolEphemeralMessage,
   SessionProtocolEphemeralSubmitParams,
   SessionProtocolEphemeralSubmitResult,
@@ -53,7 +52,6 @@ export type HostedEphemeralAgentSessionOptions = {
   executionEnvironment: ExecutionEnvironment;
   instructions: string;
   tools: SubagentToolName[];
-  riskLevel: SessionProtocolEphemeralCreateParams["riskLevel"];
   emitUpdate: (
     threadId: string,
     update: SessionProtocolEphemeralMessage["event"]["update"],
@@ -74,7 +72,6 @@ export class HostedEphemeralAgentSession {
   private readonly executionEnvironment: ExecutionEnvironment;
   private readonly instructions: string;
   private readonly tools: SubagentToolName[];
-  private readonly riskLevel: SessionProtocolEphemeralCreateParams["riskLevel"];
   private readonly emitUpdate: HostedEphemeralAgentSessionOptions["emitUpdate"];
   private readonly threads = new Map<string, HostedEphemeralAgentThreadRecord>();
   private disposed = false;
@@ -88,7 +85,6 @@ export class HostedEphemeralAgentSession {
     this.executionEnvironment = options.executionEnvironment;
     this.instructions = options.instructions;
     this.tools = [...options.tools];
-    this.riskLevel = options.riskLevel;
     this.emitUpdate = options.emitUpdate;
   }
 
@@ -162,7 +158,6 @@ export class HostedEphemeralAgentSession {
     const promptContext = runtimeContext.promptBootstrap.promptContext;
     const promptComposition = composeSessionPrompts({
       persona: this.persona,
-      riskLevel: this.riskLevel,
       cwd: promptContext.cwd,
       datetime: new Date(deps.clock.now()).toISOString(),
       platform: deps.env.platform(),
@@ -180,7 +175,6 @@ export class HostedEphemeralAgentSession {
       deps,
       backend: this.executionEnvironment.getToolExecutionBackend(),
       tools: this.tools,
-      riskLevel: this.riskLevel,
       cwd: promptContext.cwd,
       home: promptContext.home ?? deps.env.home(),
       includeAgentContext: promptContext.includeAgentContext ?? this.includeAgentContext,
@@ -205,7 +199,6 @@ type EphemeralAgentThreadOptions = {
   deps: ReturnType<typeof createDefaultCoreDeps>;
   backend: ToolExecutionBackend;
   tools: SubagentToolName[];
-  riskLevel: SessionProtocolEphemeralCreateParams["riskLevel"];
   cwd: string;
   home: string;
   includeAgentContext: boolean;
@@ -242,7 +235,6 @@ class EphemeralAgentThread {
       persona,
       systemPrompt,
       subagentPrompts: options.subagentPrompts,
-      riskLevel: options.riskLevel,
       toolRegistry: ToolCatalog.createSubagentRegistry(
         options.tools,
         options.config,

@@ -4,8 +4,10 @@ import { z } from "zod";
 import { createToolError, createToolSuccess } from "../utils/messages.js";
 import { formatZodError } from "../utils/zod.js";
 import {
+  createToolDispatch,
   isSubagentToolDispatchContext,
   type ToolDefinition,
+  type ToolDispatch,
   type ToolDispatchContext,
   type ToolDispatchResult,
 } from "./registry.js";
@@ -53,30 +55,32 @@ export function createEmitOutputToolDefinition(): ToolDefinition {
       toolCall: ToolCall,
       _signal: AbortSignal,
       context: ToolDispatchContext,
-    ): Promise<ToolDispatchResult> {
-      const parsedArgs = parseEmitOutputArgs(toolCall.arguments);
+    ): Promise<ToolDispatch> {
+      return createToolDispatch(async () => {
+        const parsedArgs = parseEmitOutputArgs(toolCall.arguments);
 
-      const blocked = (reason: string): ToolDispatchResult => {
-        const toolResult = createToolError(toolCall, reason);
-        return { kind: "single", toolResult };
-      };
+        const blocked = (reason: string): ToolDispatchResult => {
+          const toolResult = createToolError(toolCall, reason);
+          return { toolResult };
+        };
 
-      if (!parsedArgs.ok) {
-        return blocked(`Invalid arguments: ${parsedArgs.error}`);
-      }
+        if (!parsedArgs.ok) {
+          return blocked(`Invalid arguments: ${parsedArgs.error}`);
+        }
 
-      const { text } = parsedArgs.data;
+        const { text } = parsedArgs.data;
 
-      if (!isSubagentToolDispatchContext(context)) {
-        return blocked("The emit_output tool is only available to subagents.");
-      }
+        if (!isSubagentToolDispatchContext(context)) {
+          return blocked("The emit_output tool is only available to subagents.");
+        }
 
-      const { subagentContext } = context;
+        const { subagentContext } = context;
 
-      subagentContext.controlPlane.recordEmitOutput(subagentContext.id, text);
+        subagentContext.controlPlane.recordEmitOutput(subagentContext.id, text);
 
-      const toolResult = createToolSuccess(toolCall, "Emitted.");
-      return { kind: "single", toolResult };
+        const toolResult = createToolSuccess(toolCall, "Emitted.");
+        return { toolResult };
+      });
     },
   };
 }

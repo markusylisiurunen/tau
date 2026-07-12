@@ -16,13 +16,14 @@ import {
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
+  ToolDispatch,
   ToolDispatchContext,
   ToolDispatchResult,
-  ToolDispatchResultWithPhases,
   ToolUiEvent,
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_BASH } from "./tool_names.js";
 
 const BASH_MODEL_DEFAULT_MAX_TOKENS = 8192;
@@ -386,7 +387,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
       toolCall: ToolCall,
       signal: AbortSignal,
       context: ToolDispatchContext,
-    ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
+    ): Promise<ToolDispatch> {
       const parsedArgs = parseBashArgs(toolCall.arguments);
       const commandForDisplay = parsedArgs.ok
         ? parsedArgs.data.commandForDisplay
@@ -402,11 +403,11 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
           headerTarget,
           reason,
         };
-        return { kind: "single", toolResult, uiEvent };
+        return { toolResult, uiEvent };
       };
 
       if (!parsedArgs.ok) {
-        return blocked(`Invalid arguments: ${parsedArgs.error}`);
+        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       const { command, workingDirectory, timeout, maxOutputTokens, hasMaxOutputTokens } =
@@ -417,9 +418,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
         workingDirectory,
       });
 
-      // All acceptance checks passed; return two-phase result
       return {
-        kind: "phased",
         startedUiEvent: {
           type: "bash_started",
           toolCallId: toolCall.id,
@@ -472,7 +471,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               uiText,
               durationMs,
             };
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           } catch (e) {
             const msg = `Bash tool execution failed: ${e instanceof Error ? e.message : String(e)}`;
             const toolResult = createToolError(toolCall, msg);
@@ -483,7 +482,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               reason: msg,
               toolCallId: toolCall.id,
             };
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           }
         })(),
       };

@@ -12,12 +12,13 @@ import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
+  ToolDispatch,
   ToolDispatchContext,
-  ToolDispatchResult,
   ToolUiEvent,
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_NOOK } from "./tool_names.js";
 
 const NOOK_DESCRIPTION = [
@@ -181,136 +182,135 @@ export function createNookToolDefinition(backend: ToolExecutionBackend): ToolDef
       toolCall: ToolCall,
       _signal: AbortSignal,
       context: ToolDispatchContext,
-    ): Promise<ToolDispatchResult> {
-      const parsed = nookArgsSchema.safeParse(toolCall.arguments);
-      if (!parsed.success) {
-        const message = `Invalid arguments: ${formatZodError(parsed.error)}`;
-        return {
-          kind: "single",
-          toolResult: createToolError(toolCall, message),
-          uiEvent: buildUiEvent(toolCall, "error", message),
-        };
-      }
-
-      try {
-        const args = parsed.data;
-        const client = createNookClientFromConfig({ config: context.config });
-        let result: unknown;
-
-        switch (args.operation) {
-          case "read_skill":
-            result = await client.readSkill();
-            break;
-          case "list_sites":
-            result = { sites: await client.listSites() };
-            break;
-          case "delete_site":
-            result = await client.deleteSite(requireArg(args, "site"));
-            break;
-          case "copy_site": {
-            const site = requireArg(args, "site");
-            const directory = requireArg(args, "directory");
-            const destination = await backend.listDir(directory);
-            if (destination.entries.length > 0) {
-              throw new Error(`site copy destination is not empty: ${directory}`);
-            }
-            const manifest = await client.getSiteManifest(site);
-            const files = await client.downloadSiteFiles(site, manifest);
-            for (const file of files) {
-              await backend.writeFileBinary(joinBackendPath(directory, file.path), file.content);
-            }
-            result = {
-              site,
-              directory,
-              deploymentId: manifest.deploymentId,
-              fileCount: files.length,
-              byteCount: files.reduce((total, file) => total + file.sizeBytes, 0),
-            };
-            break;
-          }
-          case "list_templates":
-            result = { templates: await client.listTemplates() };
-            break;
-          case "copy_template": {
-            const template = requireArg(args, "template");
-            const directory = requireArg(args, "directory");
-            const destination = await backend.listDir(directory);
-            if (destination.entries.length > 0) {
-              throw new Error(`template copy destination is not empty: ${directory}`);
-            }
-            const manifest = await client.getTemplateManifest(template);
-            const files = await client.downloadTemplateFiles(template, manifest);
-            for (const file of files) {
-              await backend.writeFileBinary(joinBackendPath(directory, file.path), file.content);
-            }
-            result = {
-              template,
-              directory,
-              fileCount: files.length,
-              byteCount: files.reduce((total, file) => total + file.sizeBytes, 0),
-            };
-            break;
-          }
-          case "save_template": {
-            const files = await buildNookTemplateManifestFromBackend(
-              backend,
-              requireArg(args, "directory"),
-            );
-            result = await client.saveTemplate({
-              name: requireArg(args, "template"),
-              files,
-            });
-            break;
-          }
-          case "delete_template":
-            result = await client.deleteTemplate(requireArg(args, "template"));
-            break;
-          case "deploy_site": {
-            const directory = requireArg(args, "directory");
-            const files = await buildNookDeployManifestFromBackend(backend, directory);
-            result = await client.deploySite({
-              site: requireArg(args, "site"),
-              files,
-              visibility: args.public ? "public" : "private",
-            });
-            break;
-          }
-          case "get_kv":
-            result = {
-              site: requireArg(args, "site"),
-              key: requireArg(args, "key"),
-              value: await client.getKv(requireArg(args, "site"), requireArg(args, "key")),
-            };
-            break;
-          case "put_kv":
-            result = await client.putKv(
-              requireArg(args, "site"),
-              requireArg(args, "key"),
-              requireValue(args),
-            );
-            break;
-          case "delete_kv":
-            result = await client.deleteKv(requireArg(args, "site"), requireArg(args, "key"));
-            break;
-          case "list_kv":
-            result = await client.listKv(requireArg(args, "site"), args.prefix);
-            break;
+    ): Promise<ToolDispatch> {
+      return createToolDispatch(async () => {
+        const parsed = nookArgsSchema.safeParse(toolCall.arguments);
+        if (!parsed.success) {
+          const message = `Invalid arguments: ${formatZodError(parsed.error)}`;
+          return {
+            toolResult: createToolError(toolCall, message),
+            uiEvent: buildUiEvent(toolCall, "error", message),
+          };
         }
 
-        const text = typeof result === "string" ? result : stringifyResult(result);
-        return {
-          kind: "single",
-          toolResult: createToolSuccess(toolCall, text),
-          uiEvent: buildUiEvent(toolCall, "success", text),
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          kind: "single",
-          toolResult: createToolError(toolCall, message),
-          uiEvent: buildUiEvent(toolCall, "error", message),
-        };
-      }
+        try {
+          const args = parsed.data;
+          const client = createNookClientFromConfig({ config: context.config });
+          let result: unknown;
+
+          switch (args.operation) {
+            case "read_skill":
+              result = await client.readSkill();
+              break;
+            case "list_sites":
+              result = { sites: await client.listSites() };
+              break;
+            case "delete_site":
+              result = await client.deleteSite(requireArg(args, "site"));
+              break;
+            case "copy_site": {
+              const site = requireArg(args, "site");
+              const directory = requireArg(args, "directory");
+              const destination = await backend.listDir(directory);
+              if (destination.entries.length > 0) {
+                throw new Error(`site copy destination is not empty: ${directory}`);
+              }
+              const manifest = await client.getSiteManifest(site);
+              const files = await client.downloadSiteFiles(site, manifest);
+              for (const file of files) {
+                await backend.writeFileBinary(joinBackendPath(directory, file.path), file.content);
+              }
+              result = {
+                site,
+                directory,
+                deploymentId: manifest.deploymentId,
+                fileCount: files.length,
+                byteCount: files.reduce((total, file) => total + file.sizeBytes, 0),
+              };
+              break;
+            }
+            case "list_templates":
+              result = { templates: await client.listTemplates() };
+              break;
+            case "copy_template": {
+              const template = requireArg(args, "template");
+              const directory = requireArg(args, "directory");
+              const destination = await backend.listDir(directory);
+              if (destination.entries.length > 0) {
+                throw new Error(`template copy destination is not empty: ${directory}`);
+              }
+              const manifest = await client.getTemplateManifest(template);
+              const files = await client.downloadTemplateFiles(template, manifest);
+              for (const file of files) {
+                await backend.writeFileBinary(joinBackendPath(directory, file.path), file.content);
+              }
+              result = {
+                template,
+                directory,
+                fileCount: files.length,
+                byteCount: files.reduce((total, file) => total + file.sizeBytes, 0),
+              };
+              break;
+            }
+            case "save_template": {
+              const files = await buildNookTemplateManifestFromBackend(
+                backend,
+                requireArg(args, "directory"),
+              );
+              result = await client.saveTemplate({
+                name: requireArg(args, "template"),
+                files,
+              });
+              break;
+            }
+            case "delete_template":
+              result = await client.deleteTemplate(requireArg(args, "template"));
+              break;
+            case "deploy_site": {
+              const directory = requireArg(args, "directory");
+              const files = await buildNookDeployManifestFromBackend(backend, directory);
+              result = await client.deploySite({
+                site: requireArg(args, "site"),
+                files,
+                visibility: args.public ? "public" : "private",
+              });
+              break;
+            }
+            case "get_kv":
+              result = {
+                site: requireArg(args, "site"),
+                key: requireArg(args, "key"),
+                value: await client.getKv(requireArg(args, "site"), requireArg(args, "key")),
+              };
+              break;
+            case "put_kv":
+              result = await client.putKv(
+                requireArg(args, "site"),
+                requireArg(args, "key"),
+                requireValue(args),
+              );
+              break;
+            case "delete_kv":
+              result = await client.deleteKv(requireArg(args, "site"), requireArg(args, "key"));
+              break;
+            case "list_kv":
+              result = await client.listKv(requireArg(args, "site"), args.prefix);
+              break;
+          }
+
+          const text = typeof result === "string" ? result : stringifyResult(result);
+          return {
+            toolResult: createToolSuccess(toolCall, text),
+            uiEvent: buildUiEvent(toolCall, "success", text),
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            toolResult: createToolError(toolCall, message),
+            uiEvent: buildUiEvent(toolCall, "error", message),
+          };
+        }
+      });
     },
   };
 }

@@ -14,6 +14,11 @@ function setupFixture() {
   };
 }
 
+async function runTool(tool, ...args) {
+  const dispatch = await tool.dispatch(...args);
+  return dispatch.run;
+}
+
 describe("edit tool", () => {
   it("resolves backend file operations relative to the configured cwd", async () => {
     const fx = setupFixture();
@@ -66,7 +71,7 @@ describe("edit tool", () => {
       const backend = createLocalToolExecutionBackend();
       const editTool = createEditToolDefinition(backend);
 
-      await editTool.dispatch({
+      await runTool(editTool, {
         id: "tool-1",
         name: TOOL_NAME_EDIT,
         arguments: {
@@ -76,7 +81,7 @@ describe("edit tool", () => {
         },
       });
 
-      await editTool.dispatch({
+      await runTool(editTool, {
         id: "tool-2",
         name: TOOL_NAME_EDIT,
         arguments: {

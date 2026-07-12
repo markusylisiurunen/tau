@@ -7,11 +7,13 @@ import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
+  ToolDispatch,
   ToolDispatchResult,
   ToolUiEvent,
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_EDIT } from "./tool_names.js";
 
 const EDIT_DESCRIPTION = [
@@ -121,109 +123,115 @@ function buildEditUiText(args: {
 export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: EDIT_TOOL,
-    async dispatch(toolCall: ToolCall): Promise<ToolDispatchResult> {
-      const parsedArgs = parseEditArgs(toolCall.arguments);
-      const path = parsedArgs.ok ? parsedArgs.data.path : "";
-      const headerTarget = path || "(invalid arguments)";
+    async dispatch(toolCall: ToolCall): Promise<ToolDispatch> {
+      return createToolDispatch(async () => {
+        const parsedArgs = parseEditArgs(toolCall.arguments);
+        const path = parsedArgs.ok ? parsedArgs.data.path : "";
+        const headerTarget = path || "(invalid arguments)";
 
-      const blocked = (reason: string): ToolDispatchResult => {
-        const toolResult = createToolError(toolCall, reason);
-        const uiEvent: ToolUiEvent = {
-          type: "edit_blocked",
-          toolCallId: toolCall.id,
-          path: path || "(invalid path)",
-          headerTarget,
-          reason,
+        const blocked = (reason: string): ToolDispatchResult => {
+          const toolResult = createToolError(toolCall, reason);
+          const uiEvent: ToolUiEvent = {
+            type: "edit_blocked",
+            toolCallId: toolCall.id,
+            path: path || "(invalid path)",
+            headerTarget,
+            reason,
+          };
+          return { toolResult, uiEvent };
         };
-        return { kind: "single", toolResult, uiEvent };
-      };
 
-      if (!parsedArgs.ok) {
-        return blocked(`Invalid arguments: ${parsedArgs.error}`);
-      }
-
-      const { oldText, newText } = parsedArgs.data;
-
-      let content: string;
-      try {
-        const result = await backend.readFile(path);
-        content = result.content;
-      } catch (e) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        if ((e as NodeJS.ErrnoException).code === "ENOENT") {
-          return blocked(`File not found at '${path}'. Verify the path is correct.`);
+        if (!parsedArgs.ok) {
+          return blocked(`Invalid arguments: ${parsedArgs.error}`);
         }
-        return blocked(`Could not read file: ${errorMessage}`);
-      }
 
-      const matchCount = countOccurrences(content, oldText);
+        const { oldText, newText } = parsedArgs.data;
 
-      if (matchCount === 0) {
-        // Provide helpful context for debugging
-        const trimmedOld = oldText.trim();
-        const trimmedCount = trimmedOld !== oldText ? countOccurrences(content, trimmedOld) : 0;
-
-        let hint = "";
-        if (trimmedCount > 0) {
-          hint =
-            " Hint: Found matches when ignoring leading/trailing whitespace. Check that your oldText exactly matches the file content, including whitespace.";
-        } else if (oldText.includes("\n")) {
-          hint =
-            " Hint: Your search contains newlines. Ensure line endings match the file (LF vs CRLF) and indentation is exact.";
-        } else {
-          // Check for partial matches
-          const words = oldText.split(/\s+/).filter((w) => w.length > 3);
-          const partialMatches = words.filter((w) => content.includes(w));
-          if (partialMatches.length > 0 && partialMatches.length < words.length) {
-            hint = ` Hint: Some words from oldText were found ('${partialMatches.slice(0, 3).join("', '")}'), but the exact string was not. Check for typos or extra whitespace.`;
+        let content: string;
+        try {
+          const result = await backend.readFile(path);
+          content = result.content;
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+            return blocked(`File not found at '${path}'. Verify the path is correct.`);
           }
+          return blocked(`Could not read file: ${errorMessage}`);
         }
 
-        return blocked(
-          `No exact match for oldText was found in the file.${hint} Read the file first to see its current content.`,
-        );
-      }
+        const matchCount = countOccurrences(content, oldText);
 
-      if (matchCount > 1) {
-        const firstMatchContext = findMatchContext(content, oldText);
-        return blocked(
-          `Found ${matchCount} matches for oldText, but exactly 1 is required. Make oldText more specific to match only one location.\n\nFirst match context:\n${firstMatchContext}`,
-        );
-      }
+        if (matchCount === 0) {
+          // Provide helpful context for debugging
+          const trimmedOld = oldText.trim();
+          const trimmedCount = trimmedOld !== oldText ? countOccurrences(content, trimmedOld) : 0;
 
-      // Exactly one match -> perform the replacement
-      const newContent = content.replace(oldText, () => newText);
+          let hint = "";
+          if (trimmedCount > 0) {
+            hint =
+              " Hint: Found matches when ignoring leading/trailing whitespace. Check that your oldText exactly matches the file content, including whitespace.";
+          } else if (oldText.includes("\n")) {
+            hint =
+              " Hint: Your search contains newlines. Ensure line endings match the file (LF vs CRLF) and indentation is exact.";
+          } else {
+            // Check for partial matches
+            const words = oldText.split(/\s+/).filter((w) => w.length > 3);
+            const partialMatches = words.filter((w) => content.includes(w));
+            if (partialMatches.length > 0 && partialMatches.length < words.length) {
+              hint = ` Hint: Some words from oldText were found ('${partialMatches.slice(0, 3).join("', '")}'), but the exact string was not. Check for typos or extra whitespace.`;
+            }
+          }
 
-      try {
-        await backend.writeFile(path, newContent);
+          return blocked(
+            `No exact match for oldText was found in the file.${hint} Read the file first to see its current content.`,
+          );
+        }
 
-        const { lines: diffLines, added, removed } = buildLineDiff(oldText, newText);
-        const sizeDiff = newText.length - oldText.length;
-        const sizeDiffStr =
-          sizeDiff === 0 ? "Same size" : sizeDiff > 0 ? `+${sizeDiff} chars` : `${sizeDiff} chars`;
-        const summaryLine = `Successfully edited ${path}: ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
-        const statusLine = `+${added}, -${removed} · ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
+        if (matchCount > 1) {
+          const firstMatchContext = findMatchContext(content, oldText);
+          return blocked(
+            `Found ${matchCount} matches for oldText, but exactly 1 is required. Make oldText more specific to match only one location.\n\nFirst match context:\n${firstMatchContext}`,
+          );
+        }
 
-        const resultText = formatEditToolResultText({ summaryLine });
+        // Exactly one match -> perform the replacement
+        const newContent = content.replace(oldText, () => newText);
 
-        const toolResult = createToolSuccess(toolCall, resultText);
-        const uiText = buildEditUiText({ summaryLine, statusLine, diffLines });
-        const uiEvent: ToolUiEvent = {
-          type: "edit_success",
-          toolCallId: toolCall.id,
-          path,
-          headerTarget,
-          oldLength: oldText.length,
-          newLength: newText.length,
-          oldText,
-          newText,
-          uiText,
-        };
-        return { kind: "single", toolResult, uiEvent };
-      } catch (e) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`Could not write file: ${errorMessage}`);
-      }
+        try {
+          await backend.writeFile(path, newContent);
+
+          const { lines: diffLines, added, removed } = buildLineDiff(oldText, newText);
+          const sizeDiff = newText.length - oldText.length;
+          const sizeDiffStr =
+            sizeDiff === 0
+              ? "Same size"
+              : sizeDiff > 0
+                ? `+${sizeDiff} chars`
+                : `${sizeDiff} chars`;
+          const summaryLine = `Successfully edited ${path}: ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
+          const statusLine = `+${added}, -${removed} · ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
+
+          const resultText = formatEditToolResultText({ summaryLine });
+
+          const toolResult = createToolSuccess(toolCall, resultText);
+          const uiText = buildEditUiText({ summaryLine, statusLine, diffLines });
+          const uiEvent: ToolUiEvent = {
+            type: "edit_success",
+            toolCallId: toolCall.id,
+            path,
+            headerTarget,
+            oldLength: oldText.length,
+            newLength: newText.length,
+            oldText,
+            newText,
+            uiText,
+          };
+          return { toolResult, uiEvent };
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          return blocked(`Could not write file: ${errorMessage}`);
+        }
+      });
     },
   };
 }

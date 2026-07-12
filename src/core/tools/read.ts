@@ -13,11 +13,13 @@ import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
+  ToolDispatch,
   ToolDispatchResult,
   ToolUiEvent,
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_READ } from "./tool_names.js";
 
 export const READ_TOOL_MAX_TOKENS = 8192;
@@ -134,101 +136,103 @@ function buildReadUiText(args: {
 export function createReadToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: READ_TOOL,
-    async dispatch(toolCall: ToolCall): Promise<ToolDispatchResult> {
-      const parsedArgs = parseReadArgs(toolCall.arguments);
-      const path = parsedArgs.ok ? parsedArgs.data.path : "";
-      const headerTarget = path || "(invalid arguments)";
+    async dispatch(toolCall: ToolCall): Promise<ToolDispatch> {
+      return createToolDispatch(async () => {
+        const parsedArgs = parseReadArgs(toolCall.arguments);
+        const path = parsedArgs.ok ? parsedArgs.data.path : "";
+        const headerTarget = path || "(invalid arguments)";
 
-      const blocked = (reason: string): ToolDispatchResult => {
-        const toolResult = createToolError(toolCall, reason);
-        const uiEvent: ToolUiEvent = {
-          type: "read_blocked",
-          toolCallId: toolCall.id,
-          path: path || "(invalid path)",
-          headerTarget,
-          reason,
+        const blocked = (reason: string): ToolDispatchResult => {
+          const toolResult = createToolError(toolCall, reason);
+          const uiEvent: ToolUiEvent = {
+            type: "read_blocked",
+            toolCallId: toolCall.id,
+            path: path || "(invalid path)",
+            headerTarget,
+            reason,
+          };
+          return { toolResult, uiEvent };
         };
-        return { kind: "single", toolResult, uiEvent };
-      };
 
-      if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
-      }
-
-      const { startLine, endLine } = parsedArgs.data;
-
-      if (startLine !== undefined && endLine !== undefined && endLine < startLine) {
-        return blocked("endLine must be >= startLine.");
-      }
-
-      try {
-        const { path: resolvedPath, content: rawContent } = await backend.readFile(path);
-
-        const allLines = rawContent.split("\n");
-        const totalLines = allLines.length;
-        const start = startLine ?? 1;
-        const endRequested = endLine ?? totalLines;
-        const endEffective = Math.min(endRequested, totalLines);
-        const endDisplay = endLine === undefined ? undefined : endEffective;
-
-        if (start > totalLines) {
-          return blocked(`startLine (${start}) exceeds total lines (${totalLines}).`);
+        if (!parsedArgs.ok) {
+          return blocked(`invalid arguments: ${parsedArgs.error}`);
         }
 
-        const startIndex = Math.max(0, start - 1);
-        const endIndex = Math.max(startIndex, endEffective);
+        const { startLine, endLine } = parsedArgs.data;
 
-        const selected = allLines.slice(startIndex, endIndex).join("\n");
-        const selectedLines = Math.max(0, endIndex - startIndex);
-        const selectedBytes = Buffer.byteLength(selected, "utf-8");
-        const captureTruncated = selectedBytes > READ_MAX_CAPTURE_BYTES;
-        const captured = captureTruncated
-          ? truncateToBytesFromStart(selected, READ_MAX_CAPTURE_BYTES)
-          : selected;
+        if (startLine !== undefined && endLine !== undefined && endLine < startLine) {
+          return blocked("endLine must be >= startLine.");
+        }
 
-        const modelTruncation = truncateForTokens(captured, {
-          maxTokens: READ_TOOL_MAX_TOKENS,
-          strategy: "head",
-        });
+        try {
+          const { path: resolvedPath, content: rawContent } = await backend.readFile(path);
 
-        const toolText = formatReadToolResultText({
-          content: modelTruncation.content,
-          truncation: modelTruncation,
-          captureTruncated,
-          totalLines: selectedLines,
-        });
+          const allLines = rawContent.split("\n");
+          const totalLines = allLines.length;
+          const start = startLine ?? 1;
+          const endRequested = endLine ?? totalLines;
+          const endEffective = Math.min(endRequested, totalLines);
+          const endDisplay = endLine === undefined ? undefined : endEffective;
 
-        const uiText = buildReadUiText({
-          modelTruncation,
-          startLine: start,
-          endLine: endDisplay,
-          fullText: toolText,
-          totalLines: selectedLines,
-          captureTruncated,
-        });
+          if (start > totalLines) {
+            return blocked(`startLine (${start}) exceeds total lines (${totalLines}).`);
+          }
 
-        const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
-        const uiEvent: ToolUiEvent = {
-          type: "read_success",
-          toolCallId: toolCall.id,
-          path: resolvedPath,
-          headerTarget: resolvedPath,
-          startLine: start,
-          endLine: endDisplay,
-          content: modelTruncation.content,
-          modelTruncation: {
-            truncated: modelTruncation.truncated,
-            totalLines: modelTruncation.totalLines,
-            outputLines: modelTruncation.outputLines,
-          },
-          uiText,
-        };
+          const startIndex = Math.max(0, start - 1);
+          const endIndex = Math.max(startIndex, endEffective);
 
-        return { kind: "single", toolResult, uiEvent };
-      } catch (e) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`read failed: ${errorMessage}`);
-      }
+          const selected = allLines.slice(startIndex, endIndex).join("\n");
+          const selectedLines = Math.max(0, endIndex - startIndex);
+          const selectedBytes = Buffer.byteLength(selected, "utf-8");
+          const captureTruncated = selectedBytes > READ_MAX_CAPTURE_BYTES;
+          const captured = captureTruncated
+            ? truncateToBytesFromStart(selected, READ_MAX_CAPTURE_BYTES)
+            : selected;
+
+          const modelTruncation = truncateForTokens(captured, {
+            maxTokens: READ_TOOL_MAX_TOKENS,
+            strategy: "head",
+          });
+
+          const toolText = formatReadToolResultText({
+            content: modelTruncation.content,
+            truncation: modelTruncation,
+            captureTruncated,
+            totalLines: selectedLines,
+          });
+
+          const uiText = buildReadUiText({
+            modelTruncation,
+            startLine: start,
+            endLine: endDisplay,
+            fullText: toolText,
+            totalLines: selectedLines,
+            captureTruncated,
+          });
+
+          const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
+          const uiEvent: ToolUiEvent = {
+            type: "read_success",
+            toolCallId: toolCall.id,
+            path: resolvedPath,
+            headerTarget: resolvedPath,
+            startLine: start,
+            endLine: endDisplay,
+            content: modelTruncation.content,
+            modelTruncation: {
+              truncated: modelTruncation.truncated,
+              totalLines: modelTruncation.totalLines,
+              outputLines: modelTruncation.outputLines,
+            },
+            uiText,
+          };
+
+          return { toolResult, uiEvent };
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          return blocked(`read failed: ${errorMessage}`);
+        }
+      });
     },
   };
 }

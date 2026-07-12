@@ -101,6 +101,11 @@ function createContext(overrides = {}) {
   return { context, anthropic, openai, spawned };
 }
 
+async function runTool(tool, ...args) {
+  const dispatch = await tool.dispatch(...args);
+  return dispatch.run;
+}
+
 describe("spawn_agent tool", () => {
   it("accepts an allowed launch model override", async () => {
     const backend = createLocalToolExecutionBackend();
@@ -122,9 +127,7 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(dispatched.kind).toBe("phased");
     const result = await dispatched.run;
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(false);
     expect(result.uiEvent.type).toBe("spawn_agent_finished");
     expect(result.uiEvent.uiText.statusLine).toContain("openai/gpt-5.5:high");
@@ -176,9 +179,7 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(dispatched.kind).toBe("phased");
     const result = await dispatched.run;
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(false);
     expect(result.uiEvent.type).toBe("spawn_agent_finished");
     expect(result.uiEvent.uiText.statusLine).toContain("openai/gpt-5.5:high");
@@ -206,7 +207,8 @@ describe("spawn_agent tool", () => {
       },
     });
 
-    const result = await tool.dispatch(
+    const result = await runTool(
+      tool,
       {
         id: "call-2",
         name: TOOL_NAME_SPAWN_AGENT,
@@ -221,7 +223,6 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
     expect(getText(result.toolResult)).toContain("does not allow launch model overrides");
   });
@@ -231,7 +232,8 @@ describe("spawn_agent tool", () => {
     const tool = createSpawnAgentToolDefinition(backend);
     const { context, spawned } = createContext();
 
-    const result = await tool.dispatch(
+    const result = await runTool(
+      tool,
       {
         id: "call-3",
         name: TOOL_NAME_SPAWN_AGENT,
@@ -246,7 +248,6 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
     expect(getText(result.toolResult)).toContain("is not allowed for subagent");
     expect(getText(result.toolResult)).toContain("openai/gpt-5.5:high");
@@ -272,9 +273,7 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(dispatched.kind).toBe("phased");
     const result = await dispatched.run;
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(false);
     expect(spawned).toHaveLength(1);
     expect(spawned[0].model.provider).toBe(anthropic.provider);
@@ -303,7 +302,6 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(dispatched.kind).toBe("phased");
     await dispatched.run;
     expect(spawned).toHaveLength(1);
     expect(spawned[0].model.provider).toBe(openai.provider);
@@ -317,7 +315,8 @@ describe("spawn_agent tool", () => {
     const tool = createSpawnAgentToolDefinition(backend);
     const { context, spawned } = createContext();
 
-    const result = await tool.dispatch(
+    const result = await runTool(
+      tool,
       {
         id: "call-6",
         name: TOOL_NAME_SPAWN_AGENT,
@@ -332,7 +331,6 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
     expect(getText(result.toolResult)).toContain("Invalid arguments: model:");
     expect(spawned).toHaveLength(0);
@@ -343,7 +341,8 @@ describe("spawn_agent tool", () => {
     const tool = createSpawnAgentToolDefinition(backend);
     const { context, spawned } = createContext();
 
-    const result = await tool.dispatch(
+    const result = await runTool(
+      tool,
       {
         id: "call-7",
         name: TOOL_NAME_SPAWN_AGENT,
@@ -358,7 +357,6 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
     expect(getText(result.toolResult)).toContain("Invalid arguments: workingDirectory:");
     expect(spawned).toHaveLength(0);
@@ -386,7 +384,6 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(dispatched.kind).toBe("phased");
     await dispatched.run;
     expect(spawned).toHaveLength(1);
     expect(spawned[0].workingDirectory).toBe("/tmp");
@@ -414,7 +411,6 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(dispatched.kind).toBe("phased");
     await dispatched.run;
     expect(spawned).toHaveLength(1);
     expect(spawned[0].workingDirectory).toBe("/repo");
@@ -464,7 +460,6 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(dispatched.kind).toBe("phased");
     await dispatched.run;
     expect(resolveSubagentRuntime).toHaveBeenCalledWith({
       cwd: "/repo",
@@ -485,7 +480,8 @@ describe("spawn_agent tool", () => {
       },
     });
 
-    const result = await createSpawnAgentToolDefinition(createLocalToolExecutionBackend()).dispatch(
+    const result = await runTool(
+      createSpawnAgentToolDefinition(createLocalToolExecutionBackend()),
       {
         id: "call-10",
         name: TOOL_NAME_SPAWN_AGENT,
@@ -500,7 +496,6 @@ describe("spawn_agent tool", () => {
       context,
     );
 
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
     expect(getText(result.toolResult)).toContain("Failed to build the subagent prompt");
     expect(getText(result.toolResult)).toContain("target skill configuration is invalid");

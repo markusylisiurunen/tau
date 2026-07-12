@@ -7,7 +7,14 @@ import { createToolError } from "../utils/messages.js";
 import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { ToolDefinition, ToolDispatchResult, ToolUiEvent, ToolUiText } from "./registry.js";
+import type {
+  ToolDefinition,
+  ToolDispatch,
+  ToolDispatchResult,
+  ToolUiEvent,
+  ToolUiText,
+} from "./registry.js";
+import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_VIEW_IMAGE } from "./tool_names.js";
 
 const VIEW_IMAGE_DESCRIPTION = [
@@ -227,74 +234,76 @@ function buildViewImageUiText(args: { mimeType: string; fullText: string }): Too
 export function createViewImageToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: VIEW_IMAGE_TOOL,
-    async dispatch(toolCall: ToolCall): Promise<ToolDispatchResult> {
-      const parsedArgs = parseViewImageArgs(toolCall.arguments);
-      const path = parsedArgs.ok ? parsedArgs.data.path : "";
-      const headerTarget = path || "(invalid arguments)";
+    async dispatch(toolCall: ToolCall): Promise<ToolDispatch> {
+      return createToolDispatch(async () => {
+        const parsedArgs = parseViewImageArgs(toolCall.arguments);
+        const path = parsedArgs.ok ? parsedArgs.data.path : "";
+        const headerTarget = path || "(invalid arguments)";
 
-      const blocked = (reason: string): ToolDispatchResult => {
-        const toolResult = createToolError(toolCall, reason);
-        const uiEvent: ToolUiEvent = {
-          type: "view_image_blocked",
-          toolCallId: toolCall.id,
-          path: path || "(invalid path)",
-          headerTarget,
-          reason,
+        const blocked = (reason: string): ToolDispatchResult => {
+          const toolResult = createToolError(toolCall, reason);
+          const uiEvent: ToolUiEvent = {
+            type: "view_image_blocked",
+            toolCallId: toolCall.id,
+            path: path || "(invalid path)",
+            headerTarget,
+            reason,
+          };
+          return { toolResult, uiEvent };
         };
-        return { kind: "single", toolResult, uiEvent };
-      };
 
-      if (!parsedArgs.ok) {
-        return blocked(`Invalid arguments: ${parsedArgs.error}`);
-      }
-
-      try {
-        const { path: resolvedPath, content } = await backend.readFileBinary(path, {
-          maxBytes: VIEW_IMAGE_READ_MAX_BYTES,
-        });
-
-        const detected = await fileTypeFromBuffer(content);
-        const mimeType = detected?.mime;
-        if (!isSupportedImageType(mimeType)) {
-          return blocked(
-            `Unsupported image format. Supported formats: ${SUPPORTED_IMAGE_TYPES.join(", ")}.`,
-          );
+        if (!parsedArgs.ok) {
+          return blocked(`Invalid arguments: ${parsedArgs.error}`);
         }
 
-        const encodedImage = await prepareImageForModel(content, mimeType);
-        const data = encodedImage.content.toString("base64");
-        const resultText = `Viewed ${resolvedPath} (${encodedImage.mimeType})`;
-        const toolResult: ToolResultMessage = {
-          role: "toolResult",
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          content: [
-            { type: "text", text: resultText },
-            { type: "image", data, mimeType: encodedImage.mimeType },
-          ],
-          isError: false,
-          timestamp: Date.now(),
-        };
+        try {
+          const { path: resolvedPath, content } = await backend.readFileBinary(path, {
+            maxBytes: VIEW_IMAGE_READ_MAX_BYTES,
+          });
 
-        const uiText = buildViewImageUiText({
-          mimeType: encodedImage.mimeType,
-          fullText: resultText,
-        });
-        const uiEvent: ToolUiEvent = {
-          type: "view_image_success",
-          toolCallId: toolCall.id,
-          path: resolvedPath,
-          headerTarget: resolvedPath,
-          mimeType: encodedImage.mimeType,
-          bytes: encodedImage.content.byteLength,
-          uiText,
-        };
+          const detected = await fileTypeFromBuffer(content);
+          const mimeType = detected?.mime;
+          if (!isSupportedImageType(mimeType)) {
+            return blocked(
+              `Unsupported image format. Supported formats: ${SUPPORTED_IMAGE_TYPES.join(", ")}.`,
+            );
+          }
 
-        return { kind: "single", toolResult, uiEvent };
-      } catch (e) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`Tool view_image failed: ${errorMessage}`);
-      }
+          const encodedImage = await prepareImageForModel(content, mimeType);
+          const data = encodedImage.content.toString("base64");
+          const resultText = `Viewed ${resolvedPath} (${encodedImage.mimeType})`;
+          const toolResult: ToolResultMessage = {
+            role: "toolResult",
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            content: [
+              { type: "text", text: resultText },
+              { type: "image", data, mimeType: encodedImage.mimeType },
+            ],
+            isError: false,
+            timestamp: Date.now(),
+          };
+
+          const uiText = buildViewImageUiText({
+            mimeType: encodedImage.mimeType,
+            fullText: resultText,
+          });
+          const uiEvent: ToolUiEvent = {
+            type: "view_image_success",
+            toolCallId: toolCall.id,
+            path: resolvedPath,
+            headerTarget: resolvedPath,
+            mimeType: encodedImage.mimeType,
+            bytes: encodedImage.content.byteLength,
+            uiText,
+          };
+
+          return { toolResult, uiEvent };
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          return blocked(`Tool view_image failed: ${errorMessage}`);
+        }
+      });
     },
   };
 }

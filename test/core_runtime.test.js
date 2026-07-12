@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
+import { safeParseCoreEventEnvelope } from "../dist/core/events/parser.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
 import { resolveRuntimePromptBootstrapAsync } from "../dist/core/runtime/runtime_bootstrap.js";
@@ -43,11 +44,54 @@ import {
   getCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
+  splitTauUserMetadata,
   stripTauUserDisplayText,
   stripTauUserMetadata,
   stripTauUserMetadataFromMessage,
   TAU_USER_METADATA_PREFIX,
 } from "../dist/core/utils/user_metadata.js";
+
+describe("core event parser", () => {
+  it("strips unknown envelope, event, and nested payload fields", () => {
+    expect(
+      safeParseCoreEventEnvelope({
+        version: 1,
+        envelopeExtra: true,
+        event: {
+          type: "compaction_end",
+          reason: "threshold",
+          outcome: "compacted",
+          eventExtra: true,
+          result: {
+            summaryHistoryEntryId: "summary-1",
+            continuationHistoryEntryId: "continuation-1",
+            compactionMessage: "compacted",
+            cutType: "turn-boundary",
+            retainedMessageCount: 2,
+            resultExtra: true,
+          },
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        version: 1,
+        event: {
+          type: "compaction_end",
+          reason: "threshold",
+          outcome: "compacted",
+          result: {
+            summaryHistoryEntryId: "summary-1",
+            continuationHistoryEntryId: "continuation-1",
+            compactionMessage: "compacted",
+            cutType: "turn-boundary",
+            retainedMessageCount: 2,
+          },
+        },
+      },
+    });
+  });
+});
 
 describe("command registry", () => {
   it("parses and dispatches commands", async () => {
@@ -1202,12 +1246,39 @@ describe("compaction context message", () => {
     ).toThrow("invalid tau user metadata");
 
     const encoded = Buffer.from(
-      JSON.stringify([{ type: "compaction", version: 1, summary: "summary", extra: true }]),
+      JSON.stringify([{ type: "compaction", version: 2, summary: "summary" }]),
       "utf8",
     ).toString("base64url");
     expect(() =>
       stripTauUserMetadata(`${TAU_USER_METADATA_PREFIX}${encoded}\u001evisible`),
-    ).toThrow("invalid tau user metadata: unknown key: extra");
+    ).toThrow("invalid tau user metadata: unsupported compaction metadata version");
+  });
+
+  it("strips unknown tau user metadata fields", () => {
+    const encoded = Buffer.from(
+      JSON.stringify([
+        {
+          type: "compaction",
+          version: 1,
+          summary: "summary",
+          preservedUserMessages: [{ id: "user-1", text: "keep me", extra: true }],
+          extra: true,
+        },
+      ]),
+      "utf8",
+    ).toString("base64url");
+
+    expect(splitTauUserMetadata(`${TAU_USER_METADATA_PREFIX}${encoded}\u001evisible`)).toEqual({
+      metadata: [
+        {
+          type: "compaction",
+          version: 1,
+          summary: "summary",
+          preservedUserMessages: [{ id: "user-1", text: "keep me" }],
+        },
+      ],
+      visibleText: "visible",
+    });
   });
 
   it("skips hidden auto-continuation messages when preparing manual compaction", () => {

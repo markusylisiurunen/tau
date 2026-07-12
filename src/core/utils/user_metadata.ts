@@ -99,20 +99,6 @@ function parseMetadataRecord(value: unknown): TauUserMetadata {
   }
 }
 
-function assertMetadataKeys(
-  record: Record<string, unknown>,
-  expectedKeys: readonly string[],
-): void {
-  const expected = new Set(expectedKeys);
-  const unknownKeys = Object.keys(record).filter((key) => !expected.has(key));
-  if (unknownKeys.length > 0) {
-    const keyLabel = unknownKeys.length === 1 ? "key" : "keys";
-    throw new Error(
-      `invalid tau user metadata: unknown ${keyLabel}: ${unknownKeys.sort().join(", ")}`,
-    );
-  }
-}
-
 function parsePreservedUserMessages(value: unknown): TauPreservedUserMessage[] {
   if (!Array.isArray(value)) {
     throw new Error("invalid tau user metadata: preserved user messages must be an array");
@@ -127,7 +113,6 @@ function parsePreservedUserMessages(value: unknown): TauPreservedUserMessage[] {
     }
 
     const record = item as Record<string, unknown>;
-    assertMetadataKeys(record, ["id", "text"]);
     if (typeof record.id !== "string" || record.id.trim() === "") {
       throw new Error(
         `invalid tau user metadata: preserved user message ${index} id must be a non-empty string`,
@@ -150,7 +135,6 @@ function parsePreservedUserMessages(value: unknown): TauPreservedUserMessage[] {
 }
 
 function parseCompactionMetadataRecord(record: Record<string, unknown>): TauCompactionUserMetadata {
-  assertMetadataKeys(record, ["type", "version", "summary", "preservedUserMessages"]);
   if (record.version !== 1) {
     throw new Error("invalid tau user metadata: unsupported compaction metadata version");
   }
@@ -168,14 +152,6 @@ function parseCompactionMetadataRecord(record: Record<string, unknown>): TauComp
 function parseAutoCompactionMetadataRecord(
   record: Record<string, unknown>,
 ): TauAutoCompactionUserMetadata {
-  assertMetadataKeys(record, [
-    "type",
-    "version",
-    "summary",
-    "preservedUserMessages",
-    "cutType",
-    "retainedMessageCount",
-  ]);
   if (record.version !== 1) {
     throw new Error("invalid tau user metadata: unsupported auto-compaction metadata version");
   }
@@ -209,7 +185,6 @@ function parseAutoCompactionMetadataRecord(
 function parseAutoCompactionContinuationMetadataRecord(
   record: Record<string, unknown>,
 ): TauAutoCompactionContinuationUserMetadata {
-  assertMetadataKeys(record, ["type", "version"]);
   if (record.version !== 1) {
     throw new Error(
       "invalid tau user metadata: unsupported auto-compaction continuation metadata version",

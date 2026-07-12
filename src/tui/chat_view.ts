@@ -47,7 +47,6 @@ export type ChatViewInputHandlers = {
   onCtrlT?: () => void;
   onCtrlO?: () => void;
   onShiftTab?: () => void;
-  onCtrlR?: () => void;
   onCtrlP?: () => void;
   onCtrlS?: () => void;
   onCtrlY?: () => void;
@@ -389,7 +388,6 @@ export class TuiChatView implements ChatView {
     this.editor.onCtrlT = handlers.onCtrlT;
     this.editor.onCtrlO = handlers.onCtrlO;
     this.editor.onShiftTab = handlers.onShiftTab;
-    this.editor.onCtrlR = handlers.onCtrlR;
     this.editor.onCtrlP = handlers.onCtrlP;
     this.editor.onCtrlS = handlers.onCtrlS;
     this.editor.onCtrlY = handlers.onCtrlY;

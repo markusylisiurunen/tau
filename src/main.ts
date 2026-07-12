@@ -442,8 +442,9 @@ function printServeHelp(): void {
       "  --auth-token <token> require tau attach / SDK websocket clients to provide this token.",
       "  --help, -h           show this help and exit.",
       "",
-      "",
       "examples:",
+      "  tau serve",
+      "  tau serve --host 0.0.0.0 --port 8787 --auth-token $TAU_WS_AUTH_TOKEN",
     ].join("\n"),
   );
 }

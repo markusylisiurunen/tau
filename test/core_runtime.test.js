@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { safeParseCoreEventEnvelope } from "../dist/core/events/parser.js";
 import { personas } from "../dist/core/personas.js";
+import { ConversationTurnRuntime } from "../dist/core/runtime/conversation_turn_runtime.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/runtime/runtime_bootstrap.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
 import {
@@ -54,7 +55,7 @@ describe("core event parser", () => {
   it("strips unknown envelope, event, and nested payload fields", () => {
     expect(
       safeParseCoreEventEnvelope({
-        version: 1,
+        version: 2,
         envelopeExtra: true,
         event: {
           type: "compaction_end",
@@ -74,7 +75,7 @@ describe("core event parser", () => {
     ).toEqual({
       ok: true,
       value: {
-        version: 1,
+        version: 2,
         event: {
           type: "compaction_end",
           reason: "threshold",
@@ -86,6 +87,45 @@ describe("core event parser", () => {
             cutType: "turn-boundary",
             retainedMessageCount: 2,
           },
+        },
+      },
+    });
+  });
+
+  it("parses tool recovery events", () => {
+    const message = {
+      role: "user",
+      content: [{ type: "text", text: "<system>recovery</system>\n" }],
+      timestamp: 2,
+    };
+    const toolResult = {
+      role: "toolResult",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      content: [{ type: "text", text: "done" }],
+      isError: false,
+      timestamp: 1,
+    };
+
+    expect(
+      safeParseCoreEventEnvelope({
+        version: 2,
+        event: {
+          type: "tool_recovery",
+          historyEntryId: "recovery-1",
+          message,
+          toolResults: [toolResult],
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        version: 2,
+        event: {
+          type: "tool_recovery",
+          historyEntryId: "recovery-1",
+          message,
+          toolResults: [toolResult],
         },
       },
     });
@@ -457,6 +497,552 @@ describe("core session rewind APIs", () => {
     }
   });
 
+  it("starts streamed tool calls early while preserving sequential execution", async () => {
+    const firstCall = fauxToolCall("first_tool", {}, { id: "first-call" });
+    const secondCall = fauxToolCall("second_tool", {}, { id: "second-call" });
+    const toolMessage = fauxAssistantMessage([firstCall, secondCall], {
+      stopReason: "toolUse",
+    });
+    const finalMessage = fauxAssistantMessage("done");
+    let releaseFirst;
+    const firstRun = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    let releaseModel;
+    const modelRun = new Promise((resolve) => {
+      releaseModel = resolve;
+    });
+    let markFirstStarted;
+    const firstStarted = new Promise((resolve) => {
+      markFirstStarted = resolve;
+    });
+    let markSecondStarted;
+    const secondStarted = new Promise((resolve) => {
+      markSecondStarted = resolve;
+    });
+    let secondHasStarted = false;
+
+    const createDefinition = (name, dispatch) => ({
+      schema: {
+        name,
+        description: "test tool",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+      },
+      dispatch,
+    });
+    const toolRegistry = new ToolRegistry([
+      createDefinition("first_tool", async (toolCall) => {
+        markFirstStarted();
+        await firstRun;
+        return {
+          kind: "single",
+          toolResult: {
+            role: "toolResult",
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            content: [{ type: "text", text: "first done" }],
+            isError: false,
+            timestamp: 2,
+          },
+        };
+      }),
+      createDefinition("second_tool", async (toolCall) => {
+        secondHasStarted = true;
+        markSecondStarted();
+        return {
+          kind: "single",
+          toolResult: {
+            role: "toolResult",
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            content: [{ type: "text", text: "second done" }],
+            isError: false,
+            timestamp: 3,
+          },
+        };
+      }),
+    ]);
+    const persona = {
+      id: "early-tools",
+      label: "early tools",
+      model: personas[0].model,
+      systemPrompt: "system",
+      settings: { reasoning: "none" },
+      tools: ["first_tool", "second_tool"],
+      skills: "*",
+      source: "builtin",
+    };
+    const session = new CoreSession({
+      persona,
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry,
+    });
+    const responses = [toolMessage, finalMessage];
+    session.engine.modelRuntime.streamModel = () => {
+      const response = responses.shift();
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (response === toolMessage) {
+            yield { type: "toolcall_start", contentIndex: 0, partial: toolMessage };
+            yield { type: "toolcall_start", contentIndex: 1, partial: toolMessage };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 1,
+              toolCall: secondCall,
+              partial: toolMessage,
+            };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall: firstCall,
+              partial: toolMessage,
+            };
+            await modelRun;
+          }
+        },
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    session.addUserText("use both tools");
+    const events = [];
+    const turn = (async () => {
+      for await (const event of session.events(new AbortController().signal)) {
+        events.push(event);
+      }
+    })();
+
+    await firstStarted;
+    expect(secondHasStarted).toBe(false);
+    releaseFirst();
+    await secondStarted;
+    expect(secondHasStarted).toBe(true);
+    expect(events.some((event) => event.type === "assistant_final")).toBe(false);
+
+    releaseModel();
+    await turn;
+
+    const relevantEvents = events
+      .filter((event) => event.type === "assistant_final" || event.type === "tool_result")
+      .map((event) =>
+        event.type === "tool_result" ? `${event.type}:${event.message.toolCallId}` : event.type,
+      );
+    expect(relevantEvents).toEqual([
+      "assistant_final",
+      "tool_result:first-call",
+      "tool_result:second-call",
+      "assistant_final",
+    ]);
+  });
+
+  it("continues from hidden tool recovery context after a terminal model error", async () => {
+    const toolCall = fauxToolCall("early_tool", { path: "result.txt" }, { id: "early-call" });
+    const errorMessage = fauxAssistantMessage([toolCall], {
+      stopReason: "error",
+      errorMessage: "network error",
+    });
+    const finalMessage = fauxAssistantMessage("continued");
+    let executions = 0;
+    const toolRegistry = new ToolRegistry([
+      {
+        schema: {
+          name: "early_tool",
+          description: "test tool",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+        dispatch: async (call) => {
+          executions += 1;
+          return {
+            kind: "single",
+            toolResult: {
+              role: "toolResult",
+              toolCallId: call.id,
+              toolName: call.name,
+              content: [{ type: "text", text: "created result.txt" }],
+              isError: false,
+              timestamp: 2,
+            },
+          };
+        },
+      },
+    ]);
+    const session = new CoreSession({
+      persona: { ...personas[0], tools: ["early_tool"] },
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry,
+    });
+    const responses = [errorMessage, finalMessage];
+    const contexts = [];
+    session.engine.modelRuntime.streamModel = (_model, context) => {
+      contexts.push(context);
+      const response = responses.shift();
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (response === errorMessage) {
+            yield { type: "toolcall_start", contentIndex: 0, partial: response };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall,
+              partial: response,
+            };
+            yield { type: "error", reason: "error", error: response };
+          }
+        },
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    session.addUserText("create the file");
+    const events = [];
+    for await (const event of session.events(new AbortController().signal)) {
+      events.push(event);
+    }
+
+    expect(executions).toBe(1);
+    expect(events.filter((event) => event.type === "tool_result")).toEqual([]);
+    expect(events.filter((event) => event.type === "assistant_final")).toHaveLength(2);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "notice", severity: "error" }),
+        expect.objectContaining({
+          type: "tool_recovery",
+          toolResults: [expect.objectContaining({ toolCallId: "early-call" })],
+        }),
+      ]),
+    );
+
+    const recoveryMessage = session.rawHistory.find(
+      (message) =>
+        message.role === "user" &&
+        Array.isArray(message.content) &&
+        message.content.some(
+          (content) => content.type === "text" && content.text.includes("<tool-execution-records>"),
+        ),
+    );
+    expect(recoveryMessage).toBeDefined();
+    const recoveryText = recoveryMessage.content.find((content) => content.type === "text").text;
+    expect(stripTauUserDisplayText(recoveryText)).toBe("");
+    expect(recoveryText).toContain("created result.txt");
+    expect(session.rawHistory.some((message) => message.role === "toolResult")).toBe(false);
+    expect(session.history.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(session.listRewindCandidates()).toEqual([
+      expect.objectContaining({ text: "create the file" }),
+    ]);
+    expect(contexts).toHaveLength(2);
+    expect(
+      contexts[1].messages.some(
+        (message) => message.role === "assistant" && message.stopReason === "error",
+      ),
+    ).toBe(false);
+    expect(
+      contexts[1].messages.some(
+        (message) =>
+          message.role === "user" &&
+          Array.isArray(message.content) &&
+          message.content.some(
+            (content) =>
+              content.type === "text" && content.text.includes("<tool-execution-records>"),
+          ),
+      ),
+    ).toBe(true);
+  });
+
+  it("limits hidden tool recovery to one subturn retry", async () => {
+    const firstToolCall = fauxToolCall("early_tool", {}, { id: "first-call" });
+    const secondToolCall = fauxToolCall("early_tool", {}, { id: "second-call" });
+    const responses = [
+      {
+        toolCall: firstToolCall,
+        message: fauxAssistantMessage([firstToolCall], {
+          stopReason: "error",
+          errorMessage: "first network error",
+        }),
+      },
+      {
+        toolCall: secondToolCall,
+        message: fauxAssistantMessage([secondToolCall], {
+          stopReason: "error",
+          errorMessage: "second network error",
+        }),
+      },
+    ];
+    let executions = 0;
+    const toolRegistry = new ToolRegistry([
+      {
+        schema: {
+          name: "early_tool",
+          description: "test tool",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+        dispatch: async (call) => {
+          executions += 1;
+          return {
+            kind: "single",
+            toolResult: {
+              role: "toolResult",
+              toolCallId: call.id,
+              toolName: call.name,
+              content: [{ type: "text", text: `completed ${call.id}` }],
+              isError: false,
+              timestamp: executions,
+            },
+          };
+        },
+      },
+    ]);
+    const session = new CoreSession({
+      persona: { ...personas[0], tools: ["early_tool"] },
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry,
+    });
+    let modelCalls = 0;
+    session.engine.modelRuntime.streamModel = () => {
+      const response = responses[modelCalls];
+      modelCalls += 1;
+      if (!response) {
+        throw new Error("unexpected extra recovery subturn");
+      }
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield { type: "toolcall_start", contentIndex: 0, partial: response.message };
+          yield {
+            type: "toolcall_end",
+            contentIndex: 0,
+            toolCall: response.toolCall,
+            partial: response.message,
+          };
+          yield { type: "error", reason: "error", error: response.message };
+        },
+        async result() {
+          return response.message;
+        },
+      };
+    };
+
+    session.addUserText("use a tool");
+    const events = [];
+    for await (const event of session.events(new AbortController().signal)) {
+      events.push(event);
+    }
+
+    expect(modelCalls).toBe(2);
+    expect(executions).toBe(2);
+    expect(events.filter((event) => event.type === "assistant_final")).toHaveLength(2);
+    expect(events.filter((event) => event.type === "tool_recovery")).toHaveLength(2);
+    const recoveryMessages = session.rawHistory.filter(
+      (message) =>
+        message.role === "user" &&
+        Array.isArray(message.content) &&
+        message.content.some(
+          (content) => content.type === "text" && content.text.includes("<tool-execution-records>"),
+        ),
+    );
+    expect(recoveryMessages).toHaveLength(2);
+    expect(recoveryMessages[0].content[0].text).toContain(
+      "Continue the original request using these execution results",
+    );
+    expect(recoveryMessages[1].content[0].text).toContain(
+      "Do not continue the interrupted request unless the user asks",
+    );
+  });
+
+  it("records streamed tool recovery when a turn is interrupted", async () => {
+    const toolCall = fauxToolCall("early_tool", {}, { id: "early-call" });
+    const abortedMessage = fauxAssistantMessage([toolCall], {
+      stopReason: "aborted",
+      errorMessage: "Request was aborted",
+    });
+    let executions = 0;
+    const toolRegistry = new ToolRegistry([
+      {
+        schema: {
+          name: "early_tool",
+          description: "test tool",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+        dispatch: async (call, signal) => {
+          executions += 1;
+          if (!signal.aborted) {
+            await new Promise((resolve) =>
+              signal.addEventListener("abort", resolve, { once: true }),
+            );
+          }
+          return {
+            kind: "single",
+            toolResult: {
+              role: "toolResult",
+              toolCallId: call.id,
+              toolName: call.name,
+              content: [{ type: "text", text: "cancelled after starting" }],
+              isError: true,
+              timestamp: 2,
+            },
+          };
+        },
+      },
+    ]);
+    const session = new CoreSession({
+      persona: { ...personas[0], tools: ["early_tool"] },
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry,
+    });
+    session.engine.modelRuntime.streamModel = (_model, _context, options) => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "toolcall_start", contentIndex: 0, partial: abortedMessage };
+        yield {
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall,
+          partial: abortedMessage,
+        };
+        if (!options.signal.aborted) {
+          await new Promise((resolve) =>
+            options.signal.addEventListener("abort", resolve, { once: true }),
+          );
+        }
+        yield { type: "error", reason: "aborted", error: abortedMessage };
+      },
+      async result() {
+        return abortedMessage;
+      },
+    });
+
+    session.addUserText("use a tool");
+    const events = [];
+    const runtime = new ConversationTurnRuntime(session);
+    const result = await runtime.run({
+      onEvent(event) {
+        events.push(event);
+        if (event.type === "tool_ui" && event.uiEvent.type === "tool_call_queued") {
+          runtime.interrupt();
+        }
+      },
+    });
+
+    expect(result).toEqual({ aborted: true });
+    expect(executions).toBe(1);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "assistant_final",
+          message: expect.objectContaining({ stopReason: "aborted" }),
+        }),
+        expect.objectContaining({
+          type: "tool_recovery",
+          toolResults: [expect.objectContaining({ toolCallId: "early-call" })],
+        }),
+      ]),
+    );
+    expect(events.some((event) => event.type === "tool_result")).toBe(false);
+    const recoveryMessage = session.rawHistory.find(
+      (message) =>
+        message.role === "user" &&
+        Array.isArray(message.content) &&
+        message.content.some(
+          (content) => content.type === "text" && content.text.includes("<tool-execution-records>"),
+        ),
+    );
+    expect(recoveryMessage).toBeDefined();
+    expect(recoveryMessage.content[0].text).toContain(
+      "Do not continue the interrupted request unless the user asks",
+    );
+  });
+
+  it("aborts an early tool when the model stream fails", async () => {
+    const toolCall = fauxToolCall("early_tool", {}, { id: "early-call" });
+    const toolMessage = fauxAssistantMessage([toolCall], { stopReason: "toolUse" });
+    let markToolStarted;
+    const toolStarted = new Promise((resolve) => {
+      markToolStarted = resolve;
+    });
+    let toolAborted = false;
+    const toolRegistry = new ToolRegistry([
+      {
+        schema: {
+          name: "early_tool",
+          description: "test tool",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+        dispatch: async (call, signal) => {
+          markToolStarted();
+          await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+          toolAborted = true;
+          return {
+            kind: "single",
+            toolResult: {
+              role: "toolResult",
+              toolCallId: call.id,
+              toolName: call.name,
+              content: [{ type: "text", text: "cancelled" }],
+              isError: true,
+              timestamp: 2,
+            },
+          };
+        },
+      },
+    ]);
+    const session = new CoreSession({
+      persona: { ...personas[0], tools: ["early_tool"] },
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry,
+    });
+    session.engine.modelRuntime.streamModel = () => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "toolcall_start", contentIndex: 0, partial: toolMessage };
+        yield {
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall,
+          partial: toolMessage,
+        };
+        await toolStarted;
+        throw new Error("model stream failed");
+      },
+      async result() {
+        throw new Error("model stream failed");
+      },
+    });
+
+    session.addUserText("use a tool");
+    const turn = async () => {
+      for await (const _event of session.events(new AbortController().signal)) {
+      }
+    };
+
+    await expect(turn()).rejects.toThrow("model stream failed");
+    expect(toolAborted).toBe(true);
+  });
+
   it("keeps reasoning frozen across all subturns in an agent turn", async () => {
     const requestedReasoning = [];
     const toolContextReasoning = [];
@@ -515,7 +1101,14 @@ describe("core session rewind APIs", () => {
       requestedReasoning.push(options.reasoning);
       const response = responses.shift();
       return {
-        async *[Symbol.asyncIterator]() {},
+        async *[Symbol.asyncIterator]() {
+          for (const [contentIndex, content] of response.content.entries()) {
+            if (content.type === "toolCall") {
+              yield { type: "toolcall_start", contentIndex, partial: response };
+              yield { type: "toolcall_end", contentIndex, toolCall: content, partial: response };
+            }
+          }
+        },
         async result() {
           return response;
         },

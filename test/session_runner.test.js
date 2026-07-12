@@ -107,6 +107,7 @@ describe("session runner tool dispatch context", () => {
           snapshot: {
             text: "a",
             thinking: "",
+            toolCalls: [],
             hasTextStarted: true,
             hasAnyThinking: false,
           },
@@ -116,6 +117,7 @@ describe("session runner tool dispatch context", () => {
           snapshot: {
             text: "abc",
             thinking: "",
+            toolCalls: [],
             hasTextStarted: true,
             hasAnyThinking: false,
           },
@@ -124,6 +126,177 @@ describe("session runner tool dispatch context", () => {
     } finally {
       now.mockRestore();
     }
+  });
+
+  it("flushes pending assistant text before tool-call streaming", async () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    const toolCall = {
+      id: "tool-call-1",
+      type: "toolCall",
+      name: "fake_tool",
+      arguments: {},
+    };
+    const finalMessage = {
+      role: "assistant",
+      api: "anthropic",
+      provider: "anthropic",
+      model: "claude-opus",
+      stopReason: "toolUse",
+      content: [{ type: "text", text: "ab" }, toolCall],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [
+            { type: "text_delta", delta: "a" },
+            { type: "text_delta", delta: "b" },
+            { type: "toolcall_start", contentIndex: 1 },
+            { type: "toolcall_delta", contentIndex: 1, delta: "{}" },
+            { type: "toolcall_end", contentIndex: 1, toolCall },
+          ],
+          finalMessage,
+        );
+      },
+    };
+
+    try {
+      const events = [];
+      const runner = runModelSubturn({
+        model: {},
+        context: {},
+        modelRuntime,
+        streamOptions: {},
+        signal: new AbortController().signal,
+        emitPartials: true,
+      });
+      while (true) {
+        const next = await runner.next();
+        if (next.done) {
+          expect(next.value).toBe(finalMessage);
+          break;
+        }
+        events.push(next.value);
+      }
+
+      expect(events).toEqual([
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "a",
+            thinking: "",
+            toolCalls: [],
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "ab",
+            thinking: "",
+            toolCalls: [],
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "ab",
+            thinking: "",
+            toolCalls: [toolCall],
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+      ]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("retries without exposing tool calls when early execution is disabled", async () => {
+    const toolCall = {
+      id: "tool-call-1",
+      type: "toolCall",
+      name: "fake_tool",
+      arguments: {},
+    };
+    const errorMessage = {
+      role: "assistant",
+      api: "anthropic",
+      provider: "anthropic",
+      model: "claude-opus",
+      stopReason: "error",
+      errorMessage: "network error",
+      content: [toolCall],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const successMessage = {
+      ...errorMessage,
+      stopReason: "stop",
+      errorMessage: undefined,
+      content: [{ type: "text", text: "recovered" }],
+    };
+    let attempts = 0;
+    const modelRuntime = {
+      streamModel() {
+        attempts += 1;
+        if (attempts === 1) {
+          return createModelStream(
+            [
+              { type: "toolcall_start", contentIndex: 0 },
+              { type: "toolcall_end", contentIndex: 0, toolCall },
+              { type: "error", reason: "error", error: errorMessage },
+            ],
+            errorMessage,
+          );
+        }
+        return createModelStream([], successMessage);
+      },
+    };
+    const runner = runModelSubturn({
+      model: {},
+      context: {},
+      modelRuntime,
+      streamOptions: {},
+      signal: new AbortController().signal,
+      emitPartials: false,
+      retry: {
+        shouldRetryAfterError: () => true,
+        maxRetries: 1,
+      },
+    });
+    const events = [];
+    let finalMessage;
+    while (true) {
+      const next = await runner.next();
+      if (next.done) {
+        finalMessage = next.value;
+        break;
+      }
+      events.push(next.value);
+    }
+
+    expect(attempts).toBe(2);
+    expect(events).toEqual([]);
+    expect(finalMessage).toBe(successMessage);
   });
 
   it("flushes the latest pending assistant partial before a stream error", async () => {

@@ -19,6 +19,7 @@ export type {
   CoreEventVersion,
   CoreNoticeEvent,
   CoreSubagentUiEvent,
+  CoreToolRecoveryEvent,
   CoreToolResultEvent,
   CoreToolUiEvent,
   RunnerEvent,

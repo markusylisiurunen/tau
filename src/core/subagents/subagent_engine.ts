@@ -56,7 +56,7 @@ export type SubagentRunResult = {
   toolCalls: number;
 };
 
-const MAX_SUBAGENT_SUBTURNS = 128;
+const MAX_SUBAGENT_SUBTURNS = 256;
 
 function getStreamingSettings(settings: SubagentRuntimeConfig["settings"]): TauStreamOptions {
   const merged = { ...(settings ?? {}) } as Record<string, unknown>;

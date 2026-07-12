@@ -240,6 +240,7 @@ function assistantPartial(text) {
   return {
     text,
     thinking: "",
+    toolCalls: [],
     hasTextStarted: Boolean(text),
     hasAnyThinking: false,
   };
@@ -659,6 +660,226 @@ describe("LocalSessionHost", () => {
       }),
     );
     expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it("publishes streamed tool calls before the assistant message is final", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    const deltas = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+    const toolCall = {
+      type: "toolCall",
+      id: "streamed-tool-call",
+      name: "bash",
+      arguments: { command: "pwd" },
+    };
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_start",
+      historyEntryId: "assistant-streaming-tool",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-streaming-tool",
+      snapshot: assistantPartial("running a command"),
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-streaming-tool",
+      snapshot: {
+        ...assistantPartial("running a command"),
+        toolCalls: [toolCall],
+      },
+    });
+    expect(deltas.at(-1).delta.changes).toEqual([
+      expect.objectContaining({
+        type: "message.replace",
+        message: expect.objectContaining({
+          message: expect.objectContaining({
+            content: [{ type: "text", text: "running a command" }, toolCall],
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        type: "tool.set",
+        tool: expect.objectContaining({
+          call: { messageId: "assistant-streaming-tool", contentIndex: 1 },
+        }),
+      }),
+    ]);
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "tool_ui",
+      uiEvent: {
+        type: "tool_call_queued",
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        headerTarget: toolCall.name,
+      },
+    });
+
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "assistant-streaming-tool",
+          state: "draft",
+          message: expect.objectContaining({
+            content: [{ type: "text", text: "running a command" }, toolCall],
+          }),
+        }),
+      ]),
+    );
+    expect(snapshot.tools[toolCall.id]).toEqual(
+      expect.objectContaining({
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        status: "queued",
+        facetIds: [`tool-ui-${toolCall.id}`],
+      }),
+    );
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_final",
+      historyEntryId: "assistant-streaming-tool",
+      message: assistantMessageWithToolCalls([
+        toolCall,
+        { type: "text", text: "running a command" },
+      ]),
+    });
+
+    const finalSnapshot = await hostedSession.snapshot();
+    expect(finalSnapshot.tools[toolCall.id].call).toEqual({
+      messageId: "assistant-streaming-tool",
+      contentIndex: 0,
+    });
+  });
+
+  it("replaces a tool-only draft when later text changes the content shape", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    const deltas = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+    const toolCall = {
+      type: "toolCall",
+      id: "tool-before-text",
+      name: "bash",
+      arguments: { command: "pwd" },
+    };
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_start",
+      historyEntryId: "assistant-tool-before-text",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-tool-before-text",
+      snapshot: {
+        ...assistantPartial(""),
+        toolCalls: [toolCall],
+      },
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-tool-before-text",
+      snapshot: {
+        ...assistantPartial("after"),
+        toolCalls: [toolCall],
+      },
+    });
+
+    expect(deltas.at(-1).delta.changes).toEqual([
+      expect.objectContaining({
+        type: "message.replace",
+        message: expect.objectContaining({
+          message: expect.objectContaining({
+            content: [{ type: "text", text: "after" }, toolCall],
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        type: "tool.set",
+        tool: expect.objectContaining({
+          call: { messageId: "assistant-tool-before-text", contentIndex: 1 },
+        }),
+      }),
+    ]);
+  });
+
+  it("records recovered tool results without model-visible tool result messages", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    const toolCall = {
+      type: "toolCall",
+      id: "recovered-tool-call",
+      name: "bash",
+      arguments: { command: "pwd" },
+    };
+    const recoveryMessage = {
+      role: "user",
+      content: [{ type: "text", text: "<system>tool recovery</system>\n" }],
+      timestamp: 3,
+    };
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_start",
+      historyEntryId: "assistant-recovery-error",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-recovery-error",
+      snapshot: {
+        ...assistantPartial(""),
+        toolCalls: [toolCall],
+      },
+    });
+    const errorMessage = {
+      ...assistantMessageWithToolCalls([toolCall]),
+      stopReason: "error",
+      errorMessage: "network error",
+    };
+    hostedSession.session.addMessage(errorMessage, {
+      historyEntryId: "assistant-recovery-error",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_final",
+      historyEntryId: "assistant-recovery-error",
+      message: errorMessage,
+    });
+    hostedSession.session.addMessage(recoveryMessage, {
+      historyEntryId: "tool-recovery-message",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "tool_recovery",
+      historyEntryId: "tool-recovery-message",
+      message: recoveryMessage,
+      toolResults: [
+        {
+          role: "toolResult",
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          content: [{ type: "text", text: "done" }],
+          isError: false,
+          timestamp: 2,
+        },
+      ],
+    });
+
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "tool-recovery-message", message: recoveryMessage }),
+      ]),
+    );
+    expect(snapshot.messages.some((message) => message.message.role === "toolResult")).toBe(false);
+    expect(snapshot.timeline.some((item) => item.messageId === "tool-recovery-message")).toBe(
+      false,
+    );
+    expect(snapshot.tools[toolCall.id]).toEqual(expect.objectContaining({ status: "succeeded" }));
+    expect(snapshot.tools[toolCall.id]).not.toHaveProperty("resultMessageId");
   });
 
   it("does not persist unchanged live snapshots during refreshes", async () => {

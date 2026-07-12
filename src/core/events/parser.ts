@@ -1,3 +1,4 @@
+import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
 import {
   CORE_EVENT_VERSION,
   type CoreEvent,
@@ -95,6 +96,7 @@ function stripCoreEvent(value: UnknownRecord): CoreEvent {
         snapshot: {
           text: snapshot.text as string,
           thinking: snapshot.thinking as string,
+          toolCalls: snapshot.toolCalls as AssistantPartialSnapshot["toolCalls"],
           hasTextStarted: snapshot.hasTextStarted as boolean,
           hasAnyThinking: snapshot.hasAnyThinking as boolean,
         },
@@ -122,6 +124,16 @@ function stripCoreEvent(value: UnknownRecord): CoreEvent {
         type: "tool_result",
         historyEntryId: value.historyEntryId as string,
         message: value.message as Extract<CoreEvent, { type: "tool_result" }>["message"],
+      };
+    case "tool_recovery":
+      return {
+        type: "tool_recovery",
+        historyEntryId: value.historyEntryId as string,
+        message: value.message as Extract<CoreEvent, { type: "tool_recovery" }>["message"],
+        toolResults: value.toolResults as Extract<
+          CoreEvent,
+          { type: "tool_recovery" }
+        >["toolResults"],
       };
     case "compaction_start":
       return { type: "compaction_start", reason: "threshold" };
@@ -183,6 +195,13 @@ function isValidCoreEvent(value: UnknownRecord, eventType: string): boolean {
       return typeof value.originHistoryEntryId === "string" && isSubagentUiEvent(value.event);
     case "tool_result":
       return typeof value.historyEntryId === "string" && isToolResultMessage(value.message);
+    case "tool_recovery":
+      return (
+        typeof value.historyEntryId === "string" &&
+        isUserMessage(value.message) &&
+        Array.isArray(value.toolResults) &&
+        value.toolResults.every(isToolResultMessage)
+      );
     case "compaction_start":
       return isOneOf(value.reason, compactionReasons);
     case "compaction_end":
@@ -227,8 +246,28 @@ function isAssistantMessage(value: unknown): boolean {
   return (
     isRecord(value) &&
     value.role === "assistant" &&
-    (value.stopReason === undefined || isOneOf(value.stopReason, stopReasons))
+    Array.isArray(value.content) &&
+    value.content.every(isAssistantContent) &&
+    typeof value.api === "string" &&
+    typeof value.provider === "string" &&
+    typeof value.model === "string" &&
+    isRecord(value.usage) &&
+    isOneOf(value.stopReason, stopReasons) &&
+    isFiniteNumber(value.timestamp)
   );
+}
+
+function isAssistantContent(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.type === "text") {
+    return typeof value.text === "string";
+  }
+  if (value.type === "thinking") {
+    return typeof value.thinking === "string";
+  }
+  return isToolCall(value);
 }
 
 function isToolResultMessage(value: unknown): boolean {
@@ -236,7 +275,43 @@ function isToolResultMessage(value: unknown): boolean {
     isRecord(value) &&
     value.role === "toolResult" &&
     typeof value.toolCallId === "string" &&
-    typeof value.toolName === "string"
+    typeof value.toolName === "string" &&
+    Array.isArray(value.content) &&
+    value.content.every(isUserContent) &&
+    typeof value.isError === "boolean" &&
+    isFiniteNumber(value.timestamp)
+  );
+}
+
+function isUserMessage(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    value.role === "user" &&
+    (typeof value.content === "string" ||
+      (Array.isArray(value.content) && value.content.every(isUserContent))) &&
+    isFiniteNumber(value.timestamp)
+  );
+}
+
+function isUserContent(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.type === "text") {
+    return typeof value.text === "string";
+  }
+  return (
+    value.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string"
+  );
+}
+
+function isToolCall(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    value.type === "toolCall" &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    isRecord(value.arguments)
   );
 }
 
@@ -245,6 +320,8 @@ function isAssistantPartialSnapshot(value: unknown): boolean {
     isRecord(value) &&
     typeof value.text === "string" &&
     typeof value.thinking === "string" &&
+    Array.isArray(value.toolCalls) &&
+    value.toolCalls.every(isToolCall) &&
     typeof value.hasTextStarted === "boolean" &&
     typeof value.hasAnyThinking === "boolean" &&
     (value.hasTextStarted || value.text.length === 0) &&

@@ -49,10 +49,6 @@ export class ConversationTurnRuntime {
             await stream.return?.({ aborted: true });
             break;
           }
-          if (abortController.signal.aborted) {
-            await stream.return?.({ aborted: true });
-            break;
-          }
         }
       } catch (err) {
         if (eventHandlerError !== undefined) {

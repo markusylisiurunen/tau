@@ -25,10 +25,16 @@ const backend = {
   },
 };
 
+async function runTool(tool, ...args) {
+  const dispatch = await tool.dispatch(...args);
+  return dispatch.run;
+}
+
 describe("bash output policy", () => {
   it("rejects unknown execution arguments", async () => {
     const tool = createBashToolDefinition(backend);
-    const result = await tool.dispatch(
+    const result = await runTool(
+      tool,
       {
         id: "bash-1",
         name: "bash",
@@ -38,7 +44,6 @@ describe("bash output policy", () => {
       { scope: "main" },
     );
 
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
   });
 

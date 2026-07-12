@@ -68,6 +68,11 @@ function getImageBlock(content) {
   return block;
 }
 
+async function runTool(tool, ...args) {
+  const dispatch = await tool.dispatch(...args);
+  return dispatch.run;
+}
+
 describe("view_image tool", () => {
   it("downscales images to fit inside a 2000x2000 square", async () => {
     const fx = setupFixture();
@@ -78,16 +83,11 @@ describe("view_image tool", () => {
 
       const backend = createLocalToolExecutionBackend();
       const tool = createViewImageToolDefinition(backend);
-      const result = await tool.dispatch({
+      const result = await runTool(tool, {
         id: "tool-1",
         name: TOOL_NAME_VIEW_IMAGE,
         arguments: { path: filePath },
       });
-
-      expect(result.kind).toBe("single");
-      if (result.kind !== "single") {
-        throw new Error("expected single dispatch result");
-      }
 
       expect(result.uiEvent.type).toBe("view_image_success");
       if (result.uiEvent.type !== "view_image_success") {
@@ -117,16 +117,11 @@ describe("view_image tool", () => {
 
       const backend = createLocalToolExecutionBackend();
       const tool = createViewImageToolDefinition(backend);
-      const result = await tool.dispatch({
+      const result = await runTool(tool, {
         id: "tool-2",
         name: TOOL_NAME_VIEW_IMAGE,
         arguments: { path: filePath },
       });
-
-      expect(result.kind).toBe("single");
-      if (result.kind !== "single") {
-        throw new Error("expected single dispatch result");
-      }
 
       expect(result.uiEvent.type).toBe("view_image_success");
       if (result.uiEvent.type !== "view_image_success") {
@@ -153,16 +148,11 @@ describe("view_image tool", () => {
 
       const backend = createLocalToolExecutionBackend();
       const tool = createViewImageToolDefinition(backend);
-      const result = await tool.dispatch({
+      const result = await runTool(tool, {
         id: "tool-3",
         name: TOOL_NAME_VIEW_IMAGE,
         arguments: { path: filePath },
       });
-
-      expect(result.kind).toBe("single");
-      if (result.kind !== "single") {
-        throw new Error("expected single dispatch result");
-      }
 
       expect(result.uiEvent.type).toBe("view_image_success");
       if (result.uiEvent.type !== "view_image_success") {
@@ -196,16 +186,11 @@ describe("view_image tool", () => {
 
       const backend = createLocalToolExecutionBackend();
       const tool = createViewImageToolDefinition(backend);
-      const result = await tool.dispatch({
+      const result = await runTool(tool, {
         id: "tool-4",
         name: TOOL_NAME_VIEW_IMAGE,
         arguments: { path: filePath },
       });
-
-      expect(result.kind).toBe("single");
-      if (result.kind !== "single") {
-        throw new Error("expected single dispatch result");
-      }
 
       expect(result.uiEvent.type).toBe("view_image_blocked");
       expect(getTextBlock(result.toolResult.content)).toContain("Unsupported image format");

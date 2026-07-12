@@ -11,12 +11,8 @@ import {
 } from "../utils/parallel_api.js";
 import { TRUNCATION_MARKER, type TruncationResult, truncateForTokens } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
-import type {
-  ToolDefinition,
-  ToolDispatchResult,
-  ToolDispatchResultWithPhases,
-  ToolUiEvent,
-} from "./registry.js";
+import type { ToolDefinition, ToolDispatch, ToolDispatchResult, ToolUiEvent } from "./registry.js";
+import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_WEB_SEARCH } from "./tool_names.js";
 
 const WEB_SEARCH_DESCRIPTION = [
@@ -175,10 +171,7 @@ function formatSearchResults(response: ParallelSearchResponse): TruncationResult
 export function createWebSearchToolDefinition(config: Config): ToolDefinition {
   return {
     schema: WEB_SEARCH_TOOL,
-    async dispatch(
-      toolCall: ToolCall,
-      signal?: AbortSignal,
-    ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
+    async dispatch(toolCall: ToolCall, signal?: AbortSignal): Promise<ToolDispatch> {
       const parsedArgs = parseArgs(toolCall.arguments);
       const objective = parsedArgs.ok ? parsedArgs.data.objective : "";
       const headerTarget = objective || "(invalid arguments)";
@@ -193,22 +186,21 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
           status: "error",
           message: reason,
         };
-        return { kind: "single", toolResult, uiEvent };
+        return { toolResult, uiEvent };
       };
 
       if (!parsedArgs.ok) {
-        return blocked(`Invalid arguments: ${parsedArgs.error}`);
+        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       const args = parsedArgs.data;
 
       const apiKey = getParallelApiKey(config);
       if (!apiKey) {
-        return blocked("Missing Parallel API key.");
+        return createToolDispatch(() => blocked("Missing Parallel API key."));
       }
 
       return {
-        kind: "phased",
         startedUiEvent: {
           type: "web_search_started",
           toolCallId: toolCall.id,
@@ -282,7 +274,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
               costUsd: estimateParallelSearchCostUsd(args.maxResults, response.results.length),
               message: resultText.truncated ? TRUNCATION_MARKER : undefined,
             };
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             const reason = msg.trim() ? msg : "Request failed.";
@@ -295,7 +287,7 @@ export function createWebSearchToolDefinition(config: Config): ToolDefinition {
               status: "error",
               message: reason,
             };
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           }
         })(),
       };

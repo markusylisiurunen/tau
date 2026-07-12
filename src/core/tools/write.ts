@@ -13,11 +13,13 @@ import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
+  ToolDispatch,
   ToolDispatchResult,
   ToolUiEvent,
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_WRITE } from "./tool_names.js";
 
 const WRITE_DESCRIPTION = [
@@ -94,50 +96,52 @@ function buildWriteUiText(args: {
 export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: WRITE_TOOL,
-    async dispatch(toolCall: ToolCall): Promise<ToolDispatchResult> {
-      const parsedArgs = parseWriteArgs(toolCall.arguments);
-      const path = parsedArgs.ok ? parsedArgs.data.path : "";
-      const headerTarget = path || "(invalid arguments)";
+    async dispatch(toolCall: ToolCall): Promise<ToolDispatch> {
+      return createToolDispatch(async () => {
+        const parsedArgs = parseWriteArgs(toolCall.arguments);
+        const path = parsedArgs.ok ? parsedArgs.data.path : "";
+        const headerTarget = path || "(invalid arguments)";
 
-      const blocked = (reason: string): ToolDispatchResult => {
-        const toolResult = createToolError(toolCall, reason);
-        const uiEvent: ToolUiEvent = {
-          type: "write_blocked",
-          toolCallId: toolCall.id,
-          path: path || "(invalid path)",
-          headerTarget,
-          reason,
+        const blocked = (reason: string): ToolDispatchResult => {
+          const toolResult = createToolError(toolCall, reason);
+          const uiEvent: ToolUiEvent = {
+            type: "write_blocked",
+            toolCallId: toolCall.id,
+            path: path || "(invalid path)",
+            headerTarget,
+            reason,
+          };
+          return { toolResult, uiEvent };
         };
-        return { kind: "single", toolResult, uiEvent };
-      };
 
-      if (!parsedArgs.ok) {
-        return blocked(`Invalid arguments: ${parsedArgs.error}`);
-      }
+        if (!parsedArgs.ok) {
+          return blocked(`Invalid arguments: ${parsedArgs.error}`);
+        }
 
-      const { content } = parsedArgs.data;
+        const { content } = parsedArgs.data;
 
-      try {
-        const { bytes, lines } = await backend.writeFile(path, content);
-        const resultText = `Successfully wrote ${formatBytes(bytes)} (${lines} lines) to ${path}`;
+        try {
+          const { bytes, lines } = await backend.writeFile(path, content);
+          const resultText = `Successfully wrote ${formatBytes(bytes)} (${lines} lines) to ${path}`;
 
-        const toolResult = createToolSuccess(toolCall, resultText);
-        const uiText = buildWriteUiText({ bytes, lines, content, fullText: resultText });
-        const uiEvent: ToolUiEvent = {
-          type: "write_success",
-          toolCallId: toolCall.id,
-          path,
-          headerTarget,
-          bytes,
-          lines,
-          content,
-          uiText,
-        };
-        return { kind: "single", toolResult, uiEvent };
-      } catch (e) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`Write failed: ${errorMessage}`);
-      }
+          const toolResult = createToolSuccess(toolCall, resultText);
+          const uiText = buildWriteUiText({ bytes, lines, content, fullText: resultText });
+          const uiEvent: ToolUiEvent = {
+            type: "write_success",
+            toolCallId: toolCall.id,
+            path,
+            headerTarget,
+            bytes,
+            lines,
+            content,
+            uiText,
+          };
+          return { toolResult, uiEvent };
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          return blocked(`Write failed: ${errorMessage}`);
+        }
+      });
     },
   };
 }

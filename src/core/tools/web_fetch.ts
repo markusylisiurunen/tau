@@ -11,12 +11,8 @@ import {
 } from "../utils/parallel_api.js";
 import { TRUNCATION_MARKER, type TruncationResult, truncateForTokens } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
-import type {
-  ToolDefinition,
-  ToolDispatchResult,
-  ToolDispatchResultWithPhases,
-  ToolUiEvent,
-} from "./registry.js";
+import type { ToolDefinition, ToolDispatch, ToolDispatchResult, ToolUiEvent } from "./registry.js";
+import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_WEB_FETCH } from "./tool_names.js";
 
 const WEB_FETCH_DESCRIPTION = [
@@ -203,10 +199,7 @@ function formatExtractResults(response: ExtractResponse): TruncationResult {
 export function createWebFetchToolDefinition(config: Config): ToolDefinition {
   return {
     schema: WEB_FETCH_TOOL,
-    async dispatch(
-      toolCall: ToolCall,
-      signal?: AbortSignal,
-    ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
+    async dispatch(toolCall: ToolCall, signal?: AbortSignal): Promise<ToolDispatch> {
       const parsedArgs = parseArgs(toolCall.arguments);
       const url = parsedArgs.ok ? parsedArgs.data.url : "";
       const headerTarget = url || "(invalid arguments)";
@@ -221,22 +214,21 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
           status: "error",
           message: reason,
         };
-        return { kind: "single", toolResult, uiEvent };
+        return { toolResult, uiEvent };
       };
 
       if (!parsedArgs.ok) {
-        return blocked(`Invalid arguments: ${parsedArgs.error}`);
+        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       const args = parsedArgs.data;
 
       const apiKey = getParallelApiKey(config);
       if (!apiKey) {
-        return blocked("Missing Parallel API key.");
+        return createToolDispatch(() => blocked("Missing Parallel API key."));
       }
 
       return {
-        kind: "phased",
         startedUiEvent: {
           type: "web_fetch_started",
           toolCallId: toolCall.id,
@@ -305,7 +297,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
               costUsd: estimateParallelExtractCostUsd(1),
               message: resultText.truncated ? TRUNCATION_MARKER : undefined,
             };
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             const reason = msg.trim() ? msg : "Request failed.";
@@ -318,7 +310,7 @@ export function createWebFetchToolDefinition(config: Config): ToolDefinition {
               status: "error",
               message: reason,
             };
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           }
         })(),
       };

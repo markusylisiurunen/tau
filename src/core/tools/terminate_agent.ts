@@ -5,11 +5,12 @@ import type { SubagentResult } from "../subagents/control_plane.js";
 import { createToolError, createToolResult } from "../utils/messages.js";
 import { parseToolArgs } from "../utils/zod.js";
 import {
+  createToolDispatch,
   isMainToolDispatchContext,
   type ToolDefinition,
+  type ToolDispatch,
   type ToolDispatchContext,
   type ToolDispatchResult,
-  type ToolDispatchResultWithPhases,
   type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
@@ -80,7 +81,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
       toolCall: ToolCall,
       signal: AbortSignal,
       context: ToolDispatchContext,
-    ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
+    ): Promise<ToolDispatch> {
       let id = "";
       let headerTarget = "(invalid arguments)";
 
@@ -93,25 +94,26 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
           headerTarget,
           reason,
         };
-        return { kind: "single", toolResult, uiEvent };
+        return { toolResult, uiEvent };
       };
 
       const parsedArgs = parseToolArgs(terminateArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return blocked(`Invalid arguments: ${parsedArgs.error}`);
+        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       ({ id } = parsedArgs.data);
       headerTarget = id;
 
       if (!isMainToolDispatchContext(context)) {
-        return blocked("The terminate_agent tool is only available in the main session.");
+        return createToolDispatch(() =>
+          blocked("The terminate_agent tool is only available in the main session."),
+        );
       }
 
       const controlPlane = context.subagentControlPlane;
 
       return {
-        kind: "phased",
         startedUiEvent: {
           type: "terminate_agent_started",
           toolCallId: toolCall.id,
@@ -139,7 +141,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
                 uiText,
               };
               const toolResult = createToolError(toolCall, message);
-              return { kind: "single", toolResult, uiEvent };
+              return { toolResult, uiEvent };
             }
 
             const resultText = formatTerminateResult(result);
@@ -168,7 +170,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               uiText,
             };
             const toolResult = createToolResult(toolCall, resultText, !succeeded);
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The terminate_agent request failed.";
@@ -188,7 +190,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               uiText,
             };
             const toolResult = createToolError(toolCall, reason);
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           }
         })(),
       };

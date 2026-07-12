@@ -6,11 +6,12 @@ import { createToolError, createToolResult } from "../utils/messages.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
+  createToolDispatch,
   isMainToolDispatchContext,
   type ToolDefinition,
+  type ToolDispatch,
   type ToolDispatchContext,
   type ToolDispatchResult,
-  type ToolDispatchResultWithPhases,
   type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText } from "./subagent_ui.js";
@@ -64,7 +65,7 @@ export function createSendInputToAgentToolDefinition(
       toolCall: ToolCall,
       signal: AbortSignal,
       context: ToolDispatchContext,
-    ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
+    ): Promise<ToolDispatch> {
       let id = "";
       let prompt = "";
       let headerTarget = "(invalid arguments)";
@@ -83,28 +84,30 @@ export function createSendInputToAgentToolDefinition(
           headerTarget: details?.title ?? headerTarget,
           reason,
         };
-        return { kind: "single", toolResult, uiEvent } satisfies ToolDispatchResult;
+        return { toolResult, uiEvent } satisfies ToolDispatchResult;
       };
 
       const parsedArgs = parseToolArgs(sendInputArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return blocked(`Invalid arguments: ${parsedArgs.error}`);
+        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       ({ id, prompt } = parsedArgs.data);
       headerTarget = id;
 
       if (!isMainToolDispatchContext(context)) {
-        return blocked("The send_input_to_agent tool is only available in the main session.", {
-          id,
-        });
+        return createToolDispatch(() =>
+          blocked("The send_input_to_agent tool is only available in the main session.", {
+            id,
+          }),
+        );
       }
 
       const controlPlane = context.subagentControlPlane;
 
       const snapshot = controlPlane.getSnapshot(id);
       if (!snapshot) {
-        return blocked(`Unknown subagent ID: ${id}`, { id, title: id });
+        return createToolDispatch(() => blocked(`Unknown subagent ID: ${id}`, { id, title: id }));
       }
 
       const config = context.config;
@@ -112,7 +115,6 @@ export function createSendInputToAgentToolDefinition(
       const target = resolveSnapshotTarget(snapshot);
 
       return {
-        kind: "phased",
         startedUiEvent: {
           type: "send_input_to_agent_started",
           toolCallId: toolCall.id,
@@ -142,7 +144,7 @@ export function createSendInputToAgentToolDefinition(
               message: reason,
               uiText,
             };
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           }
 
           const sendResult = controlPlane.sendInput({
@@ -166,7 +168,7 @@ export function createSendInputToAgentToolDefinition(
               headerTarget: target.title,
               reason: sendResult.reason,
             };
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           }
 
           const resultText = formatSendInputToolResult(sendResult);
@@ -187,7 +189,7 @@ export function createSendInputToAgentToolDefinition(
             status: "success",
             uiText,
           };
-          return { kind: "single", toolResult, uiEvent };
+          return { toolResult, uiEvent };
         })(),
       };
     },

@@ -262,17 +262,24 @@ export type ToolUiText = {
 };
 
 export type ToolDispatchResult = {
-  kind: "single";
   toolResult: ToolResultMessage;
   uiEvent?: ToolUiEvent;
 };
 
-export type ToolDispatchResultWithPhases = {
-  kind: "phased";
+export type ToolDispatch = {
   startedUiEvent?: ToolUiEvent;
-  uiEvents?: AsyncIterable<ToolUiEvent>;
   run: Promise<ToolDispatchResult>;
 };
+
+export function createToolDispatch(
+  run: ToolDispatchResult | (() => ToolDispatchResult | Promise<ToolDispatchResult>),
+  startedUiEvent?: ToolUiEvent,
+): ToolDispatch {
+  return {
+    startedUiEvent,
+    run: typeof run === "function" ? Promise.resolve().then(run) : Promise.resolve(run),
+  };
+}
 
 export type SubagentDispatchContext = {
   id: string;
@@ -338,7 +345,7 @@ export interface ToolDefinition {
     toolCall: ToolCall,
     signal: AbortSignal,
     context: ToolDispatchContext,
-  ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases>;
+  ): Promise<ToolDispatch>;
 }
 
 export class ToolRegistry {

@@ -10,11 +10,12 @@ import { createToolError, createToolResult } from "../utils/messages.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
+  createToolDispatch,
   isMainToolDispatchContext,
   type ToolDefinition,
+  type ToolDispatch,
   type ToolDispatchContext,
   type ToolDispatchResult,
-  type ToolDispatchResultWithPhases,
   type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText } from "./subagent_ui.js";
@@ -108,7 +109,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       toolCall: ToolCall,
       signal: AbortSignal,
       context: ToolDispatchContext,
-    ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
+    ): Promise<ToolDispatch> {
       let name = "";
       let title = "";
       let headerTarget = "(invalid arguments)";
@@ -123,12 +124,12 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           headerTarget: details?.title ?? headerTarget,
           reason,
         };
-        return { kind: "single", toolResult, uiEvent } satisfies ToolDispatchResult;
+        return { toolResult, uiEvent } satisfies ToolDispatchResult;
       };
 
       const parsedArgs = parseToolArgs(spawnArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return blocked(`Invalid arguments: ${parsedArgs.error}`);
+        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       const { prompt, model, workingDirectory } = parsedArgs.data;
@@ -137,10 +138,12 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       headerTarget = title;
 
       if (!isMainToolDispatchContext(context)) {
-        return blocked("The spawn_agent tool is only available in the main session.", {
-          name,
-          title,
-        });
+        return createToolDispatch(() =>
+          blocked("The spawn_agent tool is only available in the main session.", {
+            name,
+            title,
+          }),
+        );
       }
 
       const { persona, cwd: baseCwd, subagentPrompts } = context;
@@ -152,7 +155,9 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       let effectiveSubagentPrompts = subagentPrompts;
       if (workingDirectory) {
         if (!context.resolveSubagentRuntime) {
-          return blocked("Working-directory context resolution is unavailable.", { name, title });
+          return createToolDispatch(() =>
+            blocked("Working-directory context resolution is unavailable.", { name, title }),
+          );
         }
         try {
           const runtime = await context.resolveSubagentRuntime({ cwd, persona });
@@ -161,64 +166,78 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           modelResolver = runtime.modelResolver;
           effectiveSubagentPrompts = runtime.subagentPrompts;
         } catch (error) {
-          return blocked(
-            `Failed to build the subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
-            {
-              name,
-              title,
-            },
+          return createToolDispatch(() =>
+            blocked(
+              `Failed to build the subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
+              {
+                name,
+                title,
+              },
+            ),
           );
         }
       }
       if (!effectivePersona.subagents || Object.keys(effectivePersona.subagents).length === 0) {
-        return blocked("The spawn_agent tool is not enabled for the resolved persona.", {
-          name,
-          title,
-        });
+        return createToolDispatch(() =>
+          blocked("The spawn_agent tool is not enabled for the resolved persona.", {
+            name,
+            title,
+          }),
+        );
       }
       const personaConfig = effectivePersona.subagents[name];
       if (!personaConfig) {
-        return blocked(`Subagent '${name}' is not enabled for the resolved persona.`, {
-          name,
-          title,
-        });
+        return createToolDispatch(() =>
+          blocked(`Subagent '${name}' is not enabled for the resolved persona.`, {
+            name,
+            title,
+          }),
+        );
       }
       const systemPrompt = effectiveSubagentPrompts[name];
       if (!systemPrompt) {
-        return blocked(`Subagent '${name}' is missing its system prompt.`, {
-          name,
-          title,
-        });
+        return createToolDispatch(() =>
+          blocked(`Subagent '${name}' is missing its system prompt.`, {
+            name,
+            title,
+          }),
+        );
       }
 
       let launchModelOverride: SubagentLaunchModel | undefined;
       if (model) {
         const parsedLaunchModel = parseSubagentLaunchModel(model, { resolveModel: modelResolver });
         if (parsedLaunchModel.error || !parsedLaunchModel.launchModel) {
-          return blocked(`Invalid model parameter: ${parsedLaunchModel.error}.`, {
-            name,
-            title,
-          });
+          return createToolDispatch(() =>
+            blocked(`Invalid model parameter: ${parsedLaunchModel.error}.`, {
+              name,
+              title,
+            }),
+          );
         }
 
         const launchModels = personaConfig.launchModels ?? [];
         if (launchModels.length === 0) {
-          return blocked(
-            `Subagent '${name}' does not allow launch model overrides. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
-            {
-              name,
-              title,
-            },
+          return createToolDispatch(() =>
+            blocked(
+              `Subagent '${name}' does not allow launch model overrides. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
+              {
+                name,
+                title,
+              },
+            ),
           );
         }
 
         if (!launchModels.includes(parsedLaunchModel.launchModel.normalized)) {
-          return blocked(
-            `Model '${parsedLaunchModel.launchModel.normalized}' is not allowed for subagent '${name}'. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
-            {
-              name,
-              title,
-            },
+          return createToolDispatch(
+            blocked(
+              `Model '${parsedLaunchModel.launchModel.normalized}' is not allowed for subagent '${name}'. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
+              {
+                name,
+                title,
+              },
+            ),
           );
         }
 
@@ -247,7 +266,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       const statusPrefixParts = [name, modelLabel, statusWorkingDirectory].filter(Boolean);
 
       return {
-        kind: "phased",
         startedUiEvent: {
           type: "spawn_agent_started",
           toolCallId: toolCall.id,
@@ -275,7 +293,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
               message: reason,
               uiText,
             };
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           }
 
           const spawnResult = controlPlane.spawn({
@@ -301,7 +319,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
               headerTarget,
               reason: spawnResult.reason,
             };
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           }
 
           const resultText = formatSpawnToolResult({
@@ -329,7 +347,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             agentId: spawnResult.id,
             uiText,
           };
-          return { kind: "single", toolResult, uiEvent };
+          return { toolResult, uiEvent };
         })(),
       };
     },

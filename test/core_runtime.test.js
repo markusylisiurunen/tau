@@ -539,30 +539,32 @@ describe("core session rewind APIs", () => {
         markFirstStarted();
         await firstRun;
         return {
-          kind: "single",
-          toolResult: {
-            role: "toolResult",
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            content: [{ type: "text", text: "first done" }],
-            isError: false,
-            timestamp: 2,
-          },
+          run: Promise.resolve({
+            toolResult: {
+              role: "toolResult",
+              toolCallId: toolCall.id,
+              toolName: toolCall.name,
+              content: [{ type: "text", text: "first done" }],
+              isError: false,
+              timestamp: 2,
+            },
+          }),
         };
       }),
       createDefinition("second_tool", async (toolCall) => {
         secondHasStarted = true;
         markSecondStarted();
         return {
-          kind: "single",
-          toolResult: {
-            role: "toolResult",
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            content: [{ type: "text", text: "second done" }],
-            isError: false,
-            timestamp: 3,
-          },
+          run: Promise.resolve({
+            toolResult: {
+              role: "toolResult",
+              toolCallId: toolCall.id,
+              toolName: toolCall.name,
+              content: [{ type: "text", text: "second done" }],
+              isError: false,
+              timestamp: 3,
+            },
+          }),
         };
       }),
     ]);
@@ -664,15 +666,16 @@ describe("core session rewind APIs", () => {
         dispatch: async (call) => {
           executions += 1;
           return {
-            kind: "single",
-            toolResult: {
-              role: "toolResult",
-              toolCallId: call.id,
-              toolName: call.name,
-              content: [{ type: "text", text: "created result.txt" }],
-              isError: false,
-              timestamp: 2,
-            },
+            run: Promise.resolve({
+              toolResult: {
+                role: "toolResult",
+                toolCallId: call.id,
+                toolName: call.name,
+                content: [{ type: "text", text: "created result.txt" }],
+                isError: false,
+                timestamp: 2,
+              },
+            }),
           };
         },
       },
@@ -796,15 +799,16 @@ describe("core session rewind APIs", () => {
         dispatch: async (call) => {
           executions += 1;
           return {
-            kind: "single",
-            toolResult: {
-              role: "toolResult",
-              toolCallId: call.id,
-              toolName: call.name,
-              content: [{ type: "text", text: `completed ${call.id}` }],
-              isError: false,
-              timestamp: executions,
-            },
+            run: Promise.resolve({
+              toolResult: {
+                role: "toolResult",
+                toolCallId: call.id,
+                toolName: call.name,
+                content: [{ type: "text", text: `completed ${call.id}` }],
+                isError: false,
+                timestamp: executions,
+              },
+            }),
           };
         },
       },
@@ -892,15 +896,16 @@ describe("core session rewind APIs", () => {
             );
           }
           return {
-            kind: "single",
-            toolResult: {
-              role: "toolResult",
-              toolCallId: call.id,
-              toolName: call.name,
-              content: [{ type: "text", text: "cancelled after starting" }],
-              isError: true,
-              timestamp: 2,
-            },
+            run: Promise.resolve({
+              toolResult: {
+                role: "toolResult",
+                toolCallId: call.id,
+                toolName: call.name,
+                content: [{ type: "text", text: "cancelled after starting" }],
+                isError: true,
+                timestamp: 2,
+              },
+            }),
           };
         },
       },
@@ -997,15 +1002,16 @@ describe("core session rewind APIs", () => {
           await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
           toolAborted = true;
           return {
-            kind: "single",
-            toolResult: {
-              role: "toolResult",
-              toolCallId: call.id,
-              toolName: call.name,
-              content: [{ type: "text", text: "cancelled" }],
-              isError: true,
-              timestamp: 2,
-            },
+            run: Promise.resolve({
+              toolResult: {
+                role: "toolResult",
+                toolCallId: call.id,
+                toolName: call.name,
+                content: [{ type: "text", text: "cancelled" }],
+                isError: true,
+                timestamp: 2,
+              },
+            }),
           };
         },
       },
@@ -1062,15 +1068,16 @@ describe("core session rewind APIs", () => {
           toolContextReasoning.push(context.persona.settings.reasoning);
           session.setReasoning("high");
           return {
-            kind: "single",
-            toolResult: {
-              role: "toolResult",
-              toolCallId: "fake-call",
-              toolName: "fake_tool",
-              content: [{ type: "text", text: "ok" }],
-              isError: false,
-              timestamp: 2,
-            },
+            run: Promise.resolve({
+              toolResult: {
+                role: "toolResult",
+                toolCallId: "fake-call",
+                toolName: "fake_tool",
+                content: [{ type: "text", text: "ok" }],
+                isError: false,
+                timestamp: 2,
+              },
+            }),
           };
         },
       },
@@ -1161,15 +1168,16 @@ describe("core session rewind APIs", () => {
           async dispatch(toolCall, _signal, context) {
             receivedOriginHistoryEntryId = context.originHistoryEntryId;
             return {
-              kind: "single",
-              toolResult: {
-                role: "toolResult",
-                toolCallId: toolCall.id,
-                toolName: toolCall.name,
-                content: [{ type: "text", text: "ok" }],
-                isError: false,
-                timestamp: 2,
-              },
+              run: Promise.resolve({
+                toolResult: {
+                  role: "toolResult",
+                  toolCallId: toolCall.id,
+                  toolName: toolCall.name,
+                  content: [{ type: "text", text: "ok" }],
+                  isError: false,
+                  timestamp: 2,
+                },
+              }),
             };
           },
         },

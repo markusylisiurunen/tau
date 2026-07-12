@@ -86,7 +86,7 @@ DM and group behavior matches the previous Telegram adapter:
 - non-triggering group text/caption messages, attachments, audio transcripts, and processing errors are buffered as sender-attributed context and the last 50 pending messages since the previous bot-triggering turn are included with the triggering turn.
 - group commands must mention the bot, for example `/status@botusername`, `/status @botusername`, or `@botusername /status`.
 - Telegram-originated text and transcribed audio use explicit steering mode: if the selected session is idle the message behaves like a normal user turn, and if the agent is already working the message is accepted and run at the next safe boundary.
-- Telegram `voice` and `audio` messages are downloaded, transcribed with the configured speech-to-text provider, and then sent to the selected session.
+- Telegram `voice` and `audio` messages are downloaded and transcribed with the configured speech-to-text provider. For direct DM turns and bot-triggering group turns, the transcript is echoed to the chat before being sent to the selected session.
 - attachments (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`) are downloaded to local temp files immediately, queued per session, and prepended to the next text/voice turn as local temp paths with mime, size, and caption metadata.
 - attachment-only messages do not trigger a turn.
 - unsupported attachments and over-limit attachments are skipped with a Telegram warning.

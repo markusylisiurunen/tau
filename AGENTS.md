@@ -77,7 +77,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
   - `cli.ts` - CLI argument parsing and help text
   - `telegram/` - Telegram runner config, CLI, and runtime wiring for `tau telegram`
   - `telegram/session_manager.ts`, `telegram/adapter.ts`, `telegram/workspace.ts` - SDK-backed Telegram session manager, Telegram polling/media adapter, and workspace preparation helpers
-    - `telegram/adapter.ts` handles DM and opt-in group commands with explicit bot mentions, group mention triggers with sender-attributed pending context (including attachments, audio transcripts, and processing errors) since the previous bot-triggering turn, voice/audio transcription, steering-mode submission for text/audio while a session is running, immediate attachment materialization/queueing for text/voice-triggered turns, and splits oversized Telegram replies into chunks capped at 95% of each Telegram API method's byte limit and sent 1 second apart
+    - `telegram/adapter.ts` handles DM and opt-in group commands with explicit bot mentions, group mention triggers with sender-attributed pending context (including attachments, audio transcripts, and processing errors) since the previous bot-triggering turn, voice/audio transcription with transcript echoes for submitted audio turns, steering-mode submission for text/audio while a session is running, immediate attachment materialization/queueing for text/voice-triggered turns, and splits oversized Telegram replies into chunks capped at 95% of each Telegram API method's byte limit and sent 1 second apart
 
   - `debug.ts` - `--debug` output
   - `config/deps.ts` - Config loader dependencies

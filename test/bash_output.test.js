@@ -26,13 +26,13 @@ const backend = {
 };
 
 describe("bash output policy", () => {
-  it("rejects removed and unknown execution arguments", async () => {
+  it("rejects unknown execution arguments", async () => {
     const tool = createBashToolDefinition(backend);
     const result = await tool.dispatch(
       {
         id: "bash-1",
         name: "bash",
-        arguments: { command: "pwd", safetyLevel: "read" },
+        arguments: { command: "pwd", unexpected: true },
       },
       new AbortController().signal,
       { scope: "main" },

@@ -182,24 +182,6 @@ export class ChatRuntime {
     );
   }
 
-  rebuildSubagentPrompts(options?: { skillsBlock?: string }): void {
-    if (options?.skillsBlock !== undefined) {
-      this.promptContext.skillsBlock = options.skillsBlock;
-    }
-
-    const nextPromptComposition = this.composePromptSet(options?.skillsBlock);
-    this.latestPromptComposition = {
-      ...this.latestPromptComposition,
-      subagentPrompts: nextPromptComposition.subagentPrompts,
-    };
-
-    this.sessionInstance.setPersona(
-      this.currentPersona,
-      this.latestPromptComposition.baseSystemPrompt,
-      this.latestPromptComposition.subagentPrompts,
-    );
-  }
-
   private composePromptSet(skillsBlock?: string): SessionPromptComposition {
     return composeSessionPrompts({
       persona: this.currentPersona,

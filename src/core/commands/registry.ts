@@ -26,7 +26,6 @@ export type Command = (
 
 export type CommandId = Command["type"];
 export type CommandArgument = "none" | "persona" | "prompt" | "theme";
-export type CommandSection = "base" | "trailing";
 
 export interface CommandInfo {
   id: CommandId;
@@ -34,7 +33,6 @@ export interface CommandInfo {
   description: string;
   autocompleteDescription?: string;
   argument: CommandArgument;
-  section: CommandSection;
 }
 
 interface CommandDefinition<Ctx, T extends Command = Command> extends CommandInfo {
@@ -148,17 +146,10 @@ export class CommandRegistry<Ctx = unknown> {
 
     const hasThemes = (themes?.length ?? 0) > 0;
     const commands = this.list().filter((command) => command.argument !== "theme" || hasThemes);
-    const baseCommands = commands.filter((command) => command.section === "base");
-    const trailingCommands = commands.filter((command) => command.section === "trailing");
-
-    const commandEntries: Array<[string, string]> = [];
-    baseCommands.forEach((command) => {
-      commandEntries.push([command.usage, command.description]);
-    });
-
-    trailingCommands.forEach((command) => {
-      commandEntries.push([command.usage, command.description]);
-    });
+    const commandEntries = commands.map((command): [string, string] => [
+      command.usage,
+      command.description,
+    ]);
 
     const keyEntries: Array<[string, string]> = [
       ["shift+tab", "cycle reasoning effort"],
@@ -199,7 +190,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "show this help",
     autocompleteDescription: "show help",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/help") return null;
@@ -214,7 +204,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "exit tau",
     autocompleteDescription: "exit tau",
     argument: "none",
-    section: "base",
     allowDuringStreaming: true,
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -230,7 +219,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "new session",
     autocompleteDescription: "new session",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/new") return null;
@@ -245,7 +233,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "rewind context to an earlier user message",
     autocompleteDescription: "rewind context to a selected user message",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/rewind") return null;
@@ -260,7 +247,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "open the local diff review tool for the session diff",
     autocompleteDescription: "open diff review for git diff args",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/diff") return null;
@@ -275,7 +261,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "summarize and start new session",
     autocompleteDescription: "compact history to a summary",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/compact:summary-only") return null;
@@ -290,7 +275,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "summarize and include previous last assistant message",
     autocompleteDescription: "compact history, keep last assistant message",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/compact:summary-and-last") return null;
@@ -305,7 +289,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "prune earliest tool results from context",
     autocompleteDescription: "prune earliest tool results",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/prune:earliest") return null;
@@ -320,7 +303,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "prune largest tool results from context",
     autocompleteDescription: "prune largest tool results",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/prune:largest") return null;
@@ -335,7 +317,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "prune tool results using model selection",
     autocompleteDescription: "prune tool results with model selection",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/prune:smart") return null;
@@ -350,7 +331,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "reload prompts, skills, themes, and AGENTS.md",
     autocompleteDescription: "reload prompts, skills, themes, and AGENTS.md",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/reload") return null;
@@ -365,7 +345,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "start voice recording and transcription",
     autocompleteDescription: "start voice recording",
     argument: "none",
-    section: "base",
     allowDuringStreaming: true,
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -381,7 +360,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "speak the last assistant message aloud",
     autocompleteDescription: "speak the last assistant message",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/speak") return null;
@@ -396,7 +374,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "copy last assistant message",
     autocompleteDescription: "copy last assistant message",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/copy:text") return null;
@@ -411,7 +388,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "copy code blocks from last assistant message",
     autocompleteDescription: "copy code blocks from last assistant message",
     argument: "none",
-    section: "base",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/copy:code") return null;
@@ -425,7 +401,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     usage: "/persona:<id>",
     description: "switch persona",
     argument: "persona",
-    section: "trailing",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       const match = command.match(/^\/persona:(.+)$/i);
@@ -441,7 +416,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     usage: "/prompt:<id>",
     description: "insert prompt template",
     argument: "prompt",
-    section: "trailing",
     allowDuringStreaming: true,
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -458,7 +432,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     usage: "/theme:<id>",
     description: "switch theme",
     argument: "theme",
-    section: "trailing",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       const match = command.match(/^\/theme:(.+)$/i);
@@ -474,7 +447,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     usage: "",
     description: "",
     argument: "none",
-    section: "base",
     hidden: true,
     parse: () => null,
     run: (ctx, command) => ctx.unknown(command.raw),

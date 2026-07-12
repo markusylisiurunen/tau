@@ -187,35 +187,4 @@ describe("ChatRuntime", () => {
     expect(lastSetPersona.systemPrompt).toBe(composition.baseSystemPrompt);
     expect(lastSetPersona.subagentPrompts).toEqual(composition.subagentPrompts);
   });
-
-  it("rebuilds only subagent prompts while preserving the main system prompt", () => {
-    const { session, calls } = createStubSession();
-
-    const runtime = new ChatRuntime({
-      session,
-      persona: createPersona(),
-      promptContext: {
-        cwd: "/repo/start",
-        skillsBlock: "### Skills\n\n- initial",
-      },
-      environment: createEnvironment(),
-    });
-
-    const mainBefore = runtime.promptComposition.baseSystemPrompt;
-    const subagentBefore = runtime.promptComposition.subagentPrompts.researcher;
-
-    runtime.updatePromptContext({ cwd: "/repo/next" });
-    runtime.rebuildSubagentPrompts();
-
-    const composition = runtime.promptComposition;
-    expect(composition.baseSystemPrompt).toBe(mainBefore);
-    expect(composition.baseSystemPrompt).toContain("<cwd>/repo/start</cwd>");
-    expect(composition.subagentPrompts.researcher).toContain("<cwd>/repo/next</cwd>");
-    expect(composition.subagentPrompts.researcher).not.toBe(subagentBefore);
-
-    const lastSetPersona = calls.setPersonaCalls.at(-1);
-    expect(lastSetPersona).toBeDefined();
-    expect(lastSetPersona.systemPrompt).toBe(mainBefore);
-    expect(lastSetPersona.subagentPrompts).toEqual(composition.subagentPrompts);
-  });
 });

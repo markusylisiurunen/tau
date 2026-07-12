@@ -209,6 +209,7 @@ export async function runSubagent(options: {
       emitPartials: false,
       retry: {
         shouldRetryAfterError: ({ error, model }) => shouldAutoRetry({ model, error }),
+        allowAfterToolCall: true,
         maxRetries: 1,
         delayMs: 3000,
         notice: { text: "auto-retrying after transient error", severity: "warn" },

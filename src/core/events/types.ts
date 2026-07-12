@@ -1,4 +1,9 @@
-import type { AssistantMessage, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
+import type {
+  AssistantMessage,
+  ToolCall,
+  ToolResultMessage,
+  UserMessage,
+} from "@earendil-works/pi-ai";
 import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
 import type { ToolUiEvent } from "../tools/registry.js";
@@ -43,6 +48,13 @@ export type CoreToolResultEvent = {
   type: "tool_result";
   historyEntryId: string;
   message: ToolResultMessage;
+};
+
+export type CoreToolRecoveryEvent = {
+  type: "tool_recovery";
+  historyEntryId: string;
+  message: UserMessage;
+  toolResults: ToolResultMessage[];
 };
 
 export type CoreCompactionStartEvent = {
@@ -90,6 +102,7 @@ export type CoreEvent =
   | CoreToolUiEvent
   | CoreSubagentUiEvent
   | CoreToolResultEvent
+  | CoreToolRecoveryEvent
   | CoreCompactionStartEvent
   | CoreCompactionEndEvent;
 

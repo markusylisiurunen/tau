@@ -16,7 +16,10 @@ import {
   filterProjectPathAutocompleteEntries,
   loadProjectPathAutocompleteEntriesWithBackend,
 } from "../core/utils/project_files.js";
-import { hasAutoCompactionContinuationMetadata } from "../core/utils/user_metadata.js";
+import {
+  hasAutoCompactionContinuationMetadata,
+  splitTauUserText,
+} from "../core/utils/user_metadata.js";
 import type {
   ExecutionEnvironment,
   ExecutionEnvironmentResolver,
@@ -1122,6 +1125,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     if (message.id === "system") {
       return false;
     }
+    if (isHiddenSystemOnlyUserMessage(message.message)) {
+      return false;
+    }
     if (isCoreMessage(message.message) && hasAutoCompactionContinuationMetadata(message.message)) {
       return false;
     }
@@ -1266,8 +1272,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         if (nextDraft.message.role !== "assistant" || !Array.isArray(nextDraft.message.content)) {
           throw new Error("assistant partial produced a non-assistant message");
         }
-        this.syncToolRunsFromAssistantMessage(event.historyEntryId, nextDraft.message);
-        const toolChanges = this.toolChangesForAssistantMessage(
+        const toolChanges = this.syncToolRunsFromAssistantMessage(
           event.historyEntryId,
           nextDraft.message,
         );
@@ -1283,7 +1288,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       case "assistant_final": {
         this.draftAssistantMessage = undefined;
         this.messageStates.delete(event.historyEntryId);
-        this.syncToolRunsFromAssistantMessage(event.historyEntryId, event.message);
+        const toolChanges = this.syncToolRunsFromAssistantMessage(
+          event.historyEntryId,
+          event.message,
+        );
         this.costTotal += event.message.usage?.cost?.total ?? 0;
         await this.emitPatch("assistant-message", [
           { type: "cost.set", costTotal: this.costTotal },
@@ -1296,7 +1304,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
               message: event.message,
             },
           },
-          ...this.toolChangesForAssistantMessage(event.historyEntryId, event.message),
+          ...toolChanges,
         ]);
         return;
       }
@@ -1337,6 +1345,34 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             timelineItem: timelineItemForMessage(event.historyEntryId),
           },
         ]);
+        return;
+      }
+      case "tool_recovery": {
+        const changes: SessionProtocolChange[] = [
+          {
+            type: "message.append",
+            message: {
+              id: event.historyEntryId,
+              state: "committed",
+              modelVisible: true,
+              message: event.message,
+            },
+          },
+        ];
+        for (const toolResult of event.toolResults) {
+          const existing = this.tools.get(toolResult.toolCallId);
+          if (!existing) {
+            continue;
+          }
+          const nextTool: SessionProtocolToolRun = {
+            ...existing,
+            status: toolResult.isError ? "failed" : "succeeded",
+            finishedAt: toolResult.timestamp,
+          };
+          this.tools.set(nextTool.id, nextTool);
+          changes.push({ type: "tool.set", tool: structuredClone(nextTool) });
+        }
+        await this.emitPatch("recovery", changes);
         return;
       }
       case "notice": {
@@ -1572,16 +1608,31 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private syncToolRunsFromAssistantMessage(
     messageId: string,
     message: Pick<AssistantMessage, "content">,
-  ): void {
+  ): SessionProtocolChange[] {
+    const changes: SessionProtocolChange[] = [];
     const toolCalls = message.content
       .map((content, index) => ({ content, index }))
       .filter(
         (item): item is { content: ToolCall; index: number } => item.content.type === "toolCall",
       );
+    const toolCallIds = new Set(toolCalls.map(({ content }) => content.id));
+
+    for (const [id, tool] of this.tools) {
+      if (tool.call.messageId !== messageId || toolCallIds.has(tool.toolCallId)) {
+        continue;
+      }
+      this.tools.delete(id);
+      changes.push({ type: "tool.remove", id });
+      for (const facetId of tool.facetIds) {
+        if (this.facets.delete(facetId)) {
+          changes.push({ type: "facet.remove", id: facetId });
+        }
+      }
+    }
 
     for (const { content, index } of toolCalls) {
       const existing = this.tools.get(content.id);
-      this.tools.set(content.id, {
+      const nextTool: SessionProtocolToolRun = {
         ...(existing ?? {
           id: content.id,
           toolCallId: content.id,
@@ -1593,26 +1644,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           messageId,
           contentIndex: index,
         },
-      });
+      };
+      if (existing && JSON.stringify(existing) === JSON.stringify(nextTool)) {
+        continue;
+      }
+      this.tools.set(content.id, nextTool);
+      changes.push({ type: "tool.set", tool: structuredClone(nextTool) });
     }
-  }
 
-  private toolChangesForAssistantMessage(
-    _messageId: string,
-    message: Pick<AssistantMessage, "content">,
-  ): SessionProtocolChange[] {
-    return message.content
-      .map((content, index) => ({ content, index }))
-      .filter(
-        (item): item is { content: ToolCall; index: number } => item.content.type === "toolCall",
-      )
-      .map(({ content }) => {
-        const tool = this.tools.get(content.id);
-        if (!tool) {
-          throw new Error(`missing protocol tool run for tool call '${content.id}'`);
-        }
-        return { type: "tool.set", tool: structuredClone(tool) };
-      });
+    return changes;
   }
 
   private async interruptDraftAssistantMessage(): Promise<void> {
@@ -1668,6 +1708,12 @@ function buildAssistantContentAppendChange(
   if (!assistantDraftStaticContentEquals(previousDraft, nextDraft)) {
     return undefined;
   }
+  if (
+    assistantDraftHasStaticContent(previousDraft) &&
+    !assistantDraftContentShapeEquals(previousDraft, nextDraft)
+  ) {
+    return undefined;
+  }
 
   const previousText = getAssistantDraftBlockText(previousDraft, "text");
   const nextText = getAssistantDraftBlockText(nextDraft, "text");
@@ -1718,6 +1764,28 @@ function assistantDraftStaticContentEquals(
     (content) => content.type !== "text" && content.type !== "thinking",
   );
   return JSON.stringify(previousContent) === JSON.stringify(nextContent);
+}
+
+function assistantDraftHasStaticContent(message: SessionProtocolMessage): boolean {
+  return (
+    message.message.role === "assistant" &&
+    message.message.content.some(
+      (content) => content.type !== "text" && content.type !== "thinking",
+    )
+  );
+}
+
+function assistantDraftContentShapeEquals(
+  previousDraft: SessionProtocolMessage,
+  nextDraft: SessionProtocolMessage,
+): boolean {
+  if (previousDraft.message.role !== "assistant" || nextDraft.message.role !== "assistant") {
+    return false;
+  }
+  return (
+    JSON.stringify(previousDraft.message.content.map((content) => content.type)) ===
+    JSON.stringify(nextDraft.message.content.map((content) => content.type))
+  );
 }
 
 function getAssistantDraftBlockText(
@@ -1782,6 +1850,21 @@ function timelineItemForMessage(messageId: string): SessionProtocolTimelineItem 
     id: `timeline-${messageId}`,
     messageId,
   };
+}
+
+function isHiddenSystemOnlyUserMessage(message: SessionProtocolMessage["message"]): boolean {
+  if (message.role !== "user") {
+    return false;
+  }
+  const text =
+    typeof message.content === "string"
+      ? message.content
+      : message.content
+          .filter((content) => content.type === "text")
+          .map((content) => content.text)
+          .join("\n\n");
+  const split = splitTauUserText(text);
+  return split.hiddenSystemBlocks.length > 0 && !split.displayText.trim();
 }
 
 function isCoreMessage(message: SessionProtocolMessage["message"]): message is Message {

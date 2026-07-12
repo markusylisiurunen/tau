@@ -125,6 +125,16 @@ function stripCoreEvent(value: UnknownRecord): CoreEvent {
         historyEntryId: value.historyEntryId as string,
         message: value.message as Extract<CoreEvent, { type: "tool_result" }>["message"],
       };
+    case "tool_recovery":
+      return {
+        type: "tool_recovery",
+        historyEntryId: value.historyEntryId as string,
+        message: value.message as Extract<CoreEvent, { type: "tool_recovery" }>["message"],
+        toolResults: value.toolResults as Extract<
+          CoreEvent,
+          { type: "tool_recovery" }
+        >["toolResults"],
+      };
     case "compaction_start":
       return { type: "compaction_start", reason: "threshold" };
     case "compaction_end":
@@ -185,6 +195,13 @@ function isValidCoreEvent(value: UnknownRecord, eventType: string): boolean {
       return typeof value.originHistoryEntryId === "string" && isSubagentUiEvent(value.event);
     case "tool_result":
       return typeof value.historyEntryId === "string" && isToolResultMessage(value.message);
+    case "tool_recovery":
+      return (
+        typeof value.historyEntryId === "string" &&
+        isUserMessage(value.message) &&
+        Array.isArray(value.toolResults) &&
+        value.toolResults.every(isToolResultMessage)
+      );
     case "compaction_start":
       return isOneOf(value.reason, compactionReasons);
     case "compaction_end":
@@ -239,6 +256,14 @@ function isToolResultMessage(value: unknown): boolean {
     value.role === "toolResult" &&
     typeof value.toolCallId === "string" &&
     typeof value.toolName === "string"
+  );
+}
+
+function isUserMessage(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    value.role === "user" &&
+    (typeof value.content === "string" || Array.isArray(value.content))
   );
 }
 

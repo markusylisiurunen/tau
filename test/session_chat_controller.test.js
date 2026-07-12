@@ -1185,6 +1185,31 @@ describe("SessionChatController", () => {
     );
   });
 
+  it("does not render hidden system-only user messages", async () => {
+    const session = new FakeSession(
+      createSnapshot([
+        {
+          id: "hidden-tool-recovery",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "<system>tool recovery</system>\n" }],
+          },
+        },
+      ]),
+    );
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+    });
+
+    controller.start();
+
+    expect(view.messages.some((message) => message.id === "hidden-tool-recovery")).toBe(false);
+  });
+
   it("syncs rendered history when a session update arrives from another client", async () => {
     const session = new FakeSession();
     const view = new FakeView();

@@ -225,6 +225,81 @@ describe("session runner tool dispatch context", () => {
     }
   });
 
+  it("allows consumers without early execution to retry after streamed tool calls", async () => {
+    const toolCall = {
+      id: "tool-call-1",
+      type: "toolCall",
+      name: "fake_tool",
+      arguments: {},
+    };
+    const errorMessage = {
+      role: "assistant",
+      api: "anthropic",
+      provider: "anthropic",
+      model: "claude-opus",
+      stopReason: "error",
+      errorMessage: "network error",
+      content: [toolCall],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const successMessage = {
+      ...errorMessage,
+      stopReason: "stop",
+      errorMessage: undefined,
+      content: [{ type: "text", text: "recovered" }],
+    };
+    let attempts = 0;
+    const modelRuntime = {
+      streamModel() {
+        attempts += 1;
+        if (attempts === 1) {
+          return createModelStream(
+            [
+              { type: "toolcall_start", contentIndex: 0 },
+              { type: "toolcall_end", contentIndex: 0, toolCall },
+              { type: "error", reason: "error", error: errorMessage },
+            ],
+            errorMessage,
+          );
+        }
+        return createModelStream([], successMessage);
+      },
+    };
+    const runner = runModelSubturn({
+      model: {},
+      context: {},
+      modelRuntime,
+      streamOptions: {},
+      signal: new AbortController().signal,
+      retry: {
+        allowAfterToolCall: true,
+        shouldRetryAfterError: () => true,
+        maxRetries: 1,
+      },
+    });
+    const events = [];
+    let finalMessage;
+    while (true) {
+      const next = await runner.next();
+      if (next.done) {
+        finalMessage = next.value;
+        break;
+      }
+      events.push(next.value);
+    }
+
+    expect(attempts).toBe(2);
+    expect(events).toEqual([{ type: "tool_call", toolCall }]);
+    expect(finalMessage).toBe(successMessage);
+  });
+
   it("flushes the latest pending assistant partial before a stream error", async () => {
     const now = vi.spyOn(Date, "now");
     now.mockReturnValue(1_000);

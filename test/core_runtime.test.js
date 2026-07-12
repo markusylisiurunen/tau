@@ -90,6 +90,45 @@ describe("core event parser", () => {
       },
     });
   });
+
+  it("parses tool recovery events", () => {
+    const message = {
+      role: "user",
+      content: [{ type: "text", text: "<system>recovery</system>\n" }],
+      timestamp: 2,
+    };
+    const toolResult = {
+      role: "toolResult",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      content: [{ type: "text", text: "done" }],
+      isError: false,
+      timestamp: 1,
+    };
+
+    expect(
+      safeParseCoreEventEnvelope({
+        version: 1,
+        event: {
+          type: "tool_recovery",
+          historyEntryId: "recovery-1",
+          message,
+          toolResults: [toolResult],
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        version: 1,
+        event: {
+          type: "tool_recovery",
+          historyEntryId: "recovery-1",
+          message,
+          toolResults: [toolResult],
+        },
+      },
+    });
+  });
 });
 
 describe("command registry", () => {
@@ -600,6 +639,126 @@ describe("core session rewind APIs", () => {
       "tool_result:second-call",
       "assistant_final",
     ]);
+  });
+
+  it("continues from hidden tool recovery context after a terminal model error", async () => {
+    const toolCall = fauxToolCall("early_tool", { path: "result.txt" }, { id: "early-call" });
+    const errorMessage = fauxAssistantMessage([toolCall], {
+      stopReason: "error",
+      errorMessage: "network error",
+    });
+    const finalMessage = fauxAssistantMessage("continued");
+    let executions = 0;
+    const toolRegistry = new ToolRegistry([
+      {
+        schema: {
+          name: "early_tool",
+          description: "test tool",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+        dispatch: async (call) => {
+          executions += 1;
+          return {
+            kind: "single",
+            toolResult: {
+              role: "toolResult",
+              toolCallId: call.id,
+              toolName: call.name,
+              content: [{ type: "text", text: "created result.txt" }],
+              isError: false,
+              timestamp: 2,
+            },
+          };
+        },
+      },
+    ]);
+    const session = new CoreSession({
+      persona: { ...personas[0], tools: ["early_tool"] },
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry,
+    });
+    const responses = [errorMessage, finalMessage];
+    const contexts = [];
+    session.engine.modelRuntime.streamModel = (_model, context) => {
+      contexts.push(context);
+      const response = responses.shift();
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (response === errorMessage) {
+            yield { type: "toolcall_start", contentIndex: 0, partial: response };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall,
+              partial: response,
+            };
+            yield { type: "error", reason: "error", error: response };
+          }
+        },
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    session.addUserText("create the file");
+    const events = [];
+    for await (const event of session.events(new AbortController().signal)) {
+      events.push(event);
+    }
+
+    expect(executions).toBe(1);
+    expect(events.filter((event) => event.type === "tool_result")).toEqual([]);
+    expect(events.filter((event) => event.type === "assistant_final")).toHaveLength(2);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "notice", severity: "error" }),
+        expect.objectContaining({
+          type: "tool_recovery",
+          toolResults: [expect.objectContaining({ toolCallId: "early-call" })],
+        }),
+      ]),
+    );
+
+    const recoveryMessage = session.rawHistory.find(
+      (message) =>
+        message.role === "user" &&
+        Array.isArray(message.content) &&
+        message.content.some(
+          (content) => content.type === "text" && content.text.includes("<tool-execution-records>"),
+        ),
+    );
+    expect(recoveryMessage).toBeDefined();
+    const recoveryText = recoveryMessage.content.find((content) => content.type === "text").text;
+    expect(stripTauUserDisplayText(recoveryText)).toBe("");
+    expect(recoveryText).toContain("created result.txt");
+    expect(session.rawHistory.some((message) => message.role === "toolResult")).toBe(false);
+    expect(session.history.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(session.listRewindCandidates()).toEqual([
+      expect.objectContaining({ text: "create the file" }),
+    ]);
+    expect(contexts).toHaveLength(2);
+    expect(
+      contexts[1].messages.some(
+        (message) => message.role === "assistant" && message.stopReason === "error",
+      ),
+    ).toBe(false);
+    expect(
+      contexts[1].messages.some(
+        (message) =>
+          message.role === "user" &&
+          Array.isArray(message.content) &&
+          message.content.some(
+            (content) =>
+              content.type === "text" && content.text.includes("<tool-execution-records>"),
+          ),
+      ),
+    ).toBe(true);
   });
 
   it("aborts an early tool when the model stream fails", async () => {

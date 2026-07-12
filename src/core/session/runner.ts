@@ -36,6 +36,7 @@ export type RunnerEvent = ModelRunnerEvent | ToolRunnerEvent;
 export type RetryOptions = {
   notice?: { text: string; severity?: CoreNoticeEvent["severity"] };
   shouldRetryAfterError?: (args: { error: unknown; model: Model<Api> }) => boolean;
+  allowAfterToolCall: boolean;
   maxRetries?: number;
   delayMs?: number;
 };
@@ -187,7 +188,7 @@ export async function* runModelSubturn(
     try {
       const result = yield* runAttempt(streamOptions);
       if (
-        !hasEmittedToolCall &&
+        (!hasEmittedToolCall || retry?.allowAfterToolCall) &&
         attempt < maxRetries &&
         retry?.shouldRetryAfterError?.({ error: result, model })
       ) {
@@ -204,7 +205,7 @@ export async function* runModelSubturn(
       return result;
     } catch (error) {
       if (
-        !hasEmittedToolCall &&
+        (!hasEmittedToolCall || retry?.allowAfterToolCall) &&
         attempt < maxRetries &&
         retry?.shouldRetryAfterError?.({ error, model })
       ) {

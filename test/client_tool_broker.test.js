@@ -10,6 +10,11 @@ function createToolCall(args = {}) {
   };
 }
 
+async function runTool(tool, ...args) {
+  const dispatch = await tool.dispatch(...args);
+  return dispatch.run;
+}
+
 describe("ClientToolBroker", () => {
   it("returns full client tool results with a truncated final UI event", async () => {
     const broker = new ClientToolBroker();
@@ -33,13 +38,13 @@ describe("ClientToolBroker", () => {
     registration.attachSession("session-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
-    const result = await definition.dispatch(
+    const result = await runTool(
+      definition,
       createToolCall({ choice: "a" }),
       new AbortController().signal,
       {},
     );
 
-    expect(result.kind).toBe("single");
     expect(result.toolResult.content[0].text).toBe(content);
     expect(result.uiEvent).toMatchObject({
       type: "client_tool_finished",
@@ -81,13 +86,13 @@ describe("ClientToolBroker", () => {
     const definition = broker.getToolDefinitions("session-1")[0];
     registration.detachSession("session-1");
 
-    const result = await definition.dispatch(
+    const result = await runTool(
+      definition,
       createToolCall({ choice: "a" }),
       new AbortController().signal,
       {},
     );
 
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
     expect(result.toolResult.content[0].text).toBe(
       "Client tool 'local_picker' is unavailable because its owning client detached.",
@@ -113,15 +118,14 @@ describe("ClientToolBroker", () => {
       registration.attachSession("session-1");
       const definition = broker.getToolDefinitions("session-1")[0];
 
-      const dispatched = definition.dispatch(
+      const dispatch = await definition.dispatch(
         createToolCall({ choice: "a" }),
         new AbortController().signal,
         {},
       );
       await vi.advanceTimersByTimeAsync(5000);
-      const result = await dispatched;
+      const result = await dispatch.run;
 
-      expect(result.kind).toBe("single");
       expect(result.toolResult.isError).toBe(true);
       expect(result.toolResult.content[0].text).toBe(
         "Client tool 'local_picker' is unavailable because its owning client did not acknowledge the tool call within 5000ms.",

@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import type {
   ToolDefinition,
+  ToolDispatch,
   ToolDispatchContext,
-  ToolDispatchResult,
   ToolUiEvent,
   ToolUiText,
 } from "../core/tools/registry.js";
+import { createToolDispatch } from "../core/tools/registry.js";
 import { createToolError, createToolResult } from "../core/utils/messages.js";
 import { formatTokenEstimate } from "../core/utils/token.js";
 import { buildHeadTailPreviewLines } from "../core/utils/tool_preview.js";
@@ -364,9 +365,11 @@ function createClientToolDefinition(
       toolCall: ToolCall,
       signal: AbortSignal,
       _context: ToolDispatchContext,
-    ): Promise<ToolDispatchResult> {
-      const toolResult = await broker.dispatch({ sessionId, clientId, tool, toolCall, signal });
-      return { kind: "single", toolResult, uiEvent: createClientToolFinishedUiEvent(toolResult) };
+    ): Promise<ToolDispatch> {
+      return createToolDispatch(async () => {
+        const toolResult = await broker.dispatch({ sessionId, clientId, tool, toolCall, signal });
+        return { toolResult, uiEvent: createClientToolFinishedUiEvent(toolResult) };
+      });
     },
   };
 }

@@ -6,11 +6,12 @@ import { createToolError, createToolResult } from "../utils/messages.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { parseToolArgs } from "../utils/zod.js";
 import {
+  createToolDispatch,
   isMainToolDispatchContext,
   type ToolDefinition,
+  type ToolDispatch,
   type ToolDispatchContext,
   type ToolDispatchResult,
-  type ToolDispatchResultWithPhases,
   type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
@@ -133,7 +134,7 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
       toolCall: ToolCall,
       signal: AbortSignal,
       context: ToolDispatchContext,
-    ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
+    ): Promise<ToolDispatch> {
       let ids: string[] = [];
       const formatHeaderTarget = (entries: string[]): string => {
         const cleaned = entries.map((id) => id.trim()).filter(Boolean);
@@ -150,12 +151,12 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
           headerTarget,
           reason,
         };
-        return { kind: "single", toolResult, uiEvent };
+        return { toolResult, uiEvent };
       };
 
       const parsedArgs = parseToolArgs(waitArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return blocked(`Invalid arguments: ${parsedArgs.error}`);
+        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       ({ ids } = parsedArgs.data);
@@ -172,13 +173,14 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
       const dedupedTarget = formatHeaderTarget(deduped);
 
       if (!isMainToolDispatchContext(context)) {
-        return blocked("The wait_for_agents tool is only available in the main session.");
+        return createToolDispatch(() =>
+          blocked("The wait_for_agents tool is only available in the main session."),
+        );
       }
 
       const controlPlane = context.subagentControlPlane;
 
       return {
-        kind: "phased",
         startedUiEvent: {
           type: "wait_for_agents_started",
           toolCallId: toolCall.id,
@@ -214,7 +216,7 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
               uiText,
             };
             const toolResult = createToolResult(toolCall, resultText, hasFailures);
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The wait_for_agents request failed.";
@@ -233,7 +235,7 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
               uiText,
             };
             const toolResult = createToolError(toolCall, reason);
-            return { kind: "single", toolResult, uiEvent };
+            return { toolResult, uiEvent };
           }
         })(),
       };

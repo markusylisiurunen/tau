@@ -8,11 +8,13 @@ import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
+  ToolDispatch,
   ToolDispatchResult,
   ToolUiEvent,
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_LIST } from "./tool_names.js";
 
 export const LIST_MAX_ENTRIES = 4096;
@@ -99,73 +101,75 @@ function buildListUiText(args: {
 export function createListToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: LIST_TOOL,
-    async dispatch(toolCall: ToolCall): Promise<ToolDispatchResult> {
-      const parsedArgs = parseListArgs(toolCall.arguments);
-      const path = parsedArgs.ok ? parsedArgs.data.path : "";
-      const headerTarget = path || "(invalid arguments)";
+    async dispatch(toolCall: ToolCall): Promise<ToolDispatch> {
+      return createToolDispatch(async () => {
+        const parsedArgs = parseListArgs(toolCall.arguments);
+        const path = parsedArgs.ok ? parsedArgs.data.path : "";
+        const headerTarget = path || "(invalid arguments)";
 
-      const blocked = (reason: string): ToolDispatchResult => {
-        const toolResult = createToolError(toolCall, reason);
-        const uiEvent: ToolUiEvent = {
-          type: "list_blocked",
-          toolCallId: toolCall.id,
-          path: path || "(invalid path)",
-          headerTarget,
-          reason,
-        };
-        return { kind: "single", toolResult, uiEvent };
-      };
-
-      if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
-      }
-
-      const { offset, limit } = parsedArgs.data;
-      const effectiveLimit = Math.min(Math.max(1, limit), LIST_MAX_ENTRIES);
-
-      try {
-        const { path: resolvedPath, entries: dirents } = await backend.listDir(path);
-
-        const entries = dirents
-          .map((d) => ({
-            name: d.name,
-            suffix: d.isDirectory ? "/" : d.isSymlink ? "@" : "",
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map((e) => `${e.name}${e.suffix}`);
-
-        const total = entries.length;
-        const windowed = entries.slice(offset, offset + effectiveLimit);
-
-        const toolText = formatListToolResultText(windowed);
-        const uiText = buildListUiText({
-          offset,
-          limit: effectiveLimit,
-          total,
-          returned: windowed.length,
-          entries: windowed,
-          fullText: toolText,
-        });
-
-        const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
-        const uiEvent: ToolUiEvent = {
-          type: "list_success",
-          toolCallId: toolCall.id,
-          path: resolvedPath,
-          headerTarget: resolvedPath,
-          offset,
-          limit: effectiveLimit,
-          total,
-          returned: windowed.length,
-          entries: windowed,
-          uiText,
+        const blocked = (reason: string): ToolDispatchResult => {
+          const toolResult = createToolError(toolCall, reason);
+          const uiEvent: ToolUiEvent = {
+            type: "list_blocked",
+            toolCallId: toolCall.id,
+            path: path || "(invalid path)",
+            headerTarget,
+            reason,
+          };
+          return { toolResult, uiEvent };
         };
 
-        return { kind: "single", toolResult, uiEvent };
-      } catch (e) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`list failed: ${errorMessage}`);
-      }
+        if (!parsedArgs.ok) {
+          return blocked(`invalid arguments: ${parsedArgs.error}`);
+        }
+
+        const { offset, limit } = parsedArgs.data;
+        const effectiveLimit = Math.min(Math.max(1, limit), LIST_MAX_ENTRIES);
+
+        try {
+          const { path: resolvedPath, entries: dirents } = await backend.listDir(path);
+
+          const entries = dirents
+            .map((d) => ({
+              name: d.name,
+              suffix: d.isDirectory ? "/" : d.isSymlink ? "@" : "",
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((e) => `${e.name}${e.suffix}`);
+
+          const total = entries.length;
+          const windowed = entries.slice(offset, offset + effectiveLimit);
+
+          const toolText = formatListToolResultText(windowed);
+          const uiText = buildListUiText({
+            offset,
+            limit: effectiveLimit,
+            total,
+            returned: windowed.length,
+            entries: windowed,
+            fullText: toolText,
+          });
+
+          const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, false);
+          const uiEvent: ToolUiEvent = {
+            type: "list_success",
+            toolCallId: toolCall.id,
+            path: resolvedPath,
+            headerTarget: resolvedPath,
+            offset,
+            limit: effectiveLimit,
+            total,
+            returned: windowed.length,
+            entries: windowed,
+            uiText,
+          };
+
+          return { toolResult, uiEvent };
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          return blocked(`list failed: ${errorMessage}`);
+        }
+      });
     },
   };
 }

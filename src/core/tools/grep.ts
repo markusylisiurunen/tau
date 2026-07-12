@@ -8,12 +8,13 @@ import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type {
   ToolDefinition,
+  ToolDispatch,
   ToolDispatchResult,
-  ToolDispatchResultWithPhases,
   ToolUiEvent,
   ToolUiLine,
   ToolUiText,
 } from "./registry.js";
+import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_GREP } from "./tool_names.js";
 
 export const GREP_TOOL_MAX_TOKENS = 8192;
@@ -229,10 +230,7 @@ function buildGrepUiText(args: {
 export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: GREP_TOOL,
-    async dispatch(
-      toolCall: ToolCall,
-      signal?: AbortSignal,
-    ): Promise<ToolDispatchResult | ToolDispatchResultWithPhases> {
+    async dispatch(toolCall: ToolCall, signal?: AbortSignal): Promise<ToolDispatch> {
       const parsedArgs = parseGrepArgs(toolCall.arguments);
       const pattern = parsedArgs.ok ? parsedArgs.data.pattern : "";
       const headerTarget = pattern || "(invalid arguments)";
@@ -246,11 +244,11 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
           headerTarget,
           reason,
         };
-        return { kind: "single", toolResult, uiEvent };
+        return { toolResult, uiEvent };
       };
 
       if (!parsedArgs.ok) {
-        return blocked(`invalid arguments: ${parsedArgs.error}`);
+        return createToolDispatch(() => blocked(`invalid arguments: ${parsedArgs.error}`));
       }
 
       const parsed = parsedArgs.data;
@@ -265,11 +263,10 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
         });
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        return blocked(`grep failed: ${errorMessage}`);
+        return createToolDispatch(() => blocked(`grep failed: ${errorMessage}`));
       }
 
       return {
-        kind: "phased",
         startedUiEvent: {
           type: "grep_started",
           toolCallId: toolCall.id,
@@ -324,7 +321,7 @@ export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDef
             uiText,
           };
 
-          return { kind: "single", toolResult, uiEvent };
+          return { toolResult, uiEvent };
         })(),
       };
     },

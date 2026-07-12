@@ -72,6 +72,11 @@ async function startTemplateSave(registry, name = "starter") {
   return { response, body: await response.json() };
 }
 
+async function runTool(tool, ...args) {
+  const dispatch = await tool.dispatch(...args);
+  return dispatch.run;
+}
+
 describe("nook validation", () => {
   it("accepts path-safe slugs and rejects reserved or malformed slugs", () => {
     expect(validateNookSiteSlug("demo-app").ok).toBe(true);
@@ -674,11 +679,10 @@ describe("nook tool", () => {
 
   it("fails fast when nook is not configured", async () => {
     const tool = createNookToolDefinition({});
-    const result = await tool.dispatch(toolCall, new AbortController().signal, {
+    const result = await runTool(tool, toolCall, new AbortController().signal, {
       config: {},
     });
 
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
     expect(result.toolResult.content[0].text).toContain("not configured");
   });
@@ -692,7 +696,8 @@ describe("nook tool", () => {
     };
     const fetchMock = vi.spyOn(globalThis, "fetch");
     const tool = createNookToolDefinition(backend);
-    const result = await tool.dispatch(
+    const result = await runTool(
+      tool,
       {
         type: "toolCall",
         id: "call_1",
@@ -707,7 +712,6 @@ describe("nook tool", () => {
       { config: { nook: { domain: "nook.example.com" } } },
     );
 
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
     expect(result.toolResult.content[0].text).toContain("not empty");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -715,7 +719,8 @@ describe("nook tool", () => {
 
   it("requires a value for put_kv", async () => {
     const tool = createNookToolDefinition({});
-    const result = await tool.dispatch(
+    const result = await runTool(
+      tool,
       {
         type: "toolCall",
         id: "call_1",
@@ -726,7 +731,6 @@ describe("nook tool", () => {
       { config: { nook: { domain: "nook.example.com" } } },
     );
 
-    expect(result.kind).toBe("single");
     expect(result.toolResult.isError).toBe(true);
     expect(result.toolResult.content[0].text).toContain("requires value");
   });

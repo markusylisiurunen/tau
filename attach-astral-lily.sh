@@ -1,24 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SSH_HOST=${TAU_REMOTE_SSH_HOST:-astral-lily}
-REMOTE_REPOSITORY=${TAU_REMOTE_REPOSITORY:-https://github.com/markusylisiurunen/tau.git}
-WS_HOST=${TAU_REMOTE_WS_HOST:-$(ssh -G "$SSH_HOST" 2>/dev/null | awk '$1 == "hostname" { print $2; exit }')}
-TAU_BIN=${TAU_BIN:-tau}
-
-REMOTE_CWD=$(
-  ssh "$SSH_HOST" 'bash -s' -- "$REMOTE_REPOSITORY" <<'REMOTE'
+remote_cwd=$(ssh astral-lily 'bash -s' <<'REMOTE'
 set -euo pipefail
 
-repository=$1
 workspace_root=$HOME/workspace
 mkdir -p "$workspace_root"
 workspace=$(mktemp -d "$workspace_root/tau-XXXXX")
 prepared=false
 trap 'if [[ $prepared == false ]]; then rm -rf "$workspace"; fi' EXIT
 
-printf 'Cloning %s into %s\n' "$repository" "$workspace" >&2
-git clone "$repository" "$workspace" >&2
+printf 'Cloning Tau into %s\n' "$workspace" >&2
+git clone https://github.com/markusylisiurunen/tau.git "$workspace" >&2
 
 source "$HOME/.nvm/nvm.sh"
 cd "$workspace"
@@ -34,17 +27,18 @@ printf '%s\n' "$workspace"
 REMOTE
 )
 
-server_config=$(ssh "$SSH_HOST" 'sed -n -e "s/^PORT=//p" -e "s/^AUTH_TOKEN=//p" ./start-tau-serve.sh')
-REMOTE_PORT=$(printf '%s\n' "$server_config" | sed -n '1p')
-AUTH_TOKEN=$(printf '%s\n' "$server_config" | sed -n '2p')
+ws_host=$(ssh -G astral-lily 2>/dev/null | awk '$1 == "hostname" { print $2; exit }')
+server_config=$(ssh astral-lily 'sed -n -e "s/^PORT=//p" -e "s/^AUTH_TOKEN=//p" ./start-tau-serve.sh')
+remote_port=$(printf '%s\n' "$server_config" | sed -n '1p')
+auth_token=$(printf '%s\n' "$server_config" | sed -n '2p')
 
-if [[ ! $REMOTE_PORT =~ ^[0-9]+$ || -z $AUTH_TOKEN || -z $WS_HOST ]]; then
-  echo "Could not resolve the Tau server connection for $SSH_HOST." >&2
+if [[ ! $remote_port =~ ^[0-9]+$ || -z $auth_token || -z $ws_host ]]; then
+  echo "Could not resolve the Tau server connection for astral-lily." >&2
   exit 1
 fi
 
-"$TAU_BIN" attach \
+tau attach \
   --new \
-  --cwd "$REMOTE_CWD" \
-  --auth-token "$AUTH_TOKEN" \
-  "ws://${WS_HOST}:${REMOTE_PORT}"
+  --cwd "$remote_cwd" \
+  --auth-token "$auth_token" \
+  "ws://${ws_host}:${remote_port}"

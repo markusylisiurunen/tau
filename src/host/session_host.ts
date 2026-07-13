@@ -46,6 +46,8 @@ export type TauHostedSession = {
   ): Promise<SessionProtocolRecordResult>;
   runTurn(): Promise<SessionProtocolUserMessageTurnResult["turn"]>;
   interruptTurn(): boolean;
+  interruptMaintenance(): boolean;
+  waitForActiveWork(): Promise<void>;
   requestTurnBoundaryStop(): boolean;
   cancelTurnBoundaryStop(): boolean;
   exec(

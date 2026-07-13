@@ -145,6 +145,14 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
   const { client, sandboxId } = options;
   const commandSessions = new Map<string, Promise<{ id: string; cwd: string }>>();
   const commandQueues = new Map<string, Promise<void>>();
+  const disposeAbortController = new AbortController();
+  let disposed = false;
+
+  const assertActive = (): void => {
+    if (disposed) {
+      throw new Error("Cloudflare Sandbox execution backend is disposed");
+    }
+  };
 
   const ensureCommandSession = async (cwd: string): Promise<string> => {
     const existing = commandSessions.get(cwd);
@@ -187,9 +195,19 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     );
   };
 
-  const runQueued = async <T>(cwd: string, task: () => Promise<T>): Promise<T> => {
+  const runQueued = async <T>(
+    cwd: string,
+    signal: AbortSignal,
+    task: () => Promise<T>,
+  ): Promise<T> => {
+    assertActive();
     const previous = commandQueues.get(cwd) ?? Promise.resolve();
-    const run = previous.catch(() => undefined).then(task);
+    const run = (async () => {
+      await waitForQueue(previous, signal);
+      signal.throwIfAborted();
+      assertActive();
+      return await task();
+    })();
     const tail = run.then(
       () => undefined,
       () => undefined,
@@ -209,7 +227,10 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     runOptions: { timeoutMs?: number; signal?: AbortSignal; cwd?: string } = {},
   ): Promise<BashExecutionResult> => {
     const cwd = runOptions.cwd ?? options.cwd;
-    return await runQueued(cwd, async () => {
+    const signal = runOptions.signal
+      ? AbortSignal.any([runOptions.signal, disposeAbortController.signal])
+      : disposeAbortController.signal;
+    return await runQueued(cwd, signal, async () => {
       const sessionId = await ensureCommandSession(cwd);
 
       try {
@@ -217,7 +238,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
           argv: ["sh", "-lc", command],
           cwd,
           timeoutMs: runOptions.timeoutMs,
-          signal: runOptions.signal,
+          signal,
           sessionId,
           onAbort: () => resetCommandSession(cwd),
         });
@@ -232,6 +253,12 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
 
   return {
     async dispose() {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      disposeAbortController.abort();
+      await Promise.allSettled(commandQueues.values());
       await resetAllCommandSessions();
     },
 
@@ -239,7 +266,10 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
 
     async runNodeScript(script, args = [], runOptions = {}) {
       const cwd = runOptions.cwd ?? options.cwd;
-      return await runQueued(cwd, async () => {
+      const signal = runOptions.signal
+        ? AbortSignal.any([runOptions.signal, disposeAbortController.signal])
+        : disposeAbortController.signal;
+      return await runQueued(cwd, signal, async () => {
         const sessionId = await ensureCommandSession(cwd);
 
         try {
@@ -247,7 +277,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
             argv: ["node", "-e", script, ...args],
             cwd,
             timeoutMs: runOptions.timeoutMs,
-            signal: runOptions.signal,
+            signal,
             maxCaptureBytes: runOptions.maxCaptureBytes,
             sessionId,
             onAbort: () => resetCommandSession(cwd),
@@ -262,11 +292,13 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     },
 
     async readFile(path) {
+      assertActive();
       const content = await client.readFile(sandboxId, path);
       return { path, content: content.toString("utf-8") };
     },
 
     async readFileBinary(path, readOptions = {}) {
+      assertActive();
       const content = await client.readFile(sandboxId, path);
       const bytes = content.byteLength;
       assertFileWithinMaxBytes(bytes, readOptions.maxBytes);
@@ -274,6 +306,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     },
 
     async writeFile(path, content) {
+      assertActive();
       const dir = dirname(path);
       if (dir && dir !== ".") {
         await exec(`mkdir -p ${shellQuote(dir)}`);
@@ -283,6 +316,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     },
 
     async writeFileBinary(path, content) {
+      assertActive();
       const dir = dirname(path);
       if (dir && dir !== ".") {
         await exec(`mkdir -p ${shellQuote(dir)}`);
@@ -292,6 +326,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     },
 
     async listDir(path) {
+      assertActive();
       const result = await exec(`node -e ${shellQuote(NODE_LIST_DIR_SCRIPT)} ${shellQuote(path)}`);
       if (result.exitCode !== 0) {
         throw new Error(result.output.trim() || `list failed for ${path}`);
@@ -301,6 +336,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     },
 
     async grep(grepOptions) {
+      assertActive();
       const resolvedPaths = resolveSandboxGrepPaths(grepOptions.paths);
 
       if (grepOptions.dryRun) {
@@ -326,6 +362,27 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       }
     },
   };
+}
+
+async function waitForQueue(queue: Promise<void>, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    void queue.then(
+      () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 export class CloudflareSandboxBridgeClient {

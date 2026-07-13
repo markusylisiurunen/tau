@@ -122,6 +122,8 @@ function createHostedSession(sessionId, sessions, options = {}) {
       releaseTurn();
       return true;
     }),
+    interruptMaintenance: vi.fn(() => false),
+    async waitForActiveWork() {},
     async exec() {
       return createProtocolExecResult({
         output: "/repo\n",

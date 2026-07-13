@@ -1125,6 +1125,7 @@ export class SessionEngine {
     const pendingToolResults: ToolResultMessage[] = [];
     const recoveryToolResults: ToolResultMessage[] = [];
     const streamedToolCalls: ToolCall[] = [];
+    const streamedToolCallIds = new Set<string>();
     let modelDone = false;
     let toolDone = false;
     let shouldNoteProviderError = false;
@@ -1213,9 +1214,7 @@ export class SessionEngine {
             }
             if (!toolRecoveryMode) {
               for (const toolResult of pendingToolResults.splice(0)) {
-                const toolHistoryEntryId = this.addMessage(toolResult, {
-                  historyEntryId: toolResult.toolCallId,
-                });
+                const toolHistoryEntryId = this.addMessage(toolResult);
                 const toolEvent: CoreEvent = {
                   type: "tool_result",
                   historyEntryId: toolHistoryEntryId,
@@ -1238,17 +1237,38 @@ export class SessionEngine {
               continue;
             }
             const queuedEvents: CoreToolUiEvent[] = [];
-            for (const toolCall of event.snapshot.toolCalls.slice(streamedToolCalls.length)) {
-              streamedToolCalls.push(toolCall);
-              const queuedEvent = toolRunner.enqueue(toolCall);
-              if (queuedEvent) {
-                queuedEvents.push(queuedEvent);
+            for (const streamedToolCall of event.snapshot.toolCalls.slice(
+              streamedToolCalls.length,
+            )) {
+              const invalidId = !streamedToolCall.id.trim();
+              const duplicateId = streamedToolCallIds.has(streamedToolCall.id);
+              if (!invalidId && !duplicateId) {
+                streamedToolCallIds.add(streamedToolCall.id);
+                streamedToolCalls.push(streamedToolCall);
+                const queuedEvent = toolRunner.enqueue(streamedToolCall);
+                if (queuedEvent) {
+                  queuedEvents.push(queuedEvent);
+                }
+                continue;
               }
+
+              const toolCall = {
+                ...streamedToolCall,
+                id: `invalid-tool-call-${randomUUID()}`,
+              };
+              const message = invalidId
+                ? "Model returned a tool call with an empty ID."
+                : `Model returned duplicate tool call ID '${streamedToolCall.id}'.`;
+              streamedToolCalls.push(toolCall);
+              toolRunner.enqueueRejected(toolCall, message);
             }
             const partialEvent: CoreEvent = {
               type: "assistant_partial",
               historyEntryId,
-              snapshot: event.snapshot,
+              snapshot: {
+                ...event.snapshot,
+                toolCalls: [...streamedToolCalls],
+              },
             };
             this.emitEvent(partialEvent);
             yield partialEvent;
@@ -1284,9 +1304,7 @@ export class SessionEngine {
             continue;
           }
 
-          const toolHistoryEntryId = this.addMessage(event.message, {
-            historyEntryId: event.message.toolCallId,
-          });
+          const toolHistoryEntryId = this.addMessage(event.message);
           const toolEvent: CoreEvent = {
             ...event,
             historyEntryId: toolHistoryEntryId,

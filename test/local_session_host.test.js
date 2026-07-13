@@ -7,6 +7,10 @@ import { createLocalToolExecutionBackend, ToolCatalog } from "../dist/core/index
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
+import {
+  EphemeralThreadBusyError,
+  HostedEphemeralAgentSession,
+} from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 
@@ -280,6 +284,74 @@ class BlockingCommitStore extends MemorySessionStore {
     await super.commitSessionSnapshot(snapshot, options);
   }
 }
+
+describe("HostedEphemeralAgentSession", () => {
+  it("rejects concurrent thread creation, submission, and forking without mutation", async () => {
+    let markCreating;
+    let releaseCreation;
+    const creating = new Promise((resolve) => {
+      markCreating = resolve;
+    });
+    const creationGate = new Promise((resolve) => {
+      releaseCreation = resolve;
+    });
+    const submittedMessages = [];
+    const thread = {
+      async submitMessage(message) {
+        submittedMessages.push(message);
+        return "done";
+      },
+      createForkSource: () => ({ historyEntries: [], usageBaseline: {} }),
+      interrupt: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const session = new HostedEphemeralAgentSession({
+      contextId: "context-1",
+      persona: personas[0],
+      config: {},
+      modelResolver: resolveModel,
+      discoveredSkills: [],
+      includeAgentContext: false,
+      executionEnvironment: createTestExecutionEnvironment(),
+      instructions: "review",
+      tools: [],
+      emitUpdate: vi.fn(),
+    });
+    session.createThread = vi.fn(async () => {
+      markCreating();
+      await creationGate;
+      return thread;
+    });
+
+    const first = session.submitThreadMessage({
+      contextId: "context-1",
+      threadId: "thread-1",
+      message: "first",
+    });
+    await creating;
+
+    await expect(
+      session.submitThreadMessage({
+        contextId: "context-1",
+        threadId: "thread-1",
+        message: "duplicate",
+      }),
+    ).rejects.toBeInstanceOf(EphemeralThreadBusyError);
+    await expect(
+      session.submitThreadMessage({
+        contextId: "context-1",
+        threadId: "thread-2",
+        forkFromThreadId: "thread-1",
+        message: "fork",
+      }),
+    ).rejects.toBeInstanceOf(EphemeralThreadBusyError);
+
+    releaseCreation();
+    await expect(first).resolves.toEqual({ threadId: "thread-1", response: "done" });
+    expect(session.createThread).toHaveBeenCalledTimes(1);
+    expect(submittedMessages).toEqual(["first"]);
+  });
+});
 
 describe("LocalSessionHost", () => {
   it("creates, attaches, lists, snapshots, and shuts down local sessions", async () => {
@@ -1427,6 +1499,73 @@ describe("LocalSessionHost", () => {
             id: "assistant-live-race",
             message: expect.objectContaining({
               content: [{ type: "text", text: "hello world!" }],
+            }),
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it("does not let a reasoning write replace streamed state at the same revision", async () => {
+    const store = new BlockingCommitStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    Object.defineProperty(hostedSession.runtime, "isTurnRunning", {
+      configurable: true,
+      get: () => true,
+    });
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_start",
+      historyEntryId: "assistant-reasoning-race",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-reasoning-race",
+      snapshot: assistantPartial("hello"),
+    });
+
+    const gate = store.blockNextCommit();
+    const reasoningPromise = hostedSession.setReasoning("high");
+    await gate.started;
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-reasoning-race",
+      snapshot: assistantPartial("hello world"),
+    });
+    gate.release();
+
+    await expect(reasoningPromise).resolves.toEqual(
+      expect.objectContaining({
+        revision: 5,
+        settings: expect.objectContaining({ reasoning: "high" }),
+      }),
+    );
+    await expect(hostedSession.snapshot()).resolves.toEqual(
+      expect.objectContaining({
+        revision: 5,
+        settings: expect.objectContaining({ reasoning: "high" }),
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            id: "assistant-reasoning-race",
+            message: expect.objectContaining({
+              content: [{ type: "text", text: "hello world" }],
+            }),
+          }),
+        ]),
+      }),
+    );
+    await expect(store.loadSession(hostedSession.session.sessionId)).resolves.toEqual(
+      expect.objectContaining({
+        revision: 5,
+        settings: expect.objectContaining({ reasoning: "high" }),
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            id: "assistant-reasoning-race",
+            message: expect.objectContaining({
+              content: [{ type: "text", text: "hello world" }],
             }),
           }),
         ]),

@@ -1,6 +1,7 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { RpcServer, runRpcServer } from "../dist/core/modes/rpc_server.js";
+import { EphemeralThreadBusyError } from "../dist/host/hosted_ephemeral_agent_session.js";
 import {
   SESSION_PROTOCOL_ERROR_CODES,
   SESSION_PROTOCOL_VERSION,
@@ -302,6 +303,12 @@ function createHarness(options = {}) {
       interruptMaintenance: vi.fn(() => false),
       waitForActiveWork: vi.fn(async () => {}),
       terminateSubagent: vi.fn(async () => ({ found: true })),
+      async submitEphemeralThread(submitOptions) {
+        if (options.submitEphemeralThread) {
+          return await options.submitEphemeralThread(submitOptions);
+        }
+        return { threadId: submitOptions.threadId, response: "done" };
+      },
       releaseTurn: () => releaseTurn?.(),
       canReleaseTurn: () => Boolean(releaseTurn),
       emitNotice: (text, revision = historyEntries.length + 1) => {
@@ -425,6 +432,35 @@ describe("rpc_server", () => {
     await harness.server.handleLine(request("list", "session.list", {}));
     const list = harness.lines.find((line) => line.type === "response" && line.id === "list");
     expect(list.result).toEqual({ sessions: [] });
+  });
+
+  it("returns busy for concurrent ephemeral thread submissions", async () => {
+    const harness = createHarness({
+      submitEphemeralThread: async ({ threadId }) => {
+        throw new EphemeralThreadBusyError(`thread '${threadId}' already has an active request`);
+      },
+    });
+
+    await harness.server.handleLine(
+      request("ephemeral-busy", "session.ephemeral.submit", {
+        sessionId: "session-1",
+        contextId: "context-1",
+        threadId: "thread-1",
+        message: "review",
+      }),
+    );
+
+    expect(
+      harness.lines.find((line) => line.type === "response" && line.id === "ephemeral-busy"),
+    ).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: {
+          code: SESSION_PROTOCOL_ERROR_CODES.busy,
+          message: "thread 'thread-1' already has an active request",
+        },
+      }),
+    );
   });
 
   it("creates additional sessions and routes requests by session id", async () => {

@@ -819,6 +819,172 @@ describe("core session rewind APIs", () => {
     ]);
   });
 
+  it("rejects duplicate streamed tool call ids without executing the duplicate", async () => {
+    const firstCall = fauxToolCall("early_tool", { sequence: 1 }, { id: "duplicate-call" });
+    const duplicateCall = fauxToolCall("early_tool", { sequence: 2 }, { id: "duplicate-call" });
+    const toolMessage = fauxAssistantMessage([firstCall, duplicateCall], {
+      stopReason: "toolUse",
+    });
+    const finalMessage = fauxAssistantMessage("continued");
+    const executedSequences = [];
+    const toolRegistry = new ToolRegistry([
+      {
+        schema: {
+          name: "early_tool",
+          description: "test tool",
+          parameters: {
+            type: "object",
+            properties: { sequence: { type: "number" } },
+            required: ["sequence"],
+            additionalProperties: false,
+          },
+        },
+        dispatch: async (call) => {
+          executedSequences.push(call.arguments.sequence);
+          return {
+            run: Promise.resolve({
+              toolResult: {
+                role: "toolResult",
+                toolCallId: call.id,
+                toolName: call.name,
+                content: [{ type: "text", text: "done" }],
+                isError: false,
+                timestamp: 2,
+              },
+            }),
+          };
+        },
+      },
+    ]);
+    const session = new CoreSession({
+      persona: { ...personas[0], tools: ["early_tool"] },
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry,
+    });
+    const responses = [toolMessage, finalMessage];
+    session.engine.modelRuntime.streamModel = () => {
+      const response = responses.shift();
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (response === toolMessage) {
+            yield { type: "toolcall_start", contentIndex: 0, partial: response };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall: firstCall,
+              partial: response,
+            };
+            yield { type: "toolcall_start", contentIndex: 1, partial: response };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 1,
+              toolCall: duplicateCall,
+              partial: response,
+            };
+          }
+        },
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    session.addUserText("use the tool twice");
+    const events = [];
+    for await (const event of session.events(new AbortController().signal)) {
+      events.push(event);
+    }
+
+    expect(executedSequences).toEqual([1]);
+    const recovery = events.find((event) => event.type === "tool_recovery");
+    expect(recovery.toolResults).toHaveLength(2);
+    expect(new Set(recovery.toolResults.map((result) => result.toolCallId)).size).toBe(2);
+    expect(recovery.toolResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toolCallId: "duplicate-call", isError: false }),
+        expect.objectContaining({
+          toolCallId: expect.stringMatching(/^invalid-tool-call-/),
+          isError: true,
+        }),
+      ]),
+    );
+    expect(
+      events.some(
+        (event) =>
+          event.type === "notice" && event.text.includes("duplicate tool call ID 'duplicate-call'"),
+      ),
+    ).toBe(true);
+  });
+
+  it("uses independent history ids for tool results", async () => {
+    const toolCall = fauxToolCall("early_tool", {}, { id: "reused-history-id" });
+    const toolMessage = fauxAssistantMessage([toolCall], { stopReason: "toolUse" });
+    const finalMessage = fauxAssistantMessage("done");
+    const toolRegistry = new ToolRegistry([
+      {
+        schema: {
+          name: "early_tool",
+          description: "test tool",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+        dispatch: async (call) => ({
+          run: Promise.resolve({
+            toolResult: {
+              role: "toolResult",
+              toolCallId: call.id,
+              toolName: call.name,
+              content: [{ type: "text", text: "done" }],
+              isError: false,
+              timestamp: 2,
+            },
+          }),
+        }),
+      },
+    ]);
+    const session = new CoreSession({
+      persona: { ...personas[0], tools: ["early_tool"] },
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry,
+    });
+    const responses = [toolMessage, finalMessage];
+    session.engine.modelRuntime.streamModel = () => {
+      const response = responses.shift();
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (response === toolMessage) {
+            yield { type: "toolcall_start", contentIndex: 0, partial: response };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall,
+              partial: response,
+            };
+          }
+        },
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    session.addUserText("prior", { historyEntryId: "reused-history-id" });
+    session.addUserText("use the tool");
+    for await (const _event of session.events(new AbortController().signal)) {
+    }
+
+    const toolResultEntry = session.rawHistoryEntries.find(
+      (entry) => entry.message.role === "toolResult",
+    );
+    expect(toolResultEntry).toEqual(
+      expect.objectContaining({
+        id: expect.not.stringMatching(/^reused-history-id$/),
+        message: expect.objectContaining({ toolCallId: "reused-history-id" }),
+      }),
+    );
+  });
+
   it("continues from hidden tool recovery context after a terminal model error", async () => {
     const toolCall = fauxToolCall("early_tool", { path: "result.txt" }, { id: "early-call" });
     const errorMessage = fauxAssistantMessage([toolCall], {

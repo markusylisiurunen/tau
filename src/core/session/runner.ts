@@ -318,11 +318,24 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
   ) {}
 
   enqueue(toolCall: ToolCall): CoreToolUiEvent | undefined {
+    const prepared = prepareToolCall(toolCall, this.options);
+    this.enqueuePrepared(prepared);
+    return prepared.type === "ready" ? createToolQueuedEvent(toolCall) : undefined;
+  }
+
+  enqueueRejected(toolCall: ToolCall, message: string): void {
+    this.enqueuePrepared({
+      type: "rejected",
+      message,
+      result: createToolError(toolCall, message),
+    });
+  }
+
+  private enqueuePrepared(prepared: PreparedToolCall): void {
     if (this.finished) {
       throw new Error("cannot enqueue a tool call after finishing the runner");
     }
 
-    const prepared = prepareToolCall(toolCall, this.options);
     this.execution = this.execution.then(async () => {
       if (this.signal.aborted) {
         return;
@@ -343,8 +356,6 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
         waiter.reject(error);
       }
     });
-
-    return prepared.type === "ready" ? createToolQueuedEvent(toolCall) : undefined;
   }
 
   private publish(event: ToolRunnerEvent): void {

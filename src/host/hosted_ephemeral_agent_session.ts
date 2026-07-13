@@ -64,8 +64,9 @@ export type HostedEphemeralAgentSessionOptions = {
 
 type HostedEphemeralAgentThreadRecord = {
   thread: EphemeralAgentThread;
-  activeRequestCount: number;
 };
+
+export class EphemeralThreadBusyError extends Error {}
 
 export class HostedEphemeralAgentSession {
   private readonly contextId: string;
@@ -79,6 +80,7 @@ export class HostedEphemeralAgentSession {
   private readonly tools: SubagentToolName[];
   private readonly emitUpdate: HostedEphemeralAgentSessionOptions["emitUpdate"];
   private readonly threads = new Map<string, HostedEphemeralAgentThreadRecord>();
+  private readonly activeThreadIds = new Set<string>();
   private disposed = false;
 
   constructor(options: HostedEphemeralAgentSessionOptions) {
@@ -104,13 +106,24 @@ export class HostedEphemeralAgentSession {
       );
     }
 
-    const record = await this.getOrCreateThread(options.threadId, options.forkFromThreadId);
-    record.activeRequestCount += 1;
+    if (this.activeThreadIds.has(options.threadId)) {
+      throw new EphemeralThreadBusyError(
+        `thread '${options.threadId}' already has an active request`,
+      );
+    }
+    if (options.forkFromThreadId && this.activeThreadIds.has(options.forkFromThreadId)) {
+      throw new EphemeralThreadBusyError(
+        `thread '${options.forkFromThreadId}' already has an active request and cannot be used as a fork source`,
+      );
+    }
+
+    this.activeThreadIds.add(options.threadId);
     try {
+      const record = await this.getOrCreateThread(options.threadId, options.forkFromThreadId);
       const response = await record.thread.submitMessage(options.message);
       return { threadId: options.threadId, response };
     } finally {
-      record.activeRequestCount -= 1;
+      this.activeThreadIds.delete(options.threadId);
     }
   }
 
@@ -124,6 +137,7 @@ export class HostedEphemeralAgentSession {
       record.thread.dispose();
     }
     this.threads.clear();
+    this.activeThreadIds.clear();
   }
 
   private async getOrCreateThread(
@@ -139,14 +153,8 @@ export class HostedEphemeralAgentSession {
     if (forkFromThreadId && !forkFrom) {
       throw new Error(`unknown fork source thread '${forkFromThreadId}'`);
     }
-    if (forkFrom && forkFrom.activeRequestCount > 0) {
-      throw new Error(
-        `thread '${forkFromThreadId}' already has an active request and cannot be used as a fork source`,
-      );
-    }
-
     const thread = await this.createThread(threadId, forkFrom?.thread.createForkSource());
-    const record: HostedEphemeralAgentThreadRecord = { thread, activeRequestCount: 0 };
+    const record: HostedEphemeralAgentThreadRecord = { thread };
     this.threads.set(threadId, record);
     return record;
   }

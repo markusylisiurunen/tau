@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
 import { type Config, resolvePromptTemplateWithBackend } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
@@ -511,6 +512,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   readonly session: CoreSession;
   private committedSessionId: string;
   private committedSnapshot?: SessionProtocolSnapshot;
+  private persistedSnapshot?: SessionProtocolSnapshot;
   private persistedSnapshotRevision?: number;
   private draftAssistantMessage?: SessionProtocolMessage;
   private readonly messageStates = new Map<string, SessionProtocolMessage["state"]>();
@@ -534,6 +536,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly unsubscribeSubagentEvent: () => void;
   private runtimeEventQueue: Promise<void> = Promise.resolve();
   private snapshotQueue: Promise<unknown> = Promise.resolve();
+  private snapshotGeneration = 0;
   private readonly maintenanceAbortControllers = new Set<AbortController>();
   private readonly maintenancePromises = new Set<Promise<unknown>>();
   private activeTurnPromise?: Promise<SessionProtocolUserMessageTurnResult["turn"]>;
@@ -558,6 +561,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.session = runtime.session;
     this.committedSessionId = committedSnapshot?.sessionId ?? this.session.sessionId;
     this.committedSnapshot = committedSnapshot
+      ? cloneSessionProtocolSnapshot(committedSnapshot)
+      : undefined;
+    this.persistedSnapshot = committedSnapshot
       ? cloneSessionProtocolSnapshot(committedSnapshot)
       : undefined;
     this.persistedSnapshotRevision = committedSnapshot?.revision;
@@ -707,7 +713,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       this.emitDelta(
         createSessionProtocolDeltaMessage({
           sessionId: snapshot.sessionId,
-          fromRevision,
+          fromRevision: snapshot.revision - 1,
           toRevision: snapshot.revision,
           reason: "configuration",
           delta: {
@@ -1109,6 +1115,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       });
       this.committedSessionId = draft.sessionId;
       this.committedSnapshot = undefined;
+      this.persistedSnapshot = undefined;
       this.persistedSnapshotRevision = undefined;
     }
 
@@ -1116,18 +1123,19 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ...draft,
       revision: this.nextSnapshotRevision(draft),
     };
-    if (
-      this.committedSnapshot &&
-      snapshot.revision === this.committedSnapshot.revision &&
-      this.persistedSnapshotRevision === snapshot.revision
-    ) {
-      return cloneSessionProtocolSnapshot(this.committedSnapshot);
+    const generation = this.snapshotGeneration;
+    if (this.persistedSnapshot && isDeepStrictEqual(this.persistedSnapshot, snapshot)) {
+      return cloneSessionProtocolSnapshot(this.committedSnapshot ?? snapshot);
     }
 
     await this.store.commitSessionSnapshot(snapshot, {
       expectedRevision: this.persistedSnapshotRevision ?? 0,
     });
+    this.persistedSnapshot = cloneSessionProtocolSnapshot(snapshot);
     this.persistedSnapshotRevision = snapshot.revision;
+    if (generation !== this.snapshotGeneration) {
+      return await this.writeSnapshot();
+    }
     return cloneSessionProtocolSnapshot(this.updateCommittedSnapshotAfterWrite(snapshot));
   }
 
@@ -1147,6 +1155,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       });
       this.committedSessionId = draft.sessionId;
       this.committedSnapshot = undefined;
+      this.persistedSnapshot = undefined;
       this.persistedSnapshotRevision = undefined;
     }
 
@@ -1154,11 +1163,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ...draft,
       revision,
     };
+    const generation = this.snapshotGeneration;
     if (persist) {
       await this.store.commitSessionSnapshot(snapshot, {
         expectedRevision: this.persistedSnapshotRevision ?? 0,
       });
+      this.persistedSnapshot = cloneSessionProtocolSnapshot(snapshot);
       this.persistedSnapshotRevision = snapshot.revision;
+      if (generation !== this.snapshotGeneration) {
+        return await this.writeSnapshot();
+      }
     }
     return cloneSessionProtocolSnapshot(this.updateCommittedSnapshotAfterWrite(snapshot));
   }
@@ -1166,8 +1180,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private updateCommittedSnapshotAfterWrite(
     snapshot: SessionProtocolSnapshot,
   ): SessionProtocolSnapshot {
-    if (!this.committedSnapshot || this.committedSnapshot.revision <= snapshot.revision) {
+    if (!this.committedSnapshot || this.committedSnapshot.revision < snapshot.revision) {
       this.committedSnapshot = cloneSessionProtocolSnapshot(snapshot);
+      this.snapshotGeneration += 1;
     }
     return this.committedSnapshot;
   }
@@ -1733,6 +1748,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
     if (options.persist === false) {
       this.committedSnapshot = applySessionProtocolDelta(this.committedSnapshot, delta);
+      this.snapshotGeneration += 1;
       this.emitDelta(delta);
       return;
     }

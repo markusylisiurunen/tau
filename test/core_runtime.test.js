@@ -433,10 +433,22 @@ describe("core session rewind APIs", () => {
       const sessionId = session.sessionId;
       session.addUserText("remember this");
       session.addMessage(fauxAssistantMessage("remembered"));
+      vi.spyOn(session.engine.subagentControlPlane, "listSnapshots").mockReturnValue([
+        {
+          id: "agent-1",
+          name: "default",
+          title: "research",
+          status: "running",
+          abortRequested: false,
+        },
+      ]);
 
       await session.compact({ mode: "only-summary" });
 
       expect(session.sessionId).toBe(sessionId);
+      expect(stripTauUserMetadata(session.rawHistory[0].content[0].text)).toContain(
+        "<active-subagents>\n- agent-1: research",
+      );
     } finally {
       unregisterFauxProvider();
     }
@@ -512,6 +524,15 @@ describe("core session rewind APIs", () => {
         },
       });
 
+      vi.spyOn(session.engine.subagentControlPlane, "listSnapshots").mockReturnValue([
+        {
+          id: "agent-1",
+          name: "default",
+          title: "research",
+          status: "running",
+          abortRequested: false,
+        },
+      ]);
       session.addUserText("old request", { historyEntryId: "old-request" });
       session.addMessage(assistantMessageWithUsage("old answer", 1000));
       session.addUserText(`middle request ${"x".repeat(6000)}`, {
@@ -527,6 +548,9 @@ describe("core session rewind APIs", () => {
       }
 
       expect(session.sessionId).toBe(sessionId);
+      expect(stripTauUserMetadata(session.rawHistory[0].content[0].text)).toContain(
+        "<active-subagents>\n- agent-1: research",
+      );
 
       const compactionEnd = events.find(
         (event) => event.type === "compaction_end" && event.outcome === "compacted",
@@ -2162,7 +2186,6 @@ describe("compaction context message", () => {
     const continuation = buildAutoCompactionContinuationMessage({
       cutType: "turn-boundary",
       now: 2,
-      subagentStatus: "- agent-1: check tests (name: default, status: running)",
     });
     const entries = historyEntries([
       userMessage(previousSummaryText),
@@ -2196,8 +2219,6 @@ describe("compaction context message", () => {
       cutType: "turn-boundary",
       retainedMessageCount: 2,
     });
-    expect(stripTauUserMetadata(continuation.content[0].text)).toContain("<active-subagents>");
-    expect(stripTauUserMetadata(continuation.content[0].text)).toContain("agent-1");
     expect(hasAutoCompactionContinuationMetadata(continuation)).toBe(true);
   });
 });

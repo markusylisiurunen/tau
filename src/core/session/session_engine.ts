@@ -49,6 +49,7 @@ import {
   getAutoCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
   isTauUserMessageHidden,
+  prependTauHiddenSystemMessages,
   prependTauUserMetadata,
   stripTauUserDisplayText,
   stripTauUserMetadata,
@@ -477,11 +478,11 @@ export class SessionEngine {
       preservedUserMessages: summaryResult.preservedUserMessages,
     });
 
-    const textWithModelNotice = prependModelNotice(
+    const textWithContext = this.prependCompactionContext(
       compactionMessage,
       resolveModelNotice(this.config, this.persona.model),
     );
-    const textWithMetadata = prependTauUserMetadata(textWithModelNotice, [
+    const textWithMetadata = prependTauUserMetadata(textWithContext, [
       {
         type: "compaction",
         version: 1,
@@ -934,8 +935,8 @@ export class SessionEngine {
     const compactionMessage = buildCompactionUserMessage({ summary: compactionSummary });
     const retainedMessageCount = preparation.retainedEntries.length;
     const modelNotice = resolveModelNotice(this.config, this.persona.model);
-    const textWithModelNotice = prependModelNotice(compactionMessage, modelNotice);
-    const textWithMetadata = prependTauUserMetadata(textWithModelNotice, [
+    const textWithContext = this.prependCompactionContext(compactionMessage, modelNotice);
+    const textWithMetadata = prependTauUserMetadata(textWithContext, [
       {
         type: "auto-compaction",
         version: 1,
@@ -960,7 +961,6 @@ export class SessionEngine {
         cutType: preparation.cutType,
         now: this.deps.clock.now(),
         modelNotice,
-        subagentStatus: this.formatAutoCompactionSubagentStatus(),
       }),
     };
 
@@ -975,7 +975,14 @@ export class SessionEngine {
     };
   }
 
-  private formatAutoCompactionSubagentStatus(): string | undefined {
+  private prependCompactionContext(text: string, modelNotice?: string): string {
+    const hiddenSystemMessages = [modelNotice, this.formatCompactionSubagentStatus()].filter(
+      (message): message is string => message !== undefined,
+    );
+    return prependTauHiddenSystemMessages(text, hiddenSystemMessages);
+  }
+
+  private formatCompactionSubagentStatus(): string | undefined {
     const running = this.subagentControlPlane
       .listSnapshots()
       .filter((snapshot) => snapshot.status === "running");
@@ -983,12 +990,13 @@ export class SessionEngine {
       return undefined;
     }
 
-    return running
+    const entries = running
       .map((snapshot) => {
         const abort = snapshot.abortRequested ? ", abort requested" : "";
         return `- ${snapshot.id}: ${snapshot.title} (name: ${snapshot.name}, status: ${snapshot.status}${abort})`;
       })
       .join("\n");
+    return `<active-subagents>\n${entries}\n</active-subagents>`;
   }
 
   private shouldRunAutoCompaction(): boolean {

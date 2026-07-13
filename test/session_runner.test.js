@@ -826,7 +826,7 @@ describe("session pruning", () => {
     expect(request?.prompt).not.toContain("old summary");
   });
 
-  it("skips malformed rejected edit calls without partially pruning earlier history", () => {
+  it("skips malformed rejected edit calls while pruning valid calls", () => {
     const entries = [
       {
         id: "valid-edit",

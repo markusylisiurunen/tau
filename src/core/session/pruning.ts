@@ -514,10 +514,12 @@ function pruneEditToolHistory(
         return block;
       }
 
-      const args = getToolCallArgumentsObject(toolCall);
-      const oldText = getEditArgument(args, "oldText");
-      const newText = getEditArgument(args, "newText");
-      if (oldText === undefined || newText === undefined) {
+      const args = toolCall.arguments;
+      if (!args || typeof args !== "object" || Array.isArray(args)) {
+        return block;
+      }
+      const { oldText, newText } = args as Record<string, unknown>;
+      if (typeof oldText !== "string" || typeof newText !== "string") {
         return block;
       }
 
@@ -614,23 +616,6 @@ function getAssistantContentOrThrow(
   }
 
   return assistant.content;
-}
-
-function getToolCallArgumentsObject(toolCall: ToolCall): Record<string, unknown> {
-  const { arguments: argumentsValue } = toolCall;
-  if (!argumentsValue || typeof argumentsValue !== "object" || Array.isArray(argumentsValue)) {
-    return {};
-  }
-
-  return argumentsValue as Record<string, unknown>;
-}
-
-function getEditArgument(
-  args: Record<string, unknown>,
-  key: "oldText" | "newText",
-): string | undefined {
-  const value = args[key];
-  return typeof value === "string" ? value : undefined;
 }
 
 function buildPrunedEditToolResult(diff: EditPruneCallDiff): string {

@@ -424,6 +424,39 @@ describe("core session rewind APIs", () => {
     }
   });
 
+  it("leaves session history unchanged when pruning fails", async () => {
+    const session = new CoreSession({
+      persona: personas[0],
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry: new ToolRegistry([]),
+    });
+    session.addMessage(
+      fauxAssistantMessage([
+        fauxToolCall(
+          TOOL_NAME_EDIT,
+          { path: "src/a.ts", oldText: "before", newText: "after" },
+          { id: "edit-valid" },
+        ),
+      ]),
+      { historyEntryId: "valid-edit" },
+    );
+    session.addMessage(
+      {
+        role: "assistant",
+        content: "malformed",
+        timestamp: 2,
+      },
+      { historyEntryId: "malformed-assistant" },
+    );
+    const before = session.rawHistoryEntries;
+
+    await expect(session.pruneToolResults({ strategy: "earliest", fraction: 1 })).rejects.toThrow(
+      "invalid assistant message content while pruning edit tool calls",
+    );
+    expect(session.rawHistoryEntries).toEqual(before);
+  });
+
   it("clamps auto-compaction retention to the threshold budget", async () => {
     const faux = fauxProvider({
       provider: "faux-auto-clamp",

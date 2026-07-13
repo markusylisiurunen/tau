@@ -495,6 +495,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly timelineExtras: SessionProtocolTimelineItem[] = [];
   private readonly tools = new Map<string, SessionProtocolToolRun>();
   private readonly agents = new Map<string, SessionProtocolAgentRun>();
+  private readonly agentCostTotals = new Map<string, number>();
   private readonly facets = new Map<string, SessionProtocolFacet>();
   private readonly deltaListeners = new Set<(delta: SessionProtocolDeltaMessage) => void>();
   private readonly ephemeralListeners = new Set<
@@ -828,6 +829,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
     });
 
+    await this.runtimeEventQueue;
     this.reconcileProjections();
     const snapshot = await this.commitSnapshot();
     this.emitSnapshotReset("maintenance", snapshot);
@@ -869,6 +871,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       throw new Error("rewind failed");
     }
 
+    await this.runtimeEventQueue;
     this.reconcileProjections();
     const snapshot = await this.commitSnapshot();
     this.emitSnapshotReset("maintenance", snapshot);
@@ -1069,10 +1072,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     for (const [id, agent] of this.agents) {
       if (!messageIds.has(agent.originMessageId)) {
         this.agents.delete(id);
+        this.agentCostTotals.delete(id);
       }
     }
 
-    const timelineExtraIds = new Set(this.timelineExtras.map((item) => item.id));
+    const operationIds = new Set(
+      this.timelineExtras.filter((item) => item.type === "operation").map((item) => item.id),
+    );
     const prunedByToolId = new Map(
       prunedToolResults.map((result) => [result.toolCallId, result.content]),
     );
@@ -1082,7 +1088,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         (facet.subject.type === "message" && messageIds.has(facet.subject.id)) ||
         (facet.subject.type === "tool" && this.tools.has(facet.subject.id)) ||
         (facet.subject.type === "agent" && this.agents.has(facet.subject.id)) ||
-        (facet.subject.type === "operation" && timelineExtraIds.has(facet.subject.id));
+        (facet.subject.type === "operation" && operationIds.has(facet.subject.id));
       if (!subjectExists) {
         this.facets.delete(id);
         continue;
@@ -1228,8 +1234,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       this.tools.set(id, structuredClone(tool));
     }
     this.agents.clear();
+    this.agentCostTotals.clear();
     for (const [id, agent] of Object.entries(snapshot.agents)) {
       this.agents.set(id, structuredClone(agent));
+      this.agentCostTotals.set(id, agent.costTotal);
     }
     this.costTotal = snapshot.costTotal;
     this.facets.clear();
@@ -1476,6 +1484,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   private async recordToolUiEvent(event: ToolUiEvent): Promise<void> {
     const toolCallId = event.toolCallId;
+    const existingTool = this.tools.get(toolCallId);
+    if (!existingTool) {
+      return;
+    }
+
     const facetId = `tool-ui-${toolCallId}`;
     const existing = this.facets.get(facetId);
     const events = Array.isArray(existing?.data.events) ? existing.data.events : [];
@@ -1488,19 +1501,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     };
     this.facets.set(facet.id, facet);
 
-    const existingTool = this.tools.get(toolCallId);
-    const toolChange = existingTool
-      ? {
-          type: "tool.set" as const,
-          tool: this.updateToolRunFromUiEvent(existingTool, event),
-        }
-      : undefined;
-    if (toolChange) {
-      this.tools.set(toolChange.tool.id, toolChange.tool);
-    }
+    const tool = this.updateToolRunFromUiEvent(existingTool, event);
+    this.tools.set(tool.id, tool);
 
     await this.emitPatch("tool-run", [
-      ...(toolChange ? [toolChange] : []),
+      { type: "tool.set", tool },
       { type: "facet.set", facet: structuredClone(facet) },
     ]);
   }
@@ -1540,7 +1545,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     if (!agent) {
       return;
     }
-    this.costTotal += Math.max(0, agent.costTotal - (existing?.costTotal ?? 0));
+    const previousCost = this.agentCostTotals.get(agent.id) ?? 0;
+    this.costTotal += Math.max(0, agent.costTotal - previousCost);
+    this.agentCostTotals.set(agent.id, agent.costTotal);
+    if (!this.session.rawHistoryEntries.some((entry) => entry.id === originHistoryEntryId)) {
+      return;
+    }
     this.agents.set(agent.id, agent);
     await this.emitPatch("agent-run", [
       { type: "cost.set", costTotal: this.costTotal },

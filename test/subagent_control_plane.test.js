@@ -65,6 +65,27 @@ describe("subagent control plane origin correlation", () => {
     });
   });
 
+  it("aborts and removes agents whose origin is no longer retained", () => {
+    runSubagentMock.mockReset();
+    const signals = [];
+    runSubagentMock.mockImplementation(({ signal }) => {
+      signals.push(signal);
+      return new Promise(() => {});
+    });
+
+    const controlPlane = createControlPlane();
+    const retainedId = spawnAgent(controlPlane, "retained");
+    const removedId = spawnAgent(controlPlane, "removed");
+
+    controlPlane.retainOrigins(new Set(["history-retained"]));
+
+    expect(controlPlane.getSnapshot(retainedId)).toEqual(
+      expect.objectContaining({ id: retainedId, status: "running" }),
+    );
+    expect(controlPlane.getSnapshot(removedId)).toBeUndefined();
+    expect(signals.map((signal) => signal.aborted)).toEqual([false, true]);
+  });
+
   it("preserves spawn origin history entry across send_input_to_agent runs", async () => {
     runSubagentMock.mockReset();
     runSubagentMock.mockResolvedValue({

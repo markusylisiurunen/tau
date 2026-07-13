@@ -223,9 +223,6 @@ export class SessionEngine {
       id: entry.id,
       message: structuredClone(entry.message),
     }));
-  }
-
-  private retainSubagentsForCurrentHistory(): void {
     this.subagentControlPlane.retainOrigins(new Set(this.historyEntries.map((entry) => entry.id)));
   }
 
@@ -385,7 +382,6 @@ export class SessionEngine {
 
     const removedEntryIds = this.historyEntries.slice(historyIndex).map((item) => item.id);
     this.replaceHistoryEntries(this.historyEntries.slice(0, historyIndex));
-    this.retainSubagentsForCurrentHistory();
 
     return {
       historyEntryId: entry.id,
@@ -494,7 +490,6 @@ export class SessionEngine {
       },
     };
     this.replaceHistoryEntries([summaryEntry]);
-    this.retainSubagentsForCurrentHistory();
 
     return {
       compactionMessage,
@@ -517,7 +512,7 @@ export class SessionEngine {
         : [];
     }
 
-    const nextHistoryEntries = this.rawHistoryEntriesSnapshot.map((entry) => ({ ...entry }));
+    const nextHistoryEntries = [...this.rawHistoryEntriesSnapshot];
     const result = pruneSessionHistory({
       historyEntries: nextHistoryEntries,
       replaceMessageById: (historyEntryId, message) => {
@@ -971,7 +966,9 @@ export class SessionEngine {
         cutType: preparation.cutType,
         now: this.deps.clock.now(),
         modelNotice,
-        subagentStatus: this.formatAutoCompactionSubagentStatus(),
+        subagentStatus: this.formatAutoCompactionSubagentStatus(
+          new Set(preparation.retainedEntries.map((entry) => entry.id)),
+        ),
       }),
     };
 
@@ -986,10 +983,18 @@ export class SessionEngine {
     };
   }
 
-  private formatAutoCompactionSubagentStatus(): string | undefined {
+  private formatAutoCompactionSubagentStatus(
+    retainedHistoryEntryIds: ReadonlySet<string>,
+  ): string | undefined {
     const running = this.subagentControlPlane
       .listSnapshots()
-      .filter((snapshot) => snapshot.status === "running");
+      .filter(
+        (snapshot) =>
+          snapshot.status === "running" &&
+          retainedHistoryEntryIds.has(
+            this.subagentControlPlane.getOriginHistoryEntryId(snapshot.id),
+          ),
+      );
     if (running.length === 0) {
       return undefined;
     }

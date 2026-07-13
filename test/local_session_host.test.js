@@ -581,6 +581,84 @@ describe("LocalSessionHost", () => {
     );
   });
 
+  it("accounts for queued subagent progress without restoring a removed projection", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    hostedSession.session.addUserText("old request", { historyEntryId: "old-user" });
+    await hostedSession.snapshot();
+
+    const usage = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      contextWindowUsageTokens: 0,
+      contextWindow: 1000,
+    };
+    await hostedSession.enqueueRuntimeEvent({
+      type: "subagent_ui",
+      originHistoryEntryId: "old-user",
+      event: {
+        type: "subagent_spawned",
+        state: {
+          id: "agent-1",
+          name: "default",
+          title: "research",
+          status: "running",
+          costTotal: 0,
+          turns: 0,
+          toolCalls: 0,
+          usage,
+          startedAt: 1,
+          abortRequested: false,
+        },
+      },
+    });
+
+    hostedSession.session.restoreState({
+      sessionId: hostedSession.session.sessionId,
+      historyEntries: [
+        {
+          id: "compaction-summary",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "compacted summary" }],
+            timestamp: 2,
+          },
+        },
+      ],
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "subagent_ui",
+      originHistoryEntryId: "old-user",
+      event: {
+        type: "subagent_progress",
+        id: "agent-1",
+        text: "late progress",
+        costTotal: 0.5,
+        turns: 1,
+        toolCalls: 0,
+        usage,
+      },
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "compaction_end",
+      reason: "threshold",
+      outcome: "compacted",
+      result: {
+        summaryHistoryEntryId: "compaction-summary",
+        continuationHistoryEntryId: "compaction-continuation",
+        compactionMessage: "compacted summary",
+        cutType: "turn-boundary",
+        retainedMessageCount: 1,
+      },
+    });
+
+    await expect(hostedSession.snapshot()).resolves.toEqual(
+      expect.objectContaining({ costTotal: 0.5, agents: {} }),
+    );
+  });
+
   it("preserves cumulative session cost when compaction replaces message history", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

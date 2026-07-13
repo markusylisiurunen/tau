@@ -1486,6 +1486,149 @@ describe("session_protocol", () => {
     });
   });
 
+  it("rejects semantically mismatched snapshot projections", () => {
+    const messages = [
+      {
+        id: "system",
+        state: "committed",
+        modelVisible: true,
+        message: { role: "system", content: "system prompt", timestamp: 0 },
+      },
+      {
+        id: "user-1",
+        state: "committed",
+        modelVisible: true,
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "run it" }],
+          timestamp: 1,
+        },
+      },
+      {
+        id: "assistant-1",
+        state: "draft",
+        modelVisible: false,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "pwd" } },
+          ],
+          timestamp: 2,
+        },
+      },
+      {
+        id: "result-1",
+        state: "committed",
+        modelVisible: true,
+        message: {
+          role: "toolResult",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          content: [{ type: "text", text: "/repo" }],
+          isError: false,
+          timestamp: 3,
+        },
+      },
+    ];
+    const tool = {
+      id: "tool-1",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      call: { messageId: "assistant-1", contentIndex: 0 },
+      resultMessageId: "result-1",
+      status: "succeeded",
+      facetIds: [],
+    };
+    const agent = {
+      id: "agent-1",
+      name: "default",
+      title: "research",
+      status: "succeeded",
+      originMessageId: "user-1",
+      costTotal: 0,
+      turns: 1,
+      toolCalls: 0,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        contextWindowUsageTokens: 0,
+        contextWindow: 1000,
+      },
+      startedAt: 1,
+      finishedAt: 2,
+      abortRequested: false,
+    };
+    const snapshot = createProtocolSnapshot({
+      messages,
+      timeline: [
+        { type: "notice", id: "notice-1", notice: { severity: "info", text: "hi", timestamp: 1 } },
+      ],
+      tools: { "tool-1": tool },
+      agents: { "agent-1": agent },
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...snapshot,
+        tools: {
+          "tool-1": { ...tool, call: { messageId: "assistant-1", contentIndex: 1 } },
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringContaining("tool 'tool-1' does not match its call message content"),
+      }),
+    });
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...snapshot,
+        tools: { "tool-1": { ...tool, resultMessageId: "user-1" } },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringContaining("tool 'tool-1' does not match its result message"),
+      }),
+    });
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...snapshot,
+        agents: { "agent-1": { ...agent, originMessageId: "assistant-1" } },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringContaining(
+          "agent 'agent-1' origin does not reference a user message",
+        ),
+      }),
+    });
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...snapshot,
+        facets: {
+          "operation-facet": {
+            id: "operation-facet",
+            subject: { type: "operation", id: "notice-1" },
+            kind: "test",
+            version: 1,
+            data: {},
+          },
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringContaining(
+          "facet 'operation-facet' references unknown operation subject",
+        ),
+      }),
+    });
+  });
+
   it("parses and constructs pending user message state", () => {
     const message = createSessionProtocolPendingUserMessagesMessage({
       sessionId: "session-1",

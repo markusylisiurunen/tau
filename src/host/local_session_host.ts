@@ -184,22 +184,32 @@ export class LocalSessionHost implements TauSessionHost {
     snapshot: SessionProtocolSnapshot,
     executionEnvironment: ExecutionEnvironment,
   ): Promise<LocalHostedSession> {
-    const recovered = normalizeRecoveredSnapshot(snapshot);
-    const hostedSession = await this.createLocalSessionHandle(
-      executionEnvironment,
-      recovered.snapshot,
-      undefined,
-      recovered.changed,
-    );
-    hostedSession.session.restoreState({
-      sessionId: recovered.snapshot.sessionId,
-      historyEntries: recovered.snapshot.messages.flatMap((entry) =>
-        entry.modelVisible && isCoreMessage(entry.message)
-          ? [{ id: entry.id, message: entry.message }]
-          : [],
-      ),
-    });
-    return hostedSession;
+    let hostedSession: LocalHostedSessionHandle | undefined;
+    try {
+      const recovered = normalizeRecoveredSnapshot(snapshot);
+      hostedSession = await this.createLocalSessionHandle(
+        executionEnvironment,
+        recovered.snapshot,
+        undefined,
+        recovered.changed,
+      );
+      hostedSession.session.restoreState({
+        sessionId: recovered.snapshot.sessionId,
+        historyEntries: recovered.snapshot.messages.flatMap((entry) =>
+          entry.modelVisible && isCoreMessage(entry.message)
+            ? [{ id: entry.id, message: entry.message }]
+            : [],
+        ),
+      });
+      return hostedSession;
+    } catch (error) {
+      if (hostedSession) {
+        await hostedSession.dispose();
+      } else {
+        await executionEnvironment.dispose();
+      }
+      throw error;
+    }
   }
 
   private async createLocalSessionHandle(
@@ -442,6 +452,20 @@ export class LocalSessionHost implements TauSessionHost {
     }
 
     for (const session of this.sessions) {
+      session.interruptTurn();
+      session.interruptMaintenance();
+    }
+
+    const settlementResults = await Promise.allSettled(
+      [...this.sessions].map((session) => session.waitForActiveWork()),
+    );
+    for (const result of settlementResults) {
+      if (result.status === "rejected") {
+        errors.push(result.reason);
+      }
+    }
+
+    for (const session of this.sessions) {
       try {
         await session.snapshot();
       } catch (error) {
@@ -510,6 +534,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly unsubscribeSubagentEvent: () => void;
   private runtimeEventQueue: Promise<void> = Promise.resolve();
   private snapshotQueue: Promise<unknown> = Promise.resolve();
+  private readonly maintenanceAbortControllers = new Set<AbortController>();
+  private readonly maintenancePromises = new Set<Promise<unknown>>();
+  private activeTurnPromise?: Promise<SessionProtocolUserMessageTurnResult["turn"]>;
+  private disposePromise?: Promise<void>;
   private costTotal = 0;
   private forceNextSnapshotRevision: boolean;
   private disposed = false;
@@ -587,6 +615,18 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async runTurn(): Promise<SessionProtocolUserMessageTurnResult["turn"]> {
     this.assertActive();
+    const run = this.runTurnNow();
+    this.activeTurnPromise = run;
+    try {
+      return await run;
+    } finally {
+      if (this.activeTurnPromise === run) {
+        this.activeTurnPromise = undefined;
+      }
+    }
+  }
+
+  private async runTurnNow(): Promise<SessionProtocolUserMessageTurnResult["turn"]> {
     try {
       const result = await this.runtime.runTurn({
         onEvent: (event) => this.recordTurnRuntimeEvent(event),
@@ -609,6 +649,25 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   interruptTurn(): boolean {
     this.assertActive();
     return this.runtime.interruptTurn();
+  }
+
+  interruptMaintenance(): boolean {
+    let interrupted = false;
+    for (const abortController of this.maintenanceAbortControllers) {
+      if (!abortController.signal.aborted) {
+        abortController.abort();
+        interrupted = true;
+      }
+    }
+    return interrupted;
+  }
+
+  async waitForActiveWork(): Promise<void> {
+    await Promise.allSettled([
+      ...(this.activeTurnPromise ? [this.activeTurnPromise] : []),
+      ...this.maintenancePromises,
+    ]);
+    await this.runtimeEventQueue;
   }
 
   requestTurnBoundaryStop(): boolean {
@@ -823,45 +882,65 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   async compact(
     options: Omit<SessionProtocolCompactParams, "sessionId">,
   ): Promise<SessionProtocolCompactResult> {
-    this.assertActive();
-    const result = await this.session.compact({
-      mode: options.mode === "summary-only" ? "only-summary" : "with-last-assistant",
-      ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
-    });
+    return await this.runMaintenance(async (signal) => {
+      const result = await this.session.compact({
+        mode: options.mode === "summary-only" ? "only-summary" : "with-last-assistant",
+        ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
+        signal,
+      });
 
-    await this.runtimeEventQueue;
-    this.reconcileProjections();
-    const snapshot = await this.commitSnapshot();
-    this.emitSnapshotReset("maintenance", snapshot);
-    return {
-      snapshot,
-      compactionMessage: result.compactionMessage,
-      includedLastAssistant: result.includedLastAssistant,
-    };
+      signal.throwIfAborted();
+      await this.runtimeEventQueue;
+      this.reconcileProjections();
+      const snapshot = await this.commitSnapshot();
+      this.emitSnapshotReset("maintenance", snapshot);
+      return {
+        snapshot,
+        compactionMessage: result.compactionMessage,
+        includedLastAssistant: result.includedLastAssistant,
+      };
+    });
   }
 
   async pruneToolResults(
     options: Omit<SessionProtocolPruneParams, "sessionId">,
   ): Promise<SessionProtocolPruneResult> {
-    this.assertActive();
-    const result = await this.session.pruneToolResults({
-      strategy: options.strategy,
-      fraction: options.fraction,
-      ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
-    });
+    return await this.runMaintenance(async (signal) => {
+      const result = await this.session.pruneToolResults({
+        strategy: options.strategy,
+        fraction: options.fraction,
+        ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
+        signal,
+      });
 
-    this.reconcileProjections({ prunedToolResults: result.prunedToolResults });
-    const snapshot = await this.commitSnapshot();
-    this.emitSnapshotReset("maintenance", snapshot);
-    return {
-      snapshot,
-      message: result.message,
-      noop: result.noop,
-      bashResultsPruned: result.bashResultsPruned,
-      editCallsPruned: result.editCallsPruned,
-      editResultsPruned: result.editResultsPruned,
-      bytesPruned: result.bytesPruned,
-    };
+      signal.throwIfAborted();
+      this.reconcileProjections({ prunedToolResults: result.prunedToolResults });
+      const snapshot = await this.commitSnapshot();
+      this.emitSnapshotReset("maintenance", snapshot);
+      return {
+        snapshot,
+        message: result.message,
+        noop: result.noop,
+        bashResultsPruned: result.bashResultsPruned,
+        editCallsPruned: result.editCallsPruned,
+        editResultsPruned: result.editResultsPruned,
+        bytesPruned: result.bytesPruned,
+      };
+    });
+  }
+
+  private async runMaintenance<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    this.assertActive();
+    const abortController = new AbortController();
+    this.maintenanceAbortControllers.add(abortController);
+    const promise = operation(abortController.signal);
+    this.maintenancePromises.add(promise);
+    try {
+      return await promise;
+    } finally {
+      this.maintenanceAbortControllers.delete(abortController);
+      this.maintenancePromises.delete(promise);
+    }
   }
 
   async rewindToHistoryEntryId(historyEntryId: string): Promise<SessionProtocolRewindResult> {
@@ -946,20 +1025,56 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   async dispose(): Promise<void> {
+    if (!this.disposePromise) {
+      this.disposePromise = this.disposeNow();
+    }
+    return await this.disposePromise;
+  }
+
+  private async disposeNow(): Promise<void> {
     if (this.disposed) {
       return;
     }
+
+    const errors: unknown[] = [];
+    this.runtime.interruptTurn();
+    this.interruptMaintenance();
+    try {
+      await this.waitForActiveWork();
+    } catch (error) {
+      errors.push(error);
+    }
+
     this.disposed = true;
     try {
       this.unsubscribeSubagentEvent();
-      for (const session of this.ephemeralAgentSessions.values()) {
+    } catch (error) {
+      errors.push(error);
+    }
+    for (const session of this.ephemeralAgentSessions.values()) {
+      try {
         session.dispose();
+      } catch (error) {
+        errors.push(error);
       }
-      this.ephemeralAgentSessions.clear();
+    }
+    this.ephemeralAgentSessions.clear();
+    try {
       this.session.dispose();
+    } catch (error) {
+      errors.push(error);
+    }
+
+    try {
       await this.executionEnvironment.dispose();
+    } catch (error) {
+      errors.push(error);
     } finally {
       this.removeFromHost(this);
+    }
+
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "failed to dispose hosted session");
     }
   }
 

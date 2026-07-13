@@ -299,6 +299,9 @@ function createHarness(options = {}) {
         releaseTurn();
         return true;
       },
+      interruptMaintenance: vi.fn(() => false),
+      waitForActiveWork: vi.fn(async () => {}),
+      terminateSubagent: vi.fn(async () => ({ found: true })),
       releaseTurn: () => releaseTurn?.(),
       canReleaseTurn: () => Boolean(releaseTurn),
       emitNotice: (text, revision = historyEntries.length + 1) => {
@@ -967,6 +970,34 @@ describe("rpc_server", () => {
     );
 
     expect(harness.lines).toHaveLength(lineCount);
+  });
+
+  it("terminates a subagent without interrupting an active foreground turn", async () => {
+    const harness = createHarness();
+
+    const submit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "keep this turn running",
+      }),
+    );
+    await waitFor(() => harness.seededSession.canReleaseTurn());
+
+    await harness.server.handleLine(
+      request("terminate-1", "session.terminateSubagent", {
+        sessionId: "session-1",
+        subagentId: "agent-1",
+      }),
+    );
+
+    expect(harness.seededSession.isTurnRunning).toBe(true);
+    expect(harness.seededSession.terminateSubagent).toHaveBeenCalledWith("agent-1");
+    expect(
+      harness.lines.find((line) => line.type === "response" && line.id === "terminate-1"),
+    ).toMatchObject({ ok: true, result: { found: true } });
+
+    harness.releaseTurn();
+    await submit;
   });
 
   it("changes reasoning during an active turn without interrupting or rejecting queued submits", async () => {

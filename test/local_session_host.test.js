@@ -2161,6 +2161,34 @@ describe("LocalSessionHost", () => {
     );
   });
 
+  it("disposes a restored environment when recovered runtime initialization fails", async () => {
+    const store = new MemorySessionStore();
+    const storedSnapshot = createStoredSnapshot({
+      sessionId: "failed-recovery",
+      revision: 1,
+      historyEntries: [],
+    });
+    await store.commitSessionSnapshot(storedSnapshot);
+
+    const restoredEnvironment = createTestExecutionEnvironment();
+    restoredEnvironment.resolveRuntimeContext = vi.fn(async () => {
+      throw new Error("runtime context failed");
+    });
+    restoredEnvironment.dispose = vi.fn(async () => {});
+    const host = createHost(store, {
+      executionEnvironmentResolver: {
+        resolve: async () => createTestExecutionEnvironment(),
+        canRestore: () => true,
+        restore: async () => restoredEnvironment,
+      },
+    });
+
+    await expect(host.observeSession(storedSnapshot.sessionId)).rejects.toThrow(
+      "runtime context failed",
+    );
+    expect(restoredEnvironment.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("disposes a resolved create-session environment when shutdown wins the resolver race", async () => {
     const store = new MemorySessionStore();
     let releaseResolve;
@@ -2221,6 +2249,84 @@ describe("LocalSessionHost", () => {
     expect(resolve).toHaveBeenCalledTimes(1);
     expect(resolvedEnvironment.dispose).toHaveBeenCalledTimes(1);
     await expect(host.listSessions()).resolves.toEqual([]);
+  });
+
+  it("settles an active turn before disposing its execution environment", async () => {
+    const store = new MemorySessionStore();
+    const executionEnvironment = createTestExecutionEnvironment();
+    let hostedSession;
+    executionEnvironment.dispose = vi.fn(async () => {
+      expect(hostedSession.isTurnRunning).toBe(false);
+    });
+    const host = createHostForEnvironment(store, executionEnvironment);
+    hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.record({ text: "keep running until disposal" });
+
+    let markStreamStarted;
+    const streamStarted = new Promise((resolve) => {
+      markStreamStarted = resolve;
+    });
+    hostedSession.runtime.session.engine.modelRuntime.streamModel = (
+      _model,
+      _context,
+      options,
+    ) => ({
+      async *[Symbol.asyncIterator]() {
+        markStreamStarted();
+        await new Promise((resolve) => {
+          options.signal.addEventListener("abort", resolve, { once: true });
+        });
+      },
+      async result() {
+        return fauxAssistantMessage("", { stopReason: "aborted" });
+      },
+    });
+
+    const turn = hostedSession.runTurn();
+    await streamStarted;
+    await hostedSession.dispose();
+    await expect(turn).resolves.toMatchObject({ aborted: true });
+    expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts and settles maintenance before the shutdown snapshot", async () => {
+    const store = new MemorySessionStore();
+    const executionEnvironment = createTestExecutionEnvironment();
+    executionEnvironment.dispose = vi.fn(async () => {});
+    const host = createHostForEnvironment(store, executionEnvironment);
+    const hostedSession = await host.createSession(localCreateInput);
+    hostedSession.session.addUserText("original user message");
+    hostedSession.session.addMessage(fauxAssistantMessage("original assistant response"));
+    const before = await hostedSession.snapshot();
+
+    let markStreamStarted;
+    const streamStarted = new Promise((resolve) => {
+      markStreamStarted = resolve;
+    });
+    hostedSession.runtime.session.engine.modelRuntime.streamModel = (
+      _model,
+      _context,
+      options,
+    ) => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        markStreamStarted();
+        await new Promise((resolve) => {
+          options.signal.addEventListener("abort", resolve, { once: true });
+        });
+        return fauxAssistantMessage("summary");
+      },
+    });
+
+    const compact = hostedSession.compact({ mode: "summary-only" });
+    const compactResult = expect(compact).rejects.toThrow();
+    await streamStarted;
+    await expect(host.shutdown()).resolves.toBeUndefined();
+    await compactResult;
+
+    const stored = await store.loadSession(before.sessionId);
+    expect(stored.messages).toEqual(before.messages);
+    expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
   });
 
   it("removes directly disposed live handles from host recovery bookkeeping", async () => {

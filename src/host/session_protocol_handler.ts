@@ -293,17 +293,24 @@ export class SessionProtocolHandler {
       if (interruptActiveTurns && (state.live.activeSubmit || state.session.isTurnRunning)) {
         state.session.interruptTurn();
       }
+      if (interruptActiveTurns) {
+        state.session.interruptMaintenance();
+      }
       if (interruptActiveTurns && state.live.activeBash) {
         state.live.activeBash.abortController.abort();
       }
     }
 
     if (interruptActiveTurns) {
+      await Promise.allSettled(states.map((state) => state.session.waitForActiveWork()));
       await Promise.allSettled(
         states.map((state) => state.live.activeSubmit?.promise).filter((promise) => promise),
       );
       await Promise.allSettled(
         states.map((state) => state.live.activeBash?.promise).filter((promise) => promise),
+      );
+      await Promise.allSettled(
+        states.map((state) => getSessionMutationQueueState(state.session).queue),
       );
     }
 
@@ -1055,14 +1062,15 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const interrupted = state.session.interruptTurn();
+    const interruptedTurn = state.session.interruptTurn();
+    const interruptedMaintenance = state.session.interruptMaintenance();
     const interruptedBash = Boolean(state.live.activeBash);
     state.live.activeBash?.abortController.abort();
     this.rejectPendingSteeringSubmits(state, "session was interrupted");
 
     const result: SessionProtocolResultByMethod["session.interrupt"] = {
-      interrupted: interrupted || interruptedBash,
-      isTurnRunning: state.session.isTurnRunning || interruptedBash,
+      interrupted: interruptedTurn || interruptedMaintenance || interruptedBash,
+      isTurnRunning: state.session.isTurnRunning || interruptedMaintenance || interruptedBash,
     };
 
     this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.interrupt", result));
@@ -1195,7 +1203,7 @@ export class SessionProtocolHandler {
   private async handleTerminateSubagent(
     request: Extract<SessionProtocolRequestMessage, { method: "session.terminateSubagent" }>,
   ): Promise<void> {
-    await this.withSessionMutation(request, "subagent termination requested", async (state) => {
+    await this.withNonInterruptingSessionMutation(request, async (state) => {
       this.sendMessage(
         createSessionProtocolSuccessResponse(
           request.id,
@@ -1275,6 +1283,9 @@ export class SessionProtocolHandler {
     }
 
     await this.runSessionMutation(state, async () => {
+      if (this.closed) {
+        return;
+      }
       if (state.session.sessionId !== request.params.sessionId) {
         this.sendSessionNotFound(request.id, request.params.sessionId);
         return;
@@ -1282,6 +1293,28 @@ export class SessionProtocolHandler {
       await this.interruptAndWaitForActiveSubmit(state);
       this.rejectPendingSteeringSubmits(state, queuedSteeringRejectionMessage);
       this.rejectPendingQueuedSubmits(state, queuedSteeringRejectionMessage);
+      await handler(state);
+    });
+  }
+
+  private async withNonInterruptingSessionMutation(
+    request: SessionProtocolMutationRequest,
+    handler: (state: SessionProtocolHandlerSessionState) => Promise<void>,
+  ): Promise<void> {
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+
+    await this.runSessionMutation(state, async () => {
+      if (this.closed) {
+        return;
+      }
+      if (state.session.sessionId !== request.params.sessionId) {
+        this.sendSessionNotFound(request.id, request.params.sessionId);
+        return;
+      }
       await handler(state);
     });
   }

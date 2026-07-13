@@ -205,6 +205,106 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(sessionRequests).toHaveLength(1);
   });
 
+  it("cancels a queued command before it reaches the bridge", async () => {
+    const encoder = new TextEncoder();
+    const execStreams = [];
+    const fetchMock = async (url) => {
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/session")) {
+        return jsonResponse({ id: "tau-session-1" });
+      }
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/exec")) {
+        const stream = {};
+        const body = new ReadableStream({
+          start(controller) {
+            stream.controller = controller;
+          },
+        });
+        execStreams.push(stream);
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      return jsonResponse({});
+    };
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: fetchMock,
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    const first = backend.runBash("one");
+    await waitFor(() => execStreams.length === 1);
+    const controller = new AbortController();
+    const second = backend.runBash("two", { signal: controller.signal });
+    controller.abort();
+
+    await expect(second).rejects.toMatchObject({ name: "AbortError" });
+    expect(execStreams).toHaveLength(1);
+    execStreams[0].controller.enqueue(encoder.encode(execSse({ stdout: "one\n" }).join("")));
+    execStreams[0].controller.close();
+    await expect(first).resolves.toMatchObject({ output: "one\n" });
+    await backend.dispose();
+  });
+
+  it("cancels active and queued commands and rejects new work on dispose", async () => {
+    const requests = [];
+    let execCount = 0;
+    const fetchMock = async (url, init = {}) => {
+      requests.push({ url: String(url), init });
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/session")) {
+        return jsonResponse({ id: "tau-session-1" });
+      }
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/exec")) {
+        execCount += 1;
+        const body = new ReadableStream({
+          start(controller) {
+            init.signal.addEventListener("abort", () => controller.error(init.signal.reason), {
+              once: true,
+            });
+          },
+        });
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      if (String(url).includes("/v1/sandbox/sandbox-1/session/tau-session-1")) {
+        return jsonResponse({});
+      }
+      return jsonResponse({ error: "not found" }, { status: 404 });
+    };
+
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: fetchMock,
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    const first = backend.runBash("one");
+    await waitFor(() => execCount === 1);
+    const second = backend.runBash("two");
+    const firstResult = expect(first).rejects.toMatchObject({ name: "AbortError" });
+    const secondResult = expect(second).rejects.toMatchObject({ name: "AbortError" });
+
+    await backend.dispose();
+    await firstResult;
+    await secondResult;
+    expect(execCount).toBe(1);
+    await expect(backend.runBash("three")).rejects.toThrow("backend is disposed");
+    expect(requests.filter((request) => request.url.endsWith("/exec"))).toHaveLength(1);
+  });
+
   it("serializes node scripts with bash commands that share a command session", async () => {
     const encoder = new TextEncoder();
     const requests = [];
@@ -390,7 +490,7 @@ describe("Cloudflare Sandbox execution environment", () => {
     ]);
   });
 
-  it("deletes the command session when bridge exec receives an already-aborted signal", async () => {
+  it("does not create a command session for an already-aborted signal", async () => {
     const requests = [];
     const fetchMock = async (url, init = {}) => {
       requests.push({ url: String(url), init });
@@ -425,7 +525,7 @@ describe("Cloudflare Sandbox execution environment", () => {
     await expect(backend.runBash("sleep 10", { signal: controller.signal })).rejects.toMatchObject({
       name: "AbortError",
     });
-    expect(requests.filter((request) => request.init.method === "DELETE")).toHaveLength(1);
+    expect(requests).toHaveLength(0);
   });
 
   it("uses real execution-environment paths for bridge file reads", async () => {

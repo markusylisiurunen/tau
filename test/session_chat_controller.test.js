@@ -113,7 +113,6 @@ function createAgentRun(overrides = {}) {
     name: "default",
     title: "Inspect state",
     status: "running",
-    originMessageId: "assistant-1",
     costTotal: 0.01,
     turns: 1,
     toolCalls: 0,

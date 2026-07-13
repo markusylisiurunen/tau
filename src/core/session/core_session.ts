@@ -92,6 +92,10 @@ export class CoreSession {
     return this.engine.onSubagentEvent(handler);
   }
 
+  hasSubagent(id: string): boolean {
+    return this.engine.hasSubagent(id);
+  }
+
   async terminateSubagent(id: string): Promise<boolean> {
     return await this.engine.terminateSubagent(id);
   }

@@ -532,7 +532,6 @@ export type SessionProtocolAgentRun = {
   name: string;
   title: string;
   status: "running" | "succeeded" | "failed" | "cancelled";
-  originMessageId: string;
   modelLabel?: string;
   costTotal: number;
   turns: number;
@@ -1511,7 +1510,6 @@ const sessionProtocolAgentRunSchema = z
     name: nonEmptyStringSchema,
     title: nonEmptyStringSchema,
     status: z.enum(["running", "succeeded", "failed", "cancelled"]),
-    originMessageId: nonEmptyStringSchema,
     modelLabel: z.string().optional(),
     costTotal: z.number().finite(),
     turns: z.number().finite(),
@@ -1562,19 +1560,20 @@ const sessionProtocolSnapshotSchema = z
   })
   .strip()
   .superRefine((snapshot, ctx) => {
-    const messageIds = new Set<string>();
+    const messagesById = new Map<string, SessionProtocolMessage>();
     for (const message of snapshot.messages) {
-      if (messageIds.has(message.id)) {
+      if (messagesById.has(message.id)) {
         ctx.addIssue({
           code: "custom",
           path: ["messages"],
           message: `duplicate message id '${message.id}'`,
         });
       }
-      messageIds.add(message.id);
+      messagesById.set(message.id, message);
     }
 
     const timelineIds = new Set<string>();
+    const operationIds = new Set<string>();
     for (const item of snapshot.timeline) {
       if (timelineIds.has(item.id)) {
         ctx.addIssue({
@@ -1584,11 +1583,116 @@ const sessionProtocolSnapshotSchema = z
         });
       }
       timelineIds.add(item.id);
-      if (item.type === "message" && !messageIds.has(item.messageId)) {
+      if (item.type === "message" && !messagesById.has(item.messageId)) {
         ctx.addIssue({
           code: "custom",
           path: ["timeline"],
           message: `timeline message item '${item.id}' references unknown message '${item.messageId}'`,
+        });
+      }
+      if (item.type === "operation") {
+        operationIds.add(item.id);
+      }
+    }
+
+    for (const [id, tool] of Object.entries(snapshot.tools)) {
+      if (id !== tool.id || id !== tool.toolCallId) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["tools", id],
+          message: `tool map key '${id}' does not match embedded identity`,
+        });
+      }
+      const callMessage = messagesById.get(tool.call.messageId);
+      if (callMessage === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["tools", id, "call", "messageId"],
+          message: `tool '${id}' references unknown call message '${tool.call.messageId}'`,
+        });
+      } else {
+        const callContent =
+          callMessage.message.role === "assistant"
+            ? callMessage.message.content[tool.call.contentIndex]
+            : undefined;
+        if (
+          typeof callContent !== "object" ||
+          callContent === null ||
+          !("type" in callContent) ||
+          callContent.type !== "toolCall" ||
+          !("id" in callContent) ||
+          callContent.id !== tool.toolCallId ||
+          !("name" in callContent) ||
+          callContent.name !== tool.toolName
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["tools", id, "call"],
+            message: `tool '${id}' does not match its call message content`,
+          });
+        }
+      }
+      if (tool.resultMessageId !== undefined) {
+        const resultMessage = messagesById.get(tool.resultMessageId);
+        if (resultMessage === undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["tools", id, "resultMessageId"],
+            message: `tool '${id}' references unknown result message '${tool.resultMessageId}'`,
+          });
+        } else if (
+          resultMessage.message.role !== "toolResult" ||
+          resultMessage.message.toolCallId !== tool.toolCallId ||
+          resultMessage.message.toolName !== tool.toolName
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["tools", id, "resultMessageId"],
+            message: `tool '${id}' does not match its result message`,
+          });
+        }
+      }
+      for (const facetId of tool.facetIds) {
+        const facet = snapshot.facets[facetId];
+        if (facet === undefined || facet.subject.type !== "tool" || facet.subject.id !== id) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["tools", id, "facetIds"],
+            message: `tool '${id}' references invalid facet '${facetId}'`,
+          });
+        }
+      }
+    }
+
+    for (const [id, agent] of Object.entries(snapshot.agents)) {
+      if (id !== agent.id) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", id],
+          message: `agent map key '${id}' does not match embedded id '${agent.id}'`,
+        });
+      }
+    }
+
+    for (const [id, facet] of Object.entries(snapshot.facets)) {
+      if (id !== facet.id) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["facets", id],
+          message: `facet map key '${id}' does not match embedded id '${facet.id}'`,
+        });
+      }
+      const subjectExists =
+        facet.subject.type === "session" ||
+        (facet.subject.type === "message" && messagesById.has(facet.subject.id)) ||
+        (facet.subject.type === "tool" && snapshot.tools[facet.subject.id] !== undefined) ||
+        (facet.subject.type === "agent" && snapshot.agents[facet.subject.id] !== undefined) ||
+        (facet.subject.type === "operation" && operationIds.has(facet.subject.id));
+      if (!subjectExists) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["facets", id, "subject"],
+          message: `facet '${id}' references unknown ${facet.subject.type} subject`,
         });
       }
     }

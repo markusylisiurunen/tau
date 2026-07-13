@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { safeParseCoreEventEnvelope } from "../dist/core/events/parser.js";
 import { personas } from "../dist/core/personas.js";
@@ -288,6 +288,24 @@ describe("core session rewind APIs", () => {
     expect(session.rewindToHistoryEntryId("missing-id")).toBeUndefined();
   });
 
+  it("rejects rewind while a subagent is running", () => {
+    const session = new CoreSession({
+      persona: personas[0],
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry: new ToolRegistry([]),
+    });
+    const historyEntryId = session.addUserText("keep this turn");
+    session.addMessage(fauxAssistantMessage("working"));
+    const before = session.rawHistoryEntries;
+    vi.spyOn(session.engine.subagentControlPlane, "getActiveCount").mockReturnValue(1);
+
+    expect(() => session.rewindToHistoryEntryId(historyEntryId)).toThrow(
+      "cannot rewind while subagents are running",
+    );
+    expect(session.rawHistoryEntries).toEqual(before);
+  });
+
   it("keeps tau metadata in raw history and strips it from visible history", () => {
     const backend = createLocalToolExecutionBackend();
     const toolRegistry = ToolCatalog.createRegistry(backend);
@@ -415,13 +433,58 @@ describe("core session rewind APIs", () => {
       const sessionId = session.sessionId;
       session.addUserText("remember this");
       session.addMessage(fauxAssistantMessage("remembered"));
+      vi.spyOn(session.engine.subagentControlPlane, "listSnapshots").mockReturnValue([
+        {
+          id: "agent-1",
+          name: "default",
+          title: "research",
+          status: "running",
+          abortRequested: false,
+        },
+      ]);
 
       await session.compact({ mode: "only-summary" });
 
       expect(session.sessionId).toBe(sessionId);
+      expect(stripTauUserMetadata(session.rawHistory[0].content[0].text)).toContain(
+        "<active-subagents>\n- agent-1: research",
+      );
     } finally {
       unregisterFauxProvider();
     }
+  });
+
+  it("leaves session history unchanged when pruning fails", async () => {
+    const session = new CoreSession({
+      persona: personas[0],
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry: new ToolRegistry([]),
+    });
+    session.addMessage(
+      fauxAssistantMessage([
+        fauxToolCall(
+          TOOL_NAME_EDIT,
+          { path: "src/a.ts", oldText: "before", newText: "after" },
+          { id: "edit-valid" },
+        ),
+      ]),
+      { historyEntryId: "valid-edit" },
+    );
+    session.addMessage(
+      {
+        role: "assistant",
+        content: "malformed",
+        timestamp: 2,
+      },
+      { historyEntryId: "malformed-assistant" },
+    );
+    const before = session.rawHistoryEntries;
+
+    await expect(session.pruneToolResults({ strategy: "earliest", fraction: 1 })).rejects.toThrow(
+      "invalid assistant message content while pruning edit tool calls",
+    );
+    expect(session.rawHistoryEntries).toEqual(before);
   });
 
   it("clamps auto-compaction retention to the threshold budget", async () => {
@@ -461,6 +524,15 @@ describe("core session rewind APIs", () => {
         },
       });
 
+      vi.spyOn(session.engine.subagentControlPlane, "listSnapshots").mockReturnValue([
+        {
+          id: "agent-1",
+          name: "default",
+          title: "research",
+          status: "running",
+          abortRequested: false,
+        },
+      ]);
       session.addUserText("old request", { historyEntryId: "old-request" });
       session.addMessage(assistantMessageWithUsage("old answer", 1000));
       session.addUserText(`middle request ${"x".repeat(6000)}`, {
@@ -476,6 +548,9 @@ describe("core session rewind APIs", () => {
       }
 
       expect(session.sessionId).toBe(sessionId);
+      expect(stripTauUserMetadata(session.rawHistory[0].content[0].text)).toContain(
+        "<active-subagents>\n- agent-1: research",
+      );
 
       const compactionEnd = events.find(
         (event) => event.type === "compaction_end" && event.outcome === "compacted",
@@ -2111,7 +2186,6 @@ describe("compaction context message", () => {
     const continuation = buildAutoCompactionContinuationMessage({
       cutType: "turn-boundary",
       now: 2,
-      subagentStatus: "- agent-1: check tests (name: default, status: running)",
     });
     const entries = historyEntries([
       userMessage(previousSummaryText),
@@ -2145,8 +2219,6 @@ describe("compaction context message", () => {
       cutType: "turn-boundary",
       retainedMessageCount: 2,
     });
-    expect(stripTauUserMetadata(continuation.content[0].text)).toContain("<active-subagents>");
-    expect(stripTauUserMetadata(continuation.content[0].text)).toContain("agent-1");
     expect(hasAutoCompactionContinuationMetadata(continuation)).toBe(true);
   });
 });

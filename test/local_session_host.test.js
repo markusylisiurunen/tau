@@ -445,6 +445,17 @@ describe("LocalSessionHost", () => {
 
     const deltas = [];
     hostedSession.onDelta((delta) => deltas.push(delta));
+    hostedSession.session.addMessage(
+      assistantMessageWithToolCalls([
+        {
+          type: "toolCall",
+          id: "tool-a",
+          name: "bash",
+          arguments: { command: "echo a" },
+        },
+      ]),
+      { historyEntryId: "assistant-tools" },
+    );
 
     await Promise.all([
       hostedSession.enqueueRuntimeEvent({
@@ -544,6 +555,110 @@ describe("LocalSessionHost", () => {
           kind: "auto-compaction",
           status: "running",
         }),
+      }),
+    );
+  });
+
+  it("preserves timeline notices when rewinding history", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    const historyEntryId = hostedSession.session.addUserText("rewind me");
+    await hostedSession.snapshot();
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "notice",
+      severity: "warn",
+      text: "keep this notice",
+    });
+    await hostedSession.rewindToHistoryEntryId(historyEntryId);
+
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.timeline).toContainEqual(
+      expect.objectContaining({
+        type: "notice",
+        notice: expect.objectContaining({ text: "keep this notice" }),
+      }),
+    );
+  });
+
+  it("accounts for queued subagent progress and preserves the projection after compaction", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+    hostedSession.session.addUserText("old request", { historyEntryId: "old-user" });
+    await hostedSession.snapshot();
+
+    const usage = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      contextWindowUsageTokens: 0,
+      contextWindow: 1000,
+    };
+    await hostedSession.enqueueRuntimeEvent({
+      type: "subagent_ui",
+      event: {
+        type: "subagent_spawned",
+        state: {
+          id: "agent-1",
+          name: "default",
+          title: "research",
+          status: "running",
+          costTotal: 0,
+          turns: 0,
+          toolCalls: 0,
+          usage,
+          startedAt: 1,
+          abortRequested: false,
+        },
+      },
+    });
+
+    hostedSession.session.restoreState({
+      sessionId: hostedSession.session.sessionId,
+      historyEntries: [
+        {
+          id: "compaction-summary",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "compacted summary" }],
+            timestamp: 2,
+          },
+        },
+      ],
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "subagent_ui",
+      event: {
+        type: "subagent_progress",
+        id: "agent-1",
+        text: "late progress",
+        costTotal: 0.5,
+        turns: 1,
+        toolCalls: 0,
+        usage,
+      },
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "compaction_end",
+      reason: "threshold",
+      outcome: "compacted",
+      result: {
+        summaryHistoryEntryId: "compaction-summary",
+        continuationHistoryEntryId: "compaction-continuation",
+        compactionMessage: "compacted summary",
+        cutType: "turn-boundary",
+        retainedMessageCount: 1,
+      },
+    });
+
+    await expect(hostedSession.snapshot()).resolves.toEqual(
+      expect.objectContaining({
+        costTotal: 0.5,
+        agents: {
+          "agent-1": expect.objectContaining({ status: "running" }),
+        },
       }),
     );
   });
@@ -713,6 +828,15 @@ describe("LocalSessionHost", () => {
       }),
     ]);
 
+    const finalMessage = assistantMessageWithToolCalls([toolCall]);
+    hostedSession.session.addMessage(finalMessage, {
+      historyEntryId: "assistant-streaming-tool",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_final",
+      historyEntryId: "assistant-streaming-tool",
+      message: finalMessage,
+    });
     await hostedSession.enqueueRuntimeEvent({
       type: "tool_ui",
       uiEvent: {
@@ -728,9 +852,9 @@ describe("LocalSessionHost", () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: "assistant-streaming-tool",
-          state: "draft",
+          state: "committed",
           message: expect.objectContaining({
-            content: [{ type: "text", text: "running a command" }, toolCall],
+            content: [toolCall],
           }),
         }),
       ]),

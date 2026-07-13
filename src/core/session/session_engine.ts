@@ -49,6 +49,7 @@ import {
   getAutoCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
   isTauUserMessageHidden,
+  prependTauHiddenSystemMessages,
   prependTauUserMetadata,
   stripTauUserDisplayText,
   stripTauUserMetadata,
@@ -281,6 +282,10 @@ export class SessionEngine {
     return () => this.subagentEventListeners.delete(handler);
   }
 
+  hasSubagent(id: string): boolean {
+    return this.subagentControlPlane.getSnapshot(id) !== undefined;
+  }
+
   async terminateSubagent(id: string): Promise<boolean> {
     const result = await this.subagentControlPlane.terminate(id);
     return Boolean(result);
@@ -378,9 +383,15 @@ export class SessionEngine {
     ) {
       return undefined;
     }
+    if (this.subagentControlPlane.getActiveCount() > 0) {
+      throw new Error("cannot rewind while subagents are running");
+    }
 
     const removedEntryIds = this.historyEntries.slice(historyIndex).map((item) => item.id);
-    this.historyEntries = this.historyEntries.slice(0, historyIndex);
+    this.replaceHistoryEntries(this.historyEntries.slice(0, historyIndex));
+    this.subagentControlPlane.retainOrigins(
+      new Set(this.historyEntries.map((historyEntry) => historyEntry.id)),
+    );
 
     return {
       historyEntryId: entry.id,
@@ -467,11 +478,11 @@ export class SessionEngine {
       preservedUserMessages: summaryResult.preservedUserMessages,
     });
 
-    const textWithModelNotice = prependModelNotice(
+    const textWithContext = this.prependCompactionContext(
       compactionMessage,
       resolveModelNotice(this.config, this.persona.model),
     );
-    const textWithMetadata = prependTauUserMetadata(textWithModelNotice, [
+    const textWithMetadata = prependTauUserMetadata(textWithContext, [
       {
         type: "compaction",
         version: 1,
@@ -511,10 +522,17 @@ export class SessionEngine {
         : [];
     }
 
-    return pruneSessionHistory({
-      historyEntries: this.historyEntries,
-      replaceMessageById: (historyEntryId, message) =>
-        this.replaceMessageById(historyEntryId, message),
+    const nextHistoryEntries = [...this.rawHistoryEntriesSnapshot];
+    const result = pruneSessionHistory({
+      historyEntries: nextHistoryEntries,
+      replaceMessageById: (historyEntryId, message) => {
+        const index = nextHistoryEntries.findIndex((entry) => entry.id === historyEntryId);
+        if (index < 0) {
+          return false;
+        }
+        nextHistoryEntries[index] = { ...nextHistoryEntries[index]!, message };
+        return true;
+      },
       options: {
         strategy: options.strategy,
         fraction: options.fraction,
@@ -522,6 +540,8 @@ export class SessionEngine {
         ...(smartSelection !== undefined ? { smartSelection } : {}),
       },
     });
+    this.replaceHistoryEntries(nextHistoryEntries);
+    return result;
   }
 
   private async runSmartPruneSelection(
@@ -644,12 +664,9 @@ export class SessionEngine {
   }
 
   private emitSubagentEvent(event: SubagentUiEvent): void {
-    const subagentId = this.getSubagentEventId(event);
-    const originHistoryEntryId = this.subagentControlPlane.getOriginHistoryEntryId(subagentId);
     const coreEvent: CoreSubagentUiEvent = {
       type: "subagent_ui",
       event,
-      originHistoryEntryId,
     };
     for (const listener of this.subagentEventListeners) {
       listener(coreEvent);
@@ -660,18 +677,6 @@ export class SessionEngine {
   private emitEvent(event: CoreEvent): void {
     for (const listener of this.eventListeners) {
       listener(event);
-    }
-  }
-
-  private getSubagentEventId(event: SubagentUiEvent): string {
-    switch (event.type) {
-      case "subagent_spawned":
-      case "subagent_finished":
-        return event.state.id;
-      case "subagent_progress":
-      case "subagent_emit_output":
-      case "subagent_abort_requested":
-        return event.id;
     }
   }
 
@@ -930,8 +935,8 @@ export class SessionEngine {
     const compactionMessage = buildCompactionUserMessage({ summary: compactionSummary });
     const retainedMessageCount = preparation.retainedEntries.length;
     const modelNotice = resolveModelNotice(this.config, this.persona.model);
-    const textWithModelNotice = prependModelNotice(compactionMessage, modelNotice);
-    const textWithMetadata = prependTauUserMetadata(textWithModelNotice, [
+    const textWithContext = this.prependCompactionContext(compactionMessage, modelNotice);
+    const textWithMetadata = prependTauUserMetadata(textWithContext, [
       {
         type: "auto-compaction",
         version: 1,
@@ -956,7 +961,6 @@ export class SessionEngine {
         cutType: preparation.cutType,
         now: this.deps.clock.now(),
         modelNotice,
-        subagentStatus: this.formatAutoCompactionSubagentStatus(),
       }),
     };
 
@@ -971,7 +975,14 @@ export class SessionEngine {
     };
   }
 
-  private formatAutoCompactionSubagentStatus(): string | undefined {
+  private prependCompactionContext(text: string, modelNotice?: string): string {
+    const hiddenSystemMessages = [modelNotice, this.formatCompactionSubagentStatus()].filter(
+      (message): message is string => message !== undefined,
+    );
+    return prependTauHiddenSystemMessages(text, hiddenSystemMessages);
+  }
+
+  private formatCompactionSubagentStatus(): string | undefined {
     const running = this.subagentControlPlane
       .listSnapshots()
       .filter((snapshot) => snapshot.status === "running");
@@ -979,12 +990,13 @@ export class SessionEngine {
       return undefined;
     }
 
-    return running
+    const entries = running
       .map((snapshot) => {
         const abort = snapshot.abortRequested ? ", abort requested" : "";
         return `- ${snapshot.id}: ${snapshot.title} (name: ${snapshot.name}, status: ${snapshot.status}${abort})`;
       })
       .join("\n");
+    return `<active-subagents>\n${entries}\n</active-subagents>`;
   }
 
   private shouldRunAutoCompaction(): boolean {

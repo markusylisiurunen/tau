@@ -116,14 +116,21 @@ export class SubagentControlPlane {
   }
 
   reset(): void {
-    for (const record of this.records.values()) {
+    this.retainOrigins(new Set());
+  }
+
+  retainOrigins(originHistoryEntryIds: ReadonlySet<string>): void {
+    for (const [id, record] of this.records) {
+      if (originHistoryEntryIds.has(record.originHistoryEntryId)) {
+        continue;
+      }
+      this.records.delete(id);
       cleanupSessionResources(record.id);
       if (record.status === "running") {
         record.abortRequested = true;
         record.controller.abort();
       }
     }
-    this.records.clear();
   }
 
   getActiveCount(): number {
@@ -318,14 +325,6 @@ export class SubagentControlPlane {
 
   listSnapshots(): SubagentStateSnapshot[] {
     return [...this.records.values()].map((record) => this.toSnapshot(record));
-  }
-
-  getOriginHistoryEntryId(id: string): string {
-    const record = this.records.get(id);
-    if (!record) {
-      throw new Error(`Unknown subagent ID: ${id}`);
-    }
-    return record.originHistoryEntryId;
   }
 
   private startRun(options: {

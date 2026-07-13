@@ -527,7 +527,6 @@ export function buildAutoCompactionContinuationMessage(args: {
   cutType: AutoCompactionCutType;
   now: number;
   modelNotice?: string;
-  subagentStatus?: string;
 }): Message {
   const lines = [
     "The conversation context before this point has been compacted.",
@@ -539,11 +538,6 @@ export function buildAutoCompactionContinuationMessage(args: {
     lines.push(
       "The retained messages begin in the middle of the latest assistant/tool turn. The summary contains the original request and earlier tool work from that turn.",
     );
-  }
-
-  const subagentStatus = args.subagentStatus?.trim();
-  if (subagentStatus) {
-    lines.push("", "<active-subagents>", subagentStatus, "</active-subagents>");
   }
 
   const hiddenSystemMessages = [args.modelNotice?.trim() || undefined, lines.join("\n")].filter(

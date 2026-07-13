@@ -826,6 +826,58 @@ describe("session pruning", () => {
     expect(request?.prompt).not.toContain("old summary");
   });
 
+  it("skips malformed rejected edit calls without partially pruning earlier history", () => {
+    const entries = [
+      {
+        id: "valid-edit",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "edit-valid",
+              name: TOOL_NAME_EDIT,
+              arguments: { path: "src/a.ts", oldText: "before", newText: "after" },
+            },
+          ],
+          timestamp: 1,
+        },
+      },
+      {
+        id: "malformed-edit",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "edit-malformed",
+              name: TOOL_NAME_EDIT,
+              arguments: { path: "src/b.ts", oldText: 42 },
+            },
+          ],
+          timestamp: 2,
+        },
+      },
+    ];
+
+    const result = pruneSessionHistory({
+      historyEntries: entries,
+      replaceMessageById(historyEntryId, message) {
+        const index = entries.findIndex((entry) => entry.id === historyEntryId);
+        entries[index] = { ...entries[index], message };
+        return true;
+      },
+      options: { strategy: "earliest", fraction: 1 },
+    });
+
+    expect(result.editCallsPruned).toBe(1);
+    expect(entries[0].message.content[0].arguments.oldText).toBe("[Content pruned]");
+    expect(entries[1].message.content[0].arguments).toEqual({
+      path: "src/b.ts",
+      oldText: 42,
+    });
+  });
+
   it("fails fast when a selected prune replacement cannot be applied", () => {
     const entries = [
       {

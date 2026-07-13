@@ -1592,6 +1592,80 @@ const sessionProtocolSnapshotSchema = z
         });
       }
     }
+
+    for (const [id, tool] of Object.entries(snapshot.tools)) {
+      if (id !== tool.id || id !== tool.toolCallId) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["tools", id],
+          message: `tool map key '${id}' does not match embedded identity`,
+        });
+      }
+      if (!messageIds.has(tool.call.messageId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["tools", id, "call", "messageId"],
+          message: `tool '${id}' references unknown call message '${tool.call.messageId}'`,
+        });
+      }
+      if (tool.resultMessageId !== undefined && !messageIds.has(tool.resultMessageId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["tools", id, "resultMessageId"],
+          message: `tool '${id}' references unknown result message '${tool.resultMessageId}'`,
+        });
+      }
+      for (const facetId of tool.facetIds) {
+        const facet = snapshot.facets[facetId];
+        if (facet === undefined || facet.subject.type !== "tool" || facet.subject.id !== id) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["tools", id, "facetIds"],
+            message: `tool '${id}' references invalid facet '${facetId}'`,
+          });
+        }
+      }
+    }
+
+    for (const [id, agent] of Object.entries(snapshot.agents)) {
+      if (id !== agent.id) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", id],
+          message: `agent map key '${id}' does not match embedded id '${agent.id}'`,
+        });
+      }
+      if (!messageIds.has(agent.originMessageId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", id, "originMessageId"],
+          message: `agent '${id}' references unknown origin message '${agent.originMessageId}'`,
+        });
+      }
+    }
+
+    for (const [id, facet] of Object.entries(snapshot.facets)) {
+      if (id !== facet.id) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["facets", id],
+          message: `facet map key '${id}' does not match embedded id '${facet.id}'`,
+        });
+      }
+      const subjectExists =
+        facet.subject.type === "session" ||
+        (facet.subject.type === "message" && messageIds.has(facet.subject.id)) ||
+        (facet.subject.type === "tool" && snapshot.tools[facet.subject.id] !== undefined) ||
+        (facet.subject.type === "agent" && snapshot.agents[facet.subject.id] !== undefined) ||
+        (facet.subject.type === "operation" && timelineIds.has(facet.subject.id));
+      if (!subjectExists) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["facets", id, "subject"],
+          message: `facet '${id}' references unknown ${facet.subject.type} subject`,
+        });
+      }
+    }
   }) as z.ZodType<SessionProtocolSnapshot>;
 
 const sessionProtocolDeltaReasonSchema = z.enum([

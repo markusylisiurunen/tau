@@ -828,6 +828,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
     });
 
+    this.reconcileProjections();
     const snapshot = await this.commitSnapshot();
     this.emitSnapshotReset("maintenance", snapshot);
     return {
@@ -847,6 +848,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
     });
 
+    this.reconcileProjections(result.prunedToolResults);
     const snapshot = await this.commitSnapshot();
     this.emitSnapshotReset("maintenance", snapshot);
     return {
@@ -867,6 +869,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       throw new Error("rewind failed");
     }
 
+    this.reconcileProjections();
     const snapshot = await this.commitSnapshot();
     this.emitSnapshotReset("maintenance", snapshot);
     return {
@@ -1047,6 +1050,57 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       this.committedSnapshot = cloneSessionProtocolSnapshot(snapshot);
     }
     return this.committedSnapshot;
+  }
+
+  private reconcileProjections(
+    prunedToolResults: readonly { toolCallId: string; content: string }[] = [],
+  ): void {
+    const messageIds = new Set(this.session.rawHistoryEntries.map((entry) => entry.id));
+    messageIds.add("system");
+
+    for (const [id, tool] of this.tools) {
+      if (
+        !messageIds.has(tool.call.messageId) ||
+        (tool.resultMessageId !== undefined && !messageIds.has(tool.resultMessageId))
+      ) {
+        this.tools.delete(id);
+      }
+    }
+    for (const [id, agent] of this.agents) {
+      if (!messageIds.has(agent.originMessageId)) {
+        this.agents.delete(id);
+      }
+    }
+
+    const prunedByToolId = new Map(
+      prunedToolResults.map((result) => [result.toolCallId, result.content]),
+    );
+    const timelineIds = new Set(this.timelineExtras.map((item) => item.id));
+    for (const [id, facet] of this.facets) {
+      const subjectExists =
+        facet.subject.type === "session" ||
+        (facet.subject.type === "message" && messageIds.has(facet.subject.id)) ||
+        (facet.subject.type === "tool" && this.tools.has(facet.subject.id)) ||
+        (facet.subject.type === "agent" && this.agents.has(facet.subject.id)) ||
+        (facet.subject.type === "operation" && timelineIds.has(facet.subject.id));
+      if (!subjectExists) {
+        this.facets.delete(id);
+        continue;
+      }
+
+      if (facet.subject.type === "tool") {
+        const toolCallId = facet.subject.id;
+        const content = prunedByToolId.get(toolCallId);
+        if (content !== undefined && facet.kind === "tau.tool-ui-events") {
+          this.facets.set(id, {
+            ...facet,
+            data: {
+              events: [{ type: "tool_pruned", toolCallId, content }],
+            },
+          });
+        }
+      }
+    }
   }
 
   private buildSnapshotDraft(): Omit<SessionProtocolSnapshot, "revision"> {
@@ -1404,6 +1458,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
       case "compaction_end":
         this.clearRunningAutoCompactionOperations();
+        this.reconcileProjections();
         await this.emitSnapshotReset("maintenance", await this.commitSnapshot());
         return;
       case "tool_ui":

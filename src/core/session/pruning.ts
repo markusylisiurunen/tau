@@ -515,8 +515,11 @@ function pruneEditToolHistory(
       }
 
       const args = getToolCallArgumentsObject(toolCall);
-      const oldText = getRequiredEditArgument(args, "oldText", toolCall.id);
-      const newText = getRequiredEditArgument(args, "newText", toolCall.id);
+      const oldText = getEditArgument(args, "oldText");
+      const newText = getEditArgument(args, "newText");
+      if (oldText === undefined || newText === undefined) {
+        return block;
+      }
 
       if (oldText === PRUNED_EDIT_ARGUMENT_MARKER && newText === PRUNED_EDIT_ARGUMENT_MARKER) {
         return block;
@@ -616,23 +619,18 @@ function getAssistantContentOrThrow(
 function getToolCallArgumentsObject(toolCall: ToolCall): Record<string, unknown> {
   const { arguments: argumentsValue } = toolCall;
   if (!argumentsValue || typeof argumentsValue !== "object" || Array.isArray(argumentsValue)) {
-    throw new Error(`invalid edit tool call arguments (tool_call_id=${toolCall.id})`);
+    return {};
   }
 
   return argumentsValue as Record<string, unknown>;
 }
 
-function getRequiredEditArgument(
+function getEditArgument(
   args: Record<string, unknown>,
   key: "oldText" | "newText",
-  toolCallId: string,
-): string {
+): string | undefined {
   const value = args[key];
-  if (typeof value !== "string") {
-    throw new Error(`missing edit argument '${key}' (tool_call_id=${toolCallId})`);
-  }
-
-  return value;
+  return typeof value === "string" ? value : undefined;
 }
 
 function buildPrunedEditToolResult(diff: EditPruneCallDiff): string {

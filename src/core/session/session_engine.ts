@@ -225,6 +225,10 @@ export class SessionEngine {
     }));
   }
 
+  private retainSubagentsForCurrentHistory(): void {
+    this.subagentControlPlane.retainOrigins(new Set(this.historyEntries.map((entry) => entry.id)));
+  }
+
   dispose(): void {
     this.closeProviderSessions();
     this.subagentControlPlane.reset();
@@ -380,7 +384,8 @@ export class SessionEngine {
     }
 
     const removedEntryIds = this.historyEntries.slice(historyIndex).map((item) => item.id);
-    this.historyEntries = this.historyEntries.slice(0, historyIndex);
+    this.replaceHistoryEntries(this.historyEntries.slice(0, historyIndex));
+    this.retainSubagentsForCurrentHistory();
 
     return {
       historyEntryId: entry.id,
@@ -489,6 +494,7 @@ export class SessionEngine {
       },
     };
     this.replaceHistoryEntries([summaryEntry]);
+    this.retainSubagentsForCurrentHistory();
 
     return {
       compactionMessage,
@@ -511,10 +517,17 @@ export class SessionEngine {
         : [];
     }
 
-    return pruneSessionHistory({
-      historyEntries: this.historyEntries,
-      replaceMessageById: (historyEntryId, message) =>
-        this.replaceMessageById(historyEntryId, message),
+    const nextHistoryEntries = this.rawHistoryEntriesSnapshot.map((entry) => ({ ...entry }));
+    const result = pruneSessionHistory({
+      historyEntries: nextHistoryEntries,
+      replaceMessageById: (historyEntryId, message) => {
+        const index = nextHistoryEntries.findIndex((entry) => entry.id === historyEntryId);
+        if (index < 0) {
+          return false;
+        }
+        nextHistoryEntries[index] = { ...nextHistoryEntries[index]!, message };
+        return true;
+      },
       options: {
         strategy: options.strategy,
         fraction: options.fraction,
@@ -522,6 +535,8 @@ export class SessionEngine {
         ...(smartSelection !== undefined ? { smartSelection } : {}),
       },
     });
+    this.replaceHistoryEntries(nextHistoryEntries);
+    return result;
   }
 
   private async runSmartPruneSelection(

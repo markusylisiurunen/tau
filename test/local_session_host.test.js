@@ -445,6 +445,17 @@ describe("LocalSessionHost", () => {
 
     const deltas = [];
     hostedSession.onDelta((delta) => deltas.push(delta));
+    hostedSession.session.addMessage(
+      assistantMessageWithToolCalls([
+        {
+          type: "toolCall",
+          id: "tool-a",
+          name: "bash",
+          arguments: { command: "echo a" },
+        },
+      ]),
+      { historyEntryId: "assistant-tools" },
+    );
 
     await Promise.all([
       hostedSession.enqueueRuntimeEvent({
@@ -713,6 +724,15 @@ describe("LocalSessionHost", () => {
       }),
     ]);
 
+    const finalMessage = assistantMessageWithToolCalls([toolCall]);
+    hostedSession.session.addMessage(finalMessage, {
+      historyEntryId: "assistant-streaming-tool",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_final",
+      historyEntryId: "assistant-streaming-tool",
+      message: finalMessage,
+    });
     await hostedSession.enqueueRuntimeEvent({
       type: "tool_ui",
       uiEvent: {
@@ -728,9 +748,9 @@ describe("LocalSessionHost", () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: "assistant-streaming-tool",
-          state: "draft",
+          state: "committed",
           message: expect.objectContaining({
-            content: [{ type: "text", text: "running a command" }, toolCall],
+            content: [toolCall],
           }),
         }),
       ]),

@@ -1072,7 +1072,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
     }
 
-    this.timelineExtras.length = 0;
+    const timelineExtraIds = new Set(this.timelineExtras.map((item) => item.id));
     const prunedByToolId = new Map(
       prunedToolResults.map((result) => [result.toolCallId, result.content]),
     );
@@ -1081,7 +1081,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         facet.subject.type === "session" ||
         (facet.subject.type === "message" && messageIds.has(facet.subject.id)) ||
         (facet.subject.type === "tool" && this.tools.has(facet.subject.id)) ||
-        (facet.subject.type === "agent" && this.agents.has(facet.subject.id));
+        (facet.subject.type === "agent" && this.agents.has(facet.subject.id)) ||
+        (facet.subject.type === "operation" && timelineExtraIds.has(facet.subject.id));
       if (!subjectExists) {
         this.facets.delete(id);
         continue;

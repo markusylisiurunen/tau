@@ -559,6 +559,28 @@ describe("LocalSessionHost", () => {
     );
   });
 
+  it("preserves timeline notices when rewinding history", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    const historyEntryId = hostedSession.session.addUserText("rewind me");
+    await hostedSession.snapshot();
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "notice",
+      severity: "warn",
+      text: "keep this notice",
+    });
+    await hostedSession.rewindToHistoryEntryId(historyEntryId);
+
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.timeline).toContainEqual(
+      expect.objectContaining({
+        type: "notice",
+        notice: expect.objectContaining({ text: "keep this notice" }),
+      }),
+    );
+  });
+
   it("preserves cumulative session cost when compaction replaces message history", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

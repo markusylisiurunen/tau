@@ -538,6 +538,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly maintenancePromises = new Set<Promise<unknown>>();
   private activeTurnPromise?: Promise<SessionProtocolUserMessageTurnResult["turn"]>;
   private disposePromise?: Promise<void>;
+  private disposing = false;
   private costTotal = 0;
   private forceNextSnapshotRevision: boolean;
   private disposed = false;
@@ -1026,6 +1027,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async dispose(): Promise<void> {
     if (!this.disposePromise) {
+      this.disposing = true;
       this.disposePromise = this.disposeNow();
     }
     return await this.disposePromise;
@@ -1096,7 +1098,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private async writeSnapshot(): Promise<SessionProtocolSnapshot> {
-    this.assertActive();
+    this.assertNotDisposed();
     const draft = this.buildSnapshotDraft();
 
     if (this.committedSessionId !== draft.sessionId) {
@@ -1133,7 +1135,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     revision: number,
     options: { persist?: boolean } = {},
   ): Promise<SessionProtocolSnapshot> {
-    this.assertActive();
+    this.assertNotDisposed();
     const draft = this.buildSnapshotDraft();
     const persist = options.persist ?? true;
 
@@ -1374,6 +1376,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private assertActive(): void {
+    if (this.disposing || this.disposed) {
+      throw new Error(`session is shut down: ${this.committedSessionId}`);
+    }
+  }
+
+  private assertNotDisposed(): void {
     if (this.disposed) {
       throw new Error(`session is shut down: ${this.committedSessionId}`);
     }

@@ -2284,8 +2284,20 @@ describe("LocalSessionHost", () => {
 
     const turn = hostedSession.runTurn();
     await streamStarted;
-    await hostedSession.dispose();
+    const dispose = hostedSession.dispose();
+    const lateRecord = hostedSession.record({ text: "do not admit during disposal" });
+    await dispose;
+    await expect(lateRecord).rejects.toThrow("session is shut down");
     await expect(turn).resolves.toMatchObject({ aborted: true });
+    expect(
+      hostedSession.session.rawHistoryEntries.some(
+        (entry) =>
+          entry.message.role === "user" &&
+          entry.message.content.some(
+            (content) => content.type === "text" && content.text === "do not admit during disposal",
+          ),
+      ),
+    ).toBe(false);
     expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
   });
 
@@ -2314,7 +2326,9 @@ describe("LocalSessionHost", () => {
         await new Promise((resolve) => {
           options.signal.addEventListener("abort", resolve, { once: true });
         });
-        return fauxAssistantMessage("summary");
+        return fauxAssistantMessage(
+          "## Goal\nContinue\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+        );
       },
     });
 

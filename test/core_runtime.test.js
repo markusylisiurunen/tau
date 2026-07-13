@@ -454,6 +454,90 @@ describe("core session rewind APIs", () => {
     }
   });
 
+  it("leaves session history unchanged when compaction is aborted", async () => {
+    const session = new CoreSession({
+      persona: personas[0],
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry: new ToolRegistry([]),
+    });
+    session.addUserText("remember this");
+    session.addMessage(fauxAssistantMessage("remembered"));
+    const before = session.rawHistoryEntries;
+    const controller = new AbortController();
+    let markStreamStarted;
+    const streamStarted = new Promise((resolve) => {
+      markStreamStarted = resolve;
+    });
+    session.engine.modelRuntime.streamModel = (_model, _context, options) => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        markStreamStarted();
+        await new Promise((resolve) => {
+          options.signal.addEventListener("abort", resolve, { once: true });
+        });
+        return fauxAssistantMessage(compactionSummary("## Goal\nContinue"));
+      },
+    });
+
+    const compact = session.compact({ mode: "only-summary", signal: controller.signal });
+    await streamStarted;
+    controller.abort();
+
+    await expect(compact).rejects.toMatchObject({ name: "AbortError" });
+    expect(session.rawHistoryEntries).toEqual(before);
+  });
+
+  it("leaves session history unchanged when smart pruning is aborted", async () => {
+    const session = new CoreSession({
+      persona: personas[0],
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry: new ToolRegistry([]),
+    });
+    const toolCall = fauxToolCall(
+      TOOL_NAME_BASH,
+      { command: "printf output" },
+      { id: "bash-call" },
+    );
+    session.addMessage(fauxAssistantMessage([toolCall]));
+    session.addMessage({
+      role: "toolResult",
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      content: [{ type: "text", text: `output ${"x".repeat(15000)}` }],
+      isError: false,
+      timestamp: 1,
+    });
+    const before = session.rawHistoryEntries;
+    const controller = new AbortController();
+    let markStreamStarted;
+    const streamStarted = new Promise((resolve) => {
+      markStreamStarted = resolve;
+    });
+    session.engine.modelRuntime.streamModel = (_model, _context, options) => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        markStreamStarted();
+        await new Promise((resolve) => {
+          options.signal.addEventListener("abort", resolve, { once: true });
+        });
+        return fauxAssistantMessage(JSON.stringify({ prune: [toolCall.id] }));
+      },
+    });
+
+    const prune = session.pruneToolResults({
+      strategy: "smart",
+      fraction: 1,
+      signal: controller.signal,
+    });
+    await streamStarted;
+    controller.abort();
+
+    await expect(prune).rejects.toMatchObject({ name: "AbortError" });
+    expect(session.rawHistoryEntries).toEqual(before);
+  });
+
   it("leaves session history unchanged when pruning fails", async () => {
     const session = new CoreSession({
       persona: personas[0],

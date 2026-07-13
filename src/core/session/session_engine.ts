@@ -499,6 +499,7 @@ export class SessionEngine {
         timestamp: this.deps.clock.now(),
       },
     };
+    options.signal?.throwIfAborted();
     this.replaceHistoryEntries([summaryEntry]);
 
     return {
@@ -540,6 +541,7 @@ export class SessionEngine {
         ...(smartSelection !== undefined ? { smartSelection } : {}),
       },
     });
+    options.signal?.throwIfAborted();
     this.replaceHistoryEntries(nextHistoryEntries);
     return result;
   }

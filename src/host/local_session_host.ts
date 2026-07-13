@@ -830,7 +830,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
 
     await this.runtimeEventQueue;
-    this.reconcileProjections();
+    this.reconcileProjections({ agentFallbackOriginMessageId: result.summaryHistoryEntryId });
     const snapshot = await this.commitSnapshot();
     this.emitSnapshotReset("maintenance", snapshot);
     return {
@@ -850,7 +850,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
     });
 
-    this.reconcileProjections(result.prunedToolResults);
+    this.reconcileProjections({ prunedToolResults: result.prunedToolResults });
     const snapshot = await this.commitSnapshot();
     this.emitSnapshotReset("maintenance", snapshot);
     return {
@@ -1056,7 +1056,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private reconcileProjections(
-    prunedToolResults: readonly { toolCallId: string; content: string }[] = [],
+    options: {
+      prunedToolResults?: readonly { toolCallId: string; content: string }[];
+      agentFallbackOriginMessageId?: string;
+    } = {},
   ): void {
     const messageIds = new Set(this.session.rawHistoryEntries.map((entry) => entry.id));
     messageIds.add("system");
@@ -1070,7 +1073,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
     }
     for (const [id, agent] of this.agents) {
-      if (!messageIds.has(agent.originMessageId)) {
+      if (messageIds.has(agent.originMessageId)) {
+        continue;
+      }
+      if (options.agentFallbackOriginMessageId !== undefined) {
+        this.agents.set(id, {
+          ...agent,
+          originMessageId: options.agentFallbackOriginMessageId,
+        });
+      } else {
         this.agents.delete(id);
         this.agentCostTotals.delete(id);
       }
@@ -1080,7 +1091,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       this.timelineExtras.filter((item) => item.type === "operation").map((item) => item.id),
     );
     const prunedByToolId = new Map(
-      prunedToolResults.map((result) => [result.toolCallId, result.content]),
+      (options.prunedToolResults ?? []).map((result) => [result.toolCallId, result.content]),
     );
     for (const [id, facet] of this.facets) {
       const subjectExists =
@@ -1466,7 +1477,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
       case "compaction_end":
         this.clearRunningAutoCompactionOperations();
-        this.reconcileProjections();
+        this.reconcileProjections(
+          event.outcome === "compacted"
+            ? { agentFallbackOriginMessageId: event.result.summaryHistoryEntryId }
+            : {},
+        );
         await this.emitSnapshotReset("maintenance", await this.commitSnapshot());
         return;
       case "tool_ui":

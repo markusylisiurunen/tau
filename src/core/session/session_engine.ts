@@ -106,6 +106,7 @@ export type SessionCompactionOptions = {
 };
 
 export type SessionCompactionResult = {
+  summaryHistoryEntryId: string;
   compactionMessage: string;
   includedLastAssistant: boolean;
 };
@@ -223,7 +224,6 @@ export class SessionEngine {
       id: entry.id,
       message: structuredClone(entry.message),
     }));
-    this.subagentControlPlane.retainOrigins(new Set(this.historyEntries.map((entry) => entry.id)));
   }
 
   dispose(): void {
@@ -382,6 +382,9 @@ export class SessionEngine {
 
     const removedEntryIds = this.historyEntries.slice(historyIndex).map((item) => item.id);
     this.replaceHistoryEntries(this.historyEntries.slice(0, historyIndex));
+    this.subagentControlPlane.retainOrigins(
+      new Set(this.historyEntries.map((historyEntry) => historyEntry.id)),
+    );
 
     return {
       historyEntryId: entry.id,
@@ -490,8 +493,10 @@ export class SessionEngine {
       },
     };
     this.replaceHistoryEntries([summaryEntry]);
+    this.subagentControlPlane.rebaseMissingOrigins(new Set([summaryEntry.id]), summaryEntry.id);
 
     return {
+      summaryHistoryEntryId: summaryEntry.id,
       compactionMessage,
       includedLastAssistant,
     };
@@ -966,13 +971,15 @@ export class SessionEngine {
         cutType: preparation.cutType,
         now: this.deps.clock.now(),
         modelNotice,
-        subagentStatus: this.formatAutoCompactionSubagentStatus(
-          new Set(preparation.retainedEntries.map((entry) => entry.id)),
-        ),
+        subagentStatus: this.formatAutoCompactionSubagentStatus(),
       }),
     };
 
     this.replaceHistoryEntries([summaryEntry, ...preparation.retainedEntries, continuationEntry]);
+    this.subagentControlPlane.rebaseMissingOrigins(
+      new Set(this.historyEntries.map((entry) => entry.id)),
+      summaryEntry.id,
+    );
 
     return {
       summaryHistoryEntryId: summaryEntry.id,
@@ -983,18 +990,10 @@ export class SessionEngine {
     };
   }
 
-  private formatAutoCompactionSubagentStatus(
-    retainedHistoryEntryIds: ReadonlySet<string>,
-  ): string | undefined {
+  private formatAutoCompactionSubagentStatus(): string | undefined {
     const running = this.subagentControlPlane
       .listSnapshots()
-      .filter(
-        (snapshot) =>
-          snapshot.status === "running" &&
-          retainedHistoryEntryIds.has(
-            this.subagentControlPlane.getOriginHistoryEntryId(snapshot.id),
-          ),
-      );
+      .filter((snapshot) => snapshot.status === "running");
     if (running.length === 0) {
       return undefined;
     }

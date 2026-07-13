@@ -133,6 +133,17 @@ export class SubagentControlPlane {
     }
   }
 
+  rebaseMissingOrigins(
+    retainedOriginHistoryEntryIds: ReadonlySet<string>,
+    replacementOriginHistoryEntryId: string,
+  ): void {
+    for (const record of this.records.values()) {
+      if (!retainedOriginHistoryEntryIds.has(record.originHistoryEntryId)) {
+        record.originHistoryEntryId = replacementOriginHistoryEntryId;
+      }
+    }
+  }
+
   getActiveCount(): number {
     let count = 0;
     for (const record of this.records.values()) {

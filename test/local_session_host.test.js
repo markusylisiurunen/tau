@@ -581,7 +581,7 @@ describe("LocalSessionHost", () => {
     );
   });
 
-  it("accounts for queued subagent progress without restoring a removed projection", async () => {
+  it("accounts for queued subagent progress and rebases the projection after compaction", async () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);
     hostedSession.session.addUserText("old request", { historyEntryId: "old-user" });
@@ -655,7 +655,12 @@ describe("LocalSessionHost", () => {
     });
 
     await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ costTotal: 0.5, agents: {} }),
+      expect.objectContaining({
+        costTotal: 0.5,
+        agents: {
+          "agent-1": expect.objectContaining({ originMessageId: "compaction-summary" }),
+        },
+      }),
     );
   });
 

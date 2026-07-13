@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { safeParseCoreEventEnvelope } from "../dist/core/events/parser.js";
 import { personas } from "../dist/core/personas.js";
@@ -286,6 +286,24 @@ describe("core session rewind APIs", () => {
     expect(remaining[1]?.role).toBe("assistant");
 
     expect(session.rewindToHistoryEntryId("missing-id")).toBeUndefined();
+  });
+
+  it("rejects rewind while a subagent is running", () => {
+    const session = new CoreSession({
+      persona: personas[0],
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry: new ToolRegistry([]),
+    });
+    const historyEntryId = session.addUserText("keep this turn");
+    session.addMessage(fauxAssistantMessage("working"));
+    const before = session.rawHistoryEntries;
+    vi.spyOn(session.engine.subagentControlPlane, "getActiveCount").mockReturnValue(1);
+
+    expect(() => session.rewindToHistoryEntryId(historyEntryId)).toThrow(
+      "cannot rewind while subagents are running",
+    );
+    expect(session.rawHistoryEntries).toEqual(before);
   });
 
   it("keeps tau metadata in raw history and strips it from visible history", () => {

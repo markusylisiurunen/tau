@@ -581,9 +581,10 @@ describe("LocalSessionHost", () => {
     );
   });
 
-  it("accounts for queued subagent progress and rebases the projection after compaction", async () => {
+  it("accounts for queued subagent progress and preserves the projection after compaction", async () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);
+    vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
     hostedSession.session.addUserText("old request", { historyEntryId: "old-user" });
     await hostedSession.snapshot();
 
@@ -597,7 +598,6 @@ describe("LocalSessionHost", () => {
     };
     await hostedSession.enqueueRuntimeEvent({
       type: "subagent_ui",
-      originHistoryEntryId: "old-user",
       event: {
         type: "subagent_spawned",
         state: {
@@ -630,7 +630,6 @@ describe("LocalSessionHost", () => {
     });
     await hostedSession.enqueueRuntimeEvent({
       type: "subagent_ui",
-      originHistoryEntryId: "old-user",
       event: {
         type: "subagent_progress",
         id: "agent-1",
@@ -658,7 +657,7 @@ describe("LocalSessionHost", () => {
       expect.objectContaining({
         costTotal: 0.5,
         agents: {
-          "agent-1": expect.objectContaining({ originMessageId: "compaction-summary" }),
+          "agent-1": expect.objectContaining({ status: "running" }),
         },
       }),
     );

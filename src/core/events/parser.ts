@@ -117,7 +117,6 @@ function stripCoreEvent(value: UnknownRecord): CoreEvent {
       return {
         type: "subagent_ui",
         event: value.event as Extract<CoreEvent, { type: "subagent_ui" }>["event"],
-        originHistoryEntryId: value.originHistoryEntryId as string,
       };
     case "tool_result":
       return {
@@ -192,7 +191,7 @@ function isValidCoreEvent(value: UnknownRecord, eventType: string): boolean {
     case "tool_ui":
       return isToolUiEvent(value.uiEvent);
     case "subagent_ui":
-      return typeof value.originHistoryEntryId === "string" && isSubagentUiEvent(value.event);
+      return isSubagentUiEvent(value.event);
     case "tool_result":
       return typeof value.historyEntryId === "string" && isToolResultMessage(value.message);
     case "tool_recovery":

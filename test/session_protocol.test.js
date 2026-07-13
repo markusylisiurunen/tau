@@ -1544,7 +1544,6 @@ describe("session_protocol", () => {
       name: "default",
       title: "research",
       status: "succeeded",
-      originMessageId: "user-1",
       costTotal: 0,
       turns: 1,
       toolCalls: 0,
@@ -1591,19 +1590,6 @@ describe("session_protocol", () => {
       ok: false,
       error: expect.objectContaining({
         message: expect.stringContaining("tool 'tool-1' does not match its result message"),
-      }),
-    });
-    expect(
-      validateSessionProtocolResult("session.snapshot", {
-        ...snapshot,
-        agents: { "agent-1": { ...agent, originMessageId: "assistant-1" } },
-      }),
-    ).toEqual({
-      ok: false,
-      error: expect.objectContaining({
-        message: expect.stringContaining(
-          "agent 'agent-1' origin does not reference a user message",
-        ),
       }),
     });
     expect(

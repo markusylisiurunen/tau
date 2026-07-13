@@ -830,7 +830,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
 
     await this.runtimeEventQueue;
-    this.reconcileProjections({ agentFallbackOriginMessageId: result.summaryHistoryEntryId });
+    this.reconcileProjections();
     const snapshot = await this.commitSnapshot();
     this.emitSnapshotReset("maintenance", snapshot);
     return {
@@ -872,7 +872,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
 
     await this.runtimeEventQueue;
-    this.reconcileProjections();
+    this.reconcileProjections({ removeMissingAgents: true });
     const snapshot = await this.commitSnapshot();
     this.emitSnapshotReset("maintenance", snapshot);
     return {
@@ -1058,7 +1058,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private reconcileProjections(
     options: {
       prunedToolResults?: readonly { toolCallId: string; content: string }[];
-      agentFallbackOriginMessageId?: string;
+      removeMissingAgents?: boolean;
     } = {},
   ): void {
     const messageIds = new Set(this.session.rawHistoryEntries.map((entry) => entry.id));
@@ -1072,18 +1072,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         this.tools.delete(id);
       }
     }
-    for (const [id, agent] of this.agents) {
-      if (messageIds.has(agent.originMessageId)) {
-        continue;
-      }
-      if (options.agentFallbackOriginMessageId !== undefined) {
-        this.agents.set(id, {
-          ...agent,
-          originMessageId: options.agentFallbackOriginMessageId,
-        });
-      } else {
-        this.agents.delete(id);
-        this.agentCostTotals.delete(id);
+    if (options.removeMissingAgents) {
+      for (const id of this.agents.keys()) {
+        if (!this.session.hasSubagent(id)) {
+          this.agents.delete(id);
+          this.agentCostTotals.delete(id);
+        }
       }
     }
 
@@ -1477,18 +1471,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
       case "compaction_end":
         this.clearRunningAutoCompactionOperations();
-        this.reconcileProjections(
-          event.outcome === "compacted"
-            ? { agentFallbackOriginMessageId: event.result.summaryHistoryEntryId }
-            : {},
-        );
+        this.reconcileProjections();
         await this.emitSnapshotReset("maintenance", await this.commitSnapshot());
         return;
       case "tool_ui":
         await this.recordToolUiEvent(event.uiEvent);
         return;
       case "subagent_ui":
-        await this.recordSubagentUiEvent(event.event, event.originHistoryEntryId);
+        await this.recordSubagentUiEvent(event.event);
         return;
     }
   }
@@ -1551,19 +1541,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return next;
   }
 
-  private async recordSubagentUiEvent(
-    event: SubagentUiEvent,
-    originHistoryEntryId: string,
-  ): Promise<void> {
+  private async recordSubagentUiEvent(event: SubagentUiEvent): Promise<void> {
     const existing = "id" in event ? this.agents.get(event.id) : this.agents.get(event.state.id);
-    const agent = agentRunFromSubagentEvent(event, originHistoryEntryId, existing);
+    const agent = agentRunFromSubagentEvent(event, existing);
     if (!agent) {
       return;
     }
     const previousCost = this.agentCostTotals.get(agent.id) ?? 0;
     this.costTotal += Math.max(0, agent.costTotal - previousCost);
     this.agentCostTotals.set(agent.id, agent.costTotal);
-    if (!this.session.rawHistoryEntries.some((entry) => entry.id === originHistoryEntryId)) {
+    if (!this.session.hasSubagent(agent.id)) {
       return;
     }
     this.agents.set(agent.id, agent);
@@ -1969,7 +1956,6 @@ function createInterruptedAssistantMessageFromModelSnapshot(
 
 function agentRunFromSubagentEvent(
   event: SubagentUiEvent,
-  originHistoryEntryId: string,
   existing?: SessionProtocolAgentRun,
 ): SessionProtocolAgentRun | undefined {
   const state =
@@ -2007,7 +1993,6 @@ function agentRunFromSubagentEvent(
           : state.status === "aborted"
             ? "cancelled"
             : "running",
-    originMessageId: originHistoryEntryId,
     ...(state.modelLabel !== undefined ? { modelLabel: state.modelLabel } : {}),
     costTotal: state.costTotal,
     turns: state.turns,

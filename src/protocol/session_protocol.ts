@@ -532,7 +532,6 @@ export type SessionProtocolAgentRun = {
   name: string;
   title: string;
   status: "running" | "succeeded" | "failed" | "cancelled";
-  originMessageId: string;
   modelLabel?: string;
   costTotal: number;
   turns: number;
@@ -1511,7 +1510,6 @@ const sessionProtocolAgentRunSchema = z
     name: nonEmptyStringSchema,
     title: nonEmptyStringSchema,
     status: z.enum(["running", "succeeded", "failed", "cancelled"]),
-    originMessageId: nonEmptyStringSchema,
     modelLabel: z.string().optional(),
     costTotal: z.number().finite(),
     turns: z.number().finite(),
@@ -1672,20 +1670,6 @@ const sessionProtocolSnapshotSchema = z
           code: "custom",
           path: ["agents", id],
           message: `agent map key '${id}' does not match embedded id '${agent.id}'`,
-        });
-      }
-      const originMessage = messagesById.get(agent.originMessageId);
-      if (originMessage === undefined) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["agents", id, "originMessageId"],
-          message: `agent '${id}' references unknown origin message '${agent.originMessageId}'`,
-        });
-      } else if (originMessage.message.role !== "user") {
-        ctx.addIssue({
-          code: "custom",
-          path: ["agents", id, "originMessageId"],
-          message: `agent '${id}' origin does not reference a user message`,
         });
       }
     }

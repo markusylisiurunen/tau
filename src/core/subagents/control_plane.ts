@@ -133,17 +133,6 @@ export class SubagentControlPlane {
     }
   }
 
-  rebaseMissingOrigins(
-    retainedOriginHistoryEntryIds: ReadonlySet<string>,
-    replacementOriginHistoryEntryId: string,
-  ): void {
-    for (const record of this.records.values()) {
-      if (!retainedOriginHistoryEntryIds.has(record.originHistoryEntryId)) {
-        record.originHistoryEntryId = replacementOriginHistoryEntryId;
-      }
-    }
-  }
-
   getActiveCount(): number {
     let count = 0;
     for (const record of this.records.values()) {
@@ -336,14 +325,6 @@ export class SubagentControlPlane {
 
   listSnapshots(): SubagentStateSnapshot[] {
     return [...this.records.values()].map((record) => this.toSnapshot(record));
-  }
-
-  getOriginHistoryEntryId(id: string): string {
-    const record = this.records.get(id);
-    if (!record) {
-      throw new Error(`Unknown subagent ID: ${id}`);
-    }
-    return record.originHistoryEntryId;
   }
 
   private startRun(options: {

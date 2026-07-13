@@ -86,25 +86,6 @@ describe("subagent control plane origin correlation", () => {
     expect(signals.map((signal) => signal.aborted)).toEqual([false, true]);
   });
 
-  it("rebases removed origins without interrupting agents", () => {
-    runSubagentMock.mockReset();
-    const signals = [];
-    runSubagentMock.mockImplementation(({ signal }) => {
-      signals.push(signal);
-      return new Promise(() => {});
-    });
-
-    const controlPlane = createControlPlane();
-    const retainedId = spawnAgent(controlPlane, "retained");
-    const rebasedId = spawnAgent(controlPlane, "rebased");
-
-    controlPlane.rebaseMissingOrigins(new Set(["history-retained"]), "compaction-summary");
-
-    expect(controlPlane.getOriginHistoryEntryId(retainedId)).toBe("history-retained");
-    expect(controlPlane.getOriginHistoryEntryId(rebasedId)).toBe("compaction-summary");
-    expect(signals.map((signal) => signal.aborted)).toEqual([false, false]);
-  });
-
   it("preserves spawn origin history entry across send_input_to_agent runs", async () => {
     runSubagentMock.mockReset();
     runSubagentMock.mockResolvedValue({
@@ -118,7 +99,6 @@ describe("subagent control plane origin correlation", () => {
     const id = spawnAgent(controlPlane, "research");
 
     await controlPlane.waitForAgents([id]);
-    expect(controlPlane.getOriginHistoryEntryId(id)).toBe("history-research");
 
     const sendInputResult = controlPlane.sendInput({
       id,
@@ -130,7 +110,10 @@ describe("subagent control plane origin correlation", () => {
     expect(sendInputResult.ok).toBe(true);
 
     await controlPlane.waitForAgents([id]);
-    expect(controlPlane.getOriginHistoryEntryId(id)).toBe("history-research");
+    expect(runSubagentMock.mock.calls.map(([options]) => options.originHistoryEntryId)).toEqual([
+      "history-research",
+      "history-research",
+    ]);
   });
 });
 

@@ -106,7 +106,6 @@ export type SessionCompactionOptions = {
 };
 
 export type SessionCompactionResult = {
-  summaryHistoryEntryId: string;
   compactionMessage: string;
   includedLastAssistant: boolean;
 };
@@ -282,6 +281,10 @@ export class SessionEngine {
     return () => this.subagentEventListeners.delete(handler);
   }
 
+  hasSubagent(id: string): boolean {
+    return this.subagentControlPlane.getSnapshot(id) !== undefined;
+  }
+
   async terminateSubagent(id: string): Promise<boolean> {
     const result = await this.subagentControlPlane.terminate(id);
     return Boolean(result);
@@ -378,6 +381,9 @@ export class SessionEngine {
       isTauUserMessageHidden(entry.message)
     ) {
       return undefined;
+    }
+    if (this.subagentControlPlane.getActiveCount() > 0) {
+      throw new Error("cannot rewind while subagents are running");
     }
 
     const removedEntryIds = this.historyEntries.slice(historyIndex).map((item) => item.id);
@@ -493,10 +499,8 @@ export class SessionEngine {
       },
     };
     this.replaceHistoryEntries([summaryEntry]);
-    this.subagentControlPlane.rebaseMissingOrigins(new Set([summaryEntry.id]), summaryEntry.id);
 
     return {
-      summaryHistoryEntryId: summaryEntry.id,
       compactionMessage,
       includedLastAssistant,
     };
@@ -659,12 +663,9 @@ export class SessionEngine {
   }
 
   private emitSubagentEvent(event: SubagentUiEvent): void {
-    const subagentId = this.getSubagentEventId(event);
-    const originHistoryEntryId = this.subagentControlPlane.getOriginHistoryEntryId(subagentId);
     const coreEvent: CoreSubagentUiEvent = {
       type: "subagent_ui",
       event,
-      originHistoryEntryId,
     };
     for (const listener of this.subagentEventListeners) {
       listener(coreEvent);
@@ -675,18 +676,6 @@ export class SessionEngine {
   private emitEvent(event: CoreEvent): void {
     for (const listener of this.eventListeners) {
       listener(event);
-    }
-  }
-
-  private getSubagentEventId(event: SubagentUiEvent): string {
-    switch (event.type) {
-      case "subagent_spawned":
-      case "subagent_finished":
-        return event.state.id;
-      case "subagent_progress":
-      case "subagent_emit_output":
-      case "subagent_abort_requested":
-        return event.id;
     }
   }
 
@@ -976,10 +965,6 @@ export class SessionEngine {
     };
 
     this.replaceHistoryEntries([summaryEntry, ...preparation.retainedEntries, continuationEntry]);
-    this.subagentControlPlane.rebaseMissingOrigins(
-      new Set(this.historyEntries.map((entry) => entry.id)),
-      summaryEntry.id,
-    );
 
     return {
       summaryHistoryEntryId: summaryEntry.id,

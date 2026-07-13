@@ -39,7 +39,7 @@ function createNoticeDelta(sessionId, revision, text) {
   };
 }
 
-function createAgentDelta(sessionId, revision, event, originMessageId) {
+function createAgentDelta(sessionId, revision, event) {
   return {
     version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
@@ -57,7 +57,6 @@ function createAgentDelta(sessionId, revision, event, originMessageId) {
             name: "default",
             title: event.title ?? event.id,
             status: event.type === "finished" ? "succeeded" : "running",
-            originMessageId,
             costTotal: event.costTotal ?? 0,
             turns: event.turns ?? 0,
             toolCalls: event.toolCalls ?? 0,
@@ -305,10 +304,8 @@ function createHarness(options = {}) {
       emitNotice: (text, revision = historyEntries.length + 1) => {
         emitDelta(createNoticeDelta(sessionId, revision, text));
       },
-      emitSubagent: (event, originHistoryEntryId) => {
-        emitDelta(
-          createAgentDelta(sessionId, historyEntries.length + 1, event, originHistoryEntryId),
-        );
+      emitSubagent: (event) => {
+        emitDelta(createAgentDelta(sessionId, historyEntries.length + 1, event));
       },
     };
 
@@ -351,8 +348,7 @@ function createHarness(options = {}) {
     seededSession,
     releaseTurn: () => seededSession?.releaseTurn(),
     emitNotice: (text, revision) => seededSession?.emitNotice(text, revision),
-    emitSubagent: (event, originHistoryEntryId) =>
-      seededSession?.emitSubagent(event, originHistoryEntryId),
+    emitSubagent: (event) => seededSession?.emitSubagent(event),
     recoverSession: () => {
       if (!seededSession) {
         throw new Error("no seeded session to recover");
@@ -593,7 +589,7 @@ describe("rpc_server", () => {
           ),
       ),
     );
-    harness.emitSubagent({ type: "spawned", id: "agent-1", title: "research" }, "history-1");
+    harness.emitSubagent({ type: "spawned", id: "agent-1", title: "research" });
 
     await harness.server.handleLine(
       request("submit-2", "session.submit", {
@@ -1079,7 +1075,7 @@ describe("rpc_server", () => {
     const steeringEntry = harness.seededSession.session.historyEntries.find((entry) =>
       entry.message.content[0].text.includes("change direction"),
     );
-    harness.emitSubagent({ type: "spawned", id: "agent-2", title: "research" }, steeringEntry.id);
+    harness.emitSubagent({ type: "spawned", id: "agent-2", title: "research" });
     harness.releaseTurn();
     await Promise.all([steerOne, steerTwo]);
 
@@ -1292,7 +1288,7 @@ describe("rpc_server", () => {
     );
 
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    harness.emitSubagent({ type: "spawned", id: "agent-1", title: "research" }, "history-1");
+    harness.emitSubagent({ type: "spawned", id: "agent-1", title: "research" });
     harness.releaseTurn();
     await firstSubmit;
 
@@ -1306,25 +1302,22 @@ describe("rpc_server", () => {
     await waitFor(
       () => harness.lines.filter((line) => deltaHasNotice(line, "streaming")).length >= 2,
     );
-    harness.emitSubagent(
-      {
-        type: "subagent_progress",
-        id: "agent-1",
-        text: "still working",
-        costTotal: 0,
-        turns: 1,
-        toolCalls: 0,
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          contextWindowUsageTokens: 0,
-          contextWindow: 200000,
-        },
+    harness.emitSubagent({
+      type: "subagent_progress",
+      id: "agent-1",
+      text: "still working",
+      costTotal: 0,
+      turns: 1,
+      toolCalls: 0,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        contextWindowUsageTokens: 0,
+        contextWindow: 200000,
       },
-      "history-1",
-    );
+    });
 
     harness.releaseTurn();
     await secondSubmit;

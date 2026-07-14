@@ -18,7 +18,11 @@ import {
   type SessionProtocolRequestMessage,
   type SessionProtocolResultByMethod,
 } from "../protocol/session_protocol.js";
-import type { TauHostedSession, TauSessionHost } from "./session_host.js";
+import {
+  EphemeralThreadBusyError,
+  type TauHostedSession,
+  type TauSessionHost,
+} from "./session_host.js";
 
 export type SessionProtocolHandlerOptions = {
   host: TauSessionHost;
@@ -1253,7 +1257,9 @@ export class SessionProtocolHandler {
       this.sendMessage(
         createSessionProtocolErrorResponse(
           request.id,
-          SESSION_PROTOCOL_ERROR_CODES.internalError,
+          error instanceof EphemeralThreadBusyError
+            ? SESSION_PROTOCOL_ERROR_CODES.busy
+            : SESSION_PROTOCOL_ERROR_CODES.internalError,
           error instanceof Error ? error.message : String(error),
         ),
       );

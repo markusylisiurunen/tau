@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
 import { type Config, resolvePromptTemplateWithBackend } from "../core/config/index.js";
 import type { CoreEvent } from "../core/events/types.js";
@@ -511,7 +512,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   readonly session: CoreSession;
   private committedSessionId: string;
   private committedSnapshot?: SessionProtocolSnapshot;
-  private persistedSnapshotRevision?: number;
+  private persistedSnapshot?: SessionProtocolSnapshot;
   private draftAssistantMessage?: SessionProtocolMessage;
   private readonly messageStates = new Map<string, SessionProtocolMessage["state"]>();
   private restoredMessageIds?: Set<string>;
@@ -534,6 +535,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly unsubscribeSubagentEvent: () => void;
   private runtimeEventQueue: Promise<void> = Promise.resolve();
   private snapshotQueue: Promise<unknown> = Promise.resolve();
+  private snapshotGeneration = 0;
   private readonly maintenanceAbortControllers = new Set<AbortController>();
   private readonly maintenancePromises = new Set<Promise<unknown>>();
   private activeTurnPromise?: Promise<SessionProtocolUserMessageTurnResult["turn"]>;
@@ -560,7 +562,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.committedSnapshot = committedSnapshot
       ? cloneSessionProtocolSnapshot(committedSnapshot)
       : undefined;
-    this.persistedSnapshotRevision = committedSnapshot?.revision;
+    this.persistedSnapshot = committedSnapshot
+      ? cloneSessionProtocolSnapshot(committedSnapshot)
+      : undefined;
     this.forceNextSnapshotRevision = forceNextSnapshotRevision;
     this.restoreProtocolState(committedSnapshot);
     this.unsubscribeSubagentEvent = this.session.onSubagentEvent((event) => {
@@ -707,7 +711,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       this.emitDelta(
         createSessionProtocolDeltaMessage({
           sessionId: snapshot.sessionId,
-          fromRevision,
+          fromRevision: snapshot.revision - 1,
           toRevision: snapshot.revision,
           reason: "configuration",
           delta: {
@@ -1086,88 +1090,79 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return await write;
   }
 
-  private async commitSnapshotWithRevision(
-    revision: number,
-    options: { persist?: boolean } = {},
-  ): Promise<SessionProtocolSnapshot> {
+  private async commitSnapshotWithRevision(revision: number): Promise<SessionProtocolSnapshot> {
     const write = this.snapshotQueue
       .catch(() => undefined)
-      .then(() => this.writeSnapshotWithRevision(revision, options));
+      .then(() => this.writeSnapshotWithRevision(revision));
     this.snapshotQueue = write.catch(() => undefined);
     return await write;
   }
 
   private async writeSnapshot(): Promise<SessionProtocolSnapshot> {
     this.assertNotDisposed();
+    const generation = this.snapshotGeneration;
     const draft = this.buildSnapshotDraft();
 
-    if (this.committedSessionId !== draft.sessionId) {
-      await this.store.deleteSession(this.committedSessionId, {
-        ...(this.persistedSnapshotRevision !== undefined
-          ? { expectedRevision: this.persistedSnapshotRevision }
-          : {}),
-      });
-      this.committedSessionId = draft.sessionId;
-      this.committedSnapshot = undefined;
-      this.persistedSnapshotRevision = undefined;
-    }
+    await this.switchSnapshotSession(draft.sessionId);
 
     const snapshot: SessionProtocolSnapshot = {
       ...draft,
       revision: this.nextSnapshotRevision(draft),
     };
-    if (
-      this.committedSnapshot &&
-      snapshot.revision === this.committedSnapshot.revision &&
-      this.persistedSnapshotRevision === snapshot.revision
-    ) {
-      return cloneSessionProtocolSnapshot(this.committedSnapshot);
+    if (this.persistedSnapshot && isDeepStrictEqual(this.persistedSnapshot, snapshot)) {
+      return cloneSessionProtocolSnapshot(this.committedSnapshot ?? snapshot);
     }
 
     await this.store.commitSessionSnapshot(snapshot, {
-      expectedRevision: this.persistedSnapshotRevision ?? 0,
+      expectedRevision: this.persistedSnapshot?.revision ?? 0,
     });
-    this.persistedSnapshotRevision = snapshot.revision;
+    this.persistedSnapshot = cloneSessionProtocolSnapshot(snapshot);
+    if (generation !== this.snapshotGeneration) {
+      return await this.writeSnapshot();
+    }
     return cloneSessionProtocolSnapshot(this.updateCommittedSnapshotAfterWrite(snapshot));
   }
 
-  private async writeSnapshotWithRevision(
-    revision: number,
-    options: { persist?: boolean } = {},
-  ): Promise<SessionProtocolSnapshot> {
+  private async writeSnapshotWithRevision(revision: number): Promise<SessionProtocolSnapshot> {
     this.assertNotDisposed();
+    const generation = this.snapshotGeneration;
     const draft = this.buildSnapshotDraft();
-    const persist = options.persist ?? true;
 
-    if (this.committedSessionId !== draft.sessionId) {
-      await this.store.deleteSession(this.committedSessionId, {
-        ...(this.persistedSnapshotRevision !== undefined
-          ? { expectedRevision: this.persistedSnapshotRevision }
-          : {}),
-      });
-      this.committedSessionId = draft.sessionId;
-      this.committedSnapshot = undefined;
-      this.persistedSnapshotRevision = undefined;
-    }
+    await this.switchSnapshotSession(draft.sessionId);
 
     const snapshot: SessionProtocolSnapshot = {
       ...draft,
       revision,
     };
-    if (persist) {
-      await this.store.commitSessionSnapshot(snapshot, {
-        expectedRevision: this.persistedSnapshotRevision ?? 0,
-      });
-      this.persistedSnapshotRevision = snapshot.revision;
+    await this.store.commitSessionSnapshot(snapshot, {
+      expectedRevision: this.persistedSnapshot?.revision ?? 0,
+    });
+    this.persistedSnapshot = cloneSessionProtocolSnapshot(snapshot);
+    if (generation !== this.snapshotGeneration) {
+      return await this.writeSnapshot();
     }
     return cloneSessionProtocolSnapshot(this.updateCommittedSnapshotAfterWrite(snapshot));
+  }
+
+  private async switchSnapshotSession(sessionId: string): Promise<void> {
+    if (this.committedSessionId === sessionId) {
+      return;
+    }
+
+    await this.store.deleteSession(this.committedSessionId, {
+      ...(this.persistedSnapshot ? { expectedRevision: this.persistedSnapshot.revision } : {}),
+    });
+    this.committedSessionId = sessionId;
+    this.committedSnapshot = undefined;
+    this.persistedSnapshot = undefined;
   }
 
   private updateCommittedSnapshotAfterWrite(
     snapshot: SessionProtocolSnapshot,
   ): SessionProtocolSnapshot {
-    if (!this.committedSnapshot || this.committedSnapshot.revision <= snapshot.revision) {
+    if (!this.committedSnapshot || this.committedSnapshot.revision < snapshot.revision) {
       this.committedSnapshot = cloneSessionProtocolSnapshot(snapshot);
+      this.snapshotGeneration += 1;
     }
     return this.committedSnapshot;
   }
@@ -1733,11 +1728,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
     if (options.persist === false) {
       this.committedSnapshot = applySessionProtocolDelta(this.committedSnapshot, delta);
+      this.snapshotGeneration += 1;
       this.emitDelta(delta);
       return;
     }
 
-    const snapshot = await this.commitSnapshotWithRevision(toRevision, options);
+    const snapshot = await this.commitSnapshotWithRevision(toRevision);
     this.emitDelta(
       createSessionProtocolDeltaMessage({
         sessionId: delta.sessionId,

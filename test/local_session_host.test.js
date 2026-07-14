@@ -7,11 +7,9 @@ import { createLocalToolExecutionBackend, ToolCatalog } from "../dist/core/index
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
-import {
-  EphemeralThreadBusyError,
-  HostedEphemeralAgentSession,
-} from "../dist/host/hosted_ephemeral_agent_session.js";
+import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
+import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 
 const localCreateInput = {

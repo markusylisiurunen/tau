@@ -1,7 +1,7 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { RpcServer, runRpcServer } from "../dist/core/modes/rpc_server.js";
-import { EphemeralThreadBusyError } from "../dist/host/hosted_ephemeral_agent_session.js";
+import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
 import {
   SESSION_PROTOCOL_ERROR_CODES,
   SESSION_PROTOCOL_VERSION,

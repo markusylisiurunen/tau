@@ -35,6 +35,8 @@ import type {
   SessionProtocolUserMessageTurnResult,
 } from "../protocol/session_protocol.js";
 
+export class EphemeralThreadBusyError extends Error {}
+
 export type TauHostedSession = {
   readonly sessionId: string;
   readonly isDisposed?: boolean;

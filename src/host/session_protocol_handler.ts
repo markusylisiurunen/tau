@@ -18,8 +18,11 @@ import {
   type SessionProtocolRequestMessage,
   type SessionProtocolResultByMethod,
 } from "../protocol/session_protocol.js";
-import { EphemeralThreadBusyError } from "./hosted_ephemeral_agent_session.js";
-import type { TauHostedSession, TauSessionHost } from "./session_host.js";
+import {
+  EphemeralThreadBusyError,
+  type TauHostedSession,
+  type TauSessionHost,
+} from "./session_host.js";
 
 export type SessionProtocolHandlerOptions = {
   host: TauSessionHost;

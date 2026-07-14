@@ -25,6 +25,7 @@ import type {
   SessionProtocolEphemeralSubmitResult,
 } from "../protocol/session_protocol.js";
 import { createExecutionEnvironmentSubagentRuntimeResolver } from "./execution_runtime.js";
+import { EphemeralThreadBusyError } from "./session_host.js";
 
 export type EphemeralAgentUsageSnapshot = {
   input: number;
@@ -62,12 +63,6 @@ export type HostedEphemeralAgentSessionOptions = {
   ) => void;
 };
 
-type HostedEphemeralAgentThreadRecord = {
-  thread: EphemeralAgentThread;
-};
-
-export class EphemeralThreadBusyError extends Error {}
-
 export class HostedEphemeralAgentSession {
   private readonly contextId: string;
   private readonly persona: Persona;
@@ -79,7 +74,7 @@ export class HostedEphemeralAgentSession {
   private readonly instructions: string;
   private readonly tools: SubagentToolName[];
   private readonly emitUpdate: HostedEphemeralAgentSessionOptions["emitUpdate"];
-  private readonly threads = new Map<string, HostedEphemeralAgentThreadRecord>();
+  private readonly threads = new Map<string, EphemeralAgentThread>();
   private readonly activeThreadIds = new Set<string>();
   private disposed = false;
 
@@ -119,8 +114,8 @@ export class HostedEphemeralAgentSession {
 
     this.activeThreadIds.add(options.threadId);
     try {
-      const record = await this.getOrCreateThread(options.threadId, options.forkFromThreadId);
-      const response = await record.thread.submitMessage(options.message);
+      const thread = await this.getOrCreateThread(options.threadId, options.forkFromThreadId);
+      const response = await thread.submitMessage(options.message);
       return { threadId: options.threadId, response };
     } finally {
       this.activeThreadIds.delete(options.threadId);
@@ -132,9 +127,9 @@ export class HostedEphemeralAgentSession {
       return;
     }
     this.disposed = true;
-    for (const record of this.threads.values()) {
-      record.thread.interrupt();
-      record.thread.dispose();
+    for (const thread of this.threads.values()) {
+      thread.interrupt();
+      thread.dispose();
     }
     this.threads.clear();
     this.activeThreadIds.clear();
@@ -143,7 +138,7 @@ export class HostedEphemeralAgentSession {
   private async getOrCreateThread(
     threadId: string,
     forkFromThreadId?: string,
-  ): Promise<HostedEphemeralAgentThreadRecord> {
+  ): Promise<EphemeralAgentThread> {
     const existing = this.threads.get(threadId);
     if (existing) {
       return existing;
@@ -153,10 +148,9 @@ export class HostedEphemeralAgentSession {
     if (forkFromThreadId && !forkFrom) {
       throw new Error(`unknown fork source thread '${forkFromThreadId}'`);
     }
-    const thread = await this.createThread(threadId, forkFrom?.thread.createForkSource());
-    const record: HostedEphemeralAgentThreadRecord = { thread };
-    this.threads.set(threadId, record);
-    return record;
+    const thread = await this.createThread(threadId, forkFrom?.createForkSource());
+    this.threads.set(threadId, thread);
+    return thread;
   }
 
   private async createThread(
